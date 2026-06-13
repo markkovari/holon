@@ -1,0 +1,78 @@
+# wasmCloud 2.x application as a WorkloadDeployment (Kubernetes operator model).
+#
+# This is the 2.x equivalent of ../wadm.yaml. The big model shift from 1.x:
+#   - Multiple components co-located in ONE workload are wired together by the
+#     operator (no explicit 1.x-style `link` trait between guest components).
+#   - Host capabilities (http incoming, keyvalue, http outgoing) are requested
+#     via `hostInterfaces` instead of being deployed as separate provider
+#     components and linked by hand.
+#   - Images are OCI refs (push with `wash push`), not file:// paths.
+#
+# VERIFIED fields (wasmCloud v2 operator docs): apiVersion
+# runtime.wasmcloud.dev/v1alpha1, kind WorkloadDeployment, spec.replicas,
+# spec.template.spec.hostSelector, .kubernetes.service, .components[].{name,image},
+# .hostInterfaces[].{namespace,package,interfaces}, components[].localResources
+# (configFrom / secretFrom / inline config).
+#
+# RC-PROVISIONAL (the v2 RC docs do not yet pin these exactly — confirm against
+# your installed operator's CRD before relying on them):
+#   - the precise syntax to bind an HTTP listen ADDRESS to an incoming-handler
+#     hostInterface (shown here as inline config on the component);
+#   - whether keyvalue NATS bucket/url config goes on the hostInterface or on
+#     component config (shown here as component config keys).
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: comp-auth
+  namespace: default
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostSelector:
+        hostgroup: default
+      kubernetes:
+        service:
+          name: comp-auth
+      components:
+        # The reference auth implementation. Exports the auth:identity surface;
+        # the two app components below import it (operator wires same-workload
+        # imports/exports automatically).
+        - name: auth-guard
+          image: ghcr.io/REPLACE_ME/auth-guard:0.1.0
+          # RC-PROVISIONAL: keyvalue backend (NATS) + OIDC config as inline config.
+          localResources:
+            config:
+              kv-bucket: "auth"
+              oidc-issuer: "http://zitadel.default.svc.cluster.local:8080"
+
+        # Guarded sample endpoint.
+        - name: sample-consumer
+          image: ghcr.io/REPLACE_ME/sample-consumer:0.1.0
+
+        # Register/login frontend.
+        - name: accounts-app
+          image: ghcr.io/REPLACE_ME/accounts-app:0.1.0
+
+      # Host-provided capabilities the workload needs.
+      hostInterfaces:
+        # HTTP server: serves the two app components' incoming-handler exports.
+        # RC-PROVISIONAL: address binding — confirm the operator's config key.
+        - name: http-in
+          namespace: wasi
+          package: http
+          interfaces:
+            - incoming-handler
+        # Generic key-value (bound to NATS by the host) — sessions/rbac/users.
+        - name: kv
+          namespace: wasi
+          package: keyvalue
+          interfaces:
+            - store
+            - atomics
+        # Outbound HTTP for OIDC discovery + JWKS.
+        - name: http-out
+          namespace: wasi
+          package: http
+          interfaces:
+            - outgoing-handler

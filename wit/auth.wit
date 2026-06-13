@@ -1,0 +1,313 @@
+// auth:identity — a universal, IdP-agnostic authentication + RBAC contract.
+//
+// The contract is the product. Any component (HTTP handler, message consumer,
+// job worker) imports `authorizer` and calls `authorize` to turn a raw token
+// into a verified `principal` with an enforced permission check, in one shot.
+//
+// Internally the package is split so an implementation can compose the pieces:
+//   jwt      — stateless signature/claims verification
+//   oidc     — IdP-agnostic discovery + JWKS + code exchange (no vendor APIs)
+//   session  — stateful, server-side sessions (refresh + revoke)
+//   rbac     — roles -> permissions, scoped per tenant
+//   authorizer — the verify-token guard that orchestrates the above
+//
+// The contract is storage- and IdP-agnostic: it never names a persistence
+// backend or a vendor IdP. How sessions/roles are stored, and which IdP issues
+// tokens, are choices an implementation makes — not part of this interface.
+//
+// Design is wasip2-stable but shaped to survive a wasip3 async refactor: every
+// fallible boundary returns `result<_, auth-error>`, no streaming-bound shapes.
+package auth:identity@0.1.0;
+
+/// Shared data types used across every interface in this package.
+interface types {
+    /// A unix timestamp in seconds since the epoch.
+    type timestamp = u64;
+
+    /// A single permission, expressed as a (target, action) pair.
+    /// e.g. { target: "orders", action: "read" }. Action "*" means any.
+    /// `target` is the protected resource name (resource is a WIT keyword).
+    record permission {
+        target: string,
+        action: string,
+    }
+
+    /// A verified caller. The end product of `authorize` / `introspect`.
+    record principal {
+        /// Stable subject id (OIDC `sub`, session owner, or jwt `sub`).
+        subject: string,
+        /// Tenant / organization the principal belongs to. "" if single-tenant.
+        tenant: string,
+        /// Roles assigned to the principal within `tenant`.
+        roles: list<string>,
+        /// Granted scopes (OAuth scopes / fine-grained grants).
+        scopes: list<string>,
+        /// When the underlying credential expires (unix seconds).
+        expires-at: timestamp,
+    }
+
+    /// Decoded, verified token claims. `raw` carries any extra claims as
+    /// stringified key/value pairs so callers can read custom claims without
+    /// the contract enumerating every possible one.
+    record claims {
+        iss: string,
+        sub: string,
+        aud: list<string>,
+        exp: timestamp,
+        iat: timestamp,
+        scopes: list<string>,
+        raw: list<tuple<string, string>>,
+    }
+
+    /// An issued credential pair. `refresh-token` is absent for purely
+    /// stateless (jwt-only) issuance.
+    record token-pair {
+        access-token: string,
+        refresh-token: option<string>,
+        /// Seconds until `access-token` expires.
+        expires-in: u64,
+        /// Server-side session id, when the token is session-backed.
+        session-id: option<string>,
+    }
+
+    /// The single error type for the whole contract. Implementations map their
+    /// internal failures onto these variants; consumers switch on them to pick
+    /// an HTTP status (invalid/expired -> 401, insufficient-scope -> 403, etc).
+    variant auth-error {
+        /// Token failed signature/structure validation. Detail is safe to log.
+        invalid-token(string),
+        /// Token parsed but is past its expiry.
+        expired,
+        /// Caller authenticated but lacks the required permission.
+        insufficient-scope(permission),
+        /// Tenant referenced by the token/principal is unknown.
+        unknown-tenant,
+        /// A backing dependency (IdP, storage, JWKS endpoint) was unreachable.
+        backend-unavailable(string),
+        /// Input was structurally malformed before any verification.
+        malformed(string),
+        /// Login failed: no such account, or wrong password.
+        invalid-credentials,
+        /// Register failed: an account with that identifier already exists.
+        already-exists,
+        /// Catch-all for unexpected internal failures.
+        internal(string),
+    }
+}
+
+/// Stateless JSON Web Token verification.
+interface jwt {
+    use types.{claims, auth-error};
+
+    /// Verify a compact JWS (RS256/ES256 via configured JWKS, HS256 via secret)
+    /// and return its validated claims. Checks signature, `exp`, and `iat`.
+    verify: func(token: string) -> result<claims, auth-error>;
+}
+
+/// IdP-agnostic OpenID Connect. Speaks only standard OIDC: discovery document,
+/// JWKS, and the authorization-code token exchange. Never any Zitadel/Ory
+/// vendor-specific endpoint, so the implementation can point at either.
+interface oidc {
+    use types.{claims, token-pair, auth-error};
+
+    /// A subset of the OIDC discovery document this contract relies on.
+    record oidc-config {
+        issuer: string,
+        authorization-endpoint: string,
+        token-endpoint: string,
+        jwks-uri: string,
+        userinfo-endpoint: option<string>,
+    }
+
+    /// Fetch + cache `{issuer}/.well-known/openid-configuration`.
+    discover: func(issuer: string) -> result<oidc-config, auth-error>;
+
+    /// Validate an OIDC id_token against the issuer's JWKS.
+    verify-id-token: func(token: string) -> result<claims, auth-error>;
+
+    /// Exchange an authorization code for tokens (code flow callback).
+    exchange-code: func(
+        code: string,
+        redirect-uri: string,
+    ) -> result<token-pair, auth-error>;
+}
+
+/// Stateful, server-side sessions. Server-side state enables refresh and
+/// revocation that pure JWTs cannot offer. Where that state lives is an
+/// implementation detail this contract deliberately does not specify.
+interface session {
+    use types.{principal, token-pair, auth-error};
+
+    /// Issue a new session for a principal, returning an access/refresh pair.
+    issue: func(p: principal) -> result<token-pair, auth-error>;
+
+    /// Exchange a valid, unexpired refresh token for a fresh token pair.
+    /// Rotates the refresh token; the old one is invalidated.
+    refresh: func(refresh-token: string) -> result<token-pair, auth-error>;
+
+    /// Revoke a session by id. Idempotent: revoking an unknown/expired
+    /// session succeeds.
+    revoke: func(session-id: string) -> result<_, auth-error>;
+
+    /// Resolve a session id back to its principal, or an error if expired/gone.
+    lookup: func(session-id: string) -> result<principal, auth-error>;
+}
+
+/// Local user accounts: registration and password-based login. For deployments
+/// that own their users (no external IdP). Password hashing + storage is an
+/// implementation detail; this contract only speaks email/password in and
+/// principal/token-pair out. Use `oidc` instead when an external IdP owns users.
+interface accounts {
+    use types.{principal, token-pair, auth-error};
+
+    /// Create a new account. Returns the freshly-created principal on success,
+    /// `already-exists` if the (tenant, email) is taken, or `malformed` for a
+    /// bad email / too-weak password. Does NOT log the user in.
+    register: func(
+        email: string,
+        password: string,
+        tenant: string,
+    ) -> result<principal, auth-error>;
+
+    /// Authenticate by email + password and issue a session token pair.
+    /// Returns `invalid-credentials` on any auth failure (no user enumeration).
+    login: func(
+        email: string,
+        password: string,
+        tenant: string,
+    ) -> result<token-pair, auth-error>;
+
+    /// Verify a password without issuing a session (e.g. step-up auth).
+    verify-password: func(
+        email: string,
+        password: string,
+        tenant: string,
+    ) -> result<principal, auth-error>;
+
+    /// Change an account's password. Requires the current password.
+    change-password: func(
+        email: string,
+        tenant: string,
+        current-password: string,
+        new-password: string,
+    ) -> result<_, auth-error>;
+}
+
+/// Role-based access control, scoped per tenant. Role->permission mappings and
+/// subject->role assignments are held by the implementation (storage-agnostic).
+interface rbac {
+    use types.{principal, permission, auth-error};
+
+    /// Pure permission check against an already-verified principal. No I/O:
+    /// uses the roles/scopes baked into the principal. Returns true if allowed.
+    check: func(p: principal, required: permission) -> bool;
+
+    /// Grant a role to a subject within a tenant. Idempotent.
+    assign-role: func(
+        tenant: string,
+        subject: string,
+        role: string,
+    ) -> result<_, auth-error>;
+
+    /// Remove a role from a subject within a tenant. Idempotent.
+    revoke-role: func(
+        tenant: string,
+        subject: string,
+        role: string,
+    ) -> result<_, auth-error>;
+
+    /// List the roles assigned to a subject within a tenant.
+    roles-for: func(
+        tenant: string,
+        subject: string,
+    ) -> result<list<string>, auth-error>;
+
+    /// List the permissions a role grants within a tenant.
+    permissions-of: func(
+        tenant: string,
+        role: string,
+    ) -> result<list<permission>, auth-error>;
+}
+
+/// THE consumer-facing API: a verify-token guard. One call validates the token
+/// (jwt | oidc | session — detected by the implementation), builds a principal,
+/// and enforces the required permission. Most components only ever import this.
+interface authorizer {
+    use types.{principal, permission, auth-error};
+
+    /// Verify `token` and require `required`. Returns the principal on success,
+    /// `insufficient-scope` if authenticated-but-unauthorized, or an auth/expiry
+    /// error otherwise.
+    authorize: func(
+        token: string,
+        required: permission,
+    ) -> result<principal, auth-error>;
+
+    /// Like `authorize` but succeeds if the principal satisfies ANY of the
+    /// required permissions.
+    authorize-any: func(
+        token: string,
+        required: list<permission>,
+    ) -> result<principal, auth-error>;
+
+    /// Verify `token` and return the principal WITHOUT any permission check.
+    /// For components that do their own authorization logic.
+    introspect: func(token: string) -> result<principal, auth-error>;
+}
+
+/// What an ordinary application component imports: just the guard. Keeps the
+/// consumer surface minimal — apps never see jwt/oidc/session/rbac directly.
+/// This is THE contract: it names no storage backend and no vendor IdP.
+world consumer {
+    import authorizer;
+}
+
+/// A ready-made world for an HTTP application that guards its endpoints with
+/// auth: it serves HTTP and imports the authorizer. The reference
+/// `sample-consumer` targets this.
+world consumer-http {
+    import authorizer;
+    export wasi:http/incoming-handler@0.2.3;
+}
+
+/// World for an HTTP registration/login frontend. Serves HTTP and imports the
+/// account + session + authorizer interfaces. The reference `accounts-app`
+/// targets this: it owns no auth logic, just maps HTTP to contract calls.
+world accounts-http {
+    import accounts;
+    import session;
+    import authorizer;
+    export wasi:http/incoming-handler@0.2.3;
+}
+
+// ---------------------------------------------------------------------------
+// Implementation world (NOT part of the contract surface).
+//
+// `authority` is what an auth:identity *implementation* targets. It is the one
+// place capability choices appear — and they are deliberately generic:
+// `wasi:keyvalue` is just "some key-value capability", bound at deploy time to
+// whatever provider the operator wires up. No backend (NATS, etc.) is named
+// here; that lives in deployment config, never in WIT.
+// ---------------------------------------------------------------------------
+
+/// What the reference implementation (`auth-guard`) provides: it exports the
+/// full auth surface and imports the host capabilities it needs to do so.
+world authority {
+    export types;
+    export jwt;
+    export oidc;
+    export session;
+    export accounts;
+    export rbac;
+    export authorizer;
+
+    // Generic persistence for sessions, refresh tokens, JWKS cache, rbac maps.
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    // Outbound HTTP to reach OIDC discovery + JWKS endpoints.
+    import wasi:http/outgoing-handler@0.2.3;
+    // Token expiry math.
+    import wasi:clocks/wall-clock@0.2.3;
+    // Session id / refresh token generation.
+    import wasi:random/random@0.2.3;
+}

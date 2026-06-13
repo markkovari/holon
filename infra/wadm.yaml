@@ -1,0 +1,127 @@
+# wadm application manifest for the auth:identity stack on wasmCloud.
+#
+# Wires:
+#   sample-consumer  --(auth:identity/authorizer)-->  auth-guard
+#   sample-consumer  <--(wasi:http)--                 httpserver provider
+#   auth-guard       --(wasi:keyvalue)-->             nats-kv provider (NATS)
+#   auth-guard       --(wasi:http outgoing)-->        httpclient provider (OIDC/JWKS)
+#
+# The NATS backend for keyvalue is chosen HERE (deployment config), never in WIT.
+#
+# Deploy:  wash app put infra/wadm.yaml && wash app deploy comp-auth
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-auth
+  annotations:
+    description: "WIT-first universal auth + RBAC reference stack"
+spec:
+  components:
+    # ---- the reference auth implementation ----
+    - name: auth-guard
+      type: component
+      properties:
+        image: file://../components/target/wasm32-wasip1/release/auth_guard.wasm
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        # keyvalue -> NATS-backed provider
+        - type: link
+          properties:
+            target: nats-kv
+            namespace: wasi
+            package: keyvalue
+            interfaces: [store, atomics]
+            target_config:
+              - name: nats-auth-bucket
+                properties:
+                  bucket: "auth"
+        # outgoing HTTP -> httpclient provider (for OIDC discovery / JWKS)
+        - type: link
+          properties:
+            target: httpclient
+            namespace: wasi
+            package: http
+            interfaces: [outgoing-handler]
+
+    # ---- the sample guarded HTTP app ----
+    - name: sample-consumer
+      type: component
+      properties:
+        image: file://../components/target/wasm32-wasip1/release/sample_consumer.wasm
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        # consumer imports the authorizer from auth-guard
+        - type: link
+          properties:
+            target: auth-guard
+            namespace: auth
+            package: identity
+            interfaces: [authorizer, types]
+
+    # ---- the register/login frontend ----
+    - name: accounts-app
+      type: component
+      properties:
+        image: file://../components/target/wasm32-wasip1/release/accounts_app.wasm
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        # imports accounts + session + authorizer, all from auth-guard
+        - type: link
+          properties:
+            target: auth-guard
+            namespace: auth
+            package: identity
+            interfaces: [accounts, session, authorizer, types]
+
+    # ---- providers ----
+    - name: httpserver
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-server:0.23.0
+      traits:
+        - type: link
+          properties:
+            target: sample-consumer
+            namespace: wasi
+            package: http
+            interfaces: [incoming-handler]
+            source_config:
+              - name: http-listen-sample
+                properties:
+                  address: "0.0.0.0:8000"
+
+    - name: httpserver-accounts
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-server:0.23.0
+      traits:
+        - type: link
+          properties:
+            target: accounts-app
+            namespace: wasi
+            package: http
+            interfaces: [incoming-handler]
+            source_config:
+              - name: http-listen-accounts
+                properties:
+                  address: "0.0.0.0:8001"
+
+    - name: nats-kv
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/keyvalue-nats:0.4.0
+        config:
+          - name: nats-url
+            properties:
+              url: "nats://host.docker.internal:4222"
+
+    - name: httpclient
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-client:0.13.0

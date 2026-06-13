@@ -1,0 +1,22 @@
+# wasmCloud 2.x host configuration (Kubernetes operator model).
+#
+# Installs a wasmCloud host into the cluster, pointed at the same NATS the
+# keyvalue capability uses. Apply BEFORE the WorkloadDeployment.
+#
+# Prereq: the wasmCloud operator must be installed in the cluster, e.g.
+#   helm install wasmcloud-operator oci://ghcr.io/wasmcloud/charts/wasmcloud-operator
+#
+# Verified fields: apiVersion k8s.wasmcloud.dev/v1alpha1, lattice, natsAddress,
+# hostReplicas, version, hostLabels. (Source: wasmCloud v2 operator docs.)
+apiVersion: k8s.wasmcloud.dev/v1alpha1
+kind: WasmCloudHostConfig
+metadata:
+  name: comp-auth-host
+  namespace: default
+spec:
+  hostReplicas: 1
+  lattice: comp-auth
+  version: "1.7.0"
+  natsAddress: nats://nats.default.svc.cluster.local:4222
+  hostLabels:
+    hostgroup: default

@@ -1,0 +1,107 @@
+# Local infra for the auth:identity workspace.
+#
+#   NATS  — always on. Provides JetStream KV, which the wasi:keyvalue provider
+#           binds to at runtime (storage for sessions / refresh / rbac).
+#   IdP   — pick ONE profile:
+#             docker compose --profile zitadel up -d
+#             docker compose --profile ory     up -d
+#           The WIT contract is IdP-agnostic; only the OIDC issuer URL differs.
+#
+# Nothing here leaks into the WIT — backend choice lives entirely in config.
+
+name: comp-auth
+
+services:
+  # ---- always on -------------------------------------------------------
+  nats:
+    image: nats:2.10-alpine
+    command:
+      - "-js"                # enable JetStream (required for KV buckets)
+      - "-m"
+      - "8222"               # monitoring
+    ports:
+      - "4222:4222"          # client
+      - "8222:8222"          # monitoring / healthz
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ---- zitadel profile -------------------------------------------------
+  zitadel-db:
+    image: postgres:16-alpine
+    profiles: ["zitadel"]
+    environment:
+      POSTGRES_USER: zitadel
+      POSTGRES_PASSWORD: zitadel
+      POSTGRES_DB: zitadel
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zitadel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:v2.65.1
+    profiles: ["zitadel"]
+    command: 'start-from-init --masterkey "MasterkeyNeedsToHave32Characters" --tlsMode disabled'
+    environment:
+      ZITADEL_DATABASE_POSTGRES_HOST: zitadel-db
+      ZITADEL_DATABASE_POSTGRES_PORT: 5432
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_EXTERNALSECURE: "false"
+      ZITADEL_EXTERNALPORT: 8080
+      ZITADEL_EXTERNALDOMAIN: localhost
+    depends_on:
+      zitadel-db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"          # OIDC issuer: http://localhost:8080
+
+  # ---- ory profile -----------------------------------------------------
+  ory-db:
+    image: postgres:16-alpine
+    profiles: ["ory"]
+    environment:
+      POSTGRES_USER: ory
+      POSTGRES_PASSWORD: ory
+      POSTGRES_DB: ory
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ory"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  hydra-migrate:
+    image: oryd/hydra:v2.2.0
+    profiles: ["ory"]
+    command: migrate sql -e --yes
+    environment:
+      DSN: postgres://ory:ory@ory-db:5432/ory?sslmode=disable
+    depends_on:
+      ory-db:
+        condition: service_healthy
+    restart: on-failure
+
+  hydra:
+    image: oryd/hydra:v2.2.0
+    profiles: ["ory"]
+    command: serve all --dev
+    environment:
+      DSN: postgres://ory:ory@ory-db:5432/ory?sslmode=disable
+      URLS_SELF_ISSUER: http://localhost:4444   # OIDC issuer
+      URLS_CONSENT: http://localhost:3000/consent
+      URLS_LOGIN: http://localhost:3000/login
+      SECRETS_SYSTEM: this-is-a-dev-only-system-secret-change-me
+    depends_on:
+      - hydra-migrate
+    ports:
+      - "4444:4444"          # public (OIDC issuer)
+      - "4445:4445"          # admin

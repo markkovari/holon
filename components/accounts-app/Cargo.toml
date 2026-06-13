@@ -1,0 +1,30 @@
+[package]
+name = "accounts-app"
+description = "HTTP JSON register/login frontend over auth:identity (accounts + session + authorizer)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "auth:accounts-app"
+
+[package.metadata.component.target]
+path = "../../wit"
+world = "accounts-http"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.3" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.3" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.3" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.3" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.3" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }

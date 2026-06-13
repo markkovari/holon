@@ -1,0 +1,10 @@
+# WIT dependencies for auth:identity. Versions are pinned in ../wkg.lock and
+# vendored under ./deps/. Re-fetch with `wkg wit fetch` (or `just vendor`).
+#
+# These mirror the `import wasi:*` statements in auth.wit's `authority` world.
+"wasi:keyvalue" = "0.2.0-draft"
+"wasi:http" = "0.2.3"
+"wasi:clocks" = "0.2.3"
+"wasi:random" = "0.2.3"
+"wasi:cli" = "0.2.3"
+"wasi:io" = "0.2.3"
