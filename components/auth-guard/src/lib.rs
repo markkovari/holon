@@ -40,6 +40,7 @@
 mod bindings;
 
 mod accounts;
+mod audit;
 mod config;
 mod kv;
 mod jwt_verify;
@@ -180,10 +181,19 @@ impl Rbac for Component {
 
 impl Authorizer for Component {
     fn authorize(token: String, required: Permission) -> Result<Principal, AuthError> {
-        let principal = resolve_principal(&token)?;
+        let perm = format!("{}:{}", required.target, required.action);
+        let principal = match resolve_principal(&token) {
+            Ok(p) => p,
+            Err(e) => {
+                audit::emit("authorize", audit::Outcome::Error, "", "", &perm);
+                return Err(e);
+            }
+        };
         if store::rbac_check(&principal, &required) {
+            audit::emit("authorize", audit::Outcome::Allow, &principal.tenant, &principal.subject, &perm);
             Ok(principal)
         } else {
+            audit::emit("authorize", audit::Outcome::Deny, &principal.tenant, &principal.subject, &perm);
             Err(AuthError::InsufficientScope(required))
         }
     }

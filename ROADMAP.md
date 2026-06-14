@@ -70,14 +70,19 @@ current state as a demo/learning artifact until Tier 1 lands.
 - [x] Implementation docs: `lib.rs` module map + storage-key layout + claim
       handling; `USAGE.md` integration guide for consumers.
 
-### Tier 3 — make it shippable
-- [ ] `just` target that deploys + auto-collapses to one host (kill the manual RS dance).
-- [ ] OpenTelemetry traces + structured audit log of auth decisions.
-- [ ] Real KV story: TTL semantics, migration, the wasi:keyvalue draft instability.
+### Tier 3 — make it shippable  (done)
+- [x] `just deploy-k8s` + `just k8s-collapse` — applies host + OAM app and scales
+      stale host ReplicaSets to 0, leaving one lattice host. No manual RS dance.
+- [x] Structured audit log of auth decisions (JSON to stderr, OTel-scrapable):
+      authorize/login/register/refresh_reuse, secret-free, `audit-enabled` toggle.
+      (Full distributed-trace spans left as a future enhancement.)
+- [x] KV TTL/migration documented: in-value expiry pattern (sessions, JWKS cache,
+      rate-limit windows), lazy delete, additive-JSON migration. See README.
 
 ## Status
 
 - ✅ Contract + impl + infra; e2e on wasmCloud k8s and jco in-process.
 - ✅ Config-driven policy via `wasi:config/runtime`.
 - ✅ TS examples (HTTP + jco) with passing e2e suites.
-- 🚧 Tier 1.
+- ✅ Tiers 1–4 complete. The auth itself is hardened; remaining work is optional
+  polish (full OTel spans, more IdP seed scripts, a vetted full-JWT-framework swap).

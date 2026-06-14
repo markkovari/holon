@@ -112,6 +112,7 @@ fn principal_for(subject: String, tenant: &str) -> Principal {
 pub fn register(email: &str, password: &str, tenant: &str) -> Result<Principal, AuthError> {
     validate_input(email, password)?;
     if load(tenant, email)?.is_some() {
+        crate::audit::emit("register", crate::audit::Outcome::Deny, tenant, email, "already_exists");
         return Err(AuthError::AlreadyExists);
     }
     let subject = new_subject();
@@ -120,6 +121,7 @@ pub fn register(email: &str, password: &str, tenant: &str) -> Result<Principal, 
     let body = serde_json::to_string(&account)
         .map_err(|e| AuthError::Internal(format!("account json: {e}")))?;
     kv::set(&user_key(tenant, email), &body)?;
+    crate::audit::emit("register", crate::audit::Outcome::Allow, tenant, &subject, "");
     Ok(principal_for(subject, tenant))
 }
 
@@ -139,19 +141,25 @@ pub fn verify_password(
 }
 
 pub fn login(email: &str, password: &str, tenant: &str) -> Result<TokenPair, AuthError> {
+    use crate::audit::{emit, Outcome};
     let key = rl_key(tenant, email);
     // Refuse before touching the password store if the identifier is locked.
-    limiter::check(&key).map_err(rl_err)?;
+    if let Err(e) = limiter::check(&key).map_err(rl_err) {
+        emit("login", Outcome::Deny, tenant, email, "rate_limited");
+        return Err(e);
+    }
 
     match verify_password(email, password, tenant) {
         Ok(principal) => {
             // success clears the failure counter
             let _ = limiter::reset(&key);
+            emit("login", Outcome::Allow, tenant, &principal.subject, "");
             store::session_issue(principal)
         }
         Err(e) => {
             // count this failure toward lockout, then surface the auth error
             let _ = limiter::record_failure(&key);
+            emit("login", Outcome::Deny, tenant, email, "invalid_credentials");
             Err(e)
         }
     }

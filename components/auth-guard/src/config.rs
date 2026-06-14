@@ -73,3 +73,9 @@ pub fn allowed_algs() -> Vec<String> {
 pub fn clock_skew() -> u64 {
     get_u64("clock-skew", 60)
 }
+
+/// Whether to emit structured (JSON) audit events for auth decisions to stderr
+/// (host-captured / scrapable by OTel collectors). Default on. Set "false" off.
+pub fn audit_enabled() -> bool {
+    get_str("audit-enabled", "true") != "false"
+}

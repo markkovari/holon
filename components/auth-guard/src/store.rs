@@ -116,6 +116,13 @@ pub fn session_refresh(refresh_token: &str) -> Result<TokenPair, AuthError> {
         // REUSE of a rotated token — treat as a breach and kill the family.
         if let Some(family) = kv::get(&format!("spent:{refresh_token}"))? {
             revoke_family(&family)?;
+            crate::audit::emit(
+                "refresh_reuse",
+                crate::audit::Outcome::Deny,
+                "",
+                "",
+                "session family revoked",
+            );
             return Err(AuthError::InvalidToken(
                 "refresh token reuse detected; session family revoked".into(),
             ));

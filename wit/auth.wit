@@ -40,6 +40,9 @@
 //   expected-audience   required JWT `aud` ("" = off)      (default "")
 //   allowed-algs        JWS alg allow-list (anti-confusion)(default "RS256,ES256")
 //   clock-skew          exp/nbf tolerance, seconds         (default 60)
+//   audit-enabled       emit JSON audit lines to stderr    (default true)
+//   max-attempts        failed logins before lockout       (default 5; rate-limiter)
+//   lockout-window      lockout window, seconds            (default 300; rate-limiter)
 //   Secrets/IdP wiring (oidc:issuer, oidc:client-id, oidc:client-secret,
 //   hs256-secret) are supplied through the keyvalue store, not config.
 //

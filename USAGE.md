@@ -92,6 +92,9 @@ rebuild). Defaults make it run with zero config:
 | `expected-audience` | `""` | required JWT `aud` (`""` disables — **set in prod**) |
 | `allowed-algs` | `RS256,ES256` | JWS alg allow-list (anti-confusion; add `HS256` for dev) |
 | `clock-skew` | `60` | `exp`/`nbf` tolerance (s) |
+| `audit-enabled` | `true` | emit JSON audit lines to stderr |
+| `max-attempts` | `5` | failed logins before lockout (rate-limiter) |
+| `lockout-window` | `300` | lockout window, seconds (rate-limiter) |
 
 Secrets & IdP wiring are supplied through the keyvalue store, not config:
 `oidc:issuer`, `oidc:client-id`, `oidc:client-secret`, `hs256-secret`.

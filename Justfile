@@ -63,11 +63,35 @@ deploy: build
     wash app put infra/wadm.yaml
     wash app deploy comp-auth
 
-# Deploy on wasmCloud 2.x via the Kubernetes operator (needs kubectl + operator).
-# Push components to OCI first (see README), and replace REPLACE_ME in workload.yaml.
+# Deploy on the wasmCloud k8s operator: apply host + OAM app, then collapse to a
+# single lattice host. Needs kubectl + the operator + components pushed to the
+# in-cluster registry (see README). `ns` defaults to comp-auth.
+ns := "comp-auth"
 deploy-k8s:
     kubectl apply -f infra/k8s/host.yaml
-    kubectl apply -f infra/k8s/workload.yaml
+    kubectl apply -f infra/k8s/app.yaml
+    @just k8s-collapse
+
+# Scale every host ReplicaSet except the newest to 0, so exactly one host runs.
+# The operator can leave two RSes at 1 after a rollout, splitting the lattice
+# (http provider and component land on different pods, wrpc calls fail). This
+# makes a single co-located host deterministic — no manual `kubectl scale`.
+k8s-collapse:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sel="app.kubernetes.io/instance=comp-auth-host"
+    live=$(kubectl get rs -n {{ns}} -l "$sel" \
+      --sort-by='{.metadata.annotations.deployment\.kubernetes\.io/revision}' \
+      -o custom-columns=N:.metadata.name,D:.spec.replicas --no-headers \
+      | awk '$2>0{print $1}')
+    n=$(echo "$live" | grep -c . || true)
+    if [ "$n" -le 1 ]; then echo "single host already; nothing to collapse"; exit 0; fi
+    # keep the last (newest revision), scale the rest to 0
+    keep=$(echo "$live" | tail -1)
+    for rs in $(echo "$live" | sed '$d'); do
+      echo "scaling stale host RS $rs -> 0 (keeping $keep)"
+      kubectl scale rs "$rs" -n {{ns}} --replicas=0
+    done
 
 # Full local check: vendor (if needed), validate WIT, build, validate components.
 check: wit-check validate

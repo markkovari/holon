@@ -133,6 +133,40 @@ curl -i -H "Authorization: Bearer $TOK" localhost:8000/  # 403 (no demo:read per
 (1.x path) **or** `kubectl` + the wasmCloud operator (2.x path). `wac` is not
 required — components are linked at runtime, not statically pre-composed.
 
+## Storage (wasi:keyvalue) — TTL & migration
+
+`wasi:keyvalue@0.2.0-draft` has **no native TTL/expiry**. The implementation
+handles this in two ways:
+
+- **Sessions** carry `expires-at` inside the stored value; `session.lookup`
+  treats an elapsed entry as gone and deletes it lazily (no background sweep).
+- **OIDC discovery / JWKS** caches store `"{expiry-epoch}:{json}"` and re-fetch
+  when the prefix time has passed (`jwks-cache-ttl`).
+- **Rate-limit** counters store `"{count}:{window-start}"`; an elapsed window
+  starts fresh on next access.
+
+Consequence: expired keys linger until next touched. With a NATS-backed bucket
+you can additionally set a bucket-level TTL on the provider for hard GC.
+
+**Migration:** values are versioned implicitly by their JSON shape. To evolve a
+record, add `#[serde(default)]` fields (forward-compatible) or bump a `v` field
+and branch on read. There is no schema registry; keep changes additive. Keys
+are namespaced by prefix (`sess:`, `refresh:`, `user:`, `rbac:…`) so a migration
+can scan one prefix at a time.
+
+## Observability (audit log)
+
+`auth-guard` emits one **JSON audit line per decision** to stderr (host-captured,
+scrapable by an OTel/log collector). No secrets — only event, outcome, tenant,
+subject, and a short detail:
+
+```json
+{"audit":true,"ts":1781440000,"event":"authorize","outcome":"deny","tenant":"acme","subject":"usr_…","detail":"orders:read"}
+```
+
+Events: `authorize` (allow/deny/error), `login`, `register`, `refresh_reuse`
+(breach). Toggle with config `audit-enabled` (default on).
+
 ## Composition (auth-guard + rate-limiter)
 
 Rate limiting lives in its **own** package/component, not inside auth — a second
