@@ -17,6 +17,7 @@
 mod bindings;
 
 mod accounts;
+mod config;
 mod kv;
 mod jwt_verify;
 mod oidc_client;
@@ -184,8 +185,11 @@ impl Authorizer for Component {
 /// - Anything else is treated as a JWS (JWT / OIDC id_token) and verified
 ///   against the issuer's key material.
 fn resolve_principal(token: &str) -> Result<Principal, AuthError> {
-    if let Some(session_id) = token.strip_prefix(tokens::ACCESS_PREFIX) {
-        return store::session_lookup(session_id);
+    // Session tokens carry the `sess_` prefix. The session id IS the whole
+    // token (prefix included) — that's how it was stored at issue time — so we
+    // pass `token` as-is, not the stripped remainder.
+    if token.starts_with(tokens::ACCESS_PREFIX) {
+        return store::session_lookup(token);
     }
     let claims = jwt_verify::verify(token)?;
     let tenant = claims_tenant(&claims);
@@ -207,7 +211,7 @@ fn claims_tenant(claims: &Claims) -> String {
             return v.clone();
         }
     }
-    String::new()
+    config::default_tenant()
 }
 
 bindings::export!(Component with_types_in bindings);

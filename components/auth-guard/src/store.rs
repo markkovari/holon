@@ -6,11 +6,10 @@ use crate::bindings::exports::auth::identity::types::{
     AuthError, Permission, Principal, TokenPair,
 };
 use crate::bindings::wasi::clocks::wall_clock;
+use crate::config;
 use crate::kv;
 use crate::tokens;
 
-/// Default session lifetime in seconds (1 hour).
-const SESSION_TTL: u64 = 3600;
 
 // ---- serde mirrors of the WIT records -----------------------------------
 // The generated WIT types don't derive serde, so we (de)serialize through
@@ -72,7 +71,7 @@ pub fn session_issue(p: Principal) -> Result<TokenPair, AuthError> {
     let mut dto = PrincipalDto::from(&p);
     // Stamp expiry from issuance time if the caller didn't set one.
     if dto.expires_at == 0 {
-        dto.expires_at = now() + SESSION_TTL;
+        dto.expires_at = now() + config::session_ttl();
     }
     let body = serde_json::to_string(&dto).map_err(json_err)?;
 

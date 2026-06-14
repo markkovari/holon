@@ -1,0 +1,13 @@
+# NATS values for wasmCloud: JetStream (with a domain) + a leafnode listener.
+# wasmCloud host pods run a nats-leaf sidecar that connects to this leafnode
+# port (7422); without it the host can't create its LATTICEDATA JetStream bucket.
+config:
+  jetstream:
+    enabled: true
+  # JetStream domain the hub advertises; host's leafNodeDomain must match.
+  merge:
+    jetstream:
+      domain: default
+  leafnodes:
+    enabled: true
+    port: 7422

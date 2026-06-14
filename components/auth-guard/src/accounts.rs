@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bindings::exports::auth::identity::types::{AuthError, Principal, TokenPair};
 use crate::bindings::wasi::random::random::get_random_bytes;
-use crate::{kv, store};
+use crate::{config, kv, store};
 
 #[derive(Serialize, Deserialize)]
 struct Account {
@@ -67,8 +67,11 @@ fn validate_input(email: &str, password: &str) -> Result<(), AuthError> {
     if !email.contains('@') || email.len() < 3 {
         return Err(AuthError::Malformed("invalid email".into()));
     }
-    if password.len() < 8 {
-        return Err(AuthError::Malformed("password must be >= 8 chars".into()));
+    let min = config::password_min_len();
+    if password.len() < min {
+        return Err(AuthError::Malformed(format!(
+            "password must be >= {min} chars"
+        )));
     }
     Ok(())
 }

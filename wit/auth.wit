@@ -267,7 +267,7 @@ world consumer {
 /// `sample-consumer` targets this.
 world consumer-http {
     import authorizer;
-    export wasi:http/incoming-handler@0.2.3;
+    export wasi:http/incoming-handler@0.2.0;
 }
 
 /// World for an HTTP registration/login frontend. Serves HTTP and imports the
@@ -277,7 +277,7 @@ world accounts-http {
     import accounts;
     import session;
     import authorizer;
-    export wasi:http/incoming-handler@0.2.3;
+    export wasi:http/incoming-handler@0.2.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,9 +305,12 @@ world authority {
     import wasi:keyvalue/store@0.2.0-draft;
     import wasi:keyvalue/atomics@0.2.0-draft;
     // Outbound HTTP to reach OIDC discovery + JWKS endpoints.
-    import wasi:http/outgoing-handler@0.2.3;
+    import wasi:http/outgoing-handler@0.2.0;
     // Token expiry math.
-    import wasi:clocks/wall-clock@0.2.3;
+    import wasi:clocks/wall-clock@0.2.0;
     // Session id / refresh token generation.
-    import wasi:random/random@0.2.3;
+    import wasi:random/random@0.2.0;
+    // Deployment policy knobs (session-ttl, password-min-len, jwks-cache-ttl,
+    // default-tenant). Supplied per-deployment via component config.
+    import wasi:config/runtime@0.2.0-draft;
 }

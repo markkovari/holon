@@ -1,22 +1,24 @@
-# wasmCloud 2.x host configuration (Kubernetes operator model).
+# wasmCloud host for the comp-auth app (OAM operator model, the model the
+# installable operator actually serves: k8s.wasmcloud.dev/v1alpha1 +
+# core.oam.dev/v1beta1). Schema matches the running operator's CRD.
 #
-# Installs a wasmCloud host into the cluster, pointed at the same NATS the
-# keyvalue capability uses. Apply BEFORE the WorkloadDeployment.
-#
-# Prereq: the wasmCloud operator must be installed in the cluster, e.g.
-#   helm install wasmcloud-operator oci://ghcr.io/wasmcloud/charts/wasmcloud-operator
-#
-# Verified fields: apiVersion k8s.wasmcloud.dev/v1alpha1, lattice, natsAddress,
-# hostReplicas, version, hostLabels. (Source: wasmCloud v2 operator docs.)
+# - natsAddress: in-cluster NATS (JetStream) — the wasi:keyvalue backend.
+# - allowedInsecure: the in-cluster registry we push components to.
+# - lattice: isolated from other apps on the cluster.
 apiVersion: k8s.wasmcloud.dev/v1alpha1
 kind: WasmCloudHostConfig
 metadata:
   name: comp-auth-host
-  namespace: default
+  namespace: comp-auth
 spec:
   hostReplicas: 1
   lattice: comp-auth
-  version: "1.7.0"
-  natsAddress: nats://nats.default.svc.cluster.local:4222
-  hostLabels:
-    hostgroup: default
+  version: "1.4.1"
+  natsAddress: nats://nats.wasmcloud.svc.cluster.local
+  natsClientPort: 4222
+  jetstreamDomain: default
+  leafNodeDomain: leaf
+  logLevel: info
+  allowLatest: true
+  allowedInsecure:
+    - registry.wasmcloud.svc.cluster.local:5000

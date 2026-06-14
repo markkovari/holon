@@ -11,8 +11,28 @@ use crate::bindings::wasi::http::outgoing_handler;
 use crate::bindings::wasi::http::types::{
     Fields, Method, OutgoingRequest, RequestOptions, Scheme,
 };
+use crate::bindings::wasi::clocks::wall_clock;
 use crate::bindings::wasi::io::streams::StreamError;
-use crate::kv;
+use crate::{config, kv};
+
+/// Read a TTL-cached value: entries are stored as `<expiry-epoch>:<payload>`.
+/// Returns the payload if present and unexpired.
+fn cache_get(key: &str) -> Option<String> {
+    let raw = kv::get(key).ok().flatten()?;
+    let (exp, payload) = raw.split_once(':')?;
+    let exp: u64 = exp.parse().ok()?;
+    if exp > wall_clock::now().seconds {
+        Some(payload.to_string())
+    } else {
+        None
+    }
+}
+
+/// Store a value with `jwks-cache-ttl` seconds of freshness.
+fn cache_put(key: &str, payload: &str) {
+    let exp = wall_clock::now().seconds + config::jwks_cache_ttl();
+    let _ = kv::set(key, &format!("{exp}:{payload}"));
+}
 
 #[derive(Deserialize)]
 struct DiscoveryDoc {
@@ -60,7 +80,7 @@ pub fn discover(issuer: &str) -> Result<OidcConfig, AuthError> {
 
 fn discovery(issuer: &str) -> Result<DiscoveryDoc, AuthError> {
     let cache_key = format!("oidc:{issuer}");
-    if let Some(body) = kv::get(&cache_key)? {
+    if let Some(body) = cache_get(&cache_key) {
         if let Ok(doc) = serde_json::from_str::<DiscoveryDoc>(&body) {
             return Ok(doc);
         }
@@ -69,13 +89,13 @@ fn discovery(issuer: &str) -> Result<DiscoveryDoc, AuthError> {
     let body = http_get(&url)?;
     let doc: DiscoveryDoc = serde_json::from_slice(&body)
         .map_err(|e| AuthError::BackendUnavailable(format!("discovery parse: {e}")))?;
-    let _ = kv::set(&cache_key, &String::from_utf8_lossy(&body));
+    cache_put(&cache_key, &String::from_utf8_lossy(&body));
     Ok(doc)
 }
 
 fn fetch_jwks(issuer: &str) -> Result<Jwks, AuthError> {
     let cache_key = format!("jwks:{issuer}");
-    if let Some(body) = kv::get(&cache_key)? {
+    if let Some(body) = cache_get(&cache_key) {
         if let Ok(jwks) = serde_json::from_str::<Jwks>(&body) {
             return Ok(jwks);
         }
@@ -84,7 +104,7 @@ fn fetch_jwks(issuer: &str) -> Result<Jwks, AuthError> {
     let body = http_get(&doc.jwks_uri)?;
     let jwks: Jwks = serde_json::from_slice(&body)
         .map_err(|e| AuthError::BackendUnavailable(format!("jwks parse: {e}")))?;
-    let _ = kv::set(&cache_key, &String::from_utf8_lossy(&body));
+    cache_put(&cache_key, &String::from_utf8_lossy(&body));
     Ok(jwks)
 }
 

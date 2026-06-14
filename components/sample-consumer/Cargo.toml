@@ -20,9 +20,10 @@ path = "../../wit"
 world = "consumer-http"
 
 [package.metadata.component.target.dependencies]
-"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.3" }
-"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.3" }
-"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.3" }
-"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.3" }
-"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.3" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
 "wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-draft" }

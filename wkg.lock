@@ -7,18 +7,27 @@ name = "wasi:clocks"
 registry = "wasi.dev"
 
 [[packages.versions]]
-requirement = "=0.2.3"
-version = "0.2.3"
-digest = "sha256:3bbed4e582d6209cf281cfe94e51d64fd0c9507635c5e1c68795f493b6cdada9"
+requirement = "=0.2.0"
+version = "0.2.0"
+digest = "sha256:51911098e929732f65d1d84f8dc393299f18a9e8de632d854714f37142efe97b"
+
+[[packages]]
+name = "wasi:config"
+registry = "wasi.dev"
+
+[[packages.versions]]
+requirement = "=0.2.0-draft"
+version = "0.2.0-draft"
+digest = "sha256:aa2d36d0843999edad80a13bf22f4529277f7b6012429f8a5d1f9499f3793c1a"
 
 [[packages]]
 name = "wasi:http"
 registry = "wasi.dev"
 
 [[packages.versions]]
-requirement = "=0.2.3"
-version = "0.2.3"
-digest = "sha256:e526c1586efc94cd148e33725139be05c4bb58ba20466d348282bd8dc3999f1d"
+requirement = "=0.2.0"
+version = "0.2.0"
+digest = "sha256:5a568e6e2d60c1ce51220e1833cdd5b88db9f615720edc762a9b4a6f36b383bd"
 
 [[packages]]
 name = "wasi:keyvalue"
@@ -34,6 +43,6 @@ name = "wasi:random"
 registry = "wasi.dev"
 
 [[packages.versions]]
-requirement = "=0.2.3"
-version = "0.2.3"
-digest = "sha256:90bff11fae5e2df9196ee89cd00d374792dce8afadf5c4c761a834ed760588e3"
+requirement = "=0.2.0"
+version = "0.2.0"
+digest = "sha256:5d535edc544d06719cf337861b7917c3d565360295e5dc424046dceddb0a0e42"

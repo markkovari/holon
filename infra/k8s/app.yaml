@@ -1,0 +1,143 @@
+# OAM Application for the comp-auth stack (cluster variant of ../wadm.yaml).
+# Schema matches the running operator's OAM dialect (verified against the
+# petclinic app on this cluster):
+#   - link trait: target: {name, config:[...]}, source: {config:[...]}
+#   - images use the oci:// prefix, pulled from the in-cluster registry
+#   - keyvalue NATS config (bucket + cluster_uri) rides on the consumer's link
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: comp-auth
+  namespace: comp-auth
+  annotations:
+    version: v0.14.0
+    description: "WIT-first universal auth + RBAC reference stack"
+spec:
+  components:
+    - name: auth-guard
+      type: component
+      properties:
+        image: oci://registry.wasmcloud.svc.cluster.local:5000/auth-guard:0.11.0
+        # Deployment policy, read by the guest via wasi:config/runtime. All have
+        # in-code defaults; override per-deployment here.
+        config:
+          - name: policy
+            properties:
+              session-ttl: "3600"
+              password-min-len: "8"
+              jwks-cache-ttl: "3600"
+              default-tenant: ""
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        - type: link
+          properties:
+            # wasmCloud routes a component's wasi:keyvalue calls over the link
+            # named `default` unless the guest selects a named link. The actual
+            # JS bucket is chosen by the `bucket` config below.
+            name: default
+            namespace: wasi
+            package: keyvalue
+            interfaces: [store, atomics]
+            target:
+              name: keyvalue-nats
+              config:
+                - name: auth-bucket
+                  properties:
+                    bucket: comp-auth
+                    cluster_uri: nats://nats.wasmcloud.svc.cluster.local:4222
+                    enable_bucket_auto_create: 'true'
+        - type: link
+          properties:
+            namespace: wasi
+            package: http
+            interfaces: [outgoing-handler]
+            target:
+              name: httpclient
+
+    - name: sample-consumer
+      type: component
+      properties:
+        image: oci://registry.wasmcloud.svc.cluster.local:5000/sample-consumer:0.11.0
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        - type: link
+          properties:
+            namespace: auth
+            package: identity
+            interfaces: [authorizer, types]
+            target:
+              name: auth-guard
+
+    - name: accounts-app
+      type: component
+      properties:
+        image: oci://registry.wasmcloud.svc.cluster.local:5000/accounts-app:0.11.0
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        - type: link
+          properties:
+            namespace: auth
+            package: identity
+            interfaces: [accounts, session, authorizer, types]
+            target:
+              name: auth-guard
+
+    # ---- providers ----
+    - name: httpserver
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-server:0.23.1
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        - type: link
+          properties:
+            name: http-sample
+            namespace: wasi
+            package: http
+            interfaces: [incoming-handler]
+            source:
+              config:
+                - name: http-sample-config
+                  properties:
+                    address: 0.0.0.0:8000
+            target:
+              name: sample-consumer
+        - type: link
+          properties:
+            name: http-accounts
+            namespace: wasi
+            package: http
+            interfaces: [incoming-handler]
+            source:
+              config:
+                - name: http-accounts-config
+                  properties:
+                    address: 0.0.0.0:8001
+            target:
+              name: accounts-app
+
+    - name: keyvalue-nats
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/keyvalue-nats:0.3.1
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+
+    - name: httpclient
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-client:0.13.0
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1

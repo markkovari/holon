@@ -133,6 +133,68 @@ curl -i -H "Authorization: Bearer $TOK" localhost:8000/  # 403 (no demo:read per
 (1.x path) **or** `kubectl` + the wasmCloud operator (2.x path). `wac` is not
 required — components are linked at runtime, not statically pre-composed.
 
+## Configuration
+
+The contract is config-driven, with two layers:
+
+**Runtime secrets/IdP wiring** (kv-seeded): OIDC issuer, client id/secret, HS256
+secret — read from keyvalue (`oidc:issuer`, `oidc:client-id`, etc.).
+
+**Deployment policy** (`wasi:config/runtime`): set per-deployment in the
+`auth-guard` component `config` block in `infra/k8s/app.yaml`, read by the guest
+at runtime — no rebuild needed. Every knob has an in-code default:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `session-ttl` | `3600` | session lifetime (seconds) |
+| `password-min-len` | `8` | min password length for local accounts |
+| `jwks-cache-ttl` | `3600` | OIDC discovery + JWKS cache freshness (seconds) |
+| `default-tenant` | `""` | tenant assumed when token/request carries none |
+
+Verified live: changing `session-ttl`/`password-min-len` in the manifest and
+re-applying (no rebuild) changes `expires_in` and password validation.
+
+What is **deliberately static** (internal data-model, not policy): token prefixes
+(`sess_`/`ref_`/`usr_`), the keyvalue link name (`default`), NATS key sanitization.
+Changing these would break stored data, so they are not operator knobs.
+
+## wasmCloud build recipe (hard-won — host 1.4.x / wasmtime 25)
+
+Getting Rust components to actually *run* on the wasmCloud host (not just build)
+required matching the host's exact WASI ABI. The working recipe:
+
+1. **`wasi:http` pinned to `@0.2.0`** in `wit/auth.wit` + `wit/deps.toml`. The
+   host (wasmtime 25.0.3) bridges `wrpc:http@0.1.0` ↔ `wasi:http@0.2.0`; building
+   against 0.2.3 → `resource type mismatch` at invocation.
+2. **Componentize with the wasmtime-25 reactor adapter**, not cargo-component's
+   default: build the core module, then
+   `wasm-tools component new <core>.wasm --adapt wasi_snapshot_preview1=wasi_snapshot_preview1.reactor.wasm`
+   (adapter from `bytecodealliance/wasmtime` release **v25.0.3**). This makes
+   `wasi:io`/`wasi:cli` coherent with what the host links.
+3. **keyvalue link must be named `default`** (`name: default` on the link in
+   `app.yaml`); the component opens the store with `store::open("default")` —
+   wasmCloud routes wasi:keyvalue by link name. The JS bucket comes from the
+   link's `bucket` config (`comp-auth`) + `enable_bucket_auto_create: 'true'`.
+4. **NATS KV keys are sanitized** (`kv::safe`) — JetStream keys allow only
+   `[-/_=A-Za-z0-9]`, so `:`/`@`/`.` in emails are `_XX` hex-escaped.
+5. Push to an in-cluster OCI registry (`registry.wasmcloud.svc:5000`) via
+   `wkg oci push --insecure`. **Bump the image tag** on every change — the host
+   caches by tag.
+6. Keep **one host replica**: the OAM operator can leave two ReplicaSets at 1,
+   splitting the lattice so http-provider and component land on different pods
+   and wrpc invocations fail. Scale the older RS to 0.
+
+## Verified end-to-end (orbstack K8s, wasmCloud 1.4.1 host, v0.5.1 operator)
+```
+register   -> 201 + principal
+login      -> 200 + access/refresh token
+/me        -> 200 + principal
+logout     -> 204
+/me (after)-> 401 expired
+sample-consumer no token        -> 401 invalid_token
+sample-consumer token, no perm  -> 403 insufficient_scope
+```
+
 ## Status / roadmap
 - ✅ Contract WIT validated; all three components build to valid components.
 - ✅ Local accounts (register/login/me/logout) via `accounts-app` over the contract.

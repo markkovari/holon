@@ -79,19 +79,17 @@ fn error_response(e: &AuthError) -> (u16, &'static str) {
 
 fn respond(response_out: ResponseOutparam, status: u16, body: &str) {
     let headers = Fields::new();
-    let _ = headers.set(
-        &"content-type".to_string(),
-        &[b"application/json".to_vec()],
-    );
+    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
-    let out = response.body().expect("outgoing body");
+    let out_body = response.body().expect("outgoing body");
     ResponseOutparam::set(response_out, Ok(response));
-    {
-        let stream = out.write().expect("write stream");
-        let _ = stream.blocking_write_and_flush(body.as_bytes());
-    }
-    let _ = OutgoingBody::finish(out, None);
+    let stream = out_body.write().expect("write stream");
+    stream
+        .blocking_write_and_flush(body.as_bytes())
+        .expect("write body");
+    drop(stream);
+    OutgoingBody::finish(out_body, None).expect("finish body");
 }
 
 bindings::export!(Component with_types_in bindings);
