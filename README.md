@@ -133,6 +133,13 @@ curl -i -H "Authorization: Bearer $TOK" localhost:8000/  # 403 (no demo:read per
 (1.x path) **or** `kubectl` + the wasmCloud operator (2.x path). `wac` is not
 required — components are linked at runtime, not statically pre-composed.
 
+## Using it
+
+See **[USAGE.md](USAGE.md)** — the consumer guide: the one `authorize` call,
+how token claims map to a `principal`, permissions/RBAC, token formats, all
+config keys, and the error→HTTP table. Per-symbol reference lives in the doc
+comments in `wit/auth.wit`.
+
 ## Examples
 
 Two ways to consume the contract from a TypeScript/Fastify app:

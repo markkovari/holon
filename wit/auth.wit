@@ -17,80 +17,169 @@
 //
 // Design is wasip2-stable but shaped to survive a wasip3 async refactor: every
 // fallible boundary returns `result<_, auth-error>`, no streaming-bound shapes.
+//
+// ── Quick start (consumer) ────────────────────────────────────────────────
+//   world my-app { import auth:identity/authorizer; ... }
+//   let principal = authorize(bearer_token, { target: "orders", action: "read" })?;
+//   // Ok(principal) -> allowed ; Err(insufficient-scope) -> 403 ; Err(...) -> 401/4xx
+//
+// ── Token formats (reference implementation) ──────────────────────────────
+//   sess_<32 hex>   opaque session access token  -> stateful lookup
+//   ref_<32 hex>    refresh token (rotated each refresh)
+//   usr_<32 hex>    generated subject id for a local account
+//   <a.b.c>         a JWS (JWT) -> stateless signature + claim verification
+//   The authorizer detects the kind by prefix/shape; consumers just pass the
+//   raw token string.
+//
+// ── Deployment config keys (read via wasi:config/runtime) ─────────────────
+//   session-ttl         session lifetime, seconds         (default 3600)
+//   password-min-len    local-account password floor      (default 8)
+//   jwks-cache-ttl      OIDC discovery + JWKS cache, secs  (default 3600)
+//   default-tenant      tenant when none in token/request (default "")
+//   expected-issuer     required JWT `iss` ("" = off)      (default "")
+//   expected-audience   required JWT `aud` ("" = off)      (default "")
+//   allowed-algs        JWS alg allow-list (anti-confusion)(default "RS256,ES256")
+//   clock-skew          exp/nbf tolerance, seconds         (default 60)
+//   Secrets/IdP wiring (oidc:issuer, oidc:client-id, oidc:client-secret,
+//   hs256-secret) are supplied through the keyvalue store, not config.
+//
+// See claim-mapping table on `interface types` for how token claims become a
+// `principal`. Full prose: comp/README.md and comp/ROADMAP.md.
 package auth:identity@0.1.0;
 
 /// Shared data types used across every interface in this package.
+///
+/// # Claim conventions (how a JWT/OIDC token maps onto these types)
+///
+/// The implementation builds a `principal` from a verified token's claims:
+///
+/// | principal field | source claim(s)                              | notes |
+/// |-----------------|----------------------------------------------|-------|
+/// | `subject`       | `sub`                                        | stable user id |
+/// | `tenant`        | `tenant`, else `org`, else                   | first present wins; |
+/// |                 | `urn:zitadel:iam:org:id`, else config        | falls back to the |
+/// |                 | `default-tenant`                             | configured default |
+/// | `scopes`        | `scope` (space-delimited) else `scp` (array) | OAuth 2 convention |
+/// | `roles`         | looked up from storage by (tenant, subject)  | NOT from the token |
+/// | `expires-at`    | `exp`                                        | unix seconds |
+///
+/// Roles are deliberately resolved server-side (RBAC store), not trusted from
+/// the token — a token cannot grant itself roles.
 interface types {
-    /// A unix timestamp in seconds since the epoch.
+    /// A unix timestamp in seconds since the Unix epoch (UTC).
     type timestamp = u64;
 
-    /// A single permission, expressed as a (target, action) pair.
-    /// e.g. { target: "orders", action: "read" }. Action "*" means any.
-    /// `target` is the protected resource name (resource is a WIT keyword).
+    /// A single permission, expressed as a `(target, action)` pair.
+    ///
+    /// - `target` — the protected resource name, e.g. `"orders"`, `"users"`.
+    ///   (Named `target` rather than `resource` because `resource` is a WIT
+    ///   keyword.) The wildcard `"*"` matches any target.
+    /// - `action` — the verb, e.g. `"read"`, `"write"`, `"delete"`. The
+    ///   wildcard `"*"` matches any action.
+    ///
+    /// A granted permission satisfies a required one when each field either
+    /// matches exactly or the grant holds `"*"`. Examples:
+    ///   grant {target:"orders", action:"*"}  satisfies  {target:"orders", action:"read"}
+    ///   grant {target:"*",      action:"read"} satisfies {target:"orders", action:"read"}
     record permission {
         target: string,
         action: string,
     }
 
-    /// A verified caller. The end product of `authorize` / `introspect`.
+    /// A verified caller — the end product of `authorize` / `introspect`.
+    /// Everything here has already been validated; consumers can trust it.
     record principal {
-        /// Stable subject id (OIDC `sub`, session owner, or jwt `sub`).
+        /// Stable subject id. From the token's `sub` claim, the session owner,
+        /// or a locally-registered account's generated id (`usr_<hex>`).
         subject: string,
-        /// Tenant / organization the principal belongs to. "" if single-tenant.
+        /// Tenant / organization the principal belongs to. Resolved per the
+        /// claim-conventions table above; `""` for single-tenant deployments.
         tenant: string,
-        /// Roles assigned to the principal within `tenant`.
+        /// Roles held within `tenant`. Resolved from the RBAC store by
+        /// (tenant, subject) — NOT read from the token. Empty = no roles.
         roles: list<string>,
-        /// Granted scopes (OAuth scopes / fine-grained grants).
+        /// Granted scopes (OAuth scopes / fine-grained grants), e.g.
+        /// `["orders:read", "profile"]`. A scope formatted `"target:action"`
+        /// (or `"*"`) is honored directly by an RBAC check, bypassing roles.
         scopes: list<string>,
-        /// When the underlying credential expires (unix seconds).
+        /// When the underlying credential expires (unix seconds). `0` means
+        /// "no expiry encoded" (the implementation may still impose one).
         expires-at: timestamp,
     }
 
-    /// Decoded, verified token claims. `raw` carries any extra claims as
-    /// stringified key/value pairs so callers can read custom claims without
-    /// the contract enumerating every possible one.
+    /// Decoded, signature-verified token claims (the `jwt`/`oidc` output).
+    ///
+    /// The named fields are the registered JWT claims this contract relies on
+    /// (RFC 7519). Everything else from the token — custom/private claims — is
+    /// carried in `raw` as stringified key/value pairs, so callers can read
+    /// claims the contract does not enumerate (e.g. `email`, `groups`) without
+    /// the WIT having to know about them. Non-string JSON values in `raw` are
+    /// rendered as their JSON text.
     record claims {
+        /// `iss` — token issuer (the IdP). Validated against `expected-issuer`.
         iss: string,
+        /// `sub` — subject (stable user id).
         sub: string,
+        /// `aud` — audience(s). Validated against `expected-audience`. A token
+        /// with a single string audience is normalized to a one-element list.
         aud: list<string>,
+        /// `exp` — expiry (unix seconds). Checked with clock-skew tolerance.
         exp: timestamp,
+        /// `iat` — issued-at (unix seconds). `0` if absent.
         iat: timestamp,
+        /// Scopes, normalized from `scope` (space-delimited) or `scp` (array).
         scopes: list<string>,
+        /// All remaining claims as `(name, value)` pairs. Values are strings;
+        /// objects/arrays/numbers are their JSON serialization.
         raw: list<tuple<string, string>>,
     }
 
-    /// An issued credential pair. `refresh-token` is absent for purely
-    /// stateless (jwt-only) issuance.
+    /// An issued credential pair.
+    ///
+    /// - `access-token` — the bearer token to present on requests. For
+    ///   session-backed issuance this is an opaque id with a `sess_` prefix;
+    ///   the implementation routes such tokens to a stateful lookup.
+    /// - `refresh-token` — exchangeable for a new pair via `session.refresh`.
+    ///   Absent for purely stateless (jwt-only) issuance. Rotated on every
+    ///   refresh; reusing a rotated one is treated as a breach (see `session`).
+    /// - `expires-in` — seconds until `access-token` expires.
+    /// - `session-id` — the server-side session id when token-backed; the same
+    ///   value as `access-token` for session tokens.
     record token-pair {
         access-token: string,
         refresh-token: option<string>,
-        /// Seconds until `access-token` expires.
         expires-in: u64,
-        /// Server-side session id, when the token is session-backed.
         session-id: option<string>,
     }
 
     /// The single error type for the whole contract. Implementations map their
-    /// internal failures onto these variants; consumers switch on them to pick
-    /// an HTTP status (invalid/expired -> 401, insufficient-scope -> 403, etc).
+    /// internal failures onto these variants; the suggested HTTP status for
+    /// each is given below so every consumer maps them the same way.
     variant auth-error {
-        /// Token failed signature/structure validation. Detail is safe to log.
+        /// Token failed signature/structure validation, or used a disallowed
+        /// algorithm, or failed an `iss`/`aud`/`nbf` check. The string detail
+        /// is safe to log (no secrets). HTTP 401.
         invalid-token(string),
-        /// Token parsed but is past its expiry.
+        /// Token parsed but is past its `exp` (beyond clock-skew). HTTP 401.
         expired,
-        /// Caller authenticated but lacks the required permission.
+        /// Caller is authenticated but lacks the required permission; the unmet
+        /// permission is attached. HTTP 403.
         insufficient-scope(permission),
-        /// Tenant referenced by the token/principal is unknown.
+        /// Tenant referenced by the token/principal is unknown. HTTP 403.
         unknown-tenant,
         /// A backing dependency (IdP, storage, JWKS endpoint) was unreachable.
+        /// HTTP 503.
         backend-unavailable(string),
-        /// Input was structurally malformed before any verification.
+        /// Input was structurally malformed before any verification (bad email,
+        /// too-short password, non-JWT string, …). HTTP 400.
         malformed(string),
-        /// Login failed: no such account, or wrong password.
+        /// Login failed: no such account, or wrong password. Deliberately does
+        /// NOT distinguish the two (no user enumeration). HTTP 401.
         invalid-credentials,
-        /// Register failed: an account with that identifier already exists.
+        /// Register failed: an account with that (tenant, email) already
+        /// exists. HTTP 409.
         already-exists,
-        /// Catch-all for unexpected internal failures.
+        /// Catch-all for unexpected internal failures. HTTP 500.
         internal(string),
     }
 }
@@ -99,8 +188,21 @@ interface types {
 interface jwt {
     use types.{claims, auth-error};
 
-    /// Verify a compact JWS (RS256/ES256 via configured JWKS, HS256 via secret)
-    /// and return its validated claims. Checks signature, `exp`, and `iat`.
+    /// Verify a compact JWS and return its validated `claims`.
+    ///
+    /// Performed, in order:
+    ///   1. parse the 3 segments; reject malformed -> `malformed`.
+    ///   2. reject any `alg` not in `allowed-algs` (anti algorithm-confusion).
+    ///   3. verify the signature: RS256/ES256 against the issuer's JWKS
+    ///      (resolved from `iss`, cached per `jwks-cache-ttl`); HS256 against
+    ///      the `hs256-secret` kv value.
+    ///   4. validate claims with `clock-skew` tolerance: `nbf` (not-yet-valid
+    ///      -> `invalid-token`), `exp` (-> `expired`), `iss` against
+    ///      `expected-issuer` and `aud` against `expected-audience` when those
+    ///      are configured (mismatch -> `invalid-token`).
+    ///
+    /// Scopes are normalized from `scope`/`scp`; all other claims land in
+    /// `claims.raw`. See the claim-mapping table on `interface types`.
     verify: func(token: string) -> result<claims, auth-error>;
 }
 
@@ -139,10 +241,18 @@ interface session {
     use types.{principal, token-pair, auth-error};
 
     /// Issue a new session for a principal, returning an access/refresh pair.
+    /// Starts a new *session family* (see `refresh`). The access token is an
+    /// opaque `sess_`-prefixed id; `expires-in` derives from `session-ttl`.
     issue: func(p: principal) -> result<token-pair, auth-error>;
 
     /// Exchange a valid, unexpired refresh token for a fresh token pair.
-    /// Rotates the refresh token; the old one is invalidated.
+    ///
+    /// Refresh tokens ROTATE: each call invalidates the presented token and
+    /// returns a new pair within the same session family. Reuse detection: if
+    /// an already-rotated refresh token is presented again (replay / theft),
+    /// the entire session family is revoked and `invalid-token` is returned —
+    /// so a stolen token cannot outlive its rotation. Returns `invalid-token`
+    /// for an unknown token.
     refresh: func(refresh-token: string) -> result<token-pair, auth-error>;
 
     /// Revoke a session by id. Idempotent: revoking an unknown/expired
@@ -198,8 +308,15 @@ interface accounts {
 interface rbac {
     use types.{principal, permission, auth-error};
 
-    /// Pure permission check against an already-verified principal. No I/O:
-    /// uses the roles/scopes baked into the principal. Returns true if allowed.
+    /// Decide whether an already-verified principal may perform `required`.
+    /// Returns true if EITHER:
+    ///   - a scope on the principal grants it directly — a scope string equal
+    ///     to `"target:action"`, or `"*"`; OR
+    ///   - one of the principal's roles maps (in the RBAC store, for this
+    ///     tenant) to a permission that matches `required`, where `"*"` in a
+    ///     granted target/action is a wildcard.
+    /// The principal carries its roles/scopes, but role->permission lookup may
+    /// touch storage.
     check: func(p: principal, required: permission) -> bool;
 
     /// Grant a role to a subject within a tenant. Idempotent.

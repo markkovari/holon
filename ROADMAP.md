@@ -58,6 +58,12 @@ current state as a demo/learning artifact until Tier 1 lands.
 - [ ] Rate limiting + lockout on login/register.
 - [ ] Replace hand-rolled JWT glue with a vetted wasip2-compatible library.
 
+### Tier 4 — make it learnable  (done)
+- [x] Exhaustive WIT doc comments: claim-mapping table, token formats, config
+      keys, per-variant HTTP statuses, scope/role semantics, refresh-family model.
+- [x] Implementation docs: `lib.rs` module map + storage-key layout + claim
+      handling; `USAGE.md` integration guide for consumers.
+
 ### Tier 3 — make it shippable
 - [ ] `just` target that deploys + auto-collapses to one host (kill the manual RS dance).
 - [ ] OpenTelemetry traces + structured audit log of auth decisions.

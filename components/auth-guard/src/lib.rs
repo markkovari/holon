@@ -1,17 +1,40 @@
 //! Reference implementation of the `auth:identity` contract (`authority` world).
 //!
-//! Exports: types, jwt, oidc, session, rbac, authorizer.
+//! # Exports / imports
+//! Exports: types, jwt, oidc, session, accounts, rbac, authorizer.
 //! Imports (host capabilities): wasi:keyvalue (store + atomics), wasi:http
 //! (outgoing, for OIDC discovery / JWKS), wasi:clocks (expiry), wasi:random
-//! (id generation).
+//! (id generation), wasi:config/runtime (policy knobs).
 //!
-//! State layout in keyvalue (bucket "auth"):
-//!   sess:{session-id}        -> JSON principal
-//!   refresh:{refresh-token}  -> session-id
-//!   jwks:{issuer}            -> cached JWKS JSON
-//!   oidc:{issuer}            -> cached discovery doc JSON
-//!   rbac:{tenant}:role:{role}      -> JSON list<permission>
-//!   rbac:{tenant}:subject:{sub}    -> JSON list<role-name>
+//! # Module map
+//! - [`config`]       — policy knobs read from wasi:config (session-ttl,
+//!                       password-min-len, expected-issuer/audience, allowed-algs, …).
+//! - [`jwt_verify`]   — stateless JWS verification + claim validation (the
+//!                       pure `validate_claims` is unit-tested).
+//! - [`oidc_client`]  — OIDC discovery + JWKS over wasi:http, TTL-cached.
+//! - [`accounts`]     — local accounts: argon2id register/login.
+//! - [`store`]        — sessions (with families + refresh-reuse detection) and RBAC.
+//! - [`kv`]           — wasi:keyvalue wrapper; sanitizes keys to NATS-legal chars.
+//! - [`tokens`]       — id generation and token prefixes.
+//!
+//! # Claim handling
+//! A verified token's claims become a `principal` per the table in the WIT
+//! (`interface types`): `sub`->subject; `scope`/`scp`->scopes; tenant from
+//! `tenant`/`org`/`urn:zitadel:iam:org:id` else `default-tenant`; roles are
+//! resolved from the RBAC store by (tenant, subject), never trusted from the
+//! token. See [`claims_tenant`] and [`resolve_principal`].
+//!
+//! # Storage layout (wasi:keyvalue, link name "default")
+//! Logical keys (then run through [`kv::safe`] so `:`/`@`/`.` become `_XX`):
+//!   sess:{session-id}        -> JSON principal (+ expiry)
+//!   refresh:{refresh-token}  -> JSON { session-id, family }   (active)
+//!   spent:{refresh-token}    -> family                        (rotated; reuse = breach)
+//!   family:{family}          -> JSON list<session-id>         (revoke-all on breach)
+//!   user:{tenant}:{email}    -> JSON { subject, argon2-phc }
+//!   rbac:{tenant}:subject:{sub}  -> JSON list<role-name>
+//!   rbac:{tenant}:role:{role}    -> JSON list<permission>
+//!   jwks:{issuer} / oidc:{issuer} -> "{expiry}:{json}"        (TTL-cached)
+//!   oidc:issuer / oidc:client-id / oidc:client-secret / hs256-secret  (config)
 
 #[allow(warnings)]
 mod bindings;
