@@ -79,6 +79,22 @@ current state as a demo/learning artifact until Tier 1 lands.
 - [x] KV TTL/migration documented: in-value expiry pattern (sessions, JWKS cache,
       rate-limit windows), lazy delete, additive-JSON migration. See README.
 
+### Tier 5 — optional polish  (done)
+
+- [x] **Evaluated `jwt-compact`** as a full JWT framework. It builds clean to
+      `wasm32-wasip1` (RustCrypto backend, no ring/getrandom issues). **Decided
+      NOT to swap:** it uses the same underlying crates we already do
+      (`rsa`/`p256`/`hmac`/`sha2`), does not provide JWKS resolution (we'd keep
+      that anyway), and our claim-validation/alg-pinning layer is already
+      unit-tested. Swapping would rewrite working code for no security gain.
+      Revisit only if we drop JWKS or want a JWE/nested-token feature it offers.
+- [x] IdP seed scripts: `infra/scripts/mint-hs256.mjs` (local dev JWT, no IdP)
+      + `infra/scripts/seed-idp.sh zitadel|ory` (bring up IdP, register client,
+      print kv-seed commands). JWT happy-path now e2e-tested (valid HS256 → 200,
+      wrong secret → 401).
+- [x] OTel: per-event `id` correlation in audit lines + host OTel export wiring
+      documented (README). Full cross-component trace spans remain future work.
+
 ## Status
 
 - ✅ Contract + impl + infra; e2e on wasmCloud k8s and jco in-process.

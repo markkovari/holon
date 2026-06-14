@@ -164,8 +164,28 @@ subject, and a short detail:
 {"audit":true,"ts":1781440000,"event":"authorize","outcome":"deny","tenant":"acme","subject":"usr_…","detail":"orders:read"}
 ```
 
+Each line carries an `id` (random per-event correlation handle) so the lines
+emitted while serving one request can be grouped in a log/trace backend.
 Events: `authorize` (allow/deny/error), `login`, `register`, `refresh_reuse`
 (breach). Toggle with config `audit-enabled` (default on).
+
+### Wiring to OpenTelemetry
+
+The wasmCloud host emits OTel traces/metrics/logs natively; component stderr
+(the audit lines) is captured into the host's log pipeline. Enable export on
+the `WasmCloudHostConfig` (`infra/k8s/host.yaml`):
+
+```yaml
+spec:
+  observability:
+    enable: true
+    endpoint: "http://otel-collector.observability.svc:4318"
+```
+
+Point an OTel collector at that endpoint; filter audit lines by `"audit":true`
+and group by `id`. Full distributed-trace spans across components (propagating a
+W3C `traceparent` through the wrpc calls) are a future enhancement — today the
+correlation is per-component via the `id` field.
 
 ## Composition (auth-guard + rate-limiter)
 
@@ -188,6 +208,22 @@ just compose   # build all + wac plug rate-limiter into auth-guard
 
 The jco-embed example uses the composed artifact; its e2e proves a 6th failed
 login returns 429.
+
+## IdP & dev tokens
+
+- **Local JWT, no IdP** — mint an HS256 token for testing the `jwt`/`authorizer`
+  path (enable HS256 via `allowed-algs` and seed `hs256-secret` in kv):
+  ```bash
+  node infra/scripts/mint-hs256.mjs --secret <kv hs256-secret> \
+    --sub u1 --tenant acme --iss https://local --aud comp-auth --scope "orders:read"
+  ```
+- **Real OIDC** — bring up an IdP and seed the `oidc:*` config:
+  ```bash
+  infra/scripts/seed-idp.sh zitadel   # or: ory
+  ```
+  It starts the compose profile, waits for the issuer, and prints the
+  `nats kv put comp-auth oidc:*` commands (Ory auto-registers a client; Zitadel
+  registration is a one-time console step the script spells out).
 
 ## Using it
 

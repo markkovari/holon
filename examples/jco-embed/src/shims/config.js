@@ -13,6 +13,8 @@ const values = {
   // JWT policy (asymmetric only by default → HS256 tokens are rejected by the
   // alg allow-list before any signature work).
   "allowed-algs": process.env.ALLOWED_ALGS ?? "RS256,ES256",
+  "expected-issuer": process.env.EXPECTED_ISSUER ?? "",
+  "expected-audience": process.env.EXPECTED_AUDIENCE ?? "",
 };
 
 // jco imports these as flat named exports. `get` returns option<string>
