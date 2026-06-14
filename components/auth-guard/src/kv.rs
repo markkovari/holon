@@ -52,3 +52,31 @@ pub fn delete(key: &str) -> Result<(), AuthError> {
         .delete(&safe(key))
         .map_err(|e| AuthError::BackendUnavailable(format!("kv delete: {e:?}")))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::safe;
+
+    #[test]
+    fn passes_through_allowed_chars() {
+        assert_eq!(safe("abcXYZ012-/="), "abcXYZ012-/=");
+    }
+
+    #[test]
+    fn escapes_nats_illegal_chars() {
+        // colon, at, dot — all illegal in NATS JetStream KV keys.
+        assert_eq!(safe("user:acme:a@b.com"), "user_3Aacme_3Aa_40b_2Ecom");
+    }
+
+    #[test]
+    fn escape_char_itself_is_escaped_so_mapping_is_injective() {
+        // a literal '_' must not collide with an escape sequence.
+        assert_ne!(safe("a_3A"), safe("a:"));
+        assert_eq!(safe("_"), "_5F");
+    }
+
+    #[test]
+    fn distinct_inputs_stay_distinct() {
+        assert_ne!(safe("a:b"), safe("a_b"));
+    }
+}

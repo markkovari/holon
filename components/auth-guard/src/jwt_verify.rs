@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::bindings::exports::auth::identity::types::{AuthError, Claims};
 use crate::bindings::wasi::clocks::wall_clock;
-use crate::{kv, oidc_client};
+use crate::{config, kv, oidc_client};
 
 #[derive(Deserialize)]
 struct Header {
@@ -29,6 +29,9 @@ struct Payload {
     exp: u64,
     #[serde(default)]
     iat: u64,
+    /// Not-before: token is invalid until this time.
+    #[serde(default)]
+    nbf: u64,
     #[serde(default)]
     scope: Option<String>,
     #[serde(default)]
@@ -55,6 +58,14 @@ impl Aud {
             Aud::Many(v) => v,
         }
     }
+
+    fn as_slice(&self) -> &[String] {
+        match self {
+            Aud::None => &[],
+            Aud::One(s) => std::slice::from_ref(s),
+            Aud::Many(v) => v,
+        }
+    }
 }
 
 fn b64(part: &str) -> Result<Vec<u8>, AuthError> {
@@ -63,7 +74,30 @@ fn b64(part: &str) -> Result<Vec<u8>, AuthError> {
         .map_err(|_| AuthError::Malformed("jwt segment not base64url".into()))
 }
 
+/// Claim-validation policy. Built from `config` at runtime; constructed directly
+/// in tests so claim checks are exercised without a wasi:config host.
+pub struct Policy {
+    pub allowed_algs: Vec<String>,
+    pub expected_issuer: String,
+    pub expected_audience: String,
+    pub clock_skew: u64,
+}
+
+impl Policy {
+    fn from_config() -> Self {
+        Policy {
+            allowed_algs: config::allowed_algs(),
+            expected_issuer: config::expected_issuer(),
+            expected_audience: config::expected_audience(),
+            clock_skew: config::clock_skew(),
+        }
+    }
+}
+
 pub fn verify(token: &str) -> Result<Claims, AuthError> {
+    let policy = Policy::from_config();
+    let now = wall_clock::now().seconds;
+
     let mut parts = token.split('.');
     let (h, p, s) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
         (Some(h), Some(p), Some(s), None) => (h, p, s),
@@ -76,8 +110,18 @@ pub fn verify(token: &str) -> Result<Claims, AuthError> {
         .map_err(|e| AuthError::Malformed(format!("jwt payload: {e}")))?;
     let signature = b64(s)?;
 
-    let signing_input = format!("{h}.{p}");
+    // 1. Pin the algorithm BEFORE verifying — refuse any alg not on the
+    //    allow-list. This blocks algorithm-confusion (e.g. HS256-signed token
+    //    forged against an RSA public key when only RS256 is expected).
+    if !policy.allowed_algs.iter().any(|a| a == &header.alg) {
+        return Err(AuthError::InvalidToken(format!(
+            "algorithm {} not allowed",
+            header.alg
+        )));
+    }
 
+    // 2. Verify the signature with the pinned algorithm.
+    let signing_input = format!("{h}.{p}");
     match header.alg.as_str() {
         "RS256" => verify_rs256(&payload.iss, header.kid.as_deref(), &signing_input, &signature)?,
         "ES256" => verify_es256(&payload.iss, header.kid.as_deref(), &signing_input, &signature)?,
@@ -85,13 +129,156 @@ pub fn verify(token: &str) -> Result<Claims, AuthError> {
         other => return Err(AuthError::InvalidToken(format!("unsupported alg {other}"))),
     }
 
-    // Expiry check.
-    let now = wall_clock::now().seconds;
-    if payload.exp != 0 && payload.exp < now {
-        return Err(AuthError::Expired);
-    }
+    // 3. Validate the claims (iss / aud / exp / nbf).
+    validate_claims(&payload, now, &policy).map_err(ClaimError::into_auth)?;
 
     Ok(payload_to_claims(payload))
+}
+
+/// Reason a token's claims were rejected. A bindings-free enum so claim
+/// validation is pure and host-unit-testable (the wasm `AuthError` type only
+/// exists for the wasm target). Mapped to `AuthError` at the call site.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ClaimError {
+    NotYetValid,
+    Expired,
+    UnexpectedIssuer,
+    AudienceNotAccepted,
+}
+
+impl ClaimError {
+    fn into_auth(self) -> AuthError {
+        match self {
+            ClaimError::NotYetValid => AuthError::InvalidToken("token not yet valid (nbf)".into()),
+            ClaimError::Expired => AuthError::Expired,
+            ClaimError::UnexpectedIssuer => AuthError::InvalidToken("unexpected issuer".into()),
+            ClaimError::AudienceNotAccepted => {
+                AuthError::InvalidToken("audience not accepted".into())
+            }
+        }
+    }
+}
+
+/// Pure claim validation — no I/O, no bindings types — so it is unit-tested
+/// directly (see tests below). Checks, in order: not-before, expiry, issuer,
+/// audience. Time checks allow `clock_skew` seconds of tolerance.
+fn validate_claims(p: &Payload, now: u64, policy: &Policy) -> Result<(), ClaimError> {
+    let skew = policy.clock_skew;
+
+    if p.nbf != 0 && p.nbf > now.saturating_add(skew) {
+        return Err(ClaimError::NotYetValid);
+    }
+    if p.exp != 0 && p.exp.saturating_add(skew) < now {
+        return Err(ClaimError::Expired);
+    }
+    if !policy.expected_issuer.is_empty() && p.iss != policy.expected_issuer {
+        return Err(ClaimError::UnexpectedIssuer);
+    }
+    if !policy.expected_audience.is_empty()
+        && !p.aud.as_slice().iter().any(|a| a == &policy.expected_audience)
+    {
+        return Err(ClaimError::AudienceNotAccepted);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(iss: &str, aud: Aud, exp: u64, nbf: u64) -> Payload {
+        Payload {
+            iss: iss.into(),
+            sub: "s".into(),
+            aud,
+            exp,
+            iat: 0,
+            nbf,
+            scope: None,
+            scp: None,
+            rest: Default::default(),
+        }
+    }
+
+    fn policy(iss: &str, aud: &str) -> Policy {
+        Policy {
+            allowed_algs: vec!["RS256".into()],
+            expected_issuer: iss.into(),
+            expected_audience: aud.into(),
+            clock_skew: 60,
+        }
+    }
+
+    const NOW: u64 = 1_000_000;
+
+    #[test]
+    fn accepts_valid_claims() {
+        let p = payload("https://idp", Aud::One("svc-a".into()), NOW + 3600, 0);
+        assert!(validate_claims(&p, NOW, &policy("https://idp", "svc-a")).is_ok());
+    }
+
+    #[test]
+    fn rejects_expired() {
+        let p = payload("https://idp", Aud::None, NOW - 3600, 0);
+        assert_eq!(
+            validate_claims(&p, NOW, &policy("", "")),
+            Err(ClaimError::Expired)
+        );
+    }
+
+    #[test]
+    fn allows_expiry_within_skew() {
+        // expired 30s ago, skew 60 -> still valid.
+        let p = payload("https://idp", Aud::None, NOW - 30, 0);
+        assert!(validate_claims(&p, NOW, &policy("", "")).is_ok());
+    }
+
+    #[test]
+    fn rejects_not_yet_valid() {
+        let p = payload("https://idp", Aud::None, NOW + 3600, NOW + 3600);
+        assert_eq!(
+            validate_claims(&p, NOW, &policy("", "")),
+            Err(ClaimError::NotYetValid)
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_issuer() {
+        let p = payload("https://evil", Aud::One("svc-a".into()), NOW + 60, 0);
+        assert_eq!(
+            validate_claims(&p, NOW, &policy("https://idp", "svc-a")),
+            Err(ClaimError::UnexpectedIssuer)
+        );
+    }
+
+    #[test]
+    fn rejects_wrong_audience() {
+        // token for svc-b presented where svc-a is expected -> the core
+        // audience-confusion check.
+        let p = payload("https://idp", Aud::One("svc-b".into()), NOW + 60, 0);
+        assert_eq!(
+            validate_claims(&p, NOW, &policy("https://idp", "svc-a")),
+            Err(ClaimError::AudienceNotAccepted)
+        );
+    }
+
+    #[test]
+    fn accepts_audience_in_array() {
+        let p = payload(
+            "https://idp",
+            Aud::Many(vec!["svc-x".into(), "svc-a".into()]),
+            NOW + 60,
+            0,
+        );
+        assert!(validate_claims(&p, NOW, &policy("https://idp", "svc-a")).is_ok());
+    }
+
+    #[test]
+    fn empty_policy_skips_iss_aud() {
+        // no expected iss/aud configured -> those checks are disabled.
+        let p = payload("anything", Aud::None, NOW + 60, 0);
+        assert!(validate_claims(&p, NOW, &policy("", "")).is_ok());
+    }
 }
 
 fn payload_to_claims(p: Payload) -> Claims {

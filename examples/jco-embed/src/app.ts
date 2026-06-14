@@ -90,6 +90,14 @@ export function buildApp(opts: { logger?: boolean } = {}): FastifyInstance {
     if (!reply.sent) reply.code(204).send();
   });
 
+  // Exchange a refresh token for a fresh token pair (rotates; reuse of a
+  // rotated token trips breach detection and revokes the session family).
+  app.post("/auth/refresh", async (request, reply) => {
+    const { refresh_token } = request.body as { refresh_token?: string };
+    if (!refresh_token) return reply.code(400).send({ error: "missing_refresh_token" });
+    return guarded(reply, () => session.refresh(refresh_token));
+  });
+
   // Guarded business route — RBAC check happens inside the component.
   app.get("/orders", async (request, reply) => {
     const token = bearer(request.headers.authorization);

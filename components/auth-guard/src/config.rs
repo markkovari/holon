@@ -43,3 +43,33 @@ pub fn jwks_cache_ttl() -> u64 {
 pub fn default_tenant() -> String {
     get_str("default-tenant", "")
 }
+
+/// Expected JWT issuer (`iss`). When set, tokens whose `iss` differs are
+/// rejected. Empty (default) disables the check — convenient for local/dev,
+/// but operators SHOULD set this in production to prevent cross-issuer reuse.
+pub fn expected_issuer() -> String {
+    get_str("expected-issuer", "")
+}
+
+/// Expected JWT audience (`aud`). When set, a token is accepted only if this
+/// value appears in its `aud`. Empty (default) disables the check.
+pub fn expected_audience() -> String {
+    get_str("expected-audience", "")
+}
+
+/// Comma-separated allow-list of JWS algorithms. Pinning the algorithm prevents
+/// algorithm-confusion attacks (e.g. a token forged with HS256 against a public
+/// RSA key). Default allows the asymmetric algs only; add `HS256` explicitly to
+/// enable shared-secret tokens (dev/test).
+pub fn allowed_algs() -> Vec<String> {
+    get_str("allowed-algs", "RS256,ES256")
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Clock-skew tolerance (seconds) applied to `exp` / `nbf` checks. Default 60.
+pub fn clock_skew() -> u64 {
+    get_u64("clock-skew", 60)
+}

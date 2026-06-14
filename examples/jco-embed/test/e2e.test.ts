@@ -103,6 +103,43 @@ describe("jco-embed e2e (component in-process)", () => {
     assert.equal(res.statusCode, 401);
   });
 
+  it("refreshes a token (rotates) and detects reuse of the old one", async () => {
+    // fresh login to get a refresh token
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email, password, tenant },
+    });
+    const first = login.json().refreshToken as string;
+    assert.match(first, /^ref_/);
+
+    // first refresh succeeds, returns a NEW pair
+    const r1 = await app.inject({
+      method: "POST",
+      url: "/auth/refresh",
+      payload: { refresh_token: first },
+    });
+    assert.equal(r1.statusCode, 200);
+    const second = r1.json().refreshToken as string;
+    assert.notEqual(second, first);
+
+    // REUSING the now-rotated first token is a breach -> 401, family revoked
+    const reuse = await app.inject({
+      method: "POST",
+      url: "/auth/refresh",
+      payload: { refresh_token: first },
+    });
+    assert.equal(reuse.statusCode, 401);
+
+    // and the breach revoked the family, so the rotated token is dead too
+    const after = await app.inject({
+      method: "POST",
+      url: "/auth/refresh",
+      payload: { refresh_token: second },
+    });
+    assert.equal(after.statusCode, 401);
+  });
+
   it("logs out (204) and the session is then invalid (401)", async () => {
     const out = await app.inject({
       method: "POST",

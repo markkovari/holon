@@ -10,14 +10,14 @@ metadata:
   name: comp-auth
   namespace: comp-auth
   annotations:
-    version: v0.15.0
+    version: v0.16.0
     description: "WIT-first universal auth + RBAC reference stack"
 spec:
   components:
     - name: auth-guard
       type: component
       properties:
-        image: oci://registry.wasmcloud.svc.cluster.local:5000/auth-guard:0.11.0
+        image: oci://registry.wasmcloud.svc.cluster.local:5000/auth-guard:0.13.0
         # Deployment policy, read by the guest via wasi:config/runtime. All have
         # in-code defaults; override per-deployment here.
         config:
@@ -27,6 +27,10 @@ spec:
               password-min-len: "8"
               jwks-cache-ttl: "3600"
               default-tenant: ""
+              expected-issuer: ""
+              expected-audience: ""
+              allowed-algs: "RS256,ES256,HS256"
+              clock-skew: "60"
       traits:
         - type: spreadscaler
           properties:

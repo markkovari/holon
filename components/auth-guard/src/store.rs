@@ -64,19 +64,41 @@ fn json_err<E: core::fmt::Debug>(e: E) -> AuthError {
 
 // ---- sessions -----------------------------------------------------------
 
+/// A refresh token maps to its session AND its session family, so a stolen,
+/// already-rotated refresh token can be detected and the whole family killed.
+#[derive(Serialize, Deserialize)]
+struct RefreshRecord {
+    session_id: String,
+    family: String,
+}
+
+/// Issue a brand-new session in a brand-new family (the login path).
 pub fn session_issue(p: Principal) -> Result<TokenPair, AuthError> {
+    let family = tokens::new_id("fam_");
+    session_issue_in_family(p, &family)
+}
+
+/// Issue a session within an existing family (the rotate-on-refresh path).
+fn session_issue_in_family(p: Principal, family: &str) -> Result<TokenPair, AuthError> {
     let session_id = tokens::new_id(tokens::ACCESS_PREFIX);
     let refresh = tokens::new_id(tokens::REFRESH_PREFIX);
 
     let mut dto = PrincipalDto::from(&p);
-    // Stamp expiry from issuance time if the caller didn't set one.
     if dto.expires_at == 0 {
         dto.expires_at = now() + config::session_ttl();
     }
     let body = serde_json::to_string(&dto).map_err(json_err)?;
 
+    let rec = serde_json::to_string(&RefreshRecord {
+        session_id: session_id.clone(),
+        family: family.to_string(),
+    })
+    .map_err(json_err)?;
+
     kv::set(&format!("sess:{session_id}"), &body)?;
-    kv::set(&format!("refresh:{refresh}"), &session_id)?;
+    kv::set(&format!("refresh:{refresh}"), &rec)?;
+    // Track the session in its family so a breach can revoke siblings.
+    family_add(family, &session_id)?;
 
     Ok(TokenPair {
         access_token: session_id.clone(),
@@ -88,20 +110,67 @@ pub fn session_issue(p: Principal) -> Result<TokenPair, AuthError> {
 
 pub fn session_refresh(refresh_token: &str) -> Result<TokenPair, AuthError> {
     let refresh_key = format!("refresh:{refresh_token}");
-    let session_id = kv::get(&refresh_key)?
-        .ok_or_else(|| AuthError::InvalidToken("unknown refresh token".into()))?;
 
+    let Some(raw) = kv::get(&refresh_key)? else {
+        // Not an active refresh token. Was it already spent? If so this is a
+        // REUSE of a rotated token — treat as a breach and kill the family.
+        if let Some(family) = kv::get(&format!("spent:{refresh_token}"))? {
+            revoke_family(&family)?;
+            return Err(AuthError::InvalidToken(
+                "refresh token reuse detected; session family revoked".into(),
+            ));
+        }
+        return Err(AuthError::InvalidToken("unknown refresh token".into()));
+    };
+
+    let rec: RefreshRecord = serde_json::from_str(&raw).map_err(json_err)?;
+    let session_id = rec.session_id;
+    let family = rec.family;
     let principal = session_lookup(&session_id)?;
 
-    // Rotate: invalidate the old refresh token, issue a brand new pair.
+    // Rotate: mark this refresh token spent (for reuse detection), drop the old
+    // active mapping + session, mint a fresh pair in the SAME family.
+    kv::set(&format!("spent:{refresh_token}"), &family)?;
     kv::delete(&refresh_key)?;
     kv::delete(&format!("sess:{session_id}"))?;
-    session_issue(principal)
+    session_issue_in_family(principal, &family)
 }
 
 pub fn session_revoke(session_id: &str) -> Result<(), AuthError> {
     // Idempotent: deleting an absent key is fine.
     kv::delete(&format!("sess:{session_id}"))
+}
+
+// ---- session families (for refresh-reuse breach response) ---------------
+
+fn family_key(family: &str) -> String {
+    format!("family:{family}")
+}
+
+/// Append a session id to its family's member list.
+fn family_add(family: &str, session_id: &str) -> Result<(), AuthError> {
+    let mut members: Vec<String> = match kv::get(&family_key(family))? {
+        Some(b) => serde_json::from_str(&b).map_err(json_err)?,
+        None => Vec::new(),
+    };
+    if !members.iter().any(|s| s == session_id) {
+        members.push(session_id.to_string());
+        let body = serde_json::to_string(&members).map_err(json_err)?;
+        kv::set(&family_key(family), &body)?;
+    }
+    Ok(())
+}
+
+/// Revoke every session in a family — the breach response to refresh reuse.
+fn revoke_family(family: &str) -> Result<(), AuthError> {
+    if let Some(b) = kv::get(&family_key(family))? {
+        let members: Vec<String> = serde_json::from_str(&b).map_err(json_err)?;
+        for sid in members {
+            kv::delete(&format!("sess:{sid}"))?;
+        }
+    }
+    kv::delete(&family_key(family))?;
+    Ok(())
 }
 
 pub fn session_lookup(session_id: &str) -> Result<Principal, AuthError> {
@@ -190,4 +259,37 @@ fn perm_matches(granted: &Permission, required: &Permission) -> bool {
     let target_ok = granted.target == "*" || granted.target == required.target;
     let action_ok = granted.action == "*" || granted.action == required.action;
     target_ok && action_ok
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn perm(t: &str, a: &str) -> Permission {
+        Permission { target: t.into(), action: a.into() }
+    }
+
+    #[test]
+    fn exact_match() {
+        assert!(perm_matches(&perm("orders", "read"), &perm("orders", "read")));
+    }
+
+    #[test]
+    fn no_match_on_different_target_or_action() {
+        assert!(!perm_matches(&perm("orders", "read"), &perm("orders", "write")));
+        assert!(!perm_matches(&perm("orders", "read"), &perm("users", "read")));
+    }
+
+    #[test]
+    fn wildcard_target_and_action() {
+        assert!(perm_matches(&perm("*", "read"), &perm("orders", "read")));
+        assert!(perm_matches(&perm("orders", "*"), &perm("orders", "delete")));
+        assert!(perm_matches(&perm("*", "*"), &perm("anything", "anything")));
+    }
+
+    #[test]
+    fn wildcard_does_not_widen_the_other_field() {
+        // target wildcard but action still must match.
+        assert!(!perm_matches(&perm("*", "read"), &perm("orders", "write")));
+    }
 }
