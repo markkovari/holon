@@ -187,6 +187,14 @@ and group by `id`. Full distributed-trace spans across components (propagating a
 W3C `traceparent` through the wrpc calls) are a future enhancement — today the
 correlation is per-component via the `id` field.
 
+## Benchmarks
+
+`bench/` measures the components two ways: **in-process** (jco, raw op cost) and
+**HTTP roundtrip** (deployed on wasmCloud k8s). Headline: fast read paths are
+~µs in-process vs ~ms over HTTP (~600× — the wrpc + provider + network cost, not
+the component); argon2 dominates register/login (~26 ms) in both. See
+`bench/README.md` + the `bench-*.png` charts.
+
 ## Reusable capabilities (their own WIT packages)
 
 Beyond auth, the repo ships generic, composable capability components — each its

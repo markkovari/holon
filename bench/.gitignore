@@ -1,0 +1,2 @@
+node_modules/
+# keep results-*.json + *.png committed as the report artifacts

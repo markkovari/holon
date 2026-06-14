@@ -1,0 +1,77 @@
+// In-process benchmark: the components running via jco IN this Node process —
+// the raw compute cost of each op, no network, no host. Reuses the transpiled
+// `gen/` from the jco-embed (auth) and jco-cache (cache) examples.
+//
+// Run their transpile first (the runner script does it):
+//   (cd ../examples/jco-embed && npm run transpile)
+//   (cd ../examples/jco-cache  && npm run transpile)
+
+import { writeFileSync } from "node:fs";
+import { measure, type Result } from "./measure.js";
+
+// auth-guard (composed: includes rate-limiter) — exported interfaces.
+import { accounts, authorizer, session } from "../../examples/jco-embed/gen/auth_guard.js";
+// cache:store
+import { cache } from "../../examples/jco-cache/gen/cache.js";
+
+const enc = (s: string) => new TextEncoder().encode(s);
+
+async function main() {
+  const results: Result[] = [];
+  const tenant = "bench";
+  const password = "hunter2hunter";
+
+  // --- accounts/session/authorizer ---
+
+  // register: throwaway unique emails (write path: argon2 hash + kv set)
+  let n = 0;
+  results.push(
+    await measure("register", () => accounts.register(`u${n++}@b.com`, password, tenant), {
+      iters: 300,
+    }),
+  );
+
+  // a fixed user for the read/verify paths
+  accounts.register("bench@b.com", password, tenant);
+  results.push(
+    await measure("login", () => accounts.login("bench@b.com", password, tenant), { iters: 300 }),
+  );
+
+  const tok = (accounts.login("bench@b.com", password, tenant) as { accessToken: string })
+    .accessToken;
+  results.push(await measure("introspect", () => authorizer.introspect(tok), { iters: 5000 }));
+  results.push(
+    await measure(
+      "authorize",
+      () => {
+        try {
+          authorizer.authorize(tok, { target: "demo", action: "read" });
+        } catch {
+          /* 403 throws — still exercises the full path */
+        }
+      },
+      { iters: 5000 },
+    ),
+  );
+  results.push(await measure("session.lookup", () => session.lookup(tok), { iters: 5000 }));
+
+  // --- cache ---
+  cache.set("k", enc("v"), 60n);
+  results.push(await measure("cache.get(hit)", () => cache.get("k"), { iters: 20000 }));
+  results.push(await measure("cache.set", () => cache.set("k", enc("v"), 60n), { iters: 20000 }));
+  results.push(await measure("cache.get(miss)", () => cache.get("absent"), { iters: 20000 }));
+
+  const out = { kind: "in-process", node: process.version, when: Date.now(), results };
+  writeFileSync(new URL("../results-inproc.json", import.meta.url), JSON.stringify(out, null, 2));
+
+  console.table(
+    results.map((r) => ({
+      op: r.op,
+      "mean µs": (r.meanNs / 1000).toFixed(2),
+      "p99 µs": (r.p99Ns / 1000).toFixed(2),
+      "ops/sec": r.opsPerSec.toLocaleString(),
+    })),
+  );
+}
+
+main();

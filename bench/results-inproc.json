@@ -1,0 +1,79 @@
+{
+  "kind": "in-process",
+  "node": "v24.16.0",
+  "when": 1781464425251,
+  "results": [
+    {
+      "op": "register",
+      "iters": 300,
+      "meanNs": 25653441,
+      "p50Ns": 25119417,
+      "p95Ns": 29101625,
+      "p99Ns": 38526958,
+      "opsPerSec": 39
+    },
+    {
+      "op": "login",
+      "iters": 300,
+      "meanNs": 25832576,
+      "p50Ns": 25111000,
+      "p95Ns": 30013042,
+      "p99Ns": 43487083,
+      "opsPerSec": 39
+    },
+    {
+      "op": "introspect",
+      "iters": 5000,
+      "meanNs": 41427,
+      "p50Ns": 33125,
+      "p95Ns": 43500,
+      "p99Ns": 122084,
+      "opsPerSec": 24139
+    },
+    {
+      "op": "authorize",
+      "iters": 5000,
+      "meanNs": 60903,
+      "p50Ns": 50417,
+      "p95Ns": 63041,
+      "p99Ns": 134542,
+      "opsPerSec": 16419
+    },
+    {
+      "op": "session.lookup",
+      "iters": 5000,
+      "meanNs": 22151,
+      "p50Ns": 20166,
+      "p95Ns": 23542,
+      "p99Ns": 45125,
+      "opsPerSec": 45144
+    },
+    {
+      "op": "cache.get(hit)",
+      "iters": 20000,
+      "meanNs": 25521,
+      "p50Ns": 19084,
+      "p95Ns": 24125,
+      "p99Ns": 62334,
+      "opsPerSec": 39183
+    },
+    {
+      "op": "cache.set",
+      "iters": 20000,
+      "meanNs": 22297,
+      "p50Ns": 18792,
+      "p95Ns": 22000,
+      "p99Ns": 51708,
+      "opsPerSec": 44848
+    },
+    {
+      "op": "cache.get(miss)",
+      "iters": 20000,
+      "meanNs": 15071,
+      "p50Ns": 12584,
+      "p95Ns": 14375,
+      "p99Ns": 23250,
+      "opsPerSec": 66354
+    }
+  ]
+}

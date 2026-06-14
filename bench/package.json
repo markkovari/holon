@@ -1,0 +1,21 @@
+{
+  "name": "comp-bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Benchmarks: in-process (jco) op latency + HTTP roundtrip",
+  "scripts": {
+    "bench:inproc": "tsx src/bench-inproc.ts",
+    "bench:http": "tsx src/bench-http.ts",
+    "plot": "python3 src/plot.py"
+  },
+  "dependencies": {
+    "@bytecodealliance/jco": "^1.23.0",
+    "@bytecodealliance/preview2-shim": "^0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
