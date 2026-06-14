@@ -74,6 +74,15 @@
       "p95Ns": 14375,
       "p99Ns": 23250,
       "opsPerSec": 66354
+    },
+    {
+      "op": "idp.introspect(RS256, warm JWKS)",
+      "iters": 3000,
+      "meanNs": 2488077,
+      "p50Ns": 2312000,
+      "p95Ns": 3221875,
+      "p99Ns": 6302375,
+      "opsPerSec": 402
     }
   ]
 }

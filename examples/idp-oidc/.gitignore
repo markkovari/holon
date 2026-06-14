@@ -1,0 +1,3 @@
+node_modules/
+gen/
+auth_guard.wasm

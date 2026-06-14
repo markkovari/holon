@@ -100,6 +100,9 @@ services:
       URLS_CONSENT: http://localhost:3000/consent
       URLS_LOGIN: http://localhost:3000/login
       SECRETS_SYSTEM: this-is-a-dev-only-system-secret-change-me
+      # issue JWT access tokens (RS256, signed by Hydra's JWKS) so our oidc/jwt
+      # verifier can validate them against {issuer}/.well-known/jwks.json.
+      STRATEGIES_ACCESS_TOKEN: jwt
     depends_on:
       - hydra-migrate
     ports:

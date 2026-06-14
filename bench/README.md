@@ -44,6 +44,7 @@ npm run plot   # -> bench-inproc.png, bench-http.png, bench-overhead.png
 | cache.get (hit) | ~26 µs | ~39k |
 | cache.set | ~22 µs | ~45k |
 | cache.get (miss) | ~15 µs | ~66k |
+| idp.introspect (RS256, warm JWKS) | ~2.5 ms | ~400 |
 
 ### HTTP roundtrip (mean / p99)
 
@@ -73,3 +74,9 @@ npm run plot   # -> bench-inproc.png, bench-http.png, bench-overhead.png
   cheaper for hot, cheap operations; the wasmCloud HTTP path buys distribution +
   language-agnostic deployment at a fixed per-call overhead (~25 ms here, mostly
   the local k8s networking). Same `.wasm` bytes either way.
+- **External-IdP token verify (RS256 vs a real Ory Hydra JWT, warm JWKS) is
+  ~2.5 ms** — ~40× a session lookup (the RSA signature math), but still
+  sub-3 ms per request and far below any network/DB cost. The first verify pays
+  a one-time JWKS fetch; subsequent ones hit the cache. Run with Hydra up:
+  `npm run bench:idp` (see `examples/idp-oidc`). This is the recommended
+  production hot path: mature IdP issues the token, this verifies it fast.

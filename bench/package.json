@@ -7,6 +7,7 @@
   "scripts": {
     "bench:inproc": "tsx src/bench-inproc.ts",
     "bench:http": "tsx src/bench-http.ts",
+    "bench:idp": "tsx src/bench-idp.ts",
     "plot": "python3 src/plot.py"
   },
   "dependencies": {

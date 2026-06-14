@@ -262,8 +262,14 @@ Two ways to consume the contract from a TypeScript/Fastify app:
 - **`examples/jco-embed/`** — in-process. `jco transpile` runs `auth_guard.wasm`
   inside Node; the app calls the component's exports directly and supplies the
   WASI host imports (keyvalue, config) as JS shims. No wasmCloud/NATS needed.
+- **`examples/idp-oidc/`** — external IdP. Verifies a **real Ory Hydra / Zitadel
+  JWT** in-process against the IdP's **live JWKS** (the recommended production
+  shape: mature IdP issues tokens, this does the fast per-request verify).
+- **`examples/jco-cache/`** — the `cache:store` component + all four caching
+  strategies.
 
-Both verified end-to-end (register/login/me/logout + RBAC deny).
+All verified end-to-end (register/login/me/logout + RBAC deny; real-IdP JWT
+verify + tamper rejection).
 
 ## Configuration
 
