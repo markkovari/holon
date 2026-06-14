@@ -10,7 +10,7 @@ metadata:
   name: comp-auth
   namespace: comp-auth
   annotations:
-    version: v0.14.0
+    version: v0.15.0
     description: "WIT-first universal auth + RBAC reference stack"
 spec:
   components:
@@ -75,7 +75,7 @@ spec:
     - name: accounts-app
       type: component
       properties:
-        image: oci://registry.wasmcloud.svc.cluster.local:5000/accounts-app:0.11.0
+        image: oci://registry.wasmcloud.svc.cluster.local:5000/accounts-app:0.12.0
       traits:
         - type: spreadscaler
           properties:

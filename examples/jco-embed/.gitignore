@@ -1,0 +1,5 @@
+node_modules/
+gen/
+# the component is a build artifact; regenerate with `just build` + componentize,
+# or copy from the components/ build output. Kept out of git like other .wasm.
+auth_guard.wasm

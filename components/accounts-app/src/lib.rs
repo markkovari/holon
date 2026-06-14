@@ -43,6 +43,7 @@ impl Guest for Component {
             (Method::Post, "/login") => login(&request),
             (Method::Get, "/me") => me(&request),
             (Method::Post, "/logout") => logout(&request),
+            (Method::Post, "/verify") => verify(&request),
             _ => Outcome::NotFound,
         };
 
@@ -116,9 +117,34 @@ fn logout(request: &IncomingRequest) -> Outcome {
     }
 }
 
-// silence unused import warning for Permission/Principal in some configs
-#[allow(dead_code)]
-fn _unused(_: Permission, _: Principal) {}
+#[derive(Deserialize)]
+struct VerifyReq {
+    target: String,
+    action: String,
+}
+
+/// Generic guard endpoint for downstream apps: verify the bearer token AND
+/// require permission {target, action}. 200 + principal if allowed, 403 if
+/// authenticated-but-unauthorized, 401 on bad/expired token.
+fn verify(request: &IncomingRequest) -> Outcome {
+    let token = match bearer_token(request) {
+        Some(t) => t,
+        None => return Outcome::Err(AuthError::InvalidToken("missing bearer".into())),
+    };
+    let body = match read_body(request) {
+        Ok(b) => b,
+        Err(_) => return Outcome::Bad("could not read body".into()),
+    };
+    let req: VerifyReq = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return Outcome::Bad(format!("bad json: {e}")),
+    };
+    let perm = Permission { target: req.target, action: req.action };
+    match authorizer::authorize(&token, &perm) {
+        Ok(p) => Outcome::Json(200, principal_json(&p)),
+        Err(e) => Outcome::Err(e),
+    }
+}
 
 // ---- request helpers ----------------------------------------------------
 

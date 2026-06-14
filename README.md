@@ -133,6 +133,19 @@ curl -i -H "Authorization: Bearer $TOK" localhost:8000/  # 403 (no demo:read per
 (1.x path) **or** `kubectl` + the wasmCloud operator (2.x path). `wac` is not
 required — components are linked at runtime, not statically pre-composed.
 
+## Examples
+
+Two ways to consume the contract from a TypeScript/Fastify app:
+
+- **`examples/fastify-app/`** — HTTP integration. Fastify calls the deployed auth
+  components over HTTP; `requireAuth(target, action)` preHandler guards routes via
+  the `accounts-app` `/verify` endpoint. Realistic microservice pattern.
+- **`examples/jco-embed/`** — in-process. `jco transpile` runs `auth_guard.wasm`
+  inside Node; the app calls the component's exports directly and supplies the
+  WASI host imports (keyvalue, config) as JS shims. No wasmCloud/NATS needed.
+
+Both verified end-to-end (register/login/me/logout + RBAC deny).
+
 ## Configuration
 
 The contract is config-driven, with two layers:
