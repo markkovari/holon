@@ -181,21 +181,15 @@ impl Rbac for Component {
 
 impl Authorizer for Component {
     fn authorize(token: String, required: Permission) -> Result<Principal, AuthError> {
-        let perm = format!("{}:{}", required.target, required.action);
-        let principal = match resolve_principal(&token) {
-            Ok(p) => p,
-            Err(e) => {
-                audit::emit("authorize", audit::Outcome::Error, "", "", &perm);
-                return Err(e);
-            }
-        };
-        if store::rbac_check(&principal, &required) {
-            audit::emit("authorize", audit::Outcome::Allow, &principal.tenant, &principal.subject, &perm);
-            Ok(principal)
-        } else {
-            audit::emit("authorize", audit::Outcome::Deny, &principal.tenant, &principal.subject, &perm);
-            Err(AuthError::InsufficientScope(required))
-        }
+        authorize_impl(&token, required, "")
+    }
+
+    fn authorize_traced(
+        token: String,
+        required: Permission,
+        traceparent: String,
+    ) -> Result<Principal, AuthError> {
+        authorize_impl(&token, required, &traceparent)
     }
 
     fn authorize_any(
@@ -217,6 +211,44 @@ impl Authorizer for Component {
 
     fn introspect(token: String) -> Result<Principal, AuthError> {
         resolve_principal(&token)
+    }
+}
+
+/// Shared authorize logic; `traceparent` is the caller's W3C trace context
+/// ("" when none) used to correlate the audit event.
+fn authorize_impl(
+    token: &str,
+    required: Permission,
+    traceparent: &str,
+) -> Result<Principal, AuthError> {
+    let perm = format!("{}:{}", required.target, required.action);
+    let principal = match resolve_principal(token) {
+        Ok(p) => p,
+        Err(e) => {
+            audit::emit_traced("authorize", audit::Outcome::Error, "", "", &perm, traceparent);
+            return Err(e);
+        }
+    };
+    if store::rbac_check(&principal, &required) {
+        audit::emit_traced(
+            "authorize",
+            audit::Outcome::Allow,
+            &principal.tenant,
+            &principal.subject,
+            &perm,
+            traceparent,
+        );
+        Ok(principal)
+    } else {
+        audit::emit_traced(
+            "authorize",
+            audit::Outcome::Deny,
+            &principal.tenant,
+            &principal.subject,
+            &perm,
+            traceparent,
+        );
+        Err(AuthError::InsufficientScope(required))
     }
 }
 

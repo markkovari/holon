@@ -385,6 +385,18 @@ interface authorizer {
     /// Verify `token` and return the principal WITHOUT any permission check.
     /// For components that do their own authorization logic.
     introspect: func(token: string) -> result<principal, auth-error>;
+
+    /// Like `authorize`, but the caller passes its W3C `traceparent`
+    /// (`00-<32hex trace-id>-<16hex span-id>-<2hex flags>`). The decision's
+    /// audit event is emitted with that trace-id + a fresh child span-id, so an
+    /// authz decision can be correlated to the originating request across the
+    /// component boundary. An empty/malformed traceparent behaves like
+    /// `authorize` (a new trace id is minted for the audit line).
+    authorize-traced: func(
+        token: string,
+        required: permission,
+        traceparent: string,
+    ) -> result<principal, auth-error>;
 }
 
 /// What an ordinary application component imports: just the guard. Keeps the

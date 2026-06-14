@@ -79,6 +79,19 @@ current state as a demo/learning artifact until Tier 1 lands.
 - [x] KV TTL/migration documented: in-value expiry pattern (sessions, JWKS cache,
       rate-limit windows), lazy delete, additive-JSON migration. See README.
 
+### Beyond — composable capabilities
+
+- [x] **Trace propagation**: `authorizer.authorize-traced(token, perm, traceparent)`
+      threads the caller's W3C trace context into audit events (real `trace_id` +
+      child `span_id`), correlating an authz decision to the originating request
+      across the component boundary. (`authorize` unchanged — non-breaking.)
+- [x] **`cache:store`** — a generic TTL cache as its own package + component
+      (third composable capability, alongside `ratelimit:guard`). Primitives
+      (get/set/ttl/invalidate/invalidate-prefix) + **all four caching
+      strategies**: Cache-Aside (consumer pattern), Read-Through (`get-through`
+      via imported `source`), Write-Through (`put-through` via `sink`),
+      Write-Behind (`put-behind` + `flush`). e2e: 10/10 in `examples/jco-cache`.
+
 ### Tier 5 — optional polish  (done)
 
 - [x] **Evaluated `jwt-compact`** as a full JWT framework. It builds clean to

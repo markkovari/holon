@@ -34,6 +34,10 @@ builds the `principal`, and enforces the permission, in one shot. Use
 `authorize_any(token, perms)` for "any of", or `introspect(token)` to verify
 without a permission check.
 
+For tracing, `authorize_traced(token, required, traceparent)` takes your request's
+W3C `traceparent`; the authz decision's audit line is emitted with that
+`trace_id` + a child `span_id`, correlating it to the originating request.
+
 ## 2. What a `principal` contains, and where it comes from
 
 A verified token's claims map onto the `principal` like this:

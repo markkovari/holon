@@ -51,19 +51,53 @@ fn esc(s: &str) -> String {
     out
 }
 
-/// Emit an audit event. `event` is the action (e.g. "authorize", "login");
-/// `subject`/`tenant` identify the actor ("" if unknown); `detail` is a short,
-/// secret-free reason (e.g. "insufficient_scope", "orders:read").
+/// A 16-hex (8-byte) span id, minted fresh per emitted event.
+fn span_id() -> String {
+    let b = get_random_bytes(8);
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Parse the trace-id out of a W3C traceparent
+/// (`00-<32hex trace-id>-<16hex span-id>-<flags>`). Returns None if absent or
+/// malformed, in which case a fresh 32-hex trace-id is minted instead.
+fn trace_id_from(traceparent: &str) -> String {
+    let parts: Vec<&str> = traceparent.split('-').collect();
+    if parts.len() == 4 && parts[1].len() == 32 && parts[1].bytes().all(|c| c.is_ascii_hexdigit())
+    {
+        parts[1].to_string()
+    } else {
+        let b = get_random_bytes(16);
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+}
+
+/// Emit an audit event with no caller trace context (mints its own ids).
 pub fn emit(event: &str, outcome: Outcome, tenant: &str, subject: &str, detail: &str) {
+    emit_traced(event, outcome, tenant, subject, detail, "");
+}
+
+/// Emit an audit event correlated to a caller's W3C `traceparent`. The line
+/// carries `trace_id` (from the parent, or freshly minted) and a fresh
+/// `span_id`, so an authz decision joins the originating request's trace.
+pub fn emit_traced(
+    event: &str,
+    outcome: Outcome,
+    tenant: &str,
+    subject: &str,
+    detail: &str,
+    traceparent: &str,
+) {
     if !config::audit_enabled() {
         return;
     }
     let ts = wall_clock::now().seconds;
-    // One compact JSON line. `audit:true` marks the line for log filters; `id`
-    // is a correlation handle for grouping in a trace/log backend.
+    let trace_id = trace_id_from(traceparent);
+    let span = span_id();
     eprintln!(
-        "{{\"audit\":true,\"id\":\"{}\",\"ts\":{},\"event\":\"{}\",\"outcome\":\"{}\",\"tenant\":\"{}\",\"subject\":\"{}\",\"detail\":\"{}\"}}",
+        "{{\"audit\":true,\"id\":\"{}\",\"trace_id\":\"{}\",\"span_id\":\"{}\",\"ts\":{},\"event\":\"{}\",\"outcome\":\"{}\",\"tenant\":\"{}\",\"subject\":\"{}\",\"detail\":\"{}\"}}",
         event_id(),
+        trace_id,
+        span,
         ts,
         esc(event),
         outcome.as_str(),

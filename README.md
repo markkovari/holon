@@ -187,6 +187,18 @@ and group by `id`. Full distributed-trace spans across components (propagating a
 W3C `traceparent` through the wrpc calls) are a future enhancement — today the
 correlation is per-component via the `id` field.
 
+## Reusable capabilities (their own WIT packages)
+
+Beyond auth, the repo ships generic, composable capability components — each its
+own package, each a worked example of WIT-first composition:
+
+- **`ratelimit:guard`** (`components/rate-limiter`) — fixed-window failure
+  counter; composed into auth-guard with `wac`.
+- **`cache:store`** (`components/cache`) — TTL byte cache with all four caching
+  strategies (Cache-Aside, Read-Through, Write-Through, Write-Behind). It
+  *imports* a `source`/`sink` the consumer provides for the through/behind
+  strategies. See its README + `examples/jco-cache` (10/10 e2e).
+
 ## Composition (auth-guard + rate-limiter)
 
 Rate limiting lives in its **own** package/component, not inside auth — a second

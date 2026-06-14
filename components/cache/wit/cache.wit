@@ -1,0 +1,95 @@
+// cache:store — a generic, TTL-aware key/value cache capability supporting four
+// classic caching strategies.
+//
+// Storage primitives (get/set/ttl/invalidate) need nothing external. The
+// strategy operations that touch a backing store call BACK into a source/sink
+// the consumer provides — a bidirectional composition example: the cache both
+// exports `cache` and imports `source`+`sink`, wired together with wac.
+//
+// Strategies:
+//   Cache-Aside    consumer-driven (get -> on miss, load + set). Pure consumer
+//                  pattern; uses only get/set. No callback needed. (Documented.)
+//   Read-Through   `get-through`: cache loads via `source.load` on miss + stores.
+//   Write-Through  `put-through`: cache writes itself AND `sink.store`, sync.
+//   Write-Behind   `put-behind` (cache now, enqueue) + `flush` (drain to sink).
+//                  wasip2 has no background tasks, so flush is an explicit call.
+package cache:store@0.1.0;
+
+/// The cache surface: primitives + strategy operations.
+interface cache {
+    variant cache-error {
+        /// The backing key/value store was unreachable.
+        backend-unavailable(string),
+        /// A `source.load` / `sink.store` callback failed (read/write-through).
+        source-failed(string),
+    }
+
+    // ---- primitives ----
+
+    /// Value for `key`, or none if absent OR expired (expired = lazy-deleted).
+    get: func(key: string) -> result<option<list<u8>>, cache-error>;
+
+    /// Set `key`=`value` with `ttl-seconds` (0 = no expiry).
+    set: func(key: string, value: list<u8>, ttl-seconds: u64) -> result<_, cache-error>;
+
+    /// Like `get`; named for call sites that branch on a miss.
+    peek: func(key: string) -> result<option<list<u8>>, cache-error>;
+
+    /// Remove `key`. Idempotent. (`invalidate` is its alias.)
+    delete: func(key: string) -> result<_, cache-error>;
+
+    /// Invalidate a single entry. Idempotent.
+    invalidate: func(key: string) -> result<_, cache-error>;
+
+    /// Invalidate every entry whose key starts with `prefix`; returns count.
+    invalidate-prefix: func(prefix: string) -> result<u32, cache-error>;
+
+    /// Remaining TTL (s): none if absent/expired, some(0) if no expiry, some(n).
+    ttl: func(key: string) -> result<option<u64>, cache-error>;
+
+    // ---- strategies ----
+
+    /// READ-THROUGH. Return the cached value; on miss, call `source.load(key)`,
+    /// store the result with `ttl-seconds`, and return it. None if the source
+    /// also has no value.
+    get-through: func(key: string, ttl-seconds: u64) -> result<option<list<u8>>, cache-error>;
+
+    /// WRITE-THROUGH. Write to the cache AND `sink.store` synchronously, so the
+    /// backing store is always consistent with the cache. Fails (and does not
+    /// cache) if the sink write fails.
+    put-through: func(key: string, value: list<u8>, ttl-seconds: u64) -> result<_, cache-error>;
+
+    /// WRITE-BEHIND. Write to the cache immediately and enqueue the write for a
+    /// later `flush`. Returns fast; the backing store is eventually consistent.
+    put-behind: func(key: string, value: list<u8>, ttl-seconds: u64) -> result<_, cache-error>;
+
+    /// Drain the write-behind queue to `sink.store`. Returns how many writes
+    /// were flushed. Call periodically (no background tasks in wasip2). Entries
+    /// that fail to flush are retained for the next call.
+    flush: func() -> result<u32, cache-error>;
+}
+
+/// Backing read source for read-through. The consumer (or another component)
+/// provides this; the cache imports and calls it on a miss.
+interface source {
+    /// Load the authoritative value for `key`, or none if it does not exist.
+    load: func(key: string) -> result<option<list<u8>>, string>;
+}
+
+/// Backing write sink for write-through / write-behind.
+interface sink {
+    /// Persist `key`=`value` to the backing store.
+    store: func(key: string, value: list<u8>) -> result<_, string>;
+    /// Remove `key` from the backing store.
+    remove: func(key: string) -> result<_, string>;
+}
+
+/// What the `cache` component provides + the callbacks it needs for the
+/// through/behind strategies.
+world cache-store {
+    export cache;
+    import source;
+    import sink;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+}
