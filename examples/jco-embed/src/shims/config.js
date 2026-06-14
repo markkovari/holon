@@ -7,6 +7,9 @@ const values = {
   "password-min-len": process.env.PASSWORD_MIN_LEN ?? "8",
   "jwks-cache-ttl": process.env.JWKS_CACHE_TTL ?? "3600",
   "default-tenant": process.env.DEFAULT_TENANT ?? "",
+  // consumed by the composed rate-limiter component
+  "max-attempts": process.env.MAX_ATTEMPTS ?? "5",
+  "lockout-window": process.env.LOCKOUT_WINDOW ?? "300",
 };
 
 // jco imports these as flat named exports. `get` returns option<string>

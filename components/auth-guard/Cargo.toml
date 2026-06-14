@@ -37,3 +37,4 @@ world = "authority"
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
 "wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-draft" }
+"ratelimit:guard" = { path = "../rate-limiter/wit" }

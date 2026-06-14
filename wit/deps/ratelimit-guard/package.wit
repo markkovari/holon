@@ -1,0 +1,43 @@
+// ratelimit:guard — a small, generic rate-limit / lockout capability.
+//
+// Deliberately auth-agnostic: it counts failures against an opaque `key` and
+// reports when a key is locked out. Any service can compose it (auth-guard
+// composes it for login/register brute-force protection, but a payments or API
+// component could use the same contract). This is a second worked example of
+// WIT-first composition: a component importing another component's interface.
+package ratelimit:guard@0.1.0;
+
+/// A fixed-window failure counter with lockout.
+interface limiter {
+    /// Why a limiter call failed.
+    variant limit-error {
+        /// The key is currently locked out (too many recent failures). The
+        /// payload is the seconds remaining until the lockout lifts.
+        locked(u32),
+        /// A backing dependency (the counter store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// Check whether `key` may proceed. Returns the number of attempts still
+    /// allowed in the current window on success, or `locked(retry-after)` when
+    /// the key is over the limit. Read-only — does not record anything.
+    check: func(key: string) -> result<u32, limit-error>;
+
+    /// Record a failed attempt for `key`. When the count crosses the configured
+    /// maximum the key becomes locked for the window duration. Call this AFTER a
+    /// failed login / register so the next `check` reflects it.
+    record-failure: func(key: string) -> result<_, limit-error>;
+
+    /// Clear the counter for `key` (e.g. after a successful login). Idempotent.
+    reset: func(key: string) -> result<_, limit-error>;
+}
+
+/// What the `rate-limiter` component provides: the limiter interface, backed by
+/// a key-value store + clock. Config knobs (max-attempts, lockout-window) come
+/// from wasi:config.
+world rate-limiter {
+    export limiter;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:config/runtime@0.2.0-draft;
+}

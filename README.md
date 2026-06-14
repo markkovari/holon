@@ -133,6 +133,28 @@ curl -i -H "Authorization: Bearer $TOK" localhost:8000/  # 403 (no demo:read per
 (1.x path) **or** `kubectl` + the wasmCloud operator (2.x path). `wac` is not
 required — components are linked at runtime, not statically pre-composed.
 
+## Composition (auth-guard + rate-limiter)
+
+Rate limiting lives in its **own** package/component, not inside auth — a second
+worked example of WIT-first composition (a component importing another
+component's interface):
+
+- `ratelimit:guard@0.1.0` (`components/rate-limiter/wit/`) — a generic
+  fixed-window failure counter (`check` / `record-failure` / `reset`). Reusable
+  by any service, not auth-specific.
+- `rate-limiter` component implements it (kv-backed, config-driven
+  `max-attempts` / `lockout-window`).
+- `auth-guard` **imports** `ratelimit:guard/limiter` and gates login.
+- `just compose` runs `wac plug` to satisfy that import with the rate-limiter,
+  producing one self-contained `auth_guard.composed.wasm`.
+
+```bash
+just compose   # build all + wac plug rate-limiter into auth-guard
+```
+
+The jco-embed example uses the composed artifact; its e2e proves a 6th failed
+login returns 429.
+
 ## Using it
 
 See **[USAGE.md](USAGE.md)** — the consumer guide: the one `authorize` call,

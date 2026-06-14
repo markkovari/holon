@@ -15,6 +15,7 @@ use serde::Deserialize;
 
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
+use bindings::auth::identity::rbac;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Permission, Principal, TokenPair};
 use bindings::exports::wasi::http::incoming_handler::Guest;
@@ -44,6 +45,8 @@ impl Guest for Component {
             (Method::Get, "/me") => me(&request),
             (Method::Post, "/logout") => logout(&request),
             (Method::Post, "/verify") => verify(&request),
+            (Method::Post, "/admin/role-permissions") => admin_set_role_perms(&request),
+            (Method::Post, "/admin/assign-role") => admin_assign_role(&request),
             _ => Outcome::NotFound,
         };
 
@@ -146,6 +149,69 @@ fn verify(request: &IncomingRequest) -> Outcome {
     }
 }
 
+// ---- admin (RBAC seeding) ------------------------------------------------
+//
+// NOTE: these routes are UNAUTHENTICATED in this example for simplicity. In a
+// real deployment, guard them (e.g. `authorizer.authorize(token, {target:
+// "rbac", action: "admin"})`) or expose them only on an internal network.
+
+#[derive(Deserialize)]
+struct PermDto {
+    target: String,
+    action: String,
+}
+
+#[derive(Deserialize)]
+struct SetRolePermsReq {
+    tenant: String,
+    role: String,
+    permissions: Vec<PermDto>,
+}
+
+#[derive(Deserialize)]
+struct AssignRoleReq {
+    tenant: String,
+    subject: String,
+    role: String,
+}
+
+/// POST /admin/role-permissions — define what a role grants. 204 on success.
+fn admin_set_role_perms(request: &IncomingRequest) -> Outcome {
+    let body = match read_body(request) {
+        Ok(b) => b,
+        Err(_) => return Outcome::Bad("could not read body".into()),
+    };
+    let req: SetRolePermsReq = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return Outcome::Bad(format!("bad json: {e}")),
+    };
+    let perms: Vec<Permission> = req
+        .permissions
+        .into_iter()
+        .map(|p| Permission { target: p.target, action: p.action })
+        .collect();
+    match rbac::set_role_permissions(&req.tenant, &req.role, &perms) {
+        Ok(()) => Outcome::Empty(204),
+        Err(e) => Outcome::Err(e),
+    }
+}
+
+/// POST /admin/assign-role — grant a role to a subject. 204 on success.
+fn admin_assign_role(request: &IncomingRequest) -> Outcome {
+    let body = match read_body(request) {
+        Ok(b) => b,
+        Err(_) => return Outcome::Bad("could not read body".into()),
+    };
+    let req: AssignRoleReq = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return Outcome::Bad(format!("bad json: {e}")),
+    };
+    match rbac::assign_role(&req.tenant, &req.subject, &req.role) {
+        Ok(()) => Outcome::Empty(204),
+        Err(e) => Outcome::Err(e),
+    }
+}
+
 // ---- request helpers ----------------------------------------------------
 
 fn parse_credentials(request: &IncomingRequest) -> Result<Credentials, String> {
@@ -215,6 +281,7 @@ fn error_response(e: &AuthError) -> (u16, &'static str) {
     match e {
         AuthError::InvalidCredentials => (401, "invalid_credentials"),
         AuthError::AlreadyExists => (409, "already_exists"),
+        AuthError::RateLimited => (429, "rate_limited"),
         AuthError::InsufficientScope(_) => (403, "insufficient_scope"),
         AuthError::Expired => (401, "expired"),
         AuthError::InvalidToken(_) => (401, "invalid_token"),

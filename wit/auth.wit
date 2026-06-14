@@ -179,6 +179,9 @@ interface types {
         /// Register failed: an account with that (tenant, email) already
         /// exists. HTTP 409.
         already-exists,
+        /// Too many failed attempts for this identifier; temporarily locked
+        /// out. HTTP 429.
+        rate-limited,
         /// Catch-all for unexpected internal failures. HTTP 500.
         internal(string),
     }
@@ -344,6 +347,15 @@ interface rbac {
         tenant: string,
         role: string,
     ) -> result<list<permission>, auth-error>;
+
+    /// Define (replace) the set of permissions a role grants within a tenant.
+    /// This is how a role->permission mapping is seeded; pair it with
+    /// `assign-role` to make a subject authorized. Idempotent (full replace).
+    set-role-permissions: func(
+        tenant: string,
+        role: string,
+        permissions: list<permission>,
+    ) -> result<_, auth-error>;
 }
 
 /// THE consumer-facing API: a verify-token guard. One call validates the token
@@ -394,6 +406,9 @@ world accounts-http {
     import accounts;
     import session;
     import authorizer;
+    // rbac: the app exposes admin routes to seed role->permission mappings and
+    // assign roles (so the authorized path can be set up, not just denied).
+    import rbac;
     export wasi:http/incoming-handler@0.2.0;
 }
 
@@ -430,4 +445,8 @@ world authority {
     // Deployment policy knobs (session-ttl, password-min-len, jwks-cache-ttl,
     // default-tenant). Supplied per-deployment via component config.
     import wasi:config/runtime@0.2.0-draft;
+    // Brute-force protection for login/register. A SEPARATE component
+    // (`rate-limiter`, package ratelimit:guard) satisfies this import —
+    // composed with `wac` at build time, or linked at runtime.
+    import ratelimit:guard/limiter@0.1.0;
 }

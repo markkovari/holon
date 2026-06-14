@@ -1,14 +1,17 @@
 # comp — WIT-first universal auth + RBAC. Task runner.
 #
-# Requires: wasm-tools, wkg, cargo-component, docker compose.
+# Requires: wasm-tools, wkg, cargo-component, wac, docker compose.
 # Runtime deploy additionally needs `wash` (wasmCloud host CLI, not bundled).
 
 set dotenv-load := true
 
 wit_dir := "wit"
 components := "components"
-guard_wasm := components / "target/wasm32-wasip1/release/auth_guard.wasm"
-consumer_wasm := components / "target/wasm32-wasip1/release/sample_consumer.wasm"
+rel := components / "target/wasm32-wasip1/release"
+guard_wasm := rel / "auth_guard.wasm"
+consumer_wasm := rel / "sample_consumer.wasm"
+ratelimit_wasm := rel / "rate_limiter.wasm"
+guard_composed := "components/target/auth_guard.composed.wasm"
 
 # List available recipes.
 default:
@@ -22,9 +25,15 @@ vendor:
 wit-check:
     wasm-tools component wit {{wit_dir}}
 
-# Build both components to wasm components.
+# Build all components to wasm components.
 build:
     cd {{components}} && cargo component build --release
+
+# Compose the rate-limiter into auth-guard with wac, satisfying auth-guard's
+# `ratelimit:guard/limiter` import. Output is a single self-contained component.
+compose: build
+    wac plug {{guard_wasm}} --plug {{ratelimit_wasm}} -o {{guard_composed}}
+    @echo "composed auth-guard (+ rate-limiter) -> {{guard_composed}}"
 
 # Validate the built components.
 validate: build

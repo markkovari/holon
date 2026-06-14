@@ -52,10 +52,14 @@ current state as a demo/learning artifact until Tier 1 lands.
 - [ ] Rust unit tests for jwt / session / rbac / accounts.
 - [ ] Refresh-token reuse detection (invalidate session family on replay).
 
-### Tier 2 — make it usable
-- [ ] Admin/RBAC routes (`assign-role`, role→permission seed) + an e2e test that
-      proves the **200 authorized** path, not just 403.
-- [ ] Rate limiting + lockout on login/register.
+### Tier 2 — make it usable  (mostly done)
+- [x] Admin/RBAC routes (`assign-role`, `set-role-permissions`) + an e2e proving
+      the **200 authorized** path (403 before grant, 200 after). Session
+      principals re-resolve roles each check, so grants take effect immediately.
+- [x] Rate limiting + lockout on login as a **separate `ratelimit:guard`
+      package + `rate-limiter` component**, composed into auth-guard with `wac`.
+      A second worked example of WIT-first composition (component imports
+      component). e2e: 6th failed login → 429.
 - [ ] Replace hand-rolled JWT glue with a vetted wasip2-compatible library.
 
 ### Tier 4 — make it learnable  (done)

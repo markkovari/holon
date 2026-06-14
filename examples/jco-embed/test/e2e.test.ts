@@ -140,6 +140,100 @@ describe("jco-embed e2e (component in-process)", () => {
     assert.equal(after.statusCode, 401);
   });
 
+  it("grants access via RBAC: 403 before role, 200 after (the authorized path)", async () => {
+    // fresh user with no roles
+    await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { email: "rbac@test.com", password, tenant },
+    });
+    const login = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: "rbac@test.com", password, tenant },
+    });
+    const tok = login.json().accessToken as string;
+    const subject = (
+      await app.inject({
+        method: "GET",
+        url: "/auth/me",
+        headers: { authorization: `Bearer ${tok}` },
+      })
+    ).json().subject as string;
+
+    // before any grant -> denied
+    const before = await app.inject({
+      method: "GET",
+      url: "/orders",
+      headers: { authorization: `Bearer ${tok}` },
+    });
+    assert.equal(before.statusCode, 403);
+
+    // seed role->permission, then assign the role to the subject
+    const sp = await app.inject({
+      method: "POST",
+      url: "/admin/role-permissions",
+      payload: {
+        tenant,
+        role: "viewer",
+        permissions: [{ target: "orders", action: "read" }],
+      },
+    });
+    assert.equal(sp.statusCode, 204);
+    const ar = await app.inject({
+      method: "POST",
+      url: "/admin/assign-role",
+      payload: { tenant, subject, role: "viewer" },
+    });
+    assert.equal(ar.statusCode, 204);
+
+    // same token now authorized -> 200 (roles re-resolved on each check)
+    const after = await app.inject({
+      method: "GET",
+      url: "/orders",
+      headers: { authorization: `Bearer ${tok}` },
+    });
+    assert.equal(after.statusCode, 200);
+    assert.equal(after.json().viewer, subject);
+  });
+
+  it("rate-limits repeated failed logins (429 after max-attempts)", async () => {
+    // composed rate-limiter: default max-attempts 5. A fresh identifier.
+    const rlEmail = "ratelimit@test.com";
+    await app.inject({
+      method: "POST",
+      url: "/auth/register",
+      payload: { email: rlEmail, password, tenant },
+    });
+
+    // 5 wrong-password attempts -> all 401 invalid_credentials
+    for (let i = 0; i < 5; i++) {
+      const res = await app.inject({
+        method: "POST",
+        url: "/auth/login",
+        payload: { email: rlEmail, password: "wrongpassword", tenant },
+      });
+      assert.equal(res.statusCode, 401);
+    }
+
+    // 6th attempt is locked out -> 429, even though it's still a wrong password
+    const locked = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: rlEmail, password: "wrongpassword", tenant },
+    });
+    assert.equal(locked.statusCode, 429);
+    assert.equal(locked.json().error, "rate_limited");
+
+    // and the CORRECT password is also locked out while the window holds
+    const stillLocked = await app.inject({
+      method: "POST",
+      url: "/auth/login",
+      payload: { email: rlEmail, password, tenant },
+    });
+    assert.equal(stillLocked.statusCode, 429);
+  });
+
   it("logs out (204) and the session is then invalid (401)", async () => {
     const out = await app.inject({
       method: "POST",

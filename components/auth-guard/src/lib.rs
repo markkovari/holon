@@ -166,6 +166,14 @@ impl Rbac for Component {
     fn permissions_of(tenant: String, role: String) -> Result<Vec<Permission>, AuthError> {
         store::rbac_permissions_of(&tenant, &role)
     }
+
+    fn set_role_permissions(
+        tenant: String,
+        role: String,
+        permissions: Vec<Permission>,
+    ) -> Result<(), AuthError> {
+        store::rbac_set_role_permissions(&tenant, &role, &permissions)
+    }
 }
 
 // ---- authorizer (the verify-token guard) --------------------------------
@@ -212,7 +220,12 @@ fn resolve_principal(token: &str) -> Result<Principal, AuthError> {
     // token (prefix included) — that's how it was stored at issue time — so we
     // pass `token` as-is, not the stripped remainder.
     if token.starts_with(tokens::ACCESS_PREFIX) {
-        return store::session_lookup(token);
+        let mut p = store::session_lookup(token)?;
+        // Re-resolve roles from the store on each check so a role granted AFTER
+        // login takes effect immediately (the principal stored at issue time may
+        // predate the grant). Scopes stay as issued.
+        p.roles = store::rbac_roles_for(&p.tenant, &p.subject).unwrap_or(p.roles);
+        return Ok(p);
     }
     let claims = jwt_verify::verify(token)?;
     let tenant = claims_tenant(&claims);

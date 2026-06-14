@@ -27,3 +27,4 @@ world = "consumer-http"
 "wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
 "wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-draft" }
+"ratelimit:guard" = { path = "../rate-limiter/wit" }

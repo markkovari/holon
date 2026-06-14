@@ -214,6 +214,19 @@ pub fn rbac_permissions_of(tenant: &str, role: &str) -> Result<Vec<Permission>, 
     }
 }
 
+pub fn rbac_set_role_permissions(
+    tenant: &str,
+    role: &str,
+    perms: &[Permission],
+) -> Result<(), AuthError> {
+    let dtos: Vec<PermissionDto> = perms
+        .iter()
+        .map(|p| PermissionDto { target: p.target.clone(), action: p.action.clone() })
+        .collect();
+    let body = serde_json::to_string(&dtos).map_err(json_err)?;
+    kv::set(&role_perms_key(tenant, role), &body)
+}
+
 pub fn rbac_assign_role(tenant: &str, subject: &str, role: &str) -> Result<(), AuthError> {
     let mut roles = rbac_roles_for(tenant, subject)?;
     if !roles.iter().any(|r| r == role) {

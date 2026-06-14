@@ -12,8 +12,24 @@ use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, Salt};
 use serde::{Deserialize, Serialize};
 
 use crate::bindings::exports::auth::identity::types::{AuthError, Principal, TokenPair};
+use crate::bindings::ratelimit::guard::limiter;
+use crate::bindings::ratelimit::guard::limiter::LimitError;
 use crate::bindings::wasi::random::random::get_random_bytes;
 use crate::{config, kv, store};
+
+/// Rate-limit key for an identifier (per tenant+email). Failed logins count
+/// against this; a successful login resets it.
+fn rl_key(tenant: &str, email: &str) -> String {
+    format!("login:{tenant}:{}", email.to_lowercase())
+}
+
+/// Map the (separate) rate-limiter component's error to our auth-error.
+fn rl_err(e: LimitError) -> AuthError {
+    match e {
+        LimitError::Locked(_) => AuthError::RateLimited,
+        LimitError::BackendUnavailable(m) => AuthError::BackendUnavailable(format!("ratelimit: {m}")),
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct Account {
@@ -123,8 +139,22 @@ pub fn verify_password(
 }
 
 pub fn login(email: &str, password: &str, tenant: &str) -> Result<TokenPair, AuthError> {
-    let principal = verify_password(email, password, tenant)?;
-    store::session_issue(principal)
+    let key = rl_key(tenant, email);
+    // Refuse before touching the password store if the identifier is locked.
+    limiter::check(&key).map_err(rl_err)?;
+
+    match verify_password(email, password, tenant) {
+        Ok(principal) => {
+            // success clears the failure counter
+            let _ = limiter::reset(&key);
+            store::session_issue(principal)
+        }
+        Err(e) => {
+            // count this failure toward lockout, then surface the auth error
+            let _ = limiter::record_failure(&key);
+            Err(e)
+        }
+    }
 }
 
 pub fn change_password(
