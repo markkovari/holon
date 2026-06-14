@@ -7,7 +7,7 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use crate::bindings::exports::auth::identity::types::{AuthError, Claims};
 use crate::bindings::wasi::clocks::wall_clock;
@@ -354,37 +354,17 @@ fn verify_es256(
         .map_err(|_| AuthError::InvalidToken("es256 verify failed".into()))
 }
 
-/// HS256 via a shared secret in kv. Constant-time-ish compare via fixed digest.
+/// HS256 via a shared secret in kv, using the vetted `hmac` crate (RFC 2104)
+/// with its built-in constant-time `verify_slice` — no hand-rolled MAC.
 fn verify_hs256(signing_input: &str, signature: &[u8]) -> Result<(), AuthError> {
+    use hmac::{Hmac, Mac};
+
     let secret = kv::get("hs256-secret")?
         .ok_or_else(|| AuthError::InvalidToken("no hs256 secret configured".into()))?;
-    // Minimal HMAC-SHA256 (RFC 2104) using sha2 directly.
-    let mac = hmac_sha256(secret.as_bytes(), signing_input.as_bytes());
-    if mac.len() == signature.len() && constant_eq(&mac, signature) {
-        Ok(())
-    } else {
-        Err(AuthError::InvalidToken("hs256 verify failed".into()))
-    }
-}
 
-fn hmac_sha256(key: &[u8], msg: &[u8]) -> Vec<u8> {
-    const BLOCK: usize = 64;
-    let mut k = if key.len() > BLOCK {
-        Sha256::digest(key).to_vec()
-    } else {
-        key.to_vec()
-    };
-    k.resize(BLOCK, 0);
-    let ipad: Vec<u8> = k.iter().map(|b| b ^ 0x36).collect();
-    let opad: Vec<u8> = k.iter().map(|b| b ^ 0x5c).collect();
-    let inner = Sha256::new().chain_update(&ipad).chain_update(msg).finalize();
-    Sha256::new().chain_update(&opad).chain_update(inner).finalize().to_vec()
-}
-
-fn constant_eq(a: &[u8], b: &[u8]) -> bool {
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .map_err(|e| AuthError::Internal(format!("hmac key: {e}")))?;
+    mac.update(signing_input.as_bytes());
+    mac.verify_slice(signature)
+        .map_err(|_| AuthError::InvalidToken("hs256 verify failed".into()))
 }

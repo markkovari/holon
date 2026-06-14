@@ -24,8 +24,9 @@ current state as a demo/learning artifact until Tier 1 lands.
    `iss`, `aud`, or `nbf`. Enables audience-confusion / cross-service token reuse.
 2. **Algorithm-confusion surface** — HS256 (shared secret) and RS/ES256 (JWKS)
    are accepted by one verifier without pinning the expected alg per issuer.
-3. **Hand-rolled crypto glue** — manual HMAC-SHA256 + JWKS/base64 plumbing. Subtle
-   bugs live here; should use a vetted JWT lib that targets wasip2.
+3. ~~**Hand-rolled crypto glue** — manual HMAC-SHA256.~~ DONE: HMAC now uses the
+   vetted RustCrypto `hmac` crate (constant-time `verify_slice`); RSA/EC verify
+   already used vetted `rsa`/`p256`. JWKS/base64 parsing remains, covered by tests.
 4. **Refresh not replay-safe** — rotation deletes the old token but stolen-token
    reuse isn't detected (should invalidate the whole session family).
 5. **No rate limiting / lockout** on login/register — credential stuffing + user
@@ -52,7 +53,7 @@ current state as a demo/learning artifact until Tier 1 lands.
 - [ ] Rust unit tests for jwt / session / rbac / accounts.
 - [ ] Refresh-token reuse detection (invalidate session family on replay).
 
-### Tier 2 — make it usable  (mostly done)
+### Tier 2 — make it usable  (done)
 - [x] Admin/RBAC routes (`assign-role`, `set-role-permissions`) + an e2e proving
       the **200 authorized** path (403 before grant, 200 after). Session
       principals re-resolve roles each check, so grants take effect immediately.
@@ -60,7 +61,8 @@ current state as a demo/learning artifact until Tier 1 lands.
       package + `rate-limiter` component**, composed into auth-guard with `wac`.
       A second worked example of WIT-first composition (component imports
       component). e2e: 6th failed login → 429.
-- [ ] Replace hand-rolled JWT glue with a vetted wasip2-compatible library.
+- [x] Replace hand-rolled HMAC with the vetted RustCrypto `hmac` crate
+      (constant-time verify). Added JWT-path e2e: alg-pinning rejection + malformed.
 
 ### Tier 4 — make it learnable  (done)
 - [x] Exhaustive WIT doc comments: claim-mapping table, token formats, config

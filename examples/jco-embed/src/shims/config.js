@@ -10,6 +10,9 @@ const values = {
   // consumed by the composed rate-limiter component
   "max-attempts": process.env.MAX_ATTEMPTS ?? "5",
   "lockout-window": process.env.LOCKOUT_WINDOW ?? "300",
+  // JWT policy (asymmetric only by default → HS256 tokens are rejected by the
+  // alg allow-list before any signature work).
+  "allowed-algs": process.env.ALLOWED_ALGS ?? "RS256,ES256",
 };
 
 // jco imports these as flat named exports. `get` returns option<string>

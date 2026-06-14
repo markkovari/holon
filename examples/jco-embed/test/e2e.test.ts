@@ -234,6 +234,35 @@ describe("jco-embed e2e (component in-process)", () => {
     assert.equal(stillLocked.statusCode, 429);
   });
 
+  it("rejects a JWT whose alg is not on the allow-list (alg pinning)", async () => {
+    // Craft an HS256 JWT. allowed-algs is RS256,ES256, so it must be rejected
+    // at the algorithm gate — before any signature/secret work.
+    const b64 = (o: unknown) =>
+      Buffer.from(JSON.stringify(o)).toString("base64url");
+    const jwt = `${b64({ alg: "HS256", typ: "JWT" })}.${b64({
+      sub: "x",
+      iss: "i",
+      exp: 9999999999,
+    })}.c2ln`;
+    const res = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { authorization: `Bearer ${jwt}` },
+    });
+    assert.equal(res.statusCode, 401);
+    assert.equal(res.json().error, "invalid_token");
+  });
+
+  it("rejects a structurally malformed JWT (400)", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { authorization: "Bearer not.a.jwt.really" },
+    });
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.json().error, "malformed");
+  });
+
   it("logs out (204) and the session is then invalid (401)", async () => {
     const out = await app.inject({
       method: "POST",

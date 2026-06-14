@@ -96,6 +96,10 @@ rebuild). Defaults make it run with zero config:
 Secrets & IdP wiring are supplied through the keyvalue store, not config:
 `oidc:issuer`, `oidc:client-id`, `oidc:client-secret`, `hs256-secret`.
 
+Crypto note: signatures use vetted RustCrypto crates — `rsa` (RS256), `p256`
+(ES256), `hmac`+`sha2` (HS256, constant-time verify), `argon2` (passwords). No
+hand-rolled primitives, no `ring`/native deps (so it builds clean for wasip2).
+
 > **Production checklist:** set `expected-issuer` + `expected-audience`, and keep
 > `allowed-algs` to the asymmetric algs you actually use. Leaving issuer/audience
 > empty disables those checks (fine for local/dev, unsafe in prod).
