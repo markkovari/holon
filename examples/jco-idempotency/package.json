@@ -1,0 +1,23 @@
+{
+  "name": "comp-jco-idempotency-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Exercise the idempotency:guard component in-process via jco",
+  "scripts": {
+    "transpile": "jco transpile idempotency_guard.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue-shim.js --map wasi:config/runtime@0.2.0-draft=../src/config-shim.js",
+    "transpile:sqlite": "jco transpile idempotency_guard.wasm -o gen-sqlite --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue-sqlite.js --map wasi:config/runtime@0.2.0-draft=../src/config-shim.js",
+    "test": "npm run transpile && tsx --test test/idempotency.test.ts",
+    "test:sqlite": "npm run transpile:sqlite && tsx --test test/sqlite.test.ts"
+  },
+  "dependencies": {
+    "@bytecodealliance/jco": "^1.23.0",
+    "@bytecodealliance/preview2-shim": "^0.17.0",
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

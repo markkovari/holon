@@ -1,88 +1,142 @@
 {
   "kind": "in-process",
   "node": "v24.16.0",
-  "when": 1781464425251,
+  "when": 1781530120399,
   "results": [
     {
       "op": "register",
       "iters": 300,
-      "meanNs": 25653441,
-      "p50Ns": 25119417,
-      "p95Ns": 29101625,
-      "p99Ns": 38526958,
-      "opsPerSec": 39
+      "meanNs": 31949467,
+      "p50Ns": 27440583,
+      "p95Ns": 53538833,
+      "p99Ns": 114085625,
+      "opsPerSec": 31
     },
     {
       "op": "login",
       "iters": 300,
-      "meanNs": 25832576,
-      "p50Ns": 25111000,
-      "p95Ns": 30013042,
-      "p99Ns": 43487083,
-      "opsPerSec": 39
+      "meanNs": 75921861,
+      "p50Ns": 58100250,
+      "p95Ns": 170404916,
+      "p99Ns": 597008125,
+      "opsPerSec": 13
     },
     {
       "op": "introspect",
       "iters": 5000,
-      "meanNs": 41427,
-      "p50Ns": 33125,
-      "p95Ns": 43500,
-      "p99Ns": 122084,
-      "opsPerSec": 24139
+      "meanNs": 372469,
+      "p50Ns": 47042,
+      "p95Ns": 1133500,
+      "p99Ns": 5553792,
+      "opsPerSec": 2685
     },
     {
       "op": "authorize",
       "iters": 5000,
-      "meanNs": 60903,
-      "p50Ns": 50417,
-      "p95Ns": 63041,
-      "p99Ns": 134542,
-      "opsPerSec": 16419
+      "meanNs": 230162,
+      "p50Ns": 55416,
+      "p95Ns": 603416,
+      "p99Ns": 2431667,
+      "opsPerSec": 4345
     },
     {
       "op": "session.lookup",
       "iters": 5000,
-      "meanNs": 22151,
-      "p50Ns": 20166,
-      "p95Ns": 23542,
-      "p99Ns": 45125,
-      "opsPerSec": 45144
+      "meanNs": 66148,
+      "p50Ns": 22292,
+      "p95Ns": 159166,
+      "p99Ns": 652291,
+      "opsPerSec": 15118
     },
     {
       "op": "cache.get(hit)",
       "iters": 20000,
-      "meanNs": 25521,
-      "p50Ns": 19084,
-      "p95Ns": 24125,
-      "p99Ns": 62334,
-      "opsPerSec": 39183
+      "meanNs": 69402,
+      "p50Ns": 20584,
+      "p95Ns": 163333,
+      "p99Ns": 638583,
+      "opsPerSec": 14409
     },
     {
       "op": "cache.set",
       "iters": 20000,
-      "meanNs": 22297,
-      "p50Ns": 18792,
-      "p95Ns": 22000,
-      "p99Ns": 51708,
-      "opsPerSec": 44848
+      "meanNs": 80037,
+      "p50Ns": 20459,
+      "p95Ns": 165042,
+      "p99Ns": 857125,
+      "opsPerSec": 12494
     },
     {
       "op": "cache.get(miss)",
       "iters": 20000,
-      "meanNs": 15071,
-      "p50Ns": 12584,
-      "p95Ns": 14375,
-      "p99Ns": 23250,
-      "opsPerSec": 66354
+      "meanNs": 116878,
+      "p50Ns": 14708,
+      "p95Ns": 201334,
+      "p99Ns": 1586125,
+      "opsPerSec": 8556
     },
     {
-      "op": "idp.introspect(RS256, warm JWKS)",
-      "iters": 3000,
-      "meanNs": 2488077,
-      "p50Ns": 2312000,
-      "p95Ns": 3221875,
-      "p99Ns": 6302375,
-      "opsPerSec": 402
+      "op": "idem.begin(miss)",
+      "iters": 20000,
+      "meanNs": 270555,
+      "p50Ns": 35917,
+      "p95Ns": 692875,
+      "p99Ns": 5351708,
+      "opsPerSec": 3696
+    },
+    {
+      "op": "idem.begin(replay)",
+      "iters": 20000,
+      "meanNs": 54662,
+      "p50Ns": 20041,
+      "p95Ns": 129458,
+      "p99Ns": 482792,
+      "opsPerSec": 18294
+    },
+    {
+      "op": "idem.complete",
+      "iters": 20000,
+      "meanNs": 49448,
+      "p50Ns": 19708,
+      "p95Ns": 80458,
+      "p99Ns": 382292,
+      "opsPerSec": 20223
+    },
+    {
+      "op": "flags.isEnabled(bool)",
+      "iters": 20000,
+      "meanNs": 108755,
+      "p50Ns": 27250,
+      "p95Ns": 300333,
+      "p99Ns": 1313833,
+      "opsPerSec": 9195
+    },
+    {
+      "op": "flags.isEnabled(rollout)",
+      "iters": 20000,
+      "meanNs": 73351,
+      "p50Ns": 25125,
+      "p95Ns": 175917,
+      "p99Ns": 647166,
+      "opsPerSec": 13633
+    },
+    {
+      "op": "flags.setRule",
+      "iters": 20000,
+      "meanNs": 63031,
+      "p50Ns": 15875,
+      "p95Ns": 150166,
+      "p99Ns": 757583,
+      "opsPerSec": 15865
+    },
+    {
+      "op": "flags.listFlags",
+      "iters": 5000,
+      "meanNs": 345926,
+      "p50Ns": 86083,
+      "p95Ns": 993000,
+      "p99Ns": 3612583,
+      "opsPerSec": 2891
     }
   ]
 }

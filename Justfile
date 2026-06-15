@@ -11,6 +11,8 @@ rel := components / "target/wasm32-wasip1/release"
 guard_wasm := rel / "auth_guard.wasm"
 consumer_wasm := rel / "sample_consumer.wasm"
 ratelimit_wasm := rel / "rate_limiter.wasm"
+idempotency_wasm := rel / "idempotency_guard.wasm"
+featureflags_wasm := rel / "feature_flags.wasm"
 guard_composed := "components/target/auth_guard.composed.wasm"
 
 # List available recipes.

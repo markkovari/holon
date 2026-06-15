@@ -1,0 +1,87 @@
+// featureflags:guard — a small, generic feature-flag / rollout capability.
+//
+// Deliberately app-agnostic: it answers "is flag X on for this context?" for
+// any service. Flag definitions come from deploy-time config (wasi:config) and
+// from dynamic, runtime-set rules in a key-value store. Rules can be set
+// globally or scoped to a tenant, and can be a plain on/off or a percentage
+// rollout. Percentage rollouts bucket on a stable hash of the subject, so a
+// given subject is sticky (it does not flicker on/off between calls). Another
+// worked example of a standalone WIT-first capability backed only by generic
+// WASI imports.
+package featureflags:guard@0.1.0;
+
+/// Feature-flag evaluation + runtime management, scoped by tenant.
+interface evaluator {
+    /// Why a flags call failed.
+    variant flag-error {
+        /// A backing dependency (the rule store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// The context a flag is evaluated against.
+    record context {
+        /// Tenant / organization. A tenant-scoped rule (if any) wins over the
+        /// global rule and over config. `""` selects the global scope.
+        tenant: string,
+        /// Stable subject id (user/session). Used to bucket percentage rollouts
+        /// so the same subject always lands on the same side of the rollout.
+        subject: string,
+    }
+
+    /// A flag rule: either a plain on/off, or a percentage rollout (0..=100,
+    /// values above 100 are clamped). The same shape is produced by config
+    /// values (`true`/`false`/`on`/`off`/`1`/`0`, or `N%`).
+    variant rule {
+        enabled,
+        disabled,
+        percentage(u8),
+    }
+
+    /// Where a flag's effective rule came from, reported by `list`.
+    enum source {
+        /// From a deploy-time `flag:{name}` config value.
+        config,
+        /// From a runtime rule set globally (tenant `""`).
+        global-override,
+        /// From a runtime rule set for the queried tenant.
+        tenant-override,
+    }
+
+    /// A flag and its effective rule + origin for a given tenant, from `list`.
+    record flag-state {
+        name: string,
+        rule: rule,
+        source: source,
+    }
+
+    /// Decide whether `flag` is enabled for `ctx`. Resolution order:
+    ///   1. tenant-scoped runtime rule for `ctx.tenant` (if set);
+    ///   2. global runtime rule (tenant `""`, if set);
+    ///   3. config `flag:{name}` — boolean (`true`/`false`/`on`/`off`/`1`/`0`)
+    ///      or percentage (`N%`); a percentage is enabled when
+    ///      `hash(subject) % 100 < N`;
+    ///   4. default `false` when the flag is unknown.
+    is-enabled: func(flag: string, ctx: context) -> result<bool, flag-error>;
+
+    /// Create or replace a runtime rule for `flag`, scoped to `tenant` (`""` =
+    /// global). This both DEFINES a brand-new flag at runtime and overrides a
+    /// config-defined one. Idempotent (full replace).
+    set-rule: func(flag: string, tenant: string, rule: rule) -> result<_, flag-error>;
+
+    /// Remove a runtime rule for (`flag`, `tenant`), falling back to the next
+    /// level in the resolution order. Idempotent.
+    clear-rule: func(flag: string, tenant: string) -> result<_, flag-error>;
+
+    /// List every known flag and its effective rule for `tenant`, merging
+    /// runtime rules (tenant-scoped + global) with config definitions. A
+    /// tenant-scoped rule shadows the global rule, which shadows config.
+    list-flags: func(tenant: string) -> result<list<flag-state>, flag-error>;
+}
+
+/// What the `feature-flags` component provides: the evaluator interface, backed
+/// by a key-value store (runtime rules) + config (definitions). No clock needed.
+world feature-flags {
+    export evaluator;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:config/runtime@0.2.0-draft;
+}

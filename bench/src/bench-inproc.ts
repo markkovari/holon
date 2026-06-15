@@ -13,6 +13,10 @@ import { measure, type Result } from "./measure.js";
 import { accounts, authorizer, session } from "../../examples/jco-embed/gen/auth_guard.js";
 // cache:store
 import { cache } from "../../examples/jco-cache/gen/cache.js";
+// idempotency:guard/store
+import { store as idem } from "../../examples/jco-idempotency/gen/idempotency_guard.js";
+// featureflags:guard/evaluator
+import { evaluator as flags } from "../../examples/jco-featureflags/gen/feature_flags.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -60,6 +64,45 @@ async function main() {
   results.push(await measure("cache.get(hit)", () => cache.get("k"), { iters: 20000 }));
   results.push(await measure("cache.set", () => cache.set("k", enc("v"), 60n), { iters: 20000 }));
   results.push(await measure("cache.get(miss)", () => cache.get("absent"), { iters: 20000 }));
+
+  // --- idempotency:guard ---
+  // begin(miss): unique key each iter -> reserves a fresh pending record (write).
+  let m = 0;
+  results.push(
+    await measure("idem.begin(miss)", () => idem.begin(`miss-${m++}`, 3600n), { iters: 20000 }),
+  );
+  // a completed key for the replay path.
+  idem.begin("hit", 3600n);
+  idem.complete("hit", 200, enc('{"ok":true}'));
+  results.push(await measure("idem.begin(replay)", () => idem.begin("hit", 3600n), { iters: 20000 }));
+  results.push(
+    await measure("idem.complete", () => idem.complete("done", 200, enc('{"ok":true}')), {
+      iters: 20000,
+    }),
+  );
+
+  // --- featureflags:guard ---
+  const ctx = { tenant: "bench", subject: "user-42" };
+  results.push(
+    await measure("flags.isEnabled(bool)", () => flags.isEnabled("new-checkout", ctx), {
+      iters: 20000,
+    }),
+  );
+  results.push(
+    await measure("flags.isEnabled(rollout)", () => flags.isEnabled("beta-search", ctx), {
+      iters: 20000,
+    }),
+  );
+  results.push(
+    await measure(
+      "flags.setRule",
+      () => flags.setRule("dark-mode", "bench", { tag: "enabled" }),
+      { iters: 20000 },
+    ),
+  );
+  // list-flags walks the keyspace — seed a handful of rules first.
+  for (let i = 0; i < 8; i++) flags.setRule(`seeded-${i}`, "bench", { tag: "disabled" });
+  results.push(await measure("flags.listFlags", () => flags.listFlags("bench"), { iters: 5000 }));
 
   const out = { kind: "in-process", node: process.version, when: Date.now(), results };
   writeFileSync(new URL("../results-inproc.json", import.meta.url), JSON.stringify(out, null, 2));

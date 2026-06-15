@@ -16,8 +16,10 @@ Numbers are from one dev machine (Apple Silicon, OrbStack k8s) — treat them as
 ```bash
 npm install
 # in-process: needs the example gens transpiled first
-(cd ../examples/jco-embed && npm run transpile)
-(cd ../examples/jco-cache  && npm run transpile)
+(cd ../examples/jco-embed        && npm install && npm run transpile)
+(cd ../examples/jco-cache        && npm install && npm run transpile)
+(cd ../examples/jco-idempotency  && npm install && npm run transpile)
+(cd ../examples/jco-featureflags && npm install && npm run transpile)
 AUDIT_ENABLED=false npm run bench:inproc      # -> results-inproc.json
 
 # HTTP: a single wasmCloud host must be up (see `just k8s-collapse`). The

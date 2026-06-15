@@ -1,0 +1,57 @@
+// idempotency:guard — a small, generic request-deduplication capability.
+//
+// Deliberately app-agnostic: it dedups any mutating operation keyed by an
+// opaque idempotency `key` (the "Idempotency-Key" header convention). The first
+// caller for a key proceeds and stores its result; later callers replay the
+// stored result instead of re-executing. Any service can compose it — payments,
+// order creation, webhook ingest. A third worked example of WIT-first
+// composition: a standalone capability backed only by generic WASI imports.
+package idempotency:guard@0.1.0;
+
+/// A store-and-replay idempotency record keyed by an opaque string.
+interface store {
+    /// Why a store call failed.
+    variant idem-error {
+        /// A request with this key is currently mid-flight (reserved but not yet
+        /// completed). The caller is a concurrent duplicate and should wait /
+        /// retry. HTTP 409.
+        in-progress,
+        /// A backing dependency (the record store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// A previously-stored response, replayed for a repeated key.
+    record cached-response {
+        status: u16,
+        body: list<u8>,
+    }
+
+    /// Reserve `key` for a new operation, or learn it was already handled.
+    ///   - `ok(none)`        -> caller is FIRST; the key is now reserved
+    ///                          (pending) for `ttl-seconds`. Proceed, then call
+    ///                          `complete`.
+    ///   - `ok(some(resp))`  -> the operation already completed; replay `resp`
+    ///                          instead of re-executing.
+    ///   - `err(in-progress)`-> another caller holds the key but has not
+    ///                          completed yet (concurrent duplicate).
+    /// A reservation older than its ttl is treated as expired and reclaimed.
+    begin: func(key: string, ttl-seconds: u64) -> result<option<cached-response>, idem-error>;
+
+    /// Record the final result for `key`, so future `begin` calls replay it.
+    /// Call this AFTER the guarded operation succeeds.
+    complete: func(key: string, status: u16, body: list<u8>) -> result<_, idem-error>;
+
+    /// Drop a key — e.g. the operation failed and the client should be allowed
+    /// to retry from scratch. Idempotent (forgetting an unknown key succeeds).
+    forget: func(key: string) -> result<_, idem-error>;
+}
+
+/// What the `idempotency-guard` component provides: the store interface, backed
+/// by a key-value store + clock. Config knob (default-ttl) comes from
+/// wasi:config; the per-call `ttl-seconds` overrides it when non-zero.
+world idempotency-guard {
+    export store;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:config/runtime@0.2.0-draft;
+}
