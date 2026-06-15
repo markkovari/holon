@@ -1,0 +1,61 @@
+// blob:store — a generic large-object (blob) storage capability.
+//
+// Where keyvalue is for small values and cache is for hot ephemeral data, this
+// is for arbitrary binary objects (uploads, exports, attachments) organized into
+// named containers. App-agnostic and backend-agnostic: the in-process reference
+// shim backs it with a Map / SQLite BLOB, while a deployment binds it to S3, R2,
+// GCS, or a filesystem provider — the component never knows. Bodies are whole
+// `list<u8>` (wasip2-stable, no streaming-bound shapes); chunked/streamed reads
+// are a future wasip3 async revision.
+package blob:store@0.1.0;
+
+interface blobstore {
+    variant blob-error {
+        /// No object exists at (container, name).
+        not-found,
+        /// The backing object store was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// Metadata about a stored object, without its bytes.
+    record object-info {
+        name: string,
+        /// Size in bytes.
+        size: u64,
+        /// Caller-supplied content type, or "" if none was set.
+        content-type: string,
+    }
+
+    /// Store (or overwrite) an object. `content-type` may be "" if unknown.
+    put: func(
+        container: string,
+        name: string,
+        data: list<u8>,
+        content-type: string,
+    ) -> result<_, blob-error>;
+
+    /// Fetch an object's bytes. `not-found` if absent.
+    get: func(container: string, name: string) -> result<list<u8>, blob-error>;
+
+    /// Metadata only (size, content-type) without transferring the bytes.
+    head: func(container: string, name: string) -> result<object-info, blob-error>;
+
+    /// Whether an object exists.
+    exists: func(container: string, name: string) -> result<bool, blob-error>;
+
+    /// Remove an object. Idempotent (deleting an absent object succeeds).
+    delete: func(container: string, name: string) -> result<_, blob-error>;
+
+    /// List objects in a container whose name starts with `prefix` (pass "" for
+    /// all). Returns metadata, not bytes. Reference impl is O(n) over the
+    /// container — fine for inspection, not a high-fanout listing engine.
+    list-objects: func(container: string, prefix: string) -> result<list<object-info>, blob-error>;
+}
+
+/// What the `blob-store` component provides: object storage, backed by a generic
+/// key-value store (the object bytes + a small index). The real object backend
+/// (S3/R2/GCS/fs) is bound at deploy time, never named here.
+world blob-store {
+    export blobstore;
+    import wasi:keyvalue/store@0.2.0-draft;
+}

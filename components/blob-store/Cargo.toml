@@ -1,0 +1,24 @@
+[package]
+name = "blob-store"
+description = "Generic large-object (blob) storage capability (blob:store)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "blob:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "blob-store"
+
+[package.metadata.component.target.dependencies]
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

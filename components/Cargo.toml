@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["auth-guard", "sample-consumer", "accounts-app", "rate-limiter", "cache", "idempotency-guard", "feature-flags", "audit-log", "notify-dispatch", "webhook-ingest"]
+members = ["auth-guard", "sample-consumer", "accounts-app", "rate-limiter", "cache", "idempotency-guard", "feature-flags", "audit-log", "notify-dispatch", "webhook-ingest", "blob-store"]
 
 [workspace.package]
 version = "0.1.0"

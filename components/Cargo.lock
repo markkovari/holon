@@ -88,6 +88,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "blob-store"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
