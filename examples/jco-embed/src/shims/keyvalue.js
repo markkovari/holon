@@ -37,3 +37,15 @@ export { Bucket };
 export function open(name) {
   return new Bucket(name);
 }
+
+// ---- wasi:keyvalue/atomics ----------------------------------------------
+// The rate-limiter (composed into auth-guard) bumps its failure counter with
+// the atomic `increment`. In a single Node process this is naturally atomic;
+// the counter is stored as a UTF-8 decimal string, matching how the component
+// reads it back through the store interface.
+export function increment(bucket, key, delta) {
+  const cur = bucket.get(key);
+  const n = (cur ? Number(new TextDecoder().decode(cur)) : 0) + Number(delta);
+  bucket.set(key, new TextEncoder().encode(String(n)));
+  return BigInt(n);
+}

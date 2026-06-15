@@ -1,23 +1,19 @@
 //! Structured audit logging of auth decisions.
 //!
-//! Emits one JSON object per line to stderr — the host captures component
-//! stderr, so an OTel/log collector can scrape it. Deliberately records NO
-//! secrets: no tokens, no passwords, no refresh tokens. Identifiers (email,
-//! subject, tenant) are logged so a decision can be traced to an actor.
+//! Decisions are recorded against the `audit:log/recorder` capability — a
+//! SEPARATE `audit-log` component (composed with wac) that persists the trail
+//! durably AND echoes each event to stderr (so the existing OTel/scrape path is
+//! unchanged). This module owns only the auth-specific shaping: outcome mapping
+//! and W3C traceparent -> trace-id/span-id. Deliberately records NO secrets: no
+//! tokens, no passwords, no refresh tokens. Identifiers (email, subject, tenant)
+//! are logged so a decision can be traced to an actor.
 //!
 //! Toggle with config `audit-enabled` (default on).
 
-use crate::bindings::wasi::clocks::wall_clock;
+use crate::bindings::audit::log::recorder;
+use crate::bindings::audit::log::types::Event;
 use crate::bindings::wasi::random::random::get_random_bytes;
 use crate::config;
-
-/// A short random correlation id per event, so the lines emitted while serving
-/// one request can be grouped in a log/trace backend (the component cannot see
-/// the caller's trace context, so it mints its own handle).
-fn event_id() -> String {
-    let b = get_random_bytes(8);
-    b.iter().map(|x| format!("{x:02x}")).collect()
-}
 
 /// Outcome of an audited decision.
 pub enum Outcome {
@@ -34,21 +30,6 @@ impl Outcome {
             Outcome::Error => "error",
         }
     }
-}
-
-/// Escape a field value for embedding in our minimal JSON (quotes/backslashes).
-fn esc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            c if (c as u32) < 0x20 => out.push(' '),
-            c => out.push(c),
-        }
-    }
-    out
 }
 
 /// A 16-hex (8-byte) span id, minted fresh per emitted event.
@@ -90,19 +71,18 @@ pub fn emit_traced(
     if !config::audit_enabled() {
         return;
     }
-    let ts = wall_clock::now().seconds;
-    let trace_id = trace_id_from(traceparent);
-    let span = span_id();
-    eprintln!(
-        "{{\"audit\":true,\"id\":\"{}\",\"trace_id\":\"{}\",\"span_id\":\"{}\",\"ts\":{},\"event\":\"{}\",\"outcome\":\"{}\",\"tenant\":\"{}\",\"subject\":\"{}\",\"detail\":\"{}\"}}",
-        event_id(),
-        trace_id,
-        span,
-        ts,
-        esc(event),
-        outcome.as_str(),
-        esc(tenant),
-        esc(subject),
-        esc(detail),
-    );
+    // id + timestamp are stamped by the recorder; we supply the auth-specific
+    // shaping (trace correlation + outcome). Recording failures are non-fatal —
+    // an audit-store hiccup must not break the auth decision itself.
+    let _ = recorder::record_event(&Event {
+        id: String::new(),
+        trace_id: trace_id_from(traceparent),
+        span_id: span_id(),
+        timestamp: 0,
+        event: event.to_string(),
+        outcome: outcome.as_str().to_string(),
+        tenant: tenant.to_string(),
+        subject: subject.to_string(),
+        detail: detail.to_string(),
+    });
 }

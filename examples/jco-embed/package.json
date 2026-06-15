@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Embed the auth-guard component in-process via jco (no network hop)",
   "scripts": {
-    "transpile": "jco transpile auth_guard.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/shims/keyvalue.js --map wasi:config/runtime@0.2.0-draft=../src/shims/config.js",
+    "transpile": "jco transpile auth_guard.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/shims/keyvalue.js --map wasi:keyvalue/atomics@0.2.0-draft=../src/shims/keyvalue.js --map wasi:config/runtime@0.2.0-draft=../src/shims/config.js",
     "start": "npm run transpile && tsx src/server.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run transpile && tsx --test test/**/*.test.ts"

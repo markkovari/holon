@@ -13,7 +13,11 @@ consumer_wasm := rel / "sample_consumer.wasm"
 ratelimit_wasm := rel / "rate_limiter.wasm"
 idempotency_wasm := rel / "idempotency_guard.wasm"
 featureflags_wasm := rel / "feature_flags.wasm"
+auditlog_wasm := rel / "audit_log.wasm"
+notify_wasm := rel / "notify_dispatch.wasm"
+webhook_wasm := rel / "webhook_ingest.wasm"
 guard_composed := "components/target/auth_guard.composed.wasm"
+webhook_composed := "components/target/webhook_ingest.composed.wasm"
 
 # List available recipes.
 default:
@@ -31,11 +35,18 @@ wit-check:
 build:
     cd {{components}} && cargo component build --release
 
-# Compose the rate-limiter into auth-guard with wac, satisfying auth-guard's
-# `ratelimit:guard/limiter` import. Output is a single self-contained component.
+# Compose the rate-limiter AND audit-log into auth-guard with wac, satisfying
+# auth-guard's `ratelimit:guard/limiter` + `audit:log/recorder` imports. Output
+# is a single self-contained component.
 compose: build
-    wac plug {{guard_wasm}} --plug {{ratelimit_wasm}} -o {{guard_composed}}
-    @echo "composed auth-guard (+ rate-limiter) -> {{guard_composed}}"
+    wac plug {{guard_wasm}} --plug {{ratelimit_wasm}} --plug {{auditlog_wasm}} -o {{guard_composed}}
+    @echo "composed auth-guard (+ rate-limiter + audit-log) -> {{guard_composed}}"
+
+# Compose the idempotency-guard into webhook-ingest, satisfying its
+# `idempotency:guard/store` import. Demonstrates one component composing another.
+compose-webhook: build
+    wac plug {{webhook_wasm}} --plug {{idempotency_wasm}} -o {{webhook_composed}}
+    @echo "composed webhook-ingest (+ idempotency-guard) -> {{webhook_composed}}"
 
 # Validate the built components.
 validate: build

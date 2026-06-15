@@ -1,0 +1,48 @@
+// notify:dispatch — a generic outbound notification capability.
+//
+// App-agnostic synchronous sender over outbound HTTP. A `webhook` POSTs the body
+// straight to a target URL; `email`/`sms` POST a small JSON envelope to a
+// configured gateway base URL (so the contract names no vendor — SendGrid,
+// Twilio, SES, etc. are a deploy-time `notify:*-url` config choice). A worked
+// example of a capability whose only host need is `wasi:http/outgoing-handler`.
+package notify:dispatch@0.1.0;
+
+interface dispatcher {
+    variant notify-error {
+        /// The channel has no configured gateway (email/sms with no *-url set).
+        unsupported-channel(string),
+        /// The upstream returned a non-2xx status (payload = the status text).
+        delivery-failed(string),
+        /// The transport was unreachable / malformed target.
+        backend-unavailable(string),
+    }
+
+    /// Delivery channel. email/sms are delivered via an HTTP gateway POST.
+    enum channel {
+        webhook,
+        email,
+        sms,
+    }
+
+    record message {
+        channel: channel,
+        /// Webhook URL for `webhook`; recipient (email address / phone) otherwise.
+        target: string,
+        /// Subject line for `email`; ignored for `webhook`/`sms`.
+        subject: string,
+        /// The payload: raw body for `webhook`, message text for `email`/`sms`.
+        body: string,
+    }
+
+    /// Send `msg` synchronously. Returns the upstream HTTP status on success.
+    send: func(msg: message) -> result<u16, notify-error>;
+}
+
+/// What the `notify-dispatch` component provides: the dispatcher, backed by
+/// outbound HTTP. Gateway base URLs for email/sms come from wasi:config
+/// (`notify:email-url`, `notify:sms-url`); the backend vendor is never named here.
+world notify-dispatch {
+    export dispatcher;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/runtime@0.2.0-draft;
+}

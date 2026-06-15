@@ -464,4 +464,9 @@ world authority {
     // (`rate-limiter`, package ratelimit:guard) satisfies this import —
     // composed with `wac` at build time, or linked at runtime.
     import ratelimit:guard/limiter@0.1.0;
+    // Durable, queryable audit trail. A SEPARATE component (`audit-log`,
+    // package audit:log) satisfies this import — composed with `wac`. The
+    // component still echoes each event to stderr, so the OTel/scrape path is
+    // unchanged; the trail just also becomes durable + queryable.
+    import audit:log/recorder@0.1.0;
 }

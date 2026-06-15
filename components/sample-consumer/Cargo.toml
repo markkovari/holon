@@ -28,3 +28,4 @@ world = "consumer-http"
 "wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-draft" }
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
+"audit:log" = { path = "../audit-log/wit" }

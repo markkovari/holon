@@ -1,0 +1,71 @@
+// audit:log — a generic, append-only audit-trail capability.
+//
+// Deliberately app-agnostic: any component records structured decision events
+// against it (auth-guard records login/authorize/refresh decisions, but a
+// payments or admin component could record its own). Events are durable (kv) AND
+// echoed to stderr, so an existing OTel/log-scrape pipeline keeps working while
+// the trail also becomes queryable. A worked example of extracting embedded
+// cross-cutting logic into a standalone WIT-first capability.
+package audit:log@0.1.0;
+
+/// Shared event shape.
+interface types {
+    /// A single audit event. Carries NO secrets — identifiers only.
+    record event {
+        /// Per-event correlation id (the impl mints one if empty).
+        id: string,
+        /// W3C trace-id this event joins (32 hex), or empty.
+        trace-id: string,
+        /// Fresh child span-id for this event (16 hex), or empty.
+        span-id: string,
+        /// Unix seconds. The impl stamps `now()` if zero.
+        timestamp: u64,
+        /// What happened, e.g. "login", "authorize".
+        event: string,
+        /// Decision outcome: "allow" | "deny" | "error".
+        outcome: string,
+        /// Tenant / org, or empty.
+        tenant: string,
+        /// Subject / actor id, or empty.
+        subject: string,
+        /// Free-form detail (e.g. "orders:read", "rate_limited"). No secrets.
+        detail: string,
+    }
+
+    variant audit-error {
+        /// The backing trail store was unreachable.
+        backend-unavailable(string),
+    }
+}
+
+/// Write side: append events to the trail.
+interface recorder {
+    use types.{event, audit-error};
+
+    /// Append `e` to the trail. The impl fills `id`/`timestamp` if unset and
+    /// persists durably. Recording never blocks the caller's decision on a
+    /// store failure being fatal — callers may ignore the result.
+    record-event: func(e: event) -> result<_, audit-error>;
+}
+
+/// Read side: query the trail. Reference impl is O(n) over stored keys — fine
+/// for inspection / tests, not a high-volume query engine.
+interface query {
+    use types.{event, audit-error};
+
+    /// Most-recent `limit` events, newest first.
+    recent: func(limit: u32) -> result<list<event>, audit-error>;
+
+    /// All events sharing a `trace-id`, newest first.
+    by-trace: func(trace-id: string) -> result<list<event>, audit-error>;
+}
+
+/// What the `audit-log` component provides: record + query, backed by a kv store
+/// and a clock. The kv backend (NATS, etc.) is bound at deploy time, never here.
+world audit-log {
+    export recorder;
+    export query;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+}

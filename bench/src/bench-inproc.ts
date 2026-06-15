@@ -17,6 +17,12 @@ import { cache } from "../../examples/jco-cache/gen/cache.js";
 import { store as idem } from "../../examples/jco-idempotency/gen/idempotency_guard.js";
 // featureflags:guard/evaluator
 import { evaluator as flags } from "../../examples/jco-featureflags/gen/feature_flags.js";
+// audit:log/recorder
+import { recorder as audit } from "../../examples/jco-audit/gen/audit_log.js";
+// webhook:ingest/verifier (composed with idempotency-guard)
+import { verifier as webhook } from "../../examples/jco-webhook/gen/webhook_ingest.js";
+import { __seed as seedWebhookKv } from "../../examples/jco-webhook/src/keyvalue-shim.js";
+import { createHmac } from "node:crypto";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -103,6 +109,43 @@ async function main() {
   // list-flags walks the keyspace — seed a handful of rules first.
   for (let i = 0; i < 8; i++) flags.setRule(`seeded-${i}`, "bench", { tag: "disabled" });
   results.push(await measure("flags.listFlags", () => flags.listFlags("bench"), { iters: 5000 }));
+
+  // --- audit:log ---
+  // record-event: kv write + stderr echo (suppress the echo noise via fd later;
+  // here it's the compute+write cost).
+  results.push(
+    await measure(
+      "audit.record-event",
+      () =>
+        audit.recordEvent({
+          id: "",
+          traceId: "",
+          spanId: "",
+          timestamp: 0n,
+          event: "authorize",
+          outcome: "allow",
+          tenant: "bench",
+          subject: "u1",
+          detail: "orders:read",
+        }),
+      { iters: 5000 },
+    ),
+  );
+
+  // --- webhook:ingest (composed with idempotency-guard) ---
+  const SECRET = "whsec_bench";
+  seedWebhookKv("wh-secret", SECRET);
+  const wbody = enc('{"event":"ping"}');
+  const wsig = createHmac("sha256", SECRET).update(wbody).digest("hex");
+  // unique delivery-id each iter -> exercises the full verify + dedup-miss path.
+  let w = 0;
+  results.push(
+    await measure(
+      "webhook.ingest(verify+dedup)",
+      () => webhook.ingest(wbody, wsig, "wh-secret", `evt-${w++}`),
+      { iters: 5000 },
+    ),
+  );
 
   const out = { kind: "in-process", node: process.version, when: Date.now(), results };
   writeFileSync(new URL("../results-inproc.json", import.meta.url), JSON.stringify(out, null, 2));

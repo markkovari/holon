@@ -1,0 +1,47 @@
+// webhook:ingest — verify an inbound webhook's HMAC signature, then dedup it.
+//
+// The composition showcase of this workspace: this component EXPORTS its own
+// `verifier` interface and IMPORTS `idempotency:guard/store` — satisfied by the
+// separate idempotency-guard component, wired with `wac plug`. So a single WIT
+// boundary chains two reusable capabilities (signature check + replay dedup)
+// that a payments/webhook endpoint would otherwise hand-roll.
+package webhook:ingest@0.1.0;
+
+interface verifier {
+    variant ingest-error {
+        /// The HMAC signature did not match (rejected before any dedup).
+        bad-signature,
+        /// A backing dependency (secret store / idempotency) was unreachable.
+        backend-unavailable(string),
+    }
+
+    record verdict {
+        /// True when this delivery should be processed (valid + first-seen).
+        accepted: bool,
+        /// True when this delivery-id was already seen (idempotent replay).
+        replay: bool,
+    }
+
+    /// Verify an HMAC-SHA256 signature over `payload` using the secret stored at
+    /// kv key `secret-ref`, then dedup on `delivery-id`:
+    ///   - bad signature                 -> err(bad-signature)
+    ///   - valid + first delivery        -> ok({accepted:true,  replay:false})
+    ///   - valid + duplicate delivery    -> ok({accepted:false, replay:true})
+    /// `signature-hex` is the lowercase hex of the expected MAC (the common
+    /// `sha256=...` webhook convention, minus any prefix).
+    ingest: func(
+        payload: list<u8>,
+        signature-hex: string,
+        secret-ref: string,
+        delivery-id: string,
+    ) -> result<verdict, ingest-error>;
+}
+
+/// What the `webhook-ingest` component provides + the capability it composes.
+world webhook-ingest {
+    export verifier;
+    // Composed sibling: the idempotency-guard component satisfies this import.
+    import idempotency:guard/store@0.1.0;
+    // The signing secret is fetched from a generic kv store (bound at deploy).
+    import wasi:keyvalue/store@0.2.0-draft;
+}

@@ -60,3 +60,15 @@ store at a path with `KV_SQLITE_PATH` (default `./idem.sqlite`).
 | Survives restart | no | yes |
 | Deps | none | `sql.js` |
 | Use for | fast hermetic tests, the bench | durable single-process / edge |
+
+## Concurrency caveat (`begin` is best-effort, not atomic)
+
+`begin` reserves a key with a get-then-set. Under truly concurrent first-callers
+this is a TOCTOU race: two callers could both see the key absent and both
+proceed. The impl mitigates this best-effort — it writes a pending record
+stamped with a unique nonce, then re-reads and yields (`in-progress`) if another
+caller's nonce won — which closes the common interleaving but **is not a
+correctness guarantee**. A real fix needs compare-and-swap, which
+`wasi:keyvalue@0.2.0-draft` does not expose (it offers only atomic `increment`,
+which the rate-limiter uses). When a CAS / atomic put-if-absent lands in a later
+WASI keyvalue draft (or via a provider extension), `begin` can become exact.

@@ -21,6 +21,7 @@ use bindings::exports::idempotency::guard::store::{CachedResponse, Guest, IdemEr
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::config::runtime as config;
 use bindings::wasi::keyvalue::store as kv;
+use bindings::wasi::random::random::get_random_bytes;
 
 struct Component;
 
@@ -46,12 +47,20 @@ fn ttl_or_default(ttl_seconds: u64) -> u64 {
 // ---- record state -------------------------------------------------------
 
 enum Record {
-    Pending { created: u64 },
+    Pending { created: u64, nonce: String },
     Done { status: u16, body: Vec<u8> },
 }
 
 fn now() -> u64 {
     wall_clock::now().seconds
+}
+
+/// A fresh 16-hex reservation nonce — used to detect a racing first-caller.
+fn nonce() -> String {
+    get_random_bytes(8)
+        .iter()
+        .map(|x| format!("{x:02x}"))
+        .collect()
 }
 
 /// Sanitize an opaque key to NATS-legal kv chars (same scheme as the
@@ -85,10 +94,14 @@ fn load(bucket: &kv::Bucket, key: &str) -> Result<Option<Record>, IdemError> {
 }
 
 fn parse(s: &str) -> Result<Record, IdemError> {
-    // `pending:{created}` | `done:{created}:{status}:{b64}`
+    // `pending:{created}:{nonce}` | `done:{created}:{status}:{b64}`
     if let Some(rest) = s.strip_prefix("pending:") {
-        let created = rest.parse().unwrap_or(0);
-        return Ok(Record::Pending { created });
+        let (created_str, nonce) = rest.split_once(':').unwrap_or((rest, ""));
+        let created = created_str.parse().unwrap_or(0);
+        return Ok(Record::Pending {
+            created,
+            nonce: nonce.to_string(),
+        });
     }
     if let Some(rest) = s.strip_prefix("done:") {
         // rest = {created}:{status}:{b64}
@@ -123,13 +136,32 @@ impl Guest for Component {
             // already completed -> replay the stored response.
             Some(Record::Done { status, body }) => Ok(Some(CachedResponse { status, body })),
             // in flight and still within ttl -> concurrent duplicate.
-            Some(Record::Pending { created }) if now.saturating_sub(created) < ttl => {
+            Some(Record::Pending { created, .. }) if now.saturating_sub(created) < ttl => {
                 Err(IdemError::InProgress)
             }
-            // absent, or a stale pending reservation -> reclaim: reserve fresh.
+            // absent, or a stale pending reservation -> try to reserve.
+            //
+            // BEST-EFFORT race mitigation (NOT a correctness guarantee): write
+            // our pending record with a unique nonce, then re-read. If the
+            // stored nonce is not ours, a concurrent first-caller wrote after us
+            // and we yield to them with `in-progress`. This catches the common
+            // interleaving but a tight set/set/read/read ordering can still let
+            // two callers both proceed. A true fix needs compare-and-swap, which
+            // wasi:keyvalue@0.2.0-draft does not expose (only `increment`).
             _ => {
-                set(&bucket, &k, &format!("pending:{now}"))?;
-                Ok(None)
+                let mine = nonce();
+                set(&bucket, &k, &format!("pending:{now}:{mine}"))?;
+                match load(&bucket, &k)? {
+                    Some(Record::Pending { nonce, .. }) if nonce == mine => Ok(None),
+                    // someone overwrote our reservation -> they win.
+                    Some(Record::Pending { .. }) => Err(IdemError::InProgress),
+                    // raced with a completer -> replay theirs.
+                    Some(Record::Done { status, body }) => {
+                        Ok(Some(CachedResponse { status, body }))
+                    }
+                    // disappeared (forget) -> we proceed.
+                    None => Ok(None),
+                }
             }
         }
     }

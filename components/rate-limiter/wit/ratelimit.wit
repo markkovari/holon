@@ -38,6 +38,9 @@ interface limiter {
 world rate-limiter {
     export limiter;
     import wasi:keyvalue/store@0.2.0-draft;
+    // Atomic increment for the failure counter — avoids the lost-update race a
+    // load/modify/save would have under concurrent record-failure calls.
+    import wasi:keyvalue/atomics@0.2.0-draft;
     import wasi:clocks/wall-clock@0.2.0;
     import wasi:config/runtime@0.2.0-draft;
 }
