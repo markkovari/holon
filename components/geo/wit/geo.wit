@@ -1,0 +1,67 @@
+// geo:resolve — geo helpers: coordinate distance + bounding box, IP classing.
+//
+// The geography basics apps reach for: great-circle (haversine) distance
+// between two lat/lon points, a bounding box around a point for a "within N km"
+// pre-filter, and classification of an IP literal (v4/v6, private/loopback vs
+// public) for compliance / abuse decisions. Deliberately NOT a GeoIP database —
+// IP→country needs a licensed dataset the host injects; this owns the pure
+// math + parsing every app would otherwise duplicate.
+//
+// Pure compute: no state, no host imports.
+package geo:resolve@0.1.0;
+
+/// Coordinate math + IP classification.
+interface coords {
+    /// Why a geo call failed.
+    variant geo-error {
+        /// A latitude/longitude was out of range (lat -90..90, lon -180..180).
+        bad-coordinate,
+        /// The IP string did not parse as IPv4 or IPv6.
+        bad-ip,
+    }
+
+    /// A WGS-84 coordinate.
+    record point {
+        lat: f64,
+        lon: f64,
+    }
+
+    /// An axis-aligned lat/lon bounding box.
+    record bbox {
+        min-lat: f64,
+        min-lon: f64,
+        max-lat: f64,
+        max-lon: f64,
+    }
+
+    /// The class of a parsed IP address.
+    enum ip-class {
+        /// Public, globally-routable.
+        public,
+        /// RFC1918 / unique-local private range.
+        private,
+        /// Loopback (127/8, ::1).
+        loopback,
+        /// Link-local / other special-use.
+        special,
+    }
+
+    /// Great-circle distance between two points, in meters (haversine).
+    distance-meters: func(a: point, b: point) -> result<f64, geo-error>;
+
+    /// A bounding box that contains every point within `radius-meters` of
+    /// `center` — a cheap pre-filter before an exact `distance-meters` check.
+    bounding-box: func(center: point, radius-meters: f64) -> result<bbox, geo-error>;
+
+    /// Whether `p` falls inside `box` (inclusive edges).
+    contains: func(box: bbox, p: point) -> bool;
+
+    /// Parse + classify an IP literal as v4/v6 and public/private/loopback/
+    /// special. `err(bad-ip)` if it doesn't parse.
+    classify-ip: func(ip: string) -> result<ip-class, geo-error>;
+}
+
+/// `geo` provides coordinate math + IP classing; pure compute, no host imports.
+world geo {
+    export coords;
+}

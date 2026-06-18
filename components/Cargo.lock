@@ -207,6 +207,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "csv"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "der"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -293,6 +300,13 @@ dependencies = [
  "typenum",
  "version_check",
  "zeroize",
+]
+
+[[package]]
+name = "geo"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -447,6 +461,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "otp"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "sha1",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "outbox"
 version = "0.1.0"
 dependencies = [
@@ -544,6 +567,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "quota"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -705,6 +736,17 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "wit-bindgen-rt",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
 ]
 
 [[package]]

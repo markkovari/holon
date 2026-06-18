@@ -51,6 +51,15 @@ import { catalog as i18n } from "../../examples/jco-i18n/gen/i18n_catalog.js";
 import { renderer as email } from "../../examples/jco-email/gen/email_render.js";
 // upload:policy/gate
 import { gate as upload } from "../../examples/jco-upload/gen/upload_policy.js";
+// --- tier-3 capabilities ---
+// otp:totp/authenticator
+import { authenticator as otp } from "../../examples/jco-otp/gen/otp.js";
+// quota:meter/meter
+import { meter as quota } from "../../examples/jco-quota/gen/quota.js";
+// geo:resolve/coords (pure compute)
+import { coords as geo } from "../../examples/jco-geo/gen/geo.js";
+// csv:codec/codec (pure compute)
+import { codec as csv } from "../../examples/jco-csv/gen/csv.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -320,6 +329,41 @@ async function main() {
   );
   const ticket = upload.authorize("acme", "image/png", 2048n, 0n);
   results.push(await measure("upload.redeem(verify)", () => upload.redeem(ticket.token), { iters: 10000 }));
+
+  // --- otp:totp (HMAC-SHA1) ---
+  const otpSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  results.push(await measure("otp.totp-now", () => otp.totpNow(otpSecret), { iters: 20000 }));
+  const otpCode = otp.totpNow(otpSecret);
+  results.push(
+    await measure("otp.verify", () => otp.verify(otpSecret, otpCode, 30, 6, 1), { iters: 20000 }),
+  );
+
+  // --- quota:meter (atomic counter) ---
+  results.push(
+    await measure("quota.reserve", () => quota.reserve("bench", 1n, 1_000_000_000n, 2592000n), {
+      iters: 20000,
+    }),
+  );
+  results.push(
+    await measure("quota.peek", () => quota.peek("bench", 1_000_000_000n, 2592000n), {
+      iters: 20000,
+    }),
+  );
+
+  // --- geo:resolve (pure compute) ---
+  const london = { lat: 51.5074, lon: -0.1278 };
+  const paris = { lat: 48.8566, lon: 2.3522 };
+  results.push(
+    await measure("geo.distance", () => geo.distanceMeters(london, paris), { iters: 50000 }),
+  );
+  results.push(await measure("geo.classify-ip", () => geo.classifyIp("192.168.1.1"), { iters: 50000 }));
+
+  // --- csv:codec (pure compute) ---
+  const csvOpts = { delimiter: "", hasHeader: false, trim: false };
+  const csvText = "a,b,c\n1,2,3\n4,5,6\n7,8,9\n10,11,12";
+  results.push(await measure("csv.parse(5x3)", () => csv.parse(csvText, csvOpts), { iters: 20000 }));
+  const csvRows = csv.parse(csvText, csvOpts);
+  results.push(await measure("csv.format(5x3)", () => csv.format(csvRows, csvOpts), { iters: 20000 }));
 
   const out = { kind: "in-process", node: process.version, when: Date.now(), results };
   writeFileSync(new URL("../results-inproc.json", import.meta.url), JSON.stringify(out, null, 2));

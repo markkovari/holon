@@ -1,0 +1,60 @@
+// csv:stream — RFC-4180 CSV parse + format.
+//
+// Import/export is on every app's roadmap and CSV is where the edge cases bite:
+// quoted fields, embedded commas/newlines, doubled quotes, custom delimiters.
+// This is a correct, dependency-free codec — parse a CSV document into rows (or
+// into records keyed by a header row), and format rows back out with proper
+// quoting. RFC 4180 with a configurable delimiter for TSV / semicolon dialects.
+//
+// Pure compute: text in, structure out. No state, no host imports.
+package csv:codec@0.1.0;
+
+/// Parse and format delimited (CSV/TSV) text.
+interface codec {
+    /// Why a csv call failed.
+    variant csv-error {
+        /// The document was malformed (e.g. an unterminated quoted field).
+        malformed(string),
+        /// A row had a different field count than the header during keyed
+        /// parsing. Carries the offending row index.
+        ragged-row(u32),
+    }
+
+    /// Dialect options. Empty `delimiter` defaults to ",".
+    record dialect {
+        /// Field delimiter (first char used); default "," when empty.
+        delimiter: string,
+        /// Treat the first row as a header (affects `parse-records` only).
+        has-header: bool,
+        /// Trim ASCII whitespace around unquoted fields.
+        trim: bool,
+    }
+
+    /// One parsed row as a list of field values.
+    record row {
+        fields: list<string>,
+    }
+
+    /// One parsed record as header-keyed name/value pairs.
+    record record-row {
+        pairs: list<tuple<string, string>>,
+    }
+
+    /// Parse a CSV document into rows (no header interpretation), honoring
+    /// quoting + embedded delimiters/newlines per RFC 4180.
+    parse: func(text: string, opts: dialect) -> result<list<row>, csv-error>;
+
+    /// Parse into header-keyed records: the first row is the header, each later
+    /// row becomes name->value pairs. `err(ragged-row(i))` if a row's field
+    /// count differs from the header.
+    parse-records: func(text: string, opts: dialect) -> result<list<record-row>, csv-error>;
+
+    /// Format rows back into a CSV document, quoting any field that contains the
+    /// delimiter, a quote, or a newline (doubling embedded quotes).
+    format: func(rows: list<row>, opts: dialect) -> string;
+}
+
+/// `csv` provides the codec; pure compute, no host imports.
+world csv {
+    export codec;
+}

@@ -35,6 +35,10 @@ npm install
 (cd ../examples/jco-i18n         && npm install && npm run transpile)
 (cd ../examples/jco-email        && npm install && npm run transpile)
 (cd ../examples/jco-upload       && npm install && npm run transpile)
+(cd ../examples/jco-otp          && npm install && npm run transpile)
+(cd ../examples/jco-quota        && npm install && npm run transpile)
+(cd ../examples/jco-geo          && npm install && npm run transpile)
+(cd ../examples/jco-csv          && npm install && npm run transpile)
 AUDIT_ENABLED=false npm run bench:inproc      # -> results-inproc.json
 
 # HTTP: a single wasmCloud host must be up (see `just k8s-collapse`). The

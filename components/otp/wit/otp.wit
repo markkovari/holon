@@ -1,0 +1,67 @@
+// otp:totp — time-based + counter-based one-time passwords (RFC 6238 / 4226).
+//
+// The second-factor primitive: generate a random shared secret (base32, the
+// `otpauth://` format authenticator apps scan), derive the current TOTP code
+// for a secret + timestamp, verify a user-supplied code with a small clock-skew
+// window, and mint/verify single-use recovery codes. HMAC-SHA1 over the moving
+// factor, exactly as Google Authenticator / Authy expect.
+//
+// Pure crypto + clock: the secret is supplied by the caller (store it in
+// secrets:vault), so this component holds no state. Clock provides "now".
+package otp:totp@0.1.0;
+
+/// Generate and verify TOTP/HOTP codes and recovery codes.
+interface authenticator {
+    /// Why an otp call failed.
+    variant otp-error {
+        /// The secret was not valid base32.
+        bad-secret,
+        /// Requested digit count is outside the supported 6..=8 range.
+        bad-digits,
+    }
+
+    /// A freshly provisioned secret + the URI to render as a QR code.
+    record provisioned {
+        /// Base32-encoded shared secret (no padding) — store it securely.
+        secret: string,
+        /// `otpauth://totp/{issuer}:{account}?secret=...&issuer=...` URI for
+        /// authenticator-app enrollment.
+        uri: string,
+    }
+
+    /// Generate a new random shared secret (20 bytes -> 32 base32 chars) and the
+    /// enrollment URI for `issuer` + `account`.
+    provision: func(issuer: string, account: string) -> result<provisioned, otp-error>;
+
+    /// Compute the TOTP code for `secret` at the given unix `timestamp`, with a
+    /// `period` (seconds, typically 30) and `digits` (6..=8, typically 6).
+    totp-at: func(secret: string, timestamp: u64, period: u32, digits: u8)
+        -> result<string, otp-error>;
+
+    /// Compute the TOTP code for `secret` right now (uses the host clock),
+    /// period 30, digits 6.
+    totp-now: func(secret: string) -> result<string, otp-error>;
+
+    /// Verify a user-supplied `code` against `secret` at the current time,
+    /// accepting codes from the `skew` adjacent periods on each side (e.g.
+    /// skew=1 tolerates the previous + next 30s window). Returns whether it
+    /// matched. Constant-time per-candidate comparison.
+    verify: func(secret: string, code: string, period: u32, digits: u8, skew: u32)
+        -> result<bool, otp-error>;
+
+    /// Compute the HOTP code for `secret` at counter value `counter` (RFC 4226).
+    hotp-at: func(secret: string, counter: u64, digits: u8) -> result<string, otp-error>;
+
+    /// Generate `count` random single-use recovery codes (formatted
+    /// `xxxx-xxxx`, crockford-ish). The caller hashes + stores them; this only
+    /// mints them.
+    recovery-codes: func(count: u32) -> list<string>;
+}
+
+/// `otp` provides TOTP/HOTP; clock for "now", random for secret/recovery
+/// generation.
+world otp {
+    export authenticator;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+}

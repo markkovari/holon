@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["auth-guard", "sample-consumer", "accounts-app", "rate-limiter", "cache", "idempotency-guard", "feature-flags", "audit-log", "notify-dispatch", "webhook-ingest", "blob-store", "session-store", "outbox", "secrets-vault", "config-store", "search-index", "login-app", "money", "slug", "pagination", "validate", "i18n-catalog", "email-render", "upload-policy"]
+members = ["auth-guard", "sample-consumer", "accounts-app", "rate-limiter", "cache", "idempotency-guard", "feature-flags", "audit-log", "notify-dispatch", "webhook-ingest", "blob-store", "session-store", "outbox", "secrets-vault", "config-store", "search-index", "login-app", "money", "slug", "pagination", "validate", "i18n-catalog", "email-render", "upload-policy", "otp", "quota", "geo", "csv"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,9 @@ base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 rsa = { version = "0.9", default-features = false, features = ["sha2"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 sha2 = { version = "0.10", default-features = false }
+# SHA-1 for TOTP/HOTP (RFC 6238/4226) — the interoperable default authenticator
+# hash (Google Authenticator et al.). Used by the `otp` component only.
+sha1 = { version = "0.10", default-features = false }
 # Vetted RFC2104 HMAC (RustCrypto) — replaces hand-rolled HMAC-SHA256; provides
 # constant-time `verify_slice`.
 hmac = { version = "0.12", default-features = false }

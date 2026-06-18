@@ -1,0 +1,64 @@
+// quota:meter — cumulative usage metering + enforcement.
+//
+// The sibling of rate-limiter: where rate-limit:guard counts events per sliding
+// window (burst protection), quota:meter tracks CUMULATIVE consumption against a
+// budget over a billing period — API calls this month, GB stored, seats used.
+// Reserve-or-reject before doing the work, record actual usage after, read the
+// current balance, and reset at period rollover.
+//
+// Counters live in the key-value store and use the atomic `increment` so two
+// concurrent consumers can't oversell a quota. Clock decides the current period
+// bucket.
+package quota:meter@0.1.0;
+
+/// Meter and enforce cumulative usage against per-subject budgets.
+interface meter {
+    /// Why a quota call failed.
+    variant quota-error {
+        /// The reservation/usage would exceed the subject's limit. Carries the
+        /// remaining allowance at the time of the call.
+        exceeded(u64),
+        /// A backing dependency (the counter store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// A snapshot of a subject's quota.
+    record balance {
+        /// Units consumed in the current period.
+        used: u64,
+        /// The configured limit for the period.
+        limit: u64,
+        /// Units still available (limit - used, floored at 0).
+        remaining: u64,
+        /// Unix seconds the current period resets.
+        resets-at: u64,
+    }
+
+    /// Atomically reserve `amount` units against `subject`'s `limit` for the
+    /// current period. Succeeds (returning the new balance) only if it fits;
+    /// otherwise `err(exceeded(remaining))` and nothing is consumed. Use before
+    /// doing the metered work.
+    reserve: func(subject: string, amount: u64, limit: u64, period-seconds: u64)
+        -> result<balance, quota-error>;
+
+    /// Record `amount` units already consumed WITHOUT a limit check (e.g.
+    /// post-hoc accounting where you can't pre-reserve). Returns the new balance.
+    record-usage: func(subject: string, amount: u64, limit: u64, period-seconds: u64)
+        -> result<balance, quota-error>;
+
+    /// Read the current balance for `subject` without consuming anything.
+    peek: func(subject: string, limit: u64, period-seconds: u64)
+        -> result<balance, quota-error>;
+
+    /// Reset a subject's consumption to zero immediately (e.g. plan upgrade /
+    /// manual credit). Idempotent.
+    reset: func(subject: string) -> result<_, quota-error>;
+}
+
+/// `quota` provides metering, backed by key-value (atomic increment) + clock.
+world quota {
+    export meter;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+}
