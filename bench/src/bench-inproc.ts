@@ -60,6 +60,15 @@ import { meter as quota } from "../../examples/jco-quota/gen/quota.js";
 import { coords as geo } from "../../examples/jco-geo/gen/geo.js";
 // csv:codec/codec (pure compute)
 import { codec as csv } from "../../examples/jco-csv/gen/csv.js";
+// --- domain-specific capabilities ---
+// webhook:sign/signer
+import { signer as websign } from "../../examples/jco-websign/gen/webhook_sign.js";
+// pii:redact/redactor (pure compute)
+import { redactor as pii } from "../../examples/jco-pii/gen/pii_redact.js";
+// json:patch/patcher (pure compute)
+import { patcher as jsonpatch } from "../../examples/jco-jsonpatch/gen/jsonpatch.js";
+// md:render/renderer (pure compute)
+import { renderer as markdown } from "../../examples/jco-markdown/gen/markdown.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -364,6 +373,40 @@ async function main() {
   results.push(await measure("csv.parse(5x3)", () => csv.parse(csvText, csvOpts), { iters: 20000 }));
   const csvRows = csv.parse(csvText, csvOpts);
   results.push(await measure("csv.format(5x3)", () => csv.format(csvRows, csvOpts), { iters: 20000 }));
+
+  // --- webhook:sign (HMAC-SHA256 outbound) ---
+  const wsbody = enc('{"id":"evt_1","type":"charge.succeeded"}');
+  results.push(
+    await measure("websign.sign(stripe)", () => websign.sign(wsbody, "whsec_bench", "stripe"), {
+      iters: 20000,
+    }),
+  );
+  const wssig = websign.signAt(wsbody, "whsec_bench", "stripe", 1700000000n);
+  results.push(
+    await measure(
+      "websign.verify(stripe)",
+      () => websign.verify(wsbody, wssig.header, "whsec_bench", "stripe", 0n),
+      { iters: 20000 },
+    ),
+  );
+
+  // --- pii:redact (pure compute) ---
+  const piitext = "Contact john@example.com or 555-123-4567, card 4242 4242 4242 4242, ip 10.0.0.1";
+  results.push(await measure("pii.redact", () => pii.redact(piitext, { kinds: [] }), { iters: 20000 }));
+
+  // --- json:patch (pure compute) ---
+  const jpdoc = '{"name":"Alice","age":30,"tags":["a","b"]}';
+  const jppatch = '[{"op":"replace","path":"/age","value":31},{"op":"add","path":"/tags/-","value":"c"}]';
+  results.push(await measure("jsonpatch.apply(6902)", () => jsonpatch.applyPatch(jpdoc, jppatch), { iters: 20000 }));
+  results.push(
+    await measure("jsonpatch.merge(7386)", () => jsonpatch.applyMerge(jpdoc, '{"age":32,"name":null}'), {
+      iters: 20000,
+    }),
+  );
+
+  // --- md:render (pure compute, safe) ---
+  const mdsrc = "# Title\n\nSome **bold** and *italic* text with `code` and a [link](https://x.com).\n\n- one\n- two";
+  results.push(await measure("markdown.to-html", () => markdown.toHtml(mdsrc), { iters: 20000 }));
 
   const out = { kind: "in-process", node: process.version, when: Date.now(), results };
   writeFileSync(new URL("../results-inproc.json", import.meta.url), JSON.stringify(out, null, 2));

@@ -1,0 +1,39 @@
+// md:render — safe Markdown -> HTML rendering.
+//
+// User-supplied Markdown (comments, descriptions, posts) needs rendering to
+// HTML without opening an XSS hole. This renders a practical CommonMark subset
+// — headings, bold/italic, inline code, code fences, links, lists, blockquotes,
+// paragraphs — and ESCAPES any raw HTML in the source so embedded `<script>` or
+// attributes can't execute. Link URLs are sanitized (only http/https/mailto;
+// `javascript:` and friends are dropped).
+//
+// Pure compute: markdown in, safe HTML out. No state, no host imports.
+package md:render@0.1.0;
+
+/// Render Markdown to sanitized HTML.
+interface renderer {
+    /// Rendering options.
+    record options {
+        /// Render soft line breaks (single newline) as `<br>` (GitHub-style).
+        hard-breaks: bool,
+        /// Add `rel="nofollow noopener"` + `target="_blank"` to links.
+        safe-links: bool,
+    }
+
+    /// Render `markdown` to HTML with default options (no hard breaks, safe
+    /// links on). Raw HTML in the source is escaped; unsafe link schemes are
+    /// stripped.
+    to-html: func(markdown: string) -> string;
+
+    /// Render with explicit options.
+    to-html-with: func(markdown: string, opts: options) -> string;
+
+    /// Strip all formatting and return the plain-text content of `markdown`
+    /// (e.g. for search indexing or previews).
+    to-text: func(markdown: string) -> string;
+}
+
+/// `markdown` provides safe MD->HTML; pure compute, no host imports.
+world markdown {
+    export renderer;
+}

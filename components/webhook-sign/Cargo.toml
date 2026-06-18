@@ -1,0 +1,26 @@
+[package]
+name = "webhook-sign"
+description = "Outbound webhook signing capability (webhook:sign)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+
+[package.metadata.component]
+package = "webhook:sign-component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "webhook-sign"
+
+[package.metadata.component.target.dependencies]
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

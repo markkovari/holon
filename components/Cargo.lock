@@ -361,6 +361,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jsonpatch"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -383,6 +391,13 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "login-app"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "markdown"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen-rt",
@@ -508,6 +523,13 @@ dependencies = [
  "base64ct",
  "rand_core",
  "subtle",
+]
+
+[[package]]
+name = "pii-redact"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -864,6 +886,15 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "webhook-ingest"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "webhook-sign"
 version = "0.1.0"
 dependencies = [
  "hmac",

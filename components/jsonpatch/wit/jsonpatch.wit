@@ -1,0 +1,45 @@
+// json:patch — RFC 6902 JSON Patch + RFC 7386 JSON Merge Patch.
+//
+// PATCH endpoints and document sync need a standard way to express + apply
+// partial changes to a JSON document. This implements both IETF standards:
+// RFC 6902 (an ordered op list — add/remove/replace/move/copy/test), and
+// RFC 7386 (merge-patch — a sparse object overlay where null deletes). Plus a
+// diff that produces a merge-patch turning one document into another.
+//
+// Pure compute: documents + patch in, result document out. No state, no host
+// imports.
+package json:patch@0.1.0;
+
+/// Apply JSON Patch / Merge Patch and diff documents.
+interface patcher {
+    /// Why a patch op failed.
+    variant patch-error {
+        /// `document` or `patch` was not valid JSON.
+        invalid-json(string),
+        /// An RFC-6902 op referenced a path that doesn't exist where required.
+        path-not-found(string),
+        /// An RFC-6902 `test` op's value did not equal the document value.
+        test-failed(string),
+        /// The patch itself was structurally invalid (bad op name, missing
+        /// field).
+        invalid-patch(string),
+    }
+
+    /// Apply an RFC 6902 patch (a JSON array of op objects) to `document`.
+    /// Returns the resulting JSON document string. Applied atomically — on any
+    /// op failure the original document is unchanged (an error is returned).
+    apply-patch: func(document: string, patch: string) -> result<string, patch-error>;
+
+    /// Apply an RFC 7386 merge-patch (a sparse JSON object; `null` values delete
+    /// the key) to `document`. Returns the merged JSON document string.
+    apply-merge: func(document: string, merge-patch: string) -> result<string, patch-error>;
+
+    /// Produce an RFC 7386 merge-patch that transforms `source` into `target`.
+    /// Returns the merge-patch JSON string.
+    diff: func(source: string, target: string) -> result<string, patch-error>;
+}
+
+/// `jsonpatch` provides patch/merge/diff; pure compute, no host imports.
+world jsonpatch {
+    export patcher;
+}

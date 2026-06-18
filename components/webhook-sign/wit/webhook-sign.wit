@@ -1,0 +1,69 @@
+// webhook:sign — outbound webhook signing (the send side of webhook:ingest).
+//
+// webhook:ingest verifies INCOMING webhooks; this signs OUTGOING ones the same
+// way, so a service that both emits and consumes webhooks uses a matched pair.
+// Produces the signature headers the major providers use: an HMAC-SHA256 over
+// `{timestamp}.{body}` plus a timestamp, formatted Stripe-style
+// (`t=...,v1=...`) or GitHub-style (`sha256=...`). Also re-verifies a signed
+// payload (with timestamp-tolerance replay protection) so the same component
+// covers a round-trip test.
+//
+// Pure crypto + clock: the signing secret is supplied by the caller (store it
+// in secrets:vault); clock provides the timestamp.
+package webhook:sign@0.1.0;
+
+/// Sign and verify outbound webhook payloads.
+interface signer {
+    /// Why a signing call failed.
+    variant sign-error {
+        /// The presented signature header was malformed.
+        malformed-signature,
+        /// Signature did not match (wrong secret / tampered body).
+        signature-mismatch,
+        /// The timestamp is outside the allowed tolerance (replay).
+        timestamp-out-of-tolerance,
+    }
+
+    /// Header style to emit.
+    enum scheme {
+        /// Stripe-style: `t={ts},v1={hex hmac of "{ts}.{body}"}`.
+        stripe,
+        /// GitHub-style: `sha256={hex hmac of body}` (no timestamp).
+        github,
+    }
+
+    /// A produced signature: the header value + the timestamp used.
+    record signature {
+        /// The header value to send (e.g. as `Webhook-Signature`).
+        header: string,
+        /// Unix seconds embedded in the signature (0 for github scheme).
+        timestamp: u64,
+    }
+
+    /// Sign `body` with `secret` using `scheme`, stamping the current time.
+    sign: func(body: list<u8>, secret: string, scheme: scheme)
+        -> result<signature, sign-error>;
+
+    /// Sign `body` at an explicit `timestamp` (for deterministic tests / replay
+    /// of a known time).
+    sign-at: func(body: list<u8>, secret: string, scheme: scheme, timestamp: u64)
+        -> result<signature, sign-error>;
+
+    /// Verify a received `header` against `body` + `secret`. For stripe scheme,
+    /// the embedded timestamp must be within `tolerance-seconds` of now
+    /// (0 = skip the time check). Constant-time signature comparison.
+    verify: func(
+        body: list<u8>,
+        header: string,
+        secret: string,
+        scheme: scheme,
+        tolerance-seconds: u64,
+    ) -> result<_, sign-error>;
+}
+
+/// `webhook-sign` provides outbound signing; HMAC secret from the caller, clock
+/// for the timestamp.
+world webhook-sign {
+    export signer;
+    import wasi:clocks/wall-clock@0.2.0;
+}

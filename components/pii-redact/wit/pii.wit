@@ -1,0 +1,59 @@
+// pii:redact — detect + mask personally-identifiable information in free text.
+//
+// Before text hits a log line, an audit trail, an LLM prompt, or an analytics
+// sink, the PII in it should be masked. This scans free text for the common
+// high-risk patterns — emails, credit-card numbers (Luhn-checked), US SSNs,
+// phone numbers, IPv4 — and replaces each match with a typed placeholder
+// (`[EMAIL]`, `[CARD]`, …), or just reports where they are. App-agnostic and
+// regex-free (hand-rolled scanners) so it stays small and wasm-clean.
+//
+// Pairs with audit:log and any logging path. Pure compute: text in, redacted
+// text + findings out. No state, no host imports.
+package pii:redact@0.1.0;
+
+/// Detect and mask PII in text.
+interface redactor {
+    /// A category of detectable PII.
+    enum kind {
+        email,
+        /// Credit-card-like digit run that passes the Luhn checksum.
+        credit-card,
+        /// US Social Security Number (NNN-NN-NNNN).
+        ssn,
+        /// Phone number (NANP / international-ish digit run).
+        phone,
+        /// IPv4 address.
+        ip,
+    }
+
+    /// One detected PII span.
+    record finding {
+        kind: kind,
+        /// Byte offset of the match start in the input.
+        start: u32,
+        /// Byte length of the match.
+        length: u32,
+    }
+
+    /// Which categories to act on; empty = all supported kinds.
+    record options {
+        kinds: list<kind>,
+    }
+
+    /// Return the PII spans found in `text` (no modification), honoring `opts`.
+    detect: func(text: string, opts: options) -> list<finding>;
+
+    /// Replace each detected span with a typed placeholder (`[EMAIL]`,
+    /// `[CARD]`, `[SSN]`, `[PHONE]`, `[IP]`). Returns the redacted text.
+    redact: func(text: string, opts: options) -> string;
+
+    /// Like `redact` but partially masks instead of fully replacing: keeps a
+    /// little context (e.g. `j***@e***.com`, card last-4 `**** **** **** 1234`).
+    /// Returns the masked text.
+    mask: func(text: string, opts: options) -> string;
+}
+
+/// `pii-redact` provides PII detection/masking; pure compute, no host imports.
+world pii-redact {
+    export redactor;
+}
