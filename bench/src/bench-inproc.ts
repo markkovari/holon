@@ -36,6 +36,21 @@ import { vault as secrets } from "../../examples/jco-secrets/gen/secrets_vault.j
 import { store as cfg } from "../../examples/jco-config/gen/config_store.js";
 // search:index/index
 import { index as search } from "../../examples/jco-search/gen/search_index.js";
+// --- tier-2 capabilities ---
+// money:amount/arithmetic (pure compute)
+import { arithmetic as money } from "../../examples/jco-money/gen/money.js";
+// slug:generate/generator (pure compute)
+import { generator as slug } from "../../examples/jco-slug/gen/slug.js";
+// validate:schema/validator (pure compute)
+import { validator as validate } from "../../examples/jco-validate/gen/validate.js";
+// paginate:cursor/cursors
+import { cursors as paginate } from "../../examples/jco-pagination/gen/pagination.js";
+// i18n:catalog/catalog
+import { catalog as i18n } from "../../examples/jco-i18n/gen/i18n_catalog.js";
+// email:template/renderer
+import { renderer as email } from "../../examples/jco-email/gen/email_render.js";
+// upload:policy/gate
+import { gate as upload } from "../../examples/jco-upload/gen/upload_policy.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -236,6 +251,75 @@ async function main() {
       { iters: 5000 },
     ),
   );
+
+  // --- money:amount (pure compute) ---
+  const m1 = money.parse("10.99", "USD");
+  const m2 = money.parse("0.01", "USD");
+  results.push(await measure("money.add", () => money.add(m1, m2), { iters: 50000 }));
+  results.push(await measure("money.allocate(3)", () => money.allocate(m1, 3), { iters: 50000 }));
+
+  // --- slug:generate (pure compute) ---
+  results.push(
+    await measure("slug.slugify", () => slug.slugify("The Quick Brown Fox: Café déjà vu!"), {
+      iters: 50000,
+    }),
+  );
+
+  // --- validate:schema (pure compute) ---
+  const vrules = [
+    { field: "name", kind: "text" as const, required: true, minLen: 2, maxLen: 50, minValue: undefined, maxValue: undefined, oneOf: [] },
+    { field: "age", kind: "integer" as const, required: true, minLen: 0, maxLen: 0, minValue: 0, maxValue: 130, oneOf: [] },
+    { field: "email", kind: "email" as const, required: true, minLen: 0, maxLen: 0, minValue: undefined, maxValue: undefined, oneOf: [] },
+  ];
+  const vjson = JSON.stringify({ name: "Alice", age: 30, email: "a@b.com" });
+  results.push(await measure("validate.validate", () => validate.validate(vjson, vrules), { iters: 20000 }));
+
+  // --- paginate:cursor ---
+  const pos = { sortKey: "2026-06-18T00:00:00Z", lastId: "row-1234", forward: true };
+  const cursor = paginate.encode(pos);
+  results.push(await measure("paginate.encode", () => paginate.encode(pos), { iters: 20000 }));
+  results.push(await measure("paginate.decode(verify)", () => paginate.decode(cursor), { iters: 20000 }));
+
+  // --- i18n:catalog ---
+  i18n.setMessage("en", "greeting", "Hello, {name}! You have {n} messages.");
+  results.push(
+    await measure(
+      "i18n.translate",
+      () =>
+        i18n.translate("en", "greeting", [
+          { name: "name", value: "Al" },
+          { name: "n", value: "3" },
+        ]),
+      { iters: 20000 },
+    ),
+  );
+
+  // --- email:template (html-escaping render) ---
+  email.putTemplate("welcome", {
+    subject: "Welcome {name}",
+    text: "Hi {name}, your code is {code}",
+    html: "<p>Hi {name}, code <b>{code}</b></p>",
+  });
+  results.push(
+    await measure(
+      "email.render",
+      () =>
+        email.render("welcome", [
+          { name: "name", value: "Al" },
+          { name: "code", value: "123" },
+        ]),
+      { iters: 20000 },
+    ),
+  );
+
+  // --- upload:policy (HMAC ticket mint + redeem) ---
+  results.push(
+    await measure("upload.authorize(sign)", () => upload.authorize("acme", "image/png", 2048n, 0n), {
+      iters: 10000,
+    }),
+  );
+  const ticket = upload.authorize("acme", "image/png", 2048n, 0n);
+  results.push(await measure("upload.redeem(verify)", () => upload.redeem(ticket.token), { iters: 10000 }));
 
   const out = { kind: "in-process", node: process.version, when: Date.now(), results };
   writeFileSync(new URL("../results-inproc.json", import.meta.url), JSON.stringify(out, null, 2));

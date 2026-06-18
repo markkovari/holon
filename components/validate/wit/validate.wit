@@ -1,0 +1,76 @@
+// validate:schema — declarative input validation.
+//
+// Every endpoint validates its input and every app reinvents it inconsistently.
+// This is a small, declarative validator: describe the expected fields as a
+// list of rules, hand it a JSON object, get back structured per-field errors
+// (or ok). Covers the common web-form / API-body cases — required, type,
+// length, numeric range, regex-free pattern classes (email/alnum/etc.), and
+// enum membership — without pulling a full JSON-schema engine into wasm.
+//
+// Pure compute: rules + data in, verdict out. No state, no host imports.
+package validate:schema@0.1.0;
+
+/// Validate JSON objects against a declarative field-rule list.
+interface validator {
+    /// The expected type / format class of a field's value.
+    enum kind {
+        /// Any string.
+        text,
+        /// Integer (JSON number with no fractional part).
+        integer,
+        /// Any JSON number.
+        number,
+        /// Boolean.
+        boolean,
+        /// String matching a basic email shape (local@domain.tld).
+        email,
+        /// String of ASCII letters/digits only.
+        alphanumeric,
+        /// String that parses as a UUID (8-4-4-4-12 hex).
+        uuid,
+    }
+
+    /// One field's rule. Bounds are optional (0 = unset for the *-len/min/max
+    /// where noted); `one-of` (when non-empty) restricts the value to a set.
+    record rule {
+        /// JSON key this rule applies to.
+        field: string,
+        /// Expected kind.
+        kind: kind,
+        /// Field must be present + non-null.
+        required: bool,
+        /// Min string length (0 = unset). Applies to text-like kinds.
+        min-len: u32,
+        /// Max string length (0 = unset).
+        max-len: u32,
+        /// Min numeric value (inclusive) for integer/number; encoded as f64.
+        min-value: option<f64>,
+        /// Max numeric value (inclusive).
+        max-value: option<f64>,
+        /// Allowed values (exact string match against the JSON-rendered value);
+        /// empty = no enum restriction.
+        one-of: list<string>,
+    }
+
+    /// A single validation failure.
+    record field-error {
+        /// The field that failed.
+        field: string,
+        /// Machine code: "required" | "type" | "min-len" | "max-len" |
+        /// "min-value" | "max-value" | "one-of" | "format".
+        code: string,
+        /// Human-readable detail.
+        message: string,
+    }
+
+    /// Validate `json` (a JSON object string) against `rules`. Returns the list
+    /// of failures — empty list means valid. Unknown extra keys are ignored.
+    /// A non-object / unparseable `json` yields a single `format` error on the
+    /// empty field.
+    validate: func(json: string, rules: list<rule>) -> list<field-error>;
+}
+
+/// `validate` provides declarative validation; pure compute, no host imports.
+world validate {
+    export validator;
+}

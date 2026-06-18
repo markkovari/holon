@@ -1,0 +1,37 @@
+// slug:generate — URL-safe slug generation.
+//
+// Turn arbitrary title text into a clean URL slug: lowercase, transliterate
+// common accented Latin to ASCII, replace runs of non-alphanumerics with a
+// single hyphen, trim, and optionally bound the length on a word boundary.
+// Plus a collision helper: given a desired slug and a set of taken slugs,
+// return the slug with the smallest numeric suffix that is free.
+//
+// Pure compute: no state, no host imports.
+package slug:generate@0.1.0;
+
+/// Generate and de-collide URL slugs.
+interface generator {
+    /// Options controlling slug generation.
+    record options {
+        /// Separator between words (default "-" when empty).
+        separator: string,
+        /// Max length in bytes (0 = unbounded). Truncation happens on a
+        /// separator boundary so words aren't cut mid-way.
+        max-length: u32,
+    }
+
+    /// Slugify `text` with default options ("-" separator, unbounded).
+    slugify: func(text: string) -> string;
+
+    /// Slugify with explicit options.
+    slugify-with: func(text: string, opts: options) -> string;
+
+    /// Given a `desired` slug and the slugs already `taken`, return `desired`
+    /// if free, else `desired-2`, `desired-3`, … — the first free suffix.
+    uniquify: func(desired: string, taken: list<string>) -> string;
+}
+
+/// `slug` provides slug generation; pure compute, no host imports.
+world slug {
+    export generator;
+}

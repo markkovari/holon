@@ -1,0 +1,63 @@
+// money:amount — exact minor-units money arithmetic.
+//
+// The bug every app ships at least once: representing money as a float. This is
+// the fix as a capability — amounts are integer minor units (cents, pence,
+// satoshi-like) tagged with an ISO-4217 currency, and all arithmetic is exact.
+// Add/subtract/scale, allocate a total across N shares with no lost pennies,
+// compare, and format for display using the currency's decimal exponent.
+//
+// Pure compute: no state, no host imports beyond the implicit wasm. The
+// currency table (exponents) is built in.
+package money:amount@0.1.0;
+
+/// Exact money arithmetic over integer minor units.
+interface arithmetic {
+    /// Why a money op failed.
+    variant money-error {
+        /// Currency code is not a known ISO-4217 alphabetic code.
+        unknown-currency(string),
+        /// Two operands carried different currencies.
+        currency-mismatch,
+        /// The operation overflowed the i64 minor-units range.
+        overflow,
+        /// A divisor / share count was zero.
+        divide-by-zero,
+    }
+
+    /// A monetary amount: integer minor units + an ISO-4217 currency code.
+    /// e.g. { units: 1099, currency: "USD" } is $10.99.
+    record amount {
+        units: s64,
+        currency: string,
+    }
+
+    /// Construct an amount from a major+minor decimal string (e.g. "10.99",
+    /// "USD") -> 1099 minor units, validating the currency + decimal places.
+    parse: func(decimal: string, currency: string) -> result<amount, money-error>;
+
+    /// Render an amount for display using the currency exponent, e.g.
+    /// {1099,"USD"} -> "10.99". No currency symbol or grouping (locale-free).
+    format: func(a: amount) -> result<string, money-error>;
+
+    /// a + b. `err(currency-mismatch)` if currencies differ.
+    add: func(a: amount, b: amount) -> result<amount, money-error>;
+
+    /// a - b. `err(currency-mismatch)` if currencies differ.
+    subtract: func(a: amount, b: amount) -> result<amount, money-error>;
+
+    /// Multiply an amount by an integer factor (e.g. quantity).
+    scale: func(a: amount, factor: s64) -> result<amount, money-error>;
+
+    /// Split `total` into `shares` parts as evenly as possible with NO lost or
+    /// gained minor units: the remainder pennies are distributed one-each to the
+    /// leading shares. Returns exactly `shares` amounts that sum to `total`.
+    allocate: func(total: amount, shares: u32) -> result<list<amount>, money-error>;
+
+    /// Compare two same-currency amounts: -1 / 0 / 1 for a<b / a==b / a>b.
+    compare: func(a: amount, b: amount) -> result<s8, money-error>;
+}
+
+/// `money` provides exact arithmetic; pure compute, no host imports.
+world money {
+    export arithmetic;
+}

@@ -1,0 +1,63 @@
+// email:template — transactional email rendering.
+//
+// The render half of sending email: store named templates (subject + text +
+// html bodies with `{name}` placeholders), then render one against a set of
+// variables to a finished message ready to hand to a sender (notify:dispatch,
+// an SMTP provider, Cloudflare Email). Keeps templating out of every service
+// and gives a single place to manage copy.
+//
+// Templates live in the key-value store; rendering is pure compute. HTML
+// placeholder values are escaped to prevent injection; text bodies are not.
+package email:template@0.1.0;
+
+/// Store and render transactional email templates.
+interface renderer {
+    /// Why a render call failed.
+    variant render-error {
+        /// No template stored under the given name.
+        unknown-template,
+        /// A required placeholder had no provided variable.
+        missing-variable(string),
+        /// A backing dependency (the template store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// A `{name}` -> value binding for rendering.
+    record var {
+        name: string,
+        value: string,
+    }
+
+    /// A stored template: subject + both body variants, each with `{name}`
+    /// placeholders. `html` may be empty for text-only templates.
+    record template {
+        subject: string,
+        text: string,
+        html: string,
+    }
+
+    /// A rendered, ready-to-send message.
+    record message {
+        subject: string,
+        text: string,
+        html: string,
+    }
+
+    /// Store (or replace) a template by name.
+    put-template: func(name: string, tmpl: template) -> result<_, render-error>;
+
+    /// Fetch a stored template verbatim (unrendered).
+    get-template: func(name: string) -> result<template, render-error>;
+
+    /// Render the named template with `vars`. HTML placeholder values are
+    /// HTML-escaped; subject + text are not. `err(missing-variable)` if a
+    /// placeholder has no binding (strict — callers pass every variable).
+    render: func(name: string, vars: list<var>) -> result<message, render-error>;
+}
+
+/// `email-render` provides template storage + rendering; templates in
+/// key-value.
+world email-render {
+    export renderer;
+    import wasi:keyvalue/store@0.2.0-draft;
+}

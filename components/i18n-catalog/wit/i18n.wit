@@ -1,0 +1,65 @@
+// i18n:catalog — message catalog, interpolation, plural rules, locale negotiation.
+//
+// The localization basics every multi-language app needs: store translated
+// message strings per locale, look one up with `{name}` placeholder
+// interpolation, pick the right plural form for a count, and negotiate the best
+// available locale from an Accept-Language-style preference list with fallback.
+//
+// Catalogs live in the key-value store (so they're updatable without a
+// redeploy); negotiation + interpolation + plural selection are pure compute.
+package i18n:catalog@0.1.0;
+
+/// Store/translate messages with interpolation, plurals, and locale negotiation.
+interface catalog {
+    /// Why an i18n call failed.
+    variant i18n-error {
+        /// No message for the given key in the resolved locale (and no
+        /// fallback hit).
+        missing-message,
+        /// A backing dependency (the message store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// A `{name}` placeholder binding for interpolation.
+    record arg {
+        name: string,
+        value: string,
+    }
+
+    /// Set (or replace) a translated message. `locale` is a BCP-47-ish tag
+    /// (e.g. "en", "en-US", "fr"); `key` is the message id; `value` may contain
+    /// `{name}` placeholders.
+    set-message: func(locale: string, key: string, value: string)
+        -> result<_, i18n-error>;
+
+    /// Set a pluralized message: `forms` maps a plural category
+    /// ("zero"|"one"|"two"|"few"|"many"|"other") to a template. "other" is
+    /// required as the fallback form.
+    set-plural: func(locale: string, key: string, forms: list<tuple<string, string>>)
+        -> result<_, i18n-error>;
+
+    /// Translate `key` in `locale`, interpolating `args`. Falls back to the
+    /// base language (e.g. "en-US" -> "en") then to the configured default
+    /// locale. `err(missing-message)` if nothing matches.
+    translate: func(locale: string, key: string, args: list<arg>)
+        -> result<string, i18n-error>;
+
+    /// Translate a pluralized `key` for `count`, choosing the plural category
+    /// (English-style rules: 1 -> "one", else "other"; "other" always exists),
+    /// interpolating `args` (a `{count}` arg is added automatically).
+    translate-plural: func(locale: string, key: string, count: u64, args: list<arg>)
+        -> result<string, i18n-error>;
+
+    /// Negotiate the best supported locale: given the client's ordered
+    /// `preferred` tags and the set of `available` tags, return the best match
+    /// (exact, then base-language, then the configured default).
+    negotiate: func(preferred: list<string>, available: list<string>) -> string;
+}
+
+/// `i18n-catalog` provides translation; catalogs in key-value, default locale
+/// from config (`default-locale`, default "en").
+world i18n-catalog {
+    export catalog;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:config/runtime@0.2.0-draft;
+}

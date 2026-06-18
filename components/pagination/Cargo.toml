@@ -1,0 +1,27 @@
+[package]
+name = "pagination"
+description = "Opaque cursor pagination codec capability (paginate:cursor)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+base64 = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+
+[package.metadata.component]
+package = "paginate:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "pagination"
+
+[package.metadata.component.target.dependencies]
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-draft" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

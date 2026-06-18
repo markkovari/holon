@@ -1,0 +1,68 @@
+// upload:policy — file-upload validation + presigned-upload ticketing.
+//
+// The gatekeeping every app needs before it lets a client push bytes to object
+// storage: validate the declared content-type + size against an allow-policy,
+// then mint a short-lived, signed upload ticket the client presents back (a
+// stand-in for a presigned URL — the signing is the reusable part; the actual
+// storage URL is the deploy's concern). Also verifies a returned ticket.
+//
+// Pairs with blob:store as the destination. Policy knobs come from config; the
+// ticket HMAC key from config; clock for expiry; random for the ticket id.
+package upload:policy@0.1.0;
+
+/// Validate uploads against policy and mint/verify signed upload tickets.
+interface gate {
+    /// Why an upload-policy call failed.
+    variant policy-error {
+        /// The declared content-type is not in the allow-list.
+        type-not-allowed(string),
+        /// The declared size exceeds the configured maximum.
+        too-large(u64),
+        /// A presented ticket is malformed, expired, or failed signature check.
+        invalid-ticket,
+        /// A backing dependency / config was unavailable.
+        backend-unavailable(string),
+    }
+
+    /// A minted upload ticket handed to the client.
+    record ticket {
+        /// Opaque, signed ticket string the client presents on upload.
+        token: string,
+        /// Server-assigned object key the upload should land under.
+        object-key: string,
+        /// Unix seconds the ticket expires.
+        expires: u64,
+    }
+
+    /// What a verified ticket resolves to.
+    record grant {
+        object-key: string,
+        content-type: string,
+        max-size: u64,
+    }
+
+    /// Check a declared upload against policy WITHOUT minting a ticket: the
+    /// content-type must be allowed (config `allowed-types`, comma-separated;
+    /// empty = allow all) and `size` must be <= the max (config `max-size`
+    /// bytes, default 10 MiB). `ok` if acceptable.
+    check: func(content-type: string, size: u64) -> result<_, policy-error>;
+
+    /// Validate (as `check`) then mint a signed ticket for `tenant`, valid for
+    /// `ttl-seconds` (0 = config `ticket-ttl`, default 300). The object key is
+    /// derived from tenant + a random id.
+    authorize: func(tenant: string, content-type: string, size: u64, ttl-seconds: u64)
+        -> result<ticket, policy-error>;
+
+    /// Verify a ticket token the client presented: checks signature + expiry
+    /// and returns what it grants. `err(invalid-ticket)` on any failure.
+    redeem: func(token: string) -> result<grant, policy-error>;
+}
+
+/// `upload-policy` provides validation + ticketing; policy + HMAC key from
+/// config, expiry from clock, ticket id from random.
+world upload-policy {
+    export gate;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+    import wasi:config/runtime@0.2.0-draft;
+}

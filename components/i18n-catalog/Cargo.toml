@@ -1,0 +1,26 @@
+[package]
+name = "i18n-catalog"
+description = "Message catalog + interpolation + plurals + locale negotiation (i18n:catalog)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+base64 = { workspace = true }
+
+[package.metadata.component]
+package = "i18n:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "i18n-catalog"
+
+[package.metadata.component.target.dependencies]
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-draft" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

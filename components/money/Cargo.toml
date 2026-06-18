@@ -1,0 +1,20 @@
+[package]
+name = "money"
+description = "Exact minor-units money arithmetic capability (money:amount)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "money:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "money"

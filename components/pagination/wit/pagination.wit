@@ -1,0 +1,74 @@
+// paginate:cursor — opaque cursor encode/decode for stable pagination.
+//
+// Offset pagination drifts when rows are inserted/deleted mid-scroll; the fix
+// is keyset (cursor) pagination over a stable sort key. This capability owns the
+// fiddly, error-prone part everyone hand-rolls: encoding a sort position into
+// an opaque, tamper-evident cursor string and decoding it back, plus building
+// the page envelope (next/prev cursors + has-more flags) from a result slice.
+//
+// The cursor is base64url(payload + a short keyed checksum) so a client can't
+// forge or accidentally corrupt it. Pure compute apart from the HMAC key, which
+// comes from config.
+package paginate:cursor@0.1.0;
+
+/// Encode/decode opaque pagination cursors and assemble page envelopes.
+interface cursors {
+    /// Why a cursor op failed.
+    variant cursor-error {
+        /// The cursor is malformed, truncated, or its checksum didn't verify
+        /// (forged / corrupted / wrong signing key).
+        invalid-cursor,
+        /// `limit` was zero or above the configured maximum.
+        bad-limit,
+    }
+
+    /// A decoded cursor position: the sort key value + the id of the last row
+    /// seen (the tiebreaker), and the direction it was issued for.
+    record position {
+        /// Opaque sort-key value at the boundary (e.g. a timestamp, a name).
+        sort-key: string,
+        /// Stable unique id of the boundary row (tiebreaker for equal keys).
+        last-id: string,
+        /// True if this cursor pages forward (next), false for backward (prev).
+        forward: bool,
+    }
+
+    /// A page envelope describing navigation around a returned slice.
+    record page-info {
+        /// Cursor to fetch the next page, if any.
+        next-cursor: option<string>,
+        /// Cursor to fetch the previous page, if any.
+        prev-cursor: option<string>,
+        /// More rows exist after this page.
+        has-next: bool,
+        /// Rows exist before this page.
+        has-prev: bool,
+    }
+
+    /// Encode a position into an opaque, checksummed cursor string.
+    encode: func(pos: position) -> string;
+
+    /// Decode + verify a cursor back into a position. `err(invalid-cursor)` on
+    /// any tampering / corruption.
+    decode: func(cursor: string) -> result<position, cursor-error>;
+
+    /// Validate a requested page size against the configured max (config
+    /// `max-page-size`, default 100). Returns the clamped, valid limit.
+    clamp-limit: func(requested: u32) -> result<u32, cursor-error>;
+
+    /// Build a page envelope: given the boundary positions of a fetched slice
+    /// (`first` and `last` row of the page) and whether more rows exist on each
+    /// side, produce the next/prev cursors + flags.
+    build-page: func(
+        first: option<position>,
+        last: option<position>,
+        more-before: bool,
+        more-after: bool,
+    ) -> page-info;
+}
+
+/// `pagination` provides cursor codec + envelope; HMAC key from config.
+world pagination {
+    export cursors;
+    import wasi:config/runtime@0.2.0-draft;
+}

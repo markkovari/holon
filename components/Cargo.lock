@@ -260,6 +260,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "email-render"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "feature-flags"
 version = "0.1.0"
 dependencies = [
@@ -305,6 +313,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest",
+]
+
+[[package]]
+name = "i18n-catalog"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -363,6 +379,13 @@ name = "memchr"
 version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
+
+[[package]]
+name = "money"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
 
 [[package]]
 name = "notify-dispatch"
@@ -441,6 +464,16 @@ dependencies = [
  "elliptic-curve",
  "primeorder",
  "sha2",
+]
+
+[[package]]
+name = "pagination"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hmac",
+ "sha2",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -696,6 +729,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "slug"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -754,6 +794,24 @@ checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
 dependencies = [
  "crypto-common",
  "subtle",
+]
+
+[[package]]
+name = "upload-policy"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hmac",
+ "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "validate"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
