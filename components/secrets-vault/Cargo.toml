@@ -1,0 +1,29 @@
+[package]
+name = "secrets-vault"
+description = "Generic envelope-encrypted secret storage + rotation capability (secrets:vault)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+base64 = { workspace = true }
+chacha20poly1305 = { workspace = true }
+
+[package.metadata.component]
+package = "secrets:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "secrets-vault"
+
+[package.metadata.component.target.dependencies]
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-draft" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

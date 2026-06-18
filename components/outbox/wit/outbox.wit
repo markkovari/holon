@@ -1,0 +1,97 @@
+// outbox:dispatch — generic transactional-outbox capability.
+//
+// The reliable-event problem every app hits: you mutate state AND want to emit
+// an event (notify a user, fire a webhook, update a projection), but a crash
+// between the two loses the event or double-fires it. The outbox pattern fixes
+// this — the event is *enqueued in the same store* as part of the work, then a
+// relay claims and dispatches it at-least-once with explicit ack.
+//
+// This component is the durable queue half: `enqueue` an event atomically,
+// `claim` a batch of due events (leased so two relays don't double-claim),
+// `ack` the ones that dispatched, `fail` the ones that didn't (with backoff +
+// retry-cap → dead-letter). The actual dispatch (HTTP, NATS, notify:dispatch)
+// is the relay's job and stays out of scope, so the component is pure WASI.
+//
+// Composes downstream with notify:dispatch / webhook:ingest as the sinks.
+package outbox:dispatch@0.1.0;
+
+/// Durable at-least-once event queue with leased claim + retry/backoff.
+interface queue {
+    /// Why an outbox call failed.
+    variant outbox-error {
+        /// The referenced event id is not in the queue (already acked, dead, or
+        /// never existed).
+        not-found,
+        /// A backing dependency (the record store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// Lifecycle state of an enqueued event.
+    enum state {
+        /// Waiting to be claimed (or its lease expired and it's claimable again).
+        pending,
+        /// Claimed by a relay, lease not yet expired; not handed to others.
+        in-flight,
+        /// Permanently failed after exhausting retries; needs human/replay.
+        dead,
+    }
+
+    /// One queued event.
+    record event {
+        /// Server-assigned unique id.
+        id: string,
+        /// App-defined routing topic (e.g. "user.created", "invoice.paid").
+        topic: string,
+        /// Opaque event payload — never interpreted by the component.
+        payload: list<u8>,
+        /// Current lifecycle state.
+        state: state,
+        /// How many delivery attempts have been made.
+        attempts: u32,
+        /// Unix seconds the event was first enqueued.
+        created: u64,
+        /// Unix seconds before which the event is not eligible to be claimed
+        /// (set by `enqueue` delay or by `fail` backoff).
+        not-before: u64,
+    }
+
+    /// Append an event to the outbox. `delay-seconds` defers first eligibility
+    /// (0 = immediately claimable). Returns the new event id.
+    enqueue: func(topic: string, payload: list<u8>, delay-seconds: u64)
+        -> result<string, outbox-error>;
+
+    /// Claim up to `max` due, pending events for `lease-seconds`. Claimed events
+    /// flip to in-flight and won't be returned to another claimer until the
+    /// lease expires (crash-safe: a dead relay's events become claimable again).
+    /// Returns fewer than `max` (incl. empty) when the queue is drained.
+    claim: func(max: u32, lease-seconds: u64) -> result<list<event>, outbox-error>;
+
+    /// Acknowledge successful dispatch — removes the event from the queue.
+    /// `err(not-found)` if it was never claimed / already acked.
+    ack: func(id: string) -> result<_, outbox-error>;
+
+    /// Report a failed dispatch. The event is rescheduled with backoff
+    /// (not-before = now + backoff). Once `attempts` exceeds `max-attempts`
+    /// (config), it moves to `dead` instead of retrying. Returns the new state.
+    fail: func(id: string) -> result<state, outbox-error>;
+
+    /// List currently dead-lettered events (for inspection / manual replay),
+    /// up to `max`.
+    dead-letters: func(max: u32) -> result<list<event>, outbox-error>;
+
+    /// Move a dead event back to pending for another attempt (resets backoff,
+    /// keeps the attempt count). `err(not-found)` if not dead/absent.
+    replay: func(id: string) -> result<_, outbox-error>;
+}
+
+/// What `outbox` provides: the queue interface, backed by key-value + clock +
+/// random. Config: `max-attempts` (default 8), `base-backoff` seconds
+/// (default 5, doubled per attempt).
+world outbox {
+    export queue;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+    import wasi:config/runtime@0.2.0-draft;
+}

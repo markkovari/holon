@@ -1,0 +1,26 @@
+[package]
+name = "search-index"
+description = "Generic full-text inverted-index capability (search:index)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+base64 = { workspace = true }
+
+[package.metadata.component]
+package = "search:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "search-index"
+
+[package.metadata.component.target.dependencies]
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

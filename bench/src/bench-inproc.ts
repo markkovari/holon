@@ -25,6 +25,17 @@ import { recorder as audit } from "../../examples/jco-audit/gen/audit_log.js";
 import { verifier as webhook } from "../../examples/jco-webhook/gen/webhook_ingest.js";
 import { __seed as seedWebhookKv } from "../../examples/jco-webhook/src/keyvalue-shim.js";
 import { createHmac } from "node:crypto";
+// session:store/store (server-side sessions + csrf) — aliased to avoid the
+// auth-guard `session` (auth's session-lookup) name clash above.
+import { store as sessstore } from "../../examples/jco-session/gen/session_store.js";
+// outbox:dispatch/queue
+import { queue as outbox } from "../../examples/jco-outbox/gen/outbox.js";
+// secrets:vault/vault
+import { vault as secrets } from "../../examples/jco-secrets/gen/secrets_vault.js";
+// config:store/store
+import { store as cfg } from "../../examples/jco-config/gen/config_store.js";
+// search:index/index
+import { index as search } from "../../examples/jco-search/gen/search_index.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -159,6 +170,69 @@ async function main() {
     await measure(
       "webhook.ingest(verify+dedup)",
       () => webhook.ingest(wbody, wsig, "wh-secret", `evt-${w++}`),
+      { iters: 5000 },
+    ),
+  );
+
+  // --- session:store ---
+  const sdata = enc('{"uid":"u1","roles":["user"]}');
+  const sess = sessstore.create(sdata, 3600n);
+  results.push(
+    await measure("session.create", () => sessstore.create(sdata, 3600n), { iters: 20000 }),
+  );
+  results.push(await measure("session.get", () => sessstore.get(sess.id), { iters: 20000 }));
+  results.push(
+    await measure("session.verify-csrf", () => sessstore.verifyCsrf(sess.id, sess.csrfToken), {
+      iters: 20000,
+    }),
+  );
+
+  // --- outbox:dispatch ---
+  const evt = enc('{"event":"user.created","id":"u1"}');
+  results.push(
+    await measure("outbox.enqueue", () => outbox.enqueue("user.created", evt, 0n), {
+      iters: 10000,
+    }),
+  );
+
+  // --- secrets:vault (ChaCha20-Poly1305 envelope) ---
+  const secret = enc("super-secret-api-key-value");
+  secrets.put("bench-key", secret);
+  results.push(await measure("secrets.get(decrypt)", () => secrets.get("bench-key"), { iters: 10000 }));
+  let sv = 0;
+  results.push(
+    await measure("secrets.put(encrypt)", () => secrets.put(`k${sv++}`, secret), { iters: 5000 }),
+  );
+
+  // --- config:store ---
+  cfg.set("bench", "timeout", { tag: "integer", val: 30n });
+  results.push(
+    await measure("config.get(typed)", () => cfg.get("bench", "timeout"), { iters: 20000 }),
+  );
+  results.push(
+    await measure(
+      "config.set(versioned)",
+      () => cfg.set("bench", "hot", { tag: "integer", val: 1n }),
+      { iters: 10000 },
+    ),
+  );
+
+  // --- search:index (TF-IDF inverted index) ---
+  for (let i = 0; i < 200; i++) {
+    search.indexDoc(`doc-${i}`, `the quick brown fox number ${i} jumps over lazy dogs`, [
+      "kind:note",
+    ]);
+  }
+  results.push(
+    await measure("search.query(any)", () => search.query("quick fox", "any", [], 10), {
+      iters: 5000,
+    }),
+  );
+  let si = 1000;
+  results.push(
+    await measure(
+      "search.index-doc",
+      () => search.indexDoc(`new-${si++}`, "fresh document text to index now", []),
       { iters: 5000 },
     ),
   );

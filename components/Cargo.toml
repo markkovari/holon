@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["auth-guard", "sample-consumer", "accounts-app", "rate-limiter", "cache", "idempotency-guard", "feature-flags", "audit-log", "notify-dispatch", "webhook-ingest", "blob-store"]
+members = ["auth-guard", "sample-consumer", "accounts-app", "rate-limiter", "cache", "idempotency-guard", "feature-flags", "audit-log", "notify-dispatch", "webhook-ingest", "blob-store", "session-store", "outbox", "secrets-vault", "config-store", "search-index", "login-app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -26,6 +26,9 @@ hmac = { version = "0.12", default-features = false }
 # Password hashing for local accounts. Pure-Rust, wasm-clean.
 argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash"] }
 password-hash = { version = "0.5", default-features = false, features = ["alloc"] }
+
+# AEAD for secrets-vault envelope encryption. Pure-Rust, wasm-clean.
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 
 [profile.release]
 opt-level = "s"

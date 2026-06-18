@@ -1,0 +1,67 @@
+// search:index — generic full-text inverted-index capability.
+//
+// The thing most apps reinvent badly: "let users search their stuff". This is a
+// small, app-agnostic inverted index — index a document (id + text + optional
+// app-defined tags), then query it with ranked results. No external search
+// engine, no network: tokens → postings live in the key-value store, ranking is
+// TF-IDF over the postings. Good for the long tail of apps whose corpus fits a
+// KV store and who don't want to run Elasticsearch.
+//
+// Deliberately minimal: ASCII-fold + lowercase + split tokenizer, AND/OR query
+// modes, tag filtering, top-k ranked ids. The app owns the documents; this owns
+// only the index. Pure WASI imports (keyvalue + clock).
+package search:index@0.1.0;
+
+/// Index documents and run ranked full-text queries over them.
+interface index {
+    /// Why a search call failed.
+    variant search-error {
+        /// The referenced document id is not in the index.
+        not-found,
+        /// A backing dependency (the record store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// How query terms combine.
+    enum mode {
+        /// A document matches if it contains ANY query term (union).
+        any,
+        /// A document matches only if it contains ALL query terms (intersection).
+        all,
+    }
+
+    /// A single ranked hit.
+    record hit {
+        /// The app-defined document id that was indexed.
+        id: string,
+        /// Relevance score (higher = better); TF-IDF, not normalized.
+        score: f64,
+    }
+
+    /// Add or replace a document in the index. `id` is the app's own id;
+    /// re-indexing the same id replaces its postings. `tags` are exact-match
+    /// facets (e.g. "tenant:acme", "kind:note") usable to scope queries.
+    index-doc: func(id: string, text: string, tags: list<string>)
+        -> result<_, search-error>;
+
+    /// Remove a document from the index. Idempotent.
+    remove: func(id: string) -> result<_, search-error>;
+
+    /// Run a ranked query. `query` is free text (tokenized like documents),
+    /// combined per `mode`. `tags` (if non-empty) restrict hits to documents
+    /// carrying ALL of the given tags. Returns the top `limit` hits, descending
+    /// by score.
+    query: func(query: string, mode: mode, tags: list<string>, limit: u32)
+        -> result<list<hit>, search-error>;
+
+    /// Number of documents currently indexed.
+    doc-count: func() -> result<u64, search-error>;
+}
+
+/// What `search-index` provides: the index interface, backed by key-value +
+/// clock. No required config knobs.
+world search-index {
+    export index;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+}

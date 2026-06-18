@@ -1,0 +1,76 @@
+// session:store — generic server-side session capability.
+//
+// App-agnostic session lifecycle: mint an opaque session id, attach an arbitrary
+// (app-defined) data blob to it, look it up, refresh its sliding expiry, and
+// revoke it. Pairs with auth-guard (which authenticates) — this holds the
+// post-login server-side state so the client only ever carries the opaque id
+// (a cookie), never the payload. Also issues + checks CSRF tokens bound to a
+// session, the other half every cookie-based app reinvents.
+//
+// Backed only by generic WASI imports (keyvalue + clock + random), same shape
+// as idempotency:guard and rate-limit:guard.
+package session:store@0.1.0;
+
+/// Mint, look up, refresh and revoke opaque server-side sessions.
+interface store {
+    /// Why a session call failed.
+    variant session-error {
+        /// No live session for the given id (absent, revoked, or expired).
+        not-found,
+        /// The supplied CSRF token did not match the session's token.
+        csrf-mismatch,
+        /// A backing dependency (the record store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// A live session as returned to the caller.
+    record session {
+        /// Opaque, unguessable id (the cookie value). 256 bits, base64url.
+        id: string,
+        /// Opaque app-defined payload (e.g. serialized user id + roles). The
+        /// component never interprets this.
+        data: list<u8>,
+        /// Unix seconds the session was created.
+        created: u64,
+        /// Unix seconds the session currently expires (advances on `refresh`).
+        expires: u64,
+        /// CSRF token bound to this session; send to the client, expect it back
+        /// on mutating requests, check via `verify-csrf`.
+        csrf-token: string,
+    }
+
+    /// Create a new session holding `data`, living `ttl-seconds` (0 = config
+    /// default). Returns the freshly-minted session incl. its id + csrf token.
+    create: func(data: list<u8>, ttl-seconds: u64) -> result<session, session-error>;
+
+    /// Fetch a live session by id. `err(not-found)` if absent/expired/revoked.
+    /// Does NOT extend expiry — call `refresh` for sliding-window behaviour.
+    get: func(id: string) -> result<session, session-error>;
+
+    /// Replace a session's payload in place (e.g. privilege change), keeping the
+    /// same id, csrf token and expiry.
+    update-data: func(id: string, data: list<u8>) -> result<_, session-error>;
+
+    /// Slide the expiry forward to now + ttl (0 = config default). Returns the
+    /// updated session. Use on each authenticated request for idle-timeout.
+    refresh: func(id: string, ttl-seconds: u64) -> result<session, session-error>;
+
+    /// Constant-time check that `token` matches the session's CSRF token.
+    /// `err(csrf-mismatch)` on mismatch, `err(not-found)` if no such session.
+    verify-csrf: func(id: string, token: string) -> result<_, session-error>;
+
+    /// Revoke a session immediately (logout). Idempotent — revoking an unknown
+    /// id succeeds.
+    revoke: func(id: string) -> result<_, session-error>;
+}
+
+/// What `session-store` provides: the store interface, backed by key-value +
+/// clock + random. `default-ttl` config knob sets the session lifetime when a
+/// per-call ttl is 0.
+world session-store {
+    export store;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+    import wasi:config/runtime@0.2.0-draft;
+}

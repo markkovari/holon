@@ -1,0 +1,27 @@
+// Declarative composition of the login-app consumer with its three
+// capabilities, the `wac compose` counterpart to the imperative `wac plug`
+// chain in `just compose-login`. Build with `just compose-login-wac`, which
+// passes each package's wasm via --dep.
+//
+// `wac plug` infers the wiring from matching imports/exports; this file states
+// it explicitly: instantiate each capability, then feed their exports into the
+// login-app instance's same-named imports. The result exports login-app's
+// `auth` and leaves only generic WASI imports open.
+
+package login:composed;
+
+// The capability components — each satisfies one of login-app's imports.
+let session = new session:store { ... };
+let config  = new config:store  { ... };
+let secrets = new secrets:vault { ... };
+
+// The consumer, wired to the three capability instances above.
+let app = new login:component {
+    "session:store/store@0.1.0": session.store,
+    "config:store/store@0.1.0":  config.store,
+    "secrets:vault/vault@0.1.0": secrets.vault,
+    ...
+};
+
+// Re-export the composed login surface.
+export app.auth;

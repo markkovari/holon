@@ -1,0 +1,73 @@
+// login:app — a consumer component that COMPOSES three universal capabilities.
+//
+// Where session:store / config:store / secrets:vault are leaf capabilities (they
+// export to whoever needs them), this component is the other side: it *imports*
+// all three and orchestrates them into one small login surface. It is the
+// worked example of multi-capability composition — `wac` plugs the three
+// capability components into this one at build time, yielding a single
+// self-contained `login_app.composed.wasm` with nothing left to import but the
+// generic WASI host shims.
+//
+// Flow:
+//   login   -> read the session ttl from config:store, fetch the auth "pepper"
+//              from secrets:vault, mint a server-side session:store session.
+//   whoami  -> look the session up, return its payload + csrf token.
+//   logout  -> revoke the session.
+package login:app@0.1.0;
+
+/// The composed login surface exported to the outside world.
+interface auth {
+    /// Why a login-app call failed.
+    variant auth-error {
+        /// Credentials rejected (here: empty user/pass — real apps verify a
+        /// store; the point is the composition, not the credential check).
+        invalid-credentials,
+        /// No live session for the supplied token.
+        no-session,
+        /// A composed capability returned an unexpected error.
+        capability(string),
+    }
+
+    /// A minted login result handed back to the client.
+    record login-result {
+        /// Opaque session token (the session:store id) — the cookie value.
+        token: string,
+        /// CSRF token bound to the session.
+        csrf: string,
+        /// Unix seconds the session expires.
+        expires: u64,
+    }
+
+    /// Who a token belongs to.
+    record identity {
+        /// The username the session was minted for.
+        user: string,
+        /// Unix seconds the session expires.
+        expires: u64,
+    }
+
+    /// Authenticate and mint a session. ttl comes from config:store
+    /// (`session-ttl`, default 3600); the stored payload is sealed-pepper-tagged
+    /// via secrets:vault to show the vault wired in.
+    login: func(user: string, password: string) -> result<login-result, auth-error>;
+
+    /// Resolve a session token to its identity. `err(no-session)` if unknown
+    /// or expired.
+    whoami: func(token: string) -> result<identity, auth-error>;
+
+    /// Revoke a session token (logout). Idempotent.
+    logout: func(token: string) -> result<_, auth-error>;
+}
+
+/// `login-app` exports `auth` and imports the three capability interfaces it
+/// composes, plus the generic WASI host imports they need transitively. After
+/// `wac plug`, the three capability imports are satisfied internally and only
+/// the WASI imports remain.
+world login-app {
+    export auth;
+
+    // The three composed capabilities.
+    import session:store/store@0.1.0;
+    import config:store/store@0.1.0;
+    import secrets:vault/vault@0.1.0;
+}

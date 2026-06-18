@@ -1,187 +1,277 @@
 {
   "kind": "in-process",
-  "node": "v24.16.0",
-  "when": 1781561215059,
+  "node": "v24.17.0",
+  "when": 1781770480552,
   "results": [
     {
       "op": "register",
       "iters": 300,
-      "meanNs": 25061366,
-      "p50Ns": 24428416,
-      "p95Ns": 29712416,
-      "p99Ns": 37221083,
-      "opsPerSec": 40
+      "meanNs": 28727727,
+      "p50Ns": 24119708,
+      "p95Ns": 62094541,
+      "p99Ns": 136372125,
+      "opsPerSec": 35
     },
     {
       "op": "login",
       "iters": 300,
-      "meanNs": 24916590,
-      "p50Ns": 24471166,
-      "p95Ns": 26347250,
-      "p99Ns": 37948333,
+      "meanNs": 24769009,
+      "p50Ns": 24312125,
+      "p95Ns": 26548833,
+      "p99Ns": 40663750,
       "opsPerSec": 40
     },
     {
       "op": "introspect",
       "iters": 5000,
-      "meanNs": 41462,
-      "p50Ns": 31584,
-      "p95Ns": 62083,
-      "p99Ns": 173042,
-      "opsPerSec": 24118
+      "meanNs": 43816,
+      "p50Ns": 31667,
+      "p95Ns": 49042,
+      "p99Ns": 131500,
+      "opsPerSec": 22823
     },
     {
       "op": "authorize",
       "iters": 5000,
-      "meanNs": 59730,
-      "p50Ns": 48333,
-      "p95Ns": 65417,
-      "p99Ns": 136167,
-      "opsPerSec": 16742
+      "meanNs": 61542,
+      "p50Ns": 49458,
+      "p95Ns": 64875,
+      "p99Ns": 165667,
+      "opsPerSec": 16249
     },
     {
       "op": "session.lookup",
       "iters": 5000,
-      "meanNs": 23679,
-      "p50Ns": 20709,
-      "p95Ns": 24875,
-      "p99Ns": 53458,
-      "opsPerSec": 42231
+      "meanNs": 22678,
+      "p50Ns": 19584,
+      "p95Ns": 24458,
+      "p99Ns": 51625,
+      "opsPerSec": 44096
     },
     {
       "op": "cache.get(hit)",
       "iters": 20000,
-      "meanNs": 22253,
-      "p50Ns": 18625,
-      "p95Ns": 23750,
-      "p99Ns": 50084,
-      "opsPerSec": 44938
+      "meanNs": 23616,
+      "p50Ns": 18417,
+      "p95Ns": 23792,
+      "p99Ns": 63000,
+      "opsPerSec": 42344
     },
     {
       "op": "cache.set",
       "iters": 20000,
-      "meanNs": 22054,
-      "p50Ns": 18125,
-      "p95Ns": 22125,
-      "p99Ns": 44750,
-      "opsPerSec": 45342
+      "meanNs": 21319,
+      "p50Ns": 17917,
+      "p95Ns": 21666,
+      "p99Ns": 46500,
+      "opsPerSec": 46906
     },
     {
       "op": "cache.get(miss)",
       "iters": 20000,
-      "meanNs": 15297,
-      "p50Ns": 12292,
-      "p95Ns": 15708,
-      "p99Ns": 35917,
-      "opsPerSec": 65372
+      "meanNs": 14253,
+      "p50Ns": 12084,
+      "p95Ns": 14875,
+      "p99Ns": 22916,
+      "opsPerSec": 70160
     },
     {
       "op": "idem.begin(miss)",
       "iters": 20000,
-      "meanNs": 28297,
-      "p50Ns": 23500,
-      "p95Ns": 31042,
-      "p99Ns": 65667,
-      "opsPerSec": 35339
+      "meanNs": 30132,
+      "p50Ns": 23584,
+      "p95Ns": 30584,
+      "p99Ns": 66167,
+      "opsPerSec": 33187
     },
     {
       "op": "idem.begin(replay)",
       "iters": 20000,
-      "meanNs": 29718,
-      "p50Ns": 23708,
-      "p95Ns": 47083,
-      "p99Ns": 150708,
-      "opsPerSec": 33649
+      "meanNs": 42654,
+      "p50Ns": 24875,
+      "p95Ns": 43167,
+      "p99Ns": 189000,
+      "opsPerSec": 23444
     },
     {
       "op": "idem.complete",
       "iters": 20000,
-      "meanNs": 22665,
-      "p50Ns": 19500,
-      "p95Ns": 26750,
-      "p99Ns": 57041,
-      "opsPerSec": 44120
+      "meanNs": 21399,
+      "p50Ns": 18750,
+      "p95Ns": 22416,
+      "p99Ns": 36375,
+      "opsPerSec": 46732
     },
     {
       "op": "flags.isEnabled(bool)",
       "iters": 20000,
-      "meanNs": 29738,
-      "p50Ns": 23417,
-      "p95Ns": 31917,
-      "p99Ns": 100250,
-      "opsPerSec": 33627
+      "meanNs": 26435,
+      "p50Ns": 22875,
+      "p95Ns": 28458,
+      "p99Ns": 48625,
+      "opsPerSec": 37828
     },
     {
       "op": "flags.isEnabled(rollout)",
       "iters": 20000,
-      "meanNs": 25946,
+      "meanNs": 26812,
       "p50Ns": 22375,
-      "p95Ns": 27041,
-      "p99Ns": 49167,
-      "opsPerSec": 38541
+      "p95Ns": 26542,
+      "p99Ns": 48417,
+      "opsPerSec": 37297
     },
     {
       "op": "flags.setRule",
       "iters": 20000,
-      "meanNs": 16244,
-      "p50Ns": 13459,
-      "p95Ns": 16875,
-      "p99Ns": 29625,
-      "opsPerSec": 61562
+      "meanNs": 15929,
+      "p50Ns": 13333,
+      "p95Ns": 16750,
+      "p99Ns": 25834,
+      "opsPerSec": 62779
     },
     {
       "op": "flags.listFlags",
       "iters": 5000,
-      "meanNs": 83687,
-      "p50Ns": 70542,
-      "p95Ns": 93834,
-      "p99Ns": 168250,
-      "opsPerSec": 11949
+      "meanNs": 108440,
+      "p50Ns": 73375,
+      "p95Ns": 183084,
+      "p99Ns": 520625,
+      "opsPerSec": 9222
     },
     {
       "op": "blob.get(1KiB)",
       "iters": 20000,
-      "meanNs": 19996,
-      "p50Ns": 14959,
-      "p95Ns": 21000,
-      "p99Ns": 65500,
-      "opsPerSec": 50009
+      "meanNs": 27667,
+      "p50Ns": 15125,
+      "p95Ns": 45250,
+      "p99Ns": 150750,
+      "opsPerSec": 36144
     },
     {
       "op": "blob.put(1KiB)",
       "iters": 20000,
-      "meanNs": 26049,
-      "p50Ns": 20500,
-      "p95Ns": 28541,
-      "p99Ns": 92208,
-      "opsPerSec": 38390
+      "meanNs": 27162,
+      "p50Ns": 20667,
+      "p95Ns": 28208,
+      "p99Ns": 83625,
+      "opsPerSec": 36817
     },
     {
       "op": "blob.head",
       "iters": 20000,
-      "meanNs": 17654,
-      "p50Ns": 13625,
-      "p95Ns": 17083,
-      "p99Ns": 41500,
-      "opsPerSec": 56644
+      "meanNs": 16487,
+      "p50Ns": 13375,
+      "p95Ns": 16875,
+      "p99Ns": 27333,
+      "opsPerSec": 60653
     },
     {
       "op": "audit.record-event",
       "iters": 5000,
-      "meanNs": 67346,
-      "p50Ns": 57833,
-      "p95Ns": 80333,
-      "p99Ns": 143792,
-      "opsPerSec": 14849
+      "meanNs": 71670,
+      "p50Ns": 58542,
+      "p95Ns": 89333,
+      "p99Ns": 183292,
+      "opsPerSec": 13953
     },
     {
       "op": "webhook.ingest(verify+dedup)",
       "iters": 5000,
-      "meanNs": 97142,
-      "p50Ns": 79708,
-      "p95Ns": 119500,
-      "p99Ns": 221208,
-      "opsPerSec": 10294
+      "meanNs": 143034,
+      "p50Ns": 78917,
+      "p95Ns": 167125,
+      "p99Ns": 922833,
+      "opsPerSec": 6991
+    },
+    {
+      "op": "session.create",
+      "iters": 20000,
+      "meanNs": 40943,
+      "p50Ns": 33916,
+      "p95Ns": 42583,
+      "p99Ns": 86958,
+      "opsPerSec": 24424
+    },
+    {
+      "op": "session.get",
+      "iters": 20000,
+      "meanNs": 23292,
+      "p50Ns": 19625,
+      "p95Ns": 23583,
+      "p99Ns": 45125,
+      "opsPerSec": 42932
+    },
+    {
+      "op": "session.verify-csrf",
+      "iters": 20000,
+      "meanNs": 22301,
+      "p50Ns": 18375,
+      "p95Ns": 21666,
+      "p99Ns": 37209,
+      "opsPerSec": 44841
+    },
+    {
+      "op": "outbox.enqueue",
+      "iters": 10000,
+      "meanNs": 1881741,
+      "p50Ns": 403834,
+      "p95Ns": 5175500,
+      "p99Ns": 27239291,
+      "opsPerSec": 531
+    },
+    {
+      "op": "secrets.get(decrypt)",
+      "iters": 10000,
+      "meanNs": 69474,
+      "p50Ns": 30208,
+      "p95Ns": 160667,
+      "p99Ns": 557250,
+      "opsPerSec": 14394
+    },
+    {
+      "op": "secrets.put(encrypt)",
+      "iters": 5000,
+      "meanNs": 423511,
+      "p50Ns": 189708,
+      "p95Ns": 343250,
+      "p99Ns": 993958,
+      "opsPerSec": 2361
+    },
+    {
+      "op": "config.get(typed)",
+      "iters": 20000,
+      "meanNs": 23996,
+      "p50Ns": 14459,
+      "p95Ns": 38542,
+      "p99Ns": 120834,
+      "opsPerSec": 41673
+    },
+    {
+      "op": "config.set(versioned)",
+      "iters": 10000,
+      "meanNs": 29060,
+      "p50Ns": 24167,
+      "p95Ns": 28667,
+      "p99Ns": 53250,
+      "opsPerSec": 34411
+    },
+    {
+      "op": "search.query(any)",
+      "iters": 5000,
+      "meanNs": 144071,
+      "p50Ns": 118292,
+      "p95Ns": 193458,
+      "p99Ns": 701750,
+      "opsPerSec": 6941
+    },
+    {
+      "op": "search.index-doc",
+      "iters": 5000,
+      "meanNs": 4922749,
+      "p50Ns": 1227250,
+      "p95Ns": 53253834,
+      "p99Ns": 67677083,
+      "opsPerSec": 203
     }
   ]
 }

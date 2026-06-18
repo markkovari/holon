@@ -23,6 +23,11 @@ npm install
 (cd ../examples/jco-blob         && npm install && npm run transpile)
 (cd ../examples/jco-audit        && npm install && npm run transpile)
 (cd ../examples/jco-webhook      && npm install && npm run transpile)  # composed: run `just compose-webhook` first
+(cd ../examples/jco-session      && npm install && npm run transpile)
+(cd ../examples/jco-outbox       && npm install && npm run transpile)
+(cd ../examples/jco-secrets      && npm install && npm run transpile)
+(cd ../examples/jco-config       && npm install && npm run transpile)
+(cd ../examples/jco-search       && npm install && npm run transpile)
 AUDIT_ENABLED=false npm run bench:inproc      # -> results-inproc.json
 
 # HTTP: a single wasmCloud host must be up (see `just k8s-collapse`). The
@@ -85,3 +90,15 @@ npm run plot   # -> bench-inproc.png, bench-http.png, bench-overhead.png
   a one-time JWKS fetch; subsequent ones hit the cache. Run with Hydra up:
   `npm run bench:idp` (see `examples/idp-oidc`). This is the recommended
   production hot path: mature IdP issues the token, this verifies it fast.
+- **Read paths are uniformly ~µs; the write paths split by data structure.**
+  `session.*`, `config.*`, `secrets.get` (incl. a ChaCha20-Poly1305 decrypt,
+  ~70 µs) and the cache/flags/idem reads all sit in the tens of µs. The two
+  outliers — `outbox.enqueue` (~1.9 ms) and `search.index-doc` (~4.9 ms) — are
+  *by design*: both maintain a newline-joined index value with a
+  read-modify-write each call, so the cost grows with the index size (here the
+  search index already holds 200 docs). `wasi:keyvalue@0.2.0-draft` exposes no
+  compare-and-swap or server-side append, so a reference impl can't do better
+  without a richer KV contract; a production backend would push the index into
+  the store (a real inverted index / a queue table) and these collapse to µs.
+  `secrets.put` (~420 µs) is the AEAD seal + a fresh random nonce — the crypto,
+  not the store.

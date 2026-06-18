@@ -16,8 +16,13 @@ featureflags_wasm := rel / "feature_flags.wasm"
 auditlog_wasm := rel / "audit_log.wasm"
 notify_wasm := rel / "notify_dispatch.wasm"
 webhook_wasm := rel / "webhook_ingest.wasm"
+session_wasm := rel / "session_store.wasm"
+config_wasm := rel / "config_store.wasm"
+secrets_wasm := rel / "secrets_vault.wasm"
+loginapp_wasm := rel / "login_app.wasm"
 guard_composed := "components/target/auth_guard.composed.wasm"
 webhook_composed := "components/target/webhook_ingest.composed.wasm"
+login_composed := "components/target/login_app.composed.wasm"
 
 # List available recipes.
 default:
@@ -47,6 +52,26 @@ compose: build
 compose-webhook: build
     wac plug {{webhook_wasm}} --plug {{idempotency_wasm}} -o {{webhook_composed}}
     @echo "composed webhook-ingest (+ idempotency-guard) -> {{webhook_composed}}"
+
+# Compose THREE capabilities — session:store + config:store + secrets:vault —
+# into the login-app consumer, satisfying all three of its imports at once.
+# The multi-capability composition demo: the output imports nothing but generic
+# WASI host shims.
+compose-login: build
+    wac plug {{loginapp_wasm}} --plug {{session_wasm}} --plug {{config_wasm}} --plug {{secrets_wasm}} -o {{login_composed}}
+    @echo "composed login-app (+ session + config + secrets) -> {{login_composed}}"
+
+# Same composition, the DECLARATIVE way — `wac compose` over a .wac source file
+# (components/login-app/compose.wac) instead of the imperative `wac plug` chain
+# above. The .wac file states the wiring explicitly. Output is equivalent.
+compose-login-wac: build
+    wac compose {{components}}/login-app/compose.wac \
+        --dep login:component={{loginapp_wasm}} \
+        --dep session:store={{session_wasm}} \
+        --dep config:store={{config_wasm}} \
+        --dep secrets:vault={{secrets_wasm}} \
+        -o components/target/login_app.wac-composed.wasm
+    @echo "composed login-app via wac source -> components/target/login_app.wac-composed.wasm"
 
 # Validate the built components.
 validate: build
