@@ -25,6 +25,10 @@ const values = {
   "max-size": process.env.UPLOAD_MAX ?? "2097152", // 2 MiB
   "ticket-ttl": "300",
   "ticket-secret": process.env.UPLOAD_SECRET ?? "vet-upload-secret",
+
+  // --- pagination (cursor signing + page size) ---
+  "max-page-size": process.env.PAGE_MAX ?? "100",
+  "cursor-secret": process.env.CURSOR_SECRET ?? "vet-cursor-secret",
 };
 
 export function get(key) {

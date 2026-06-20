@@ -1,5 +1,6 @@
 import { Toaster } from "@/components/ui/sonner"
 import { useAuth } from "@/hooks/use-auth"
+import { I18nProvider } from "@/hooks/use-i18n"
 import { Header } from "@/components/header"
 import { AuthCard } from "@/components/auth-card"
 import { OwnerView } from "@/components/owner-view"
@@ -18,19 +19,21 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <Header me={me} onLogout={() => void logout()} />
-      <main className="mx-auto max-w-5xl px-4 py-8">
-        {loading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : me ? (
-          renderView()
-        ) : (
-          <AuthCard onLogin={login} onRegister={register} />
-        )}
-      </main>
-      <Toaster />
-    </div>
+    <I18nProvider>
+      <div className="min-h-screen bg-background text-foreground">
+        <Header me={me} onLogout={() => void logout()} />
+        <main className="mx-auto max-w-5xl px-4 py-8">
+          {loading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : me ? (
+            renderView()
+          ) : (
+            <AuthCard onLogin={login} onRegister={register} />
+          )}
+        </main>
+        <Toaster />
+      </div>
+    </I18nProvider>
   )
 }
 

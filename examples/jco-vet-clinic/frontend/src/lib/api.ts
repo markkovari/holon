@@ -82,6 +82,25 @@ export async function apiBlob(path: string): Promise<Blob> {
   return res.blob()
 }
 
+// Fetch a path with the bearer token attached and trigger a browser download of
+// the response body as `filename`. The endpoints (e.g. CSV exports) are guarded,
+// so a plain <a href> won't carry the token — we fetch the blob ourselves, hand
+// it to a temporary anchor via an object URL, then revoke the URL afterwards.
+export async function downloadCsv(path: string, filename: string): Promise<void> {
+  const blob = await apiBlob(path)
+  const url = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
+}
+
 // Upload raw bytes (a File/Blob) to a path. Sends the body as-is with the
 // blob's content-type and the bearer token. Mirrors api()'s error handling.
 export async function apiUpload<T = unknown>(
@@ -225,6 +244,15 @@ export interface ValidationField {
   field: string
   code: string
   message: string
+}
+
+// UI message catalog for a locale (key -> translated string), as returned by
+// GET /i18n/:locale.
+export type UiMessages = Record<string, string>
+
+export interface I18nResponse {
+  locale: string
+  messages: UiMessages
 }
 
 // Pull a usable access token out of a login response (snake fallback).

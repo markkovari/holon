@@ -67,6 +67,7 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
   seedRoles();
   const demoUsers = seedDemoUsers();
   domain.initFsm();
+  domain.seedI18n();
 
   // Translate a thrown auth-error variant into an HTTP response. Returns the
   // call's value on success, or undefined after sending an error.
@@ -139,11 +140,17 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
   app.get("/pets", async (request, reply) => {
     const p = require(request, reply, "pets", "read");
     if (!p) return;
-    const { q } = request.query as { q?: string };
+    const { q, limit, cursor } = request.query as { q?: string; limit?: string; cursor?: string };
     // Owners only see their own pets; doctors/admins see all.
     const scopeOwner = p.roles.includes("pet-owner") && !p.roles.includes("admin") && !p.roles.includes("doctor")
       ? p.subject
       : undefined;
+    // With ?limit, return a cursor-paginated page (paginate:cursor); otherwise
+    // the full list/search (back-compat with the existing UI).
+    if (limit !== undefined && !q) {
+      const { pets, page } = domain.paginatePets(scopeOwner, Number(limit) || 10, cursor);
+      return { pets, page, viewer: p.subject };
+    }
     const pets = q ? domain.searchPets(q, scopeOwner) : domain.listPets(scopeOwner);
     return { pets, viewer: p.subject };
   });
@@ -384,7 +391,8 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
     // interface, so we read the raw audit keys the recorder wrote.)
     const p = require(request, reply, "audit", "read");
     if (!p) return;
-    return { events: domain.readAuditTrail() };
+    // PII (emails/phones/cards/SSN/IPs) masked via pii:redact before display.
+    return { events: domain.readAuditTrailRedacted() };
   });
 
   app.post("/admin/assign-role", async (request, reply) => {
@@ -393,6 +401,57 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
     const { subject, role } = request.body as { subject: string; role: string };
     guarded(reply, () => auth.assignRole(subject, role));
     if (!reply.sent) reply.code(204).send();
+  });
+
+  // ---- CSV export (csv:codec) — admin downloads ------------------------
+  app.get("/admin/export/:what.csv", async (request, reply) => {
+    const p = require(request, reply, "audit", "read"); // admin (has *:*)
+    if (!p) return;
+    const { what } = request.params as { what: string };
+    const csvText =
+      what === "appointments" ? domain.appointmentsCsv()
+      : what === "audit" ? domain.auditCsv()
+      : null;
+    if (csvText === null) return reply.code(404).send({ error: "unknown_export" });
+    reply.header("content-type", "text/csv; charset=utf-8");
+    reply.header("content-disposition", `attachment; filename="${what}.csv"`);
+    return reply.send(csvText);
+  });
+
+  // ---- staff 2FA (otp:totp) -------------------------------------------
+  // Enroll: returns the otpauth:// URI (render as QR) + the secret. Then verify
+  // a code to confirm enrollment. Any authed staff member enrolls themselves.
+  app.post("/auth/2fa/enroll", async (request, reply) => {
+    const token = bearer(request.headers.authorization);
+    if (!token) return reply.code(401).send({ error: "missing_bearer_token" });
+    const me = guarded(reply, () => auth.introspect(token));
+    if (!me) return;
+    return domain.provisionOtp(me.subject, `${me.subject}@${me.tenant}`);
+  });
+
+  app.post("/auth/2fa/verify", async (request, reply) => {
+    const token = bearer(request.headers.authorization);
+    if (!token) return reply.code(401).send({ error: "missing_bearer_token" });
+    const me = guarded(reply, () => auth.introspect(token));
+    if (!me) return;
+    const { code } = request.body as { code?: string };
+    const ok = domain.verifyOtp(me.subject, code ?? "");
+    if (!ok) return reply.code(401).send({ error: "bad_code" });
+    return { ok: true };
+  });
+
+  app.get("/auth/2fa/status", async (request, reply) => {
+    const token = bearer(request.headers.authorization);
+    if (!token) return reply.code(401).send({ error: "missing_bearer_token" });
+    const me = guarded(reply, () => auth.introspect(token));
+    if (!me) return;
+    return { enrolled: domain.hasOtp(me.subject) };
+  });
+
+  // ---- i18n (i18n:catalog) — UI string bundle -------------------------
+  app.get("/i18n/:locale", async (request, reply) => {
+    const { locale } = request.params as { locale: string };
+    return { locale, messages: domain.uiBundle(locale) };
   });
 
   // ---- static SPA -------------------------------------------------------

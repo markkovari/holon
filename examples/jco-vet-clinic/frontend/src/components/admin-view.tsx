@@ -29,6 +29,7 @@ import {
 import {
   api,
   ApiError,
+  downloadCsv,
   type AuditEvent,
   type AuditResponse,
   type Role,
@@ -67,6 +68,15 @@ export function AdminView() {
   useEffect(() => {
     void loadAudit()
   }, [loadAudit])
+
+  async function handleExport(path: string, filename: string) {
+    setError("")
+    try {
+      await downloadCsv(path, filename)
+    } catch (err) {
+      setError(describe(err))
+    }
+  }
 
   async function handleAssign(e: FormEvent) {
     e.preventDefault()
@@ -114,6 +124,40 @@ export function AdminView() {
             </div>
             <Button type="submit">Assign</Button>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Export data</CardTitle>
+          <CardDescription>
+            Download CSV snapshots. The download is fetched with your admin
+            token attached.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="outline"
+              onClick={() =>
+                void handleExport(
+                  "/admin/export/appointments.csv",
+                  "appointments.csv",
+                )
+              }
+            >
+              Export appointments (CSV)
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                void handleExport("/admin/export/audit.csv", "audit.csv")
+              }
+            >
+              Export audit log (CSV)
+            </Button>
+          </div>
         </CardContent>
       </Card>
 

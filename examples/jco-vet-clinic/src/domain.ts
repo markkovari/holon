@@ -20,6 +20,16 @@ import { engine as fsm } from "../gen/fsm/fsm_workflow.js";
 import { arithmetic as money } from "../gen/money/money.js";
 // md:render/renderer — safe Markdown -> HTML for rich visit notes.
 import { renderer as markdown } from "../gen/markdown/markdown.js";
+// csv:codec/codec — admin CSV export.
+import { codec as csv } from "../gen/csv/csv.js";
+// pii:redact/redactor — scrub PII in the admin audit view.
+import { redactor as pii } from "../gen/pii/pii_redact.js";
+// otp:totp/authenticator — staff 2FA (TOTP).
+import { authenticator as otp } from "../gen/otp/otp.js";
+// i18n:catalog/catalog — localized UI strings.
+import { catalog as i18n } from "../gen/i18n/i18n_catalog.js";
+// paginate:cursor/cursors — opaque, signed cursor pagination for the pet list.
+import { cursors as paginate } from "../gen/pagination/pagination.js";
 
 const bucket = open("default");
 const PHOTO_CONTAINER = "pet-photos";
@@ -112,6 +122,62 @@ export function createPet(input: { name: string; species: string; owner: string;
 export function listPets(forOwner?: string): Pet[] {
   const pets = scan<Pet>("pet_");
   return forOwner ? pets.filter((p) => p.owner === forOwner) : pets;
+}
+
+export interface PageInfo {
+  nextCursor?: string;
+  prevCursor?: string;
+  hasNext: boolean;
+  hasPrev: boolean;
+}
+
+/**
+ * A cursor-paginated page of pets, sorted by name (stable, id as tiebreaker).
+ * Uses paginate:cursor for the limit clamp + opaque signed cursors + the page
+ * envelope. `cursor` (opaque) resumes after a previous page.
+ */
+export function paginatePets(
+  forOwner: string | undefined,
+  limit: number,
+  cursor?: string,
+): { pets: Pet[]; page: PageInfo } {
+  const clamped = paginate.clampLimit(limit > 0 ? limit : 10) as number;
+  const all = listPets(forOwner).sort((a, b) =>
+    a.name === b.name ? (a.id < b.id ? -1 : 1) : a.name < b.name ? -1 : 1,
+  );
+
+  // decode the incoming cursor to find the start offset (after that boundary).
+  let start = 0;
+  if (cursor) {
+    try {
+      const pos = paginate.decode(cursor) as { sortKey: string; lastId: string };
+      const idx = all.findIndex((p) => p.name === pos.sortKey && p.id === pos.lastId);
+      if (idx >= 0) start = idx + 1;
+    } catch {
+      /* bad/forged cursor -> start from the beginning */
+    }
+  }
+
+  const slice = all.slice(start, start + clamped);
+  const moreAfter = start + clamped < all.length;
+  const moreBefore = start > 0;
+  const posOf = (p: Pet) => ({ sortKey: p.name, lastId: p.id, forward: true });
+  const info = paginate.buildPage(
+    slice.length ? posOf(slice[0]) : undefined,
+    slice.length ? posOf(slice[slice.length - 1]) : undefined,
+    moreBefore,
+    moreAfter,
+  ) as { nextCursor?: string; prevCursor?: string; hasNext: boolean; hasPrev: boolean };
+
+  return {
+    pets: slice,
+    page: {
+      nextCursor: info.nextCursor,
+      prevCursor: info.prevCursor,
+      hasNext: info.hasNext,
+      hasPrev: info.hasPrev,
+    },
+  };
 }
 
 export function searchPets(q: string, forOwner?: string): Pet[] {
@@ -456,4 +522,127 @@ export function readAuditTrail(max = 100): AuditEvent[] {
       };
     })
     .filter((e): e is AuditEvent => e !== undefined);
+}
+
+/** Audit trail with PII (emails/phones/cards/SSN/IPs) masked in the detail +
+ *  subject fields via pii:redact. */
+export function readAuditTrailRedacted(max = 100): AuditEvent[] {
+  const all = readAuditTrail(max);
+  const opts = { kinds: [] as never[] }; // empty = all PII kinds
+  const scrub = (s: string): string => {
+    try {
+      return pii.mask(s, opts) as string;
+    } catch {
+      return s;
+    }
+  };
+  return all.map((e) => ({ ...e, detail: scrub(e.detail), subject: scrub(e.subject) }));
+}
+
+// ---- CSV export (csv:codec) ----------------------------------------------
+
+const CSV_OPTS = { delimiter: "", hasHeader: true, trim: false };
+
+/** All appointments as a CSV document (admin export) — formatted by csv:codec. */
+export function appointmentsCsv(): string {
+  const header = { fields: ["id", "pet", "owner", "doctor", "datetime", "status"] };
+  const rows = scan<Appointment>("appt_").map((a) => ({
+    fields: [a.id, a.pet, a.owner, a.doctor || "", a.datetime, a.status],
+  }));
+  return csv.format([header, ...rows], CSV_OPTS) as string;
+}
+
+/** The audit trail as a CSV document (PII masked). */
+export function auditCsv(): string {
+  const header = { fields: ["timestamp", "event", "outcome", "tenant", "subject", "detail"] };
+  const rows = readAuditTrailRedacted(1000).map((e) => ({
+    fields: [String(e.timestamp), e.event, e.outcome, e.tenant, e.subject, e.detail],
+  }));
+  return csv.format([header, ...rows], CSV_OPTS) as string;
+}
+
+// ---- staff 2FA (otp:totp) ------------------------------------------------
+// A doctor/admin enrolls: provision mints a base32 secret + otpauth:// URI
+// (render as a QR client-side); we store the secret per subject. verify-2fa
+// checks a code. The secret lives in KV keyed by subject. (A hardened build
+// would seal the secret in secrets:vault; here it's a demo.)
+
+export interface OtpEnrollment {
+  secret: string;
+  uri: string;
+}
+
+export function provisionOtp(subject: string, account: string): OtpEnrollment {
+  const p = otp.provision("Acme Vet Clinic", account) as { secret: string; uri: string };
+  put(`otp_${subject}`, { secret: p.secret });
+  return { secret: p.secret, uri: p.uri };
+}
+
+export function verifyOtp(subject: string, code: string): boolean {
+  const rec = read<{ secret: string }>(`otp_${subject}`);
+  if (!rec) return false;
+  try {
+    return otp.verify(rec.secret, code, 30, 6, 1) as boolean;
+  } catch {
+    return false;
+  }
+}
+
+export function hasOtp(subject: string): boolean {
+  return bucket.exists(`otp_${subject}`) as boolean;
+}
+
+// ---- i18n (i18n:catalog) -------------------------------------------------
+// UI string catalog. Seeded on boot for en + es; the frontend asks for a
+// locale and gets back the bundle (with fallback negotiation handled by the
+// component).
+
+const UI_KEYS: Record<string, Record<string, string>> = {
+  en: {
+    "app.title": "Acme Vet Clinic",
+    "nav.logout": "Log out",
+    "pets.title": "My pets",
+    "pets.add": "Add pet",
+    "appt.book": "Book an appointment",
+    "appt.status": "Status",
+    "notes.title": "Visit notes",
+  },
+  es: {
+    "app.title": "Clínica Veterinaria Acme",
+    "nav.logout": "Cerrar sesión",
+    "pets.title": "Mis mascotas",
+    "pets.add": "Añadir mascota",
+    "appt.book": "Reservar una cita",
+    "appt.status": "Estado",
+    "notes.title": "Notas de la visita",
+  },
+};
+
+export function seedI18n(): void {
+  for (const [locale, msgs] of Object.entries(UI_KEYS)) {
+    for (const [key, value] of Object.entries(msgs)) {
+      try {
+        i18n.setMessage(locale, key, value);
+      } catch {
+        /* best-effort seed */
+      }
+    }
+  }
+}
+
+/** Translate one UI key for a locale (component handles fallback to en). */
+export function t(locale: string, key: string): string {
+  try {
+    return i18n.translate(locale, key, []) as string;
+  } catch {
+    return key;
+  }
+}
+
+/** The full UI bundle for a locale (negotiated against what we seeded). */
+export function uiBundle(preferred: string): Record<string, string> {
+  const locale = i18n.negotiate([preferred], ["en", "es"]) as string;
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(UI_KEYS.en)) out[key] = t(locale, key);
+  return out;
 }
