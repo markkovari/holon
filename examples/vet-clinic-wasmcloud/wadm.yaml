@@ -1,0 +1,108 @@
+# wadm application manifest — the vet-clinic auth/RBAC backend on wasmCloud,
+# with persistence backed by the NATS JetStream KV provider.
+#
+# This is the PRODUCTION path the jco persistence variants mirror: instead of a
+# Node process embedding the components via jco + a hand-written KV shim, the
+# SAME .wasm components run on a wasmCloud host, an http-server provider fronts
+# them over HTTP, and their `wasi:keyvalue` import is satisfied by the
+# `keyvalue-nats` provider — durable in NATS, chosen HERE (deployment), never in
+# WIT. (The jco-vet-clinic-nats example talks to the same NATS KV from Node.)
+#
+# Scope note: the vet DOMAIN (pets/appointments/notes) in the jco example is JS
+# glue around the components — there is no wasm host for that on wasmCloud. This
+# manifest deploys the part that IS pure wasm components: accounts-app (the
+# register/login/RBAC HTTP surface) over auth-guard, persisted to NATS KV. That
+# is the real, durable, component-native auth backend a vet-clinic frontend
+# would call.
+#
+# Prereqs: a wasmCloud host (`wash up`), NATS with JetStream on :4222, and the
+# components built (`just build` + `just compose` from comp/).
+# Deploy:  wash app put examples/vet-clinic-wasmcloud/wadm.yaml
+#          wash app deploy vet-clinic
+# Then:    curl localhost:8081/register -d '{"email":"o@acme.test","password":"ownerpass1","tenant":"acme-vet"}'
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: vet-clinic
+  annotations:
+    description: "Vet-clinic auth + RBAC backend, persisted to NATS KV, on wasmCloud"
+spec:
+  components:
+    # ---- auth-guard: the composed auth implementation (auth + rate-limiter +
+    #      audit-log). Use the wac-composed artifact from `just compose`. ----
+    - name: auth-guard
+      type: component
+      properties:
+        image: file://../../components/target/auth_guard.composed.wasm
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        # keyvalue (sessions, refresh tokens, RBAC maps, audit, accounts) -> NATS
+        - type: link
+          properties:
+            target: nats-kv
+            namespace: wasi
+            package: keyvalue
+            interfaces: [store, atomics]
+            target_config:
+              - name: vet-bucket
+                properties:
+                  bucket: "vetclinic"
+        # outgoing HTTP -> httpclient (OIDC discovery / JWKS, if used)
+        - type: link
+          properties:
+            target: httpclient
+            namespace: wasi
+            package: http
+            interfaces: [outgoing-handler]
+
+    # ---- accounts-app: the register/login/RBAC HTTP surface. Imports
+    #      accounts + session + authorizer + rbac from auth-guard. ----
+    - name: accounts-app
+      type: component
+      properties:
+        image: file://../../components/target/wasm32-wasip1/release/accounts_app.wasm
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        - type: link
+          properties:
+            target: auth-guard
+            namespace: auth
+            package: identity
+            interfaces: [accounts, session, authorizer, rbac, types]
+
+    # ---- providers ----
+    - name: httpserver
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-server:0.23.0
+      traits:
+        - type: link
+          properties:
+            target: accounts-app
+            namespace: wasi
+            package: http
+            interfaces: [incoming-handler]
+            source_config:
+              - name: vet-http
+                properties:
+                  address: "0.0.0.0:8081"
+
+    # NATS JetStream KV — the durable store. Same NATS the jco-vet-clinic-nats
+    # variant uses; the bucket name is set per-link above.
+    - name: nats-kv
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/keyvalue-nats:0.4.0
+        config:
+          - name: nats-url
+            properties:
+              url: "nats://host.docker.internal:4222"
+
+    - name: httpclient
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-client:0.13.0

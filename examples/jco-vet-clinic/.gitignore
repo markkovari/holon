@@ -1,0 +1,10 @@
+node_modules/
+gen/
+gen-sqlite/
+*.sqlite
+
+# Vite frontend: source in frontend/src is tracked; build cruft is not.
+# The built SPA in public/ IS committed (the backend serves it out-of-box,
+# same convention as the committed .wasm files). Rebuild with `npm run build:frontend`.
+frontend/node_modules/
+frontend/dist/

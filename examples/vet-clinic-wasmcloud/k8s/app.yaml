@@ -1,0 +1,117 @@
+# OAM Application for the vet-clinic auth/RBAC backend on wasmCloud 2.x (k8s
+# operator). The SAME composed auth-guard + accounts-app components from the jco
+# examples, now running as real wasm on the cluster, persisted to NATS KV.
+#
+# Graph:
+#   accounts-app  --(auth:identity/{accounts,session,authorizer,rbac})-->  auth-guard
+#   accounts-app  <--(wasi:http incoming)--                                 httpserver :8081
+#   auth-guard    --(wasi:keyvalue store+atomics)-->                        keyvalue-nats  (NATS JetStream)
+#   auth-guard    --(wasi:http outgoing)-->                                 httpclient     (OIDC/JWKS)
+#
+# Images are pulled via oci:// from the in-cluster registry (push with the
+# README's `wash oci push` / docker steps). The NATS keyvalue bucket is chosen
+# HERE (deployment), never in WIT — the durable store the jco-vet-clinic-nats
+# variant mirrors from Node.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: vet-clinic
+  namespace: vet-clinic
+  annotations:
+    version: v0.1.0
+    description: "Vet-clinic auth + RBAC backend, persisted to NATS KV, on wasmCloud k8s"
+spec:
+  components:
+    - name: auth-guard
+      type: component
+      properties:
+        image: oci://registry.wasmcloud.svc.cluster.local:5000/vet-auth-guard:0.1.0
+        config:
+          - name: policy
+            properties:
+              session-ttl: "3600"
+              password-min-len: "8"
+              default-tenant: "acme-vet"
+              audit-enabled: "true"
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        - type: link
+          properties:
+            name: default
+            namespace: wasi
+            package: keyvalue
+            interfaces: [store, atomics]
+            target:
+              name: keyvalue-nats
+              config:
+                - name: vet-bucket
+                  properties:
+                    bucket: vetclinic
+                    cluster_uri: nats://nats.wasmcloud.svc.cluster.local:4222
+                    enable_bucket_auto_create: "true"
+        - type: link
+          properties:
+            namespace: wasi
+            package: http
+            interfaces: [outgoing-handler]
+            target:
+              name: httpclient
+
+    - name: accounts-app
+      type: component
+      properties:
+        image: oci://registry.wasmcloud.svc.cluster.local:5000/vet-accounts-app:0.1.0
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        - type: link
+          properties:
+            namespace: auth
+            package: identity
+            interfaces: [accounts, session, authorizer, rbac, types]
+            target:
+              name: auth-guard
+
+    # ---- providers ----
+    - name: httpserver
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-server:0.23.1
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        - type: link
+          properties:
+            name: http-accounts
+            namespace: wasi
+            package: http
+            interfaces: [incoming-handler]
+            source:
+              config:
+                - name: http-accounts-config
+                  properties:
+                    address: 0.0.0.0:8081
+            target:
+              name: accounts-app
+
+    - name: keyvalue-nats
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/keyvalue-nats:0.3.1
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+
+    - name: httpclient
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-client:0.13.0
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1

@@ -1,0 +1,20 @@
+{
+  "name": "comp-jco-vet-clinic-nats",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The vet-clinic app with a durable NATS JetStream KV store — the same store the wasmCloud keyvalue-nats provider uses, persistent across restarts",
+  "scripts": {
+    "prep": "cd ../jco-vet-clinic && npm install && npm run transpile",
+    "start": "npm run prep && VET_KV_BACKEND=nats VET_KV_BACKEND_MODULE=\"$PWD/kv-backend.js\" PORT=${PORT:-3003} tsx ../jco-vet-clinic/src/server.ts",
+    "test": "tsx --test --test-force-exit test/persist.test.ts"
+  },
+  "dependencies": {
+    "nats": "^2.29.0",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

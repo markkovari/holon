@@ -1,0 +1,24 @@
+# wasmCloud host for the vet-clinic stack — wasmCloud 2.x via the Kubernetes
+# operator (k8s.wasmcloud.dev/v1alpha1). The operator (already running in the
+# `wasmcloud` namespace) reconciles this into a host Deployment.
+#
+# - natsAddress: in-cluster NATS (JetStream) — the wasi:keyvalue backend.
+# - allowedInsecure: the in-cluster registry components are pushed to.
+# - lattice: isolated from other apps (comp-auth, petclinic) on the cluster.
+apiVersion: k8s.wasmcloud.dev/v1alpha1
+kind: WasmCloudHostConfig
+metadata:
+  name: vet-clinic-host
+  namespace: vet-clinic
+spec:
+  hostReplicas: 1
+  lattice: vet-clinic
+  version: "1.6.0"
+  natsAddress: nats://nats.wasmcloud.svc.cluster.local
+  natsClientPort: 4222
+  jetstreamDomain: default
+  leafNodeDomain: leaf
+  logLevel: info
+  allowLatest: true
+  allowedInsecure:
+    - registry.wasmcloud.svc.cluster.local:5000

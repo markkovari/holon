@@ -1,0 +1,8 @@
+node_modules/
+gen/
+gen-sqlite/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.test.sqlite*
+.persist-test.sqlite*

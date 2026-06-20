@@ -1,0 +1,20 @@
+{
+  "name": "comp-jco-vet-clinic-sqlite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The vet-clinic app with a durable SQLite-backed KV store — same components, persistent across restarts",
+  "scripts": {
+    "prep": "cd ../jco-vet-clinic && npm install && npm run transpile",
+    "start": "npm run prep && VET_KV_BACKEND=sqlite VET_KV_BACKEND_MODULE=\"$PWD/kv-backend.js\" PORT=${PORT:-3001} tsx ../jco-vet-clinic/src/server.ts",
+    "test": "npm run prep && VET_KV_BACKEND=sqlite VET_KV_BACKEND_MODULE=\"$PWD/kv-backend.js\" VET_SQLITE_PATH=\"$PWD/.test.sqlite\" tsx --test test/persist.test.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.0",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}
