@@ -1,0 +1,20 @@
+{
+  "name": "comp-jco-policy-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Exercise the policy:guard row-level authz engine in-process via jco",
+  "scripts": {
+    "transpile": "jco transpile policy_guard.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue-shim.js",
+    "test": "npm run transpile && tsx --test test/policy.test.ts"
+  },
+  "dependencies": {
+    "@bytecodealliance/jco": "^1.23.0",
+    "@bytecodealliance/preview2-shim": "^0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

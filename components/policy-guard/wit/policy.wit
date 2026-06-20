@@ -1,0 +1,115 @@
+// policy:guard — row-level / attribute-based authorization.
+//
+// auth-guard answers "does this principal's ROLE grant action X on resource
+// TYPE Y" (RBAC). It cannot answer "does this principal own THIS row" —
+// row-level checks like `appointment.owner == subject` are hand-coded in every
+// route (the vet-clinic does it at ~17 sites). policy:guard makes those a
+// declarative, reusable rule set: register rules that match on the principal's
+// attributes + the resource's attributes, then `can` / `enforce` a request.
+//
+// Pure decision engine: principal attrs + resource attrs + action in, allow or
+// deny (with the deciding rule) out. No state beyond the registered rule set
+// (kept in the key-value store so rules are updatable without a redeploy).
+package policy:guard@0.1.0;
+
+/// Declarative attribute-based access rules + a decision point.
+interface guard {
+    /// Why a policy call failed (distinct from a deny — these are errors).
+    variant policy-error {
+        /// A rule referenced a malformed condition.
+        invalid-rule(string),
+        /// A backing dependency (the rule store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// How a condition's two operands are compared.
+    enum op {
+        /// Equal (string compare).
+        eq,
+        /// Not equal.
+        ne,
+        /// `subject` value is in the comma-separated `value` list.
+        in-list,
+        /// Numeric: subject < value.
+        lt,
+        /// Numeric: subject > value.
+        gt,
+        /// `subject` (a comma list) contains `value`.
+        has,
+    }
+
+    /// One condition in a rule. `left` and `right` are attribute REFERENCES or
+    /// literals: a reference is `principal.<key>` or `resource.<key>` (resolved
+    /// from the request's attribute maps); anything else is a literal. e.g.
+    /// `{ left: "resource.owner", op: eq, right: "principal.subject" }` is the
+    /// ownership check.
+    record condition {
+        left: string,
+        op: op,
+        right: string,
+    }
+
+    /// A rule: for `action` (or "*" = any), if EVERY condition holds, the rule
+    /// `effect` applies. Lower `priority` wins ties; an explicit deny beats an
+    /// allow at the same priority.
+    record rule {
+        id: string,
+        action: string,
+        effect: effect,
+        conditions: list<condition>,
+        priority: u32,
+    }
+
+    /// A rule's outcome.
+    enum effect {
+        allow,
+        deny,
+    }
+
+    /// A name/value attribute (of a principal or a resource).
+    record attr {
+        key: string,
+        value: string,
+    }
+
+    /// The decision for a request, plus which rule decided it.
+    record decision {
+        allowed: bool,
+        /// Id of the rule that decided, or "" if no rule matched (default deny).
+        rule-id: string,
+        /// Human-readable reason.
+        reason: string,
+    }
+
+    /// Register (or replace) the rule set for a `domain` (e.g. "appointments").
+    /// Validates each rule's conditions. Replaces any existing set.
+    set-rules: func(domain: string, rules: list<rule>) -> result<_, policy-error>;
+
+    /// The rules currently registered for a domain.
+    get-rules: func(domain: string) -> result<list<rule>, policy-error>;
+
+    /// Decide whether `action` is permitted given the principal + resource
+    /// attributes, evaluating the domain's rules in priority order. Default is
+    /// DENY when no rule matches.
+    can: func(
+        domain: string,
+        action: string,
+        principal: list<attr>,
+        target-attrs: list<attr>,
+    ) -> result<decision, policy-error>;
+
+    /// Like `can` but collapses to a bool, and treats an error as deny — for the
+    /// common `if (!enforce(...)) return 403` call site.
+    enforce: func(
+        domain: string,
+        action: string,
+        principal: list<attr>,
+        target-attrs: list<attr>,
+    ) -> bool;
+}
+
+/// `policy-guard` provides the decision engine; rules in the key-value store.
+world policy-guard {
+    export guard;
+    import wasi:keyvalue/store@0.2.0-draft;
+}
