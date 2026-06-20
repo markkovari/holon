@@ -26,6 +26,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { TwoFactor } from "@/components/two-factor"
 import {
   api,
   ApiError,
@@ -209,6 +210,8 @@ export function AdminView() {
           )}
         </CardContent>
       </Card>
+
+      <TwoFactor />
     </div>
   )
 }

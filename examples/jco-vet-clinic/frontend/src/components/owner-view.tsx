@@ -41,6 +41,7 @@ import {
   type AppointmentsResponse,
   type NotesResponse,
   type Pet,
+  type PetsPage,
   type PetsResponse,
   type TransitionResponse,
   type VisitNote,
@@ -59,10 +60,32 @@ function formatNoteTime(at: number | string): string {
   return new Date(secs * 1000).toLocaleString()
 }
 
+const PAGE_SIZE = 5
+
+// Fetch a single page of pets (paged browsing). `cursor` is the opaque cursor
+// for the page to load; undefined loads the first page.
+async function loadPageAt(cursor: string | undefined): Promise<PetsPage> {
+  const params = new URLSearchParams({ limit: String(PAGE_SIZE) })
+  if (cursor !== undefined) params.set("cursor", cursor)
+  return api<PetsPage>("GET", `/pets?${params.toString()}`)
+}
+
 export function OwnerView() {
   const [pets, setPets] = useState<Pet[]>([])
   const [appts, setAppts] = useState<Appointment[]>([])
   const [error, setError] = useState("")
+
+  // Pagination state for the (non-search) browsing mode. `searching` is true
+  // while a `?q=` search is active — then we show the full match list and hide
+  // the Prev/Next controls. `pageInfo` carries the envelope's page descriptor.
+  const [searching, setSearching] = useState(false)
+  const [pageInfo, setPageInfo] = useState<PetsPage["page"] | null>(null)
+  // stack of the cursors used to *reach* each page (first page = undefined).
+  // The top of the stack is the cursor of the page currently shown; popping it
+  // and using the new top drives "Prev" without relying on the server cursor.
+  const [cursorStack, setCursorStack] = useState<(string | undefined)[]>([
+    undefined,
+  ])
 
   // visit notes, loaded lazily per appointment on expand
   const [notes, setNotes] = useState<Record<string, VisitNote[]>>({})
@@ -83,15 +106,52 @@ export function OwnerView() {
   const [apptPet, setApptPet] = useState("")
   const [apptWhen, setApptWhen] = useState("")
 
-  const loadPets = useCallback(async (q?: string) => {
-    const path = q ? `/pets?q=${encodeURIComponent(q)}` : "/pets"
-    const { pets } = await api<PetsResponse>("GET", path)
-    setPets(pets)
-    if (pets.length && !pets.some((p) => p.id === apptPet)) {
-      setApptPet(pets[0].id)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // After loading any pet list, keep the booking <Select> pointed at a pet that
+  // still exists.
+  const syncApptPet = useCallback(
+    (loaded: Pet[]) => {
+      if (loaded.length && !loaded.some((p) => p.id === apptPet)) {
+        setApptPet(loaded[0].id)
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [],
+  )
+
+  // Browsing mode: fetch one page of `PAGE_SIZE` pets at `cursor`. Replaces the
+  // cursor stack (used by the first-page / reload paths). Next/Prev manage the
+  // stack themselves and call loadPageAt directly.
+  const loadPage = useCallback(
+    async (cursor: string | undefined) => {
+      setSearching(false)
+      const { pets, page } = await loadPageAt(cursor)
+      setCursorStack([cursor])
+      setPets(pets)
+      setPageInfo(page)
+      syncApptPet(pets)
+    },
+    [syncApptPet],
+  )
+
+  // Search mode: GET /pets?q= returns the full match list (no paging). With no
+  // query it falls back to the first page of paged browsing.
+  const loadPets = useCallback(
+    async (q?: string) => {
+      if (!q) {
+        await loadPage(undefined)
+        return
+      }
+      setSearching(true)
+      setPageInfo(null)
+      const { pets } = await api<PetsResponse>(
+        "GET",
+        `/pets?q=${encodeURIComponent(q)}`,
+      )
+      setPets(pets)
+      syncApptPet(pets)
+    },
+    [loadPage, syncApptPet],
+  )
 
   const loadAppts = useCallback(async () => {
     const { appointments } = await api<AppointmentsResponse>(
@@ -100,6 +160,51 @@ export function OwnerView() {
     )
     setAppts(appointments)
   }, [])
+
+  // Reload whatever the user is currently looking at: the active search, or the
+  // current page of browsing (top of the cursor stack). Used after mutations.
+  const reloadCurrent = useCallback(async () => {
+    if (searching) {
+      await loadPets(query || undefined)
+      return
+    }
+    const cursor = cursorStack[cursorStack.length - 1]
+    const { pets, page } = await loadPageAt(cursor)
+    setPets(pets)
+    setPageInfo(page)
+    syncApptPet(pets)
+  }, [searching, query, cursorStack, loadPets, syncApptPet])
+
+  async function handleNext() {
+    if (!pageInfo?.nextCursor) return
+    setError("")
+    try {
+      const next = pageInfo.nextCursor
+      const { pets, page } = await loadPageAt(next)
+      setCursorStack((s) => [...s, next])
+      setPets(pets)
+      setPageInfo(page)
+      syncApptPet(pets)
+    } catch (err) {
+      setError(describe(err))
+    }
+  }
+
+  async function handlePrev() {
+    if (cursorStack.length <= 1) return
+    setError("")
+    try {
+      const prevStack = cursorStack.slice(0, -1)
+      const cursor = prevStack[prevStack.length - 1]
+      const { pets, page } = await loadPageAt(cursor)
+      setCursorStack(prevStack)
+      setPets(pets)
+      setPageInfo(page)
+      syncApptPet(pets)
+    } catch (err) {
+      setError(describe(err))
+    }
+  }
 
   useEffect(() => {
     void loadPets().catch((e) => setError(describe(e)))
@@ -113,7 +218,7 @@ export function OwnerView() {
       await api("POST", "/pets", { name: petName, species: petSpecies })
       setPetName("")
       setPetSpecies("")
-      await loadPets(query || undefined)
+      await reloadCurrent()
     } catch (err) {
       setError(describe(err))
     }
@@ -155,7 +260,7 @@ export function OwnerView() {
     setError("")
     try {
       await api("DELETE", `/pets/${encodeURIComponent(petId)}`)
-      await loadPets(query || undefined)
+      await reloadCurrent()
       await loadAppts()
     } catch (err) {
       setError(describe(err))
@@ -174,7 +279,7 @@ export function OwnerView() {
         { event: "cancel" },
       )
       await loadAppts()
-      await loadPets(query || undefined)
+      await reloadCurrent()
     } catch (err) {
       setError(describe(err))
     }
@@ -296,7 +401,7 @@ export function OwnerView() {
                         <PetPhoto
                           pet={p}
                           onUploaded={() => {
-                            void loadPets(query || undefined).catch((e) =>
+                            void reloadCurrent().catch((e) =>
                               setError(describe(e)),
                             )
                           }}
@@ -341,6 +446,27 @@ export function OwnerView() {
                 })}
               </TableBody>
             </Table>
+          )}
+
+          {!searching && pageInfo && (
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handlePrev()}
+                disabled={!pageInfo.hasPrev || cursorStack.length <= 1}
+              >
+                ‹ Prev
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleNext()}
+                disabled={!pageInfo.hasNext}
+              >
+                Next ›
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

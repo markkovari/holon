@@ -167,6 +167,30 @@ export interface PetsResponse {
   viewer: string
 }
 
+// A single page of pets returned by GET /pets?limit=N[&cursor=C]. Without a
+// `limit`, the same endpoint returns the full PetsResponse (no `page`).
+export interface PetsPage {
+  pets: Pet[]
+  page: {
+    nextCursor?: string
+    prevCursor?: string
+    hasNext: boolean
+    hasPrev: boolean
+  }
+  viewer: string
+}
+
+// 2FA (TOTP) enrollment. POST /auth/2fa/enroll returns the shared secret and an
+// otpauth:// provisioning URI; GET /auth/2fa/status reports whether enrolled.
+export interface TwoFactorEnroll {
+  secret: string
+  uri: string
+}
+
+export interface TwoFactorStatus {
+  enrolled: boolean
+}
+
 export interface Appointment {
   id: string
   pet: string
