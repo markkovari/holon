@@ -29,6 +29,7 @@ import { TwoFactor } from "@/components/two-factor"
 import {
   api,
   ApiError,
+  type AiSummary,
   type Appointment,
   type AppointmentsResponse,
   type Invoice,
@@ -84,6 +85,10 @@ export function DoctorView() {
     Record<string, { description: string; dollars: string }[]>
   >({})
   const [invoices, setInvoices] = useState<Record<string, Invoice>>({})
+
+  // AI summaries keyed by appt id, plus per-appt "generating" flags
+  const [summaries, setSummaries] = useState<Record<string, AiSummary>>({})
+  const [summarizing, setSummarizing] = useState<Set<string>>(new Set())
 
   const loadAppts = useCallback(async () => {
     const { appointments } = await api<AppointmentsResponse>(
@@ -211,6 +216,30 @@ export function DoctorView() {
     }
   }
 
+  async function handleSummary(apptId: string, force: boolean) {
+    setError("")
+    setSummarizing((prev) => new Set(prev).add(apptId))
+    try {
+      const summary = await api<AiSummary>(
+        "POST",
+        `/appointments/${encodeURIComponent(apptId)}/summary${
+          force ? "?force=1" : ""
+        }`,
+      )
+      setSummaries((m) => ({ ...m, [apptId]: summary }))
+      toast.success(force ? "Summary regenerated" : "Summary generated")
+    } catch (err) {
+      toast.error(`Failed: ${describe(err)}`)
+      setError(describe(err))
+    } finally {
+      setSummarizing((prev) => {
+        const next = new Set(prev)
+        next.delete(apptId)
+        return next
+      })
+    }
+  }
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -284,6 +313,12 @@ export function DoctorView() {
                           <TableCell colSpan={6} className="bg-muted/30">
                             <div className="space-y-4">
                               <NotesPanel notes={notes[a.id]} />
+                              <SummaryPanel
+                                summary={summaries[a.id]}
+                                busy={summarizing.has(a.id)}
+                                onGenerate={() => handleSummary(a.id, false)}
+                                onRegenerate={() => handleSummary(a.id, true)}
+                              />
                               <InvoicePanel
                                 lines={draftFor(a.id)}
                                 saved={saved}
@@ -369,6 +404,58 @@ function NotesPanel({ notes }: { notes: VisitNote[] | undefined }) {
         </li>
       ))}
     </ul>
+  )
+}
+
+function SummaryPanel({
+  summary,
+  busy,
+  onGenerate,
+  onRegenerate,
+}: {
+  summary: AiSummary | undefined
+  busy: boolean
+  onGenerate: () => void
+  onRegenerate: () => void
+}) {
+  return (
+    <div className="space-y-2 border-t pt-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">AI summary</p>
+        {summary ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={onRegenerate}
+          >
+            {busy ? "Regenerating…" : "Regenerate"}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            disabled={busy}
+            onClick={onGenerate}
+          >
+            {busy ? "Generating…" : "Generate summary"}
+          </Button>
+        )}
+      </div>
+      {summary ? (
+        <div className="rounded-md border bg-muted/50 p-3">
+          <p className="whitespace-pre-wrap text-sm">{summary.summary}</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            AI-generated · {new Date(summary.at * 1000).toLocaleString()}
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No summary yet. Generate one from this pet and its visit notes.
+        </p>
+      )}
+    </div>
   )
 }
 

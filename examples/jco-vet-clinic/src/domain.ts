@@ -34,6 +34,10 @@ import { authenticator as otp } from "../gen/otp/otp.js";
 import { catalog as i18n } from "../gen/i18n/i18n_catalog.js";
 // paginate:cursor/cursors — opaque, signed cursor pagination for the pet list.
 import { cursors as paginate } from "../gen/pagination/pagination.js";
+// ai:inference/inference — domain AI verbs over a composed-in LLM provider
+// (the mock here; swap a real provider with `just compose-ai`). Used to draft a
+// clinical summary of a pet + its visit notes for the doctor.
+import { inference as ai } from "../gen/ai/ai_inference.composed.js";
 
 const bucket = open("default");
 const PHOTO_CONTAINER = "pet-photos";
@@ -522,6 +526,62 @@ export function renderMarkdown(text: string): string {
   } catch {
     return text; // fall back to raw text if the renderer errors
   }
+}
+
+// ---- AI clinical summary (ai:inference) ----------------------------------
+// Draft a clinical summary of a pet + this appointment's visit notes for the
+// doctor. The app writes no prompt and names no LLM vendor — it hands the
+// assembled facts to ai:inference/summarize; whichever provider was composed in
+// (the mock here) answers. The result is cached on the appointment so re-opening
+// doesn't re-run inference.
+
+export interface AiSummary {
+  summary: string;
+  /** unix seconds the summary was generated. */
+  at: number;
+}
+
+/** Build the source text for an appointment's summary from the pet + notes. */
+function summarySource(apptId: string): { text: string; petName: string } | undefined {
+  const appt = getAppointment(apptId);
+  if (!appt) return undefined;
+  const pet = getPet(appt.pet);
+  if (!pet) return undefined;
+  const notes = notesFor(apptId).map((n) => n.text); // raw markdown text
+  const lines = [
+    `Patient: ${pet.name}, a ${pet.species}.`,
+    pet.notes ? `Owner-provided notes: ${pet.notes}` : "",
+    `Appointment ${appt.datetime}, status ${appt.status}.`,
+    notes.length ? `Visit notes:\n${notes.map((t) => `- ${t}`).join("\n")}` : "No visit notes recorded yet.",
+  ].filter(Boolean);
+  return { text: lines.join("\n"), petName: pet.name };
+}
+
+/**
+ * Generate (and cache) a clinical summary for an appointment via ai:inference.
+ * `force` re-runs even if cached. Returns undefined if the appointment/pet is
+ * missing; throws nothing — an inference failure yields a fallback summary.
+ */
+export function summarizeAppointment(apptId: string, force = false): AiSummary | undefined {
+  const cached = read<AiSummary>(`aisum_${apptId}`);
+  if (cached && !force) return cached;
+  const src = summarySource(apptId);
+  if (!src) return undefined;
+  let summary: string;
+  try {
+    // ai:inference/summarize — length "normal", focus "clinical findings".
+    summary = ai.summarize(src.text, "normal", "clinical findings") as string;
+  } catch {
+    summary = `Summary unavailable for ${src.petName}.`;
+  }
+  const result: AiSummary = { summary, at: Math.floor(Date.now() / 1000) };
+  put(`aisum_${apptId}`, result);
+  return result;
+}
+
+/** Read a cached AI summary, if one was generated. */
+export function getSummary(apptId: string): AiSummary | undefined {
+  return read<AiSummary>(`aisum_${apptId}`);
 }
 
 // ---- audit trail ---------------------------------------------------------

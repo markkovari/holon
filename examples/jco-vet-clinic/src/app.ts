@@ -346,6 +346,35 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
     return { notes: domain.notesFor(id) };
   });
 
+  // ---- AI clinical summary (ai:inference) -------------------------------
+  // Generate a summary of the pet + this appointment's notes (doctor/admin).
+  // ?force=1 re-runs inference; otherwise returns the cached one if present.
+  app.post("/appointments/:id/summary", async (request, reply) => {
+    const p = require(request, reply, "notes", "write"); // doctor (or admin via *)
+    if (!p) return;
+    const { id } = request.params as { id: string };
+    const { force } = request.query as { force?: string };
+    const result = domain.summarizeAppointment(id, force === "1" || force === "true");
+    if (!result) return reply.code(404).send({ error: "appointment_not_found" });
+    return result;
+  });
+
+  // Read a cached AI summary (owner of the appointment, or doctor/admin).
+  app.get("/appointments/:id/summary", async (request, reply) => {
+    const p = require(request, reply, "appointments", "read");
+    if (!p) return;
+    const { id } = request.params as { id: string };
+    const appt = domain.getAppointment(id);
+    if (!appt) return reply.code(404).send({ error: "appointment_not_found" });
+    const privileged = p.roles.includes("admin") || p.roles.includes("doctor");
+    if (!privileged && appt.owner !== p.subject) {
+      return reply.code(403).send({ error: "not_your_appointment" });
+    }
+    const result = domain.getSummary(id);
+    if (!result) return reply.code(404).send({ error: "no_summary" });
+    return result;
+  });
+
   // ---- deletes (owner-scoped, with business rules) ----------------------
 
   // Delete a pet — only when it has no active bookings.

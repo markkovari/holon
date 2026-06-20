@@ -389,4 +389,36 @@ describe("vet-clinic e2e (composed components, in-process)", () => {
     assert.deepEqual(j2.pets.map((p) => p.name), ["Cy", "Di"], "page 2 resumes after the cursor");
     assert.equal(j2.page.hasPrev, true);
   });
+
+  it("doctor generates an AI clinical summary of an appointment (ai:inference)", async () => {
+    const owner = await login("alice@acme-vet.test", "alicepass1");
+    const pet = (await app.inject({ method: "POST", url: "/pets", headers: auth(owner), payload: { name: "Aiko", species: "cat", notes: "indoor, neutered" } }).then((r) => r.json())) as { id: string };
+    const far = new Date(Date.now() + 25 * 864e5).toISOString().slice(0, 16);
+    const appt = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.id, datetime: far } }).then((r) => r.json())) as { id: string };
+    const doc = await login("doctor@acme-vet.test", "doctorpass1");
+    await app.inject({ method: "POST", url: `/appointments/${appt.id}/notes`, headers: auth(doc), payload: { text: "Mild dental tartar; recommend cleaning." } });
+
+    // an owner cannot generate a summary (needs notes:write)
+    const denied = await app.inject({ method: "POST", url: `/appointments/${appt.id}/summary`, headers: auth(owner) });
+    assert.equal(denied.statusCode, 403, "owner can't generate summary");
+
+    // doctor generates it
+    const gen = await app.inject({ method: "POST", url: `/appointments/${appt.id}/summary`, headers: auth(doc) });
+    assert.equal(gen.statusCode, 200, gen.body);
+    const body = gen.json() as { summary: string; at: number };
+    assert.ok(body.summary.length > 0, "non-empty summary");
+    // the mock provider returns "Summary: " + the source text head
+    assert.match(body.summary, /^Summary:/, "mock summary shape");
+    assert.ok(typeof body.at === "number" && body.at > 0, "timestamp");
+
+    // owner can READ the cached summary on their own appointment
+    const read = await app.inject({ method: "GET", url: `/appointments/${appt.id}/summary`, headers: auth(owner) });
+    assert.equal(read.statusCode, 200);
+    assert.equal((read.json() as { summary: string }).summary, body.summary, "cached, stable");
+
+    // no summary yet on a different appointment -> 404
+    const appt2 = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.id, datetime: far } }).then((r) => r.json())) as { id: string };
+    const none = await app.inject({ method: "GET", url: `/appointments/${appt2.id}/summary`, headers: auth(doc) });
+    assert.equal(none.statusCode, 404, "no summary generated yet");
+  });
 });

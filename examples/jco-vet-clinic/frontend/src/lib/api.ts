@@ -244,6 +244,13 @@ export interface Invoice {
   currency: string
 }
 
+// An AI-generated clinical summary of a pet + an appointment's visit notes,
+// returned by POST/GET /appointments/:id/summary. `at` is unix-seconds.
+export interface AiSummary {
+  summary: string
+  at: number
+}
+
 // Full pet detail: the pet plus its appointments, each with its visit notes
 // inlined (returned by GET /pets/:id).
 export type PetDetail = Pet & {
