@@ -7,6 +7,10 @@
 // The shared KV shim — the SAME module the transpiled components import, so the
 // records we write here live in the same store search-index reads from.
 import { open } from "./shims/keyvalue.js";
+// records:store/store — generic record CRUD + indexed lookups. Pets,
+// appointments and visit notes are now collections in this component instead of
+// hand-rolled KV keys; the component mints each record's id (a ULID).
+import { store as records } from "../gen/record/record_store.js";
 // search:index/index and validate:schema/validator, transpiled to JS.
 import { index as search } from "../gen/search/search_index.js";
 import { validator as validate } from "../gen/validate/validate.js";
@@ -44,19 +48,16 @@ function read<T>(key: string): T | undefined {
   const raw = bucket.get(key);
   return raw ? (JSON.parse(dec(raw)) as T) : undefined;
 }
-function scan<T>(prefix: string): T[] {
-  const { keys } = bucket.listKeys(undefined) as { keys: string[] };
-  return keys
-    .filter((k) => k.startsWith(prefix))
-    .map((k) => read<T>(k))
-    .filter((v): v is T => v !== undefined);
-}
-
-let counter = 0;
-function id(prefix: string): string {
-  // deterministic-ish unique id without Math.random (fine for an in-proc demo)
-  counter += 1;
-  return `${prefix}_${Date.now().toString(36)}${counter.toString(36)}`;
+// records:store throws a StoreError with payload {tag:'not-found'} for a missing
+// record; this re-runs `fn` and folds that one error back into `undefined`,
+// matching the old `read` semantics. Other store errors still propagate.
+function orUndefinedOnMissing<T>(fn: () => T): T | undefined {
+  try {
+    return fn();
+  } catch (e) {
+    if ((e as { payload?: { tag?: string } })?.payload?.tag === "not-found") return undefined;
+    throw e;
+  }
 }
 
 // ---- types ---------------------------------------------------------------
@@ -111,17 +112,27 @@ export function check(body: unknown, which: "pet" | "appointment"): FieldError[]
 
 // ---- pets ----------------------------------------------------------------
 
+/** Map a records:store entry to a Pet (entry.id is the pet id). */
+function petFromEntry(entry: { id: string; data: string }): Pet {
+  return { id: entry.id, ...(JSON.parse(entry.data) as Omit<Pet, "id">) };
+}
+
 export function createPet(input: { name: string; species: string; owner: string; notes?: string }): Pet {
-  const pet: Pet = { id: id("pet"), notes: "", ...input };
-  put(`pet_${pet.id}`, pet);
-  // index it for full-text search (name + species + notes), tagged by owner.
+  // the pet record is stored WITHOUT an id — records:store mints the ULID.
+  const data = { name: input.name, species: input.species, owner: input.owner, notes: input.notes ?? "" };
+  const entry = records.create("pets", JSON.stringify(data), ["owner"]) as { id: string; data: string };
+  const pet: Pet = { id: entry.id, ...data };
+  // index it for full-text search (name + species + notes), tagged by owner —
+  // keyed by the new (component-minted) id.
   search.indexDoc(pet.id, `${pet.name} ${pet.species} ${pet.notes}`, [`owner:${pet.owner}`]);
   return pet;
 }
 
 export function listPets(forOwner?: string): Pet[] {
-  const pets = scan<Pet>("pet_");
-  return forOwner ? pets.filter((p) => p.owner === forOwner) : pets;
+  const entries = forOwner
+    ? (records.findBy("pets", "owner", JSON.stringify(forOwner)) as { id: string; data: string }[])
+    : ((records.listRecords("pets", 0, "") as { entries: { id: string; data: string }[] }).entries);
+  return entries.map(petFromEntry);
 }
 
 export interface PageInfo {
@@ -183,11 +194,11 @@ export function paginatePets(
 export function searchPets(q: string, forOwner?: string): Pet[] {
   const tags = forOwner ? [`owner:${forOwner}`] : [];
   const hits = search.query(q, "any", tags, 20) as { id: string; score: number }[];
-  return hits.map((h) => read<Pet>(`pet_${h.id}`)).filter((p): p is Pet => p !== undefined);
+  return hits.map((h) => getPet(h.id)).filter((p): p is Pet => p !== undefined);
 }
 
 export function getPet(petId: string): Pet | undefined {
-  return read<Pet>(`pet_${petId}`);
+  return orUndefinedOnMissing(() => petFromEntry(records.get("pets", petId) as { id: string; data: string }));
 }
 
 // ---- pet detail (pet + its appointments, each with visit notes) ----------
@@ -199,10 +210,15 @@ export interface PetDetail extends Pet {
   appointments: AppointmentWithNotes[];
 }
 
+/** Map a records:store entry to an Appointment (entry.id is the appt id). */
+function apptFromEntry(entry: { id: string; data: string }): Appointment {
+  return { id: entry.id, ...(JSON.parse(entry.data) as Omit<Appointment, "id">) };
+}
+
 /** All appointments for a pet (any status), newest datetime first. */
 export function appointmentsForPet(petId: string): Appointment[] {
-  return scan<Appointment>("appt_")
-    .filter((a) => a.pet === petId)
+  return (records.findBy("appointments", "pet", JSON.stringify(petId)) as { id: string; data: string }[])
+    .map(apptFromEntry)
     .sort((a, b) => (a.datetime < b.datetime ? 1 : -1));
 }
 
@@ -259,7 +275,8 @@ export function putPetPhoto(
     return { ok: false, reason: `blob: ${String(e)}` };
   }
   pet.photo = contentType;
-  put(`pet_${petId}`, pet);
+  const { id: _id, ...petData } = pet;
+  records.update("pets", petId, JSON.stringify(petData), 0n);
   return { ok: true };
 }
 
@@ -301,14 +318,18 @@ export function initFsm(): void {
 // ---- appointments --------------------------------------------------------
 
 export function createAppointment(input: { pet: string; owner: string; doctor?: string; datetime: string }): Appointment {
-  const appt: Appointment = {
-    id: id("appt"),
-    doctor: "",
+  // stored WITHOUT an id — records:store mints the ULID used as the appt id.
+  const data = {
+    pet: input.pet,
+    owner: input.owner,
+    doctor: input.doctor ?? "",
+    datetime: input.datetime,
     status: "booked",
-    ...input,
   };
-  put(`appt_${appt.id}`, appt);
-  // start its lifecycle instance in the fsm (initial state "booked").
+  const entry = records.create("appointments", JSON.stringify(data), ["owner", "doctor", "pet"]) as { id: string; data: string };
+  const appt: Appointment = { id: entry.id, ...data };
+  // start its lifecycle instance in the fsm (initial state "booked"), keyed by
+  // the new (component-minted) appt id.
   fsm.createInstance(APPT_MACHINE, appt.id);
   return appt;
 }
@@ -328,7 +349,8 @@ export function transitionAppointment(apptId: string, event: ApptEvent): Transit
   try {
     const status = fsm.fire(APPT_MACHINE, apptId, event) as { state: string };
     appt.status = status.state;
-    put(`appt_${apptId}`, appt);
+    const { id: _id, ...data } = appt;
+    records.update("appointments", apptId, JSON.stringify(data), 0n);
     return { ok: true, status: status.state };
   } catch (e) {
     const p = (e as { payload?: { tag?: string; val?: string } })?.payload;
@@ -349,14 +371,23 @@ export function appointmentEvents(apptId: string): string[] {
 }
 
 export function listAppointments(filter: { owner?: string; doctor?: string }): Appointment[] {
-  let appts = scan<Appointment>("appt_");
-  if (filter.owner) appts = appts.filter((a) => a.owner === filter.owner);
-  if (filter.doctor) appts = appts.filter((a) => a.doctor === filter.doctor);
+  // use the index when filtering on a single indexed field; else list all.
+  let entries: { id: string; data: string }[];
+  if (filter.owner) {
+    entries = records.findBy("appointments", "owner", JSON.stringify(filter.owner)) as { id: string; data: string }[];
+  } else if (filter.doctor) {
+    entries = records.findBy("appointments", "doctor", JSON.stringify(filter.doctor)) as { id: string; data: string }[];
+  } else {
+    entries = (records.listRecords("appointments", 0, "") as { entries: { id: string; data: string }[] }).entries;
+  }
+  let appts = entries.map(apptFromEntry);
+  // a combined owner+doctor filter still narrows in memory (rare path).
+  if (filter.owner && filter.doctor) appts = appts.filter((a) => a.doctor === filter.doctor);
   return appts;
 }
 
 export function getAppointment(apptId: string): Appointment | undefined {
-  return read<Appointment>(`appt_${apptId}`);
+  return orUndefinedOnMissing(() => apptFromEntry(records.get("appointments", apptId) as { id: string; data: string }));
 }
 
 /** Assign a doctor to an appointment (claim it). No-op if already that doctor. */
@@ -365,14 +396,15 @@ export function assignDoctor(apptId: string, doctor: string): Appointment | unde
   if (!appt) return undefined;
   if (appt.doctor !== doctor) {
     appt.doctor = doctor;
-    put(`appt_${apptId}`, appt);
+    const { id: _id, ...data } = appt;
+    records.update("appointments", apptId, JSON.stringify(data), 0n);
   }
   return appt;
 }
 
 /** Active (not cancelled) appointments referencing a pet. */
 export function activeAppointmentsForPet(petId: string): Appointment[] {
-  return scan<Appointment>("appt_").filter((a) => a.pet === petId && a.status !== "cancelled");
+  return appointmentsForPet(petId).filter((a) => a.status !== "cancelled");
 }
 
 // ---- invoices (money:amount) ---------------------------------------------
@@ -433,7 +465,7 @@ export function deletePet(petId: string, owner: string): DeleteResult {
   if (pet.owner !== owner) return { ok: false, reason: "forbidden" };
   const active = activeAppointmentsForPet(petId);
   if (active.length > 0) return { ok: false, reason: "has_active_bookings" };
-  bucket.delete(`pet_${petId}`);
+  records.delete("pets", petId);
   search.remove(petId); // keep the index in sync
   if (pet.photo) {
     try {
@@ -457,22 +489,30 @@ export function deleteAppointment(apptId: string, owner: string, nowSeconds: num
   if (Number.isNaN(when)) return { ok: false, reason: "bad_datetime" };
   const hoursAway = (when - nowSeconds * 1000) / 3_600_000;
   if (hoursAway < 24) return { ok: false, reason: "within_24h" };
-  bucket.delete(`appt_${apptId}`);
+  records.delete("appointments", apptId);
   return { ok: true };
 }
 
 // ---- visit notes ---------------------------------------------------------
 
 export function addNote(input: { appointment: string; author: string; text: string }): VisitNote {
-  const note: VisitNote = { id: id("note"), at: Math.floor(Date.now() / 1000), ...input };
-  put(`note_${note.id}`, note);
-  return note;
+  // stored WITHOUT an id — records:store mints the ULID used as the note id.
+  const data = {
+    appointment: input.appointment,
+    author: input.author,
+    text: input.text,
+    at: Math.floor(Date.now() / 1000),
+  };
+  const entry = records.create("notes", JSON.stringify(data), ["appointment"]) as { id: string; data: string };
+  return { id: entry.id, ...data };
 }
 
 export function notesFor(appointmentId: string): VisitNote[] {
-  return scan<VisitNote>("note_")
-    .filter((n) => n.appointment === appointmentId)
-    .map((n) => ({ ...n, textHtml: renderMarkdown(n.text) }));
+  return (records.findBy("notes", "appointment", JSON.stringify(appointmentId)) as { id: string; data: string }[])
+    .map((e) => {
+      const n = { id: e.id, ...(JSON.parse(e.data) as Omit<VisitNote, "id">) };
+      return { ...n, textHtml: renderMarkdown(n.text) };
+    });
 }
 
 /** Render a doctor's markdown note to SAFE HTML via md:render (XSS-escaped). */
@@ -546,7 +586,7 @@ const CSV_OPTS = { delimiter: "", hasHeader: true, trim: false };
 /** All appointments as a CSV document (admin export) — formatted by csv:codec. */
 export function appointmentsCsv(): string {
   const header = { fields: ["id", "pet", "owner", "doctor", "datetime", "status"] };
-  const rows = scan<Appointment>("appt_").map((a) => ({
+  const rows = listAppointments({}).map((a) => ({
     fields: [a.id, a.pet, a.owner, a.doctor || "", a.datetime, a.status],
   }));
   return csv.format([header, ...rows], CSV_OPTS) as string;
