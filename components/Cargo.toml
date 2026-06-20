@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["auth-guard", "sample-consumer", "accounts-app", "rate-limiter", "cache", "idempotency-guard", "feature-flags", "audit-log", "notify-dispatch", "webhook-ingest", "blob-store", "session-store", "outbox", "secrets-vault", "config-store", "search-index", "login-app", "money", "slug", "pagination", "validate", "i18n-catalog", "email-render", "upload-policy", "otp", "quota", "geo", "csv", "webhook-sign", "pii-redact", "jsonpatch", "markdown"]
+members = ["auth-guard", "sample-consumer", "accounts-app", "rate-limiter", "cache", "idempotency-guard", "feature-flags", "audit-log", "notify-dispatch", "webhook-ingest", "blob-store", "session-store", "outbox", "secrets-vault", "config-store", "search-index", "login-app", "money", "slug", "pagination", "validate", "i18n-catalog", "email-render", "upload-policy", "otp", "quota", "geo", "csv", "webhook-sign", "pii-redact", "jsonpatch", "markdown", "fsm-workflow"]
 
 [workspace.package]
 version = "0.1.0"

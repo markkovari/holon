@@ -292,6 +292,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsm-workflow"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

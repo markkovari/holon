@@ -1,0 +1,112 @@
+// fsm:workflow — declarative finite-state-machine / workflow engine.
+//
+// Many app entities have a lifecycle with LEGAL transitions: an appointment
+// goes booked -> confirmed -> completed (or -> cancelled), and must never jump
+// booked -> completed or move out of a terminal state. Every app re-implements
+// these rules ad-hoc with scattered `if status == ...` checks. This component
+// makes the rules a first-class, declarative DEFINITION: register a machine
+// (its states + allowed transitions keyed by an event), then drive INSTANCES
+// through it — each transition is validated against the definition and the
+// instance's state is persisted, with an append-only history.
+//
+// Definitions + instance state live in the key-value store. Clock stamps the
+// history. App-agnostic: the appointment lifecycle is just one machine; orders,
+// tickets, onboarding flows are others.
+package fsm:workflow@0.1.0;
+
+/// Define state machines and drive instances through them.
+interface engine {
+    /// Why an fsm call failed.
+    variant fsm-error {
+        /// No machine registered under the given name.
+        unknown-machine,
+        /// No instance with the given id (for this machine).
+        unknown-instance,
+        /// The event is not a legal transition from the instance's current
+        /// state. Carries the current state so the caller can react.
+        illegal-transition(string),
+        /// A definition was malformed (e.g. a transition references a state not
+        /// in the state list, or no initial state).
+        invalid-definition(string),
+        /// A backing dependency (the store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// One allowed move: on `event`, go from state `source` to state `target`.
+    record transition {
+        event: string,
+        source: string,
+        target: string,
+    }
+
+    /// A machine definition: the full state set, the initial state, the legal
+    /// transitions, and which states are terminal (no outgoing moves allowed).
+    record definition {
+        states: list<string>,
+        initial: string,
+        transitions: list<transition>,
+        terminal: list<string>,
+    }
+
+    /// A live instance's status.
+    record status {
+        /// The machine this instance belongs to.
+        machine: string,
+        /// Caller-supplied instance id (e.g. an appointment id).
+        instance: string,
+        /// Current state.
+        state: string,
+        /// Whether the current state is terminal.
+        done: bool,
+        /// How many transitions have been applied.
+        steps: u32,
+    }
+
+    /// One recorded transition in an instance's history.
+    record history-entry {
+        event: string,
+        source: string,
+        target: string,
+        /// Unix seconds the transition was applied.
+        at: u64,
+    }
+
+    /// Register (or replace) a machine definition by name. Validates that the
+    /// initial + every transition state are in `states`; `err(invalid-definition)`
+    /// otherwise.
+    define: func(name: string, def: definition) -> result<_, fsm-error>;
+
+    /// Fetch a registered definition.
+    get-definition: func(name: string) -> result<definition, fsm-error>;
+
+    /// Create a new instance of `machine` with id `instance`, in the machine's
+    /// initial state. Returns its status. Re-creating an existing instance
+    /// resets it to initial.
+    create-instance: func(machine: string, instance: string) -> result<status, fsm-error>;
+
+    /// The instance's current status.
+    get-status: func(machine: string, instance: string) -> result<status, fsm-error>;
+
+    /// Whether `event` is a legal transition from the instance's current state
+    /// (does not apply it).
+    can-fire: func(machine: string, instance: string, event: string) -> result<bool, fsm-error>;
+
+    /// The events that are legal from the instance's current state.
+    allowed-events: func(machine: string, instance: string) -> result<list<string>, fsm-error>;
+
+    /// Apply `event` to the instance: validate it's a legal transition, move to
+    /// the target state, append to history, persist. Returns the new status.
+    /// `err(illegal-transition(current))` if the event isn't allowed now.
+    fire: func(machine: string, instance: string, event: string) -> result<status, fsm-error>;
+
+    /// The instance's transition history, oldest first.
+    history: func(machine: string, instance: string) -> result<list<history-entry>, fsm-error>;
+}
+
+/// `fsm-workflow` provides the engine, backed by key-value (definitions +
+/// instance state + history) and a clock (history timestamps).
+world fsm-workflow {
+    export engine;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+}
