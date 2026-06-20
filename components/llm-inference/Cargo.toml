@@ -1,0 +1,24 @@
+[package]
+name = "llm-inference"
+description = "Provider-agnostic LLM inference — deterministic mock provider (llm:inference)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "llm:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "llm-inference"
+
+# Minimal world (export only) — no WASI target deps. The mock provider needs
+# nothing; a real provider would add wasi:http + wasi:config here.
+[package.metadata.component.target.dependencies]

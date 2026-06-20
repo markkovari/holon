@@ -1,0 +1,4 @@
+node_modules/
+gen/
+gen-sqlite/
+*.sqlite

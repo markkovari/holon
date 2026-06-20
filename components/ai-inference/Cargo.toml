@@ -1,0 +1,25 @@
+[package]
+name = "ai-inference"
+description = "Domain-level AI verbs (summarize/classify/extract/...) over llm:inference (ai:inference)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "ai:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "ai-inference"
+
+[package.metadata.component.target.dependencies]
+"llm:inference" = { path = "../llm-inference/wit" }

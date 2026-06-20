@@ -1,0 +1,80 @@
+// ai:inference — domain-level AI verbs over a provider-agnostic LLM.
+//
+// Apps don't want "call an LLM"; they want "summarize this", "classify that",
+// "pull these fields". This component is those VERBS — it builds the right
+// prompt, calls the model through the `llm:inference` boundary (whatever
+// provider the deployment composed in), and shapes the reply into something the
+// app can use. The app never writes a prompt or names a vendor.
+//
+// Imports `llm:inference/inference` — satisfied by composing a provider (mock,
+// openai, anthropic, ollama, …) with `wac`, the same way auth-guard composes
+// rate-limiter. Pure orchestration over that one import.
+package ai:inference@0.1.0;
+
+/// High-level AI helpers: summarize, classify, extract, generate, rewrite, embed.
+interface inference {
+    /// Why an assist call failed.
+    variant assist-error {
+        /// The underlying inference call failed; carries the provider's reason.
+        inference-failed(string),
+        /// The model's reply didn't fit the expected shape (e.g. classify
+        /// returned a label not in the set, extract returned non-JSON).
+        unexpected-output(string),
+        /// The request was empty / nonsensical (e.g. classify with no labels).
+        invalid-request(string),
+    }
+
+    /// Length hint for a summary.
+    enum length {
+        /// One sentence.
+        brief,
+        /// A short paragraph.
+        normal,
+        /// A few paragraphs / bulleted.
+        detailed,
+    }
+
+    /// Summarize `text`. `focus` (optional, empty = none) steers the angle, e.g.
+    /// "clinical findings" for a vet note. Returns the summary text.
+    summarize: func(text: string, len: length, focus: string)
+        -> result<string, assist-error>;
+
+    /// A classification result.
+    record label-score {
+        label: string,
+        /// 0..=1000 (milli-units) confidence the model expressed / we derived.
+        confidence: u32,
+    }
+
+    /// Classify `text` into exactly one of `labels`. Returns the chosen label +
+    /// a confidence. `err(invalid-request)` if `labels` is empty;
+    /// `err(unexpected-output)` if the model picks something not in `labels`.
+    classify: func(text: string, labels: list<string>)
+        -> result<label-score, assist-error>;
+
+    /// Extract structured fields from `text`. `fields` names the wanted keys;
+    /// returns name/value pairs (value is the extracted string, or "" if the
+    /// model found nothing for that field).
+    extract: func(text: string, fields: list<string>)
+        -> result<list<tuple<string, string>>, assist-error>;
+
+    /// Free-form generation from an instruction `prompt`. `context` (optional)
+    /// is supporting material the model may use.
+    generate: func(prompt: string, context: string) -> result<string, assist-error>;
+
+    /// Rewrite `text` in a target `style` (e.g. "plain language", "formal",
+    /// "for a pet owner").
+    rewrite: func(text: string, style: string) -> result<string, assist-error>;
+
+    /// Embed `text` into a vector (passes through to the provider's embeddings;
+    /// `err(inference-failed)` if the provider has none).
+    embed: func(text: string) -> result<list<f32>, assist-error>;
+}
+
+/// `ai-assist` exports the verbs and imports the inference boundary. Compose a
+/// provider for `llm:inference/inference` (mock for tests; a real vendor client
+/// in production) with `wac` — the verbs work the same either way.
+world ai-inference {
+    export inference;
+    import llm:inference/inference@0.1.0;
+}

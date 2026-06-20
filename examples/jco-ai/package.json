@@ -1,0 +1,21 @@
+{
+  "name": "comp-jco-ai-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Exercise ai:inference (domain AI verbs) over a composed mock llm provider, in-process via jco",
+  "scripts": {
+    "transpile": "jco transpile ai_inference.composed.wasm -o gen",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run transpile && tsx --test test/ai.test.ts"
+  },
+  "dependencies": {
+    "@bytecodealliance/jco": "^1.23.0",
+    "@bytecodealliance/preview2-shim": "^0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

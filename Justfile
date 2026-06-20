@@ -61,6 +61,14 @@ compose-login: build
     wac plug {{loginapp_wasm}} --plug {{session_wasm}} --plug {{config_wasm}} --plug {{secrets_wasm}} -o {{login_composed}}
     @echo "composed login-app (+ session + config + secrets) -> {{login_composed}}"
 
+# Compose an LLM provider into the ai-inference domain layer, satisfying its
+# `llm:inference/inference` import. Here the deterministic MOCK provider is
+# plugged in (for offline tests + demo); swap --plug for a real provider
+# component (openai/anthropic/ollama) to go live — ai-inference is unchanged.
+compose-ai: build
+    wac plug {{rel}}/ai_inference.wasm --plug {{rel}}/llm_inference.wasm -o components/target/ai_inference.composed.wasm
+    @echo "composed ai-inference (+ mock llm-inference) -> components/target/ai_inference.composed.wasm"
+
 # Same composition, the DECLARATIVE way — `wac compose` over a .wac source file
 # (components/login-app/compose.wac) instead of the imperative `wac plug` chain
 # above. The .wac file states the wiring explicitly. Output is equivalent.

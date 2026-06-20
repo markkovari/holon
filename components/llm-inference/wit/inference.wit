@@ -1,0 +1,104 @@
+// llm:inference — provider-agnostic LLM inference.
+//
+// The raw, low-level call to a language model, with the PROVIDER deliberately
+// out of the contract. A guest asks for a chat/text completion or an embedding;
+// which model and vendor answer (OpenAI, Anthropic, a local Ollama, a mock) is
+// a DEPLOYMENT choice — satisfied by composing a concrete provider component or
+// a host shim, exactly like wasi:keyvalue is satisfied by a redis/nats/sqlite
+// backend. The domain layer (ai:assist) imports THIS; apps never name a vendor.
+//
+// This interface is the swap point. A provider implementation reads its model /
+// base-url / api-key from wasi:config and talks wasi:http; this WIT says nothing
+// about any of that — only the shape of a request and a reply.
+package llm:inference@0.1.0;
+
+/// Chat + text completion + embeddings, vendor-agnostic.
+interface inference {
+    /// Why an inference call failed.
+    variant infer-error {
+        /// The provider rejected the request as malformed (bad params, too many
+        /// tokens, unsupported feature).
+        invalid-request(string),
+        /// The provider authenticated/authorized the caller poorly (bad key,
+        /// quota, region).
+        provider-denied(string),
+        /// The provider was unreachable or timed out.
+        provider-unavailable(string),
+        /// The provider answered but the body couldn't be understood.
+        bad-response(string),
+        /// The model refused / returned no content (safety filter, empty).
+        no-content,
+    }
+
+    /// A role in a chat exchange.
+    enum role {
+        system,
+        user,
+        assistant,
+    }
+
+    /// One chat message.
+    record message {
+        role: role,
+        content: string,
+    }
+
+    /// Tunables for a completion. All optional-ish: 0 / empty means "provider
+    /// default". `model` empty -> the deployment's configured default model.
+    record options {
+        /// Override the configured model (else provider default).
+        model: string,
+        /// 0..=2000 (milli-units, i.e. 700 = 0.7). 0 -> provider default.
+        temperature: u32,
+        /// Max tokens to generate; 0 -> provider default.
+        max-tokens: u32,
+        /// Stop sequences (any match ends generation).
+        stop: list<string>,
+        /// Opaque per-request seed for reproducibility where the provider
+        /// supports it; 0 -> none.
+        seed: u64,
+    }
+
+    /// Token accounting for a call (0 if the provider didn't report it).
+    record usage {
+        prompt-tokens: u32,
+        completion-tokens: u32,
+    }
+
+    /// A completion result.
+    record completion {
+        /// The generated text.
+        text: string,
+        /// Why generation stopped: "stop" | "length" | "content-filter" |
+        /// "other" (provider-normalized).
+        finish-reason: string,
+        /// The model that actually answered.
+        model: string,
+        usage: usage,
+    }
+
+    /// Multi-turn chat completion. The canonical call — `complete` is sugar over
+    /// it with a single user message.
+    chat: func(messages: list<message>, opts: options) -> result<completion, infer-error>;
+
+    /// Single-prompt text completion (a user message + optional system prompt).
+    complete: func(prompt: string, system: string, opts: options)
+        -> result<completion, infer-error>;
+
+    /// Embed text into a vector. `model` in opts may select an embedding model.
+    embed: func(text: string, opts: options) -> result<list<f32>, infer-error>;
+
+    /// What this deployment can do, for capability negotiation: the default
+    /// model name + whether embeddings are available.
+    describe: func() -> tuple<string, bool>;
+}
+
+/// `llm-inference` is the provider boundary, and the world is intentionally
+/// MINIMAL — just the export. Each concrete provider declares its OWN imports:
+/// a real vendor client (e.g. `openai-provider`) imports wasi:http +
+/// wasi:config (base-url, model, api-key); a deterministic mock provider imports
+/// nothing. Keeping the contract free of those lets any provider shape satisfy
+/// it. ai:assist imports `inference` and never sees which provider answered.
+world llm-inference {
+    export inference;
+}
