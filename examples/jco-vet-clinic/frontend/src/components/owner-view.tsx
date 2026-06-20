@@ -42,6 +42,7 @@ import {
   type NotesResponse,
   type Pet,
   type PetsResponse,
+  type TransitionResponse,
   type VisitNote,
 } from "@/lib/api"
 
@@ -161,10 +162,17 @@ export function OwnerView() {
     }
   }
 
+  // Cancel an appointment via the lifecycle state machine. An owner may only
+  // `cancel` (and only their own); the server returns 409/403 which surfaces
+  // through the shared error banner.
   async function handleCancelAppt(apptId: string) {
     setError("")
     try {
-      await api("DELETE", `/appointments/${encodeURIComponent(apptId)}`)
+      await api<TransitionResponse>(
+        "POST",
+        `/appointments/${encodeURIComponent(apptId)}/transition`,
+        { event: "cancel" },
+      )
       await loadAppts()
       await loadPets(query || undefined)
     } catch (err) {
@@ -201,11 +209,10 @@ export function OwnerView() {
   function petHasActiveBooking(petId: string): boolean {
     return appts.some((a) => a.pet === petId && a.status !== "cancelled")
   }
-  // an appointment can be cancelled only when it's more than 24h away
+  // an owner can attempt to cancel any non-terminal appointment; the state
+  // machine rejects illegal transitions (409) which we surface as an error
   function apptCancellable(a: Appointment): boolean {
-    const when = Date.parse(a.datetime)
-    if (Number.isNaN(when)) return false
-    return when - Date.now() > 24 * 3_600_000
+    return a.status !== "completed" && a.status !== "cancelled"
   }
 
   if (selectedPetId !== null) {
@@ -416,15 +423,16 @@ export function OwnerView() {
                                 : `Notes (${count})`}{" "}
                               {isOpen ? "▾" : "▸"}
                             </Button>
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              disabled={!cancellable}
-                              title={cancellable ? "Cancel appointment" : "Too late — within 24h of the appointment"}
-                              onClick={() => handleCancelAppt(a.id)}
-                            >
-                              Cancel
-                            </Button>
+                            {cancellable && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                title="Cancel appointment"
+                                onClick={() => handleCancelAppt(a.id)}
+                              >
+                                Cancel
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -443,7 +451,22 @@ export function OwnerView() {
                               <ul className="space-y-2">
                                 {loaded.map((n) => (
                                   <li key={n.id} className="text-sm">
-                                    <p className="whitespace-pre-wrap">{n.text}</p>
+                                    {n.textHtml !== undefined ? (
+                                      // textHtml is SAFE: the server-side
+                                      // md:render component renders the markdown
+                                      // with raw HTML escaped and link schemes
+                                      // sanitized.
+                                      <div
+                                        className="prose-sm whitespace-pre-wrap"
+                                        dangerouslySetInnerHTML={{
+                                          __html: n.textHtml,
+                                        }}
+                                      />
+                                    ) : (
+                                      <p className="whitespace-pre-wrap">
+                                        {n.text}
+                                      </p>
+                                    )}
                                     <p className="text-xs text-muted-foreground">
                                       {n.author} · {formatNoteTime(n.at)}
                                     </p>

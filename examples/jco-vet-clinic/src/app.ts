@@ -63,9 +63,10 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
     (_req, body, done) => done(null, body),
   );
 
-  // Seed the 3 roles + demo users once, at construction.
+  // Seed the 3 roles + demo users + register the appointment state machine.
   seedRoles();
   const demoUsers = seedDemoUsers();
+  domain.initFsm();
 
   // Translate a thrown auth-error variant into an HTTP response. Returns the
   // call's value on success, or undefined after sending an error.
@@ -250,6 +251,64 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
     // Fire a confirmation via notify-dispatch (local sink in the demo).
     auth.notifyEmail(p.subject, "Appointment booked", `Your appointment ${appt.id} for ${pet.name} is ${appt.datetime}.`);
     return reply.code(201).send(appt);
+  });
+
+  // Advance an appointment through its lifecycle (fsm:workflow enforces legal
+  // moves). confirm/complete are doctor/admin; cancel may also be done by the
+  // owner of the appointment. Illegal moves -> 409.
+  app.post("/appointments/:id/transition", async (request, reply) => {
+    const p = require(request, reply, "appointments", "write");
+    if (!p) return;
+    const { id } = request.params as { id: string };
+    const { event } = request.body as { event?: string };
+    if (!event || !domain.APPT_EVENTS.includes(event as never)) {
+      return reply.code(400).send({ error: "bad_event" });
+    }
+    const appt = domain.getAppointment(id);
+    if (!appt) return reply.code(404).send({ error: "appointment_not_found" });
+    const privileged = p.roles.includes("admin") || p.roles.includes("doctor");
+    // owners may only cancel, and only their own appointment
+    if (!privileged && !(event === "cancel" && appt.owner === p.subject)) {
+      return reply.code(403).send({ error: "forbidden" });
+    }
+    const r = domain.transitionAppointment(id, event as domain.ApptEvent);
+    if (r.ok) return { id, status: r.status, allowed: domain.appointmentEvents(id) };
+    if (r.reason === "illegal_transition") {
+      return reply.code(409).send({ error: "illegal_transition", current: r.current });
+    }
+    return reply.code(400).send({ error: r.reason });
+  });
+
+  // Invoice an appointment (doctor/admin sets line items; money:amount totals).
+  app.put("/appointments/:id/invoice", async (request, reply) => {
+    const p = require(request, reply, "appointments", "write");
+    if (!p) return;
+    if (!p.roles.includes("doctor") && !p.roles.includes("admin")) {
+      return reply.code(403).send({ error: "forbidden" });
+    }
+    const { id } = request.params as { id: string };
+    if (!domain.getAppointment(id)) return reply.code(404).send({ error: "appointment_not_found" });
+    const { items } = request.body as { items?: { description: string; cents: number }[] };
+    if (!Array.isArray(items) || items.length === 0) {
+      return reply.code(400).send({ error: "no_items" });
+    }
+    return reply.code(201).send(domain.setInvoice(id, items));
+  });
+
+  // Read an appointment's invoice (owner of it, or doctor/admin).
+  app.get("/appointments/:id/invoice", async (request, reply) => {
+    const p = require(request, reply, "appointments", "read");
+    if (!p) return;
+    const { id } = request.params as { id: string };
+    const appt = domain.getAppointment(id);
+    if (!appt) return reply.code(404).send({ error: "appointment_not_found" });
+    const privileged = p.roles.includes("admin") || p.roles.includes("doctor");
+    if (!privileged && appt.owner !== p.subject) {
+      return reply.code(403).send({ error: "forbidden" });
+    }
+    const inv = domain.getInvoice(id);
+    if (!inv) return reply.code(404).send({ error: "no_invoice" });
+    return inv;
   });
 
   app.post("/appointments/:id/notes", async (request, reply) => {

@@ -248,4 +248,78 @@ describe("vet-clinic e2e (composed components, in-process)", () => {
     });
     assert.equal(res.statusCode, 413, `expected too_large, got ${res.statusCode}`);
   });
+
+  it("appointment lifecycle is governed by the fsm (legal moves only)", async () => {
+    const owner = await login("alice@acme-vet.test", "alicepass1");
+    const pet = (await app.inject({ method: "POST", url: "/pets", headers: auth(owner), payload: { name: "Fsm", species: "dog" } }).then((r) => r.json())) as { id: string };
+    const far = new Date(Date.now() + 20 * 864e5).toISOString().slice(0, 16);
+    const appt = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.id, datetime: far } }).then((r) => r.json())) as { id: string };
+    const doc = await login("doctor@acme-vet.test", "doctorpass1");
+
+    // illegal: can't complete a booked appointment (must confirm first) -> 409
+    const bad = await app.inject({ method: "POST", url: `/appointments/${appt.id}/transition`, headers: auth(doc), payload: { event: "complete" } });
+    assert.equal(bad.statusCode, 409, `expected illegal_transition, got ${bad.statusCode} ${bad.body}`);
+    assert.equal((bad.json() as { current: string }).current, "booked");
+
+    // legal: confirm -> complete
+    const c1 = await app.inject({ method: "POST", url: `/appointments/${appt.id}/transition`, headers: auth(doc), payload: { event: "confirm" } });
+    assert.equal(c1.statusCode, 200, c1.body);
+    assert.equal((c1.json() as { status: string }).status, "confirmed");
+    const c2 = await app.inject({ method: "POST", url: `/appointments/${appt.id}/transition`, headers: auth(doc), payload: { event: "complete" } });
+    assert.equal((c2.json() as { status: string }).status, "completed");
+
+    // terminal: no further moves
+    const c3 = await app.inject({ method: "POST", url: `/appointments/${appt.id}/transition`, headers: auth(doc), payload: { event: "cancel" } });
+    assert.equal(c3.statusCode, 409, "completed is terminal");
+
+    // an owner can cancel their OWN booked appointment
+    const appt2 = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.id, datetime: far } }).then((r) => r.json())) as { id: string };
+    const oc = await app.inject({ method: "POST", url: `/appointments/${appt2.id}/transition`, headers: auth(owner), payload: { event: "cancel" } });
+    assert.equal(oc.statusCode, 200, oc.body);
+    assert.equal((oc.json() as { status: string }).status, "cancelled");
+    // but an owner can't confirm (doctor/admin only)
+    const appt3 = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.id, datetime: far } }).then((r) => r.json())) as { id: string };
+    const ocf = await app.inject({ method: "POST", url: `/appointments/${appt3.id}/transition`, headers: auth(owner), payload: { event: "confirm" } });
+    assert.equal(ocf.statusCode, 403, "owner can't confirm");
+  });
+
+  it("doctor's markdown notes render to safe HTML (md:render)", async () => {
+    const owner = await login("alice@acme-vet.test", "alicepass1");
+    const pet = (await app.inject({ method: "POST", url: "/pets", headers: auth(owner), payload: { name: "Md", species: "dog" } }).then((r) => r.json())) as { id: string };
+    const far = new Date(Date.now() + 21 * 864e5).toISOString().slice(0, 16);
+    const appt = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.id, datetime: far } }).then((r) => r.json())) as { id: string };
+    const doc = await login("doctor@acme-vet.test", "doctorpass1");
+    await app.inject({ method: "POST", url: `/appointments/${appt.id}/notes`, headers: auth(doc), payload: { text: "**Bold** and <script>alert(1)</script>" } });
+    const res = await app.inject({ method: "GET", url: `/appointments/${appt.id}/notes`, headers: auth(owner) });
+    const notes = (res.json() as { notes: { textHtml: string }[] }).notes;
+    const html = notes[0].textHtml;
+    assert.ok(html.includes("<strong>Bold</strong>"), "markdown rendered");
+    assert.ok(!html.includes("<script>"), "raw HTML escaped (XSS-safe)");
+  });
+
+  it("doctor invoices an appointment; total is exact (money:amount)", async () => {
+    const owner = await login("alice@acme-vet.test", "alicepass1");
+    const pet = (await app.inject({ method: "POST", url: "/pets", headers: auth(owner), payload: { name: "Bill", species: "dog" } }).then((r) => r.json())) as { id: string };
+    const far = new Date(Date.now() + 22 * 864e5).toISOString().slice(0, 16);
+    const appt = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.id, datetime: far } }).then((r) => r.json())) as { id: string };
+    const doc = await login("doctor@acme-vet.test", "doctorpass1");
+
+    const denied = await app.inject({ method: "PUT", url: `/appointments/${appt.id}/invoice`, headers: auth(owner), payload: { items: [{ description: "x", cents: 100 }] } });
+    assert.equal(denied.statusCode, 403, "owner can't invoice");
+
+    const inv = await app.inject({
+      method: "PUT",
+      url: `/appointments/${appt.id}/invoice`,
+      headers: auth(doc),
+      payload: { items: [{ description: "Consultation", cents: 5000 }, { description: "Vaccine", cents: 3450 }] },
+    });
+    assert.equal(inv.statusCode, 201, inv.body);
+    const body = inv.json() as { totalCents: number; totalFormatted: string };
+    assert.equal(body.totalCents, 8450, "exact cents sum");
+    assert.equal(body.totalFormatted, "84.50", "formatted total");
+
+    const got = await app.inject({ method: "GET", url: `/appointments/${appt.id}/invoice`, headers: auth(owner) });
+    assert.equal(got.statusCode, 200);
+    assert.equal((got.json() as { totalCents: number }).totalCents, 8450);
+  });
 });

@@ -11,6 +11,7 @@ import {
   apiBlob,
   api,
   ApiError,
+  type Invoice,
   type PetDetail,
   type VisitNote,
 } from "@/lib/api"
@@ -178,6 +179,27 @@ function AppointmentCard({
 }: {
   appointment: PetDetail["appointments"][number]
 }) {
+  const [invoice, setInvoice] = useState<Invoice | null>(null)
+
+  // Fetch the appointment's invoice if one exists; a 404 ("no_invoice") just
+  // means there's nothing to show, so we silently ignore it.
+  useEffect(() => {
+    let cancelled = false
+    void api<Invoice>(
+      "GET",
+      `/appointments/${encodeURIComponent(appointment.id)}/invoice`,
+    )
+      .then((inv) => {
+        if (!cancelled) setInvoice(inv)
+      })
+      .catch(() => {
+        // no invoice (404) or not permitted — leave it unset
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [appointment.id])
+
   return (
     <div className="rounded-md border p-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -186,6 +208,11 @@ function AppointmentCard({
         <span className="text-sm text-muted-foreground">
           Doctor: {appointment.doctor || "—"}
         </span>
+        {invoice && (
+          <Badge>
+            Invoice: {invoice.totalFormatted} {invoice.currency}
+          </Badge>
+        )}
       </div>
       <NoteList notes={appointment.notes} />
     </div>
@@ -202,7 +229,16 @@ function NoteList({ notes }: { notes: VisitNote[] }) {
     <ul className="mt-3 space-y-2">
       {notes.map((n) => (
         <li key={n.id} className="text-sm">
-          <p className="whitespace-pre-wrap">{n.text}</p>
+          {n.textHtml !== undefined ? (
+            // textHtml is SAFE: the server-side md:render component renders the
+            // markdown with raw HTML escaped and link schemes sanitized.
+            <div
+              className="prose-sm whitespace-pre-wrap"
+              dangerouslySetInnerHTML={{ __html: n.textHtml }}
+            />
+          ) : (
+            <p className="whitespace-pre-wrap">{n.text}</p>
+          )}
           <p className="text-xs text-muted-foreground">
             {n.author} · {formatTime(n.at)}
           </p>

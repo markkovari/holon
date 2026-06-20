@@ -14,9 +14,16 @@ import { validator as validate } from "../gen/validate/validate.js";
 // and a signed upload ticket) — two more comp components, no new storage code.
 import { blobstore as blob } from "../gen/blob/blob_store.js";
 import { gate as upload } from "../gen/upload/upload_policy.js";
+// fsm:workflow/engine — appointment status lifecycle (legal transitions only).
+import { engine as fsm } from "../gen/fsm/fsm_workflow.js";
+// money:amount/arithmetic — exact invoice math (minor units, no floats).
+import { arithmetic as money } from "../gen/money/money.js";
+// md:render/renderer — safe Markdown -> HTML for rich visit notes.
+import { renderer as markdown } from "../gen/markdown/markdown.js";
 
 const bucket = open("default");
 const PHOTO_CONTAINER = "pet-photos";
+const APPT_MACHINE = "appointment";
 const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -64,8 +71,9 @@ export interface VisitNote {
   id: string;
   appointment: string;
   author: string; // doctor subject
-  text: string;
+  text: string; // raw markdown (as written by the doctor)
   at: number;
+  textHtml?: string; // safe HTML rendered from `text` (md:render); added on read
 }
 
 // ---- validation rules (declarative, enforced by the validate component) ---
@@ -200,6 +208,30 @@ export function getPetPhoto(petId: string): { contentType: string; data: Uint8Ar
   }
 }
 
+// ---- appointment lifecycle (fsm:workflow) --------------------------------
+// The appointment status is governed by a declarative state machine — legal
+// moves only: booked -> confirmed -> completed, cancel from booked|confirmed,
+// completed|cancelled are terminal. The fsm component is the source of truth;
+// the status string mirrored onto the appt record is just for list/filter.
+
+export const APPT_EVENTS = ["confirm", "complete", "cancel"] as const;
+export type ApptEvent = (typeof APPT_EVENTS)[number];
+
+/** Register the appointment machine. Idempotent — safe on every boot. */
+export function initFsm(): void {
+  fsm.define(APPT_MACHINE, {
+    states: ["booked", "confirmed", "completed", "cancelled"],
+    initial: "booked",
+    transitions: [
+      { event: "confirm", source: "booked", target: "confirmed" },
+      { event: "complete", source: "confirmed", target: "completed" },
+      { event: "cancel", source: "booked", target: "cancelled" },
+      { event: "cancel", source: "confirmed", target: "cancelled" },
+    ],
+    terminal: ["completed", "cancelled"],
+  });
+}
+
 // ---- appointments --------------------------------------------------------
 
 export function createAppointment(input: { pet: string; owner: string; doctor?: string; datetime: string }): Appointment {
@@ -210,7 +242,44 @@ export function createAppointment(input: { pet: string; owner: string; doctor?: 
     ...input,
   };
   put(`appt_${appt.id}`, appt);
+  // start its lifecycle instance in the fsm (initial state "booked").
+  fsm.createInstance(APPT_MACHINE, appt.id);
   return appt;
+}
+
+export type TransitionResult =
+  | { ok: true; status: string }
+  | { ok: false; reason: string; current?: string };
+
+/**
+ * Drive an appointment through a lifecycle event via the fsm. Rejects illegal
+ * moves (the fsm enforces booked→confirmed→completed | cancel rules). On
+ * success the appt record's status mirrors the new fsm state.
+ */
+export function transitionAppointment(apptId: string, event: ApptEvent): TransitionResult {
+  const appt = getAppointment(apptId);
+  if (!appt) return { ok: false, reason: "not_found" };
+  try {
+    const status = fsm.fire(APPT_MACHINE, apptId, event) as { state: string };
+    appt.status = status.state;
+    put(`appt_${apptId}`, appt);
+    return { ok: true, status: status.state };
+  } catch (e) {
+    const p = (e as { payload?: { tag?: string; val?: string } })?.payload;
+    if (p?.tag === "illegal-transition") {
+      return { ok: false, reason: "illegal_transition", current: p.val };
+    }
+    return { ok: false, reason: p?.tag ?? "fsm_error" };
+  }
+}
+
+/** Events legal from an appointment's current state (for UI affordances). */
+export function appointmentEvents(apptId: string): string[] {
+  try {
+    return fsm.allowedEvents(APPT_MACHINE, apptId) as string[];
+  } catch {
+    return [];
+  }
 }
 
 export function listAppointments(filter: { owner?: string; doctor?: string }): Appointment[] {
@@ -238,6 +307,52 @@ export function assignDoctor(apptId: string, doctor: string): Appointment | unde
 /** Active (not cancelled) appointments referencing a pet. */
 export function activeAppointmentsForPet(petId: string): Appointment[] {
   return scan<Appointment>("appt_").filter((a) => a.pet === petId && a.status !== "cancelled");
+}
+
+// ---- invoices (money:amount) ---------------------------------------------
+// A doctor/admin bills an appointment with line items. Amounts are exact minor
+// units (cents) in a single currency; the total is summed by the money
+// component (no float drift), and `format` renders it for display.
+
+const CURRENCY = "USD";
+
+export interface LineItem {
+  description: string;
+  /** price in minor units (cents). */
+  cents: number;
+}
+export interface Invoice {
+  appointment: string;
+  items: LineItem[];
+  /** total minor units, summed exactly by money:amount. */
+  totalCents: number;
+  /** display string, e.g. "84.50". */
+  totalFormatted: string;
+  currency: string;
+}
+
+/** Set/replace the invoice for an appointment; total computed via money:amount. */
+export function setInvoice(appointmentId: string, items: LineItem[]): Invoice {
+  // sum with the money component: start at an explicit zero amount (parse("0")
+  // is rejected — a 2-exponent currency needs minor digits), then add each line.
+  let total: { units: bigint; currency: string } = { units: 0n, currency: CURRENCY };
+  for (const it of items) {
+    const amt = { units: BigInt(Math.trunc(it.cents)), currency: CURRENCY };
+    total = money.add(total, amt) as { units: bigint; currency: string };
+  }
+  const invoice: Invoice = {
+    appointment: appointmentId,
+    items,
+    totalCents: Number(total.units),
+    totalFormatted: money.format(total) as string,
+    currency: CURRENCY,
+  };
+  put(`inv_${appointmentId}`, invoice);
+  return invoice;
+}
+
+export function getInvoice(appointmentId: string): Invoice | undefined {
+  return read<Invoice>(`inv_${appointmentId}`);
 }
 
 export type DeleteResult = { ok: true } | { ok: false; reason: string };
@@ -289,7 +404,18 @@ export function addNote(input: { appointment: string; author: string; text: stri
 }
 
 export function notesFor(appointmentId: string): VisitNote[] {
-  return scan<VisitNote>("note_").filter((n) => n.appointment === appointmentId);
+  return scan<VisitNote>("note_")
+    .filter((n) => n.appointment === appointmentId)
+    .map((n) => ({ ...n, textHtml: renderMarkdown(n.text) }));
+}
+
+/** Render a doctor's markdown note to SAFE HTML via md:render (XSS-escaped). */
+export function renderMarkdown(text: string): string {
+  try {
+    return markdown.toHtml(text) as string;
+  } catch {
+    return text; // fall back to raw text if the renderer errors
+  }
 }
 
 // ---- audit trail ---------------------------------------------------------

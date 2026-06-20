@@ -169,10 +169,36 @@ export interface VisitNote {
   text: string
   // unix-seconds from the backend; tolerate a string form too
   at: number | string
+  // SAFE HTML rendered from `text` by the md:render component (raw HTML escaped
+  // + link schemes sanitized server-side). Present on GET /appointments/:id/notes.
+  textHtml?: string
 }
 
 export interface NotesResponse {
   notes: VisitNote[]
+}
+
+// Response from POST /appointments/:id/transition. `allowed` lists the events
+// that are legal from the NEW status.
+export interface TransitionResponse {
+  id: string
+  status: string
+  allowed: string[]
+}
+
+// An invoice for an appointment (PUT/GET /appointments/:id/invoice). `cents` are
+// integer minor units; `totalFormatted` is e.g. "84.50".
+export interface InvoiceItem {
+  description: string
+  cents: number
+}
+
+export interface Invoice {
+  appointment: string
+  items: InvoiceItem[]
+  totalCents: number
+  totalFormatted: string
+  currency: string
 }
 
 // Full pet detail: the pet plus its appointments, each with its visit notes
