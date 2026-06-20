@@ -1,0 +1,40 @@
+// id:generate — sortable + random unique identifiers.
+//
+// Every app mints ids, and most do it badly: `Date.now() + counter` (not
+// portable, not sortable, collides across processes) or a bare random string
+// (not sortable, so it scatters in a KV store). This capability is the correct
+// primitives — ULIDs (lexicographically sortable, time-prefixed, monotonic
+// within a millisecond), UUIDv4, and url-safe nanoids — so records land in
+// time order in a key-value store and ids never collide.
+//
+// Pure-ish: clock for the ULID time prefix, random for entropy. No state.
+package id:generate@0.1.0;
+
+/// Mint sortable + random identifiers.
+interface generator {
+    /// A new ULID for the current time — 26 chars, Crockford base32,
+    /// lexicographically sortable, monotonic within the same millisecond.
+    ulid: func() -> string;
+
+    /// A ULID for an explicit unix-millisecond timestamp (deterministic time
+    /// prefix; entropy still random). For backfills / tests.
+    ulid-at: func(unix-millis: u64) -> string;
+
+    /// A random UUID v4 (8-4-4-4-12 lowercase hex).
+    uuid-v4: func() -> string;
+
+    /// A url-safe random id of `length` chars (A-Za-z0-9_-). `length` is
+    /// clamped to 1..=64.
+    nanoid: func(length: u8) -> string;
+
+    /// A short, human-friendly random code of `length` chars from an
+    /// unambiguous alphabet (no 0/O/1/I/L). For invite/booking codes.
+    short-code: func(length: u8) -> string;
+}
+
+/// `id-generate` provides identifiers; clock for ULID time, random for entropy.
+world id-generate {
+    export generator;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+}

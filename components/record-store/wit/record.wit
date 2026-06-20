@@ -1,0 +1,107 @@
+// record:store — typed JSON record store over key-value.
+//
+// The primitive every app reimplements as glue: store JSON records in named
+// COLLECTIONS, each record keyed by an auto-minted sortable id, with create /
+// get / update / delete / list, a simple equals-filter query, and secondary
+// INDEXES so "all pets owned by X" is a lookup instead of an O(n) scan over
+// every key. Records are opaque JSON strings — the component owns the storage
+// shape (collection prefixes, id minting, index maintenance), the app owns the
+// schema.
+//
+// This is the layer the components sit on top of: instead of hand-rolling
+// `put/read/scan/id` + `pet_`/`appt_` prefixes per record type, an app declares
+// a collection and gets typed CRUD + indexed lookups for free. Backed by
+// wasi:keyvalue; ids are ULIDs (sortable) via clock + random.
+package records:store@0.1.0;
+
+/// Typed JSON records in named collections, with indexed lookups.
+interface store {
+    /// Why a store call failed.
+    variant store-error {
+        /// No record with that id in the collection.
+        not-found,
+        /// The supplied value was not valid JSON (records must be JSON objects).
+        invalid-json(string),
+        /// An optimistic-concurrency conflict: the record changed since the
+        /// `revision` the caller passed to `update`. Carries the current
+        /// revision.
+        revision-conflict(u64),
+        /// A backing dependency (the key-value store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// A stored record.
+    record entry {
+        /// Auto-minted sortable id (ULID).
+        id: string,
+        /// The record body — a JSON object string, verbatim.
+        data: string,
+        /// Monotonic revision, bumped on every update (for optimistic locking).
+        revision: u64,
+        /// Unix seconds the record was created.
+        created: u64,
+        /// Unix seconds of the last update.
+        updated: u64,
+    }
+
+    /// One equals-filter: the record's JSON top-level field `field` must equal
+    /// the JSON-encoded `value` (e.g. value `"\"acme\""` for the string acme,
+    /// `"true"` for a bool).
+    record filter {
+        field: string,
+        value: string,
+    }
+
+    /// A page of results + an opaque continuation cursor.
+    record page {
+        entries: list<entry>,
+        /// Cursor to pass as `after` for the next page; empty when exhausted.
+        next: string,
+    }
+
+    /// Create a record in `collection`. `data` must be a JSON object. Mints a
+    /// sortable id, returns the stored entry (revision 1). If `index-fields` is
+    /// non-empty, the named top-level fields are indexed for `find-by`.
+    create: func(collection: string, data: string, index-fields: list<string>)
+        -> result<entry, store-error>;
+
+    /// Fetch a record by id.
+    get: func(collection: string, id: string) -> result<entry, store-error>;
+
+    /// Replace a record's data. If `expected-revision` is non-zero it must match
+    /// the current revision (optimistic lock) else `err(revision-conflict)`.
+    /// Re-indexes the configured index fields. Returns the new entry.
+    update: func(collection: string, id: string, data: string, expected-revision: u64)
+        -> result<entry, store-error>;
+
+    /// Delete a record (and its index entries). Idempotent.
+    delete: func(collection: string, id: string) -> result<_, store-error>;
+
+    /// List a collection in id (time) order. `limit` 0 -> a default page size;
+    /// `after` empty -> from the start, else resume after that cursor.
+    list-records: func(collection: string, limit: u32, after: string)
+        -> result<page, store-error>;
+
+    /// Look up records whose indexed `field` equals `value` (JSON-encoded). Uses
+    /// the secondary index built at create/update time — O(matches), not O(n).
+    /// `err(not-found)` returns an empty list, not an error.
+    find-by: func(collection: string, field: string, value: string)
+        -> result<list<entry>, store-error>;
+
+    /// Filter a collection by one or more equals-`filter`s (AND). Falls back to
+    /// a scan for non-indexed fields, so prefer `find-by` on an indexed field.
+    query: func(collection: string, filters: list<filter>, limit: u32)
+        -> result<list<entry>, store-error>;
+
+    /// Number of records in a collection.
+    count: func(collection: string) -> result<u64, store-error>;
+}
+
+/// `record-store` provides typed JSON records; key-value for storage, clock +
+/// random for sortable id minting.
+world record-store {
+    export store;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+}
