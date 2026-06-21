@@ -4,6 +4,113 @@ A **WIT-first** WebAssembly workspace defining a **universal authentication +
 RBAC contract** (`auth:identity`) that any component can consume. The WIT is the
 product; the Rust components and infra exist to prove the contract.
 
+It grew into a **library of 40+ reusable WASI capability components** — the
+boring infrastructure every backend reimplements (sessions, rate limits,
+search, money, validation, idempotency, audit, secrets, …), each a WIT contract
++ a reference Rust impl + an in-process `jco` example. See the
+[capability map](#component-library-the-capability-map) below for the full
+catalog, and `examples/jco-vet-clinic` for a full app composed only from them.
+
+## Component library — the capability map
+
+Every component is the same shape: a `package <ns>:<name>@0.1.0` WIT that
+**exports** its capability and **imports** only generic WASI (keyvalue, clocks,
+random, http, config). The backend/provider is bound at **deploy/compose time**,
+never in the WIT — so the same component runs over an in-memory map (jco), NATS,
+redis, sqlite, or a wasmCloud provider unchanged. Pure-compute components import
+nothing. A few **compose** other comp components (via `wac plug`) rather than
+WASI.
+
+`imports` below = the WASI families each needs (`kv` = keyvalue). `composes` =
+comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
+
+### Data & storage
+| package | does | imports |
+|---|---|---|
+| `records:store` | typed JSON records + secondary indexes (the data layer) | kv, clocks, random |
+| `id:generate` | ULID / UUIDv4 / nanoid / short-code | clocks, random |
+| `blob:store` | large-object (blob) storage | kv |
+| `cache:store` | TTL-aware cache (4 eviction strategies) | kv, clocks |
+| `config:store` | runtime app config (typed, versioned) | kv, clocks |
+| `secrets:vault` | secret storage + envelope encryption (AEAD) | kv, clocks, random, config |
+| `search:index` | full-text inverted index (TF-IDF) | kv, clocks |
+
+### Auth, identity & access
+| package | does | imports / composes |
+|---|---|---|
+| `auth:identity` | the contract: `authorizer` / `accounts` / `session` / `rbac` (see below) | — |
+| `policy:guard` | row-level / attribute-based authorization (ABAC) | kv |
+| `session:store` | server-side sessions + CSRF | kv, clocks, random, config |
+| `otp:totp` | TOTP / HOTP 2FA (RFC 6238 / 4226) | clocks, random |
+| `login:app` | a register/login app composed from config+secrets+session | composes config:store, secrets:vault, session:store |
+
+### Traffic & reliability
+| package | does | imports / composes |
+|---|---|---|
+| `ratelimit:guard` | rate-limit / lockout | kv, clocks, config |
+| `quota:meter` | cumulative usage metering + enforcement | kv, clocks |
+| `idempotency:guard` | request dedup (exactly-once) | kv, clocks, random, config |
+| `outbox:dispatch` | transactional outbox (reliable at-least-once events) | kv, clocks, random, config |
+| `event:bus` | in-app pub/sub, per-group offsets (fan-out) | kv, clocks |
+| `sched:timer` | durable timer / scheduler (one-shot + recurring) | kv, clocks |
+| `lock:mutex` | distributed advisory lease + fencing token | kv, clocks, random |
+
+### Eventing & integration
+| package | does | imports / composes |
+|---|---|---|
+| `notify:dispatch` | outbound notifications (webhook/email/sms gateway) | http, config |
+| `webhook:ingest` | verify an inbound webhook HMAC, then dedup | kv, composes idempotency:guard |
+| `webhook:sign` | sign an outbound webhook (Stripe/GitHub schemes) | clocks |
+| `audit:log` | append-only audit trail | kv, clocks, random |
+| `fsm:workflow` | declarative state-machine / workflow engine | kv, clocks |
+| `feature-flags`(`featureflags:guard`) | feature flags / rollouts | kv, config |
+
+### AI
+| package | does | imports / composes |
+|---|---|---|
+| `llm:inference` | provider-agnostic LLM boundary (the swap point) | — (provider supplies imports) |
+| `ai:inference` | domain AI verbs (summarize/classify/extract/…) | composes llm:inference |
+| `openai:provider` | concrete `llm:inference` over an OpenAI-compatible API | http, config |
+
+### Pure-compute utilities (no WASI imports)
+| package | does |
+|---|---|
+| `money:amount` | exact minor-units money arithmetic |
+| `validate:schema` | declarative input validation |
+| `paginate:cursor` | opaque signed pagination cursors (imports config) |
+| `slug:generate` | URL-safe slugs |
+| `i18n:catalog` | message catalog + interpolation + plurals (imports kv, config) |
+| `email:template` | transactional email rendering (imports kv) |
+| `upload:policy` | file-upload validation + presigned tickets (imports clocks, random, config) |
+| `geo:resolve` | coordinate distance + IP classing |
+| `csv:codec` | RFC-4180 CSV parse / format |
+| `pii:redact` | detect + mask PII in free text |
+| `json:patch` | RFC 6902 JSON Patch + RFC 7386 Merge Patch |
+| `md:render` | safe Markdown → HTML |
+
+### Composition (the whole point)
+
+The provider/backend is a deploy-time choice, expressed with `wac`:
+
+```bash
+just compose            # auth-guard + rate-limiter + audit-log -> auth_guard.composed.wasm
+just compose-login      # login-app  + config + secrets + session
+just compose-webhook    # webhook-ingest + idempotency-guard
+just compose-ai         # ai-inference + MOCK llm provider        (offline / tests)
+just compose-ai-openai  # ai-inference + openai-provider           (production)
+```
+
+`examples/jco-vet-clinic` is a full vet-clinic app (owners / doctors / admin,
+frontend + backend) composed from **~20 of these components and no bespoke
+business crate** — pets/appointments on `records:store`, auth on the composed
+`auth-guard`, ABAC on `policy:guard`, reminders on `sched:timer`, claim-races
+fenced by `lock:mutex`, booked-event fan-out on `event:bus`, AI clinical
+summaries via `ai:inference`, 2FA secrets sealed in `secrets:vault`, plus
+search / validate / money / markdown / csv / pii / otp / i18n / pagination /
+upload / blob. `bench/` measures every component's in-process op latency.
+
+---
+
 ```
 comp/
   wit/
