@@ -69,6 +69,14 @@ compose-ai: build
     wac plug {{rel}}/ai_inference.wasm --plug {{rel}}/llm_inference.wasm -o components/target/ai_inference.composed.wasm
     @echo "composed ai-inference (+ mock llm-inference) -> components/target/ai_inference.composed.wasm"
 
+# Same domain layer, but with the REAL openai-provider plugged in instead of the
+# mock — proves the swap is a composition choice, not a code change. The provider
+# imports wasi:http + wasi:config (base-url / api-key / model), which the host
+# (wasmCloud httpclient + config, or a jco http shim) satisfies at runtime.
+compose-ai-openai: build
+    wac plug {{rel}}/ai_inference.wasm --plug {{rel}}/openai_provider.wasm -o components/target/ai_inference.openai.composed.wasm
+    @echo "composed ai-inference (+ openai-provider) -> components/target/ai_inference.openai.composed.wasm"
+
 # Same composition, the DECLARATIVE way — `wac compose` over a .wac source file
 # (components/login-app/compose.wac) instead of the imperative `wac plug` chain
 # above. The .wac file states the wiring explicitly. Output is equivalent.

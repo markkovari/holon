@@ -1,0 +1,30 @@
+// openai:provider — a concrete LLM provider implementing `llm:inference`.
+//
+// This is the OTHER side of the swap point. `llm:inference` defines the
+// vendor-agnostic shape of a chat/completion/embedding call; this component
+// implements it by talking to an OpenAI-compatible HTTP API (OpenAI itself,
+// Azure OpenAI, Together, Groq, a local Ollama / llama.cpp `--api`, vLLM — any
+// endpoint that speaks the `/v1/chat/completions` + `/v1/embeddings` JSON
+// contract). Which one is a DEPLOYMENT choice via wasi:config, never WIT.
+//
+// Compose it under `ai:inference` (or any `llm:inference` consumer) with wac:
+//   wac plug ai_inference.wasm --plug openai_provider.wasm -o ai.composed.wasm
+// The consumer's `import llm:inference/inference` is satisfied by this export;
+// nothing upstream knows a vendor was chosen.
+//
+// Config (wasi:config/runtime):
+//   openai:base-url   API base, default "https://api.openai.com/v1"
+//   openai:api-key    bearer token (required for real OpenAI; some local
+//                     servers ignore it)
+//   openai:model      default chat model, e.g. "gpt-4o-mini"
+//   openai:embed-model default embedding model, e.g. "text-embedding-3-small"
+package openai:provider@0.1.0;
+
+/// Exports the vendor-agnostic `llm:inference/inference`, implemented over an
+/// OpenAI-compatible HTTP API. Imports wasi:http (the call) and wasi:config
+/// (base-url / api-key / model).
+world openai-provider {
+    export llm:inference/inference@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/runtime@0.2.0-draft;
+}
