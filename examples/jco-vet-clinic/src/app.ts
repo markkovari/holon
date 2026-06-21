@@ -424,6 +424,19 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
     return { events: domain.readAuditTrailRedacted() };
   });
 
+  // Run the appointment-reminder relay (sched:timer). In production a cron tick
+  // calls this; here an admin triggers it. Fires every reminder due at `now`
+  // (default: the host clock; ?now=<unix> overrides for testing) via
+  // notify-dispatch, then acks the timer jobs. Returns what it fired.
+  app.post("/admin/run-reminders", async (request, reply) => {
+    const p = require(request, reply, "audit", "read"); // admin (has *:*)
+    if (!p) return;
+    const q = request.query as { now?: string };
+    const now = q.now ? Number(q.now) : Math.floor(Date.now() / 1000);
+    const fired = domain.runDueReminders(now);
+    return { now, fired };
+  });
+
   app.post("/admin/assign-role", async (request, reply) => {
     const p = require(request, reply, "rbac", "admin");
     if (!p) return;

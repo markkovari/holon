@@ -38,6 +38,15 @@ import { cursors as paginate } from "../gen/pagination/pagination.js";
 // (the mock here; swap a real provider with `just compose-ai`). Used to draft a
 // clinical summary of a pet + its visit notes for the doctor.
 import { inference as ai } from "../gen/ai/ai_inference.composed.js";
+// sched:timer/timer — durable future-job store. Books a one-shot reminder 24h
+// before each appointment; a relay (`runDueReminders`) polls `due` and sends
+// the notification. The app owns no cron and no scan loop — just schedule +
+// poll. The reminder is keyed by appt id, so a re-book replaces it and a
+// delete/cancel removes it.
+import { timer } from "../gen/timer/scheduler_timer.js";
+// notify:dispatch/dispatcher — the reminder relay's sink (demo: a local sink;
+// a real build points its gateway at email/SMS via wasi:config).
+import { dispatcher as notify } from "../gen/notify/notify_dispatch.js";
 
 const bucket = open("default");
 const PHOTO_CONTAINER = "pet-photos";
@@ -335,7 +344,90 @@ export function createAppointment(input: { pet: string; owner: string; doctor?: 
   // start its lifecycle instance in the fsm (initial state "booked"), keyed by
   // the new (component-minted) appt id.
   fsm.createInstance(APPT_MACHINE, appt.id);
+  // schedule a one-shot reminder 24h before the appointment (no-op if the
+  // datetime is unparseable or already <24h away).
+  scheduleReminder(appt);
   return appt;
+}
+
+// ---- appointment reminders (sched:timer) ---------------------------------
+// A one-shot timer job fires 24h before each appointment. The app does not run
+// cron or scan a table — it `scheduleAt` the job keyed by appt id (so a re-book
+// replaces it, a delete cancels it), and a relay polls `runDueReminders(now)`
+// to send whatever is due. The job payload is the appt id; the relay re-reads
+// the appointment at fire time so a stale reminder for a cancelled appt is
+// skipped.
+
+const REMINDER_LEAD_SECONDS = 24 * 3600;
+const reminderKey = (apptId: string) => `appt-reminder-${apptId}`;
+
+/** Schedule (or replace) the 24h-before reminder for an appointment. */
+export function scheduleReminder(appt: Appointment): void {
+  const whenMs = Date.parse(appt.datetime);
+  if (Number.isNaN(whenMs)) return; // unparseable datetime -> no reminder
+  const runAt = Math.floor(whenMs / 1000) - REMINDER_LEAD_SECONDS;
+  try {
+    timer.scheduleAt(reminderKey(appt.id), BigInt(Math.max(0, runAt)), enc(appt.id));
+  } catch {
+    /* best-effort: a reminder failure never blocks booking */
+  }
+}
+
+/** Cancel a pending reminder (on delete / cancel). Safe if none exists. */
+export function cancelReminder(apptId: string): void {
+  try {
+    timer.cancel(reminderKey(apptId));
+  } catch {
+    /* not-found is fine — nothing to cancel */
+  }
+}
+
+export interface FiredReminder {
+  appointment: string;
+  pet: string;
+  owner: string;
+}
+
+/**
+ * Relay: claim every reminder due at `now`, send the notification, and ack the
+ * job. A reminder whose appointment is gone or cancelled is acked without
+ * sending (the schedule outlived the appointment). Returns what it fired — the
+ * caller (a cron tick / a test) decides cadence. `now` is injectable for tests.
+ */
+export function runDueReminders(now: number, max = 50): FiredReminder[] {
+  let due: { key: string; payload: Uint8Array }[];
+  try {
+    due = timer.due(BigInt(now), max, 300n) as { key: string; payload: Uint8Array }[];
+  } catch {
+    return [];
+  }
+  const fired: FiredReminder[] = [];
+  for (const job of due) {
+    const apptId = dec(job.payload);
+    const appt = getAppointment(apptId);
+    // skip (but still ack) reminders for gone/cancelled appointments.
+    if (appt && appt.status !== "cancelled") {
+      const pet = getPet(appt.pet);
+      const petName = pet?.name ?? appt.pet;
+      try {
+        notify.send({
+          channel: "email",
+          target: appt.owner,
+          subject: "Appointment reminder",
+          body: `Reminder: ${petName}'s appointment is on ${appt.datetime}.`,
+        });
+      } catch {
+        /* demo sink may have no gateway; the reminder is still acked */
+      }
+      fired.push({ appointment: appt.id, pet: appt.pet, owner: appt.owner });
+    }
+    try {
+      timer.ack(job.key);
+    } catch {
+      /* already gone */
+    }
+  }
+  return fired;
 }
 
 export type TransitionResult =
@@ -355,6 +447,8 @@ export function transitionAppointment(apptId: string, event: ApptEvent): Transit
     appt.status = status.state;
     const { id: _id, ...data } = appt;
     records.update("appointments", apptId, JSON.stringify(data), 0n);
+    // a cancelled/completed appointment needs no reminder.
+    if (status.state === "cancelled" || status.state === "completed") cancelReminder(apptId);
     return { ok: true, status: status.state };
   } catch (e) {
     const p = (e as { payload?: { tag?: string; val?: string } })?.payload;
@@ -494,6 +588,7 @@ export function deleteAppointment(apptId: string, owner: string, nowSeconds: num
   const hoursAway = (when - nowSeconds * 1000) / 3_600_000;
   if (hoursAway < 24) return { ok: false, reason: "within_24h" };
   records.delete("appointments", apptId);
+  cancelReminder(apptId); // no point reminding about a deleted appointment
   return { ok: true };
 }
 

@@ -730,6 +730,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "scheduler-timer"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "search-index"
 version = "0.1.0"
 dependencies = [

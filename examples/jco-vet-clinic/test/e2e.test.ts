@@ -421,4 +421,62 @@ describe("vet-clinic e2e (composed components, in-process)", () => {
     const none = await app.inject({ method: "GET", url: `/appointments/${appt2.id}/summary`, headers: auth(doc) });
     assert.equal(none.statusCode, 404, "no summary generated yet");
   });
+
+  it("booking schedules a 24h reminder; the relay fires it once it is due (sched:timer)", async () => {
+    const owner = await login("alice@acme-vet.test", "alicepass1");
+    const admin = await login("admin@acme-vet.test", "adminpass1");
+    const pet = (await app.inject({ method: "GET", url: "/pets", headers: auth(owner) }).then((r) => r.json())) as { pets: { id: string }[] };
+    const petId = pet.pets[0].id;
+    // an appointment far in the future -> reminder is scheduled 24h before it.
+    const datetime = "2030-01-01T10:00";
+    const apptRes = await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: petId, datetime } });
+    const appt = apptRes.json() as { id: string };
+
+    const apptSecs = Math.floor(Date.parse(datetime) / 1000);
+    const before24h = apptSecs - 24 * 3600 - 60; // just before the reminder is due
+
+    // this appointment's reminder is not due yet (other appointments booked by
+    // earlier tests may have their own reminders due — assert only about ours).
+    const early = await app.inject({ method: "POST", url: `/admin/run-reminders?now=${before24h}`, headers: auth(admin) });
+    assert.equal(early.statusCode, 200);
+    assert.ok(
+      !(early.json() as { fired: { appointment: string }[] }).fired.some((f) => f.appointment === appt.id),
+      "this reminder is not yet due",
+    );
+
+    // at the 24h-before mark, the relay fires exactly this reminder
+    const dueAt = apptSecs - 24 * 3600 + 1;
+    const ran = await app.inject({ method: "POST", url: `/admin/run-reminders?now=${dueAt}`, headers: auth(admin) });
+    assert.equal(ran.statusCode, 200);
+    const fired = (ran.json() as { fired: { appointment: string }[] }).fired;
+    assert.ok(fired.some((f) => f.appointment === appt.id), "reminder for the booked appointment fired");
+
+    // a second run at the same time does not re-fire (it was acked)
+    const again = await app.inject({ method: "POST", url: `/admin/run-reminders?now=${dueAt}`, headers: auth(admin) });
+    assert.ok(
+      !(again.json() as { fired: { appointment: string }[] }).fired.some((f) => f.appointment === appt.id),
+      "an acked reminder does not re-fire",
+    );
+  });
+
+  it("cancelling an appointment cancels its pending reminder (sched:timer)", async () => {
+    const owner = await login("alice@acme-vet.test", "alicepass1");
+    const admin = await login("admin@acme-vet.test", "adminpass1");
+    const pet = (await app.inject({ method: "GET", url: "/pets", headers: auth(owner) }).then((r) => r.json())) as { pets: { id: string }[] };
+    const petId = pet.pets[0].id;
+    const datetime = "2031-01-01T10:00";
+    const appt = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: petId, datetime } }).then((r) => r.json())) as { id: string };
+
+    // owner cancels via the lifecycle transition
+    const cancel = await app.inject({ method: "POST", url: `/appointments/${appt.id}/transition`, headers: auth(owner), payload: { event: "cancel" } });
+    assert.equal(cancel.statusCode, 200, cancel.body);
+
+    // at the would-be reminder time, nothing fires for this appointment
+    const dueAt = Math.floor(Date.parse(datetime) / 1000) - 24 * 3600 + 1;
+    const ran = await app.inject({ method: "POST", url: `/admin/run-reminders?now=${dueAt}`, headers: auth(admin) });
+    assert.ok(
+      !(ran.json() as { fired: { appointment: string }[] }).fired.some((f) => f.appointment === appt.id),
+      "a cancelled appointment's reminder does not fire",
+    );
+  });
 });

@@ -1,0 +1,112 @@
+// sched:timer — generic durable timer / scheduler capability.
+//
+// The "do this later" problem every app reimplements: send a reminder 24h
+// before an appointment, retry a payment in an hour, sweep stale sessions
+// nightly. The naive version is a cron line + a script that scans a table; the
+// portable version is THIS — a durable store of future jobs that a relay
+// `due`-polls and runs, with one-shot AND recurring schedules, idempotent
+// keying, and a lease so two relays don't double-fire a job.
+//
+// The component owns the *when* (eligibility, recurrence, leasing); the relay
+// owns the *what* (it reads `due` jobs, does the work, `ack`s them). The work
+// itself — notify:dispatch, an HTTP call, an outbox enqueue — stays out of
+// scope, so the component is pure WASI and composes downstream with any sink.
+//
+// One-shot vs recurring:
+//   schedule-at(key, run-at, payload)        fires once at run-at, then gone.
+//   schedule-every(key, period, first, ...)  fires every `period` seconds; each
+//                                             `due` advances its next run-at.
+//
+// `key` is app-chosen and UNIQUE: re-scheduling the same key REPLACES the prior
+// job (idempotent — safe to call on every boot, e.g. "nightly-sweep"), so the
+// app never accumulates duplicate timers.
+package sched:timer@0.1.0;
+
+/// Durable future-job store with one-shot + recurring schedules and leased due.
+interface timer {
+    /// Why a timer call failed.
+    variant timer-error {
+        /// No job with that key (already fired-and-gone, cancelled, or never
+        /// scheduled).
+        not-found,
+        /// `period-seconds` was 0 for a recurring schedule (would busy-loop).
+        invalid-period,
+        /// A backing dependency (the key-value store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// How a job recurs.
+    enum kind {
+        /// Fires exactly once at its run-at, then is removed.
+        once,
+        /// Fires repeatedly; each fire advances run-at by `period-seconds`.
+        every,
+    }
+
+    /// One scheduled job.
+    record job {
+        /// App-chosen unique key (idempotency + cancel handle).
+        key: string,
+        /// Opaque payload handed back at fire time — never interpreted here.
+        payload: list<u8>,
+        /// One-shot or recurring.
+        kind: kind,
+        /// Unix seconds the job next becomes eligible to fire.
+        run-at: u64,
+        /// Recurrence interval in seconds (0 for a one-shot job).
+        period-seconds: u64,
+        /// How many times this job has fired (advanced by `due`).
+        fires: u32,
+    }
+
+    /// Schedule a one-shot job to fire at `run-at` (unix seconds). Replaces any
+    /// existing job with the same `key`. A `run-at` in the past is allowed — it
+    /// is simply due immediately.
+    schedule-at: func(key: string, run-at: u64, payload: list<u8>)
+        -> result<_, timer-error>;
+
+    /// Schedule a recurring job firing every `period-seconds`, first at
+    /// `first-run-at` (unix seconds; pass 0 to mean "now + period"). Replaces
+    /// any existing job with the same `key`. `err(invalid-period)` if
+    /// `period-seconds` is 0.
+    schedule-every: func(
+        key: string,
+        period-seconds: u64,
+        first-run-at: u64,
+        payload: list<u8>,
+    ) -> result<_, timer-error>;
+
+    /// Claim up to `max` jobs whose run-at is <= `now`, leasing them for
+    /// `lease-seconds`. A claimed job is not returned to another caller until
+    /// the lease expires (crash-safe: a dead relay's jobs become due again).
+    /// One-shot jobs await `ack` to be removed; recurring jobs have their
+    /// run-at advanced to the next interval at fire time (so a missed window
+    /// catches up to the next future slot, never firing a burst of backlog).
+    /// `now` is supplied by the caller (testable; also the host clock of
+    /// record).
+    due: func(now: u64, max: u32, lease-seconds: u64)
+        -> result<list<job>, timer-error>;
+
+    /// Acknowledge a fired one-shot job — removes it. Recurring jobs need no
+    /// ack (they already advanced); ack on a recurring key is a no-op success.
+    /// `err(not-found)` if the key is unknown.
+    ack: func(key: string) -> result<_, timer-error>;
+
+    /// Cancel and remove a job by key. `err(not-found)` if unknown.
+    cancel: func(key: string) -> result<_, timer-error>;
+
+    /// Look up a single job by key without claiming it.
+    peek: func(key: string) -> result<option<job>, timer-error>;
+
+    /// List all live jobs (up to `max`), for inspection — does not lease.
+    list-jobs: func(max: u32) -> result<list<job>, timer-error>;
+}
+
+/// What `sched-timer` provides: the timer interface, backed by key-value +
+/// clock. No config knobs — recurrence + leasing are per-call.
+world sched-timer {
+    export timer;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+}
