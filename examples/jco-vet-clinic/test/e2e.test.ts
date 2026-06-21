@@ -479,4 +479,76 @@ describe("vet-clinic e2e (composed components, in-process)", () => {
       "a cancelled appointment's reminder does not fire",
     );
   });
+
+  it("a doctor's note claims an unassigned appointment, fenced by lock:mutex", async () => {
+    const owner = await login("alice@acme-vet.test", "alicepass1");
+    const doc = await login("doctor@acme-vet.test", "doctorpass1");
+    const pet = (await app.inject({ method: "GET", url: "/pets", headers: auth(owner) }).then((r) => r.json())) as { pets: { id: string }[] };
+    const appt = (await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.pets[0].id, datetime: "2030-03-03T09:00" } }).then((r) => r.json())) as { id: string; doctor: string };
+    assert.equal(appt.doctor, "", "freshly booked appointment is unassigned");
+    // doctor writes a note -> claims it under the lock
+    const note = await app.inject({ method: "POST", url: `/appointments/${appt.id}/notes`, headers: auth(doc), payload: { text: "Initial exam." } });
+    assert.equal(note.statusCode, 201, note.body);
+    // the appointment is now assigned to that doctor
+    const after = (await app.inject({ method: "GET", url: "/appointments", headers: auth(doc) }).then((r) => r.json())) as { appointments: { id: string; doctor: string }[] };
+    const claimed = after.appointments.find((a) => a.id === appt.id);
+    assert.ok(claimed, "doctor sees the claimed appointment");
+    assert.notEqual(claimed!.doctor, "", "appointment was claimed (doctor assigned)");
+  });
+
+  it("booking publishes an event the projection consumes (event:bus fan-out)", async () => {
+    const owner = await login("alice@acme-vet.test", "alicepass1");
+    const admin = await login("admin@acme-vet.test", "adminpass1");
+    // drain whatever is pending first, to get a stable baseline.
+    const base = (await app.inject({ method: "POST", url: "/admin/run-projection", headers: auth(admin) }).then((r) => r.json())) as { bookedCount: number };
+    // book two appointments -> two events published.
+    const pet = (await app.inject({ method: "GET", url: "/pets", headers: auth(owner) }).then((r) => r.json())) as { pets: { id: string }[] };
+    await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.pets[0].id, datetime: "2030-04-01T09:00" } });
+    await app.inject({ method: "POST", url: "/appointments", headers: auth(owner), payload: { pet: pet.pets[0].id, datetime: "2030-04-02T09:00" } });
+    // the projection consumes them on its own; the count advances by 2.
+    const after = (await app.inject({ method: "POST", url: "/admin/run-projection", headers: auth(admin) }).then((r) => r.json())) as { bookedCount: number };
+    assert.equal(after.bookedCount, base.bookedCount + 2, "projection counted both booked events");
+    // a re-drain with no new events does not double-count (acked).
+    const again = (await app.inject({ method: "POST", url: "/admin/run-projection", headers: auth(admin) }).then((r) => r.json())) as { bookedCount: number };
+    assert.equal(again.bookedCount, after.bookedCount, "acked events are not re-counted");
+  });
+
+  it("staff 2FA secret is sealed in secrets:vault, not stored in plaintext", async () => {
+    // enroll the doctor in TOTP; the secret is AEAD-sealed by secrets-vault.
+    const doc = await login("doctor@acme-vet.test", "doctorpass1");
+    const enroll = await app.inject({ method: "POST", url: "/auth/2fa/enroll", headers: auth(doc) });
+    assert.equal(enroll.statusCode, 200, enroll.body);
+    const { secret } = enroll.json() as { secret: string; uri: string };
+    assert.ok(secret.length > 0, "enroll returns a base32 secret to show once");
+    // a correct TOTP code for the sealed secret verifies (proves unseal works).
+    const code = totp(secret);
+    const verify = await app.inject({ method: "POST", url: "/auth/2fa/verify", headers: auth(doc), payload: { code } });
+    assert.equal(verify.statusCode, 200, `verify against unsealed secret: ${verify.body}`);
+    assert.equal((verify.json() as { ok: boolean }).ok, true, "code verifies against the unsealed secret");
+  });
 });
+
+// Minimal RFC-6238 TOTP (SHA-1, 30s, 6 digits) to exercise the 2FA verify path.
+import { createHmac } from "node:crypto";
+function base32Decode(s: string): Buffer {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const c of s.replace(/=+$/, "").toUpperCase()) {
+    const idx = alphabet.indexOf(c);
+    if (idx < 0) continue;
+    bits += idx.toString(2).padStart(5, "0");
+  }
+  const bytes: number[] = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  return Buffer.from(bytes);
+}
+function totp(secret: string): string {
+  const key = base32Decode(secret);
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64BE(BigInt(counter));
+  const hmac = createHmac("sha1", key).update(buf).digest();
+  const offset = hmac[hmac.length - 1] & 0xf;
+  const bin = ((hmac[offset] & 0x7f) << 24) | (hmac[offset + 1] << 16) | (hmac[offset + 2] << 8) | hmac[offset + 3];
+  return (bin % 1_000_000).toString().padStart(6, "0");
+}

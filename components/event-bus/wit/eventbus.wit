@@ -1,0 +1,72 @@
+// event:bus — generic in-app publish/subscribe event bus.
+//
+// The decoupling problem: one thing happens ("appointment booked") and several
+// unrelated reactions must run — notify the owner, write an audit line, update
+// a search projection. Calling each inline welds the producer to every consumer
+// and makes adding a fourth reaction an edit to the producer. A bus inverts it:
+// the producer `publish`es one event to a TOPIC; independent consumers, each in
+// their own CONSUMER GROUP, `poll` the topic at their own pace and `ack` what
+// they processed. Adding a reaction is a new group, not a producer change.
+//
+// Durable + per-group offsets: every event for a topic is appended to a log;
+// each group tracks its own position, so a slow or newly-added consumer still
+// sees past events (from its offset), and groups never steal each other's
+// events (unlike a work queue). At-least-once: an event stays unacked-visible
+// to a group until that group acks it, so a crash mid-handle re-delivers.
+//
+// This component owns the log + offsets over wasi:keyvalue. Delivery is PULL
+// (consumers poll) — there is no push/callback, keeping it pure WASI; a relay
+// or the app's own loop drives the polling.
+package event:bus@0.1.0;
+
+/// Durable topic log with per-consumer-group offsets (pull delivery).
+interface bus {
+    /// Why a bus call failed.
+    variant bus-error {
+        /// A backing dependency (the key-value store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// One published event.
+    record event {
+        /// Monotonic per-topic sequence id (also the offset key). Stringified
+        /// so consumers can pass it back to `ack` unambiguously.
+        id: string,
+        /// The topic it was published to.
+        topic: string,
+        /// Opaque payload — never interpreted by the component.
+        payload: list<u8>,
+        /// Unix seconds it was published.
+        at: u64,
+    }
+
+    /// Publish `payload` to `topic`. Appended to the topic log for every group
+    /// (current and future) to consume. Returns the new event id.
+    publish: func(topic: string, payload: list<u8>) -> result<string, bus-error>;
+
+    /// Poll up to `max` events for `topic` that `group` has not yet acked,
+    /// oldest first. Does NOT advance the offset — call `ack` after processing
+    /// (at-least-once). A brand-new group starts at the beginning of the log.
+    poll: func(topic: string, group: string, max: u32)
+        -> result<list<event>, bus-error>;
+
+    /// Advance `group`'s offset on `topic` past the given event ids (marks them
+    /// processed so a later `poll` won't return them). Acking out of order is
+    /// fine — the offset moves to the highest acked id.
+    ack: func(topic: string, group: string, ids: list<string>)
+        -> result<_, bus-error>;
+
+    /// How many events on `topic` `group` has not yet acked (its backlog).
+    pending: func(topic: string, group: string) -> result<u64, bus-error>;
+
+    /// List the topics that currently have a log (for inspection).
+    topics: func() -> result<list<string>, bus-error>;
+}
+
+/// What `event-bus` provides: the bus interface, backed by key-value + clock.
+world event-bus {
+    export bus;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+}

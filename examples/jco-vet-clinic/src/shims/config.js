@@ -29,6 +29,11 @@ const values = {
   // --- pagination (cursor signing + page size) ---
   "max-page-size": process.env.PAGE_MAX ?? "100",
   "cursor-secret": process.env.CURSOR_SECRET ?? "vet-cursor-secret",
+
+  // --- secrets-vault (AEAD master key for sealing staff 2FA secrets) ---
+  // base64 of 32 bytes. A real deployment injects this from a KMS / sealed
+  // config; the literal here is a demo key so the example runs with zero setup.
+  "master-key": process.env.VAULT_MASTER_KEY ?? "dmV0LWNsaW5pYy1kZW1vLW1hc3Rlci1rZXktMzJiISE=",
 };
 
 export function get(key) {

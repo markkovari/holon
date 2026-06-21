@@ -284,6 +284,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "event-bus"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "feature-flags"
 version = "0.1.0"
 dependencies = [
@@ -416,6 +424,13 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "llm-inference"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "lock-mutex"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen-rt",

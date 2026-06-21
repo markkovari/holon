@@ -1,0 +1,26 @@
+[package]
+name = "lock-mutex"
+description = "Generic distributed mutex / advisory lease capability — acquire/release/renew with TTL + fencing tokens (lock:mutex)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "lock:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "lock-mutex"
+
+[package.metadata.component.target.dependencies]
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

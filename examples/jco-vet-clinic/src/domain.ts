@@ -47,6 +47,18 @@ import { timer } from "../gen/timer/scheduler_timer.js";
 // notify:dispatch/dispatcher — the reminder relay's sink (demo: a local sink;
 // a real build points its gateway at email/SMS via wasi:config).
 import { dispatcher as notify } from "../gen/notify/notify_dispatch.js";
+// lock:mutex/mutex — fences the doctor claim-on-note race: two doctors writing
+// a note on the same unassigned appointment at once must not both think they
+// claimed it. The first acquires the appt's lock, claims it, releases.
+import { mutex as lock } from "../gen/lock/lock_mutex.js";
+// event:bus/bus — decouples "appointment booked" from its reactions. Booking
+// publishes one event; independent consumer groups (audit, search, notify)
+// poll + react on their own, instead of the domain calling each inline.
+import { bus as events } from "../gen/eventbus/event_bus.js";
+// secrets:vault/vault — AEAD-sealed storage for staff 2FA secrets. The TOTP
+// secret no longer sits in plaintext KV; it is sealed here (master key from
+// wasi:config) and only unsealed to verify a code.
+import { vault } from "../gen/secrets/secrets_vault.js";
 
 const bucket = open("default");
 const PHOTO_CONTAINER = "pet-photos";
@@ -347,7 +359,54 @@ export function createAppointment(input: { pet: string; owner: string; doctor?: 
   // schedule a one-shot reminder 24h before the appointment (no-op if the
   // datetime is unparseable or already <24h away).
   scheduleReminder(appt);
+  // publish the domain event — reactions (audit projection, search warm-up,
+  // ...) consume it via event:bus on their own, instead of being called inline.
+  publishAppointmentBooked(appt);
   return appt;
+}
+
+// ---- domain events (event:bus) -------------------------------------------
+// Booking publishes ONE event to a topic; independent consumer groups poll it
+// and react. Adding a reaction is a new group, not an edit to createAppointment.
+// Here a demo "projection" group maintains a count of booked appointments —
+// proof the fan-out works end to end without the producer knowing the consumer.
+
+export const APPT_TOPIC = "appointment.booked";
+const PROJECTION_GROUP = "booked-counter";
+const BOOKED_COUNT_KEY = "ev_booked_count";
+
+function publishAppointmentBooked(appt: Appointment): void {
+  try {
+    events.publish(APPT_TOPIC, enc(JSON.stringify({ id: appt.id, pet: appt.pet, owner: appt.owner })));
+  } catch {
+    /* best-effort: a bus failure never blocks booking */
+  }
+}
+
+/**
+ * Drain the booked-appointment topic for the projection group, incrementing a
+ * durable counter per event, then ack. Idempotent w.r.t. re-runs (acked events
+ * aren't re-counted). Returns the running total. A real app would update a
+ * search projection / dashboard here; the counter proves the consumer path.
+ */
+export function drainBookedEvents(max = 100): number {
+  let count = read<number>(BOOKED_COUNT_KEY) ?? 0;
+  try {
+    const batch = events.poll(APPT_TOPIC, PROJECTION_GROUP, max) as { id: string }[];
+    if (batch.length) {
+      count += batch.length;
+      put(BOOKED_COUNT_KEY, count);
+      events.ack(APPT_TOPIC, PROJECTION_GROUP, batch.map((e) => e.id));
+    }
+  } catch {
+    /* best-effort */
+  }
+  return count;
+}
+
+/** The current booked-appointment count maintained by the projection. */
+export function bookedCount(): number {
+  return read<number>(BOOKED_COUNT_KEY) ?? 0;
 }
 
 // ---- appointment reminders (sched:timer) ---------------------------------
@@ -488,16 +547,45 @@ export function getAppointment(apptId: string): Appointment | undefined {
   return orUndefinedOnMissing(() => apptFromEntry(records.get("appointments", apptId) as { id: string; data: string }));
 }
 
-/** Assign a doctor to an appointment (claim it). No-op if already that doctor. */
+/**
+ * Claim an appointment for a doctor (assign it). Fenced by lock:mutex so two
+ * doctors claiming the same unassigned appointment at once cannot both win —
+ * the loser sees the appointment already assigned and leaves it. No-op if this
+ * doctor already holds it. Returns the appointment with its (possibly already
+ * set) doctor, never throws on contention.
+ */
 export function assignDoctor(apptId: string, doctor: string): Appointment | undefined {
   const appt = getAppointment(apptId);
   if (!appt) return undefined;
-  if (appt.doctor !== doctor) {
-    appt.doctor = doctor;
-    const { id: _id, ...data } = appt;
-    records.update("appointments", apptId, JSON.stringify(data), 0n);
+  if (appt.doctor === doctor) return appt; // already mine
+  // try to take the claim lock for this appointment (short TTL — the critical
+  // section is one read+write). If another doctor holds it, fall through and
+  // re-read: they are mid-claim, so we yield.
+  let token: string | undefined;
+  try {
+    const lease = lock.acquire(`claim/${apptId}`, doctor, 10n) as { token: string };
+    token = lease.token;
+  } catch {
+    // held by another claimer -> re-read and accept whatever they set.
+    return getAppointment(apptId);
   }
-  return appt;
+  try {
+    // re-read INSIDE the lock: someone may have claimed it between our first
+    // read and acquiring the lock.
+    const fresh = getAppointment(apptId);
+    if (!fresh) return undefined;
+    if (fresh.doctor && fresh.doctor !== doctor) return fresh; // lost the race
+    fresh.doctor = doctor;
+    const { id: _id, ...data } = fresh;
+    records.update("appointments", apptId, JSON.stringify(data), 0n);
+    return fresh;
+  } finally {
+    try {
+      if (token) lock.release(`claim/${apptId}`, token);
+    } catch {
+      /* lease may have lapsed; harmless */
+    }
+  }
 }
 
 /** Active (not cancelled) appointments referencing a pet. */
@@ -758,33 +846,46 @@ export function auditCsv(): string {
 
 // ---- staff 2FA (otp:totp) ------------------------------------------------
 // A doctor/admin enrolls: provision mints a base32 secret + otpauth:// URI
-// (render as a QR client-side); we store the secret per subject. verify-2fa
-// checks a code. The secret lives in KV keyed by subject. (A hardened build
-// would seal the secret in secrets:vault; here it's a demo.)
+// (render as a QR client-side). The secret is AEAD-SEALED in secrets:vault
+// (master key from wasi:config) — NOT in plaintext KV — and only unsealed to
+// verify a code. verify-2fa checks a code against the unsealed secret.
 
 export interface OtpEnrollment {
   secret: string;
   uri: string;
 }
 
+/** vault secret name holding a subject's sealed TOTP secret. */
+const otpSecretName = (subject: string) => `otp/${subject}`;
+
 export function provisionOtp(subject: string, account: string): OtpEnrollment {
   const p = otp.provision("Acme Vet Clinic", account) as { secret: string; uri: string };
-  put(`otp_${subject}`, { secret: p.secret });
+  // seal the base32 TOTP secret — only ciphertext touches the store.
+  vault.put(otpSecretName(subject), enc(p.secret));
   return { secret: p.secret, uri: p.uri };
 }
 
 export function verifyOtp(subject: string, code: string): boolean {
-  const rec = read<{ secret: string }>(`otp_${subject}`);
-  if (!rec) return false;
+  let secret: string;
   try {
-    return otp.verify(rec.secret, code, 30, 6, 1) as boolean;
+    secret = dec(vault.get(otpSecretName(subject)) as Uint8Array);
+  } catch {
+    return false; // not enrolled (not-found) or crypto error
+  }
+  try {
+    return otp.verify(secret, code, 30, 6, 1) as boolean;
   } catch {
     return false;
   }
 }
 
 export function hasOtp(subject: string): boolean {
-  return bucket.exists(`otp_${subject}`) as boolean;
+  try {
+    vault.describe(otpSecretName(subject));
+    return true;
+  } catch {
+    return false; // not-found
+  }
 }
 
 // ---- i18n (i18n:catalog) -------------------------------------------------

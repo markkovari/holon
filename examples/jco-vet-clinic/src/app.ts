@@ -437,6 +437,17 @@ export function buildApp(opts: { logger?: boolean; serveStatic?: boolean } = {})
     return { now, fired };
   });
 
+  // Drain the appointment.booked event topic (event:bus) into the projection,
+  // then report the running booked count. In production a relay drives this;
+  // here an admin triggers it. Proves the fan-out: bookings published the event,
+  // this consumer group counts them independently of the producer.
+  app.post("/admin/run-projection", async (request, reply) => {
+    const p = require(request, reply, "audit", "read"); // admin (has *:*)
+    if (!p) return;
+    const total = domain.drainBookedEvents();
+    return { bookedCount: total };
+  });
+
   app.post("/admin/assign-role", async (request, reply) => {
     const p = require(request, reply, "rbac", "admin");
     if (!p) return;

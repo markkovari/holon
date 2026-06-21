@@ -1,0 +1,83 @@
+// lock:mutex — generic distributed mutex / advisory lease capability.
+//
+// The mutual-exclusion problem every app hits once it runs more than one
+// instance: two workers grab the same job, two doctors claim the same
+// appointment, two relays sweep the same queue. A single-process Mutex doesn't
+// cross instances; the portable answer is a LEASE on a shared store — "I hold
+// `key` until `expires`, here is my token". Holders renew before expiry; a
+// crashed holder's lease simply lapses (TTL is the dead-man's switch), so no
+// lock is ever stuck forever.
+//
+// This component owns the lease bookkeeping over wasi:keyvalue. It is ADVISORY:
+// it does not block callers or enforce that only the holder touches the
+// resource — it answers "may I proceed?" and the app honors the answer. A
+// `token` (random per acquire) gates release/renew so a stale holder can't
+// release a lease the next holder now owns.
+package lock:mutex@0.1.0;
+
+/// Lease-based advisory mutual exclusion over a shared store.
+interface mutex {
+    /// Why a lock call failed.
+    variant lock-error {
+        /// `acquire` failed: the key is currently held by someone else (whose
+        /// lease has not yet expired). Carries the current lease for context.
+        held(lease),
+        /// `release`/`renew` failed: the supplied token does not match the
+        /// current holder (wrong token, or the lease already lapsed / was taken
+        /// over). The caller no longer holds the lock.
+        not-holder,
+        /// `ttl-seconds` was 0 (a lease must have a positive lifetime).
+        invalid-ttl,
+        /// A backing dependency (the key-value store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// A granted (or currently-held) lease.
+    record lease {
+        /// The locked key.
+        key: string,
+        /// App-supplied identity of the holder (a worker id, instance name,
+        /// subject — opaque, for observability / fencing decisions).
+        owner: string,
+        /// Secret handle proving ownership — required by `release` / `renew`.
+        /// A fresh random value per successful `acquire`.
+        token: string,
+        /// Unix seconds the lease expires (becomes acquirable by others).
+        expires: u64,
+        /// A monotonically increasing fence: incremented each time the lock
+        /// changes hands. A resource can reject writes carrying an old fence
+        /// (the "fencing token" pattern) to stay safe even if a paused holder
+        /// wakes after its lease lapsed.
+        fence: u64,
+    }
+
+    /// Try to acquire `key` for `ttl-seconds`. Succeeds if the key is free or
+    /// its prior lease has expired (the expired lease is taken over, fence
+    /// bumped). `err(held)` if a live lease is held by someone else.
+    /// `err(invalid-ttl)` if `ttl-seconds` is 0.
+    acquire: func(key: string, owner: string, ttl-seconds: u64)
+        -> result<lease, lock-error>;
+
+    /// Release a held lease. `err(not-holder)` if `token` is not the current
+    /// holder's (already released / taken over / never held).
+    release: func(key: string, token: string) -> result<_, lock-error>;
+
+    /// Extend a held lease by `ttl-seconds` from now (keep-alive while still
+    /// working). Returns the renewed lease (same token + fence, new expiry).
+    /// `err(not-holder)` if `token` is stale; `err(invalid-ttl)` if 0.
+    renew: func(token: string, ttl-seconds: u64) -> result<lease, lock-error>;
+
+    /// Inspect the current lease on `key` without acquiring (none = free or
+    /// lapsed). The `token` field is BLANKED — peeking never reveals the secret.
+    holder: func(key: string) -> result<option<lease>, lock-error>;
+}
+
+/// What `lock-mutex` provides: the mutex interface, backed by key-value +
+/// clock + random (the lease token). No config knobs — TTL is per-call.
+world lock-mutex {
+    export mutex;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+}
