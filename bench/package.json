@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Benchmarks: in-process (jco) op latency + HTTP roundtrip",
   "scripts": {
-    "bench:inproc": "tsx src/bench-inproc.ts",
+    "bench:inproc": "node --max-old-space-size=8192 --import tsx src/bench-inproc.ts",
     "bench:http": "tsx src/bench-http.ts",
     "bench:idp": "tsx src/bench-idp.ts",
     "plot": "python3 src/plot.py"

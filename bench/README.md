@@ -43,7 +43,15 @@ npm install
 (cd ../examples/jco-pii          && npm install && npm run transpile)
 (cd ../examples/jco-jsonpatch    && npm install && npm run transpile)
 (cd ../examples/jco-markdown     && npm install && npm run transpile)
-AUDIT_ENABLED=false npm run bench:inproc      # -> results-inproc.json
+# data-layer + concurrency primitives
+(cd ../examples/jco-id           && npm install && npm run transpile)
+(cd ../examples/jco-record       && npm install && npm run transpile)
+(cd ../examples/jco-policy       && npm install && npm run transpile)
+(cd ../examples/jco-ai           && npm install && npm run transpile)  # composed: run `just compose-ai` first
+(cd ../examples/jco-timer        && npm install && npm run transpile)
+(cd ../examples/jco-lock         && npm install && npm run transpile)
+(cd ../examples/jco-eventbus     && npm install && npm run transpile)
+AUDIT_ENABLED=false npm run bench:inproc      # -> results-inproc.json (runs with an 8 GiB heap; ~27 wasm instances in one process)
 
 # HTTP: a single wasmCloud host must be up (see `just k8s-collapse`). The
 # in-cluster runner (incluster-bench.mjs in a pod) avoids flaky port-forwards.
@@ -69,6 +77,15 @@ npm run plot   # -> bench-inproc.png, bench-http.png, bench-overhead.png
 | cache.get (hit) | ~26 µs | ~39k |
 | cache.set | ~22 µs | ~45k |
 | cache.get (miss) | ~15 µs | ~66k |
+| id.ulid | ~8 µs | ~118k |
+| ai.summarize (mock) | ~15 µs | ~67k |
+| eventbus.publish | ~38 µs | ~26k |
+| lock.acquire | ~49 µs | ~21k |
+| timer.schedule-at | ~91 µs | ~11k |
+| policy.can (allow) | ~193 µs | ~5k |
+| record.create (indexed) | ~7 ms | ~140 |
+
+(Full table of all 72 ops in `results-inproc.json` / the chart above.)
 | idp.introspect (RS256, warm JWKS) | ~2.5 ms | ~400 |
 
 ### HTTP roundtrip (mean / p99)
@@ -108,12 +125,20 @@ npm run plot   # -> bench-inproc.png, bench-http.png, bench-overhead.png
 - **Read paths are uniformly ~µs; the write paths split by data structure.**
   `session.*`, `config.*`, `secrets.get` (incl. a ChaCha20-Poly1305 decrypt,
   ~70 µs) and the cache/flags/idem reads all sit in the tens of µs. The two
-  outliers — `outbox.enqueue` (~1.9 ms) and `search.index-doc` (~4.9 ms) — are
-  *by design*: both maintain a newline-joined index value with a
-  read-modify-write each call, so the cost grows with the index size (here the
-  search index already holds 200 docs). `wasi:keyvalue@0.2.0-draft` exposes no
-  compare-and-swap or server-side append, so a reference impl can't do better
-  without a richer KV contract; a production backend would push the index into
-  the store (a real inverted index / a queue table) and these collapse to µs.
-  `secrets.put` (~420 µs) is the AEAD seal + a fresh random nonce — the crypto,
-  not the store.
+  outliers — `record.create(indexed)` (~7 ms), `search.index-doc` (~2.4 ms),
+  `outbox.enqueue` (~1 ms) — are *by design*: each maintains a newline-joined
+  index value with a read-modify-write per call, so the cost grows with the
+  collection/index size (the bench drives `record.create` to ~10k rows and the
+  search index to 200 docs, so the tail reflects the index re-serialize, not the
+  insert). `wasi:keyvalue@0.2.0-draft` exposes no compare-and-swap or
+  server-side append, so a reference impl can't do better without a richer KV
+  contract; a production backend would push the index into the store (a real
+  inverted index / a queue table / SQL secondary index) and these collapse to
+  µs. `secrets.put` (~300 µs) is the AEAD seal + a fresh random nonce — the
+  crypto, not the store.
+- **The new concurrency/data primitives land where expected.** `id.*` (pure
+  compute, ~8–10 µs), `ai.*` over the *mock* provider (~15 µs — the abstraction
+  cost, not a real LLM), `lock.*` and `eventbus.publish` (single read+write,
+  ~40–50 µs), `timer.*` and `policy.can` (multi-key scan / rule eval,
+  ~90–190 µs). `record.find-by` (~170 µs) is the indexed lookup — one index
+  read + N record gets.

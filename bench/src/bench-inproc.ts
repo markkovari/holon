@@ -69,6 +69,21 @@ import { redactor as pii } from "../../examples/jco-pii/gen/pii_redact.js";
 import { patcher as jsonpatch } from "../../examples/jco-jsonpatch/gen/jsonpatch.js";
 // md:render/renderer (pure compute)
 import { renderer as markdown } from "../../examples/jco-markdown/gen/markdown.js";
+// --- data-layer + concurrency primitives ---
+// id:generate/generator (pure compute: ULID/UUIDv4/nanoid/short-code)
+import { generator as id } from "../../examples/jco-id/gen/id_generate.js";
+// records:store/store (typed JSON records + secondary indexes over kv)
+import { store as records } from "../../examples/jco-record/gen/record_store.js";
+// policy:guard/guard (row-level ABAC: setRules + can)
+import { guard as policy } from "../../examples/jco-policy/gen/policy_guard.js";
+// ai:inference/inference (domain AI verbs over the composed mock provider)
+import { inference as ai } from "../../examples/jco-ai/gen/ai_inference.composed.js";
+// sched:timer/timer (durable future-job store)
+import { timer } from "../../examples/jco-timer/gen/timer.js";
+// lock:mutex/mutex (distributed advisory lease)
+import { mutex as lock } from "../../examples/jco-lock/gen/lock.js";
+// event:bus/bus (durable pub/sub topic log)
+import { bus as eventbus } from "../../examples/jco-eventbus/gen/eventbus.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
 
@@ -407,6 +422,116 @@ async function main() {
   // --- md:render (pure compute, safe) ---
   const mdsrc = "# Title\n\nSome **bold** and *italic* text with `code` and a [link](https://x.com).\n\n- one\n- two";
   results.push(await measure("markdown.to-html", () => markdown.toHtml(mdsrc), { iters: 20000 }));
+
+  // --- id:generate (pure compute) ---
+  results.push(await measure("id.ulid", () => id.ulid(), { iters: 50000 }));
+  results.push(await measure("id.uuid-v4", () => id.uuidV4(), { iters: 50000 }));
+  results.push(await measure("id.nanoid(21)", () => id.nanoid(21), { iters: 50000 }));
+  results.push(await measure("id.short-code(8)", () => id.shortCode(8), { iters: 50000 }));
+
+  // --- records:store (typed JSON records + secondary index over kv) ---
+  // create: a fresh record each iter (write + index maintenance).
+  let rc = 0;
+  results.push(
+    await measure(
+      "record.create(indexed)",
+      () => records.create("bench", JSON.stringify({ owner: `u${rc++ % 50}`, n: rc }), ["owner"]),
+      { iters: 10000 },
+    ),
+  );
+  const rec = records.create("bench-fixed", JSON.stringify({ owner: "u1", n: 1 }), ["owner"]) as { id: string };
+  results.push(await measure("record.get", () => records.get("bench-fixed", rec.id), { iters: 20000 }));
+  // findBy: the indexed lookup ("all records owned by u1") — seed a few owners.
+  for (let i = 0; i < 20; i++) records.create("bench-fb", JSON.stringify({ owner: "u1", n: i }), ["owner"]);
+  results.push(
+    await measure("record.find-by(index)", () => records.findBy("bench-fb", "owner", JSON.stringify("u1")), {
+      iters: 10000,
+    }),
+  );
+
+  // --- policy:guard (row-level ABAC) ---
+  policy.setRules("bench-res", [
+    { id: "owner-rw", action: "*", effect: "allow", priority: 10, conditions: [{ left: "resource.owner", op: "eq", right: "principal.subject" }] },
+    { id: "staff-any", action: "*", effect: "allow", priority: 10, conditions: [{ left: "principal.role", op: "in-list", right: "doctor,admin" }] },
+  ]);
+  results.push(
+    await measure(
+      "policy.can(allow)",
+      () =>
+        policy.can(
+          "bench-res",
+          "read",
+          [{ key: "subject", value: "u1" }],
+          [{ key: "owner", value: "u1" }],
+        ),
+      { iters: 20000 },
+    ),
+  );
+  results.push(
+    await measure(
+      "policy.can(deny)",
+      () =>
+        policy.can(
+          "bench-res",
+          "read",
+          [{ key: "subject", value: "u2" }],
+          [{ key: "owner", value: "u1" }],
+        ),
+      { iters: 20000 },
+    ),
+  );
+
+  // --- ai:inference (domain verbs over the composed MOCK provider — measures
+  // the abstraction + mock cost, NOT a real LLM call) ---
+  const aiText = "Bella, a 4yo Labrador, limping on the left hind leg with mild stifle swelling.";
+  results.push(await measure("ai.summarize(mock)", () => ai.summarize(aiText, "brief", "clinical"), { iters: 5000 }));
+  results.push(await measure("ai.classify(mock)", () => ai.classify(aiText, ["urgent", "routine"]), { iters: 5000 }));
+  results.push(await measure("ai.embed(mock)", () => ai.embed("golden retriever"), { iters: 5000 }));
+
+  // --- sched:timer (durable future-job store) ---
+  let ts = 0;
+  const tpayload = enc("remind");
+  // schedule-at writes one record + index-add; bench the write path with unique
+  // keys. NOTE: `due` is an O(n) scan of the live index — measuring it against a
+  // large all-far-future backlog is pathological (scans every job, finds none
+  // eligible, allocates per job per call). So bench schedule-at on its own, then
+  // `due` against a SMALL fixed backlog with a modest iter count.
+  results.push(
+    await measure("timer.schedule-at", () => timer.scheduleAt(`j${ts++}`, 9_999_999_999n, tpayload), {
+      iters: 2000,
+    }),
+  );
+  // due against a small, bounded set: cancel the 2000 scheduled above first so
+  // the scan stays cheap, leave ~16 due-now jobs, then measure.
+  for (let i = 0; i < ts; i++) timer.cancel(`j${i}`);
+  for (let i = 0; i < 16; i++) timer.scheduleAt(`due-${i}`, 1n, tpayload); // run-at in the past = due
+  results.push(await measure("timer.due(16)", () => timer.due(1_000_000_000n, 8, 60n), { iters: 5000 }));
+
+  // --- lock:mutex (advisory lease) ---
+  let lk = 0;
+  results.push(
+    await measure("lock.acquire", () => lock.acquire(`bench-lock-${lk++}`, "worker", 60n), {
+      iters: 10000,
+    }),
+  );
+  const lease = lock.acquire("bench-lock-fixed", "worker", 600n) as { token: string };
+  results.push(await measure("lock.renew", () => lock.renew(lease.token, 600n), { iters: 10000 }));
+  results.push(await measure("lock.holder(peek)", () => lock.holder("bench-lock-fixed"), { iters: 20000 }));
+
+  // --- event:bus (durable pub/sub log) ---
+  const ebpayload = enc('{"id":"appt-1"}');
+  results.push(
+    await measure("eventbus.publish", () => eventbus.publish("appt.booked", ebpayload), {
+      iters: 10000,
+    }),
+  );
+  // poll: a fresh group each iter starts at offset 0 over the log built above.
+  let eg = 0;
+  results.push(
+    await measure("eventbus.poll", () => eventbus.poll("appt.booked", `g${eg++}`, 10), {
+      iters: 10000,
+    }),
+  );
 
   const out = { kind: "in-process", node: process.version, when: Date.now(), results };
   writeFileSync(new URL("../results-inproc.json", import.meta.url), JSON.stringify(out, null, 2));
