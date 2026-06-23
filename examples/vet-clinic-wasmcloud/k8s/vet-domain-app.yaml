@@ -1,0 +1,96 @@
+# OAM Application for the FULL vet-clinic domain on wasmCloud 2.x (k8s operator).
+#
+# This is the whole app as ONE component: vet_domain.full.composed.wasm —
+# vet-domain (Rust HTTP handler) + auth-guard + records:store + validate +
+# search + blob + upload + fsm + money + markdown + csv + pii + otp + secrets +
+# i18n + pagination + ai (mock llm) + cache (+ cache-backing) + timer + lock +
+# event-bus, all wac-plugged into a single wasm that exports wasi:http and
+# imports only WASI. The http-server provider fronts it; wasi:keyvalue is the
+# keyvalue-nats provider (durable in NATS JetStream). No Node, no shim — the
+# same bytes the native vet-host and jco run, here on the pooled wasmCloud host.
+apiVersion: core.oam.dev/v1beta1
+kind: Application
+metadata:
+  name: vet-domain
+  namespace: vet-clinic
+  annotations:
+    version: v0.1.0
+    description: "Full vet-clinic domain as one composed wasm, on wasmCloud k8s"
+spec:
+  components:
+    - name: vet-domain
+      type: component
+      properties:
+        image: oci://registry.wasmcloud.svc.cluster.local:5000/vet-domain-full:0.1.0
+        config:
+          - name: vet-config
+            properties:
+              default-tenant: "acme-vet"
+              session-ttl: "3600"
+              password-min-len: "8"
+              audit-enabled: "true"
+              max-attempts: "5"
+              lockout-window: "300"
+              master-key: "dmV0LWNsaW5pYy1kZW1vLW1hc3Rlci1rZXktMzJiISE="
+              allowed-types: "image/png,image/jpeg,image/webp,image/gif"
+              max-size: "2097152"
+              ticket-ttl: "300"
+              ticket-secret: "vet-upload-secret"
+              max-page-size: "100"
+              cursor-secret: "vet-cursor-secret"
+      traits:
+        - type: spreadscaler
+          properties:
+            instances: 1
+        # wasi:keyvalue (every component's store/atomics) -> NATS JetStream KV.
+        - type: link
+          properties:
+            name: default
+            namespace: wasi
+            package: keyvalue
+            interfaces: [store, atomics]
+            target:
+              name: keyvalue-nats
+              config:
+                - name: vet-domain-bucket
+                  properties:
+                    bucket: vetdomain
+                    cluster_uri: nats://nats.wasmcloud.svc.cluster.local:4222
+                    enable_bucket_auto_create: "true"
+        # outbound HTTP (auth-guard's OIDC/JWKS path, if used).
+        - type: link
+          properties:
+            namespace: wasi
+            package: http
+            interfaces: [outgoing-handler]
+            target:
+              name: httpclient
+
+    # the http-server provider fronts the component on :8080.
+    - name: httpserver
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-server:0.23.1
+      traits:
+        - type: link
+          properties:
+            namespace: wasi
+            package: http
+            interfaces: [incoming-handler]
+            source:
+              config:
+                - name: listen
+                  properties:
+                    address: 0.0.0.0:8081
+            target:
+              name: vet-domain
+
+    - name: httpclient
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/http-client:0.13.0
+
+    - name: keyvalue-nats
+      type: capability
+      properties:
+        image: ghcr.io/wasmcloud/keyvalue-nats:0.3.1

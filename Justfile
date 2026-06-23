@@ -74,6 +74,9 @@ compose-vet: compose
 # ai-inference (+mock llm, pre-composed), cache, timer, lock, event-bus). Output
 # is the whole feature-complete vet-clinic backend as ONE wasm.
 compose-vet-full: compose compose-ai
+    # cache needs a backing store (source/sink); pre-compose cache + cache-backing
+    # so the pair has zero non-WASI imports, then plug the pair.
+    wac plug {{rel}}/cache.wasm --plug {{rel}}/cache_backing.wasm -o components/target/cache.composed.wasm
     wac plug {{vetdomain_wasm}} \
       --plug {{guard_composed}} \
       --plug {{ai_composed}} \
@@ -91,10 +94,10 @@ compose-vet-full: compose compose-ai
       --plug {{rel}}/secrets_vault.wasm \
       --plug {{rel}}/i18n_catalog.wasm \
       --plug {{rel}}/pagination.wasm \
-      --plug {{rel}}/cache.wasm \
       --plug {{rel}}/scheduler_timer.wasm \
       --plug {{rel}}/lock_mutex.wasm \
       --plug {{rel}}/event_bus.wasm \
+      --plug components/target/cache.composed.wasm \
       -o {{vet_full_composed}}
     @echo "composed FULL vet-domain (19 capabilities) -> {{vet_full_composed}}"
 

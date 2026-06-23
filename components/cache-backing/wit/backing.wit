@@ -1,0 +1,14 @@
+// cache-backing — a durable backing store for cache:store's source + sink.
+//
+// cache:store imports `source` (load) + `sink` (store/remove) as the
+// authoritative store behind its TTL cache. In jco those were a local shim; on
+// a real host they need a component. This exports both over wasi:keyvalue, so a
+// composed app that uses cache:store has NO unsatisfied non-WASI imports and
+// deploys on wasmCloud (the keyvalue is the keyvalue-nats provider).
+package cache:backing@0.1.0;
+
+world cache-backing {
+    export cache:store/source@0.1.0;
+    export cache:store/sink@0.1.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+}

@@ -263,6 +263,12 @@ struct Args {
     /// NATS URL for --kv nats (JetStream KV).
     #[arg(long, default_value = "127.0.0.1:4222")]
     nats_url: String,
+    /// Use wasmtime's POOLING allocator (pre-reserved instance/memory slots,
+    /// reused across requests) instead of the default on-demand allocator. This
+    /// is what wasmCloud does — it makes per-request component instantiation of
+    /// the 19-component graph far cheaper. Off by default (the naive baseline).
+    #[arg(long)]
+    pool: bool,
 }
 
 // ---- main: instantiate + serve -------------------------------------------
@@ -273,6 +279,19 @@ async fn main() -> Result<()> {
 
     let mut wt_config = Config::new();
     wt_config.async_support(true);
+    if args.pool {
+        // wasmtime's pooling allocator: pre-reserve a fixed set of instance +
+        // memory + table slots and recycle them, so instantiating the
+        // 19-component graph per request costs a slot grab, not fresh mmaps.
+        // (The strategy wasmCloud uses.) Generous caps for a composed app.
+        let mut pool = wasmtime::PoolingAllocationConfig::default();
+        pool.total_component_instances(1000);
+        pool.total_core_instances(10_000);
+        pool.total_memories(10_000);
+        pool.max_memory_size(64 << 20); // 64 MiB per linear memory
+        pool.total_tables(10_000);
+        wt_config.allocation_strategy(wasmtime::InstanceAllocationStrategy::Pooling(pool));
+    }
     let engine = Engine::new(&wt_config)?;
 
     let component = Component::from_file(&engine, &args.component)?;
@@ -300,7 +319,7 @@ async fn main() -> Result<()> {
     let addr: SocketAddr = args.addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("vet-host: serving {} on http://{}", args.component, addr);
-    println!("vet-host: kv backend = {}", args.kv);
+    println!("vet-host: kv backend = {} | allocator = {}", args.kv, if args.pool { "pooling" } else { "on-demand" });
     if let Some(d) = static_dir.as_ref() {
         println!("vet-host: serving static SPA from {}", d.display());
     }

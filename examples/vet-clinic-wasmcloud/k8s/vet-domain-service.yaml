@@ -1,0 +1,21 @@
+# NodePort Service exposing the wasmCloud host's http-server listener (:8081,
+# where the vet-domain component serves UI + API) at a fixed node port — so the
+# app is reachable at http://<node>:30081 with NO kubectl port-forward.
+#
+# Selector targets the operator-managed host pod (label set by the operator).
+apiVersion: v1
+kind: Service
+metadata:
+  name: vet-domain
+  namespace: vet-clinic
+  labels:
+    app: vet-domain
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/instance: vet-clinic-host
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+      nodePort: 30081
