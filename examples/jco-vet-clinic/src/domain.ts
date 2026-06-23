@@ -59,6 +59,9 @@ import { bus as events } from "../gen/eventbus/event_bus.js";
 // secret no longer sits in plaintext KV; it is sealed here (master key from
 // wasi:config) and only unsealed to verify a code.
 import { vault } from "../gen/secrets/secrets_vault.js";
+// cache:store/cache — TTL-aware cache for the AI clinical summaries (expensive
+// inference, rarely-changing inputs, no need to live forever).
+import { cache } from "../gen/cache/cache.js";
 
 const bucket = open("default");
 const PHOTO_CONTAINER = "pet-photos";
@@ -615,7 +618,11 @@ export interface Invoice {
   currency: string;
 }
 
-/** Set/replace the invoice for an appointment; total computed via money:amount. */
+/**
+ * Set/replace the invoice for an appointment; total computed via money:amount.
+ * Stored in records:store (collection "invoices", indexed by appointment) — one
+ * invoice per appointment, so a re-set deletes the prior record first.
+ */
 export function setInvoice(appointmentId: string, items: LineItem[]): Invoice {
   // sum with the money component: start at an explicit zero amount (parse("0")
   // is rejected — a 2-exponent currency needs minor digits), then add each line.
@@ -631,12 +638,17 @@ export function setInvoice(appointmentId: string, items: LineItem[]): Invoice {
     totalFormatted: money.format(total) as string,
     currency: CURRENCY,
   };
-  put(`inv_${appointmentId}`, invoice);
+  // 1:1 with the appointment — drop any existing invoice, then create fresh.
+  for (const e of records.findBy("invoices", "appointment", JSON.stringify(appointmentId)) as { id: string }[]) {
+    records.delete("invoices", e.id);
+  }
+  records.create("invoices", JSON.stringify(invoice), ["appointment"]);
   return invoice;
 }
 
 export function getInvoice(appointmentId: string): Invoice | undefined {
-  return read<Invoice>(`inv_${appointmentId}`);
+  const hits = records.findBy("invoices", "appointment", JSON.stringify(appointmentId)) as { id: string; data: string }[];
+  return hits.length ? (JSON.parse(hits[0].data) as Invoice) : undefined;
 }
 
 export type DeleteResult = { ok: true } | { ok: false; reason: string };
@@ -740,13 +752,29 @@ function summarySource(apptId: string): { text: string; petName: string } | unde
   return { text: lines.join("\n"), petName: pet.name };
 }
 
+// The AI summary is cached in cache:store (TTL-aware) rather than hand-rolled
+// KV: inference is the expensive call, the inputs (notes) change rarely, and a
+// summary needn't live forever — a TTL is exactly right. The key is the appt id.
+const AISUM_TTL_SECONDS = 24 * 3600;
+const aisumKey = (apptId: string) => `aisum_${apptId}`;
+
+function readSummary(apptId: string): AiSummary | undefined {
+  try {
+    const raw = cache.get(aisumKey(apptId)) as Uint8Array | undefined;
+    return raw ? (JSON.parse(dec(raw)) as AiSummary) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Generate (and cache) a clinical summary for an appointment via ai:inference.
- * `force` re-runs even if cached. Returns undefined if the appointment/pet is
- * missing; throws nothing — an inference failure yields a fallback summary.
+ * The result is stored in cache:store with a 24h TTL (re-generated after it
+ * lapses). `force` re-runs even if cached. Returns undefined if the
+ * appointment/pet is missing; an inference failure yields a fallback summary.
  */
 export function summarizeAppointment(apptId: string, force = false): AiSummary | undefined {
-  const cached = read<AiSummary>(`aisum_${apptId}`);
+  const cached = readSummary(apptId);
   if (cached && !force) return cached;
   const src = summarySource(apptId);
   if (!src) return undefined;
@@ -758,13 +786,13 @@ export function summarizeAppointment(apptId: string, force = false): AiSummary |
     summary = `Summary unavailable for ${src.petName}.`;
   }
   const result: AiSummary = { summary, at: Math.floor(Date.now() / 1000) };
-  put(`aisum_${apptId}`, result);
+  cache.set(aisumKey(apptId), enc(JSON.stringify(result)), BigInt(AISUM_TTL_SECONDS));
   return result;
 }
 
-/** Read a cached AI summary, if one was generated. */
+/** Read a cached AI summary, if one is still live in the cache. */
 export function getSummary(apptId: string): AiSummary | undefined {
-  return read<AiSummary>(`aisum_${apptId}`);
+  return readSummary(apptId);
 }
 
 // ---- audit trail ---------------------------------------------------------

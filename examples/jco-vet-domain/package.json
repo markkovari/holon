@@ -1,0 +1,21 @@
+{
+  "name": "comp-jco-vet-domain-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The vet-clinic domain as ONE wasm HTTP component (vet-domain composed with auth-guard + records + validate + search), served in-process via jco's WASI HTTPServer",
+  "scripts": {
+    "transpile": "jco transpile vet_domain.composed.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue.js --map wasi:keyvalue/atomics@0.2.0-draft=../src/keyvalue.js --map wasi:config/runtime@0.2.0-draft=../src/config.js",
+    "start": "npm run transpile && tsx src/server.ts",
+    "test": "npm run transpile && tsx --test test/vet.test.ts"
+  },
+  "dependencies": {
+    "@bytecodealliance/jco": "^1.23.0",
+    "@bytecodealliance/preview2-shim": "^0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

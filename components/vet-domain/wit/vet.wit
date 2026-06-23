@@ -1,0 +1,41 @@
+// vet:domain — the vet-clinic DOMAIN as a WIT component (not Node/JS glue).
+//
+// This is the language- and host-agnostic answer to "the domain is the only
+// non-component piece": the pet/appointment/note orchestration that used to be
+// TypeScript running under jco is here an HTTP component that EXPORTS
+// wasi:http/incoming-handler and IMPORTS the capability contracts it composes.
+//
+// The world names only WIT — no vendor, no backend, no language. The same
+// vet_domain.wasm runs on jco (Node), on a wasmCloud host, or under wasmtime,
+// and a different team could reimplement it in Go/C against this exact world.
+// Backends (KV→NATS/redis/sqlite) and the auth impl are bound at COMPOSE time.
+//
+// Scope (core slice): register/login (proxied to auth:identity), pet CRUD +
+// search, appointment booking + listing, and visit notes — every mutating
+// route guarded by authorizer.authorize, bodies checked by validate:schema,
+// records held in records:store, pets indexed in search:index. Photos, fsm,
+// money, ai, timers, etc. are a later parity pass.
+package vet:domain@0.1.0;
+
+/// The vet-clinic HTTP backend, composed from capability contracts.
+world vet-domain {
+    // serve HTTP (the http-server provider / jco host drives this).
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth + accounts + sessions + RBAC — satisfied by the composed auth-guard.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // domain records (pets / appointments / notes) + their lookups.
+    import records:store/store@0.1.0;
+    // request-body validation.
+    import validate:schema/validator@0.1.0;
+    // pet full-text search.
+    import search:index/index@0.1.0;
+
+    // outbound HTTP (auth-guard's OIDC/JWKS path needs it when composed).
+    import wasi:http/outgoing-handler@0.2.0;
+}

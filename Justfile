@@ -23,6 +23,11 @@ loginapp_wasm := rel / "login_app.wasm"
 guard_composed := "components/target/auth_guard.composed.wasm"
 webhook_composed := "components/target/webhook_ingest.composed.wasm"
 login_composed := "components/target/login_app.composed.wasm"
+vetdomain_wasm := rel / "vet_domain.wasm"
+recordstore_wasm := rel / "record_store.wasm"
+validate_wasm := rel / "validate.wasm"
+searchindex_wasm := rel / "search_index.wasm"
+vet_composed := "components/target/vet_domain.composed.wasm"
 
 # List available recipes.
 default:
@@ -46,6 +51,20 @@ build:
 compose: build
     wac plug {{guard_wasm}} --plug {{ratelimit_wasm}} --plug {{auditlog_wasm}} -o {{guard_composed}}
     @echo "composed auth-guard (+ rate-limiter + audit-log) -> {{guard_composed}}"
+
+# Compose the vet-clinic DOMAIN component (the Rust HTTP backend) with every
+# capability it imports: the composed auth-guard (auth:identity), records:store,
+# validate:schema, search:index. Output is ONE self-contained app component that
+# serves HTTP and runs identically on jco or a wasmCloud host — the whole
+# vet-clinic backend as language-agnostic wasm, no Node.
+compose-vet: compose
+    wac plug {{vetdomain_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{validate_wasm}} \
+      --plug {{searchindex_wasm}} \
+      -o {{vet_composed}}
+    @echo "composed vet-domain (+ auth-guard + records + validate + search) -> {{vet_composed}}"
 
 # Compose the idempotency-guard into webhook-ingest, satisfying its
 # `idempotency:guard/store` import. Demonstrates one component composing another.
