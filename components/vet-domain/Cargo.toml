@@ -29,6 +29,25 @@ world = "vet-domain"
 # auth.wit's own world imports these; needed to merge the auth:identity package.
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
+# full-parity capability contracts.
+"blob:store" = { path = "../blob-store/wit" }
+"upload:policy" = { path = "../upload-policy/wit" }
+"fsm:workflow" = { path = "../fsm-workflow/wit" }
+"money:amount" = { path = "../money/wit" }
+"md:render" = { path = "../markdown/wit" }
+"csv:codec" = { path = "../csv/wit" }
+"pii:redact" = { path = "../pii-redact/wit" }
+"otp:totp" = { path = "../otp/wit" }
+"secrets:vault" = { path = "../secrets-vault/wit" }
+"i18n:catalog" = { path = "../i18n-catalog/wit" }
+"paginate:cursor" = { path = "../pagination/wit" }
+"ai:inference" = { path = "../ai-inference/wit" }
+# ai:inference's package references llm:inference (the provider boundary).
+"llm:inference" = { path = "../llm-inference/wit" }
+"cache:store" = { path = "../cache/wit" }
+"sched:timer" = { path = "../scheduler-timer/wit" }
+"lock:mutex" = { path = "../lock-mutex/wit" }
+"event:bus" = { path = "../event-bus/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
 "wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }

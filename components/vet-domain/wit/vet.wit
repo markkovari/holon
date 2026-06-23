@@ -10,11 +10,12 @@
 // and a different team could reimplement it in Go/C against this exact world.
 // Backends (KV→NATS/redis/sqlite) and the auth impl are bound at COMPOSE time.
 //
-// Scope (core slice): register/login (proxied to auth:identity), pet CRUD +
-// search, appointment booking + listing, and visit notes — every mutating
-// route guarded by authorizer.authorize, bodies checked by validate:schema,
-// records held in records:store, pets indexed in search:index. Photos, fsm,
-// money, ai, timers, etc. are a later parity pass.
+// This world is the FULL-PARITY surface: register/login + pet CRUD + search,
+// appointment booking/lifecycle/invoices, visit notes (markdown), pet photos,
+// AI clinical summaries, staff 2FA, i18n, pagination, reminders, claim locks,
+// event fan-out, CSV export and a PII-redacted audit view — every cross-cutting
+// concern a real comp component imported below, every mutating route guarded by
+// authorizer.authorize and bodies checked by validate:schema.
 package vet:domain@0.1.0;
 
 /// The vet-clinic HTTP backend, composed from capability contracts.
@@ -29,12 +30,52 @@ world vet-domain {
     import auth:identity/rbac@0.1.0;
     import auth:identity/types@0.1.0;
 
-    // domain records (pets / appointments / notes) + their lookups.
+    // domain records (pets / appointments / notes / invoices) + their lookups.
     import records:store/store@0.1.0;
     // request-body validation.
     import validate:schema/validator@0.1.0;
     // pet full-text search.
     import search:index/index@0.1.0;
+
+    // pet photos: validate type+size + mint/redeem a ticket, then store bytes.
+    import upload:policy/gate@0.1.0;
+    import blob:store/blobstore@0.1.0;
+    // appointment status lifecycle (legal transitions only).
+    import fsm:workflow/engine@0.1.0;
+    // exact invoice arithmetic (minor units, no floats).
+    import money:amount/arithmetic@0.1.0;
+    // safe Markdown -> HTML for rich visit notes.
+    import md:render/renderer@0.1.0;
+    // admin CSV export.
+    import csv:codec/codec@0.1.0;
+    // PII masking in the admin audit view.
+    import pii:redact/redactor@0.1.0;
+    // staff 2FA: TOTP + an AEAD-sealed secret store for the shared secret.
+    import otp:totp/authenticator@0.1.0;
+    import secrets:vault/vault@0.1.0;
+    // localized UI strings.
+    import i18n:catalog/catalog@0.1.0;
+    // opaque, signed cursor pagination for the pet list.
+    import paginate:cursor/cursors@0.1.0;
+    // domain AI verbs over a composed-in LLM provider (clinical summary).
+    import ai:inference/inference@0.1.0;
+    // TTL-aware cache for the AI summaries.
+    import cache:store/cache@0.1.0;
+    // durable future-job store for the 24h appointment reminder.
+    import sched:timer/timer@0.1.0;
+    // fences the doctor claim-on-note race.
+    import lock:mutex/mutex@0.1.0;
+    // decouples "appointment booked" from its reactions (audit/search/notify).
+    import event:bus/bus@0.1.0;
+
+    // raw audit-log keys (al_*) are read straight from the shared KV the
+    // composed auth-guard's recorder writes to — audit:log does not re-export
+    // its query interface, so we read the bucket like the TS reference did.
+    import wasi:keyvalue/store@0.2.0-draft;
+
+    // "now" for the >24h cancel rule + the default run-reminders clock (the TS
+    // app used Date.now(); here it is the host wall clock).
+    import wasi:clocks/wall-clock@0.2.0;
 
     // outbound HTTP (auth-guard's OIDC/JWKS path needs it when composed).
     import wasi:http/outgoing-handler@0.2.0;

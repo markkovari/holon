@@ -28,6 +28,8 @@ recordstore_wasm := rel / "record_store.wasm"
 validate_wasm := rel / "validate.wasm"
 searchindex_wasm := rel / "search_index.wasm"
 vet_composed := "components/target/vet_domain.composed.wasm"
+vet_full_composed := "components/target/vet_domain.full.composed.wasm"
+ai_composed := "components/target/ai_inference.composed.wasm"
 
 # List available recipes.
 default:
@@ -65,6 +67,36 @@ compose-vet: compose
       --plug {{searchindex_wasm}} \
       -o {{vet_composed}}
     @echo "composed vet-domain (+ auth-guard + records + validate + search) -> {{vet_composed}}"
+
+# FULL-PARITY compose: plug every capability the parity vet-domain imports into
+# one app component — all 19 (auth-guard, records, validate, search, blob,
+# upload, fsm, money, markdown, csv, pii, otp, secrets, i18n, pagination,
+# ai-inference (+mock llm, pre-composed), cache, timer, lock, event-bus). Output
+# is the whole feature-complete vet-clinic backend as ONE wasm.
+compose-vet-full: compose compose-ai
+    wac plug {{vetdomain_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{ai_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{validate_wasm}} \
+      --plug {{searchindex_wasm}} \
+      --plug {{rel}}/blob_store.wasm \
+      --plug {{rel}}/upload_policy.wasm \
+      --plug {{rel}}/fsm_workflow.wasm \
+      --plug {{rel}}/money.wasm \
+      --plug {{rel}}/markdown.wasm \
+      --plug {{rel}}/csv.wasm \
+      --plug {{rel}}/pii_redact.wasm \
+      --plug {{rel}}/otp.wasm \
+      --plug {{rel}}/secrets_vault.wasm \
+      --plug {{rel}}/i18n_catalog.wasm \
+      --plug {{rel}}/pagination.wasm \
+      --plug {{rel}}/cache.wasm \
+      --plug {{rel}}/scheduler_timer.wasm \
+      --plug {{rel}}/lock_mutex.wasm \
+      --plug {{rel}}/event_bus.wasm \
+      -o {{vet_full_composed}}
+    @echo "composed FULL vet-domain (19 capabilities) -> {{vet_full_composed}}"
 
 # Run the composed vet-domain wasm under the NATIVE Rust host (wasmtime). No
 # Node, no wasmCloud — `host/` is its own native binary that serves the

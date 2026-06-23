@@ -42,6 +42,8 @@ mod bindings {
     });
 }
 
+use bindings::cache::store::sink as cache_sink;
+use bindings::cache::store::source as cache_source;
 use bindings::wasi::config::runtime as config;
 use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::store;
@@ -53,6 +55,8 @@ use bindings::wasi::keyvalue::store;
 // backend; the guest never knows.
 
 type Buckets = Arc<Mutex<HashMap<String, HashMap<String, Vec<u8>>>>>;
+/// the cache component's backing store (flat key -> bytes).
+type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 
 /// A host resource handed to the guest when it calls `store.open(name)`.
 pub struct HostBucket {
@@ -66,6 +70,7 @@ struct Host {
     wasi: WasiCtx,
     http: WasiHttpCtx,
     buckets: Buckets,
+    cache_backing: CacheBacking,
     config: Arc<HashMap<String, String>>,
 }
 
@@ -195,6 +200,24 @@ impl atomics::Host for Host {
     }
 }
 
+// ---- cache:store source + sink host impl (the cache backing store) -------
+
+impl cache_source::Host for Host {
+    fn load(&mut self, key: String) -> Result<Result<Option<Vec<u8>>, String>> {
+        Ok(Ok(self.cache_backing.lock().unwrap().get(&key).cloned()))
+    }
+}
+impl cache_sink::Host for Host {
+    fn store(&mut self, key: String, value: Vec<u8>) -> Result<Result<(), String>> {
+        self.cache_backing.lock().unwrap().insert(key, value);
+        Ok(Ok(()))
+    }
+    fn remove(&mut self, key: String) -> Result<Result<(), String>> {
+        self.cache_backing.lock().unwrap().remove(&key);
+        Ok(Ok(()))
+    }
+}
+
 // ---- wasi:config/runtime host impl ---------------------------------------
 
 impl config::Host for Host {
@@ -219,6 +242,19 @@ fn build_config() -> HashMap<String, String> {
     c.insert("audit-enabled".into(), "true".into());
     c.insert("max-attempts".into(), "5".into());
     c.insert("lockout-window".into(), "300".into());
+    // secrets-vault AEAD master key (base64 of 32 bytes) — seals staff 2FA
+    // secrets. Demo default; inject from a KMS in production.
+    c.insert(
+        "master-key".into(),
+        env("VET_VAULT_KEY", "dmV0LWNsaW5pYy1kZW1vLW1hc3Rlci1rZXktMzJiISE="),
+    );
+    // upload-policy (pet photos) + pagination (cursor signing).
+    c.insert("allowed-types".into(), env("VET_UPLOAD_TYPES", "image/png,image/jpeg,image/webp,image/gif"));
+    c.insert("max-size".into(), env("VET_UPLOAD_MAX", "2097152"));
+    c.insert("ticket-ttl".into(), "300".into());
+    c.insert("ticket-secret".into(), env("VET_UPLOAD_SECRET", "vet-upload-secret"));
+    c.insert("max-page-size".into(), env("VET_PAGE_MAX", "100"));
+    c.insert("cursor-secret".into(), env("VET_CURSOR_SECRET", "vet-cursor-secret"));
     c
 }
 
@@ -254,12 +290,15 @@ async fn main() -> Result<()> {
     store::add_to_linker(&mut linker, |h| h)?;
     atomics::add_to_linker(&mut linker, |h| h)?;
     config::add_to_linker(&mut linker, |h| h)?;
+    cache_source::add_to_linker(&mut linker, |h| h)?;
+    cache_sink::add_to_linker(&mut linker, |h| h)?;
 
     // pre-instantiate the proxy (incoming-handler) world once.
     let proxy_pre = ProxyPre::new(linker.instantiate_pre(&component)?)?;
 
     // shared, process-lifetime state.
     let buckets: Buckets = Arc::new(Mutex::new(HashMap::new()));
+    let cache_backing: CacheBacking = Arc::new(Mutex::new(HashMap::new()));
     let config = Arc::new(build_config());
 
     let addr: SocketAddr = args.addr.parse()?;
@@ -275,6 +314,7 @@ async fn main() -> Result<()> {
         let engine = engine.clone();
         let proxy_pre = proxy_pre.clone();
         let buckets = buckets.clone();
+        let cache_backing = cache_backing.clone();
         let config = config.clone();
 
         tokio::task::spawn(async move {
@@ -282,8 +322,11 @@ async fn main() -> Result<()> {
                 let engine = engine.clone();
                 let proxy_pre = proxy_pre.clone();
                 let buckets = buckets.clone();
+                let cache_backing = cache_backing.clone();
                 let config = config.clone();
-                async move { handle_request(engine, proxy_pre, buckets, config, req).await }
+                async move {
+                    handle_request(engine, proxy_pre, buckets, cache_backing, config, req).await
+                }
             });
             if let Err(e) = http1::Builder::new()
                 .serve_connection(io, service)
@@ -300,6 +343,7 @@ async fn handle_request(
     engine: Arc<Engine>,
     proxy_pre: Arc<ProxyPre<Host>>,
     buckets: Buckets,
+    cache_backing: CacheBacking,
     config: Arc<HashMap<String, String>>,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
@@ -308,6 +352,7 @@ async fn handle_request(
         wasi: WasiCtxBuilder::new().inherit_stderr().build(),
         http: WasiHttpCtx::new(),
         buckets,
+        cache_backing,
         config,
     };
     let mut store = Store::new(&engine, host);

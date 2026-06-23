@@ -11,4 +11,9 @@ world host-imports {
     import wasi:keyvalue/store@0.2.0-draft;
     import wasi:keyvalue/atomics@0.2.0-draft;
     import wasi:config/runtime@0.2.0-draft;
+    // the cache component's backing-store hooks (the full-parity app composes in
+    // cache:store, whose source/sink are NOT wasi — the host backs them with an
+    // in-memory map, mirroring the jco cache-backing shim).
+    import cache:store/source@0.1.0;
+    import cache:store/sink@0.1.0;
 }
