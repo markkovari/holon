@@ -22,9 +22,14 @@ The composed app imports only generic WASI; this host satisfies all of it:
 - **standard WASI** (cli/clocks/random/io/filesystem) — `wasmtime-wasi`
 - **wasi:http** (the incoming-handler the component exports + outgoing) —
   `wasmtime-wasi-http`
-- **wasi:keyvalue@0.2.0-draft** (store + atomics) — an **in-memory store
-  implemented in `main.rs`** (a `HashMap` per bucket). Swap it for redis/sqlite/
-  NATS and the component is unchanged.
+- **wasi:keyvalue@0.2.0-draft** (store + atomics) — a **swappable `KvBackend`**
+  (`src/kv.rs`) chosen by `--kv memory|redis|nats`. The SAME component bytes run
+  on all three; only the host store changes:
+  - `memory` (default) — in-process `HashMap` per bucket; resets on restart.
+  - `redis` — any redis-compatible server (`--redis-url`, e.g. valkey :6379);
+    flat keyspace `{bucket}\x1f{key}`, `INCRBY` for atomics, `SCAN` for list.
+  - `nats` — NATS JetStream KV (`--nats-url`); one KV bucket per store name,
+    keys hex-escaped to the NATS charset. Durable; survives restart.
 - **wasi:config@0.2.0-draft** — the deployment knobs (default-tenant, session-ttl,
   vault master-key, upload + cursor secrets, …) from sane defaults, overridable
   via `VET_*` env vars.

@@ -183,8 +183,9 @@ interface types {
         /// exists. HTTP 409.
         already-exists,
         /// Too many failed attempts for this identifier; temporarily locked
-        /// out. HTTP 429.
-        rate-limited,
+        /// out. HTTP 429. Carries the retry-after hint in SECONDS (0 if the
+        /// backend didn't report one) so the caller can set `Retry-After`.
+        rate-limited(u32),
         /// Catch-all for unexpected internal failures. HTTP 500.
         internal(string),
     }

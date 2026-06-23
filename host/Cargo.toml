@@ -21,5 +21,9 @@ wasmtime-wasi-http = "27"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+redis = "0.27"
+nats = "0.25"

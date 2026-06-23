@@ -281,7 +281,7 @@ fn error_response(e: &AuthError) -> (u16, &'static str) {
     match e {
         AuthError::InvalidCredentials => (401, "invalid_credentials"),
         AuthError::AlreadyExists => (409, "already_exists"),
-        AuthError::RateLimited => (429, "rate_limited"),
+        AuthError::RateLimited(_) => (429, "rate_limited"),
         AuthError::InsufficientScope(_) => (403, "insufficient_scope"),
         AuthError::Expired => (401, "expired"),
         AuthError::InvalidToken(_) => (401, "invalid_token"),

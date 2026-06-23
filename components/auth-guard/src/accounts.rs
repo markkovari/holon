@@ -26,7 +26,8 @@ fn rl_key(tenant: &str, email: &str) -> String {
 /// Map the (separate) rate-limiter component's error to our auth-error.
 fn rl_err(e: LimitError) -> AuthError {
     match e {
-        LimitError::Locked(_) => AuthError::RateLimited,
+        // carry the rate-limiter's retry-after (seconds) through to the caller.
+        LimitError::Locked(retry_after) => AuthError::RateLimited(retry_after),
         LimitError::BackendUnavailable(m) => AuthError::BackendUnavailable(format!("ratelimit: {m}")),
     }
 }

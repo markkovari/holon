@@ -28,6 +28,7 @@ use serde::Deserialize;
 
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
+use bindings::auth::identity::session;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::types::{AuthError, Permission, Principal, TokenPair};
 use bindings::records::store::store as records;
@@ -92,6 +93,12 @@ impl Guest for Component {
             (Method::Post, "/register") => register(&request),
             (Method::Post, "/login") => login(&request),
             (Method::Get, "/me") => me(&request),
+            // `/auth/*` aliases so the existing React SPA (built against the jco
+            // app's paths) works unmodified against this Rust backend.
+            (Method::Post, "/auth/register") => register(&request),
+            (Method::Post, "/auth/login") => login(&request),
+            (Method::Get, "/auth/me") => me(&request),
+            (Method::Post, "/auth/logout") => logout(&request),
 
             // ---- pets ----
             (Method::Get, "/pets") => list_pets(&request, &query),
@@ -171,8 +178,18 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
         Outcome::Raw(code, ct, bytes) => respond(response_out, code, &ct, &bytes),
         Outcome::Auth(e) => {
-            let (code, msg) = auth_error(&e);
-            respond_json(response_out, code, &format!("{{\"error\":\"{msg}\"}}"));
+            // rate-limited carries a retry-after (seconds) — surface it as the
+            // Retry-After header AND a retryAfter JSON field so the UI can show it.
+            if let AuthError::RateLimited(secs) = e {
+                let body = format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}");
+                let headers = Fields::new();
+                let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+                let _ = headers.set(&"retry-after".to_string(), &[secs.to_string().into_bytes()]);
+                respond_built(response_out, 429, headers, body.as_bytes());
+            } else {
+                let (code, msg) = auth_error(&e);
+                respond_json(response_out, code, &format!("{{\"error\":\"{msg}\"}}"));
+            }
         }
         Outcome::Bad(msg) => respond_json(response_out, 400, &format!("{{\"error\":\"{}\"}}", esc(&msg))),
         Outcome::Err(code, msg) => respond_json(response_out, code, &format!("{{\"error\":\"{}\"}}", esc(&msg))),
@@ -241,6 +258,18 @@ const UI_KEYS: [&str; 7] = [
 
 // ---- auth routes --------------------------------------------------------
 
+/// The clinic's single tenant. The SPA omits `tenant` on register/login, so an
+/// empty value must resolve to this — otherwise accounts land under tenant ""
+/// and can never be found again. (Mirrors the jco app's `default-tenant`.)
+const DEFAULT_TENANT: &str = "acme-vet";
+
+fn tenant_or_default(t: &Option<String>) -> String {
+    match t {
+        Some(s) if !s.is_empty() => s.clone(),
+        _ => DEFAULT_TENANT.to_string(),
+    }
+}
+
 #[derive(Deserialize)]
 struct RegisterReq {
     email: String,
@@ -256,7 +285,7 @@ fn register(request: &IncomingRequest) -> Outcome {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
-    let tenant = req.tenant.clone().unwrap_or_default();
+    let tenant = tenant_or_default(&req.tenant);
     let principal = match accounts::register(&req.email, &req.password, &tenant) {
         Ok(p) => p,
         Err(e) => return Outcome::Auth(e),
@@ -285,7 +314,7 @@ fn login(request: &IncomingRequest) -> Outcome {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
-    let tenant = req.tenant.unwrap_or_default();
+    let tenant = tenant_or_default(&req.tenant);
     match accounts::login(&req.email, &req.password, &tenant) {
         Ok(tp) => Outcome::Json(200, token_pair_json(&tp)),
         Err(e) => Outcome::Auth(e),
@@ -296,6 +325,18 @@ fn me(request: &IncomingRequest) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(200, principal_json(&p)),
         Err(o) => o,
+    }
+}
+
+/// Revoke the bearer's session (logout). 204 on success.
+fn logout(request: &IncomingRequest) -> Outcome {
+    let token = match bearer(request) {
+        Some(t) => t,
+        None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())),
+    };
+    match session::revoke(&token) {
+        Ok(()) => Outcome::Json(204, String::new()),
+        Err(e) => Outcome::Auth(e),
     }
 }
 
@@ -1621,7 +1662,9 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
     match e {
         AuthError::InvalidCredentials => (401, "invalid_credentials"),
         AuthError::AlreadyExists => (409, "already_exists"),
-        AuthError::RateLimited => (429, "rate_limited"),
+        // RateLimited(_) is handled in `emit` (adds Retry-After); this arm is a
+        // fallback so the match stays exhaustive.
+        AuthError::RateLimited(_) => (429, "rate_limited"),
         AuthError::InsufficientScope(_) => (403, "insufficient_scope"),
         AuthError::Expired => (401, "expired"),
         AuthError::InvalidToken(_) => (401, "invalid_token"),
@@ -1657,6 +1700,21 @@ fn policy_err(e: upload::PolicyError) -> Outcome {
 
 fn respond_json(response_out: ResponseOutparam, status: u16, body: &str) {
     respond(response_out, status, "application/json", body.as_bytes());
+}
+
+/// Respond with a pre-built Fields (for extra headers, e.g. Retry-After).
+fn respond_built(response_out: ResponseOutparam, status: u16, headers: Fields, body: &[u8]) {
+    let response = OutgoingResponse::new(headers);
+    let _ = response.set_status_code(status);
+    let out = response.body().expect("outgoing body");
+    ResponseOutparam::set(response_out, Ok(response));
+    if !body.is_empty() {
+        let stream = out.write().expect("write stream");
+        for chunk in body.chunks(4096) {
+            let _ = stream.blocking_write_and_flush(chunk);
+        }
+    }
+    let _ = OutgoingBody::finish(out, None);
 }
 
 fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {

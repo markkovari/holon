@@ -70,7 +70,7 @@ fn error_response(e: &AuthError) -> (u16, &'static str) {
         AuthError::InvalidToken(_) => (401, "invalid_token"),
         AuthError::InvalidCredentials => (401, "invalid_credentials"),
         AuthError::AlreadyExists => (409, "already_exists"),
-        AuthError::RateLimited => (429, "rate_limited"),
+        AuthError::RateLimited(_) => (429, "rate_limited"),
         AuthError::UnknownTenant => (403, "unknown_tenant"),
         AuthError::Malformed(_) => (400, "malformed"),
         AuthError::BackendUnavailable(_) => (503, "backend_unavailable"),

@@ -14,6 +14,9 @@
 //! this is a third host, proving the component is host-agnostic. Swap the
 //! in-memory KV for redis/sqlite/NATS and the component is unchanged.
 
+mod kv;
+use kv::KvBackend;
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -48,14 +51,14 @@ use bindings::wasi::config::runtime as config;
 use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::store;
 
-// ---- the in-memory key-value store ---------------------------------------
-// One named bucket -> a map of key -> bytes. Shared across the whole process
-// (every request handler opens buckets against the same Store), so data
-// persists for the host's lifetime. A real deployment swaps this for a durable
-// backend; the guest never knows.
+// ---- the key-value store -------------------------------------------------
+// The guest's wasi:keyvalue is backed by a swappable `KvBackend` (memory /
+// redis / nats — chosen by `--kv`). The component bytes never change; only this
+// host-side impl does. (See kv.rs.)
 
-type Buckets = Arc<Mutex<HashMap<String, HashMap<String, Vec<u8>>>>>;
-/// the cache component's backing store (flat key -> bytes).
+type Kv = Arc<dyn KvBackend>;
+/// the cache component's backing store (flat key -> bytes), shares the same Kv
+/// under a reserved bucket.
 type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 
 /// A host resource handed to the guest when it calls `store.open(name)`.
@@ -69,9 +72,14 @@ struct Host {
     table: ResourceTable,
     wasi: WasiCtx,
     http: WasiHttpCtx,
-    buckets: Buckets,
+    kv: Kv,
     cache_backing: CacheBacking,
     config: Arc<HashMap<String, String>>,
+}
+
+/// Map a backend error to the wasi:keyvalue `error` variant.
+fn kv_err(e: anyhow::Error) -> store::Error {
+    store::Error::Other(format!("{e:#}"))
 }
 
 impl WasiView for Host {
@@ -95,12 +103,7 @@ impl WasiHttpView for Host {
 
 impl store::Host for Host {
     fn open(&mut self, identifier: String) -> Result<Result<Resource<HostBucket>, store::Error>> {
-        // ensure the named bucket exists.
-        self.buckets
-            .lock()
-            .unwrap()
-            .entry(identifier.clone())
-            .or_default();
+        // a bucket handle is just the name; the backend lazily creates it.
         let res = self.table.push(HostBucket { name: identifier })?;
         Ok(Ok(res))
     }
@@ -113,9 +116,7 @@ impl store::HostBucket for Host {
         key: String,
     ) -> Result<Result<Option<Vec<u8>>, store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
-        let buckets = self.buckets.lock().unwrap();
-        let val = buckets.get(&name).and_then(|b| b.get(&key)).cloned();
-        Ok(Ok(val))
+        Ok(self.kv.get(&name, &key).map_err(kv_err))
     }
 
     fn set(
@@ -125,13 +126,7 @@ impl store::HostBucket for Host {
         value: Vec<u8>,
     ) -> Result<Result<(), store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
-        self.buckets
-            .lock()
-            .unwrap()
-            .entry(name)
-            .or_default()
-            .insert(key, value);
-        Ok(Ok(()))
+        Ok(self.kv.set(&name, &key, &value).map_err(kv_err))
     }
 
     fn delete(
@@ -140,10 +135,7 @@ impl store::HostBucket for Host {
         key: String,
     ) -> Result<Result<(), store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
-        if let Some(b) = self.buckets.lock().unwrap().get_mut(&name) {
-            b.remove(&key);
-        }
-        Ok(Ok(()))
+        Ok(self.kv.delete(&name, &key).map_err(kv_err))
     }
 
     fn exists(
@@ -152,9 +144,7 @@ impl store::HostBucket for Host {
         key: String,
     ) -> Result<Result<bool, store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
-        let buckets = self.buckets.lock().unwrap();
-        let exists = buckets.get(&name).map(|b| b.contains_key(&key)).unwrap_or(false);
-        Ok(Ok(exists))
+        Ok(self.kv.exists(&name, &key).map_err(kv_err))
     }
 
     fn list_keys(
@@ -163,12 +153,11 @@ impl store::HostBucket for Host {
         _cursor: Option<u64>,
     ) -> Result<Result<store::KeyResponse, store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
-        let buckets = self.buckets.lock().unwrap();
-        let keys = buckets
-            .get(&name)
-            .map(|b| b.keys().cloned().collect())
-            .unwrap_or_default();
-        Ok(Ok(store::KeyResponse { keys, cursor: None }))
+        Ok(self
+            .kv
+            .list_keys(&name)
+            .map(|keys| store::KeyResponse { keys, cursor: None })
+            .map_err(kv_err))
     }
 
     fn drop(&mut self, rep: Resource<HostBucket>) -> Result<()> {
@@ -187,16 +176,7 @@ impl atomics::Host for Host {
         delta: u64,
     ) -> Result<Result<u64, store::Error>> {
         let name = self.table.get(&bucket)?.name.clone();
-        let mut buckets = self.buckets.lock().unwrap();
-        let b = buckets.entry(name).or_default();
-        let cur: u64 = b
-            .get(&key)
-            .and_then(|v| std::str::from_utf8(v).ok())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        let next = cur.saturating_add(delta);
-        b.insert(key, next.to_string().into_bytes());
-        Ok(Ok(next))
+        Ok(self.kv.increment(&name, &key, delta).map_err(kv_err))
     }
 }
 
@@ -269,6 +249,20 @@ struct Args {
     /// Address to listen on.
     #[arg(long, default_value = "127.0.0.1:3007")]
     addr: String,
+    /// Optional directory of static files (a built SPA) to serve for GET
+    /// requests that aren't API routes. Omit for API-only.
+    #[arg(long)]
+    static_dir: Option<String>,
+    /// Key-value backend: memory (default, in-process) | redis | nats. The wasm
+    /// component is identical for all three — only the host store changes.
+    #[arg(long, default_value = "memory")]
+    kv: String,
+    /// Redis URL for --kv redis.
+    #[arg(long, default_value = "redis://127.0.0.1:6379")]
+    redis_url: String,
+    /// NATS URL for --kv nats (JetStream KV).
+    #[arg(long, default_value = "127.0.0.1:4222")]
+    nats_url: String,
 }
 
 // ---- main: instantiate + serve -------------------------------------------
@@ -297,13 +291,19 @@ async fn main() -> Result<()> {
     let proxy_pre = ProxyPre::new(linker.instantiate_pre(&component)?)?;
 
     // shared, process-lifetime state.
-    let buckets: Buckets = Arc::new(Mutex::new(HashMap::new()));
+    let kv_backend: Kv = kv::build(&args.kv, &args.redis_url, &args.nats_url)?;
     let cache_backing: CacheBacking = Arc::new(Mutex::new(HashMap::new()));
     let config = Arc::new(build_config());
+    let static_dir: Arc<Option<std::path::PathBuf>> =
+        Arc::new(args.static_dir.map(std::path::PathBuf::from));
 
     let addr: SocketAddr = args.addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!("vet-host: serving {} on http://{}", args.component, addr);
+    println!("vet-host: kv backend = {}", args.kv);
+    if let Some(d) = static_dir.as_ref() {
+        println!("vet-host: serving static SPA from {}", d.display());
+    }
 
     let engine = Arc::new(engine);
     let proxy_pre = Arc::new(proxy_pre);
@@ -313,19 +313,28 @@ async fn main() -> Result<()> {
         let io = TokioIo::new(stream);
         let engine = engine.clone();
         let proxy_pre = proxy_pre.clone();
-        let buckets = buckets.clone();
+        let kv_backend = kv_backend.clone();
         let cache_backing = cache_backing.clone();
         let config = config.clone();
+        let static_dir = static_dir.clone();
 
         tokio::task::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
                 let engine = engine.clone();
                 let proxy_pre = proxy_pre.clone();
-                let buckets = buckets.clone();
+                let kv_backend = kv_backend.clone();
                 let cache_backing = cache_backing.clone();
                 let config = config.clone();
+                let static_dir = static_dir.clone();
                 async move {
-                    handle_request(engine, proxy_pre, buckets, cache_backing, config, req).await
+                    // static SPA first (GET, non-API). Falls through to the
+                    // component for API routes + all non-GET.
+                    if let Some(dir) = static_dir.as_ref() {
+                        if let Some(resp) = try_static(dir, &req) {
+                            return Ok::<_, anyhow::Error>(resp);
+                        }
+                    }
+                    handle_request(engine, proxy_pre, kv_backend, cache_backing, config, req).await
                 }
             });
             if let Err(e) = http1::Builder::new()
@@ -338,11 +347,76 @@ async fn main() -> Result<()> {
     }
 }
 
+/// API route prefixes that must go to the wasm component, never to static files.
+const API_PREFIXES: &[&str] = &[
+    "/register", "/login", "/me", "/auth", "/pets", "/appointments", "/admin", "/i18n",
+];
+
+/// Serve a static file from `dir` for a non-API GET, with an index.html SPA
+/// fallback (client-side routing). Returns None to let the component handle it
+/// (any non-GET, or an API path).
+fn try_static(
+    dir: &std::path::Path,
+    req: &hyper::Request<hyper::body::Incoming>,
+) -> Option<hyper::Response<HyperOutgoingBody>> {
+    use http_body_util::{BodyExt, Full};
+    if req.method() != hyper::Method::GET {
+        return None;
+    }
+    let path = req.uri().path();
+    if API_PREFIXES.iter().any(|p| path == *p || path.starts_with(&format!("{p}/")) || path.starts_with(&format!("{p}?"))) {
+        return None;
+    }
+    // resolve a file; "/" -> index.html. Reject path traversal.
+    let rel = path.trim_start_matches('/');
+    if rel.contains("..") {
+        return None;
+    }
+    let candidate = if rel.is_empty() { dir.join("index.html") } else { dir.join(rel) };
+    let (bytes, ctype) = match std::fs::read(&candidate) {
+        Ok(b) => (b, content_type(&candidate)),
+        // SPA fallback: unknown non-asset path -> index.html (client router).
+        Err(_) => {
+            let idx = dir.join("index.html");
+            match std::fs::read(&idx) {
+                Ok(b) => (b, "text/html; charset=utf-8"),
+                Err(_) => return None,
+            }
+        }
+    };
+    let body = Full::new(bytes::Bytes::from(bytes))
+        .map_err(|never| match never {})
+        .boxed();
+    Some(
+        hyper::Response::builder()
+            .status(200)
+            .header("content-type", ctype)
+            .body(body)
+            .unwrap(),
+    )
+}
+
+fn content_type(p: &std::path::Path) -> &'static str {
+    match p.extension().and_then(|e| e.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("ico") => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
 /// Drive one HTTP request through the component's incoming-handler.
 async fn handle_request(
     engine: Arc<Engine>,
     proxy_pre: Arc<ProxyPre<Host>>,
-    buckets: Buckets,
+    kv: Kv,
     cache_backing: CacheBacking,
     config: Arc<HashMap<String, String>>,
     req: hyper::Request<hyper::body::Incoming>,
@@ -351,7 +425,7 @@ async fn handle_request(
         table: ResourceTable::new(),
         wasi: WasiCtxBuilder::new().inherit_stderr().build(),
         http: WasiHttpCtx::new(),
-        buckets,
+        kv,
         cache_backing,
         config,
     };
