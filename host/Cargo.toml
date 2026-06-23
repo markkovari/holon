@@ -1,0 +1,25 @@
+[package]
+name = "vet-host"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Native Rust host that runs the composed vet-domain wasm component over wasmtime — serves its wasi:http/incoming-handler and satisfies its wasi:keyvalue + wasi:config imports host-side."
+
+# This is a NATIVE binary (aarch64/x86_64), NOT a wasm component — it is its own
+# crate, deliberately OUTSIDE the components/ (wasm32) workspace.
+[workspace]
+
+[[bin]]
+name = "vet-host"
+path = "src/main.rs"
+
+[dependencies]
+wasmtime = { version = "27", features = ["component-model", "async"] }
+wasmtime-wasi = "27"
+wasmtime-wasi-http = "27"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

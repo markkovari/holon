@@ -66,6 +66,12 @@ compose-vet: compose
       -o {{vet_composed}}
     @echo "composed vet-domain (+ auth-guard + records + validate + search) -> {{vet_composed}}"
 
+# Run the composed vet-domain wasm under the NATIVE Rust host (wasmtime). No
+# Node, no wasmCloud — `host/` is its own native binary that serves the
+# component's HTTP and satisfies its keyvalue/config imports in-process.
+host: compose-vet
+    cd host && cargo run --release -- --component ../{{vet_composed}} --addr 127.0.0.1:3007
+
 # Compose the idempotency-guard into webhook-ingest, satisfying its
 # `idempotency:guard/store` import. Demonstrates one component composing another.
 compose-webhook: build

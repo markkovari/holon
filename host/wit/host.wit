@@ -1,0 +1,14 @@
+// The slice of non-standard WASI the vet-host implements for the guest:
+// wasi:keyvalue (store + atomics) and wasi:config (runtime). The standard
+// families (cli/clocks/random/io/filesystem/http) come from wasmtime-wasi +
+// wasmtime-wasi-http and are NOT bound here.
+//
+// bindgen! generates host traits from this; main.rs implements them over an
+// in-memory key-value store and the process environment.
+package vet:host@0.1.0;
+
+world host-imports {
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    import wasi:config/runtime@0.2.0-draft;
+}
