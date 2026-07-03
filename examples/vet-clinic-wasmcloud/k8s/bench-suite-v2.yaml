@@ -1,0 +1,47 @@
+# bench:suite on wasmCloud v2 — the HTTP overhead ladder (see
+# components/bench-suite). One component; kv + blobstore are the host's
+# NATS-backed plugins, so the /kv-* and /blob-* rungs measure real durable
+# backend round-trips. Bench: oha against http://bench-suite.wasmcloud-v2.svc/<rung>.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bench-suite
+  namespace: wasmcloud-v2
+spec:
+  ports:
+    - name: http
+      port: 80
+      targetPort: 9191
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: bench-suite
+  namespace: wasmcloud-v2
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: bench-suite
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: bench-suite.wasmcloud-v2.svc.cluster.local
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [store]
+        - namespace: wasi
+          package: blobstore
+          interfaces: [blobstore, container, types]
+          # the NATS blobstore plugin allow-lists containers per workload.
+          config:
+            buckets: bench
+      components:
+        - name: bench-suite
+          image: registry.petclinic.svc.cluster.local:5000/vet-bench-suite:0.1.3
+          poolSize: 8
+          maxInvocations: 200

@@ -83,5 +83,5 @@ interface evaluator {
 world feature-flags {
     export evaluator;
     import wasi:keyvalue/store@0.2.0-draft;
-    import wasi:config/runtime@0.2.0-draft;
+    import wasi:config/store@0.2.0-rc.1;
 }

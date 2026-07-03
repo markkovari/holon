@@ -4,7 +4,7 @@
 //! Exports: types, jwt, oidc, session, accounts, rbac, authorizer.
 //! Imports (host capabilities): wasi:keyvalue (store + atomics), wasi:http
 //! (outgoing, for OIDC discovery / JWKS), wasi:clocks (expiry), wasi:random
-//! (id generation), wasi:config/runtime (policy knobs).
+//! (id generation), wasi:config/store (policy knobs).
 //!
 //! # Module map
 //! - [`config`]       — policy knobs read from wasi:config (session-ttl,

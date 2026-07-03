@@ -28,7 +28,7 @@
 //! `invalid-cursor`. The payload base64url-encodes each field so the `:`
 //! delimiter can never appear inside a field value.
 //!
-//! ## Config (wasi:config/runtime)
+//! ## Config (wasi:config/store)
 //!   cursor-secret   HMAC signing key. Defaults to a fixed development value;
 //!                   PRODUCTION DEPLOYMENTS MUST SET THIS to a real secret,
 //!                   otherwise cursors are trivially forgeable.
@@ -43,7 +43,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use bindings::exports::paginate::cursor::cursors::{CursorError, Guest, PageInfo, Position};
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 
 struct Component;
 

@@ -70,5 +70,5 @@ interface cursors {
 /// `pagination` provides cursor codec + envelope; HMAC key from config.
 world pagination {
     export cursors;
-    import wasi:config/runtime@0.2.0-draft;
+    import wasi:config/store@0.2.0-rc.1;
 }

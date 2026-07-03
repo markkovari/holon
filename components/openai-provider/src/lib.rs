@@ -11,7 +11,7 @@
 //! read full response body) mirrors notify-dispatch's `post`, extended to
 //! return the response BODY (the model's answer) and to set a bearer header.
 //!
-//! Config (wasi:config/runtime):
+//! Config (wasi:config/store):
 //!   openai:base-url     default "https://api.openai.com/v1"
 //!   openai:api-key      bearer token (sent as `Authorization: Bearer …`)
 //!   openai:model        default chat model (default "gpt-4o-mini")
@@ -25,7 +25,7 @@ mod codec;
 use bindings::exports::llm::inference::inference::{
     Completion, Guest, InferError, Message, Options, Role, Usage,
 };
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::http::outgoing_handler;
 use bindings::wasi::http::types::{
     Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,

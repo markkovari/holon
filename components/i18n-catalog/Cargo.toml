@@ -22,5 +22,5 @@ world = "i18n-catalog"
 
 [package.metadata.component.target.dependencies]
 "wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
-"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

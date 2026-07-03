@@ -28,7 +28,7 @@
 //!   ob_idx    newline-joined list of all live event ids, so `claim` /
 //!             `dead-letters` can enumerate without a key-scan API.
 //!
-//! Config (wasi:config/runtime):
+//! Config (wasi:config/store):
 //!   max-attempts   retry cap before dead-lettering (default 8)
 //!   base-backoff   backoff base seconds, doubled per attempt (default 5)
 //!
@@ -46,7 +46,7 @@ use base64::Engine;
 
 use bindings::exports::outbox::dispatch::queue::{Event, Guest, OutboxError, State};
 use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wasi::random::random::get_random_bytes;
 

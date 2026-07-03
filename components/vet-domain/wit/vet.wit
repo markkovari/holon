@@ -68,6 +68,10 @@ world vet-domain {
     // decouples "appointment booked" from its reactions (audit/search/notify).
     import event:bus/bus@0.1.0;
 
+    // the built SPA lives in its own component so this artifact stays slim —
+    // per-request instantiation cost tracks component size on wasmCloud.
+    import ui:assets/files@0.1.0;
+
     // raw audit-log keys (al_*) are read straight from the shared KV the
     // composed auth-guard's recorder writes to — audit:log does not re-export
     // its query interface, so we read the bucket like the TS reference did.

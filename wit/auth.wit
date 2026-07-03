@@ -460,7 +460,7 @@ world authority {
     import wasi:random/random@0.2.0;
     // Deployment policy knobs (session-ttl, password-min-len, jwks-cache-ttl,
     // default-tenant). Supplied per-deployment via component config.
-    import wasi:config/runtime@0.2.0-draft;
+    import wasi:config/store@0.2.0-rc.1;
     // Brute-force protection for login/register. A SEPARATE component
     // (`rate-limiter`, package ratelimit:guard) satisfies this import —
     // composed with `wac` at build time, or linked at runtime.

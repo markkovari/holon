@@ -7,7 +7,7 @@
 //! A `pending` record older than its ttl is treated as expired and reclaimed,
 //! so a crashed in-flight request never wedges a key forever.
 //!
-//! Config (wasi:config/runtime):
+//! Config (wasi:config/store):
 //!   default-ttl   reservation / record lifetime, seconds (default 86400)
 //!                 the per-call `ttl-seconds` overrides this when non-zero.
 
@@ -19,7 +19,7 @@ use base64::Engine;
 
 use bindings::exports::idempotency::guard::store::{CachedResponse, Guest, IdemError};
 use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wasi::random::random::get_random_bytes;
 

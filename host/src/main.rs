@@ -47,7 +47,7 @@ mod bindings {
 
 use bindings::cache::store::sink as cache_sink;
 use bindings::cache::store::source as cache_source;
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::store;
 
@@ -198,13 +198,13 @@ impl cache_sink::Host for Host {
     }
 }
 
-// ---- wasi:config/runtime host impl ---------------------------------------
+// ---- wasi:config/store host impl ---------------------------------------
 
 impl config::Host for Host {
-    fn get(&mut self, key: String) -> Result<Result<Option<String>, config::ConfigError>> {
+    fn get(&mut self, key: String) -> Result<Result<Option<String>, config::Error>> {
         Ok(Ok(self.config.get(&key).cloned()))
     }
-    fn get_all(&mut self) -> Result<Result<Vec<(String, String)>, config::ConfigError>> {
+    fn get_all(&mut self) -> Result<Result<Vec<(String, String)>, config::Error>> {
         Ok(Ok(self.config.iter().map(|(k, v)| (k.clone(), v.clone())).collect()))
     }
 }

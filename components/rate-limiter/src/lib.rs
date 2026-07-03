@@ -13,7 +13,7 @@
 //! (clearing the counter when the window elapses) is a benign, rare race — at
 //! worst it briefly under-counts right at a window boundary, never over-counts.
 //!
-//! Config (wasi:config/runtime):
+//! Config (wasi:config/store):
 //!   max-attempts     failures allowed per window before lockout (default 5; 0 = disabled)
 //!   lockout-window   window / lockout duration, seconds          (default 300)
 
@@ -22,7 +22,7 @@ mod bindings;
 
 use bindings::exports::ratelimit::guard::limiter::{Guest, LimitError};
 use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::store;
 

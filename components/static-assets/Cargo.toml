@@ -1,0 +1,20 @@
+[package]
+name = "static-assets"
+description = "Embedded static-file bundle (the built React SPA) served as a capability (static:assets)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "ui:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "ui-assets"

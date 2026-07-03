@@ -10,7 +10,7 @@
 //! app-defined `data` blob is base64url-encoded (URL_SAFE_NO_PAD) so it never
 //! collides with the field delimiter.
 //!
-//! Config (wasi:config/runtime):
+//! Config (wasi:config/store):
 //!   default-ttl   session lifetime, seconds (default 86400). The per-call
 //!                 `ttl-seconds` overrides this when non-zero.
 
@@ -22,7 +22,7 @@ use base64::Engine;
 
 use bindings::exports::session::store::store::{Guest, Session, SessionError};
 use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wasi::random::random::get_random_bytes;
 

@@ -44,5 +44,5 @@ interface dispatcher {
 world notify-dispatch {
     export dispatcher;
     import wasi:http/outgoing-handler@0.2.0;
-    import wasi:config/runtime@0.2.0-draft;
+    import wasi:config/store@0.2.0-rc.1;
 }

@@ -21,7 +21,7 @@ mod bindings;
 use bindings::exports::featureflags::guard::evaluator::{
     Context, FlagError, FlagState, Guest, Rule, Source,
 };
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::store as kv;
 
 struct Component;

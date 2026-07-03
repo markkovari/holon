@@ -1,0 +1,124 @@
+# FULL vet-clinic on wasmCloud v2 (runtime-operator, runtime.wasmcloud.dev/v1alpha1).
+#
+# One Workload, 16 components — the runtime links them IN-PROCESS in a single
+# wasmtime store (no wrpc-over-NATS between components, no wac fusing, no
+# 30-nested-instance cap). Host plugins satisfy the WASI imports: keyvalue →
+# NATS-backed (durable), config → per-component view of the config blocks
+# below (wasi:config/store@0.2.0-rc.1 — components migrated from the old
+# runtime@0.2.0-draft draft), http → the host's :9191 virtual-host router.
+#
+# HTTP routing is by Host header: the primary hostname is set on the wasi:http
+# hostInterface below; the operator additionally injects
+# `vet-clinic.wasmcloud-v2` / `.svc` aliases because kubernetes.service is set,
+# and maintains the Service's endpoints to point at the host pods.
+#
+# Images: the same OCI registry the v1 petclinic-stack deploy uses; tag 0.2.0
+# carries the wasi:config store migration. Host group needs
+# `--allow-insecure-registries` (helm: runtime.extraArgs) for the HTTP registry.
+#
+# Deploy:  kubectl apply -f k8s/vet-domain-v2.yaml
+# Try it:  curl -H 'Host: vet-clinic.wasmcloud-v2.svc' http://<gateway-or-hostgroup-svc>/
+apiVersion: v1
+kind: Service
+metadata:
+  name: vet-clinic
+  namespace: wasmcloud-v2
+spec:
+  # no selector — the runtime-operator's route controller maintains endpoints
+  # pointing at the host pod(s) actually running the workload.
+  ports:
+    - name: http
+      port: 80
+      targetPort: 9191
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: vet-clinic
+  namespace: wasmcloud-v2
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: vet-clinic
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: vet-clinic.wasmcloud-v2.svc.cluster.local
+        - namespace: wasi
+          package: http
+          interfaces: [outgoing-handler]
+        # one entry per interface: an entry binds to a component only if the
+        # component's world covers EVERY interface in the entry, so a combined
+        # [store, atomics] entry would skip components that import only store.
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [store]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [atomics]
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: vet-domain
+          image: registry.petclinic.svc.cluster.local:5000/vet-vet-domain-lattice:0.2.0
+          # warm pre-instantiated instances of the linked chain + concurrency cap;
+          # with the defaults (0) every request instantiates the whole
+          # 16-component graph from scratch.
+          poolSize: 8
+          maxInvocations: 200
+          localResources:
+            # knobs for the wac-fused pure-compute caps (upload-policy, paginate).
+            config:
+              allowed-types: "image/png,image/jpeg,image/webp,image/gif"
+              max-size: "2097152"
+              ticket-ttl: "300"
+              ticket-secret: "vet-upload-secret"
+              max-page-size: "100"
+              cursor-secret: "vet-cursor-secret"
+        - name: auth-guard
+          image: registry.petclinic.svc.cluster.local:5000/vet-auth-guard:0.2.0
+          localResources:
+            config:
+              default-tenant: "acme-vet"
+              session-ttl: "3600"
+              password-min-len: "8"
+              audit-enabled: "true"
+              max-attempts: "5"
+              lockout-window: "300"
+        - name: records-store
+          image: registry.petclinic.svc.cluster.local:5000/vet-records-store:0.2.0
+        - name: search-index
+          image: registry.petclinic.svc.cluster.local:5000/vet-search-index:0.2.0
+        - name: blob-store
+          image: registry.petclinic.svc.cluster.local:5000/vet-blob-store:0.2.0
+        - name: fsm-workflow
+          image: registry.petclinic.svc.cluster.local:5000/vet-fsm-workflow:0.2.0
+        - name: csv
+          image: registry.petclinic.svc.cluster.local:5000/vet-csv:0.2.0
+        - name: otp
+          image: registry.petclinic.svc.cluster.local:5000/vet-otp:0.2.0
+        - name: secrets-vault
+          image: registry.petclinic.svc.cluster.local:5000/vet-secrets-vault:0.2.0
+          localResources:
+            config:
+              master-key: "dmV0LWNsaW5pYy1kZW1vLW1hc3Rlci1rZXktMzJiISE="
+        - name: i18n-catalog
+          image: registry.petclinic.svc.cluster.local:5000/vet-i18n-catalog:0.2.0
+        - name: ai-inference
+          image: registry.petclinic.svc.cluster.local:5000/vet-ai:0.2.0
+        - name: cache
+          image: registry.petclinic.svc.cluster.local:5000/vet-cache:0.2.0
+        - name: scheduler-timer
+          image: registry.petclinic.svc.cluster.local:5000/vet-scheduler-timer:0.2.0
+        - name: lock-mutex
+          image: registry.petclinic.svc.cluster.local:5000/vet-lock-mutex:0.2.0
+        - name: event-bus
+          image: registry.petclinic.svc.cluster.local:5000/vet-event-bus:0.2.0
+        - name: static-assets
+          image: registry.petclinic.svc.cluster.local:5000/vet-static-assets:0.2.0

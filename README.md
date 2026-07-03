@@ -87,6 +87,7 @@ comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
 | `pii:redact` | detect + mask PII in free text |
 | `json:patch` | RFC 6902 JSON Patch + RFC 7386 Merge Patch |
 | `md:render` | safe Markdown → HTML |
+| `ui:assets` | embedded static bundle (the built SPA) served as a capability (build.rs `include_bytes!`) |
 
 ### Composition (the whole point)
 

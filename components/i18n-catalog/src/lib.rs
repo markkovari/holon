@@ -14,14 +14,14 @@
 //! Lookup falls back: exact locale -> base language (split on '-', take [0]) ->
 //! configured `default-locale`.
 //!
-//! Config (wasi:config/runtime):
+//! Config (wasi:config/store):
 //!   default-locale  fallback locale tag (default "en").
 
 #[allow(warnings)]
 mod bindings;
 
 use bindings::exports::i18n::catalog::catalog::{Arg, Guest, I18nError};
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::store as kv;
 
 struct Component;

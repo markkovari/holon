@@ -60,6 +60,40 @@ curl -X POST localhost:8088/login -H 'content-type: application/json' \
 Check status: `kubectl get application -n vet-clinic` (→ `Deployed`) and the host
 log `kubectl logs -n vet-clinic deploy/vet-clinic-host -c wasmcloud-host`.
 
+## Full app — linked vs hybrid (lattice) topology
+
+`gen-manifest.py` generates the FULL vet-clinic manifest (UI + 20 capabilities).
+Two shapes:
+
+- **Linked** (default): every capability its own component, every call a
+  wrpc-over-NATS hop. `VET_REPLICAS=5 python3 gen-manifest.py > k8s/vet-domain-linked.yaml`
+- **Hybrid / lattice** (`LATTICE=1`): the 6 pure-compute caps (money, validate,
+  md, pii, paginate, upload-policy) are wac-fused INTO vet-domain
+  (`just compose-vet-lattice`, 28 core modules — under wasmtime's 30 cap;
+  fusing all 19 gives 104 and does not deploy). No NATS hop for pure compute;
+  stateful caps stay linked. Their `wasi:config` knobs move onto vet-domain
+  automatically. `LATTICE=1 VET_REPLICAS=5 python3 gen-manifest.py > k8s/vet-domain-lattice.yaml`
+
+The React SPA is no longer embedded in vet-domain — it is its own
+`static-assets` component (`ui:assets/files` link, `vet-static-assets` image),
+so the HTTP-facing artifact stays slim (~816 KB fused vs ~3.4 MB with the SPA
+embedded): per-request instantiation cost tracks component size on this host.
+
+If the cluster's NATS/registry live in a different namespace, override the
+in-cluster endpoints: `VET_REG=registry.<ns>.svc.cluster.local:5000
+VET_NATS=nats://nats.<ns>.svc.cluster.local:4222`.
+
+## wasmCloud v2 (runtime-operator) — the fast path
+
+`k8s/vet-domain-v2.yaml` deploys the same app on **wasmCloud v2**
+(`runtime.wasmcloud.dev/v1alpha1`, helm chart `charts/runtime-operator` in
+wasmCloud/wasmCloud): one WorkloadDeployment, 16 components linked
+**in-process**, keyvalue durable in NATS, HTTP routed by Host header via the
+operator-maintained `vet-clinic` Service. Measured ~**1000 rps** for the full
+app on one host pod vs ~10 (v1 round 1) — numbers and the four migration
+gotchas (config rc.1 rename, per-interface hostInterfaces entries,
+poolSize, 512Mi default memory limit) in `bench/HOST-PERF.md`.
+
 ## Gotcha — wasi:http version skew (why host version 1.6.0)
 
 On host **`1.4.1`** the components failed to scale with:

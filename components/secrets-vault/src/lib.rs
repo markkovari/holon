@@ -4,7 +4,7 @@
 //! *value version* is sealed with AEAD (ChaCha20-Poly1305) under a single
 //! per-vault **master key** before it ever touches the record store, so only
 //! ciphertext lives in the backend. The master key itself is never persisted by
-//! this component: it is injected via `wasi:config/runtime` (config key
+//! this component: it is injected via `wasi:config/store` (config key
 //! `master-key`, base64 STANDARD, exactly 32 bytes) and read fresh on each call.
 //!
 //! "Envelope" here means each version's plaintext is encrypted independently
@@ -17,7 +17,7 @@
 //!   sv_{name}_v{version}  -> base64(nonce||ciphertext) for one version
 //!   sv_index              -> newline-joined list of stored secret names
 //!
-//! Config (wasi:config/runtime):
+//! Config (wasi:config/store):
 //!   master-key   base64 STANDARD, MUST decode to exactly 32 bytes — required.
 
 #[allow(warnings)]
@@ -30,7 +30,7 @@ use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, Key, KeyInit, Nonce};
 
 use bindings::exports::secrets::vault::vault::{Guest, SecretMeta, VaultError};
 use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wasi::random::random::get_random_bytes;
 

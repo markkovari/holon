@@ -1,4 +1,4 @@
-//! Deployment policy, read from `wasi:config/runtime` (set per-deployment in the
+//! Deployment policy, read from `wasi:config/store` (set per-deployment in the
 //! component's config — see infra/k8s/app.yaml). Every knob has a sane default
 //! so the component runs with zero config; operators override as needed.
 //!
@@ -8,17 +8,17 @@
 //!   jwks-cache-ttl     seconds to cache OIDC JWKS      (default 3600)  [reserved]
 //!   default-tenant     tenant when none in token/req   (default "")
 
-use crate::bindings::wasi::config::runtime;
+use crate::bindings::wasi::config::store;
 
 fn get_u64(key: &str, default: u64) -> u64 {
-    match runtime::get(key) {
+    match store::get(key) {
         Ok(Some(v)) => v.parse().unwrap_or(default),
         _ => default,
     }
 }
 
 fn get_str(key: &str, default: &str) -> String {
-    match runtime::get(key) {
+    match store::get(key) {
         Ok(Some(v)) => v,
         _ => default.to_string(),
     }

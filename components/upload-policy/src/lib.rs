@@ -13,7 +13,7 @@
 //! compares it to the presented checksum, so a tampered payload or a wrong key
 //! fails closed as `invalid-ticket`.
 //!
-//! Config (wasi:config/runtime):
+//! Config (wasi:config/store):
 //!   allowed-types   comma-separated content-type allow-list; empty/unset = all
 //!   max-size        bytes, default 10485760 (10 MiB)
 //!   ticket-ttl      seconds, default 300
@@ -30,7 +30,7 @@ use sha2::Sha256;
 
 use bindings::exports::upload::policy::gate::{Grant, Guest, PolicyError, Ticket};
 use bindings::wasi::clocks::wall_clock;
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::random::random::get_random_bytes;
 
 struct Component;

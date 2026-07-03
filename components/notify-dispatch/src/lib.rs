@@ -14,7 +14,7 @@
 mod bindings;
 
 use bindings::exports::notify::dispatch::dispatcher::{Channel, Guest, Message, NotifyError};
-use bindings::wasi::config::runtime as config;
+use bindings::wasi::config::store as config;
 use bindings::wasi::http::outgoing_handler;
 use bindings::wasi::http::types::{
     Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,

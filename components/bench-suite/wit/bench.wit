@@ -1,0 +1,21 @@
+// bench:suite — the apples-to-apples HTTP overhead ladder.
+//
+// Six endpoints, each adding exactly one layer, to separate what the wasm
+// runtime costs from what the app/backends cost:
+//   GET  /ok        -> 200, empty body            (router + invocation floor)
+//   GET  /json      -> serialize a static struct  (+ serde ser)
+//   POST /echo      -> deserialize + reserialize  (+ serde deser)
+//   POST /kv-read   -> echo + one kv get          (+ 1 backend round-trip)
+//   POST /kv-rw     -> echo + kv set + get        (+ 2 backend round-trips)
+//   POST /blob-read -> echo + one blob get-data   (blobstore read)
+//   POST /blob-rw   -> echo + blob write + read   (blobstore write+read)
+//
+// Same shape as every other comp component: generic WASI only; the kv /
+// blobstore backends are a host/deploy choice (in-memory, NATS, ...).
+package bench:suite@0.1.0;
+
+world bench-suite {
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:blobstore/blobstore@0.2.0-draft;
+}

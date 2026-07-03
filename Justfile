@@ -29,7 +29,9 @@ validate_wasm := rel / "validate.wasm"
 searchindex_wasm := rel / "search_index.wasm"
 vet_composed := "components/target/vet_domain.composed.wasm"
 vet_full_composed := "components/target/vet_domain.full.composed.wasm"
+vet_lattice := "components/target/vet_domain.lattice.wasm"
 ai_composed := "components/target/ai_inference.composed.wasm"
+staticassets_wasm := rel / "static_assets.wasm"
 
 # List available recipes.
 default:
@@ -65,8 +67,9 @@ compose-vet: compose
       --plug {{recordstore_wasm}} \
       --plug {{validate_wasm}} \
       --plug {{searchindex_wasm}} \
+      --plug {{staticassets_wasm}} \
       -o {{vet_composed}}
-    @echo "composed vet-domain (+ auth-guard + records + validate + search) -> {{vet_composed}}"
+    @echo "composed vet-domain (+ auth-guard + records + validate + search + ui) -> {{vet_composed}}"
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,
@@ -98,8 +101,31 @@ compose-vet-full: compose compose-ai
       --plug {{rel}}/lock_mutex.wasm \
       --plug {{rel}}/event_bus.wasm \
       --plug components/target/cache.composed.wasm \
+      --plug {{staticassets_wasm}} \
       -o {{vet_full_composed}}
-    @echo "composed FULL vet-domain (19 capabilities) -> {{vet_full_composed}}"
+    @echo "composed FULL vet-domain (19 capabilities + ui) -> {{vet_full_composed}}"
+
+# LATTICE compose (wasmCloud): fuse ONLY the pure-compute capabilities into
+# vet-domain — each is ~4 core modules, and wasmtime caps a component at 30
+# nested core-module instances (the fused-everything artifact is 104 and does
+# not deploy). vet-domain + these 6 = 28 modules; csv (admin export, coldest
+# path) stays linked to fit. Every stateful/swap-point capability (auth,
+# records, search, blob, fsm, otp, secrets, i18n, ai, cache, timer, lock,
+# event-bus, ui/static, csv) remains a wadm LINK. This removes the per-call
+# wrpc-over-NATS hop for pure compute while keeping the lattice where it earns
+# its cost (durability, scaling, hot-swap). LATTICE=1 gen-manifest.py drops the
+# fused capabilities from the manifest.
+compose-vet-lattice: build
+    wac plug {{vetdomain_wasm}} \
+      --plug {{rel}}/money.wasm \
+      --plug {{validate_wasm}} \
+      --plug {{rel}}/markdown.wasm \
+      --plug {{rel}}/pii_redact.wasm \
+      --plug {{rel}}/pagination.wasm \
+      --plug {{rel}}/upload_policy.wasm \
+      -o {{vet_lattice}}
+    wasm-tools validate {{vet_lattice}}
+    @echo "composed LATTICE vet-domain (+ 6 pure-compute caps fused, 28 core modules) -> {{vet_lattice}}"
 
 # Run the composed vet-domain wasm under the NATIVE Rust host (wasmtime). No
 # Node, no wasmCloud — `host/` is its own native binary that serves the
