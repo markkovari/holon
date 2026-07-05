@@ -38,6 +38,7 @@ use serde_json::Value;
 
 use bindings::exports::records::store::store::{Entry, Filter, Guest, Page, StoreError};
 use bindings::wasi::clocks::wall_clock;
+use bindings::wasi::keyvalue::batch;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wasi::random::random::get_random_bytes;
 
@@ -178,6 +179,38 @@ fn load_record(
     }
 }
 
+/// Load many records in ONE backend round-trip via `wasi:keyvalue/batch`
+/// get-many. Returns (id, record) pairs in input-id order, skipping absent
+/// ids. A get-many error propagates: every supported host links the batch
+/// interface (a host without it fails at LINK time), so a runtime error is a
+/// real backend fault — degrading to N sequential per-key gets there turned
+/// one transient error into a 20-second page.
+fn load_records_many(
+    bucket: &kv::Bucket,
+    collection: &str,
+    ids: &[String],
+) -> Result<Vec<(String, Stored)>, StoreError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let keys: Vec<String> = ids.iter().map(|id| rec_key(collection, id)).collect();
+    let found = batch::get_many(bucket, &keys)
+        .map_err(|e| StoreError::BackendUnavailable(format!("get-many: {e:?}")))?;
+    // get-many returns (key, bytes) pairs; map back to ids in input order.
+    let mut by_key: std::collections::HashMap<String, Vec<u8>> =
+        found.into_iter().flatten().collect();
+    let mut out = Vec::with_capacity(ids.len());
+    for (id, key) in ids.iter().zip(&keys) {
+        if let Some(bytes) = by_key.remove(key) {
+            let stored = serde_json::from_slice::<Stored>(&bytes).map_err(|e| {
+                StoreError::BackendUnavailable(format!("corrupt record {id}: {e}"))
+            })?;
+            out.push((id.clone(), stored));
+        }
+    }
+    Ok(out)
+}
+
 fn put_record(
     bucket: &kv::Bucket,
     collection: &str,
@@ -191,88 +224,333 @@ fn put_record(
         .map_err(|e| StoreError::BackendUnavailable(format!("set: {e:?}")))
 }
 
-// ---- sorted id index ----------------------------------------------------
+// ---- chunked sorted id lists ---------------------------------------------
 //
-// `idx_{collection}` -> JSON Vec<String> of ids, kept SORTED. Since ids are
-// ULIDs, lexicographic order == creation-time order, so `list` reads it
-// directly. Same single-writer best-effort RMW caveat as config-store's
-// namespace index: no CAS in wasi:keyvalue@0.2.0-draft.
+// An id list (the per-collection id index AND every secondary index) is a
+// small MANIFEST at `{base}` plus chunk values at `{base}_c{seq:08}`, each a
+// sorted JSON Vec<String> of at most CHUNK_MAX ids. The old layout (one JSON
+// array holding every id) made each insert an O(N) read-modify-write of an
+// unboundedly growing value — ~400 KB per create at 13k records, with a hard
+// wall at NATS's 1 MiB message cap. Chunks keep every write O(CHUNK_MAX)
+// regardless of collection size; new ULIDs sort last, so inserts touch only
+// the final chunk. A legacy whole-array value is still readable and is split
+// into chunks on the first write. Same single-writer best-effort RMW caveat
+// as before: no CAS in wasi:keyvalue@0.2.0-draft.
 
-fn read_id_index(bucket: &kv::Bucket, collection: &str) -> Result<Vec<String>, StoreError> {
-    match bucket.get(&idx_key(collection)) {
-        Ok(Some(bytes)) => serde_json::from_slice::<Vec<String>>(&bytes)
-            .map_err(|e| StoreError::BackendUnavailable(format!("corrupt id index: {e}"))),
-        Ok(None) => Ok(Vec::new()),
-        Err(e) => Err(StoreError::BackendUnavailable(format!("get id index: {e:?}"))),
+const CHUNK_MAX: usize = 1024; // ~30 KB of ULIDs per chunk value
+
+#[derive(Serialize, Deserialize)]
+struct ChunkMeta {
+    /// chunk-key suffix (allocation order; position comes from the manifest's
+    /// order, which is kept sorted by `first`).
+    seq: u32,
+    /// smallest id in the chunk.
+    first: String,
+    /// number of ids in the chunk.
+    count: u64,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct Manifest {
+    chunks: Vec<ChunkMeta>,
+}
+
+enum IdList {
+    Absent,
+    /// pre-chunking layout: the whole sorted array in one value.
+    Legacy(Vec<String>),
+    Chunked(Manifest),
+}
+
+fn chunk_key(base: &str, seq: u32) -> String {
+    format!("{base}_c{seq:08}")
+}
+
+fn enc<T: Serialize>(v: &T) -> Result<Vec<u8>, StoreError> {
+    serde_json::to_vec(v).map_err(|e| StoreError::BackendUnavailable(format!("encode: {e}")))
+}
+
+fn ids_set_many(bucket: &kv::Bucket, writes: Vec<(String, Vec<u8>)>) -> Result<(), StoreError> {
+    batch::set_many(bucket, &writes)
+        .map_err(|e| StoreError::BackendUnavailable(format!("set-many: {e:?}")))
+}
+
+fn ids_load(bucket: &kv::Bucket, base: &str) -> Result<IdList, StoreError> {
+    match bucket.get(base) {
+        Ok(Some(bytes)) => {
+            // a manifest is a JSON object, the legacy layout a JSON array.
+            if let Ok(m) = serde_json::from_slice::<Manifest>(&bytes) {
+                Ok(IdList::Chunked(m))
+            } else {
+                serde_json::from_slice::<Vec<String>>(&bytes)
+                    .map(IdList::Legacy)
+                    .map_err(|e| {
+                        StoreError::BackendUnavailable(format!("corrupt id list {base}: {e}"))
+                    })
+            }
+        }
+        Ok(None) => Ok(IdList::Absent),
+        Err(e) => Err(StoreError::BackendUnavailable(format!("get id list: {e:?}"))),
     }
 }
 
-fn write_id_index(bucket: &kv::Bucket, collection: &str, ids: &[String]) -> Result<(), StoreError> {
-    let body = serde_json::to_vec(ids)
-        .map_err(|e| StoreError::BackendUnavailable(format!("serialize id index: {e}")))?;
-    bucket
-        .set(&idx_key(collection), &body)
-        .map_err(|e| StoreError::BackendUnavailable(format!("set id index: {e:?}")))
+fn ids_read_chunk(bucket: &kv::Bucket, key: &str) -> Result<Vec<String>, StoreError> {
+    match bucket.get(key) {
+        Ok(Some(bytes)) => serde_json::from_slice(&bytes)
+            .map_err(|e| StoreError::BackendUnavailable(format!("corrupt chunk {key}: {e}"))),
+        // manifest points at a missing chunk (best-effort drift): treat empty.
+        Ok(None) => Ok(Vec::new()),
+        Err(e) => Err(StoreError::BackendUnavailable(format!("get chunk: {e:?}"))),
+    }
+}
+
+/// Batched fetch of the given chunk keys, concatenated in input order
+/// (missing chunks skipped — index drift is best-effort, as before).
+fn ids_fetch_chunks(
+    bucket: &kv::Bucket,
+    keys: &[String],
+) -> Result<Vec<String>, StoreError> {
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let found = batch::get_many(bucket, keys)
+        .map_err(|e| StoreError::BackendUnavailable(format!("get-many chunks: {e:?}")))?;
+    let mut by_key: std::collections::HashMap<String, Vec<u8>> =
+        found.into_iter().flatten().collect();
+    let mut out = Vec::new();
+    for key in keys {
+        if let Some(bytes) = by_key.remove(key) {
+            let ids: Vec<String> = serde_json::from_slice(&bytes).map_err(|e| {
+                StoreError::BackendUnavailable(format!("corrupt chunk {key}: {e}"))
+            })?;
+            out.extend(ids);
+        }
+    }
+    Ok(out)
+}
+
+/// Every id in the list, in order — manifest read + ONE batched chunk fetch.
+fn ids_read_all(bucket: &kv::Bucket, base: &str) -> Result<Vec<String>, StoreError> {
+    match ids_load(bucket, base)? {
+        IdList::Absent => Ok(Vec::new()),
+        IdList::Legacy(v) => Ok(v),
+        IdList::Chunked(m) => {
+            let keys: Vec<String> = m.chunks.iter().map(|c| chunk_key(base, c.seq)).collect();
+            ids_fetch_chunks(bucket, &keys)
+        }
+    }
+}
+
+/// Position of the first id strictly after `after` in a sorted list.
+fn page_start(ids: &[String], after: &str) -> usize {
+    if after.is_empty() {
+        return 0;
+    }
+    match ids.binary_search_by(|x| x.as_str().cmp(after)) {
+        Ok(pos) => pos + 1,
+        Err(pos) => pos, // `after` not present: resume where it would be.
+    }
+}
+
+/// Up to `want` ids strictly after `after` plus whether more remain — fetches
+/// only the chunks the page touches, not the whole list.
+fn ids_page(
+    bucket: &kv::Bucket,
+    base: &str,
+    after: &str,
+    want: usize,
+) -> Result<(Vec<String>, bool), StoreError> {
+    let m = match ids_load(bucket, base)? {
+        IdList::Absent => return Ok((Vec::new(), false)),
+        IdList::Legacy(ids) => {
+            let start = page_start(&ids, after);
+            let window: Vec<String> = ids.iter().skip(start).take(want).cloned().collect();
+            let more = start + window.len() < ids.len();
+            return Ok((window, more));
+        }
+        IdList::Chunked(m) => m,
+    };
+    if m.chunks.is_empty() {
+        return Ok((Vec::new(), false));
+    }
+    // skip whole chunks that end at-or-before `after`: chunk i's ids are all
+    // < chunks[i+1].first, so if chunks[i+1].first <= after none can qualify.
+    let mut start_chunk = 0;
+    if !after.is_empty() {
+        while start_chunk + 1 < m.chunks.len()
+            && m.chunks[start_chunk + 1].first.as_str() <= after
+        {
+            start_chunk += 1;
+        }
+    }
+    // fetch chunks until their counts cover the worst-case skip within the
+    // first chunk plus the page itself.
+    let skip_bound = m.chunks[start_chunk].count as usize;
+    let mut keys = Vec::new();
+    let mut covered = 0usize;
+    let mut fetched_chunks = 0usize;
+    for c in &m.chunks[start_chunk..] {
+        keys.push(chunk_key(base, c.seq));
+        covered += c.count as usize;
+        fetched_chunks += 1;
+        if covered >= skip_bound + want {
+            break;
+        }
+    }
+    let ids = ids_fetch_chunks(bucket, &keys)?;
+    let from = page_start(&ids, after);
+    let window: Vec<String> = ids.iter().skip(from).take(want).cloned().collect();
+    let more = ids.len() - from > window.len()
+        || start_chunk + fetched_chunks < m.chunks.len();
+    Ok((window, more))
+}
+
+fn ids_count(bucket: &kv::Bucket, base: &str) -> Result<u64, StoreError> {
+    Ok(match ids_load(bucket, base)? {
+        IdList::Absent => 0,
+        IdList::Legacy(v) => v.len() as u64,
+        IdList::Chunked(m) => m.chunks.iter().map(|c| c.count).sum(),
+    })
+}
+
+/// Rewrite the whole list in chunked form (legacy conversion / first write).
+fn ids_write_chunked(bucket: &kv::Bucket, base: &str, ids: &[String]) -> Result<(), StoreError> {
+    let mut writes = Vec::new();
+    let mut chunks = Vec::new();
+    for (i, chunk) in ids.chunks(CHUNK_MAX).enumerate() {
+        let seq = i as u32;
+        chunks.push(ChunkMeta {
+            seq,
+            first: chunk[0].clone(),
+            count: chunk.len() as u64,
+        });
+        writes.push((chunk_key(base, seq), enc(&chunk)?));
+    }
+    writes.push((base.to_string(), enc(&Manifest { chunks })?));
+    ids_set_many(bucket, writes)
+}
+
+/// Which manifest chunk should hold `id`: the last chunk whose `first` <= id
+/// (ids below every chunk go into the first).
+fn chunk_index_for(m: &Manifest, id: &str) -> usize {
+    let mut ci = 0;
+    for (i, c) in m.chunks.iter().enumerate() {
+        if c.first.as_str() <= id {
+            ci = i;
+        } else {
+            break;
+        }
+    }
+    ci
+}
+
+/// Insert `id`, keeping the list sorted and deduped. Touches one chunk (two
+/// on a split) + the manifest, written in one set-many.
+fn ids_insert(bucket: &kv::Bucket, base: &str, id: &str) -> Result<(), StoreError> {
+    let mut m = match ids_load(bucket, base)? {
+        IdList::Absent => Manifest::default(),
+        IdList::Legacy(mut v) => {
+            // one-time conversion: fold the insert into the chunked rewrite.
+            match v.binary_search_by(|x| x.as_str().cmp(id)) {
+                Ok(_) => return Ok(()),
+                Err(pos) => v.insert(pos, id.to_string()),
+            }
+            return ids_write_chunked(bucket, base, &v);
+        }
+        IdList::Chunked(m) => m,
+    };
+    if m.chunks.is_empty() {
+        return ids_write_chunked(bucket, base, &[id.to_string()]);
+    }
+    let ci = chunk_index_for(&m, id);
+    let ckey = chunk_key(base, m.chunks[ci].seq);
+    let mut ids = ids_read_chunk(bucket, &ckey)?;
+    match ids.binary_search_by(|x| x.as_str().cmp(id)) {
+        Ok(_) => return Ok(()), // already present
+        Err(pos) => ids.insert(pos, id.to_string()),
+    }
+    let mut writes = Vec::new();
+    if ids.len() > CHUNK_MAX {
+        // split: right half moves to a fresh seq, manifest entry follows.
+        let right = ids.split_off(ids.len() / 2);
+        let new_seq = m.chunks.iter().map(|c| c.seq).max().unwrap_or(0) + 1;
+        m.chunks[ci].first = ids[0].clone();
+        m.chunks[ci].count = ids.len() as u64;
+        m.chunks.insert(
+            ci + 1,
+            ChunkMeta { seq: new_seq, first: right[0].clone(), count: right.len() as u64 },
+        );
+        writes.push((chunk_key(base, new_seq), enc(&right)?));
+    } else {
+        m.chunks[ci].first = ids[0].clone();
+        m.chunks[ci].count = ids.len() as u64;
+    }
+    writes.push((ckey, enc(&ids)?));
+    writes.push((base.to_string(), enc(&m)?));
+    ids_set_many(bucket, writes)
+}
+
+/// Remove `id`. Touches one chunk + the manifest; an emptied chunk is dropped.
+fn ids_remove(bucket: &kv::Bucket, base: &str, id: &str) -> Result<(), StoreError> {
+    let mut m = match ids_load(bucket, base)? {
+        IdList::Absent => return Ok(()),
+        IdList::Legacy(mut v) => {
+            let before = v.len();
+            v.retain(|x| x != id);
+            if v.len() != before {
+                return ids_write_chunked(bucket, base, &v);
+            }
+            return Ok(());
+        }
+        IdList::Chunked(m) => m,
+    };
+    if m.chunks.is_empty() {
+        return Ok(());
+    }
+    let ci = chunk_index_for(&m, id);
+    let ckey = chunk_key(base, m.chunks[ci].seq);
+    let mut ids = ids_read_chunk(bucket, &ckey)?;
+    let Ok(pos) = ids.binary_search_by(|x| x.as_str().cmp(id)) else {
+        return Ok(());
+    };
+    ids.remove(pos);
+    if ids.is_empty() {
+        m.chunks.remove(ci);
+        let _ = bucket.delete(&ckey); // best-effort; manifest no longer points at it
+        ids_set_many(bucket, vec![(base.to_string(), enc(&m)?)])
+    } else {
+        m.chunks[ci].first = ids[0].clone();
+        m.chunks[ci].count = ids.len() as u64;
+        ids_set_many(bucket, vec![(ckey, enc(&ids)?), (base.to_string(), enc(&m)?)])
+    }
+}
+
+// ---- id index + secondary indexes over the chunked lists ------------------
+
+fn read_id_index(bucket: &kv::Bucket, collection: &str) -> Result<Vec<String>, StoreError> {
+    ids_read_all(bucket, &idx_key(collection))
 }
 
 fn id_index_insert(bucket: &kv::Bucket, collection: &str, id: &str) -> Result<(), StoreError> {
-    let mut ids = read_id_index(bucket, collection)?;
-    // keep sorted; ULIDs sort lexicographically by time.
-    match ids.binary_search_by(|x| x.as_str().cmp(id)) {
-        Ok(_) => {} // already present
-        Err(pos) => {
-            ids.insert(pos, id.to_string());
-            write_id_index(bucket, collection, &ids)?;
-        }
-    }
-    Ok(())
+    ids_insert(bucket, &idx_key(collection), id)
 }
 
 fn id_index_remove(bucket: &kv::Bucket, collection: &str, id: &str) -> Result<(), StoreError> {
-    let mut ids = read_id_index(bucket, collection)?;
-    if let Ok(pos) = ids.binary_search_by(|x| x.as_str().cmp(id)) {
-        ids.remove(pos);
-        write_id_index(bucket, collection, &ids)?;
-    }
-    Ok(())
+    ids_remove(bucket, &idx_key(collection), id)
 }
-
-// ---- secondary indexes --------------------------------------------------
 
 fn read_ix(bucket: &kv::Bucket, key: &str) -> Result<Vec<String>, StoreError> {
-    match bucket.get(key) {
-        Ok(Some(bytes)) => serde_json::from_slice::<Vec<String>>(&bytes)
-            .map_err(|e| StoreError::BackendUnavailable(format!("corrupt index {key}: {e}"))),
-        Ok(None) => Ok(Vec::new()),
-        Err(e) => Err(StoreError::BackendUnavailable(format!("get index: {e:?}"))),
-    }
+    ids_read_all(bucket, key)
 }
 
-fn write_ix(bucket: &kv::Bucket, key: &str, ids: &[String]) -> Result<(), StoreError> {
-    let body = serde_json::to_vec(ids)
-        .map_err(|e| StoreError::BackendUnavailable(format!("serialize index: {e}")))?;
-    bucket
-        .set(key, &body)
-        .map_err(|e| StoreError::BackendUnavailable(format!("set index: {e:?}")))
-}
-
+// secondary indexes share the chunked list; entries are now ULID-sorted
+// (== creation order) rather than append-order.
 fn ix_add(bucket: &kv::Bucket, key: &str, id: &str) -> Result<(), StoreError> {
-    let mut ids = read_ix(bucket, key)?;
-    if !ids.iter().any(|x| x == id) {
-        ids.push(id.to_string());
-        write_ix(bucket, key, &ids)?;
-    }
-    Ok(())
+    ids_insert(bucket, key, id)
 }
 
 fn ix_remove(bucket: &kv::Bucket, key: &str, id: &str) -> Result<(), StoreError> {
-    let mut ids = read_ix(bucket, key)?;
-    let before = ids.len();
-    ids.retain(|x| x != id);
-    if ids.len() != before {
-        write_ix(bucket, key, &ids)?;
-    }
-    Ok(())
+    ids_remove(bucket, key, id)
 }
 
 /// The JSON-encoded value of a top-level field in `data`, or `None` if the
@@ -426,40 +704,22 @@ impl Guest for Component {
 
     fn list_records(collection: String, limit: u32, after: String) -> Result<Page, StoreError> {
         let bucket = open()?;
-        let ids = read_id_index(&bucket, &collection)?;
-
         let limit = match limit as usize {
             0 => DEFAULT_LIMIT,
             n => n.min(MAX_LIMIT),
         };
 
-        // Find the start position. `after` empty -> from the start; else the
-        // position just past `after` in the sorted list.
-        let start = if after.is_empty() {
-            0
-        } else {
-            match ids.binary_search_by(|x| x.as_str().cmp(after.as_str())) {
-                Ok(pos) => pos + 1,
-                Err(pos) => pos, // `after` not present: resume where it would be.
-            }
-        };
+        // Page over the chunked id index (fetches only the chunks the page
+        // touches), then ONE batched record fetch; ids whose record vanished
+        // (best-effort index drift) are skipped by load_records_many.
+        let (window, more) = ids_page(&bucket, &idx_key(&collection), &after, limit)?;
+        let entries: Vec<Entry> = load_records_many(&bucket, &collection, &window)?
+            .into_iter()
+            .map(|(id, stored)| entry_from(&id, stored))
+            .collect();
 
-        let window: Vec<&String> = ids.iter().skip(start).take(limit).collect();
-        let mut entries = Vec::with_capacity(window.len());
-        for id in &window {
-            if let Some(stored) = load_record(&bucket, &collection, id)? {
-                entries.push(entry_from(id, stored));
-            }
-            // Skip ids whose record vanished (best-effort index drift).
-        }
-
-        // More remain iff there is an id past the end of this window.
-        let consumed = start + window.len();
-        let next = if consumed < ids.len() {
-            window
-                .last()
-                .map(|s| s.to_string())
-                .unwrap_or_default()
+        let next = if more {
+            window.last().map(|s| s.to_string()).unwrap_or_default()
         } else {
             String::new()
         };
@@ -477,14 +737,12 @@ impl Guest for Component {
         let ids = read_ix(&bucket, &ix_key(&collection, &field, &value))?;
 
         let mut entries = Vec::new();
-        for id in &ids {
-            if let Some(stored) = load_record(&bucket, &collection, id)? {
-                // RE-VERIFY: the sanitized+capped index key can over-match, so
-                // confirm the record's actual top-level field == value.
-                if let Ok(parsed) = serde_json::from_str::<Value>(&stored.data) {
-                    if field_value(&parsed, &field).as_deref() == Some(value.as_str()) {
-                        entries.push(entry_from(id, stored));
-                    }
+        for (id, stored) in load_records_many(&bucket, &collection, &ids)? {
+            // RE-VERIFY: the sanitized+capped index key can over-match, so
+            // confirm the record's actual top-level field == value.
+            if let Ok(parsed) = serde_json::from_str::<Value>(&stored.data) {
+                if field_value(&parsed, &field).as_deref() == Some(value.as_str()) {
+                    entries.push(entry_from(&id, stored));
                 }
             }
         }
@@ -526,23 +784,27 @@ impl Guest for Component {
             None => read_id_index(&bucket, &collection)?,
         };
 
+        // Batch-fetch candidates in chunks so a scan over a big collection
+        // still early-exits once `limit` matches are found.
         let mut entries = Vec::new();
-        for id in &candidates {
+        for chunk in candidates.chunks(100) {
             if entries.len() >= limit {
                 break;
             }
-            let Some(stored) = load_record(&bucket, &collection, id)? else {
-                continue;
-            };
-            let Ok(parsed) = serde_json::from_str::<Value>(&stored.data) else {
-                continue;
-            };
-            // AND: every filter's top-level field must JSON-equal its value.
-            let matches = filters.iter().all(|f| {
-                field_value(&parsed, &f.field).as_deref() == Some(f.value.as_str())
-            });
-            if matches {
-                entries.push(entry_from(id, stored));
+            for (id, stored) in load_records_many(&bucket, &collection, chunk)? {
+                if entries.len() >= limit {
+                    break;
+                }
+                let Ok(parsed) = serde_json::from_str::<Value>(&stored.data) else {
+                    continue;
+                };
+                // AND: every filter's top-level field must JSON-equal its value.
+                let matches = filters.iter().all(|f| {
+                    field_value(&parsed, &f.field).as_deref() == Some(f.value.as_str())
+                });
+                if matches {
+                    entries.push(entry_from(&id, stored));
+                }
             }
         }
         Ok(entries)
@@ -550,7 +812,8 @@ impl Guest for Component {
 
     fn count(collection: String) -> Result<u64, StoreError> {
         let bucket = open()?;
-        Ok(read_id_index(&bucket, &collection)?.len() as u64)
+        // manifest chunk counts sum — one kv read regardless of size.
+        ids_count(&bucket, &idx_key(&collection))
     }
 }
 

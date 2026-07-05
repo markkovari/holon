@@ -165,4 +165,39 @@ describe("records:store component", () => {
       assert.equal(o.owner, "u1");
     }
   });
+
+  it("id index chunking survives a split (>1024 records): count, paging, find-by, delete", () => {
+    // CHUNK_MAX is 1024 — 1100 creates forces at least one chunk split.
+    const N = 1100;
+    const ids: string[] = [];
+    for (let i = 0; i < N; i++) {
+      const e: Entry = store.create(
+        "big",
+        JSON.stringify({ n: i, owner: i % 2 === 0 ? "even" : "odd" }),
+        ["owner"],
+      );
+      ids.push(e.id);
+    }
+    assert.equal(store.count("big"), BigInt(N));
+
+    // page through everything; order must be the sorted (creation) order.
+    const seen: string[] = [];
+    let after = "";
+    for (;;) {
+      const page = store.listRecords("big", 500, after);
+      seen.push(...page.entries.map((e: Entry) => e.id));
+      if (!page.next) break;
+      after = page.next;
+    }
+    assert.deepEqual(seen, [...ids].sort());
+
+    // secondary index spans chunks too.
+    assert.equal(store.findBy("big", "owner", '"even"').length, N / 2);
+
+    // delete crosses the split boundary cleanly.
+    store.delete("big", ids[0]);
+    assert.equal(store.count("big"), BigInt(N - 1));
+    const first = store.listRecords("big", 1, "").entries[0];
+    assert.notEqual(first.id, ids[0]);
+  });
 });

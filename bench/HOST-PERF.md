@@ -546,6 +546,164 @@ Reproduce: deploy `examples/vet-clinic-wasmcloud/k8s/bench-suite-v2.yaml`
 (note the `buckets:` allow-list on the blobstore hostInterface), run
 `cargo run --release --bin refbench` in `host/`, and point oha at both.
 
+## Round 5 — the KV-trip diet + platform limits (v2, 0.2.1 images)
+
+Three app changes (see the 0.2.1 components): `ensure_seeded()` gated to the
+fsm/i18n routes instead of every request; record-store list/find-by/query
+fetch pages via `wasi:keyvalue/batch.get-many` (ONE backend round-trip — the
+wash-runtime NATS plugin runs the gets concurrently; falls back to per-key
+gets on hosts without batch); auth-guard RBAC collapsed to one doc per tenant
+(`rbac:{tenant}`), so authorize = session get + 1 kv read. GET /pets dropped
+from ~11 KV ops to ~4. NOTE: components now IMPORT `wasi:keyvalue/batch` —
+the v2 manifest needs its own `interfaces: [batch]` hostInterfaces entry, the
+native host + jco shims got batch impls, and the RBAC key layout changed
+(re-seed roles/perms on deploy).
+
+Two PLATFORM ceilings surfaced once the app got faster, both fixed:
+
+1. **wasmtime pooling `total_core_instances` (default 1000) per host** — every
+   non-pooled invocation instantiates the ~28-core-module chain, and pool
+   slots count against the same budget (poolSize 48 × 28 = 1344 starved the
+   engine outright → 25-35 % 500s at c≥20). Fix: wash-runtime reads
+   `WASMTIME_POOLING_TOTAL_*` env — set `TOTAL_CORE_INSTANCES=8000` (+
+   MEMORIES/TABLES=8000, STACKS/COMPONENT_INSTANCES=2000) on the hostgroup
+   deployment. (Env lives on the Deployment, NOT in helm values — a helm
+   upgrade wipes it.)
+2. **NATS at chart defaults: 128Mi limit + `-DV` payload-trace logging.**
+   Concurrent writes OOM-killed JetStream (verified OOMKilled), wedging every
+   host's kv client for minutes (`JetStream TimedOut` storms; the Service
+   loses endpoints while replicas recycle) — this masqueraded as the app
+   "write wedge". Fix: drop `-DV`, requests 500m/512Mi, limits 2/2Gi.
+   JetStream storage is emptyDir, so the NATS restart also reset the bucket.
+
+Final ladder (3 hostgroup pods × 3 workload replicas, poolSize 16,
+maxInvocations 1000, in-cluster oha, fresh bucket, 10 s runs — ALL 100 %):
+
+| op | round 3 (1 rep) | round 3 (3 rep) | **round 5 (3 rep)** |
+|---|--:|--:|--:|
+| GET / @ c50 | 1044 | 1494 | **1823 rps** @ 27 ms |
+| GET /pets @ c50 | 929 | — | **1266 rps** @ 40 ms |
+| GET /pets @ c100 | ~1000 | 1422 | **1068 rps** @ 94 ms |
+| POST /pets @ c10 | 820 | — | **459 rps** @ 22 ms |
+| POST /pets @ c30 | — | 1860 | **558 rps** @ 54 ms |
+| login @ c10 / c30 | 349 | 1105 | **170 / 186 rps** |
+
+Reads: best numbers this cluster has produced, zero errors up to c100.
+Writes trail round 3's peaks: the id-index RMW grows O(N) *during* the run
+(5.5k creates in 10 s), and login is argon2-CPU that `maxInvocations: 1000`
+now funnels onto fewer pooled instances (round 3's 200 spread it wider) —
+lower maxInvocations to spread CPU-bound paths, or accept it; the honest
+write ceiling is the O(N) id-index + per-term posting-list RMW in
+record-store, which is the next component-side lever (chunked/sharded
+indexes). GET /pets?limit=1 at 1.7k owner records was also observed at 20 s
+(fetch-all-then-sort pagination + the batch fallback going sequential when
+one get errors) — index-ordered pagination is the fix.
+
+### Round 5b — chunked indexes (records-store 0.2.2)
+
+Both levers applied. Every id list in record-store (the per-collection id
+index AND every secondary index) is now a small manifest + sorted chunks of
+≤1024 ids (`idx_…` -> manifest, `idx_…_c{seq}` -> chunk): inserts/removes
+touch one ~30 KB chunk + the manifest (written in one `set-many`) instead of
+an O(N) RMW of one unbounded value (which also had a hard wall at NATS's
+1 MiB message cap ≈ 33k ids). `list-records` pages by fetching only the
+chunks the page touches; `count` is one manifest read; a legacy whole-array
+value is read transparently and split into chunks on its first write
+(verified live against the 0.2.1 bucket). The get-many sequential fallback is
+GONE — a batch error now propagates instead of degrading into N serial gets
+(the actual mechanism behind the 20 s page).
+
+Measured on the same bucket grown to ~10–20k pets (in-cluster oha, 100 %):
+
+| op | 0.2.1 (whole-array) | 0.2.2 (chunked) |
+|---|--:|--:|
+| GET /pets?limit=1, ~10k-pet owner | 20 s | **217 ms** |
+| single POST @ ~10k records | 40 ms (worsening) | **15–17 ms (flat)** |
+| POST /pets @ c10 / c30 | 459/558 fresh, ~260 at 10k | **319 / 348 rps, size-independent** |
+| GET /pets @ c50 (3-pet user) | 1266 | 901 (secondary ix now 2 reads; cluster noise) |
+
+Remaining O(N) writer: search-index term posting lists (a hot term's list
+still RMWs whole — same chunking recipe applies if it ever shows up outside
+same-name bench data). The ?limit page still *fetches* all owner records
+(one batched trip) before the name-sort — the 217 ms is that fetch+parse;
+a name-sorted index would be the next step only if a real UI needs faster.
+
+## Round 6 — second hardware + the hybrid lattice
+
+### 6a. Same stack, second machine (csatapaci: 12-core Mac, 96 GiB OrbStack)
+
+Full clean install (chart from wasmCloud/wasmCloud main = 2.5.1) with the
+round-5 lessons folded into VALUES this time: `runtime.env` carries the
+`WASMTIME_POOLING_TOTAL_*` knobs, `nats.resources` set 500m/512Mi–2/2Gi, and
+the chart's hardcoded `-DV` NATS arg deleted from the template (upstream bug:
+`templates/nats/deployment.yaml` payload-trace-logs every message; it is what
+OOM'd NATS at the default 128Mi in round 5). Fresh bucket, 3 hosts × 3
+replicas, in-cluster oha, ALL 100 %:
+
+| op | picur (10c, round 5b) | **csatapaci (12c)** |
+|---|--:|--:|
+| GET / @ c50 | 1823 | **1926 rps** |
+| GET /pets @ c50 / c100 / c300 | 1266 / 1068 | **829 / 1650 / 1742 rps** (plateau c200+) |
+| POST /pets @ c10 / c30 | 459* | **605 / 684 rps** |
+| login @ c30 | 186 | **257 rps** |
+
+(*picur POST was on a 10k-record bucket; csata fresh — but chunked indexes
+make that comparison nearly moot now.) Roughly +20–40 % over picur, in line
+with 12 vs 10 cores; the linear-with-hardware story holds.
+
+### 6b. Bare-metal host joins the k8s operator (the open v2 question: YES)
+
+A plain `wash host` (the ghcr.io/wasmcloud/wash:2.5.1 image under Docker on
+csatapaci — NO k8s on that side) joined picur's operator over the LAN:
+kubectl port-forwards exposed picur's NATS (:4222) and registry (:5555→5000)
+on the LAN; the container got `--add-host` aliases for the NATS cert SAN +
+registry name, the client TLS certs from picur's `wasmcloud-runtime-tls` /
+`wasmcloud-data-tls` secrets, and the same `--host-group default
+--environment wasmcloud-v2`. Result: a Host CR appears in picur's cluster,
+the operator SCHEDULES vet-clinic replicas onto it, the remote host pulls all
+16 images from picur's registry and serves: GET / 144 ms, login OK, /pets
+0.7–0.9 s (the KV-per-op WAN tax — a JetStream leaf node on the remote side
+is the fix for real deployments). So: v2 orchestration needs *a* k8s for the
+operator, but hosts are location-independent — the "tiny managed brain +
+rented metal muscle" shape works today.
+
+Findings for upstream: (1) scheduler places workloads onto STALE Host CRs —
+a restarted host leaves a ghost CR for ~90 s and new workloads pin to it,
+stuck Ready=False until the reaper runs, then reschedule cleanly; (2)
+`--enable-meters` enables wasmtime FUEL metering and the 28-core-module
+vet-clinic chain traps with "all fuel consumed" on instantiation — do not
+enable it for composed apps (and it didn't populate Host CR system metrics
+anyway; those read 0 for in-cluster pods too); (3) workload spread is
+concentration-heavy (12 replicas landed 5/5/1/1 across 4 hosts).
+
+### 6c. The two Macs serving together — hybrid lattice under load
+
+Same topology under load: picur's 3-pod cluster + the bare csatapaci host in
+ONE lattice (18 replicas; the remote held 3), loaded simultaneously — oha in
+picur's cluster → Service, oha in a container on csatapaci → the metal host
+directly. The remote host needs the SAME `WASMTIME_POOLING_TOTAL_*` env as
+the pods (its 2–3 workloads × poolSize 16 × 28 modules ate the default
+1000-core budget: static traffic survived on fast turnover, /pets threw ~95 %
+500s until the env was set — round 5's lesson applies per host, everywhere).
+
+| path | rps | success |
+|---|--:|--:|
+| picur cluster GET / @ c50 (during combined) | 2006 | 100 % |
+| csatapaci metal GET / @ c50 (during combined) | 805–821 | 100 % |
+| **combined static, one lattice, two Macs** | **~2800 rps** | 100 % |
+| csatapaci metal GET /pets @ c20 | **98 rps @ 206 ms** | 100 % |
+| (picur in-cluster /pets, for contrast) | 1266 @ 40 ms | 100 % |
+
+The two-line summary of hybrid physics: **compute paths scale across
+machines almost additively; KV paths divide by data locality.** The remote
+host's every `wasi:keyvalue` op crosses the LAN bridge to picur's JetStream
+(and all its requests multiplex ONE NATS client connection), so the KV-heavy
+path runs at ~8 % of local speed. Production hybrid = JetStream leaf node (or
+domain) on the muscle side; bridge transport barely matters otherwise (socat
+vs `kubectl port-forward` measured identically once pooling was fixed).
+Footnote: the virtual-host router alone (remote host, no workload → 404)
+clocked ~115k rps — routing is never the bottleneck.
+
 ## Reproduce
 
 ```bash

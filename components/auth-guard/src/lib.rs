@@ -31,8 +31,7 @@
 //!   spent:{refresh-token}    -> family                        (rotated; reuse = breach)
 //!   family:{family}          -> JSON list<session-id>         (revoke-all on breach)
 //!   user:{tenant}:{email}    -> JSON { subject, argon2-phc }
-//!   rbac:{tenant}:subject:{sub}  -> JSON list<role-name>
-//!   rbac:{tenant}:role:{role}    -> JSON list<permission>
+//!   rbac:{tenant}  -> JSON { subjects: {sub -> list<role>}, roles: {role -> list<permission>} }
 //!   jwks:{issuer} / oidc:{issuer} -> "{expiry}:{json}"        (TTL-cached)
 //!   oidc:issuer / oidc:client-id / oidc:client-secret / hs256-secret  (config)
 
@@ -196,8 +195,8 @@ impl Authorizer for Component {
         token: String,
         required: Vec<Permission>,
     ) -> Result<Principal, AuthError> {
-        let principal = resolve_principal(&token)?;
-        if required.iter().any(|r| store::rbac_check(&principal, r)) {
+        let (principal, doc) = resolve_principal_doc(&token)?;
+        if required.iter().any(|r| store::rbac_check_with(&doc, &principal, r)) {
             Ok(principal)
         } else {
             // Report the first requirement as the unmet one.
@@ -222,14 +221,14 @@ fn authorize_impl(
     traceparent: &str,
 ) -> Result<Principal, AuthError> {
     let perm = format!("{}:{}", required.target, required.action);
-    let principal = match resolve_principal(token) {
-        Ok(p) => p,
+    let (principal, doc) = match resolve_principal_doc(token) {
+        Ok(x) => x,
         Err(e) => {
             audit::emit_traced("authorize", audit::Outcome::Error, "", "", &perm, traceparent);
             return Err(e);
         }
     };
-    if store::rbac_check(&principal, &required) {
+    if store::rbac_check_with(&doc, &principal, &required) {
         audit::emit_traced(
             "authorize",
             audit::Outcome::Allow,
@@ -258,6 +257,12 @@ fn authorize_impl(
 /// - Anything else is treated as a JWS (JWT / OIDC id_token) and verified
 ///   against the issuer's key material.
 fn resolve_principal(token: &str) -> Result<Principal, AuthError> {
+    resolve_principal_doc(token).map(|(p, _)| p)
+}
+
+/// Resolve the principal AND return the rbac doc its roles came from, so the
+/// authorize paths can permission-check without a second kv round-trip.
+fn resolve_principal_doc(token: &str) -> Result<(Principal, store::RbacDoc), AuthError> {
     // Session tokens carry the `sess_` prefix. The session id IS the whole
     // token (prefix included) — that's how it was stored at issue time — so we
     // pass `token` as-is, not the stripped remainder.
@@ -266,19 +271,31 @@ fn resolve_principal(token: &str) -> Result<Principal, AuthError> {
         // Re-resolve roles from the store on each check so a role granted AFTER
         // login takes effect immediately (the principal stored at issue time may
         // predate the grant). Scopes stay as issued.
-        p.roles = store::rbac_roles_for(&p.tenant, &p.subject).unwrap_or(p.roles);
-        return Ok(p);
+        let doc = match store::rbac_load(&p.tenant) {
+            Ok(doc) => {
+                p.roles = doc.roles_of(&p.subject);
+                doc
+            }
+            // kv hiccup: keep the roles issued with the session; role-derived
+            // grants then deny against the empty doc, scope grants still work.
+            Err(_) => store::RbacDoc::default(),
+        };
+        return Ok((p, doc));
     }
     let claims = jwt_verify::verify(token)?;
     let tenant = claims_tenant(&claims);
-    let roles = store::rbac_roles_for(&tenant, &claims.sub).unwrap_or_default();
-    Ok(Principal {
-        subject: claims.sub,
-        tenant,
-        roles,
-        scopes: claims.scopes,
-        expires_at: claims.exp,
-    })
+    let doc = store::rbac_load(&tenant).unwrap_or_default();
+    let roles = doc.roles_of(&claims.sub);
+    Ok((
+        Principal {
+            subject: claims.sub,
+            tenant,
+            roles,
+            scopes: claims.scopes,
+            expires_at: claims.exp,
+        },
+        doc,
+    ))
 }
 
 /// Extract a tenant id from claims. Looks for an `org`/`tenant` custom claim,

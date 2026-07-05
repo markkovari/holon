@@ -37,3 +37,17 @@ export { Bucket };
 export function open(name) {
   return new Bucket(name);
 }
+
+// wasi:keyvalue/batch — one guest call for multi-key ops over the same store.
+export function getMany(bucket, keys) {
+  return keys.map((k) => {
+    const v = bucket.get(k);
+    return v === undefined ? undefined : [k, v];
+  });
+}
+export function setMany(bucket, keyValues) {
+  for (const [k, v] of keyValues) bucket.set(k, v);
+}
+export function deleteMany(bucket, keys) {
+  for (const k of keys) bucket.delete(k);
+}

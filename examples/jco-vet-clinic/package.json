@@ -21,7 +21,7 @@
     "transpile:otp": "jco transpile otp.wasm -o gen/otp",
     "transpile:pagination": "jco transpile pagination.wasm -o gen/pagination --map wasi:config/runtime@0.2.0-draft=../../src/shims/config.js",
     "transpile:i18n": "jco transpile i18n_catalog.wasm -o gen/i18n --map wasi:keyvalue/store@0.2.0-draft=../../src/shims/keyvalue.js --map wasi:config/runtime@0.2.0-draft=../../src/shims/config.js",
-    "transpile:record": "jco transpile record_store.wasm -o gen/record --map wasi:keyvalue/store@0.2.0-draft=../../src/shims/keyvalue.js",
+    "transpile:record": "jco transpile record_store.wasm -o gen/record --map wasi:keyvalue/store@0.2.0-draft=../../src/shims/keyvalue.js --map wasi:keyvalue/batch@0.2.0-draft=../../src/shims/keyvalue.js",
     "transpile:ai": "jco transpile ai_inference.composed.wasm -o gen/ai",
     "transpile:timer": "jco transpile scheduler_timer.wasm -o gen/timer --map wasi:keyvalue/store@0.2.0-draft=../../src/shims/keyvalue.js --map wasi:keyvalue/atomics@0.2.0-draft=../../src/shims/keyvalue.js",
     "transpile:lock": "jco transpile lock_mutex.wasm -o gen/lock --map wasi:keyvalue/store@0.2.0-draft=../../src/shims/keyvalue.js --map wasi:keyvalue/atomics@0.2.0-draft=../../src/shims/keyvalue.js",

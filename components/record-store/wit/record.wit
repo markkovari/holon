@@ -102,6 +102,7 @@ interface store {
 world record-store {
     export store;
     import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/batch@0.2.0-draft;
     import wasi:clocks/wall-clock@0.2.0;
     import wasi:random/random@0.2.0;
 }

@@ -49,6 +49,7 @@ use bindings::cache::store::sink as cache_sink;
 use bindings::cache::store::source as cache_source;
 use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::atomics;
+use bindings::wasi::keyvalue::batch;
 use bindings::wasi::keyvalue::store;
 
 // ---- the key-value store -------------------------------------------------
@@ -180,6 +181,58 @@ impl atomics::Host for Host {
     }
 }
 
+// ---- wasi:keyvalue/batch host impl ----------------------------------------
+// One guest call instead of N for multi-key reads/writes. The backend loop is
+// host-side, so even without a backend-native multi-get this removes the
+// per-key guest<->host round-trips.
+
+impl batch::Host for Host {
+    fn get_many(
+        &mut self,
+        bucket: Resource<HostBucket>,
+        keys: Vec<String>,
+    ) -> Result<Result<Vec<Option<(String, Vec<u8>)>>, store::Error>> {
+        let name = self.table.get(&bucket)?.name.clone();
+        let mut out = Vec::with_capacity(keys.len());
+        for key in keys {
+            match self.kv.get(&name, &key) {
+                Ok(Some(v)) => out.push(Some((key, v))),
+                Ok(None) => out.push(None),
+                Err(e) => return Ok(Err(kv_err(e))),
+            }
+        }
+        Ok(Ok(out))
+    }
+
+    fn set_many(
+        &mut self,
+        bucket: Resource<HostBucket>,
+        key_values: Vec<(String, Vec<u8>)>,
+    ) -> Result<Result<(), store::Error>> {
+        let name = self.table.get(&bucket)?.name.clone();
+        for (key, value) in key_values {
+            if let Err(e) = self.kv.set(&name, &key, &value) {
+                return Ok(Err(kv_err(e)));
+            }
+        }
+        Ok(Ok(()))
+    }
+
+    fn delete_many(
+        &mut self,
+        bucket: Resource<HostBucket>,
+        keys: Vec<String>,
+    ) -> Result<Result<(), store::Error>> {
+        let name = self.table.get(&bucket)?.name.clone();
+        for key in keys {
+            if let Err(e) = self.kv.delete(&name, &key) {
+                return Ok(Err(kv_err(e)));
+            }
+        }
+        Ok(Ok(()))
+    }
+}
+
 // ---- cache:store source + sink host impl (the cache backing store) -------
 
 impl cache_source::Host for Host {
@@ -302,6 +355,7 @@ async fn main() -> Result<()> {
     wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
     store::add_to_linker(&mut linker, |h| h)?;
     atomics::add_to_linker(&mut linker, |h| h)?;
+    batch::add_to_linker(&mut linker, |h| h)?;
     config::add_to_linker(&mut linker, |h| h)?;
     cache_source::add_to_linker(&mut linker, |h| h)?;
     cache_sink::add_to_linker(&mut linker, |h| h)?;

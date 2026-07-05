@@ -192,33 +192,59 @@ pub fn session_lookup(session_id: &str) -> Result<Principal, AuthError> {
 }
 
 // ---- rbac ---------------------------------------------------------------
+//
+// All RBAC state for a tenant lives in ONE kv value (`rbac:{tenant}`):
+// subject -> roles plus role -> permissions. Every kv op is a real backend
+// round-trip, so the old per-key layout (roles read + one read per role)
+// made every authorize 2+N trips; the single doc makes it one. Admin writes
+// are read-modify-write of the doc — cold path, same no-CAS caveat the
+// per-key layout already had.
+// ponytail: one doc per tenant; split back out per subject if a tenant's
+// subject count ever makes this value heavy.
 
-fn roles_key(tenant: &str, subject: &str) -> String {
-    format!("rbac:{tenant}:subject:{subject}")
+#[derive(Serialize, Deserialize, Default)]
+pub struct RbacDoc {
+    subjects: std::collections::BTreeMap<String, Vec<String>>,
+    roles: std::collections::BTreeMap<String, Vec<PermissionDto>>,
 }
 
-fn role_perms_key(tenant: &str, role: &str) -> String {
-    format!("rbac:{tenant}:role:{role}")
+impl RbacDoc {
+    pub fn roles_of(&self, subject: &str) -> Vec<String> {
+        self.subjects.get(subject).cloned().unwrap_or_default()
+    }
+}
+
+fn rbac_key(tenant: &str) -> String {
+    format!("rbac:{tenant}")
+}
+
+/// Load a tenant's rbac doc — the ONE kv read an authorize pays for rbac.
+pub fn rbac_load(tenant: &str) -> Result<RbacDoc, AuthError> {
+    match kv::get(&rbac_key(tenant))? {
+        Some(body) => serde_json::from_str(&body).map_err(json_err),
+        None => Ok(RbacDoc::default()),
+    }
+}
+
+fn rbac_store(tenant: &str, doc: &RbacDoc) -> Result<(), AuthError> {
+    let body = serde_json::to_string(doc).map_err(json_err)?;
+    kv::set(&rbac_key(tenant), &body)
 }
 
 pub fn rbac_roles_for(tenant: &str, subject: &str) -> Result<Vec<String>, AuthError> {
-    match kv::get(&roles_key(tenant, subject))? {
-        Some(body) => serde_json::from_str(&body).map_err(json_err),
-        None => Ok(Vec::new()),
-    }
+    Ok(rbac_load(tenant)?.roles_of(subject))
 }
 
 pub fn rbac_permissions_of(tenant: &str, role: &str) -> Result<Vec<Permission>, AuthError> {
-    match kv::get(&role_perms_key(tenant, role))? {
-        Some(body) => {
-            let dtos: Vec<PermissionDto> = serde_json::from_str(&body).map_err(json_err)?;
-            Ok(dtos
-                .into_iter()
-                .map(|d| Permission { target: d.target, action: d.action })
-                .collect())
-        }
-        None => Ok(Vec::new()),
-    }
+    Ok(rbac_load(tenant)?
+        .roles
+        .get(role)
+        .map(|dtos| {
+            dtos.iter()
+                .map(|d| Permission { target: d.target.clone(), action: d.action.clone() })
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 pub fn rbac_set_role_permissions(
@@ -226,58 +252,72 @@ pub fn rbac_set_role_permissions(
     role: &str,
     perms: &[Permission],
 ) -> Result<(), AuthError> {
-    let dtos: Vec<PermissionDto> = perms
-        .iter()
-        .map(|p| PermissionDto { target: p.target.clone(), action: p.action.clone() })
-        .collect();
-    let body = serde_json::to_string(&dtos).map_err(json_err)?;
-    kv::set(&role_perms_key(tenant, role), &body)
+    let mut doc = rbac_load(tenant)?;
+    doc.roles.insert(
+        role.to_string(),
+        perms
+            .iter()
+            .map(|p| PermissionDto { target: p.target.clone(), action: p.action.clone() })
+            .collect(),
+    );
+    rbac_store(tenant, &doc)
 }
 
 pub fn rbac_assign_role(tenant: &str, subject: &str, role: &str) -> Result<(), AuthError> {
-    let mut roles = rbac_roles_for(tenant, subject)?;
+    let mut doc = rbac_load(tenant)?;
+    let roles = doc.subjects.entry(subject.to_string()).or_default();
     if !roles.iter().any(|r| r == role) {
         roles.push(role.to_string());
-        let body = serde_json::to_string(&roles).map_err(json_err)?;
-        kv::set(&roles_key(tenant, subject), &body)?;
+        rbac_store(tenant, &doc)?;
     }
     Ok(())
 }
 
 pub fn rbac_revoke_role(tenant: &str, subject: &str, role: &str) -> Result<(), AuthError> {
-    let mut roles = rbac_roles_for(tenant, subject)?;
+    let mut doc = rbac_load(tenant)?;
+    let Some(roles) = doc.subjects.get_mut(subject) else {
+        return Ok(());
+    };
     let before = roles.len();
     roles.retain(|r| r != role);
     if roles.len() != before {
-        let body = serde_json::to_string(&roles).map_err(json_err)?;
-        kv::set(&roles_key(tenant, subject), &body)?;
+        rbac_store(tenant, &doc)?;
     }
     Ok(())
 }
 
-/// Pure-ish permission check. Tries scopes first (no I/O), then resolves the
-/// principal's roles to permissions from kv. A permission matches if target and
+/// Permission check against an already-loaded rbac doc — NO I/O. Tries scopes
+/// first, then role-derived permissions. A permission matches if target and
 /// action match, with "*" acting as a wildcard for either field.
-pub fn rbac_check(p: &Principal, required: &Permission) -> bool {
+pub fn rbac_check_with(doc: &RbacDoc, p: &Principal, required: &Permission) -> bool {
     // 1. Direct scope grant, formatted "target:action".
     let scope = format!("{}:{}", required.target, required.action);
     if p.scopes.iter().any(|s| s == &scope || s == "*") {
         return true;
     }
     // 2. Role-derived permissions.
-    for role in &p.roles {
-        if let Ok(perms) = rbac_permissions_of(&p.tenant, role) {
-            if perms.iter().any(|perm| perm_matches(perm, required)) {
-                return true;
-            }
-        }
-    }
-    false
+    p.roles.iter().any(|role| {
+        doc.roles
+            .get(role)
+            .is_some_and(|perms| perms.iter().any(|d| matches_parts(&d.target, &d.action, required)))
+    })
 }
 
+/// One-shot check that loads the doc itself (the exported rbac `check`).
+pub fn rbac_check(p: &Principal, required: &Permission) -> bool {
+    // kv down -> default (empty) doc: only a direct scope grant can allow.
+    let doc = rbac_load(&p.tenant).unwrap_or_default();
+    rbac_check_with(&doc, p, required)
+}
+
+#[cfg(test)]
 fn perm_matches(granted: &Permission, required: &Permission) -> bool {
-    let target_ok = granted.target == "*" || granted.target == required.target;
-    let action_ok = granted.action == "*" || granted.action == required.action;
+    matches_parts(&granted.target, &granted.action, required)
+}
+
+fn matches_parts(target: &str, action: &str, required: &Permission) -> bool {
+    let target_ok = target == "*" || target == required.target;
+    let action_ok = action == "*" || action == required.action;
     target_ok && action_ok
 }
 

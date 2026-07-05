@@ -79,10 +79,6 @@ const AISUM_TTL_SECONDS: u64 = 24 * 3600;
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
-        // boot-time idempotent seeding (define the fsm machine + i18n catalog).
-        // safe to run on every request — define/set-message replace in place.
-        ensure_seeded();
-
         let method = request.method();
         let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
@@ -204,12 +200,11 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 // ---- boot seeding (fsm machine + i18n catalog) --------------------------
 
 fn ensure_seeded() {
-    // Seed ONCE, not per request. On a single-process host (jco/native) the
-    // per-request seeding was free (in-process calls); on wasmCloud each
-    // fsm::define + i18n::set_message is a wrpc-over-NATS round-trip, so
-    // re-seeding ~15 hops on every request tanked throughput (and tripped the
-    // wrpc deadline). Gate on one cheap KV read: a marker in a `meta`
-    // collection. Non-empty -> already seeded, skip the ~15 calls.
+    // Idempotent seeding of the fsm machine + i18n catalog, gated on one KV
+    // read (a marker in a `meta` collection). Called ONLY from the routes that
+    // consume the seeded state (create/transition appointment, i18n bundle) —
+    // running it in the global handler charged every request, including static
+    // assets and /pets, one KV round-trip for state they never touch.
     if records::count("meta").map(|n| n > 0).unwrap_or(false) {
         return; // already seeded
     }
@@ -751,6 +746,7 @@ fn appt_rules() -> Vec<Rule> {
 }
 
 fn create_appointment(request: &IncomingRequest) -> Outcome {
+    ensure_seeded(); // fsm machine must exist before create_instance
     let _principal = match require(request, "appointments", "write") {
         Ok(p) => p,
         Err(o) => return o,
@@ -865,6 +861,7 @@ struct TransitionReq {
 /// Advance an appointment through its lifecycle via fsm:workflow. confirm/complete
 /// are doctor/admin; cancel may also be done by the appointment's owner.
 fn transition_appointment(request: &IncomingRequest, appt_id: &str) -> Outcome {
+    ensure_seeded(); // fsm machine must exist before fire/allowed-events
     let principal = match require(request, "appointments", "write") {
         Ok(p) => p,
         Err(o) => return o,
@@ -1486,6 +1483,7 @@ fn twofa_status(request: &IncomingRequest) -> Outcome {
 
 /// The full UI bundle for a locale (negotiated against what we seeded).
 fn i18n_bundle(locale: &str) -> Outcome {
+    ensure_seeded(); // catalog must exist before negotiate/translate
     let available = vec!["en".to_string(), "es".to_string()];
     let resolved = i18n::negotiate(&[locale.to_string()], &available);
     let pairs: Vec<String> = UI_KEYS

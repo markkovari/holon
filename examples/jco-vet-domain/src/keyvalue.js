@@ -113,6 +113,21 @@ export function increment(bucket, key, delta) {
   return BigInt(n);
 }
 
+// wasi:keyvalue/batch — one guest call for multi-key ops over the same mirror
+// (record-store's list/find-by fetch pages this way instead of a get per id).
+export function getMany(bucket, keys) {
+  return keys.map((k) => {
+    const v = bucket.get(k);
+    return v === undefined ? undefined : [k, v];
+  });
+}
+export function setMany(bucket, keyValues) {
+  for (const [k, v] of keyValues) bucket.set(k, v);
+}
+export function deleteMany(bucket, keys) {
+  for (const k of keys) bucket.delete(k);
+}
+
 // Test/dev helper: wipe the in-memory mirror (does not touch a durable backend).
 export function __reset() {
   buckets.clear();

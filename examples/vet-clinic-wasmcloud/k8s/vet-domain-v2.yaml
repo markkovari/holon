@@ -37,7 +37,7 @@ metadata:
   name: vet-clinic
   namespace: wasmcloud-v2
 spec:
-  replicas: 1
+  replicas: 3
   template:
     spec:
       kubernetes:
@@ -62,16 +62,22 @@ spec:
           package: keyvalue
           interfaces: [atomics]
         - namespace: wasi
+          package: keyvalue
+          interfaces: [batch]
+        - namespace: wasi
           package: config
           interfaces: [store]
       components:
         - name: vet-domain
-          image: registry.petclinic.svc.cluster.local:5000/vet-vet-domain-lattice:0.2.0
+          image: registry.petclinic.svc.cluster.local:5000/vet-vet-domain-lattice:0.2.1
           # warm pre-instantiated instances of the linked chain + concurrency cap;
           # with the defaults (0) every request instantiates the whole
           # 16-component graph from scratch.
-          poolSize: 8
-          maxInvocations: 200
+          # keep pool × ~28 core modules well under the host engine's
+          # 1000-concurrent-core-instances cap (pool 48 = 1344 cores starved it);
+          # spread bench concurrency with spec.replicas instead.
+          poolSize: 16
+          maxInvocations: 1000
           localResources:
             # knobs for the wac-fused pure-compute caps (upload-policy, paginate).
             config:
@@ -82,7 +88,7 @@ spec:
               max-page-size: "100"
               cursor-secret: "vet-cursor-secret"
         - name: auth-guard
-          image: registry.petclinic.svc.cluster.local:5000/vet-auth-guard:0.2.0
+          image: registry.petclinic.svc.cluster.local:5000/vet-auth-guard:0.2.1
           localResources:
             config:
               default-tenant: "acme-vet"
@@ -92,7 +98,7 @@ spec:
               max-attempts: "5"
               lockout-window: "300"
         - name: records-store
-          image: registry.petclinic.svc.cluster.local:5000/vet-records-store:0.2.0
+          image: registry.petclinic.svc.cluster.local:5000/vet-records-store:0.2.2
         - name: search-index
           image: registry.petclinic.svc.cluster.local:5000/vet-search-index:0.2.0
         - name: blob-store
