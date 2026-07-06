@@ -41,6 +41,34 @@ impl Guest for Component {
             // 1. floor: router + invocation, no work.
             (Method::Get, "/ok") => respond(response_out, 200, "text/plain", b""),
 
+            // 8. streaming probe: 10 SSE events, one every 200 ms. Headers are
+            // sent before the first write, each event is flushed individually —
+            // if the client sees them arrive spread over ~2 s the runtime
+            // streams; if they all land at once it buffers.
+            (Method::Get, "/sse") => {
+                let headers = Fields::new();
+                let _ = headers.set(
+                    &"content-type".to_string(),
+                    &[b"text/event-stream".to_vec()],
+                );
+                let _ = headers.set(&"cache-control".to_string(), &[b"no-cache".to_vec()]);
+                let response = OutgoingResponse::new(headers);
+                let _ = response.set_status_code(200);
+                let out = response.body().expect("outgoing body");
+                ResponseOutparam::set(response_out, Ok(response));
+                {
+                    let stream = out.write().expect("write stream");
+                    for i in 0..10u32 {
+                        let event = format!("data: {{\"tick\":{i}}}\n\n");
+                        if stream.blocking_write_and_flush(event.as_bytes()).is_err() {
+                            break; // client went away
+                        }
+                        sleep_ms(200);
+                    }
+                }
+                let _ = OutgoingBody::finish(out, None);
+            }
+
             // 2. + serde serialize of a static struct.
             (Method::Get, "/json") => {
                 let pet = Pet { name: "Rex".into(), species: "dog".into(), age: 3 };
@@ -182,6 +210,10 @@ fn container() -> Result<bindings::wasi::blobstore::container::Container, String
 fn parse_pet(request: &IncomingRequest) -> Option<Pet> {
     let body = read_body(request).ok()?;
     serde_json::from_slice(&body).ok()
+}
+
+fn sleep_ms(ms: u64) {
+    bindings::wasi::clocks::monotonic_clock::subscribe_duration(ms * 1_000_000).block();
 }
 
 fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {

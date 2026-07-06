@@ -704,6 +704,16 @@ vs `kubectl port-forward` measured identically once pooling was fixed).
 Footnote: the virtual-host router alone (remote host, no workload → 404)
 clocked ~115k rps — routing is never the bottleneck.
 
+### 6d. Streaming probe — SSE through wash-runtime: STREAMS
+
+`bench-suite:0.1.4` adds `GET /sse`: 10 events, one `blocking_write_and_flush`
+every 200 ms, `ResponseOutparam::set` before the first write. Measured
+in-cluster with a raw-socket client stamping each chunk's arrival: events
+landed at +0.00 s, +0.21 s, … +1.83 s — individually, as flushed, headers
+first. wash-runtime's `wasi:http` path does incremental delivery, so
+LLM-token streaming (SSE) works on wasmCloud v2 as-is. (This was the go/no-go
+check for AI-harness workloads.)
+
 ## Reproduce
 
 ```bash

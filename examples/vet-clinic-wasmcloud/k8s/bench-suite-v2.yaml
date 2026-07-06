@@ -42,6 +42,6 @@ spec:
             buckets: bench
       components:
         - name: bench-suite
-          image: registry.petclinic.svc.cluster.local:5000/vet-bench-suite:0.1.3
+          image: registry.petclinic.svc.cluster.local:5000/vet-bench-suite:0.1.4
           poolSize: 8
           maxInvocations: 200
