@@ -714,6 +714,100 @@ first. wash-runtime's `wasi:http` path does incremental delivery, so
 LLM-token streaming (SSE) works on wasmCloud v2 as-is. (This was the go/no-go
 check for AI-harness workloads.)
 
+## Round 7 — Raspberry Pi 5 (malna): the native host on €80 hardware
+
+Same native Rust host + `vet_domain.full.composed.wasm`, cross-compiled from
+the Mac with `cargo zigbuild --target aarch64-unknown-linux-gnu.2.36` (~70 s
+build, 15.7 MB binary — scp'd with the 3.4 MB wasm + 620 KB SPA, nothing else
+installed on the Pi). malna = Pi 5 Model B, 4× Cortex-A76, 8 GiB, Debian
+bookworm. Loaded from the Mac over LAN (oha, ~1.8 ms RTT), in-memory KV,
+`oha -z 15s`, ALL rows 100 %:
+
+| op | on-demand | **pooling (`--pool`)** | picur Mac pooling (round 1) |
+|---|--:|--:|--:|
+| GET / (static) @ c50 | 2871 rps | **7653 rps @ p50 7 ms** | — |
+| GET /pets @ c50 | 1083 @ 46 ms | **1428 rps @ p50 35 ms** | 2957 |
+| POST /pets @ c10 | 660 @ 14 ms | **802 rps @ p50 12 ms** | 1793 |
+| POST /login @ c10 | 27 | **30 rps @ p50 349 ms** | 175 |
+| RSS after load | 134 MB | 141 MB | 427 MB |
+
+Reads and writes land at ~half the M-series Mac — in line with 4 small cores
+vs 10 big ones; the linear-with-hardware story extends down to a Pi. The two
+outliers tell the usual story: GET / never touches wasm (native static-file
+path — the Pi pushes 7.6k rps of SPA without breaking p50 7 ms), and login is
+argon2 — ~350 ms per hash on a Cortex-A76 vs ~30 ms on the M-series, so the
+Pi does 30 rps of logins and nothing will fix that but cheaper KDF params or
+bigger cores. Pooling's win over on-demand is smaller than on the Mac
+(+32 % on /pets vs +490 % round 1) — instantiation is a smaller slice of the
+budget when every core is slow and the KV work dominates.
+
+Takeaway: the whole vet-clinic — 28 wasm modules, UI + API, one binary — runs
+a four-digit read path on a Raspberry Pi at 141 MB RSS. A JetStream leaf node
+on the Pi (nats-server is already installed) is the missing piece to make it
+a real lattice edge node rather than an island.
+
+## Round 8 — WASI p3 (async components): the compute rungs, ported
+
+`components/bench-suite-p3` is the bench ladder's three compute rungs (/ok,
+/json, /echo) rebuilt as a **p3 async component**: exports
+`wasi:http/handler@0.3.0`, handler is an `async fn(Request) ->
+Result<Response, ErrorCode>`, bodies are native `stream<u8>` — no wasi:io, no
+outparams, and **one instance serves concurrent requests natively** (no
+poolSize / maxInvocations / `WASMTIME_POOLING_TOTAL_*` arithmetic).
+
+**"p3 enabled by default" — settled (July 2026, wasmCloud main):** the April
+2026 blog's `wasip3` Cargo feature is GONE — wash-runtime now builds with
+wasmtime's `p3` + `component-model-async` features unconditionally (wasmtime
+pinned to a git rev ahead of the stock releases; upstream flips the default in
+wasmtime 46). There is no config toggle either (`dev.wasip3` no longer
+exists): dispatch is auto-detected from the component's exported world
+(`handler@0.3.0` → p3 path, `incoming-handler@0.2.0` → p2 path). Released
+wash 2.5.1 images predate this; wash **2.5.2+ / main** is the p3-by-default
+line. WIT versions are final `@0.3.0` (the blog's `0.3.0-rc-2026-03-15`
+suffix is gone).
+
+Toolchain that works (mirrors wasmCloud main's own fixtures/examples):
+`wit-bindgen 0.58` with `async-spawn` + `inter-task-wakeup`, plain cdylib
+built to `wasm32-wasip2` (no wasip3 rustc target yet — the p3-ness lives in
+the WIT), p3 WIT deps vendored from wasmCloud's
+`crates/wash-runtime/tests/fixtures/p3-wit-deps`. Standalone crate — the
+components workspace stays on cargo-component/wit-bindgen-rt 0.41, which
+can't emit async bindings. libstd's `wasi:cli/io@0.2` imports ride along in
+the built component; the host serves both generations to one component.
+
+Measured under `wash dev` (main = 2.5.2), same laptop, loopback oha, 10 s,
+ALL 100 %; the p2 column is wasmCloud's own `http-handler-p2` fixture (static
+body ≈ the /ok floor) on the SAME wash binary:
+
+| op | p3 (1 instance) | p2 (same host) |
+|---|--:|--:|
+| GET /ok @ c50 | **27.0–28.0k rps @ 1.8 ms** | 33.3k rps @ 1.5 ms |
+| GET /ok @ c200 | **26.8k rps @ 7.5 ms** (flat) | 33.3k rps @ 6.0 ms (flat) |
+| GET /json @ c50 | 26.9k rps | — |
+| POST /echo @ c50 | **26.6k rps** — writes at read speed | — |
+| RSS after load | ~55–69 MB | (same) |
+
+Takeaways:
+- **p3 works end-to-end on stock main with zero flags** — build the world,
+  wash dev serves it down the p3 dispatch path.
+- **The floor costs ~19 % vs p2 today** (27k vs 33.3k) — the async plumbing
+  (per-response wit_stream + trailers future + spawn) isn't free and the
+  impl is preview-grade; p3's pitch here isn't raw floor rps.
+- **What p3 actually buys:** concurrent POSTs run at read speed on one
+  instance (the p2 concurrent-write wedge family doesn't apply), and
+  concurrency needs no pool-slot budgeting — c200 is flat with no
+  `total_core_instances` math.
+- **Migration blocker unchanged:** only wasi:http has a user-facing p3 path.
+  wasi:keyvalue/config stay p2 (main has `wasmcloud:keyvalue@0.1.0` p3
+  fixtures — watch that), so the vet-clinic app can't follow yet.
+- Upstream nit found: the `http-handler-p2` fixture's `wkg.toml` points at
+  `p3-wit-deps` paths that don't exist — delete it and `wkg wit fetch` to
+  build.
+
+Reproduce: `cargo build -p wash --release` from wasmCloud main, then
+`wash dev` in `components/bench-suite-p3` (`.wash/config.yaml` sets
+`dev.address`), `oha -z 10s -c 50 http://127.0.0.1:8000/ok`.
+
 ## Reproduce
 
 ```bash

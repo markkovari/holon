@@ -1,0 +1,27 @@
+[package]
+name = "bench-suite-p3"
+description = "bench ladder compute rungs (/ok, /json, /echo) on WASI p3 async http (bench:suite-p3)"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Standalone on purpose: p3 needs wit-bindgen 0.58 (async generate!), while the
+# components workspace builds with cargo-component + wit-bindgen-rt 0.41.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Pinned to what wasmCloud main's own p3 fixtures/examples use — the async ABI
+# must match the host's wasmtime.
+wit-bindgen = { version = "0.58.0", features = ["async-spawn", "inter-task-wakeup"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1

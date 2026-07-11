@@ -1,0 +1,18 @@
+// bench:suite-p3 — the compute rungs of the bench ladder on WASI p3.
+//
+// Same endpoints as bench-suite's first three rungs (/ok, /json, /echo),
+// but exported as the p3 async `wasi:http/handler@0.3.0`: one component
+// instance can serve concurrent requests natively, so this rung measures
+// the p3 dispatch path without poolSize/pooling-allocator arithmetic.
+//
+// The kv/blob rungs stay in bench-suite (p2) until wasi:keyvalue has a
+// user-facing p3 host path.
+package bench:suite-p3@0.1.0;
+
+world bench-suite-p3 {
+    import wasi:http/types@0.3.0;
+    import wasi:clocks/types@0.3.0;
+    import wasi:random/random@0.3.0;
+
+    export wasi:http/handler@0.3.0;
+}
