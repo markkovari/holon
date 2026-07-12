@@ -1,0 +1,36 @@
+[package]
+name = "link-shortener"
+description = "Link shortener HTTP component composing slug + id-generate + record-store + cache + rate-limiter (shortlink:app)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "shortlink:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "shortlink-app"
+
+[package.metadata.component.target.dependencies]
+"slug:generate" = { path = "../slug/wit" }
+"id:generate" = { path = "../id-generate/wit" }
+"records:store" = { path = "../record-store/wit" }
+"cache:store" = { path = "../cache/wit" }
+"ratelimit:guard" = { path = "../rate-limiter/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

@@ -32,6 +32,8 @@ vet_full_composed := "components/target/vet_domain.full.composed.wasm"
 vet_lattice := "components/target/vet_domain.lattice.wasm"
 ai_composed := "components/target/ai_inference.composed.wasm"
 staticassets_wasm := rel / "static_assets.wasm"
+shortlink_wasm := rel / "link_shortener.wasm"
+shortlink_composed := "components/target/link_shortener.composed.wasm"
 
 # List available recipes.
 default:
@@ -164,6 +166,25 @@ compose-webhook: build
 compose-login: build
     wac plug {{loginapp_wasm}} --plug {{session_wasm}} --plug {{config_wasm}} --plug {{secrets_wasm}} -o {{login_composed}}
     @echo "composed login-app (+ session + config + secrets) -> {{login_composed}}"
+
+# Compose the link-shortener app: slug + id-generate + record-store +
+# rate-limiter + cache (pre-composed with its kv backing). Output imports only
+# generic WASI (keyvalue/clocks/random/config), so any comp host runs it.
+compose-shortlink: build
+    wac plug {{rel}}/cache.wasm --plug {{rel}}/cache_backing.wasm -o components/target/cache.composed.wasm
+    wac plug {{shortlink_wasm}} \
+      --plug {{rel}}/slug.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      --plug {{recordstore_wasm}} \
+      --plug {{ratelimit_wasm}} \
+      --plug components/target/cache.composed.wasm \
+      -o {{shortlink_composed}}
+    wasm-tools validate {{shortlink_composed}}
+    @echo "composed link-shortener (+ slug + id-generate + records + rate-limiter + cache) -> {{shortlink_composed}}"
+
+# Run the composed link-shortener under the native host.
+host-shortlink: compose-shortlink
+    cd host && cargo run --release --bin vet-host -- --component ../{{shortlink_composed}} --addr 127.0.0.1:3008
 
 # Compose an LLM provider into the ai-inference domain layer, satisfying its
 # `llm:inference/inference` import. Here the deterministic MOCK provider is

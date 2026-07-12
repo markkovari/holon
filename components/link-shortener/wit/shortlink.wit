@@ -1,0 +1,37 @@
+// shortlink:app — a link shortener as a WIT HTTP component.
+//
+// The smallest "real app" composition in the catalog: mint a short code
+// (custom alias via slug:generate, otherwise a nanoid from id:generate),
+// persist it as a records:store record indexed on `code`, and serve the
+// redirect hot path through cache:store so a hit is one cache read + one
+// atomic click increment + a 302. Creation is guarded by ratelimit:guard
+// (fixed-window per client) since there is no auth.
+//
+// Routes:
+//   POST   /api/links        {url, slug?, title?} -> 201 link
+//   GET    /api/links        ?limit&after         -> paged list
+//   GET    /api/links/{id}                        -> link + click count
+//   DELETE /api/links/{id}                        -> delete + cache invalidate
+//   GET    /{code}                                -> 302 Location
+package shortlink:app@0.1.0;
+
+/// The link-shortener HTTP backend, composed from capability contracts.
+world shortlink-app {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // custom-alias slugify + collision suffixing.
+    import slug:generate/generator@0.1.0;
+    // nanoid short codes for auto-minted links.
+    import id:generate/generator@0.1.0;
+    // link records, indexed on `code`.
+    import records:store/store@0.1.0;
+    // redirect hot path.
+    import cache:store/cache@0.1.0;
+    // create-endpoint abuse guard (fixed window per client).
+    import ratelimit:guard/limiter@0.1.0;
+
+    // click counters: `clicks:{code}` bumped with an atomic increment so the
+    // hot path never does a read-modify-write on the link record itself.
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+}

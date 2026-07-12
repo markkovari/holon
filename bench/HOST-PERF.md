@@ -807,6 +807,47 @@ Takeaways:
 Reproduce: `cargo build -p wash --release` from wasmCloud main, then
 `wash dev` in `components/bench-suite-p3` (`.wash/config.yaml` sets
 `dev.address`), `oha -z 10s -c 50 http://127.0.0.1:8000/ok`.
+## Round 9 — link-shortener: a small composition's ceiling is the allocator
+
+`components/link-shortener` is the smallest "real app" composition in the
+catalog: an HTTP component plugging **slug + id-generate + record-store +
+rate-limiter + cache(+cache-backing)** — 7 components in the composed graph vs
+vet-clinic's 19+. Its redirect hot path is deliberately thin: one cache read,
+one atomic click increment, a 302. The question: does a small graph move the
+per-request-instantiation wall from Rounds 2/4?
+
+Native `vet-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
+100 % success everywhere (no non-2xx/3xx):
+
+| route | on-demand | `--pool` |
+|---|--:|--:|
+| GET /{code} (redirect: cache read + atomic bump + 302) @ c50 | 2.35k rps @ 21.4 ms p50 | **17.5k rps @ 2.9 ms p50** (p99 5.1 ms) |
+| GET /{code} @ c200 | 2.39k rps @ 81.7 ms | **17.5k rps @ 11.3 ms** (flat) |
+| GET /api/links/{id} (record get + click counter) @ c50 | 2.34k rps | 16.0k rps |
+| GET / (static JSON, no KV at all) @ c50 | 2.36k rps | 17.1k rps |
+| host RSS after load | — | ~62 MB |
+
+Takeaways:
+- **On-demand, every route is 2.35k** — including the root route that touches
+  no KV and no capability. The route body is invisible; per-request
+  instantiation of the 7-module graph is the whole bill. Same wall as the
+  19-component vet-clinic hit, barely moved by being 2.7× smaller.
+- **Pooling is 7.4×** (2.35k → 17.5k @ c50) and stays flat at c200 with p99
+  under 25 ms. Confirms Round 2's conclusion at the small end of the graph-size
+  axis: the pooling allocator is not an optimization, it's the difference
+  between a demo and a service.
+- **The composition itself is ~free.** Pooled, the full redirect path (cache
+  get through the composed cache component + `wasi:keyvalue/atomics` bump +
+  302) runs at 17.5k vs the do-nothing floor's 17.1k — within noise. The stats
+  route's extra record-store get + counter read costs ~9 % (16.0k). Cross-
+  component calls in a wac-fused graph are effectively function calls.
+- Rate-limited create (`POST /api/links` behind ratelimit:guard) was left out
+  of the ladder on purpose — a create-flood benches the guard's 429 path, not
+  the app.
+
+Reproduce: `just host-shortlink` (add `--pool` to the recipe's flags for the
+pooled row), seed one link, then
+`oha -z 10s -c 50 http://127.0.0.1:3008/{code}`.
 
 ## Reproduce
 
