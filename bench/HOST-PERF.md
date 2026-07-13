@@ -849,6 +849,53 @@ Reproduce: `just host-shortlink` (add `--pool` to the recipe's flags for the
 pooled row), seed one link, then
 `oha -z 10s -c 50 http://127.0.0.1:3008/{code}`.
 
+## Round 10 — dev-portal: auth + ABAC + quota on every request, still ~free
+
+`components/dev-portal` is the control-plane app from PLATFORM.md: projects,
+sha256-hashed API keys, a metered gateway, and stripe-signed webhook delivery
+off a durable outbox. Its composed graph is **9 components** (the composed
+auth-guard bundle + record-store + id-generate + quota + policy-guard +
+outbox + webhook-sign + notify-dispatch) — the biggest app graph benched
+since vet-clinic, and unlike the link shortener every interesting route does
+REAL cross-component work: bearer introspection (auth-guard), ABAC rule
+evaluation (policy-guard), or an atomic quota reserve.
+
+Native `vet-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
+100 % success (all 200s — the bench key's limit is 10⁹ so quota never trips):
+
+| route | on-demand | `--pool` |
+|---|--:|--:|
+| POST /api/gateway/echo (sha256 + indexed key lookup + quota reserve) @ c50 | 1.41k rps @ 35.7 ms p50 | **10.5k rps @ 4.8 ms p50** (p99 8.5 ms) |
+| POST /api/gateway/echo @ c200 | — | **10.5k rps @ 18.6 ms** (flat) |
+| GET /auth/me (authorizer introspect) @ c50 | 1.42k rps | 11.1k rps |
+| GET /api/projects/{id} (introspect + record get + ABAC eval) @ c50 | 1.40k rps | 10.4k rps |
+| GET / (static JSON floor) @ c50 | 1.43k rps | 11.2k rps |
+| host RSS after load | — | ~99 MB |
+
+Takeaways:
+- **The graph-size axis, quantified.** On-demand floors: 7 components → 2.35k
+  (Round 9), 9 components → 1.4k. Instantiation cost scales with the composed
+  graph, and it stays the whole bill until pooling: pooled, both apps land at
+  their own flat ceiling (17.5k vs 10.5–11.2k). Same 7.4–7.5× pooling ratio at
+  both sizes.
+- **Security is not the tax.** Pooled, the full gateway path — hash the
+  presented key, indexed find-by, atomic quota reserve — runs within ~6 % of
+  the do-nothing floor (10.5k vs 11.2k). A bearer introspect through the
+  composed auth-guard is ~1 % off floor (11.1k). The two-layer authorize
+  (introspect + record get + policy:guard rule eval) costs ~7 % (10.4k).
+  Cross-component contract calls keep behaving like function calls.
+- The pooled floor itself (11.2k vs Round 9's 17.1k) shows the per-request
+  cost that DOES grow with graph size even pooled — more modules per
+  instantiation slot to wire, ~35 % floor drop for +2 components and the much
+  larger auth-guard bundle.
+- Write-path routes (mint key, drain outbox with live HTTP delivery) were
+  left out: minting floods the KV with records and drain benches the
+  receiver, not the portal.
+
+Reproduce: `just host-portal` (add `--pool` for the pooled row), register +
+login + create project + mint a high-limit key, then
+`oha -z 10s -c 50 -m POST -H "x-api-key: dk_…" http://127.0.0.1:3009/api/gateway/echo`.
+
 ## Reproduce
 
 ```bash

@@ -249,6 +249,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dev-portal"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,55 @@
+// portal:app — a developer portal / API-key service as a WIT HTTP component.
+//
+// The control-plane shape from PLATFORM.md, composed from capability
+// contracts: developers register and log in (auth:identity, via the composed
+// auth-guard), create projects, invite members, and mint API keys; a metered
+// gateway route enforces a per-key hourly quota; key lifecycle events flow
+// through a durable outbox and are delivered as SIGNED webhooks
+// (webhook:sign, stripe scheme) via notify:dispatch.
+//
+// Authorization is two-layer on purpose — the point of this app:
+//   RBAC  (auth:identity/rbac)  answers "may this ROLE do this at all?"
+//                               (admin-only outbox drain).
+//   ABAC  (policy:guard)        answers "may this PRINCIPAL touch this
+//                               PROJECT?" (owner/member rules over attrs).
+//
+// Routes:
+//   POST   /auth/register|login, GET /auth/me, POST /auth/logout
+//   POST   /api/projects                {name}
+//   GET    /api/projects                (mine)          GET /api/projects/{id}
+//   POST   /api/projects/{id}/members   {subject}       (owner)
+//   POST   /api/projects/{id}/webhook   {url, secret}   (owner)
+//   POST   /api/projects/{id}/keys      {name, limit?}  -> full key ONCE
+//   GET    /api/projects/{id}/keys                      (hashes never leave)
+//   DELETE /api/keys/{id}                               (owner; emits event)
+//   GET    /api/keys/{id}/usage                         quota balance
+//   POST   /api/gateway/echo            x-api-key       metered echo
+//   POST   /api/admin/drain                             deliver outbox (admin)
+package portal:app@0.1.0;
+
+/// The developer-portal HTTP backend, composed from capability contracts.
+world dev-portal {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // login/register + sessions + roles — the composed auth-guard.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // projects + api-key records (keys indexed by hash for O(1) verify).
+    import records:store/store@0.1.0;
+    // api-key minting (dk_ + 32-char nanoid).
+    import id:generate/generator@0.1.0;
+    // per-key hourly quota on the gateway route.
+    import quota:meter/meter@0.1.0;
+    // project-level ABAC: owner/member rules evaluated over attrs.
+    import policy:guard/guard@0.1.0;
+    // durable event queue for key lifecycle events.
+    import outbox:dispatch/queue@0.1.0;
+    // stripe-scheme HMAC signatures on outbound webhooks.
+    import webhook:sign/signer@0.1.0;
+    // webhook delivery (wasi:http/outgoing-handler under the hood).
+    import notify:dispatch/dispatcher@0.1.0;
+}

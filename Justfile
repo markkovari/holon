@@ -34,6 +34,8 @@ ai_composed := "components/target/ai_inference.composed.wasm"
 staticassets_wasm := rel / "static_assets.wasm"
 shortlink_wasm := rel / "link_shortener.wasm"
 shortlink_composed := "components/target/link_shortener.composed.wasm"
+portal_wasm := rel / "dev_portal.wasm"
+portal_composed := "components/target/dev_portal.composed.wasm"
 
 # List available recipes.
 default:
@@ -185,6 +187,28 @@ compose-shortlink: build
 # Run the composed link-shortener under the native host.
 host-shortlink: compose-shortlink
     cd host && cargo run --release --bin vet-host -- --component ../{{shortlink_composed}} --addr 127.0.0.1:3008
+
+# Compose the dev-portal app: the composed auth-guard (auth:identity) +
+# record-store + id-generate + quota + policy-guard + outbox + webhook-sign +
+# notify-dispatch. RBAC gates role verbs, policy-guard gates project access;
+# key events leave as stripe-signed webhooks on an admin-pumped outbox drain.
+compose-portal: compose
+    wac plug {{portal_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/id_generate.wasm \
+      --plug {{rel}}/quota.wasm \
+      --plug {{rel}}/policy_guard.wasm \
+      --plug {{rel}}/outbox.wasm \
+      --plug {{rel}}/webhook_sign.wasm \
+      --plug {{rel}}/notify_dispatch.wasm \
+      -o {{portal_composed}}
+    wasm-tools validate {{portal_composed}}
+    @echo "composed dev-portal (+ auth-guard + records + ids + quota + policy + outbox + sign + notify) -> {{portal_composed}}"
+
+# Run the composed dev-portal under the native host.
+host-portal: compose-portal
+    cd host && cargo run --release --bin vet-host -- --component ../{{portal_composed}} --addr 127.0.0.1:3009
 
 # Compose an LLM provider into the ai-inference domain layer, satisfying its
 # `llm:inference/inference` import. Here the deterministic MOCK provider is
