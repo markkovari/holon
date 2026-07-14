@@ -1,0 +1,39 @@
+// ledger:app — a billing ledger as a WIT HTTP component.
+//
+// The money-correctness showcase: every write is guarded by the classic
+// Stripe-style `idempotency-key` header (idempotency:guard caches the FIRST
+// response and replays it verbatim on retry — a different use of the same
+// contract than webhook-ingest's dedup), amounts are integer minor units via
+// money:amount (parse/add/subtract/allocate, never floats), account balances
+// update through record-store's revision CAS with a bounded retry, entry
+// volume is metered per account by quota:meter, statements export through
+// csv:codec, and every posted entry lands on a durable outbox feed an external
+// biller drains at-least-once.
+//
+// Routes:
+//   POST   /api/accounts                      {name, currency}
+//   GET    /api/accounts                      GET /api/accounts/{id}
+//   POST   /api/accounts/{id}/entries         idempotency-key: {kind, amount, description?}
+//   GET    /api/accounts/{id}/entries
+//   GET    /api/accounts/{id}/statement.csv
+//   GET    /api/allocate                      ?amount&currency&shares  penny-exact split
+//   POST   /api/events/drain                  claim+ack the outbox feed
+package ledger:app@0.1.0;
+
+/// The billing-ledger HTTP backend, composed from capability contracts.
+world ledger-app {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // integer minor-unit arithmetic: parse/format/add/subtract/allocate.
+    import money:amount/arithmetic@0.1.0;
+    // accounts + entries; balance updates ride the revision CAS.
+    import records:store/store@0.1.0;
+    // idempotency-key replay cache on the write path.
+    import idempotency:guard/store@0.1.0;
+    // per-account entry metering (fixed window).
+    import quota:meter/meter@0.1.0;
+    // statement export.
+    import csv:codec/codec@0.1.0;
+    // durable entry feed for an external consumer.
+    import outbox:dispatch/queue@0.1.0;
+}

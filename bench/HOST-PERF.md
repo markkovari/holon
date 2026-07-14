@@ -896,6 +896,88 @@ Reproduce: `just host-portal` (add `--pool` for the pooled row), register +
 login + create project + mint a high-limit key, then
 `oha -z 10s -c 50 -m POST -H "x-api-key: dk_…" http://127.0.0.1:3009/api/gateway/echo`.
 
+## Round 11 — three apps, one axis: relay, ledger, status-page
+
+Three new apps land the composition patterns the catalog had not exercised:
+**webhook-relay** (`relay:app`, 10 modules composed: webhook-ingest(+idempotency-guard)
++ jsonpatch + outbox + webhook-sign + notify-dispatch + rate-limiter + audit-log
++ record-store) is the reliability trio end to end — HMAC ingest, replay dedup,
+durable outbox, github-signed delivery with retry + dead letters. **billing-ledger**
+(`ledger:app`, 7 modules: money + record-store + idempotency-guard + quota + csv
++ outbox) is the Stripe-style `idempotency-key` write path over integer-minor-unit
+money. **status-page** (`status:app`, 6 modules: scheduler-timer + record-store +
+fsm-workflow + event-bus + notify-dispatch) is the first TIMER-driven app — work
+originates from `sched:timer`, not a request. Together they extend the graph-size
+axis of Rounds 9/10 with three more points: 6, 7, and 10 modules.
+
+Native `vet-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
+100 % success everywhere:
+
+**webhook-relay** (:3010)
+
+| route | on-demand | `--pool` |
+|---|--:|--:|
+| POST /hook/{id} replay (kv secret + HMAC verify + idem lookup) @ c50 | 1.65k rps @ 30.3 ms p50 | **11.5k rps @ 4.3 ms p50** (p99 7.8 ms) |
+| POST /hook/{id} replay @ c200 | 1.67k rps @ 116.9 ms | **11.6k rps @ 16.8 ms** (flat) |
+| GET /api/sources (record list) @ c50 | 1.64k rps | 11.4k rps |
+| GET / (static JSON floor) @ c50 | 1.68k rps | 12.4k rps |
+| host RSS after load | — | ~82 MB |
+
+**billing-ledger** (:3011)
+
+| route | on-demand | `--pool` |
+|---|--:|--:|
+| POST entries, fixed idempotency-key (cached replay) @ c50 | 2.29k rps @ 21.9 ms p50 | **18.0k rps @ 2.8 ms p50** (p99 5.1 ms) |
+| POST entries, fixed idempotency-key @ c200 | 2.25k rps @ 87.5 ms | **18.5k rps @ 10.6 ms** (flat) |
+| GET /api/accounts/{id} (record get + money format) @ c50 | 2.23k rps | 17.5k rps |
+| GET statement.csv (find-by + csv over 5 entries) @ c50 | 2.15k rps | 16.4k rps |
+| GET /api/allocate (pure money math) @ c50 | 2.17k rps | 18.4k rps |
+| GET / (static JSON floor) @ c50 | 2.19k rps | 18.3k rps |
+| host RSS after load | — | ~62 MB |
+
+**status-page** (:3012, 5 monitors seeded)
+
+| route | on-demand | `--pool` |
+|---|--:|--:|
+| GET /api/status (record list + 5× fsm get-status) @ c50 | 2.60k rps @ 19.3 ms p50 | **17.2k rps @ 2.9 ms p50** (p99 5.2 ms) |
+| GET /api/monitors/{id}/history (fsm transition log) @ c50 | 2.57k rps | 19.9k rps |
+| GET /api/events (bus consumer-group poll) @ c50 | 2.68k rps | 19.7k rps |
+| GET / (inline html floor) @ c50 | 2.62k rps | 20.0k rps |
+| host RSS after load | — | ~64 MB |
+
+Takeaways:
+- **The graph-size axis now has five points.** On-demand floors: 6 modules →
+  2.6k, 7 → 2.2k, 7 (shortlink, Round 9) → 2.35k, 9 (portal, Round 10) → 1.4k,
+  10 (relay) → 1.65k. Pooled floors: 20.0k / 18.3k / 17.1k / 11.2k / 12.4k.
+  Module COUNT is not the whole story — the 10-module relay outruns the
+  9-module portal on both floors because the portal's auth-guard bundle is a
+  much bigger module (argon2 + JWT crypto) than the relay's ten small ones.
+  Instantiation cost scales with total compiled size, not import count.
+- **The ledger's 7-module numbers reproduce Round 9's 7-module numbers**
+  (2.2k/18.3k vs 2.35k/17.1k floor) on a different app with different
+  capabilities. The wall is structural, not app-specific.
+- **An idempotent replay costs nothing.** The cached-response write path (idem
+  begin → cache hit → replay the stored 201) runs AT the floor (18.0k vs
+  18.3k) — the whole point of the pattern: retries don't re-execute money
+  arithmetic, quota, records, or outbox, they cost one kv read.
+- **The relay's verify path is ~7 % off floor** (11.5k vs 12.4k) for a kv
+  secret fetch + HMAC-SHA256 + dedup lookup through two composed layers
+  (webhook-ingest → idempotency-guard). Signature checking as a composed
+  contract, ~free at 11.5k rps.
+- **status-page's fan-out read costs ~14 %** (17.2k vs 20.0k) for a record
+  list + five fsm get-status reads — six kv round trips per request. The
+  history and bus-poll routes (one kv read each) sit at floor.
+- Excluded on purpose: the relay's ACCEPT path and the drains (oha can't mint
+  a unique delivery-id/idempotency-key per request, and accepted events grow
+  the outbox unboundedly while drains bench the receiving server, not the
+  app); status-page's `POST /api/tick` (probes external targets on a timer
+  cadence — the bench would measure the probe target).
+
+Reproduce: `just host-relay` / `host-ledger` / `host-status` (add `--pool` to
+the recipe's flags for the pooled rows), seed via the routes in each app's
+`GET /`, then e.g.
+`oha -z 10s -c 50 -m POST -d '{"order":42}' -H "x-relay-signature: <hex>" -H "x-relay-delivery: bench-1" http://127.0.0.1:3010/hook/{id}`.
+
 ## Reproduce
 
 ```bash

@@ -36,6 +36,12 @@ shortlink_wasm := rel / "link_shortener.wasm"
 shortlink_composed := "components/target/link_shortener.composed.wasm"
 portal_wasm := rel / "dev_portal.wasm"
 portal_composed := "components/target/dev_portal.composed.wasm"
+relay_wasm := rel / "webhook_relay.wasm"
+relay_composed := "components/target/webhook_relay.composed.wasm"
+ledger_wasm := rel / "billing_ledger.wasm"
+ledger_composed := "components/target/billing_ledger.composed.wasm"
+statuspage_wasm := rel / "status_page.wasm"
+statuspage_composed := "components/target/status_page.composed.wasm"
 
 # List available recipes.
 default:
@@ -209,6 +215,65 @@ compose-portal: compose
 # Run the composed dev-portal under the native host.
 host-portal: compose-portal
     cd host && cargo run --release --bin vet-host -- --component ../{{portal_composed}} --addr 127.0.0.1:3009
+
+# Compose the webhook-relay app: the composed webhook-ingest (HMAC verify +
+# replay dedup) + jsonpatch + outbox + webhook-sign + notify-dispatch +
+# rate-limiter + audit-log + record-store. Ingest -> transform -> durable
+# queue; drain delivers github-signed webhooks with retry + dead letters.
+compose-relay: compose-webhook
+    wac plug {{relay_wasm}} \
+      --plug {{webhook_composed}} \
+      --plug {{rel}}/jsonpatch.wasm \
+      --plug {{rel}}/outbox.wasm \
+      --plug {{rel}}/webhook_sign.wasm \
+      --plug {{notify_wasm}} \
+      --plug {{ratelimit_wasm}} \
+      --plug {{auditlog_wasm}} \
+      --plug {{recordstore_wasm}} \
+      -o {{relay_composed}}
+    wasm-tools validate {{relay_composed}}
+    @echo "composed webhook-relay (+ ingest + jsonpatch + outbox + sign + notify + rate-limiter + audit + records) -> {{relay_composed}}"
+
+# Run the composed webhook-relay under the native host.
+host-relay: compose-relay
+    cd host && cargo run --release --bin vet-host -- --component ../{{relay_composed}} --addr 127.0.0.1:3010
+
+# Compose the billing-ledger app: money + record-store + idempotency-guard +
+# quota + csv + outbox. Idempotency-key replay cache on the write path,
+# integer minor-unit arithmetic, revision-CAS balances, csv statements.
+compose-ledger: build
+    wac plug {{ledger_wasm}} \
+      --plug {{rel}}/money.wasm \
+      --plug {{recordstore_wasm}} \
+      --plug {{idempotency_wasm}} \
+      --plug {{rel}}/quota.wasm \
+      --plug {{rel}}/csv.wasm \
+      --plug {{rel}}/outbox.wasm \
+      -o {{ledger_composed}}
+    wasm-tools validate {{ledger_composed}}
+    @echo "composed billing-ledger (+ money + records + idempotency + quota + csv + outbox) -> {{ledger_composed}}"
+
+# Run the composed billing-ledger under the native host.
+host-ledger: compose-ledger
+    cd host && cargo run --release --bin vet-host -- --component ../{{ledger_composed}} --addr 127.0.0.1:3011
+
+# Compose the status-page app: scheduler-timer + record-store + fsm-workflow +
+# event-bus + notify-dispatch. Timer-driven probes over outgoing HTTP; state
+# transitions fan out on the bus and alert as webhooks.
+compose-status: build
+    wac plug {{statuspage_wasm}} \
+      --plug {{rel}}/scheduler_timer.wasm \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/fsm_workflow.wasm \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{notify_wasm}} \
+      -o {{statuspage_composed}}
+    wasm-tools validate {{statuspage_composed}}
+    @echo "composed status-page (+ timer + records + fsm + bus + notify) -> {{statuspage_composed}}"
+
+# Run the composed status-page under the native host.
+host-status: compose-status
+    cd host && cargo run --release --bin vet-host -- --component ../{{statuspage_composed}} --addr 127.0.0.1:3012
 
 # Compose an LLM provider into the ai-inference domain layer, satisfying its
 # `llm:inference/inference` import. Here the deterministic MOCK provider is

@@ -1,0 +1,41 @@
+// status:app — a status page / uptime monitor as a WIT HTTP component.
+//
+// The timer-driven showcase: the workload originates from sched:timer, not an
+// inbound request. Each monitor is a recurring timer job; `POST /api/tick`
+// (the explicit pump — wasip2 has no background tasks) claims due jobs, probes
+// each target over wasi:http/outgoing-handler, and drives an fsm:workflow
+// instance per monitor (up -> degraded -> down needs TWO consecutive failures;
+// one good probe recovers). A state transition publishes to event:bus and,
+// when the monitor has an alert-url, fires a notify:dispatch webhook. The
+// public page is served inline; history is the fsm's own transition log.
+//
+// Routes:
+//   GET    /                              status page (inline html)
+//   POST   /api/monitors                  {name, url, period?, alert-url?}
+//   GET    /api/monitors                  DELETE /api/monitors/{id}
+//   GET    /api/status                    monitors + fsm state + last probe
+//   GET    /api/monitors/{id}/history     fsm transition log
+//   POST   /api/tick                      claim due jobs, probe, transition
+//   GET    /api/events                    ?group&ack  event-bus consumer poll
+package status:app@0.1.0;
+
+/// The status-page HTTP backend, composed from capability contracts.
+world status-app {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // one recurring job per monitor; due/ack with leases.
+    import sched:timer/timer@0.1.0;
+    // monitor configs + last-probe snapshot.
+    import records:store/store@0.1.0;
+    // per-monitor up/degraded/down state machine + transition history.
+    import fsm:workflow/engine@0.1.0;
+    // state-change fan-out for subscribers (consumer-group poll).
+    import event:bus/bus@0.1.0;
+    // alert webhooks on state change.
+    import notify:dispatch/dispatcher@0.1.0;
+
+    // the probes themselves.
+    import wasi:http/outgoing-handler@0.2.0;
+    // `now` for timer due/scheduling.
+    import wasi:clocks/wall-clock@0.2.0;
+}

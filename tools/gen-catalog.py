@@ -30,7 +30,10 @@ COMPONENTS = ROOT / "components"
 RELEASE = COMPONENTS / "target" / "wasm32-wasip1" / "release"
 
 # app/demo components: listed, but flagged not-reusable-as-is.
-APP_SPECIFIC = {"vet-domain", "login-app", "accounts-app", "sample-consumer", "bench-suite"}
+APP_SPECIFIC = {
+    "vet-domain", "login-app", "accounts-app", "sample-consumer", "bench-suite",
+    "link-shortener", "dev-portal", "webhook-relay", "billing-ledger", "status-page",
+}
 
 GET_CALL = re.compile(r'[a-z_]*(?:get|cfg)[a-z_0-9]*\(\s*"([a-z0-9._-]{2,})"')
 # the repo convention: a module-doc block listing knobs with descriptions:

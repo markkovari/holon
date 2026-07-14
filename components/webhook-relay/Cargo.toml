@@ -1,0 +1,40 @@
+[package]
+name = "webhook-relay"
+description = "Webhook relay HTTP component composing webhook-ingest + jsonpatch + outbox + webhook-sign + notify-dispatch + rate-limiter + audit-log + record-store (relay:app)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "relay:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "relay-app"
+
+[package.metadata.component.target.dependencies]
+"webhook:ingest" = { path = "../webhook-ingest/wit" }
+"idempotency:guard" = { path = "../idempotency-guard/wit" }
+"json:patch" = { path = "../jsonpatch/wit" }
+"outbox:dispatch" = { path = "../outbox/wit" }
+"webhook:sign" = { path = "../webhook-sign/wit" }
+"notify:dispatch" = { path = "../notify-dispatch/wit" }
+"ratelimit:guard" = { path = "../rate-limiter/wit" }
+"audit:log" = { path = "../audit-log/wit" }
+"records:store" = { path = "../record-store/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

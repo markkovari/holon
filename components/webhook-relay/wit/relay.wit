@@ -1,0 +1,48 @@
+// relay:app — a webhook relay (tiny Hookdeck) as a WIT HTTP component.
+//
+// The reliability-trio showcase: an inbound delivery is HMAC-verified and
+// replay-deduped (webhook:ingest, itself composed with idempotency-guard),
+// optionally reshaped with a stored RFC 6902 patch / RFC 7386 merge-patch
+// (json:patch), then parked on a durable at-least-once queue (outbox:dispatch).
+// An explicit drain claims pending events and delivers each one as a SIGNED
+// webhook (webhook:sign, github scheme) via notify:dispatch, with retry/backoff
+// and a dead-letter lane handled entirely by the outbox contract. Ingest is
+// rate-limited per source and every accept/reject/delivery lands in audit:log.
+//
+// Routes:
+//   POST   /api/sources              {name, secret, destination, dest-secret, transform?}
+//   GET    /api/sources              GET /api/sources/{id}   DELETE /api/sources/{id}
+//   POST   /hook/{source-id}         x-relay-signature, x-relay-delivery  -> 202
+//   POST   /api/drain                deliver pending events (explicit pump)
+//   GET    /api/dead                 dead-lettered events
+//   POST   /api/dead/{id}/replay     re-queue a dead letter
+//   GET    /api/audit                ?limit -> recent audit events
+package relay:app@0.1.0;
+
+/// The webhook-relay HTTP backend, composed from capability contracts.
+world relay-app {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // inbound HMAC verify + replay dedup (composed with idempotency-guard).
+    import webhook:ingest/verifier@0.1.0;
+    // optional payload reshape: array -> RFC 6902 patch, object -> merge-patch.
+    import json:patch/patcher@0.1.0;
+    // durable at-least-once delivery queue with retry/backoff + dead letters.
+    import outbox:dispatch/queue@0.1.0;
+    // github-scheme HMAC signatures on outbound deliveries.
+    import webhook:sign/signer@0.1.0;
+    // outbound webhook delivery (wasi:http/outgoing-handler under the hood).
+    import notify:dispatch/dispatcher@0.1.0;
+    // per-source ingest abuse guard (failure counter + lockout).
+    import ratelimit:guard/limiter@0.1.0;
+    // accept/reject/delivery trail.
+    import audit:log/types@0.1.0;
+    import audit:log/recorder@0.1.0;
+    import audit:log/query@0.1.0;
+    // source configs (destination, transform, outbound secret).
+    import records:store/store@0.1.0;
+
+    // inbound secrets live at `relay:secret:{source}` — the kv location
+    // webhook:ingest's `secret-ref` parameter points at.
+    import wasi:keyvalue/store@0.2.0-draft;
+}

@@ -8,60 +8,69 @@ capabilities, so anything marked reusable drops into another app via
 
 | component | package | deps | config knobs | size | reusable as-is |
 |---|---|---|---|--:|:--:|
-| **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 126 KiB | ✓ |
+| **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 124 KiB | ✓ |
 | **audit-log** | `audit:log@0.1.0` | kv:store | — | 130 KiB | ✓ |
-| **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 131 KiB | app/demo |
-| **blob-store** | `blob:store@0.1.0` | kv:store | — | 77 KiB | ✓ |
-| **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 77 KiB | ✓ |
-| **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 65 KiB | ✓ |
-| **config-store** | `config:store@0.1.0` | kv:store | — | 120 KiB | ✓ |
-| **csv** | `csv:codec@0.1.0` | pure compute | — | 60 KiB | ✓ |
-| **email-render** | `email:template@0.1.0` | kv:store | — | 80 KiB | ✓ |
-| **event-bus** | `event:bus@0.1.0` | kv:atomics, kv:store | — | 86 KiB | ✓ |
-| **feature-flags** | `featureflags:guard@0.1.0` | config/store, kv:store | — | 78 KiB | ✓ |
+| **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 130 KiB | app/demo |
+| **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — | ✓ |
+| **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 182 KiB | app/demo |
+| **blob-store** | `blob:store@0.1.0` | kv:store | — | 75 KiB | ✓ |
+| **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 76 KiB | ✓ |
+| **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 64 KiB | ✓ |
+| **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
+| **csv** | `csv:codec@0.1.0` | pure compute | — | 58 KiB | ✓ |
+| **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 214 KiB | app/demo |
+| **email-render** | `email:template@0.1.0` | kv:store | — | 81 KiB | ✓ |
+| **event-bus** | `event:bus@0.1.0` | kv:atomics, kv:store | — | 87 KiB | ✓ |
+| **feature-flags** | `featureflags:guard@0.1.0` | config/store, kv:store | — | 77 KiB | ✓ |
 | **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 142 KiB | ✓ |
-| **geo** | `geo:resolve@0.1.0` | pure compute | — | 65 KiB | ✓ |
-| **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 78 KiB | ✓ |
-| **id-generate** | `id:generate@0.1.0` | pure compute | — | 56 KiB | ✓ |
+| **geo** | `geo:resolve@0.1.0` | pure compute | — | 63 KiB | ✓ |
+| **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 77 KiB | ✓ |
+| **id-generate** | `id:generate@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 81 KiB | ✓ |
-| **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 128 KiB | ✓ |
-| **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 76 KiB | ✓ |
+| **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 126 KiB | ✓ |
+| **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 158 KiB | app/demo |
+| **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 74 KiB | ✓ |
 | **lock-mutex** | `lock:mutex@0.1.0` | kv:atomics, kv:store | — | 77 KiB | ✓ |
-| **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 69 KiB | app/demo |
-| **markdown** | `md:render@0.1.0` | pure compute | — | 85 KiB | ✓ |
-| **money** | `money:amount@0.1.0` | pure compute | — | 61 KiB | ✓ |
-| **notify-dispatch** | `notify:dispatch@0.1.0` | config/store, http/outgoing-handler | — | 92 KiB | ✓ |
-| **openai-provider** | `openai:provider@0.1.0` | config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed` | 176 KiB | ✓ |
+| **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 68 KiB | app/demo |
+| **markdown** | `md:render@0.1.0` | pure compute | — | 83 KiB | ✓ |
+| **money** | `money:amount@0.1.0` | pure compute | — | 59 KiB | ✓ |
+| **notify-dispatch** | `notify:dispatch@0.1.0` | config/store, http/outgoing-handler | — | 91 KiB | ✓ |
+| **openai-provider** | `openai:provider@0.1.0` | config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed` | 175 KiB | ✓ |
 | **otp** | `otp:totp@0.1.0` | pure compute | — | 83 KiB | ✓ |
 | **outbox** | `outbox:dispatch@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `base-backoff` | 92 KiB | ✓ |
-| **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 75 KiB | ✓ |
-| **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 78 KiB | ✓ |
+| **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 76 KiB | ✓ |
+| **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 165 KiB | ✓ |
-| **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 70 KiB | ✓ |
+| **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 69 KiB | ✓ |
 | **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 69 KiB | ✓ |
-| **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 180 KiB | ✓ |
+| **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
 | **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 91 KiB | ✓ |
 | **search-index** | `search:index@0.1.0` | kv:store | — | 98 KiB | ✓ |
-| **secrets-vault** | `secrets:vault@0.1.0` | config/store, kv:store | `master-key` | 95 KiB | ✓ |
-| **session-store** | `session:store@0.1.0` | config/store, kv:store | `default-ttl` | 83 KiB | ✓ |
-| **slug** | `slug:generate@0.1.0` | pure compute | — | 86 KiB | ✓ |
-| **static-assets** | `ui:assets@0.1.0` | pure compute | — | 650 KiB | ✓ |
+| **secrets-vault** | `secrets:vault@0.1.0` | config/store, kv:store | `master-key` | 96 KiB | ✓ |
+| **session-store** | `session:store@0.1.0` | config/store, kv:store | `default-ttl` | 84 KiB | ✓ |
+| **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
+| **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
+| **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 78 KiB | ✓ |
-| **validate** | `validate:schema@0.1.0` | pure compute | — | 115 KiB | ✓ |
-| **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — | 289 KiB | app/demo |
-| **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 72 KiB | ✓ |
-| **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 64 KiB | ✓ |
+| **validate** | `validate:schema@0.1.0` | pure compute | — | 113 KiB | ✓ |
+| **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — | 287 KiB | app/demo |
+| **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 70 KiB | ✓ |
+| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 180 KiB | app/demo |
+| **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 62 KiB | ✓ |
 
 ## Descriptions
 
 - **ai-inference** — `ai:assist` — domain-level AI verbs over a provider-agnostic LLM
 - **audit-log** — `audit-log` — reference implementation of `audit:log`
 - **bench-suite** — `bench-suite` — the HTTP overhead ladder (see wit/bench.wit)
+- **bench-suite-p3** — `bench-suite-p3` — the compute rungs of the HTTP overhead ladder on WASI p3
+- **billing-ledger** — ledger:app — billing ledger over composed capability contracts
 - **blob-store** — `blob-store` — reference implementation of `blob:store`
 - **cache** — `cache` — reference implementation of `cache:store`
 - **cache-backing** — `cache-backing` — exports cache:store's `source` + `sink` over wasi:keyvalue
 - **config-store** — `config-store` — reference implementation of `config:store`
 - **csv** — `csv` — reference implementation of `csv:stream/codec`
+- **dev-portal** — portal:app — developer portal / API-key service over composed contracts
 - **email-render** — `email-render` — reference implementation of `email:template`
 - **event-bus** — `event-bus` — reference implementation of `event:bus`
 - **feature-flags** — `feature-flags` — reference implementation of `featureflags:guard`
@@ -71,6 +80,7 @@ capabilities, so anything marked reusable drops into another app via
 - **id-generate** — `id-generate` — reference implementation of `id:generate/generator`
 - **idempotency-guard** — `idempotency-guard` — reference implementation of `idempotency:guard`
 - **jsonpatch** — `jsonpatch` — reference implementation of `json:patch`
+- **link-shortener** — shortlink:app — link shortener over composed capability contracts
 - **llm-inference** — `llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`
 - **lock-mutex** — `lock-mutex` — reference implementation of `lock:mutex`
 - **login-app** — `login-app` — a consumer component that composes three universal
@@ -92,8 +102,10 @@ capabilities, so anything marked reusable drops into another app via
 - **session-store** — `session-store` — reference implementation of `session:store`
 - **slug** — `slug` — reference implementation of `slug:generate`
 - **static-assets** — `static-assets` — reference implementation of `static:assets`
+- **status-page** — status:app — uptime monitor over composed capability contracts
 - **upload-policy** — `upload-policy` — reference implementation of `upload:policy`
 - **validate** — `validate` — reference implementation of `validate:schema`
 - **vet-domain** — `vet-domain` — the vet-clinic domain as a WIT HTTP component (FULL PARITY)
 - **webhook-ingest** — `webhook-ingest` — reference implementation of `webhook:ingest`
+- **webhook-relay** — relay:app — webhook relay over composed capability contracts
 - **webhook-sign** — `webhook-sign` — reference implementation of `webhook:sign`

@@ -101,6 +101,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "billing-ledger"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -946,6 +955,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "status-page"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1023,6 +1041,15 @@ version = "0.1.0"
 dependencies = [
  "hmac",
  "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "webhook-relay"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
