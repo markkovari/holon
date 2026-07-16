@@ -42,6 +42,8 @@ ledger_wasm := rel / "billing_ledger.wasm"
 ledger_composed := "components/target/billing_ledger.composed.wasm"
 statuspage_wasm := rel / "status_page.wasm"
 statuspage_composed := "components/target/status_page.composed.wasm"
+helpdesk_wasm := rel / "helpdesk_domain.wasm"
+helpdesk_composed := "components/target/helpdesk_domain.composed.wasm"
 
 # List available recipes.
 default:
@@ -80,6 +82,19 @@ compose-vet: compose
       --plug {{staticassets_wasm}} \
       -o {{vet_composed}}
     @echo "composed vet-domain (+ auth-guard + records + validate + search + ui) -> {{vet_composed}}"
+
+# Compose helpdesk-domain (HELPDESK.md rung 1) with every capability it
+# imports: the composed auth-guard (auth:identity), records:store,
+# fsm:workflow, id:generate, md:render. Remaining imports are generic WASI.
+compose-helpdesk: compose
+    wac plug {{helpdesk_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/fsm_workflow.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      --plug {{rel}}/markdown.wasm \
+      -o {{helpdesk_composed}}
+    @echo "composed helpdesk-domain (+ auth-guard + records + fsm + ids + md) -> {{helpdesk_composed}}"
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,
@@ -154,6 +169,14 @@ host-redis: compose-vet-full
     cd host && cargo run --release -- --component ../{{vet_full_composed}} \
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
       --kv redis --redis-url redis://127.0.0.1:6379
+
+# Run the helpdesk app (HELPDESK.md rung 1) on the native host, persisted to
+# NATS JetStream KV. Same bytes the jco example serves — different host.
+host-helpdesk: compose-helpdesk
+    cd host && VET_TENANT=helpdesk cargo run --release --bin vet-host -- \
+      --component ../{{helpdesk_composed}} --addr 0.0.0.0:3007 \
+      --static-dir ../examples/jco-helpdesk/public \
+      --kv nats --nats-url 127.0.0.1:4222
 
 # Same, persisted to NATS JetStream KV (:4222 by default).
 host-nats: compose-vet-full

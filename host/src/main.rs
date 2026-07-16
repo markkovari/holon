@@ -422,7 +422,7 @@ async fn main() -> Result<()> {
 
 /// API route prefixes that must go to the wasm component, never to static files.
 const API_PREFIXES: &[&str] = &[
-    "/register", "/login", "/me", "/auth", "/pets", "/appointments", "/admin", "/i18n",
+    "/register", "/login", "/me", "/auth", "/api", "/pets", "/appointments", "/admin", "/i18n",
 ];
 
 /// Serve a static file from `dir` for a non-API GET, with an index.html SPA

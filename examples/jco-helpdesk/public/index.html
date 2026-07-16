@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>helpdesk</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1a202c; --muted: #64748b;
+    --line: #e2e8f0; --accent: #4f46e5; --accent-ink: #ffffff; --danger: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --ink: #e5e9f0; --muted: #8b95a7;
+      --line: #2a2f3a; --accent: #818cf8; --accent-ink: #0f1115;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: .75rem; padding: .7rem 1.2rem; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1.05rem; margin: 0; }
+  header .who { margin-left: auto; color: var(--muted); font-size: .85rem; }
+  main { max-width: 1080px; margin: 1.2rem auto; padding: 0 1rem; display: grid; gap: 1rem; grid-template-columns: 340px 1fr; align-items: start; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1rem; }
+  h2 { font-size: .95rem; margin: 0 0 .6rem; }
+  input, textarea, select { width: 100%; padding: .5rem .6rem; margin: .2rem 0 .6rem; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
+  textarea { min-height: 70px; resize: vertical; }
+  button { padding: .45rem .9rem; border: 0; border-radius: 7px; background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  .ticket { padding: .55rem .6rem; border: 1px solid var(--line); border-radius: 8px; margin-bottom: .5rem; cursor: pointer; }
+  .ticket:hover { border-color: var(--accent); }
+  .ticket .sub { font-weight: 600; }
+  .ticket .meta { font-size: .78rem; color: var(--muted); }
+  .badge { display: inline-block; padding: .05rem .5rem; border-radius: 99px; font-size: .72rem; font-weight: 700; border: 1px solid var(--line); }
+  .st-new { color: #b45309; } .st-open { color: #1d4ed8; } .st-pending { color: #7c3aed; }
+  .st-solved { color: #15803d; } .st-closed { color: var(--muted); }
+  .pr-urgent, .pr-high { color: var(--danger); }
+  .msg { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; margin: .6rem 0; }
+  .msg.internal { border-style: dashed; opacity: .85; }
+  .msg .from { font-size: .78rem; color: var(--muted); margin-bottom: .25rem; }
+  .msg .body p { margin: .3rem 0; }
+  .error { color: var(--danger); font-size: .85rem; min-height: 1.2em; }
+  .hint { color: var(--muted); font-size: .8rem; }
+  label.inline { display: inline-flex; gap: .35rem; align-items: center; font-size: .85rem; color: var(--muted); }
+  label.inline input { width: auto; margin: 0; }
+  #history { font-size: .8rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎫 helpdesk <span class="hint">— one wasm component, native host</span></h1>
+  <span class="who" id="who"></span>
+  <button class="ghost" id="logout" hidden>logout</button>
+</header>
+
+<main>
+  <div id="left">
+    <div class="panel" id="authPanel">
+      <h2 id="authTitle">Sign in</h2>
+      <input id="email" placeholder="email" autocomplete="username">
+      <input id="password" type="password" placeholder="password (8+ chars)" autocomplete="current-password">
+      <select id="role">
+        <option value="requester">requester</option>
+        <option value="agent">agent</option>
+        <option value="admin">admin</option>
+      </select>
+      <div class="row">
+        <button id="loginBtn">Login</button>
+        <button class="ghost" id="registerBtn">Register</button>
+      </div>
+      <div class="error" id="authError"></div>
+    </div>
+
+    <div class="panel" id="newTicketPanel" hidden>
+      <h2>New ticket</h2>
+      <input id="ntSubject" placeholder="subject">
+      <textarea id="ntBody" placeholder="describe the problem (markdown ok)"></textarea>
+      <select id="ntPriority">
+        <option>low</option><option selected>normal</option><option>high</option><option>urgent</option>
+      </select>
+      <button id="ntCreate">Create</button>
+      <div class="error" id="ntError"></div>
+    </div>
+
+    <div class="panel" id="listPanel" hidden>
+      <div class="row"><h2 style="margin:0">Tickets</h2><button class="ghost" id="refresh" style="margin-left:auto">↻</button></div>
+      <div id="tickets"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="detailPanel" hidden>
+    <div class="row">
+      <h2 id="dTitle" style="margin:0"></h2>
+      <span class="badge" id="dStatus"></span>
+      <span class="badge" id="dPriority"></span>
+      <span class="hint" id="dAssignee" style="margin-left:auto"></span>
+    </div>
+    <div id="thread"></div>
+    <textarea id="reply" placeholder="reply (markdown ok)"></textarea>
+    <div class="row">
+      <button id="send">Send</button>
+      <label class="inline" id="internalWrap" hidden><input type="checkbox" id="internal"> internal note</label>
+      <span id="stateBtns" class="row" style="margin-left:auto"></span>
+    </div>
+    <div class="error" id="dError"></div>
+    <div id="history"></div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem("hd_token") || "";
+let me = null;            // {subject, roles}
+let current = null;       // open ticket id
+const AGENT_EVENTS = ["triage", "solve", "close", "reopen"];
+
+async function api(path, opts = {}) {
+  const headers = { "content-type": "application/json", ...(opts.headers || {}) };
+  if (token) headers.authorization = `Bearer ${token}`;
+  const r = await fetch(path, { ...opts, headers });
+  if (r.status === 204) return {};
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+function setView() {
+  const authed = !!me;
+  $("authPanel").hidden = authed;
+  $("newTicketPanel").hidden = !authed;
+  $("listPanel").hidden = !authed;
+  $("logout").hidden = !authed;
+  $("who").textContent = authed ? `${me.subject.slice(0, 12)}… · ${me.roles.join(",") || "requester"}` : "";
+  $("internalWrap").hidden = !isAgent();
+  if (!authed) $("detailPanel").hidden = true;
+}
+const isAgent = () => me && me.roles.some((r) => r === "agent" || r === "admin");
+
+async function boot() {
+  if (!token) return setView();
+  try { me = await api("/auth/me"); } catch { token = ""; localStorage.removeItem("hd_token"); }
+  setView();
+  if (me) loadTickets();
+}
+
+$("loginBtn").onclick = () => auth("/auth/login");
+$("registerBtn").onclick = () => auth("/auth/register", true);
+async function auth(path, thenLogin = false) {
+  $("authError").textContent = "";
+  const body = { email: $("email").value.trim(), password: $("password").value };
+  if (thenLogin) body.role = $("role").value;
+  try {
+    if (thenLogin) { await api(path, { method: "POST", body: JSON.stringify(body) }); return auth("/auth/login"); }
+    const t = await api(path, { method: "POST", body: JSON.stringify(body) });
+    token = t.access_token; localStorage.setItem("hd_token", token);
+    me = await api("/auth/me");
+    setView(); loadTickets();
+  } catch (e) { $("authError").textContent = e.message; }
+}
+$("logout").onclick = async () => {
+  try { await api("/auth/logout", { method: "POST" }); } catch {}
+  token = ""; me = null; current = null; localStorage.removeItem("hd_token"); setView();
+};
+
+$("ntCreate").onclick = async () => {
+  $("ntError").textContent = "";
+  try {
+    const t = await api("/api/tickets", { method: "POST", body: JSON.stringify({
+      subject: $("ntSubject").value.trim(), body: $("ntBody").value, priority: $("ntPriority").value }) });
+    $("ntSubject").value = ""; $("ntBody").value = "";
+    await loadTickets(); open(t.id);
+  } catch (e) { $("ntError").textContent = e.message; }
+};
+
+$("refresh").onclick = loadTickets;
+async function loadTickets() {
+  const { tickets } = await api("/api/tickets");
+  const el = $("tickets");
+  el.innerHTML = "";
+  if (!tickets.length) el.innerHTML = '<div class="hint">no tickets yet</div>';
+  for (const t of tickets.slice().reverse()) {
+    const d = document.createElement("div");
+    d.className = "ticket";
+    d.innerHTML = `<div class="sub"></div>
+      <div class="meta">${t.ref} · <span class="badge st-${t.status}">${t.status}</span>
+      <span class="badge pr-${t.priority}">${t.priority}</span></div>`;
+    d.querySelector(".sub").textContent = t.subject;
+    d.onclick = () => open(t.id);
+    el.appendChild(d);
+  }
+}
+
+async function open(id) {
+  current = id;
+  const t = await api(`/api/tickets/${id}`);
+  $("detailPanel").hidden = false;
+  $("dTitle").textContent = `${t.ref} — ${t.subject}`;
+  $("dStatus").textContent = t.status; $("dStatus").className = `badge st-${t.status}`;
+  $("dPriority").textContent = t.priority; $("dPriority").className = `badge pr-${t.priority}`;
+  $("dAssignee").textContent = t.assignee ? `assignee: ${String(t.assignee).slice(0, 12)}…` : "unassigned";
+  const th = $("thread");
+  th.innerHTML = "";
+  for (const m of t.messages) {
+    const d = document.createElement("div");
+    d.className = `msg ${m.kind}`;
+    const from = document.createElement("div");
+    from.className = "from";
+    from.textContent = `${m.author.slice(0, 12)}… · ${m.kind} · ${new Date(m.created * 1000).toLocaleString()}`;
+    const body = document.createElement("div");
+    body.className = "body";
+    body.innerHTML = m.html; // sanitized server-side by md:render
+    d.append(from, body);
+    th.appendChild(d);
+  }
+  const sb = $("stateBtns");
+  sb.innerHTML = "";
+  if (isAgent()) {
+    for (const ev of (t.allowed_events || []).filter((e) => AGENT_EVENTS.includes(e))) {
+      const b = document.createElement("button");
+      b.className = "ghost"; b.textContent = ev;
+      b.onclick = async () => { await api(`/api/tickets/${id}/state`, { method: "POST", body: JSON.stringify({ event: ev }) }); refresh(); };
+      sb.appendChild(b);
+    }
+  }
+  const h = await api(`/api/tickets/${id}/history`);
+  $("history").textContent = h.history.map((e) => `${e.from}→${e.to} (${e.event})`).join("  ·  ") || "no transitions yet";
+}
+
+$("send").onclick = async () => {
+  $("dError").textContent = "";
+  try {
+    await api(`/api/tickets/${current}/messages`, { method: "POST", body: JSON.stringify({
+      body: $("reply").value, internal: $("internal").checked }) });
+    $("reply").value = ""; $("internal").checked = false;
+    refresh();
+  } catch (e) { $("dError").textContent = e.message; }
+};
+
+function refresh() { loadTickets(); if (current) open(current); }
+boot();
+</script>
+</body>
+</html>

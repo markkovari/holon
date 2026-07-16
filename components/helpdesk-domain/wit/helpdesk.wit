@@ -1,0 +1,44 @@
+// helpdesk:app — a multi-tenant support/ticketing SaaS as a WIT HTTP component.
+//
+// Rung 1 of HELPDESK.md: the core ticket loop. Requesters open tickets and
+// reply; agents triage, reply (public or internal note), assign, and drive the
+// lifecycle. The lifecycle is not if-statements — it is a declarative
+// fsm:workflow machine (new -> open -> pending -> solved -> closed, reopen on
+// requester reply), so every state move is validated and history is recorded.
+//
+// Message bodies are Markdown, rendered to sanitized HTML at read time
+// (md:render), so stored data is source-of-truth and XSS is the renderer's
+// problem, solved once.
+//
+// Routes:
+//   POST /auth/register {email,password,role?}   role: requester|agent|admin
+//   POST /auth/login    GET /auth/me    POST /auth/logout
+//   POST /api/tickets                   {subject, body, priority?}
+//   GET  /api/tickets                   agents: all; requesters: own
+//   GET  /api/tickets/{id}              + messages (internal hidden from requesters)
+//   POST /api/tickets/{id}/messages     {body, internal?}   drives the FSM
+//   POST /api/tickets/{id}/state        {event}             agent-only
+//   POST /api/tickets/{id}/assign       {subject}           agent-only
+//   GET  /api/tickets/{id}/history      the FSM audit trail
+package helpdesk:app@0.1.0;
+
+/// The helpdesk HTTP backend, composed from capability contracts.
+world helpdesk-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // login/register + sessions + roles — the composed auth-guard.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // tickets + messages (indexed by requester/status/ticket).
+    import records:store/store@0.1.0;
+    // the declarative ticket lifecycle.
+    import fsm:workflow/engine@0.1.0;
+    // human-friendly public refs (HD-XXXXXX).
+    import id:generate/generator@0.1.0;
+    // safe Markdown -> HTML for message bodies.
+    import md:render/renderer@0.1.0;
+}
