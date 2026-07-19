@@ -58,7 +58,12 @@ fn safe(s: &str) -> String {
 }
 
 fn seq_key(topic: &str) -> String {
-    format!("eb_seq_{}", safe(topic))
+    // Dotted on purpose: on a NATS-KV-backed host every write to this key is
+    // broadcast on subject `$KV.<bucket>.eb.seq.<topic>`, so a push relay
+    // (components/event-pusher) can subscribe to `$KV.<bucket>.eb.seq.>` and
+    // get server-side-filtered publish notifications — without being woken by
+    // every other KV write in the bucket (which would feed back on itself).
+    format!("eb.seq.{}", safe(topic))
 }
 fn ev_key(topic: &str, seq: u64) -> String {
     // zero-pad so lexical order matches numeric order (not strictly needed —

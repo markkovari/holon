@@ -214,6 +214,7 @@ compose-eshop: compose compose-eshop-catalog
     wac plug {{rel}}/eshop_payment.wasm --plug {{rel}}/event_bus.wasm -o {{eshoppayment_composed}}
     wac plug {{rel}}/accounts_app.wasm --plug {{guard_composed}} -o {{eshopidentity_composed}}
     wac plug {{rel}}/eshop_gateway.wasm --plug {{rel}}/proxy_route.wasm -o {{eshopgateway_composed}}
+    wac plug {{rel}}/event_pusher.wasm --plug {{rel}}/proxy_route.wasm -o components/target/event_pusher.composed.wasm
     @echo "composed eshop services -> components/target/eshop_*.composed.wasm"
 
 # Run the whole eshop (identity/catalog/basket/ordering/payment + gateway with
@@ -231,11 +232,12 @@ eshop_reg := env_var_or_default("ESHOP_REG", "localhost:30500")
 # Then open http://gateway.eshop.svc.cluster.local (orbstack svc DNS).
 k8s-eshop: compose-eshop
     wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-identity:0.1.1 {{eshopidentity_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-catalog:0.1.2 {{eshopcatalog_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-basket:0.1.1 {{eshopbasket_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-ordering:0.1.2 {{eshopordering_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-payment:0.1.1 {{eshoppayment_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-catalog:0.1.3 {{eshopcatalog_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-basket:0.1.2 {{eshopbasket_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-ordering:0.1.3 {{eshopordering_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-payment:0.1.2 {{eshoppayment_composed}}
     wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-gateway:0.1.3 {{eshopgateway_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/event-pusher:0.1.0 components/target/event_pusher.composed.wasm
     kubectl apply -f examples/eshop/k8s/registry.yaml -f examples/eshop/k8s/eshop.yaml
 
 # Compose the idempotency-guard into webhook-ingest, satisfying its

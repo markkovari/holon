@@ -50,9 +50,14 @@ catalog ──OrderStockConfirmed──▶ ordering ──…ToValidated──�
 payment ──OrderPaymentSucceeded──▶ ordering ──…ToPaid──▶ catalog (stock −)
 ```
 
-`event:bus` is pull-based, so consumers drain on `POST /internal/pump`: driven
-by the open storefront page (every 2s), the `eshop-pump` Deployment on k8s, or
-the smoke script.
+`event:bus` is pull-based, so consumers drain on `POST /internal/pump`. On k8s
+the drains are **push-driven**: `event-pusher` (`event:push@0.1.0`) exports the
+`wasmcloud:messaging` handler, subscribed to the bus seq keys' JetStream-KV
+change subjects (`$KV.default.eb.seq.>`) — every publish pokes the consumers
+within ~100ms. The `eshop-pump` Deployment remains as a 10s sweep for what no
+KV change announces (grace-period expiry) and for notifications the
+at-most-once push drops. The open storefront page and the smoke script also
+pump (needed on the native lane, which has no messaging plugin).
 
 ## Run it
 

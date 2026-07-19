@@ -105,7 +105,7 @@ spec:
           interfaces: [store]
       components:
         - name: catalog
-          image: registry.eshop.svc.cluster.local:5000/eshop-catalog:0.1.2
+          image: registry.eshop.svc.cluster.local:5000/eshop-catalog:0.1.3
           poolSize: 8
           maxInvocations: 200
 ---
@@ -152,7 +152,7 @@ spec:
           interfaces: [store]
       components:
         - name: basket
-          image: registry.eshop.svc.cluster.local:5000/eshop-basket:0.1.1
+          image: registry.eshop.svc.cluster.local:5000/eshop-basket:0.1.2
           poolSize: 8
           maxInvocations: 200
           localResources:
@@ -203,7 +203,7 @@ spec:
           interfaces: [store]
       components:
         - name: ordering
-          image: registry.eshop.svc.cluster.local:5000/eshop-ordering:0.1.2
+          image: registry.eshop.svc.cluster.local:5000/eshop-ordering:0.1.3
           poolSize: 8
           maxInvocations: 200
           localResources:
@@ -250,7 +250,7 @@ spec:
           interfaces: [store]
       components:
         - name: payment
-          image: registry.eshop.svc.cluster.local:5000/eshop-payment:0.1.1
+          image: registry.eshop.svc.cluster.local:5000/eshop-payment:0.1.2
           poolSize: 8
           maxInvocations: 200
           localResources:
@@ -311,9 +311,46 @@ metadata:
 spec:
   ports: [{ name: http, port: 80, targetPort: 9191 }]
 ---
-# The choreography driver: event:bus is pull-based, so something must tick.
-# One curl loop against the gateway's fan-out pump — the Dapr-subscription
-# push stand-in. ponytail: a curl loop; sched:timer-driven drains if it matters.
+# PUSH delivery (the hot path): event-pusher exports the wasmcloud:messaging
+# handler; the host subscribes it to the JetStream-KV change subjects of the
+# bus's dotted seq keys, so every bus.publish invokes it within milliseconds
+# and it pokes the consumer drains via proxy:route. Core-NATS at-most-once —
+# the sweep Deployment below is the completeness backstop.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: event-pusher
+  namespace: eshop
+spec:
+  replicas: 1
+  template:
+    spec:
+      hostInterfaces:
+        - namespace: wasmcloud
+          package: messaging
+          interfaces: [handler]
+          config:
+            subscriptions: "$KV.default.eb.seq.>"
+        - namespace: wasi
+          package: http
+          interfaces: [outgoing-handler]
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: event-pusher
+          image: registry.eshop.svc.cluster.local:5000/event-pusher:0.1.0
+          poolSize: 4
+          maxInvocations: 64
+          localResources:
+            allowedHosts: ["*.eshop.svc.cluster.local"]
+            config:
+              routes: "/pump/ordering=http://ordering.eshop.svc.cluster.local/internal/pump/,/pump/catalog=http://catalog.eshop.svc.cluster.local/internal/pump/,/pump/payment=http://payment.eshop.svc.cluster.local/internal/pump/,/pump/basket=http://basket.eshop.svc.cluster.local/internal/pump/"
+              push-targets: "/pump/ordering,/pump/catalog,/pump/payment,/pump/basket"
+---
+# The SWEEP (the completeness path): a slow tick covering what no KV change
+# announces — grace-period expiry — plus any notification the at-most-once
+# push dropped. Was the sole (2s) driver before event-pusher existed.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -332,7 +369,7 @@ spec:
           image: curlimages/curl:8.10.1
           command: ["/bin/sh", "-c"]
           args:
-            - while true; do curl -s -m 10 -X POST http://gateway.eshop.svc.cluster.local/internal/pump || true; sleep 2; done
+            - while true; do curl -s -m 10 -X POST http://gateway.eshop.svc.cluster.local/internal/pump || true; sleep 10; done
           resources:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { memory: 32Mi }

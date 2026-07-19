@@ -55,6 +55,7 @@ comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
 | `sched:timer` | durable timer / scheduler (one-shot + recurring) | kv, clocks |
 | `lock:mutex` | distributed advisory lease + fencing token | kv, clocks, random |
 | `proxy:route` | config-driven reverse-proxy forwarding (route table + the outgoing round trip) | http, config |
+| `event:push` | push delivery for `event:bus`: NATS-KV change notifications drive consumer drains | wasmcloud:messaging (host), composes proxy:route |
 
 ### Eventing & integration
 | package | does | imports / composes |

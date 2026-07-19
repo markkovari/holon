@@ -93,10 +93,20 @@ counting Dapr component yaml, IdentityServer config, and Envoy config.
 
 1. **Push delivery.** `event:bus` is pull-only, so Dapr's push subscriptions
    became `/internal/pump` endpoints + a curl-loop Deployment + the SPA
-   heartbeat. It works, but it's the one place the recreation feels hand-
-   cranked, and it caps choreography throughput (see above). Gap: a
-   `wasmcloud:messaging`-backed push variant of `event:bus`, or a host-level
-   scheduler that invokes a component export on a timer.
+   heartbeat. **RESOLVED** (follow-up PR): `components/event-pusher`
+   (`event:push@0.1.0`) exports the `wasmcloud:messaging` handler; the bus's
+   seq keys became dotted (`eb.seq.<topic>`) so their JetStream-KV change
+   subjects are server-side filterable, the host subscribes the pusher to
+   `$KV.default.eb.seq.>`, and each publish pokes the consumer drains through
+   proxy:route. Measured: order visible as `submitted` **0.1s** after
+   checkout (was up to a full poll interval); post-grace the whole
+   stock→payment→paid chain cascades in ~0.2s; end-to-end 10.2s where 10s is
+   the deliberate grace window. Push is core-NATS at-most-once, so the pump
+   Deployment stays as a **10s sweep** — it drives time-based transitions
+   (grace expiry) and catches dropped notifications. The bus stays pure-WASI;
+   push is an optional deploy-time add-on. Ops caveat: resetting the bus log
+   (purging `eb*` keys) must also purge `id_*` idempotency records — event
+   ids restart and would replay as "already handled".
 2. **The atomics representation trap** (now fixed in event-bus): wasi:keyvalue
    doesn't pin how `atomics.increment` stores its counter — wash-runtime's
    NATS plugin writes 8-byte big-endian, the native host writes decimal

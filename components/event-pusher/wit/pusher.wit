@@ -1,0 +1,29 @@
+// event:push — push delivery for the pull-based event:bus.
+//
+// The bus is deliberately pull-only (pure WASI, runs anywhere); its one
+// ergonomic gap vs Dapr pub/sub is that something must drive consumer polls.
+// This component closes the gap on hosts with a wasmcloud:messaging plugin:
+// every `bus.publish` bumps the topic's dotted seq key, the NATS-KV backend
+// broadcasts that change on `$KV.<bucket>.eb.seq.<topic>`, and the host
+// invokes this component's handler for each one — which pokes the consumer
+// services' drain endpoints over proxy:route. Publish -> consumers now flows
+// in milliseconds instead of a poll interval.
+//
+// Deploy-time config:
+//   push-targets   comma-separated paths POSTed on any bus activity,
+//                  resolved through proxy:route's `routes` table
+//                  (e.g. "/pump/ordering,/pump/catalog").
+//
+// This is the LATENCY path only. Delivery here is core-NATS (at-most-once):
+// a slow/restarting relay drops notifications, so keep a slow timer-driven
+// sweep as the completeness backstop (it also drives time-based transitions
+// like grace-period expiry, which no KV change announces).
+package event:push@0.1.0;
+
+/// Bus-activity relay: KV-change notification in, drain pokes out.
+world event-pusher {
+    export wasmcloud:messaging/handler@0.2.0;
+
+    import proxy:route/router@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

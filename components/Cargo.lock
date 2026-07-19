@@ -369,6 +369,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "event-pusher"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "feature-flags"
 version = "0.1.0"
 dependencies = [
