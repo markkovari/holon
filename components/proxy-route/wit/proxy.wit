@@ -1,0 +1,49 @@
+// proxy:route — config-driven reverse-proxy forwarding as a capability.
+//
+// Every edge component reimplements the same two things: a prefix -> upstream
+// route table, and the verbose wasi:http outgoing round trip (build request,
+// write body, subscribe, block, drain response). This contract owns both; the
+// consumer keeps only its edge concerns (which headers to pass, fallbacks,
+// auth). Extracted from the eshop-gateway (ESHOP.md), which shrank to glue.
+//
+// The route TABLE is wasi:config key `routes`: comma-separated
+// `prefix=upstream` entries, longest prefix wins. Strip convention: an
+// upstream ending in `/` strips the matched prefix before appending the
+// remainder ("/api/identity=http://idsvc/" forwards /api/identity/login to
+// http://idsvc/login); otherwise the original path is forwarded verbatim.
+package proxy:route@0.1.0;
+
+/// Prefix-routed HTTP forwarding over the host's outgoing handler.
+interface router {
+    /// A forwarded upstream response.
+    record upstream-response {
+        status: u16,
+        content-type: string,
+        body: list<u8>,
+    }
+
+    /// Why a forward failed.
+    variant proxy-error {
+        /// No route prefix matched the path.
+        no-route,
+        /// The upstream could not be reached (or the request not built).
+        upstream-unreachable(string),
+    }
+
+    /// Longest-prefix match of `path` against the route table; returns the
+    /// resolved target URL (strip convention applied) without forwarding.
+    resolve: func(path: string) -> option<string>;
+
+    /// Resolve `path-with-query` and forward `method` + `headers` + `body`,
+    /// returning the upstream's status / content-type / body.
+    forward: func(method: string, path-with-query: string,
+                  headers: list<tuple<string, string>>, body: list<u8>)
+        -> result<upstream-response, proxy-error>;
+}
+
+/// What `proxy-route` provides: the router, over outgoing HTTP + config.
+world proxy-route {
+    export router;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

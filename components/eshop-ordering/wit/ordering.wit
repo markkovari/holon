@@ -1,0 +1,49 @@
+// eshop:ordering — the eShopOnDapr Ordering.API as a WIT HTTP component.
+//
+// The order lifecycle is eShopOnDapr's, verbatim states and integration
+// events — but where the original models each order as a Dapr ACTOR (with a
+// reminder for the grace period), here it is a declarative fsm:workflow
+// machine per order plus a pump-driven grace sweep: the FSM validates every
+// transition and keeps the history; the record mirrors the state for
+// indexed listing.
+//
+//   submitted --grace-expired--> awaitingStockValidation
+//     --stock-confirmed--> validated --payment-succeeded--> paid --ship--> shipped
+//     --stock-rejected/payment-failed/cancel--> cancelled
+//
+// Consumes:  UserCheckoutAccepted, OrderStockConfirmed, OrderStockRejected,
+//            OrderPaymentSucceeded, OrderPaymentFailed
+// Publishes: OrderStarted, OrderStatusChangedTo{Submitted,AwaitingStockValidation,
+//            Validated,Paid,Shipped,Cancelled}
+//
+// Routes:
+//   GET  /api/orders               caller's orders (admin: all)
+//   GET  /api/orders/{id}          + FSM history
+//   POST /api/orders/{id}/cancel   inside the grace window (pre-paid states)
+//   POST /api/orders/{id}/ship     admin-only, from paid
+//   POST /internal/pump            drain consumer group + grace sweep
+package eshop:ordering@0.1.0;
+
+/// The ordering HTTP backend, composed from capability contracts.
+world ordering-service {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // token introspection against the shared session bucket.
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // order records (indexed by buyer + status).
+    import records:store/store@0.1.0;
+    // the declarative order lifecycle (the Dapr-actor stand-in).
+    import fsm:workflow/engine@0.1.0;
+    // integration events (Dapr pub/sub stand-in).
+    import event:bus/bus@0.1.0;
+    // at-least-once dedup for order creation: a duplicate UserCheckoutAccepted
+    // delivery would mint a second order (every other consumer is naturally
+    // idempotent through the FSM). Keyed on the bus event id.
+    import idempotency:guard/store@0.1.0;
+
+    // grace-period sweep needs "now"; the window is deploy-time config.
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

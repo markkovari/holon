@@ -54,6 +54,7 @@ comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
 | `event:bus` | in-app pub/sub, per-group offsets (fan-out) | kv, clocks |
 | `sched:timer` | durable timer / scheduler (one-shot + recurring) | kv, clocks |
 | `lock:mutex` | distributed advisory lease + fencing token | kv, clocks, random |
+| `proxy:route` | config-driven reverse-proxy forwarding (route table + the outgoing round trip) | http, config |
 
 ### Eventing & integration
 | package | does | imports / composes |

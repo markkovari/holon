@@ -1,0 +1,29 @@
+[package]
+name = "eshop-gateway"
+description = "eShopOnDapr Envoy gateway + storefront host as a wasm component (eshop:gateway)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "eshop:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "gateway-service"
+
+[package.metadata.component.target.dependencies]
+"proxy:route" = { path = "../proxy-route/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

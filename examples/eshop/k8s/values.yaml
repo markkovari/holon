@@ -1,0 +1,29 @@
+# runtime-operator (wasmCloud v2) values for the eshop deploy.
+# Encodes the hard-won HOST-PERF round 3-5 fixes as chart values (2.5.3 exposes
+# them all — no more kubectl patches that a helm upgrade reverts):
+#   - NATS at chart defaults (128Mi) OOM-killed under concurrent KV writes;
+#   - hostgroup 512Mi default OOMs under pooled multi-component workloads;
+#   - wasmtime pooling total-core-instances starves pooled HTTP components;
+#   - in-cluster registry is plain HTTP.
+global:
+  tls:
+    # match the verified 2.5.1 setup; the 2.5.3 cert machinery is untested here.
+    enabled: false
+runtime:
+  extraArgs: ["--allow-insecure-registries"]
+  env:
+    - name: WASMTIME_POOLING_TOTAL_CORE_INSTANCES
+      value: "8000"
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      memory: "4Gi"
+nats:
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      memory: "2Gi"

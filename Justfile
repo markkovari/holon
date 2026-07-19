@@ -44,6 +44,13 @@ statuspage_wasm := rel / "status_page.wasm"
 statuspage_composed := "components/target/status_page.composed.wasm"
 helpdesk_wasm := rel / "helpdesk_domain.wasm"
 helpdesk_composed := "components/target/helpdesk_domain.composed.wasm"
+eshopcatalog_wasm := rel / "eshop_catalog.wasm"
+eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
+eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
+eshopordering_composed := "components/target/eshop_ordering.composed.wasm"
+eshoppayment_composed := "components/target/eshop_payment.composed.wasm"
+eshopidentity_composed := "components/target/eshop_identity.composed.wasm"
+eshopgateway_composed := "components/target/eshop_gateway.composed.wasm"
 
 # List available recipes.
 default:
@@ -183,6 +190,53 @@ host-nats: compose-vet-full
     cd host && cargo run --release -- --component ../{{vet_full_composed}} \
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
       --kv nats --nats-url 127.0.0.1:4222
+
+# Compose the eshop-catalog service (ESHOP.md): eShopOnDapr's Catalog.API over
+# record-store + event-bus + idempotency-guard (at-least-once dedup for the
+# stock consumers). Output imports only generic WASI.
+compose-eshop-catalog: build
+    wac plug {{eshopcatalog_wasm}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{idempotency_wasm}} \
+      -o {{eshopcatalog_composed}}
+    @echo "composed eshop-catalog (+ records + event-bus + idempotency) -> {{eshopcatalog_composed}}"
+
+# Compose every eshop service (ESHOP.md): eShopOnDapr recreated over comp
+# contracts. identity = the existing accounts-app + composed auth-guard,
+# untouched. Each output imports only generic WASI.
+compose-eshop: compose compose-eshop-catalog
+    wac plug {{rel}}/eshop_basket.wasm --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} --plug {{rel}}/event_bus.wasm -o {{eshopbasket_composed}}
+    wac plug {{rel}}/eshop_ordering.wasm --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} --plug {{rel}}/fsm_workflow.wasm \
+      --plug {{rel}}/event_bus.wasm --plug {{idempotency_wasm}} -o {{eshopordering_composed}}
+    wac plug {{rel}}/eshop_payment.wasm --plug {{rel}}/event_bus.wasm -o {{eshoppayment_composed}}
+    wac plug {{rel}}/accounts_app.wasm --plug {{guard_composed}} -o {{eshopidentity_composed}}
+    wac plug {{rel}}/eshop_gateway.wasm --plug {{rel}}/proxy_route.wasm -o {{eshopgateway_composed}}
+    @echo "composed eshop services -> components/target/eshop_*.composed.wasm"
+
+# Run the whole eshop (identity/catalog/basket/ordering/payment + gateway with
+# the embedded storefront) on native hosts over a shared NATS at :4222.
+# Gateway/storefront: http://127.0.0.1:3100 — smoke: examples/eshop/smoke.sh
+host-eshop: compose-eshop
+    examples/eshop/run-local.sh
+
+eshop_reg := env_var_or_default("ESHOP_REG", "localhost:30500")
+
+# Deploy eshop on wasmCloud v2 / k8s: push the six service images to the
+# in-cluster registry (NodePort 30500) and apply the WorkloadDeployments.
+# Infra first (once): helm install eshop <wasmCloud>/charts/runtime-operator \
+#   -n eshop -f examples/eshop/k8s/values.yaml   (chart v2.5.2 verified)
+# Then open http://gateway.eshop.svc.cluster.local (orbstack svc DNS).
+k8s-eshop: compose-eshop
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-identity:0.1.1 {{eshopidentity_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-catalog:0.1.2 {{eshopcatalog_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-basket:0.1.1 {{eshopbasket_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-ordering:0.1.2 {{eshopordering_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-payment:0.1.1 {{eshoppayment_composed}}
+    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-gateway:0.1.3 {{eshopgateway_composed}}
+    kubectl apply -f examples/eshop/k8s/registry.yaml -f examples/eshop/k8s/eshop.yaml
 
 # Compose the idempotency-guard into webhook-ingest, satisfying its
 # `idempotency:guard/store` import. Demonstrates one component composing another.

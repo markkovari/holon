@@ -1,0 +1,29 @@
+// eshop:catalog — the eShopOnDapr Catalog.API as a WIT HTTP component.
+//
+// Brands / types / items with paging + filter browse (the storefront read
+// path), plus the stock side of the checkout choreography: when ordering
+// announces OrderStatusChangedToAwaitingStockValidation the catalog answers
+// OrderStockConfirmed/OrderStockRejected, and on OrderStatusChangedToPaid it
+// decrements the real stock. Integration event names are eShopOnDapr's,
+// verbatim; the bus replaces Dapr pub/sub.
+//
+// Routes:
+//   GET  /api/catalog/items?pageIndex&pageSize&brand&type
+//   GET  /api/catalog/items/{id}
+//   GET  /api/catalog/brands
+//   GET  /api/catalog/types
+//   POST /internal/pump      drain this service's consumer group
+package eshop:catalog@0.1.0;
+
+/// The catalog HTTP backend, composed from capability contracts.
+world catalog-service {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // items/brands/types, with brand/type secondary indexes.
+    import records:store/store@0.1.0;
+    // integration events (Dapr pub/sub stand-in).
+    import event:bus/bus@0.1.0;
+    // event:bus is at-least-once and stock decrements are not naturally
+    // idempotent (unlike ordering's FSM transitions) — dedup per order id.
+    import idempotency:guard/store@0.1.0;
+}

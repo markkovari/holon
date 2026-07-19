@@ -1,0 +1,20 @@
+// eshop:payment — the eShopOnDapr Payment.API as a WIT HTTP component.
+//
+// The original is a deliberate stub: it consumes
+// OrderStatusChangedToValidated and answers OrderPaymentSucceeded or
+// OrderPaymentFailed based on a config flag ("PaymentSucceeded" toggle).
+// Same here — the flag is wasi:config `payment-succeeds` (default true).
+//
+// Routes:
+//   POST /internal/pump    consume validated orders, publish payment results
+package eshop:payment@0.1.0;
+
+/// The payment processor, composed from capability contracts.
+world payment-service {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // integration events (Dapr pub/sub stand-in).
+    import event:bus/bus@0.1.0;
+    // the simulated-outcome toggle.
+    import wasi:config/store@0.2.0-rc.1;
+}

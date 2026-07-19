@@ -1,0 +1,338 @@
+# eShopOnDapr on wasmCloud v2 (runtime-operator, runtime.wasmcloud.dev/v1alpha1).
+#
+# One WorkloadDeployment per eShop service — the Dapr-sidecar-per-service
+# topology, recreated: every service is its own wac-composed wasm (domain +
+# capability components fused; byte-identical to what the native-host lane
+# runs) and workloads share nothing but the host's NATS-backed wasi:keyvalue
+# (bucket "default": sessions, records, and the event-bus topic log — the
+# Dapr state store + pub/sub stand-ins) and plain HTTP through the gateway.
+#
+# HTTP is the host's :9191 virtual-host router: each workload's primary
+# hostname is set on its wasi:http hostInterface; the no-selector Services are
+# endpoint-maintained by the operator. hostInterface entries are per-entry
+# ALL-match (see vet-domain-v2.yaml) — keyvalue store/atomics/batch stay
+# separate entries.
+#
+# Deploy:  just k8s-eshop   (push images + kubectl apply -f this file)
+# Try it (orbstack resolves cluster service DNS from the mac; port-forward
+# can't attach to the operator's selector-less Services — if not on orbstack,
+# port-forward the hostgroup POD on 9191 and send a Host: header):
+#          open http://gateway.eshop.svc.cluster.local  (storefront)
+#          GATEWAY=http://gateway.eshop.svc.cluster.local examples/eshop/smoke.sh
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: identity
+  namespace: eshop
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: identity
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: identity.eshop.svc.cluster.local
+        - namespace: wasi
+          package: http
+          interfaces: [outgoing-handler]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [store]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [atomics]
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: identity
+          image: registry.eshop.svc.cluster.local:5000/eshop-identity:0.1.1
+          poolSize: 8
+          maxInvocations: 200
+          localResources:
+            config:
+              default-tenant: "eshop"
+              session-ttl: "3600"
+              password-min-len: "8"
+              audit-enabled: "true"
+              max-attempts: "5"
+              lockout-window: "300"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity
+  namespace: eshop
+spec:
+  ports: [{ name: http, port: 80, targetPort: 9191 }]
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: catalog
+  namespace: eshop
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: catalog
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: catalog.eshop.svc.cluster.local
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [store]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [atomics]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [batch]
+        # idempotency-guard (composed in) reads its default-ttl from config.
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: catalog
+          image: registry.eshop.svc.cluster.local:5000/eshop-catalog:0.1.2
+          poolSize: 8
+          maxInvocations: 200
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog
+  namespace: eshop
+spec:
+  ports: [{ name: http, port: 80, targetPort: 9191 }]
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: basket
+  namespace: eshop
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: basket
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: basket.eshop.svc.cluster.local
+        - namespace: wasi
+          package: http
+          interfaces: [outgoing-handler]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [store]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [atomics]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [batch]
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: basket
+          image: registry.eshop.svc.cluster.local:5000/eshop-basket:0.1.1
+          poolSize: 8
+          maxInvocations: 200
+          localResources:
+            config:
+              default-tenant: "eshop"
+              session-ttl: "3600"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: basket
+  namespace: eshop
+spec:
+  ports: [{ name: http, port: 80, targetPort: 9191 }]
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: ordering
+  namespace: eshop
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: ordering
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: ordering.eshop.svc.cluster.local
+        - namespace: wasi
+          package: http
+          interfaces: [outgoing-handler]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [store]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [atomics]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [batch]
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: ordering
+          image: registry.eshop.svc.cluster.local:5000/eshop-ordering:0.1.2
+          poolSize: 8
+          maxInvocations: 200
+          localResources:
+            config:
+              default-tenant: "eshop"
+              session-ttl: "3600"
+              # demo-sized cancel window (the original defaults to 60s).
+              grace-period-secs: "10"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ordering
+  namespace: eshop
+spec:
+  ports: [{ name: http, port: 80, targetPort: 9191 }]
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: payment
+  namespace: eshop
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: payment
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: payment.eshop.svc.cluster.local
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [store]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [atomics]
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: payment
+          image: registry.eshop.svc.cluster.local:5000/eshop-payment:0.1.1
+          poolSize: 8
+          maxInvocations: 200
+          localResources:
+            config:
+              # flip to "false" to watch orders cancel on payment failure.
+              payment-succeeds: "true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment
+  namespace: eshop
+spec:
+  ports: [{ name: http, port: 80, targetPort: 9191 }]
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: gateway
+  namespace: eshop
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: gateway
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: gateway.eshop.svc.cluster.local
+        - namespace: wasi
+          package: http
+          interfaces: [outgoing-handler]
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: gateway
+          image: registry.eshop.svc.cluster.local:5000/eshop-gateway:0.1.3
+          poolSize: 8
+          maxInvocations: 200
+          localResources:
+            # egress is fail-closed; the proxy may only dial the sibling services.
+            allowedHosts: ["*.eshop.svc.cluster.local"]
+            config:
+              # proxy:route table — prefix=upstream, longest prefix wins;
+              # upstream ending in / strips the matched prefix.
+              routes: "/api/identity=http://identity.eshop.svc.cluster.local/,/api/catalog=http://catalog.eshop.svc.cluster.local,/api/basket=http://basket.eshop.svc.cluster.local,/api/orders=http://ordering.eshop.svc.cluster.local,/pump/ordering=http://ordering.eshop.svc.cluster.local/internal/pump/,/pump/catalog=http://catalog.eshop.svc.cluster.local/internal/pump/,/pump/payment=http://payment.eshop.svc.cluster.local/internal/pump/,/pump/basket=http://basket.eshop.svc.cluster.local/internal/pump/"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: eshop
+spec:
+  ports: [{ name: http, port: 80, targetPort: 9191 }]
+---
+# The choreography driver: event:bus is pull-based, so something must tick.
+# One curl loop against the gateway's fan-out pump — the Dapr-subscription
+# push stand-in. ponytail: a curl loop; sched:timer-driven drains if it matters.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eshop-pump
+  namespace: eshop
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: eshop-pump }
+  template:
+    metadata:
+      labels: { app: eshop-pump }
+    spec:
+      containers:
+        - name: pump
+          image: curlimages/curl:8.10.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - while true; do curl -s -m 10 -X POST http://gateway.eshop.svc.cluster.local/internal/pump || true; sleep 2; done
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }

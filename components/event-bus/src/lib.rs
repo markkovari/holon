@@ -74,10 +74,15 @@ fn open() -> Result<kv::Bucket, BusError> {
 }
 
 fn get_u64(bucket: &kv::Bucket, key: &str) -> Result<u64, BusError> {
+    // wasi:keyvalue doesn't pin the atomics counter representation: some hosts
+    // store it as a decimal string (native vet-host, jco shims), wash-runtime's
+    // NATS plugin as 8-byte big-endian. Reading the publish counter via
+    // store.get must accept both or consumers see head=0 forever.
     match bucket.get(key) {
-        Ok(Some(bytes)) => Ok(String::from_utf8(bytes)
+        Ok(Some(bytes)) => Ok(std::str::from_utf8(&bytes)
             .ok()
             .and_then(|s| s.parse().ok())
+            .or_else(|| bytes.as_slice().try_into().ok().map(u64::from_be_bytes))
             .unwrap_or(0)),
         Ok(None) => Ok(0),
         Err(e) => Err(BusError::BackendUnavailable(format!("get {key}: {e:?}"))),

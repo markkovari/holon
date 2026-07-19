@@ -288,6 +288,13 @@ fn build_config() -> HashMap<String, String> {
     c.insert("ticket-secret".into(), env("VET_UPLOAD_SECRET", "vet-upload-secret"));
     c.insert("max-page-size".into(), env("VET_PAGE_MAX", "100"));
     c.insert("cursor-secret".into(), env("VET_CURSOR_SECRET", "vet-cursor-secret"));
+    // Generic passthrough: CFG_GRACE_PERIOD_SECS=5 -> config key "grace-period-secs".
+    // Apps beyond vet-clinic (eshop &c.) get knobs without editing this list.
+    for (k, v) in std::env::vars() {
+        if let Some(name) = k.strip_prefix("CFG_") {
+            c.insert(name.to_lowercase().replace('_', "-"), v);
+        }
+    }
     c
 }
 

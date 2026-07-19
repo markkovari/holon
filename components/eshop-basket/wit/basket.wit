@@ -1,0 +1,30 @@
+// eshop:basket — the eShopOnDapr Basket.API as a WIT HTTP component.
+//
+// The per-buyer shopping basket (Dapr state store -> records:store) and the
+// checkout entry point of the choreography: POST /api/basket/checkout
+// publishes UserCheckoutAccepted (202, fire-and-forget — ordering picks it
+// up), and the basket is only cleared when ordering answers with
+// OrderStarted, exactly like the original. Auth is the composed auth-guard —
+// sessions live in the shared bucket, so tokens minted by the identity
+// service (accounts-app) introspect here.
+//
+// Routes:
+//   GET  /api/basket             the caller's basket (empty one if none)
+//   POST /api/basket             replace basket items
+//   POST /api/basket/checkout    {address+card fields} -> UserCheckoutAccepted
+//   POST /internal/pump          consume OrderStarted -> clear basket
+package eshop:basket@0.1.0;
+
+/// The basket HTTP backend, composed from capability contracts.
+world basket-service {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // token introspection against the shared session bucket.
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // one basket record per buyer.
+    import records:store/store@0.1.0;
+    // integration events (Dapr pub/sub stand-in).
+    import event:bus/bus@0.1.0;
+}

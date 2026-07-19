@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eShop on wasmCloud</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1a202c; --muted: #64748b;
+    --line: #e2e8f0; --accent: #4f46e5; --accent-ink: #ffffff; --danger: #dc2626;
+    --ok: #059669;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #171a21; --ink: #e5e9f0; --muted: #8b95a7;
+      --line: #2a2f3a; --accent: #818cf8; --accent-ink: #0f1115; --ok: #34d399;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: .75rem; padding: .7rem 1.2rem; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1.05rem; margin: 0; }
+  header .who { margin-left: auto; color: var(--muted); font-size: .85rem; }
+  main { max-width: 1160px; margin: 1.2rem auto; padding: 0 1rem; display: grid; gap: 1rem; grid-template-columns: 340px 1fr; align-items: start; }
+  @media (max-width: 840px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1rem; }
+  h2 { font-size: .95rem; margin: 0 0 .6rem; }
+  input, select { width: 100%; padding: .5rem .6rem; margin: .2rem 0 .6rem; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; }
+  button { padding: .45rem .9rem; border: 0; border-radius: 7px; background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button.danger { background: var(--danger); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .grid { display: grid; gap: .8rem; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: .8rem; display: flex; flex-direction: column; gap: .3rem; }
+  .card .name { font-weight: 600; min-height: 2.6em; }
+  .card .price { font-size: 1.05rem; }
+  .card .stock { color: var(--muted); font-size: .8rem; }
+  .row { display: flex; gap: .5rem; align-items: center; }
+  .row > * { margin: 0; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  .chip { display: inline-block; padding: .1rem .55rem; border-radius: 999px; font-size: .75rem; font-weight: 600; background: var(--line); }
+  .chip.paid, .chip.shipped { background: var(--ok); color: #fff; }
+  .chip.cancelled { background: var(--danger); color: #fff; }
+  .chip.submitted, .chip.awaitingStockValidation, .chip.validated { background: var(--accent); color: var(--accent-ink); }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  td, th { text-align: left; padding: .3rem .2rem; border-bottom: 1px solid var(--line); }
+  #toast { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: .5rem 1rem; border-radius: 8px; opacity: 0; transition: opacity .3s; }
+  details { margin-top: .3rem; }
+  .qty { width: 3.2rem; text-align: center; padding: .2rem; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>eShop <span class="muted">on wasmCloud</span></h1>
+  <span class="who" id="who">not signed in</span>
+  <button class="ghost" id="logoutBtn" hidden>Sign out</button>
+</header>
+<main>
+  <div style="display:flex;flex-direction:column;gap:1rem">
+    <section class="panel" id="authPanel">
+      <h2>Sign in</h2>
+      <input id="email" placeholder="email" value="demo@eshop.test">
+      <input id="password" type="password" placeholder="password" value="P@ssword1">
+      <div class="row">
+        <button id="loginBtn">Sign in</button>
+        <button class="ghost" id="registerBtn">Register</button>
+      </div>
+      <div class="muted" id="authMsg"></div>
+    </section>
+
+    <section class="panel" id="basketPanel" hidden>
+      <h2>Basket</h2>
+      <table id="basketTable"></table>
+      <div class="row" style="margin-top:.5rem;justify-content:space-between">
+        <strong id="basketTotal"></strong>
+      </div>
+      <details id="checkoutBox">
+        <summary>Checkout</summary>
+        <input id="street" placeholder="street" value="1 Wasm Way">
+        <div class="row">
+          <input id="city" placeholder="city" value="Redmond">
+          <input id="state" placeholder="state" value="WA">
+        </div>
+        <div class="row">
+          <input id="country" placeholder="country" value="USA">
+          <input id="zip" placeholder="zip" value="98052">
+        </div>
+        <input id="card" placeholder="card number" value="4012888888881881">
+        <div class="row">
+          <input id="cardName" placeholder="name on card" value="Demo Shopper">
+          <input id="cardExp" placeholder="MM/YY" value="12/28">
+          <input id="cardCvv" placeholder="CVV" value="123">
+        </div>
+        <button id="checkoutBtn">Place order</button>
+      </details>
+    </section>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:1rem">
+    <section class="panel">
+      <h2>Catalog</h2>
+      <div class="row">
+        <select id="brandSel"><option value="">all brands</option></select>
+        <select id="typeSel"><option value="">all types</option></select>
+      </div>
+      <div class="grid" id="catalog"></div>
+      <div class="row" style="margin-top:.6rem">
+        <button class="ghost" id="prevBtn">&larr;</button>
+        <span class="muted" id="pageInfo"></span>
+        <button class="ghost" id="nextBtn">&rarr;</button>
+      </div>
+    </section>
+
+    <section class="panel" id="ordersPanel" hidden>
+      <h2>My orders</h2>
+      <div id="orders" class="muted">none yet</div>
+    </section>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let token = localStorage.getItem('eshop-token') || '';
+let page = 0; const pageSize = 8;
+let basket = { items: [] };
+
+const money = c => '$' + (c / 100).toFixed(2);
+const toast = m => { const t = $('toast'); t.textContent = m; t.style.opacity = 1; setTimeout(() => t.style.opacity = 0, 2200); };
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers, token ? { Authorization: 'Bearer ' + token } : {});
+  const r = await fetch(path, opts);
+  if (r.status === 401 && token) { signOut(); throw new Error('session expired'); }
+  if (!r.ok && r.status !== 202) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+  return r.status === 204 ? null : r.json();
+}
+
+// ---- auth ----
+function setSignedIn(email) {
+  $('who').textContent = token ? (email || 'signed in') : 'not signed in';
+  $('logoutBtn').hidden = !token;
+  $('authPanel').hidden = !!token;
+  $('basketPanel').hidden = !token;
+  $('ordersPanel').hidden = !token;
+}
+function signOut() { token = ''; localStorage.removeItem('eshop-token'); setSignedIn(); }
+$('logoutBtn').onclick = signOut;
+
+$('registerBtn').onclick = async () => {
+  try {
+    await api('/api/identity/register', { method: 'POST', body: JSON.stringify({ email: $('email').value, password: $('password').value }) });
+    $('authMsg').textContent = 'registered — sign in';
+  } catch (e) { $('authMsg').textContent = e.message; }
+};
+$('loginBtn').onclick = async () => {
+  const creds = () => JSON.stringify({ email: $('email').value, password: $('password').value });
+  try {
+    let r;
+    try {
+      r = await api('/api/identity/login', { method: 'POST', body: creds() });
+    } catch (e) {
+      // demo convenience: unknown account -> register it and retry, like
+      // eShopOnDapr's seeded demo user.
+      if (!/invalid_credentials/.test(e.message)) throw e;
+      await api('/api/identity/register', { method: 'POST', body: creds() });
+      r = await api('/api/identity/login', { method: 'POST', body: creds() });
+    }
+    token = r.access_token; localStorage.setItem('eshop-token', token);
+    setSignedIn($('email').value);
+    await Promise.all([loadBasket(), loadOrders()]);
+  } catch (e) { $('authMsg').textContent = e.message; }
+};
+
+// ---- catalog ----
+async function loadLookups() {
+  for (const [id, path] of [['brandSel', 'brands'], ['typeSel', 'types']]) {
+    const d = await api('/api/catalog/' + path);
+    for (const row of d.data) {
+      const o = document.createElement('option');
+      o.value = row.id; o.textContent = row.name;
+      $(id).appendChild(o);
+    }
+  }
+}
+async function loadCatalog() {
+  const q = new URLSearchParams({ pageIndex: page, pageSize });
+  if ($('brandSel').value) q.set('brand', $('brandSel').value);
+  if ($('typeSel').value) q.set('type', $('typeSel').value);
+  const d = await api('/api/catalog/items?' + q);
+  $('catalog').innerHTML = '';
+  for (const it of d.data) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `<div class="name">${it.name}</div>
+      <div class="price">${money(it.price)}</div>
+      <div class="stock">${it.availableStock} in stock · ${it.brand} · ${it.type}</div>`;
+    const btn = document.createElement('button');
+    btn.textContent = 'Add to basket';
+    btn.disabled = !token || it.availableStock === 0;
+    btn.onclick = () => addToBasket(it);
+    card.appendChild(btn);
+    $('catalog').appendChild(card);
+  }
+  const pages = Math.max(1, Math.ceil(d.count / pageSize));
+  $('pageInfo').textContent = `page ${page + 1}/${pages} · ${d.count} items`;
+  $('prevBtn').disabled = page === 0;
+  $('nextBtn').disabled = page >= pages - 1;
+}
+$('prevBtn').onclick = () => { page--; loadCatalog(); };
+$('nextBtn').onclick = () => { page++; loadCatalog(); };
+$('brandSel').onchange = $('typeSel').onchange = () => { page = 0; loadCatalog(); };
+
+// ---- basket ----
+async function loadBasket() {
+  basket = await api('/api/basket');
+  renderBasket();
+}
+function renderBasket() {
+  const t = $('basketTable');
+  t.innerHTML = '';
+  let total = 0;
+  for (const it of basket.items) {
+    total += it.unitPrice * it.quantity;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${it.productName}</td><td>${money(it.unitPrice)}</td>`;
+    const tdQ = document.createElement('td');
+    const q = document.createElement('input');
+    q.type = 'number'; q.min = 0; q.value = it.quantity; q.className = 'qty';
+    q.onchange = () => setQty(it.productId, +q.value);
+    tdQ.appendChild(q); tr.appendChild(tdQ);
+    t.appendChild(tr);
+  }
+  $('basketTotal').textContent = basket.items.length ? 'Total ' + money(total) : 'empty';
+  $('checkoutBox').style.display = basket.items.length ? '' : 'none';
+}
+async function pushBasket() {
+  basket = await api('/api/basket', { method: 'POST', body: JSON.stringify({ items: basket.items }) });
+  renderBasket();
+}
+function addToBasket(it) {
+  const existing = basket.items.find(b => b.productId === it.id);
+  if (existing) existing.quantity++;
+  else basket.items.push({ productId: it.id, productName: it.name, unitPrice: it.price, quantity: 1 });
+  pushBasket().then(() => toast('added ' + it.name));
+}
+function setQty(productId, qty) {
+  const it = basket.items.find(b => b.productId === productId);
+  if (!it) return;
+  if (qty <= 0) basket.items = basket.items.filter(b => b.productId !== productId);
+  else it.quantity = qty;
+  pushBasket();
+}
+
+$('checkoutBtn').onclick = async () => {
+  try {
+    await api('/api/basket/checkout', { method: 'POST', body: JSON.stringify({
+      street: $('street').value, city: $('city').value, state: $('state').value,
+      country: $('country').value, zipCode: $('zip').value,
+      cardNumber: $('card').value, cardHolderName: $('cardName').value,
+      cardExpiration: $('cardExp').value, cardSecurityNumber: $('cardCvv').value, cardTypeId: 1,
+    })});
+    toast('order placed — watch it move below');
+    loadOrders();
+  } catch (e) { toast('checkout failed: ' + e.message); }
+};
+
+// ---- orders ----
+const CANCELLABLE = ['submitted', 'awaitingStockValidation', 'validated'];
+async function loadOrders() {
+  if (!token) return;
+  const d = await api('/api/orders');
+  const box = $('orders');
+  if (!d.orders.length) { box.textContent = 'none yet'; return; }
+  box.innerHTML = '';
+  for (const o of d.orders.slice().reverse()) {
+    const div = document.createElement('div');
+    div.className = 'card'; div.style.marginBottom = '.6rem';
+    div.innerHTML = `<div class="row" style="justify-content:space-between">
+        <strong>#${o.id.slice(-6)}</strong>
+        <span class="chip ${o.status}">${o.status}</span></div>
+      <div class="muted">${o.items.map(i => `${i.quantity}× ${i.productName}`).join(', ')} — ${money(o.total)}</div>`;
+    if (CANCELLABLE.includes(o.status)) {
+      const c = document.createElement('button');
+      c.className = 'danger'; c.textContent = 'Cancel';
+      c.onclick = async () => { await api(`/api/orders/${o.id}/cancel`, { method: 'POST' }); loadOrders(); };
+      div.appendChild(c);
+    }
+    box.appendChild(div);
+  }
+}
+
+// ---- the demo heartbeat -----------------------------------------------------
+// ponytail: while the page is open it drives the pull-based choreography
+// itself (pump + refresh every 2s); the k8s eshop-pump loop does the same
+// job when nobody is watching.
+setInterval(async () => {
+  if (document.hidden) return;
+  try { await fetch('/internal/pump', { method: 'POST' }); } catch {}
+  if (token) { loadOrders().catch(() => {}); loadBasket().catch(() => {}); }
+  loadCatalog().catch(() => {});
+}, 2000);
+
+// ---- boot ----
+setSignedIn();
+loadLookups().then(loadCatalog);
+if (token) { setSignedIn('(session)'); loadBasket().catch(signOut); loadOrders().catch(() => {}); }
+</script>
+</body>
+</html>
