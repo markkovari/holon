@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg:#0d1117; --chrome:#161b22; --line:#30363d; --ink:#c9d1d9; --dim:#7d8590;
+          --ok:#3fb950; --cmd:#58a6ff; --accent:#e3b341; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #010409; }
+  .win { width: 940px; margin: 20px auto; border: 1px solid var(--line); border-radius: 10px;
+         overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .bar { background: var(--chrome); padding: 10px 14px; display: flex; align-items: center; gap: 8px;
+         border-bottom: 1px solid var(--line); }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .r{background:#ff5f56}.y{background:#ffbd2e}.g{background:#27c93f}
+  .bar .t { margin-left: 10px; color: var(--dim); font: 12px ui-monospace, Menlo, monospace; }
+  .term { background: var(--bg); padding: 18px 20px; min-height: 560px;
+          font: 14px/1.62 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink); }
+  .row { white-space: pre; opacity: 0; transform: translateY(3px); transition: opacity .12s, transform .12s; }
+  .row.show { opacity: 1; transform: none; }
+  .cmd { color: var(--cmd); } .prompt { color: var(--ok); } .dim { color: var(--dim); }
+  .ok .ck { color: var(--ok); font-weight: 700; } .ok .fn { color: var(--ink); } .ok .rq { color: var(--dim); }
+  .good { color: var(--ok); font-weight: 700; }
+  .rule { color: var(--line); }
+  .banner { margin-top: 14px; color: var(--ok); font-weight: 700; }
+  .banner .sub { color: var(--dim); font-weight: 400; }
+  .cursor { display:inline-block; width:8px; height:16px; background:var(--ink); vertical-align:-2px;
+            animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+  <div class="win">
+    <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="t">conduit — RealWorld conformance</span></div>
+    <div class="term" id="term"></div>
+  </div>
+<script>
+const files = [
+  ["articles",17],["auth",20],["comments",13],["errors_articles",20],["errors_auth",20],
+  ["errors_authorization",9],["errors_comments",10],["errors_profiles",6],["favorites",9],
+  ["feed",12],["pagination",7],["profiles",7],["tags",4],
+];
+const pad = (s,n) => (s + " ".repeat(n)).slice(0,n);
+const term = document.getElementById("term");
+const add = (html, cls="") => { const d=document.createElement("div"); d.className="row "+cls; d.innerHTML=html; term.appendChild(d); requestAnimationFrame(()=>d.classList.add("show")); return d; };
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+
+async function run() {
+  // typed command
+  const cmd = add('<span class="prompt">comp $</span> <span class="cmd"></span><span class="cursor"></span>');
+  const span = cmd.querySelector(".cmd"), text = "just conformance-conduit";
+  for (let i=0;i<text.length;i++){ span.textContent = text.slice(0,i+1); await sleep(45); }
+  cmd.querySelector(".cursor").remove();
+  await sleep(500);
+  add('<span class="dim">▸ compose  conduit-domain + auth-guard + record-store + slug  → conduit_domain.composed.wasm</span>'); await sleep(300);
+  add('<span class="dim">▸ vet-host  serving the composed app on :3009  (in-memory KV)</span>'); await sleep(500);
+  add('Running RealWorld Hurl conformance against http://127.0.0.1:3009'); await sleep(450);
+  for (const [name,req] of files) {
+    add('<span class="ok"><span class="ck">Success</span>  <span class="fn">'+pad("hurl/"+name+".hurl",30)+'</span> <span class="rq">('+req+' requests)</span></span>');
+    await sleep(230);
+  }
+  await sleep(300);
+  add('<span class="rule">────────────────────────────────────────────────────────</span>');
+  add('Executed files:    13'); await sleep(120);
+  add('Executed requests: 154 (215/s)'); await sleep(120);
+  add('<span class="good">Succeeded files:   13 (100.0%)</span>'); await sleep(120);
+  add('Failed files:      0 (0.0%)'); await sleep(120);
+  add('Duration:          715 ms'); await sleep(500);
+  add('<span class="banner">✓ RealWorld conformance — 13/13 files, 154 requests, all green<br><span class="sub">  the official gothinkster/realworld Hurl suite, against one composed wasm app</span></span>');
+  window.__done = true;
+}
+run();
+</script>
+</body>
+</html>

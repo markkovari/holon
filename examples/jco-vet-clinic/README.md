@@ -7,6 +7,10 @@ sessions, audit, search, validation, notifications) is an unmodified comp
 component, and the domain (pets, appointments, visit notes) is thin JS glue over
 the same in-memory key-value store the components share.
 
+![Vet clinic: a pet-owner signs in, registers a pet, searches, and books an appointment — the role-scoped owner view of the ~20-component app](../../docs/media/petclinic.gif)
+
+*(The gif runs on the native Rust host — `just host-full` — serving the same SPA + wasm; jco is the in-process variant.)*
+
 Three roles:
 
 | Role | Can |

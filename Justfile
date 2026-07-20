@@ -194,17 +194,17 @@ compose-vet-lattice: build
 # Node, no wasmCloud — `host/` is its own native binary that serves the
 # component's HTTP and satisfies its keyvalue/config imports in-process.
 host: compose-vet
-    cd host && cargo run --release -- --component ../{{vet_composed}} --addr 127.0.0.1:3007
+    cd host && cargo run --release --bin vet-host -- --component ../{{vet_composed}} --addr 127.0.0.1:3007
 
 # Run the FULL-PARITY app on the native host + serve the built React SPA. One
 # Rust binary = UI + API. The whole vet-clinic, no Node. (--kv memory default.)
 host-full: compose-vet-full
-    cd host && cargo run --release -- --component ../{{vet_full_composed}} \
+    cd host && cargo run --release --bin vet-host -- --component ../{{vet_full_composed}} \
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public
 
 # Same, persisted to Redis (any redis-compatible server, e.g. valkey :6379).
 host-redis: compose-vet-full
-    cd host && cargo run --release -- --component ../{{vet_full_composed}} \
+    cd host && cargo run --release --bin vet-host -- --component ../{{vet_full_composed}} \
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
       --kv redis --redis-url redis://127.0.0.1:6379
 
@@ -218,7 +218,7 @@ host-helpdesk: compose-helpdesk
 
 # Same, persisted to NATS JetStream KV (:4222 by default).
 host-nats: compose-vet-full
-    cd host && cargo run --release -- --component ../{{vet_full_composed}} \
+    cd host && cargo run --release --bin vet-host -- --component ../{{vet_full_composed}} \
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
       --kv nats --nats-url 127.0.0.1:4222
 

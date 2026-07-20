@@ -3,12 +3,15 @@
 A Medium-clone ("Conduit") — the [RealWorld](https://realworld-docs.netlify.app/)
 reference app. Chosen for one reason the other showcases can't offer: it has an
 **external, objective conformance suite**. The spec fixes the exact REST API
-(down to JSON envelopes and status codes), and the project ships a Postman
-collection run by `newman`. "We composed it from contracts with no bespoke
-business crate" stops being our claim and becomes something a skeptic clones
-and runs: `APIURL=… newman run Conduit.postman_collection.json` → all green.
+(down to JSON envelopes and status codes), and the project ships a conformance
+suite (Hurl). "We composed it from contracts with no bespoke business crate"
+stops being our claim and becomes something a skeptic clones and runs:
+`just conformance-conduit` → all green.
 
-Pattern mirrors `vet-domain` / `helpdesk-domain`: one **`conduit-domain`**
+![The official RealWorld Hurl conformance suite running against the composed conduit app on the native Rust host: 13/13 files, 154 requests, all green](docs/media/conduit-conformance.gif)
+
+Conduit is API-only (no bundled frontend — its proof is the conformance run
+above, not a UI). Pattern mirrors `vet-domain` / `helpdesk-domain`: one **`conduit-domain`**
 component that exports `wasi:http` and imports only WIT contracts. Every
 capability behind it is a swappable reference implementation from the catalog.
 

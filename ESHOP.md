@@ -7,6 +7,8 @@ and the whole thing runs three ways from the same bytes — jco-style native
 host, `just host-eshop` locally, and wasmCloud v2 WorkloadDeployments on
 Kubernetes.
 
+![eShop: sign in, add to cart, checkout, and watch the order advance through the cross-service choreography (submitted → paid) — five wasm services over one NATS lattice](docs/media/eshop.gif)
+
 ## The mapping (the point of the exercise)
 
 | eShopOnDapr | here |

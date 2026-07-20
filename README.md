@@ -119,13 +119,19 @@ composition, not a bespoke crate. Each has a design doc mapping the app to the
 catalog and a bench round:
 
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
-  + gateway) on wasmCloud v2 + k8s.
+  + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
   events, SLA (rung 1 shipped).
 - **[CONDUIT.md](CONDUIT.md)** — the **RealWorld** ("Conduit") spec, **100% green
   on the official Hurl conformance suite** (`just conformance-conduit`) from one
   `conduit-domain` + `auth-guard` + `record-store` + `slug`. The strongest proof
   of the thesis: a skeptic clones the upstream suite and it passes.
+  ([demo](docs/media/conduit-conformance.gif))
+- **[vet-clinic](examples/jco-vet-clinic/README.md)** — the flagship: owners /
+  doctors / admin, RBAC, ~20 components, browser SPA. ([demo](docs/media/petclinic.gif))
+
+> Demo gifs live in [`docs/media/`](docs/media); regenerate them with the
+> Playwright harness in [`tools/screencast/`](tools/screencast).
 
 ---
 

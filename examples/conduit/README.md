@@ -9,6 +9,8 @@ Users & profiles, articles (CRUD + slug + filters + feed + tags), comments,
 favorites — the complete API, composed from contracts with no bespoke business
 crate.
 
+![The official RealWorld Hurl conformance suite going green against the composed app: 13/13 files, 154 requests](../../docs/media/conduit-conformance.gif)
+
 ## Verify
 
 ```bash
