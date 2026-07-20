@@ -246,3 +246,18 @@ Ensure all Rust code is strictly typed, handles errors safely, and includes clea
 - [ ] Extract a generic `saga:orchestrator` contract (arbitrary step +
       compensation definitions), and land the Golem wRPC provider so a leg can be
       a real durable Golem worker (the roadmap item above).
+
+### Realtime / pulse (REALTIME.md) — done
+
+- [x] A realtime chat room (`pulse-domain`) — the first showcase in a new
+      *class*: a **sustained connection with server push** rather than
+      request/response. `GET /api/rooms/{room}/events` holds the HTTP response
+      open and streams new messages as **Server-Sent-Events** `data:` frames
+      (real push on wasip2 — the host streams the body while the guest loops;
+      no WebSocket, no wasip3 async). Composed over `record-store` (log + cursor)
+      + `event-bus` (fan-out spine) + `id-generate`, with a two-pane browser SPA
+      (native `EventSource`) + presence. `just e2e-pulse` (a held-open reader
+      gets a separately-posted message) + bench: one broadcast → **150/150
+      concurrent SSE connections** (`bench/PULSE-BENCH.md`).
+- [ ] Multi-host fan-out: replace per-stream polling with `event-bus` +
+      `event-pusher` push, so connections can spread across hosts.

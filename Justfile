@@ -48,6 +48,8 @@ conduit_wasm := rel / "conduit_domain.wasm"
 conduit_composed := "components/target/conduit_domain.composed.wasm"
 saga_wasm := rel / "saga_domain.wasm"
 saga_composed := "components/target/saga_domain.composed.wasm"
+pulse_wasm := rel / "pulse_domain.wasm"
+pulse_composed := "components/target/pulse_domain.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -167,6 +169,29 @@ e2e-saga: compose-saga
 durable-saga: compose-saga
     cd host && cargo build --release --bin vet-host
     bash examples/saga/durability.sh
+
+# Compose pulse-domain (REALTIME.md — a realtime chat room with SSE server-push)
+# with records + event-bus + id-generate. No auth. Remaining imports are WASI.
+compose-pulse: build
+    wac plug {{pulse_wasm}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      -o {{pulse_composed}}
+    @echo "composed pulse-domain (+ records + event-bus + ids) -> {{pulse_composed}}"
+
+# Run the chat app on the native Rust host + serve the two-pane SPA. Open two
+# browser windows on http://127.0.0.1:3015 and watch messages stream live.
+host-pulse: compose-pulse
+    cd host && VET_TENANT=pulse cargo run --release --bin vet-host -- \
+      --component ../{{pulse_composed}} --addr 0.0.0.0:3015 \
+      --static-dir ../examples/pulse/public
+
+# Realtime e2e: compose + build host + a Rust test that posts a message and
+# proves a SEPARATE held-open SSE connection receives it live.
+e2e-pulse: compose-pulse
+    cd host && cargo build --release --bin vet-host
+    cd examples/pulse && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

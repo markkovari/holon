@@ -1,0 +1,30 @@
+// pulse:app — a realtime chat room as a WIT HTTP component.
+//
+// The new class: a sustained connection with server push. `GET /events` sets
+// its response early and then loops writing Server-Sent-Events `data:` frames
+// as new messages arrive — the host streams them to the browser while the guest
+// keeps running. See REALTIME.md.
+//
+// Routes:
+//   POST /rooms/{room}/messages   {user, text}     post
+//   GET  /rooms/{room}/messages   ?after=seq        history / catch-up
+//   GET  /rooms/{room}/events     ?after=seq        LIVE SSE stream
+//   POST /rooms/{room}/presence   {user}            heartbeat            (rung 3)
+//   GET  /rooms/{room}/presence                     who's online         (rung 3)
+package pulse:app@0.1.0;
+
+/// The chat backend + the SSE loop, composed from capability contracts.
+world pulse-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // durable message log (indexed by room) + presence records.
+    import records:store/store@0.1.0;
+    // fan-out spine: publish room:{room} on every message.
+    import event:bus/bus@0.1.0;
+    // message ids.
+    import id:generate/generator@0.1.0;
+    // message timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

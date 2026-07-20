@@ -50,6 +50,7 @@ capabilities, so anything marked reusable drops into another app via
 | **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 165 KiB | ✓ |
 | **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes` | 101 KiB | ✓ |
+| **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 159 KiB | ✓ |
 | **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 69 KiB | ✓ |
 | **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 69 KiB | ✓ |
 | **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 180 KiB | ✓ |
@@ -112,6 +113,7 @@ capabilities, so anything marked reusable drops into another app via
 - **pii-redact** — `pii-redact` — reference implementation of `pii:redact`
 - **policy-guard** — `policy-guard` — reference implementation of `policy:guard`
 - **proxy-route** — proxy:route — reference implementation. Route table from wasi:config
+- **pulse-domain** — pulse:app — a realtime chat room over composed contracts
 - **quota** — `quota` — reference implementation of `quota:meter`
 - **rate-limiter** — `rate-limiter` — reference implementation of `ratelimit:guard`
 - **record-store** — `record-store` — reference implementation of `record:store`

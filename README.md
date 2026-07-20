@@ -131,6 +131,10 @@ catalog and a bench round:
   `conduit-domain` + `auth-guard` + `record-store` + `slug`. The strongest proof
   of the thesis: a skeptic clones the upstream suite and it passes.
   ([demo](docs/media/conduit-conformance.gif))
+- **[REALTIME.md](REALTIME.md)** — **pulse**, a live chat room: a message streams
+  to every open window over held-open **SSE** (real server-push on wasip2, no
+  WebSocket) — one broadcast fans out to 150 concurrent connections. The one
+  *new class*: sustained connections, not request/response. ([demo](docs/media/pulse.gif))
 - **[vet-clinic](examples/jco-vet-clinic/README.md)** — the flagship: owners /
   doctors / admin, RBAC, ~20 components, browser SPA. ([demo](docs/media/petclinic.gif))
 

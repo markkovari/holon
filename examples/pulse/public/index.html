@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pulse — realtime chat on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff; --me:#4f46e5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115; --me:#818cf8; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: .6rem; padding: .7rem 1rem;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1rem; margin: 0; }
+  header h1 .dim { color: var(--muted); font-weight: 400; }
+  header .grow { flex: 1; }
+  header input { padding: .35rem .5rem; border: 1px solid var(--line); border-radius: 7px;
+                 background: var(--bg); color: var(--ink); font: inherit; width: 8rem; }
+  .online { color: var(--muted); font-size: .82rem; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#22c55e; margin-right:.25rem; }
+  #log { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .55rem; }
+  .msg { max-width: 78%; padding: .45rem .7rem; border-radius: 12px; background: var(--panel);
+         border: 1px solid var(--line); }
+  .msg .who { font-size: .72rem; color: var(--muted); margin-bottom: .1rem; }
+  .msg.mine { align-self: flex-end; background: var(--me); color: var(--accent-ink); border-color: transparent; }
+  .msg.mine .who { color: rgba(255,255,255,.75); }
+  form { display: flex; gap: .5rem; padding: .7rem 1rem; background: var(--panel); border-top: 1px solid var(--line); }
+  form input { flex: 1; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 8px;
+               background: var(--bg); color: var(--ink); font: inherit; }
+  form button { padding: .55rem 1rem; border: 0; border-radius: 8px; background: var(--accent);
+                color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer; }
+  .status { font-size: .78rem; color: var(--muted); }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🌐 pulse <span class="dim">· #<span id="room">lobby</span></span></h1>
+    <span class="status" id="status">connecting…</span>
+    <span class="grow"></span>
+    <span class="online" id="online"></span>
+    <input id="name" title="your name">
+  </header>
+  <div id="log"></div>
+  <form id="composer">
+    <input id="text" placeholder="Message #lobby…" autocomplete="off" autofocus>
+    <button>Send</button>
+  </form>
+<script>
+const $ = id => document.getElementById(id);
+const qs = new URLSearchParams(location.search);
+const room = qs.get("room") || "lobby";
+$("room").textContent = room;
+$("text").placeholder = `Message #${room}…`;
+let name = qs.get("name") || localStorage.getItem("pulse-name") || "guest-" + Math.floor(1000 + Math.random() * 9000);
+$("name").value = name;
+$("name").onchange = () => { name = $("name").value.trim() || name; localStorage.setItem("pulse-name", name); };
+
+const api = p => `/api/rooms/${encodeURIComponent(room)}${p}`;
+const seen = new Set();
+const log = $("log");
+
+function render(m) {
+  if (seen.has(m.id)) return;
+  seen.add(m.id);
+  const div = document.createElement("div");
+  div.className = "msg" + (m.user === name ? " mine" : "");
+  div.innerHTML = `<div class="who"></div><div class="body"></div>`;
+  div.querySelector(".who").textContent = m.user;
+  div.querySelector(".body").textContent = m.text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function history() {
+  const r = await fetch(api("/messages?after=-1"));
+  const d = await r.json();
+  (d.messages || []).forEach(render);
+  return d.cursor ?? -1;
+}
+
+function connect(after) {
+  const es = new EventSource(api(`/events?after=${after}`));
+  es.onopen = () => $("status").textContent = "● live";
+  es.onmessage = e => { try { render(JSON.parse(e.data)); } catch {} };
+  es.onerror = () => $("status").textContent = "reconnecting…"; // EventSource auto-retries
+}
+
+$("composer").onsubmit = async e => {
+  e.preventDefault();
+  const text = $("text").value.trim();
+  if (!text) return;
+  $("text").value = "";
+  await fetch(api("/messages"), { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ user: name, text }) });
+  // the message comes back over SSE (deduped by id), so no optimistic append.
+};
+
+async function presence() {
+  await fetch(api("/presence"), { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ user: name }) }).catch(() => {});
+  const d = await fetch(api("/presence")).then(r => r.json()).catch(() => ({ online: [] }));
+  const n = (d.online || []).length;
+  $("online").innerHTML = `<span class="dot"></span>${n} online`;
+}
+
+(async () => { connect(await history()); presence(); setInterval(presence, 4000); })();
+</script>
+</body>
+</html>

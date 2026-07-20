@@ -775,6 +775,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulse-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "quota"
 version = "0.1.0"
 dependencies = [
