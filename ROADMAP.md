@@ -232,3 +232,17 @@ Ensure all Rust code is strictly typed, handles errors safely, and includes clea
 - [ ] Optional: password rotation + email rename in auth-guard (the two flagged
       conformance caveats), a `?search` extension (`search-index`), and a stock
       RealWorld frontend SPA served from `--static-dir`.
+
+### Saga / durable orchestration (SAGA.md) — done
+
+- [x] A durable **trip-booking saga** (`saga-domain`) — flight → hotel → car with
+      **compensation** on failure — composed over `fsm-workflow` + `record-store`
+      + `idempotency-guard` + `event-bus` + `sched:timer` + `id-generate`. The
+      first showcase exercising **compensation + durable, resumable execution**:
+      a flaky leg retries then gives up + compensates; `pump` advances one
+      persisted step at a time; and the saga **survives a host kill and resumes**
+      on NATS (`just durable-saga` → PASS). `just e2e-saga` (commit + all
+      compensation/retry paths) + app-path bench (`bench/SAGA-BENCH.md`).
+- [ ] Extract a generic `saga:orchestrator` contract (arbitrary step +
+      compensation definitions), and land the Golem wRPC provider so a leg can be
+      a real durable Golem worker (the roadmap item above).

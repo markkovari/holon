@@ -1,0 +1,33 @@
+// saga:app — a durable trip-booking saga as a WIT HTTP component.
+//
+// Book flight → hotel → car in sequence; if any leg fails, compensate the legs
+// already booked, in reverse. The saga *pattern* (forward + compensation +
+// durable, resumable state + once-only steps) is composed from catalog
+// contracts — no bespoke engine. See SAGA.md.
+//
+// Routes:
+//   POST /trips            {traveler, failLeg?}   start a saga
+//   GET  /trips/{id}       status + step timeline + fsm history
+//   POST /trips/{id}/run   drive to a terminal state (commit or compensate)
+//   POST /internal/pump    advance every running saga one step (resume/retry)
+package saga:app@0.1.0;
+
+/// The trip-booking saga orchestrator, composed from capability contracts.
+world saga-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // durable saga + booking records (indexed by status / saga id).
+    import records:store/store@0.1.0;
+    // the saga lifecycle: running → committed | compensating → compensated | failed.
+    import fsm:workflow/engine@0.1.0;
+    // each book/compensate step runs exactly once.
+    import idempotency:guard/store@0.1.0;
+    // step events: started / leg.booked / leg.failed / leg.compensated / committed.
+    import event:bus/bus@0.1.0;
+    // human-friendly booking refs (FL-XXXX etc.).
+    import id:generate/generator@0.1.0;
+    // durable retry scheduling for a flaky leg (schedule-at / due / cancel).
+    import sched:timer/timer@0.1.0;
+    // startedAt / per-leg timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

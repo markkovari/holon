@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg:#0d1117; --chrome:#161b22; --line:#30363d; --ink:#c9d1d9; --dim:#7d8590;
+          --ok:#3fb950; --cmd:#58a6ff; --fail:#f85149; --comp:#e3b341; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #010409; }
+  .win { width: 960px; margin: 18px auto; border: 1px solid var(--line); border-radius: 10px;
+         overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .bar { background: var(--chrome); padding: 10px 14px; display: flex; align-items: center; gap: 8px;
+         border-bottom: 1px solid var(--line); }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .r{background:#ff5f56}.y{background:#ffbd2e}.g{background:#27c93f}
+  .bar .t { margin-left: 10px; color: var(--dim); font: 12px ui-monospace, Menlo, monospace; }
+  .term { background: var(--bg); padding: 16px 20px; min-height: 660px;
+          font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--ink); }
+  .row { white-space: pre; opacity: 0; transform: translateY(3px); transition: opacity .1s, transform .1s; }
+  .row.show { opacity: 1; transform: none; }
+  .cmd { color: var(--cmd); } .prompt { color: var(--ok); } .dim { color: var(--dim); }
+  .ok { color: var(--ok); } .fail { color: var(--fail); } .comp { color: var(--comp); }
+  .arrow { color: var(--ink); font-weight: 700; }
+  .banner { margin-top: 12px; color: var(--ok); font-weight: 700; }
+  .cursor { display:inline-block; width:8px; height:15px; background:var(--ink); vertical-align:-2px;
+            animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+  <div class="win">
+    <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span class="t">saga — durable trip-booking (flight → hotel → car)</span></div>
+    <div class="term" id="term"></div>
+  </div>
+<script>
+const term = document.getElementById("term");
+const add = (html, cls="") => { const d=document.createElement("div"); d.className="row "+cls; d.innerHTML=html; term.appendChild(d); requestAnimationFrame(()=>d.classList.add("show")); return d; };
+const sleep = ms => new Promise(r=>setTimeout(r,ms));
+const bar = (f,h,c) => `<span class="dim">[</span>${f}<span class="dim"> · </span>${h}<span class="dim"> · </span>${c}<span class="dim">]</span>`;
+const g = s => `<span class="ok">${s}</span>`, r = s => `<span class="fail">${s}</span>`, a = s => `<span class="comp">${s}</span>`, d = s => `<span class="dim">${s}</span>`;
+
+async function typeCmd(text) {
+  const row = add(`<span class="prompt">saga $</span> <span class="cmd"></span><span class="cursor"></span>`);
+  const span = row.querySelector(".cmd");
+  for (let i=0;i<text.length;i++){ span.textContent=text.slice(0,i+1); await sleep(28); }
+  row.querySelector(".cursor").remove(); return row;
+}
+
+async function run() {
+  // ---- happy path -------------------------------------------------------
+  await typeCmd(`curl -sX POST :3012/trips -d '{"traveler":"Ada"}'`); await sleep(300);
+  add(`  <span class="arrow">→</span> trip 01KXZ…  status: <span class="ok">running</span>   ${bar(d("flight"),d("hotel"),d("car"))}`); await sleep(700);
+  await typeCmd(`curl -sX POST :3012/trips/01KXZ…/run`); await sleep(350);
+  add(`  ${g("✓ flight")}  booked  <span class="dim">FL-7QK2P4</span>   ${bar(g("flight✓"),d("hotel"),d("car"))}`); await sleep(650);
+  add(`  ${g("✓ hotel ")}  booked  <span class="dim">HT-3M8XZ1</span>   ${bar(g("flight✓"),g("hotel✓"),d("car"))}`); await sleep(650);
+  add(`  ${g("✓ car   ")}  booked  <span class="dim">CR-9WD0LK</span>   ${bar(g("flight✓"),g("hotel✓"),g("car✓"))}`); await sleep(550);
+  add(`  <span class="arrow">→</span> status: <span class="ok">committed</span>  — all three legs held`); await sleep(1100);
+
+  // ---- compensation -----------------------------------------------------
+  add(`<span class="dim"># a leg fails → compensate the booked legs, in reverse</span>`); await sleep(400);
+  await typeCmd(`curl -sX POST :3012/trips -d '{…,"failLeg":"car"}' ; …/run`); await sleep(350);
+  add(`  ${g("✓ flight")}  booked   ${bar(g("flight✓"),d("hotel"),d("car"))}`); await sleep(550);
+  add(`  ${g("✓ hotel ")}  booked   ${bar(g("flight✓"),g("hotel✓"),d("car"))}`); await sleep(550);
+  add(`  ${r("✗ car   ")}  unavailable   <span class="arrow">→</span> <span class="comp">compensating</span>`); await sleep(650);
+  add(`  ${a("↩ hotel ")}  compensated   ${bar(g("flight✓"),a("hotel↩"),r("car✗"))}`); await sleep(550);
+  add(`  ${a("↩ flight")}  compensated   ${bar(a("flight↩"),a("hotel↩"),r("car✗"))}`); await sleep(550);
+  add(`  <span class="arrow">→</span> status: <span class="comp">compensated</span>  — rolled back cleanly`); await sleep(1100);
+
+  // ---- durability -------------------------------------------------------
+  add(`<span class="dim"># state lives in NATS KV → kill the host mid-saga, it resumes</span>`); await sleep(400);
+  await typeCmd(`just durable-saga`); await sleep(350);
+  add(`  started saga 01KXZTG…  ·  pump →  ${g("flight booked")}`); await sleep(500);
+  add(`  ${r("--- killing host (pid 20016) ---")}`); await sleep(650);
+  add(`  after restart:  status=<span class="ok">running</span>  flight=<span class="ok">booked</span>   ${d("← survived on NATS")}`); await sleep(700);
+  add(`  <span class="banner">PASS: saga survived the restart and resumed → committed</span>`); await sleep(300);
+  window.__done = true;
+}
+run();
+</script>
+</body>
+</html>

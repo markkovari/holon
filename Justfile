@@ -46,6 +46,8 @@ helpdesk_wasm := rel / "helpdesk_domain.wasm"
 helpdesk_composed := "components/target/helpdesk_domain.composed.wasm"
 conduit_wasm := rel / "conduit_domain.wasm"
 conduit_composed := "components/target/conduit_domain.composed.wasm"
+saga_wasm := rel / "saga_domain.wasm"
+saga_composed := "components/target/saga_domain.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -133,6 +135,38 @@ e2e-conduit: compose-conduit
 conformance-conduit: compose-conduit
     cd host && cargo build --release --bin vet-host
     bash examples/conduit/conformance/run.sh
+
+# Compose saga-domain (SAGA.md — a durable trip-booking saga) with the durable
+# primitives it orchestrates: records + fsm + idempotency + event-bus + ids.
+# No auth (anonymous engine). Remaining imports are generic WASI.
+compose-saga: build
+    wac plug {{saga_wasm}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/fsm_workflow.wasm \
+      --plug {{idempotency_wasm}} \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      --plug {{rel}}/scheduler_timer.wasm \
+      -o {{saga_composed}}
+    @echo "composed saga-domain (+ records + fsm + idempotency + event-bus + ids + timer) -> {{saga_composed}}"
+
+# Run the saga app on the native Rust host. Use --kv nats to prove durability
+# (state survives a restart); memory is fine for the happy/compensation paths.
+host-saga: compose-saga
+    cd host && VET_TENANT=saga cargo run --release --bin vet-host -- \
+      --component ../{{saga_composed}} --addr 0.0.0.0:3012
+
+# Saga e2e: compose + build host + a Rust test that spawns the host and drives
+# commit, compensation, and (NATS) resume-after-restart over real HTTP.
+e2e-saga: compose-saga
+    cd host && cargo build --release --bin vet-host
+    cd examples/saga && cargo test --release
+
+# Durability proof (SAGA.md rung 3): start a saga on NATS KV, advance it, KILL
+# the host, restart, and show it resumes. Requires NATS on :4222.
+durable-saga: compose-saga
+    cd host && cargo build --release --bin vet-host
+    bash examples/saga/durability.sh
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

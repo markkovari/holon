@@ -1,0 +1,40 @@
+[package]
+name = "saga-domain"
+description = "Durable trip-booking saga composing fsm-workflow + record-store + idempotency-guard + outbox + scheduler-timer + event-bus (saga:app)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "saga:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "saga-domain"
+
+[package.metadata.component.target.dependencies]
+"records:store" = { path = "../record-store/wit" }
+"fsm:workflow" = { path = "../fsm-workflow/wit" }
+"idempotency:guard" = { path = "../idempotency-guard/wit" }
+"event:bus" = { path = "../event-bus/wit" }
+"id:generate" = { path = "../id-generate/wit" }
+# imported from rung 3 (durable retry + timers); listed up front so the WIT
+# resolves without a Cargo edit when those imports land.
+"outbox:dispatch" = { path = "../outbox/wit" }
+"sched:timer" = { path = "../scheduler-timer/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

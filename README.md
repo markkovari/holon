@@ -122,6 +122,10 @@ catalog and a bench round:
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
   events, SLA (rung 1 shipped).
+- **[SAGA.md](SAGA.md)** — a durable **trip-booking saga** (flight → hotel → car,
+  **compensate on failure**); retries a flaky leg, and **survives a host kill and
+  resumes** on NATS (`just durable-saga`). The one axis the others don't show:
+  compensation + durable, resumable execution. ([demo](docs/media/saga.gif))
 - **[CONDUIT.md](CONDUIT.md)** — the **RealWorld** ("Conduit") spec, **100% green
   on the official Hurl conformance suite** (`just conformance-conduit`) from one
   `conduit-domain` + `auth-guard` + `record-store` + `slug`. The strongest proof

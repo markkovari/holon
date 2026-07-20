@@ -795,6 +795,26 @@
     "reusable_as_is": true
   },
   {
+    "name": "saga-domain",
+    "package": "saga:app@0.1.0",
+    "description": "saga:app \u2014 a durable trip-booking saga over composed contracts",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "event:bus/bus",
+      "fsm:workflow/engine",
+      "id:generate/generator",
+      "idempotency:guard/store",
+      "records:store/store",
+      "sched:timer/timer"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 166539,
+    "wasm_sha256_12": "7f5ab51d4c0f",
+    "reusable_as_is": true
+  },
+  {
     "name": "scheduler-timer",
     "package": "sched:timer@0.1.0",
     "description": "`scheduler-timer` \u2014 reference implementation of `sched:timer`",

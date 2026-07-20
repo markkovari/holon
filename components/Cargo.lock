@@ -865,6 +865,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "saga-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "sample-consumer"
 version = "0.1.0"
 dependencies = [
