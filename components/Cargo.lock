@@ -196,6 +196,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "conduit-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "config-store"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,13 @@
+[package]
+name = "conduit-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone crate (NOT in the components wasm workspace): the e2e is a native
+# HTTP client, so its deps (ureq) stay out of the wasm32 build.
+[workspace]
+
+[dependencies]
+ureq = "2"
+serde_json = "1"

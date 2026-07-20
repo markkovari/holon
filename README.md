@@ -112,6 +112,21 @@ summaries via `ai:inference`, 2FA secrets sealed in `secrets:vault`, plus
 search / validate / money / markdown / csv / pii / otp / i18n / pagination /
 upload / blob. `bench/` measures every component's in-process op latency.
 
+### Showcase apps (recreated on the catalog)
+
+Bigger apps, each one HTTP component that imports only contracts — the domain is
+composition, not a bespoke crate. Each has a design doc mapping the app to the
+catalog and a bench round:
+
+- **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
+  + gateway) on wasmCloud v2 + k8s.
+- **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
+  events, SLA (rung 1 shipped).
+- **[CONDUIT.md](CONDUIT.md)** — the **RealWorld** ("Conduit") spec, **100% green
+  on the official Hurl conformance suite** (`just conformance-conduit`) from one
+  `conduit-domain` + `auth-guard` + `record-store` + `slug`. The strongest proof
+  of the thesis: a skeptic clones the upstream suite and it passes.
+
 ---
 
 ```

@@ -1,0 +1,52 @@
+// conduit:app — the RealWorld ("Conduit") spec as a WIT HTTP component.
+//
+// Rung 1 of CONDUIT.md: Users & Profiles. Register/login mint a JWT via the
+// composed auth-guard; the current user reads/edits their profile; users follow
+// and unfollow each other. Everything is composition — the only bespoke code is
+// this component's HTTP-to-contract routing.
+//
+// RealWorld quirks this component honors:
+//   - Authorization header is `Token <jwt>` (also accepts `Bearer`).
+//   - Request AND response bodies are envelope-wrapped: {"user":{...}},
+//     {"profile":{...}}.
+//   - Identity shown to clients is the `username`; the stable id is the
+//     auth-guard `subject`. The `users` record maps username <-> subject.
+//
+// Routes (rung 1):
+//   GET  /                              usage
+//   POST /api/users                     register  {user:{username,email,password}}
+//   POST /api/users/login               login     {user:{email,password}}
+//   GET  /api/user                      current user            (Token)
+//   PUT  /api/user                      update    {user:{email?,username?,bio?,image?}}
+//   GET  /api/profiles/{username}       profile   (Token optional -> following)
+//   POST /api/profiles/{username}/follow                        (Token)
+//   DEL  /api/profiles/{username}/follow                        (Token)
+//
+// Rung 2 — Articles:
+//   POST /api/articles                  {article:{title,description,body,tagList?}}
+//   GET  /api/articles                  ?tag&author&favorited&limit&offset  (Token opt)
+//   GET  /api/articles/feed             followed authors ?limit&offset      (Token)
+//   GET  /api/articles/{slug}                                               (Token opt)
+//   PUT  /api/articles/{slug}           author-only {article:{title?,description?,body?}}
+//   DEL  /api/articles/{slug}           author-only
+//   GET  /api/tags                      distinct tags across all articles
+package conduit:app@0.1.0;
+
+/// The Conduit HTTP backend, composed from capability contracts.
+world conduit-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // register/login + token introspection — the composed auth-guard.
+    // No rbac, no session-revoke: RealWorld has no roles and no logout.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // users (username/email/subject) + follow relations + articles, indexed.
+    import records:store/store@0.1.0;
+    // article slugs from titles, with collision suffixes.
+    import slug:generate/generator@0.1.0;
+    // millisecond-precision createdAt/updatedAt (record:store is second-only, so
+    // an update in the same second wouldn't change updatedAt — RealWorld checks it).
+    import wasi:clocks/wall-clock@0.2.0;
+}

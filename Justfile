@@ -44,6 +44,8 @@ statuspage_wasm := rel / "status_page.wasm"
 statuspage_composed := "components/target/status_page.composed.wasm"
 helpdesk_wasm := rel / "helpdesk_domain.wasm"
 helpdesk_composed := "components/target/helpdesk_domain.composed.wasm"
+conduit_wasm := rel / "conduit_domain.wasm"
+conduit_composed := "components/target/conduit_domain.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -102,6 +104,35 @@ compose-helpdesk: compose
       --plug {{rel}}/markdown.wasm \
       -o {{helpdesk_composed}}
     @echo "composed helpdesk-domain (+ auth-guard + records + fsm + ids + md) -> {{helpdesk_composed}}"
+
+# Compose conduit-domain (CONDUIT.md rung 1 — the RealWorld spec) with the
+# capabilities it imports: the composed auth-guard (auth:identity) + records:store.
+# Remaining imports are generic WASI. Output is ONE self-contained app component.
+compose-conduit: compose
+    wac plug {{conduit_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/slug.wasm \
+      -o {{conduit_composed}}
+    @echo "composed conduit-domain (+ auth-guard + records + slug) -> {{conduit_composed}}"
+
+# Run the conduit app (CONDUIT.md rung 1) on the native Rust host, in-memory KV.
+host-conduit: compose-conduit
+    cd host && VET_TENANT=conduit cargo run --release --bin vet-host -- \
+      --component ../{{conduit_composed}} --addr 0.0.0.0:3008
+
+# conduit e2e: build the composed app + native host, then a Rust test that spawns
+# the host and drives the full API (users/profiles/articles/comments/favorites).
+e2e-conduit: compose-conduit
+    cd host && cargo build --release --bin vet-host
+    cd examples/conduit && cargo test --release
+
+# RealWorld conformance (CONDUIT.md rung 4): the OFFICIAL Hurl suite (vendored in
+# examples/conduit/conformance/hurl) against the composed app on the native host.
+# Requires `hurl` (https://hurl.dev) — like `wash`, not bundled.
+conformance-conduit: compose-conduit
+    cd host && cargo build --release --bin vet-host
+    bash examples/conduit/conformance/run.sh
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

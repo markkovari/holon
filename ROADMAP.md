@@ -219,3 +219,16 @@ Ensure all Rust code is strictly typed, handles errors safely, and includes clea
       notifications + signed webhooks, `mail-parse`, SLA timers + search,
       billing rollup, AI drafts. Rung 1 is done (`components/helpdesk-domain`,
       `examples/jco-helpdesk`, `just host-helpdesk` on the native host + NATS).
+
+### Conduit / RealWorld (CONDUIT.md) — done
+
+- [x] The full RealWorld ("Conduit") spec as one `conduit-domain` component +
+      `auth-guard` + `record-store` + `slug`, run on the native Rust host.
+      **Passes the official RealWorld Hurl conformance suite 100% (13/13 files,
+      154 requests)** — `just conformance-conduit`; suite vendored + pinned under
+      `examples/conduit/conformance`. Rust e2e (`just e2e-conduit`) + app-path
+      bench (`bench/CONDUIT-BENCH.md`, round 13). This is the first showcase
+      validated against an *external, objective* test suite rather than our own.
+- [ ] Optional: password rotation + email rename in auth-guard (the two flagged
+      conformance caveats), a `?search` extension (`search-index`), and a stock
+      RealWorld frontend SPA served from `--static-dir`.
