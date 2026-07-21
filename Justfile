@@ -170,6 +170,16 @@ durable-saga: compose-saga
     cd host && cargo build --release --bin vet-host
     bash examples/saga/durability.sh
 
+# Golem provider (GOLEM.md): unit tests (contract + Value mapping + provider
+# compiles). No infra — the live Golem hop skips without GOLEM_E2E.
+golem-provider-test:
+    cd providers/golem-workflow && cargo test --release
+
+# Live e2e (GOLEM.md rung 3): download Golem 1.5, run it, deploy the demo agent,
+# and invoke it through the provider's bridge (asserts durable state advances).
+golem-e2e:
+    bash providers/golem-workflow/e2e.sh
+
 # Compose pulse-domain (REALTIME.md — a realtime chat room with SSE server-push)
 # with records + event-bus + id-generate. No auth. Remaining imports are WASI.
 compose-pulse: build

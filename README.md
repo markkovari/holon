@@ -141,6 +141,11 @@ catalog and a bench round:
 > Demo gifs live in [`docs/media/`](docs/media); regenerate them with the
 > Playwright harness in [`tools/screencast/`](tools/screencast).
 
+**Beyond apps** — [GOLEM.md](GOLEM.md): the first *capability provider* (not a
+component). A native wasmCloud↔**Golem** bridge (`providers/golem-workflow`) that
+lets a component invoke a **durable Golem worker** over a typed contract —
+**live-verified** against a real Golem 1.5 server (`just golem-e2e`).
+
 ---
 
 ```

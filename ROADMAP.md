@@ -118,14 +118,21 @@ current state as a demo/learning artifact until Tier 1 lands.
 
 ## TODO — next up
 
-### Native wRPC-to-Golem capability provider
+### Native wRPC-to-Golem capability provider — built (GOLEM.md)
 
-- [ ] Build a native wasmCloud (v2.x) **capability provider** in Rust that
-      bridges native wRPC calls on the NATS lattice to durable **Golem**
-      workers: a component calls a typed WIT interface over wRPC, the provider
-      maps the typed Rust structs to `golem_wasm_rpc::Value`, invokes the Golem
-      worker via its HTTP client, and returns the typed result. First provider
-      in this repo (everything so far is components + hosts). Full work brief:
+- [x] **`providers/golem-workflow`** — the first *provider* in the repo (all else
+      is components + hosts). A native wasmCloud v2 provider exporting
+      `durable:workflow/orchestrator` over wRPC, bridging to durable **Golem**
+      workers. **Live-verified end-to-end**: the bridge invokes a real deployed
+      Golem 1.5 worker and its durable state advances (`just golem-e2e`,
+      `GOLEM_E2E=1 cargo test`). Two findings baked into GOLEM.md: pin
+      `wit-bindgen-wrpc 0.10` to match `wasmcloud-provider-sdk 0.17.1`'s
+      `wrpc-transport 0.28`; and a direct `reqwest` gateway call beats the
+      non-OSS, build-time-generated `golem-client`.
+- [ ] Remaining: the wasmCloud-lattice *front* half (component → provider) needs
+      the classic wasmCloud host — the installed `wash 2.3` is the new
+      component-shell, so it's compiled-but-not-hosted-here. Plus the saga
+      integration (a saga leg = a durable Golem worker). Original work brief:
 
 <details>
 <summary>Work brief (verbatim)</summary>

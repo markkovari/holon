@@ -1,0 +1,54 @@
+// durable:workflow — a component's typed handle to a durable external worker.
+//
+// The consumer imports `orchestrator` and calls `trigger` like any function.
+// A native capability provider (this crate, golem-workflow) satisfies it over
+// wRPC on the NATS lattice, bridging each call to a durable Golem worker — so
+// the work survives its own crashes, retries with exactly-once effects, and
+// resumes. Swap the provider (Temporal, Step Functions, …) and the component is
+// unchanged. See GOLEM.md.
+package durable:workflow@0.1.0;
+
+interface orchestrator {
+    /// A workflow invocation. `payload` is opaque JSON the worker understands.
+    record run-request {
+        workflow-id: string,
+        payload: string,
+    }
+
+    variant run-error {
+        /// No worker/template registered for `workflow-id`.
+        not-found(string),
+        /// `payload` was malformed for this workflow.
+        invalid-input(string),
+        /// The worker ran but returned an error result.
+        worker-failed(string),
+        /// The durable runtime (Golem) was unreachable.
+        unavailable(string),
+    }
+
+    /// Blocking: trigger a durable worker, wait for it, return its result.
+    /// Simple; ties up the caller for the worker's lifetime.
+    trigger: func(req: run-request) -> result<string, run-error>;
+
+    /// The lifecycle of an async run.
+    record run-status {
+        /// pending | running | completed | failed
+        state: string,
+        /// present once `state` is completed | failed
+        output: option<string>,
+    }
+
+    /// Fire-and-poll: start a durable worker and return a run-id immediately, so
+    /// a long-running (or crash-recovering) worker doesn't hold the request open.
+    start: func(req: run-request) -> result<string, run-error>;
+
+    /// Poll a run started with `start`.
+    status: func(run-id: string) -> result<run-status, run-error>;
+}
+
+/// What the `golem-workflow` provider exports. (A native binary, not a wasm
+/// component — it also imports the lattice/host capabilities via the provider
+/// SDK, which live outside this WIT.)
+world golem-provider {
+    export orchestrator;
+}
