@@ -94,5 +94,14 @@ node search.mjs
 bash to-gif.sh videos/search/*.webm ../../docs/media/search.gif 720 12
 ```
 
+**ratelimit** — throttle wall; burst to drive the attempt bar to its ceiling,
+watch the key LOCK with a countdown + the quota gauge drain, then Reset:
+
+```bash
+just host-ratelimit &                   # from repo root; wall on :3020
+node ratelimit.mjs
+bash to-gif.sh videos/ratelimit/*.webm ../../docs/media/ratelimit.gif 760 12
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

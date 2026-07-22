@@ -1,0 +1,34 @@
+// throttle:app — a live throttle wall as a WIT HTTP component.
+//
+// The new axis: backpressure you can watch. Each request is gated by two
+// complementary limiters — ratelimit:guard (fixed-window attempts + lockout)
+// and quota:meter (cumulative budget) — and every verdict is streamed over SSE
+// so a wall UI shows the attempt bar filling, the lockout latch tripping with a
+// countdown, and the quota gauge draining/refilling. See RATELIMIT.md.
+//
+// Routes:
+//   POST /api/hit      {key?, subject?}   one request → allow | throttled
+//   POST /api/burst    {key?, n?}         fire N hits
+//   POST /api/fail     {key?}             record a failure (drives lockout)
+//   POST /api/reset    {key?}             clear limiter + meter for a key
+//   GET  /api/state    ?key=&subject=     attempts-left, locked?, retry-after, quota
+//   GET  /api/stream   ?key=              LIVE SSE stream of decisions
+package throttle:app@0.1.0;
+
+/// The decision gate + the SSE loop, composed from capability contracts.
+world throttle-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // fixed-window attempt counter + lockout.
+    import ratelimit:guard/limiter@0.1.0;
+    // cumulative usage budget + reset period.
+    import quota:meter/meter@0.1.0;
+    // fan-out spine + the SSE cursor: publish a verdict per decision.
+    import event:bus/bus@0.1.0;
+    // decision ids.
+    import id:generate/generator@0.1.0;
+    // retry-after math + timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

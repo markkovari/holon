@@ -154,6 +154,11 @@ catalog and a bench round:
   (`just host-search`). The one **read/query** axis — everything else is
   write/stream-shaped — over `search:index` + `records` + `cache` +
   `metrics`. ([demo](docs/media/search.gif))
+- **[RATELIMIT.md](RATELIMIT.md)** — a live **throttle wall**: hammer an endpoint
+  and watch the attempt bar hit its ceiling, the key **lock out** with a
+  countdown, and a cumulative **quota** gauge drain — then recover
+  (`just host-ratelimit`). The axis nothing else shows: **backpressure you can
+  see**, over `ratelimit:guard` + `quota:meter`. ([demo](docs/media/ratelimit.gif))
 - **[REALTIME.md](REALTIME.md)** — **pulse**, a live chat room: a message streams
   to every open window over held-open **SSE** (real server-push on wasip2, no
   WebSocket) — one broadcast fans out to 150 concurrent connections. The one

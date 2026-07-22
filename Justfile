@@ -58,6 +58,8 @@ abtest_wasm := rel / "abtest_domain.wasm"
 abtest_composed := "components/target/abtest_domain.composed.wasm"
 search_wasm := rel / "search_domain.wasm"
 search_composed := "components/target/search_domain.composed.wasm"
+throttle_wasm := rel / "throttle_domain.wasm"
+throttle_composed := "components/target/throttle_domain.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -332,6 +334,35 @@ host-search: compose-search
 e2e-search: compose-search
     cd host && cargo build --release --bin vet-host
     cd examples/search && cargo test --release
+
+# Compose throttle-domain (RATELIMIT.md — a live throttle wall) with the two
+# limiters + event-bus + id-generate. No auth. Remaining imports are WASI
+# (kv + config bound at deploy).
+compose-ratelimit: build
+    wac plug {{throttle_wasm}} \
+      --plug {{ratelimit_wasm}} \
+      --plug {{rel}}/quota.wasm \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      -o {{throttle_composed}}
+    @echo "composed throttle-domain (+ ratelimit + quota + event-bus + ids) -> {{throttle_composed}}"
+
+# Run the throttle wall on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3020: hold the hammer button, watch the attempt bar hit the
+# ceiling and the key LOCK with a countdown, and the quota gauge drain — live.
+# CFG_MAX_ATTEMPTS / CFG_LOCKOUT_WINDOW tune the wall (defaults 5 / 300s).
+host-ratelimit: compose-ratelimit
+    cd host && VET_TENANT=throttle CFG_MAX_ATTEMPTS=10 CFG_LOCKOUT_WINDOW=15 \
+      cargo run --release --bin vet-host -- \
+      --component ../{{throttle_composed}} --addr 0.0.0.0:3020 \
+      --static-dir ../examples/ratelimit/public
+
+# Throttle e2e: compose + build host + a Rust test that proves N allowed then a
+# 429 at the ceiling, a quota `remaining` that decrements, lockout after a burst
+# of failures, and a verdict reaching a SEPARATE held-open SSE connection.
+e2e-ratelimit: compose-ratelimit
+    cd host && cargo build --release --bin vet-host
+    cd examples/ratelimit && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

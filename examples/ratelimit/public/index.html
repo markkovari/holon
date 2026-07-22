@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ratelimit — a live throttle wall on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --track:#e2e8f0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --track:#1e2430; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--ink); display: flex; flex-direction: column; align-items: center; }
+  .wrap { width: 100%; max-width: 720px; padding: 1.4rem 1rem; display: flex; flex-direction: column; gap: 1.1rem; }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  header .dim { color: var(--muted); font-weight: 400; font-size: .9rem; }
+  .controls { display: flex; gap: .5rem; flex-wrap: wrap; }
+  button { font: inherit; padding: .55rem .9rem; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  button.danger { color: var(--bad); border-color: var(--bad); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; }
+  .card h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 .7rem; }
+  .gauge-label { display: flex; justify-content: space-between; font-size: .85rem; margin-bottom: .3rem; }
+  .track { height: 22px; background: var(--track); border-radius: 7px; overflow: hidden; }
+  .fill { height: 100%; transition: width .2s, background .2s; }
+  .status { display: flex; align-items: center; gap: .6rem; margin-top: .8rem; font-weight: 600; }
+  .badge { padding: .2rem .6rem; border-radius: 7px; color: #fff; font-size: .85rem; }
+  .badge.ok { background: var(--ok); } .badge.locked { background: var(--bad); }
+  .count { color: var(--muted); font-weight: 400; font-size: .85rem; }
+  .feed { max-height: 30vh; overflow-y: auto; display: flex; flex-direction: column; gap: .25rem; font-family: ui-monospace, monospace; font-size: .78rem; }
+  .feed .row { display: flex; gap: .5rem; padding: .15rem 0; }
+  .feed .v { width: 5rem; font-weight: 600; }
+  .v.allow { color: var(--ok); } .v.locked, .v.quota { color: var(--bad); } .v.strike { color: var(--warn); } .v.reset { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>ratelimit</h1> <span class="dim">— a live throttle wall · fixed-window lockout + cumulative quota</span></header>
+
+  <div class="controls">
+    <button class="primary" id="hit">Hit once</button>
+    <button id="burst">Burst ×10</button>
+    <button id="hold">Hold to hammer</button>
+    <button class="danger" id="reset">Reset</button>
+  </div>
+
+  <div class="card">
+    <h2>Fixed-window lockout (max 10 / 15s)</h2>
+    <div class="gauge-label"><span>attempts this window</span><span id="att">0</span></div>
+    <div class="track"><div class="fill" id="attFill" style="width:0%;background:var(--ok)"></div></div>
+    <div class="status"><span class="badge ok" id="lockBadge">OPEN</span><span class="count" id="lockNote"></span></div>
+  </div>
+
+  <div class="card">
+    <h2>Cumulative quota (20 / 30s)</h2>
+    <div class="gauge-label"><span>used</span><span id="quotaLabel">0 / 20</span></div>
+    <div class="track"><div class="fill" id="quotaFill" style="width:0%;background:var(--accent)"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>Verdict stream (SSE)</h2>
+    <div class="feed" id="feed"></div>
+  </div>
+</div>
+
+<script>
+  const KEY = "demo";
+  const MAX = 10, QUOTA = 20;
+
+  async function hitOnce() { await fetch("/api/hit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: KEY, subject: KEY }) }); }
+  document.getElementById("hit").onclick = hitOnce;
+  document.getElementById("burst").onclick = () => fetch("/api/burst", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: KEY, n: 10 }) });
+  document.getElementById("reset").onclick = () => fetch("/api/reset", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: KEY }) });
+
+  // hold-to-hammer
+  let hammer = null;
+  const holdBtn = document.getElementById("hold");
+  const startHold = () => { if (hammer) return; hammer = setInterval(hitOnce, 180); holdBtn.textContent = "…hammering"; };
+  const stopHold = () => { clearInterval(hammer); hammer = null; holdBtn.textContent = "Hold to hammer"; };
+  holdBtn.addEventListener("mousedown", startHold); holdBtn.addEventListener("mouseup", stopHold); holdBtn.addEventListener("mouseleave", stopHold);
+
+  async function refresh() {
+    const s = await (await fetch(`/api/state?key=${KEY}&subject=${KEY}`)).json();
+    const used = MAX - (s.attempts_left ?? MAX);
+    document.getElementById("att").textContent = Math.max(0, used);
+    const attPct = Math.min(100, Math.round(Math.max(0, used) / MAX * 100));
+    const attFill = document.getElementById("attFill");
+    attFill.style.width = attPct + "%";
+    attFill.style.background = s.locked ? "var(--bad)" : attPct > 70 ? "var(--warn)" : "var(--ok)";
+    const badge = document.getElementById("lockBadge");
+    badge.className = "badge " + (s.locked ? "locked" : "ok");
+    badge.textContent = s.locked ? "LOCKED" : "OPEN";
+    document.getElementById("lockNote").textContent = s.locked ? `retry in ${s.retry_after}s` : "";
+
+    const q = s.quota_used ?? 0;
+    document.getElementById("quotaLabel").textContent = `${q} / ${QUOTA}`;
+    document.getElementById("quotaFill").style.width = Math.min(100, Math.round(q / QUOTA * 100)) + "%";
+  }
+
+  const feed = document.getElementById("feed");
+  function push(v) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const time = new Date().toLocaleTimeString().split(" ")[0];
+    row.innerHTML = `<span class="v ${v.verdict}">${v.verdict}</span><span>${v.key}</span><span style="color:var(--muted);margin-left:auto">${time}</span>`;
+    feed.prepend(row);
+    while (feed.childElementCount > 40) feed.lastChild.remove();
+  }
+
+  // live verdicts over SSE + a periodic state refresh (countdown ticks).
+  const es = new EventSource(`/api/stream?key=${KEY}`);
+  es.onmessage = ev => { try { push(JSON.parse(ev.data)); } catch {} refresh(); };
+  setInterval(refresh, 1000);
+  refresh();
+</script>
+</body>
+</html>
