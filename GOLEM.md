@@ -110,9 +110,12 @@ Unlike saga/pulse — fully e2e'd on the lightweight `host/` wasmtime binary —
    run`), a real agent deployed, and the provider's bridge call (`invoke_golem`)
    invoked against it, twice, asserting the durable count advances. Automated:
    `GOLEM_E2E=1 cargo test` (see the crate README).
-4. ◻︎ **Saga integration** (follow-up) — a `saga` variant whose legs call
-   `orchestrator.trigger` so each leg is a durable Golem worker. Designed, not
-   yet built.
+4. ✅ **Saga integration** — the [trip-booking saga](SAGA.md) can book each leg by
+   invoking a real durable Golem worker over `wasi:http/outgoing-handler`, so a
+   saga leg *is* a crash-proof workflow while the saga still owns compensation.
+   Live proof: `just saga-golem` — the saga commits with golem-issued refs and the
+   leg's durable worker state advances. (This proves the same Golem hop the
+   provider makes, from inside a wasm component instead of a native provider.)
 
 ## Status & the honest boundary
 

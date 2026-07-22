@@ -26,8 +26,10 @@ use bindings::sched::timer::timer;
 use bindings::wasi::clocks::wall_clock;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::wasi::http::outgoing_handler;
 use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
+    Fields, IncomingRequest, Method, OutgoingBody, OutgoingRequest, OutgoingResponse,
+    RequestOptions, ResponseOutparam, Scheme,
 };
 
 struct Component;
@@ -148,6 +150,11 @@ fn create_trip(request: &IncomingRequest) -> Outcome {
         .iter()
         .map(|leg| json!({"leg": leg, "state": "pending", "ref": "", "price": price(leg), "at": 0, "attempts": 0}))
         .collect();
+    // golem-backed legs (optional): when `golemUrl` is set, each leg is booked by
+    // invoking a durable Golem worker over HTTP instead of the in-process
+    // simulation. `golemHost` is the gateway `Host` header for subdomain routing.
+    let golem_url = body["golemUrl"].as_str().unwrap_or("");
+    let golem_host = body["golemHost"].as_str().unwrap_or("");
     let data = json!({
         "traveler": traveler,
         "status": "running",
@@ -155,6 +162,8 @@ fn create_trip(request: &IncomingRequest) -> Outcome {
         "failLeg": fail_leg,
         "flakyLeg": flaky_leg,
         "flakyFails": flaky_fails,
+        "golemUrl": golem_url,
+        "golemHost": golem_host,
         "steps": steps,
     });
     let entry = match records::create(SAGAS, &data.to_string(), &["status".to_string()]) {
@@ -225,6 +234,7 @@ fn step(id: &str) -> bool {
     let fail_leg = data["failLeg"].as_str().unwrap_or("").to_string();
     let flaky_leg = data["flakyLeg"].as_str().unwrap_or("").to_string();
     let flaky_fails = data["flakyFails"].as_u64().unwrap_or(0);
+    let golem = golem_opts(&data);
 
     match status.as_str() {
         "running" => {
@@ -258,10 +268,19 @@ fn step(id: &str) -> bool {
                     } else {
                         // success (also the recovery of a previously-flaky leg)
                         let _ = timer::cancel(&timer_key);
-                        let reference = book_leg(id, &leg);
-                        set_leg(&mut data, i, "booked", &reference);
-                        save(id, &data);
-                        publish("saga.leg.booked", &json!({"saga": id, "leg": leg, "ref": reference}));
+                        match book_leg(id, &leg, golem.as_ref().map(|(u, h)| (u.as_str(), h.as_str()))) {
+                            Ok(reference) => {
+                                set_leg(&mut data, i, "booked", &reference);
+                                save(id, &data);
+                                publish("saga.leg.booked", &json!({"saga": id, "leg": leg, "ref": reference}));
+                            }
+                            // the leg's durable provider (Golem) failed → roll back,
+                            // like any other leg failure. Prior legs are compensated.
+                            Err(e) => {
+                                data["lastError"] = json!(e);
+                                begin_compensation(id, &mut data, i, &leg);
+                            }
+                        }
                     }
                 }
             }
@@ -293,17 +312,90 @@ fn step(id: &str) -> bool {
 /// Reserve a leg, fenced so the booking record is created at most once. Returns
 /// the booking ref (a fresh one, or the replayed ref if already booked). The
 /// decision to book/fail/retry is the caller's; this only performs the reserve.
-fn book_leg(saga: &str, leg: &str) -> String {
+fn book_leg(saga: &str, leg: &str, golem: Option<(&str, &str)>) -> Result<String, String> {
     let key = format!("saga:{saga}:book:{leg}");
     if let Ok(Some(cached)) = idem::begin(&key, 3600) {
-        return String::from_utf8_lossy(&cached.body).into_owned(); // idempotent replay
+        return Ok(String::from_utf8_lossy(&cached.body).into_owned()); // idempotent replay
     }
     // first caller (single-writer per saga, so in-progress can't race here).
-    let reference = format!("{}-{}", ref_prefix(leg), ids::short_code(6));
+    let reference = match golem {
+        // book the leg by invoking a REAL durable Golem worker over HTTP.
+        Some((url, host)) => match golem_book(url, host, &format!("{leg}-{saga}")) {
+            Ok(result) => format!("{}-golem-{result}", ref_prefix(leg)),
+            Err(e) => {
+                let _ = idem::forget(&key); // release the key so a retry can re-attempt
+                return Err(e);
+            }
+        },
+        // in-process simulated booking.
+        None => format!("{}-{}", ref_prefix(leg), ids::short_code(6)),
+    };
     let booking = json!({"saga": saga, "leg": leg, "ref": reference, "price": price(leg)});
     let _ = records::create(BOOKINGS, &booking.to_string(), &["saga".to_string()]);
     let _ = idem::complete(&key, 200, reference.as_bytes());
-    reference
+    Ok(reference)
+}
+
+/// The (url, host) of the Golem gateway if this saga's legs are golem-backed.
+fn golem_opts(data: &Value) -> Option<(String, String)> {
+    let url = data["golemUrl"].as_str().unwrap_or("");
+    if url.is_empty() {
+        return None;
+    }
+    Some((url.to_string(), data["golemHost"].as_str().unwrap_or("").to_string()))
+}
+
+/// Invoke a durable Golem worker via the API gateway (`POST
+/// {url}/counters/{workflow}/increment`) and return its result body. This is the
+/// same call the `golem-workflow` provider makes — here the saga makes it
+/// directly over `wasi:http`, so a saga leg IS a crash-proof Golem worker.
+fn golem_book(url: &str, host: &str, workflow: &str) -> Result<String, String> {
+    let (scheme, url_authority) = if let Some(rest) = url.strip_prefix("https://") {
+        (Scheme::Https, rest.trim_end_matches('/').to_string())
+    } else {
+        (Scheme::Http, url.trim_start_matches("http://").trim_end_matches('/').to_string())
+    };
+    // wasi:http derives the `Host` header from the authority (a manual `host`
+    // field is ignored), and Golem's gateway routes by subdomain Host. So the
+    // authority MUST be the gateway host (e.g. `app.localhost:9006`) — it
+    // resolves to loopback locally and yields the right `Host` automatically.
+    let authority = if host.is_empty() { url_authority } else { host.to_string() };
+    let headers = Fields::new();
+    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let req = OutgoingRequest::new(headers);
+    req.set_method(&Method::Post).map_err(|_| "set method".to_string())?;
+    req.set_scheme(Some(&scheme)).map_err(|_| "set scheme".to_string())?;
+    req.set_authority(Some(&authority)).map_err(|_| "set authority".to_string())?;
+    req.set_path_with_query(Some(&format!("/counters/{workflow}/increment")))
+        .map_err(|_| "set path".to_string())?;
+    {
+        let out = req.body().map_err(|_| "body".to_string())?;
+        let _ = OutgoingBody::finish(out, None);
+    }
+    let future = outgoing_handler::handle(req, Some(RequestOptions::new()))
+        .map_err(|e| format!("golem unreachable: {e:?}"))?;
+    future.subscribe().block();
+    let resp = future
+        .get()
+        .ok_or_else(|| "no response".to_string())?
+        .map_err(|_| "response taken".to_string())?
+        .map_err(|e| format!("http: {e:?}"))?;
+    if !(200..300).contains(&resp.status()) {
+        return Err(format!("golem status {}", resp.status()));
+    }
+    let mut bytes = Vec::new();
+    if let Ok(incoming) = resp.consume() {
+        if let Ok(stream) = incoming.stream() {
+            loop {
+                match stream.blocking_read(8192) {
+                    Ok(c) if c.is_empty() => break,
+                    Ok(c) => bytes.extend_from_slice(&c),
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+    Ok(String::from_utf8_lossy(&bytes).trim().to_string())
 }
 
 /// Mark a leg failed and move the saga into `compensating`.
@@ -391,6 +483,7 @@ fn saga_json(id: &str) -> String {
         "startedAt": data["startedAt"],
         "steps": data["steps"],
         "history": history,
+        "lastError": data["lastError"],
     })
     .to_string()
 }

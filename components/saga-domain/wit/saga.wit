@@ -30,4 +30,8 @@ world saga-domain {
     import sched:timer/timer@0.1.0;
     // startedAt / per-leg timestamps.
     import wasi:clocks/wall-clock@0.2.0;
+    // golem-backed legs: book a leg by invoking a durable Golem worker over HTTP
+    // (the same worker the golem-workflow provider bridges to) — so a saga leg is
+    // a real crash-proof workflow, and the saga still owns compensation.
+    import wasi:http/outgoing-handler@0.2.0;
 }

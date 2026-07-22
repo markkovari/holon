@@ -108,10 +108,32 @@ capabilities into contracts.
    (`just durable-saga` → PASS).
 4. ✅ **Bench** — app-path round, memory vs NATS: the first bench of a *stateful
    workflow* path. See [`bench/SAGA-BENCH.md`](bench/SAGA-BENCH.md).
+5. ✅ **Golem-backed legs** — a leg is booked by invoking a real durable
+   [Golem](GOLEM.md) worker over `wasi:http/outgoing-handler` (the same worker the
+   `golem-workflow` provider bridges to). Send a trip with `golemUrl` + `golemHost`
+   and each leg becomes a crash-proof workflow while the saga still owns
+   compensation. Live proof: `just saga-golem` → the saga commits with
+   golem-issued refs (`FL-golem-1`) and the leg's durable worker state advances.
+
+### Golem-backed legs — how the hop works
+
+Set `golemUrl` (e.g. `http://127.0.0.1:9006`) and `golemHost` (the gateway
+subdomain, e.g. `golem-agent.localhost:9006`) on `POST /trips`. Each leg then
+does a fenced `POST {golemUrl}/counters/{leg}-{saga}/increment` to a durable
+worker; a `2xx` yields the golem ref, anything else rolls the saga back through
+its normal compensation. The leg is still idempotency-guarded, so a retried pump
+never double-invokes the worker. Omit the fields and legs stay simulated —
+same code path, no infra needed.
+
+> **wasi:http gotcha:** the outbound `Host` header is derived from the request
+> *authority*, not a manual `host` field, and Golem's gateway routes by
+> subdomain Host. So the authority must be the gateway host itself
+> (`golem-agent.localhost:9006`, which resolves to loopback locally) — not the
+> raw `127.0.0.1`. Getting this wrong is a silent `404` from the gateway.
 
 ## Non-goals (v1)
 
 A generic saga-definition contract (this app is one concrete saga), parallel
-legs (strictly sequential here), human-approval steps, and real external
-providers (legs are simulated bookings so failure is deterministic and the demo
-is self-contained).
+legs (strictly sequential here), and human-approval steps. Legs are simulated
+bookings by default so failure is deterministic and the demo is self-contained;
+rung 5 upgrades a leg to a **real** durable Golem worker when infra is present.

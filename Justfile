@@ -180,6 +180,14 @@ golem-provider-test:
 golem-e2e:
     bash providers/golem-workflow/e2e.sh
 
+# Live proof (SAGA.md): a saga whose LEGS are real durable Golem workers. Starts
+# Golem, deploys the agent, runs the saga with golem-backed legs over wasi:http,
+# and asserts it committed with golem-issued refs + the worker's state advanced.
+# Requires the Golem binary (run `just golem-e2e` once to fetch it).
+saga-golem: compose-saga
+    cd host && cargo build --release --bin vet-host
+    bash examples/saga/golem-legs.sh
+
 # Compose pulse-domain (REALTIME.md — a realtime chat room with SSE server-push)
 # with records + event-bus + id-generate. No auth. Remaining imports are WASI.
 compose-pulse: build
