@@ -1,0 +1,80 @@
+// experiment:assign — weighted, sticky, named-variant assignment.
+//
+// The A/B/n primitive that `featureflags:guard` is not: a flag decides a
+// boolean (on/off, 2 arms, no names); an experiment splits subjects across N
+// NAMED variants by relative weight, and returns which arm a subject is in.
+//
+// Assignment is deterministic + STICKY: a subject's variant is a pure function
+// of a stable hash of `ctx.subject` over the variant set, so a subject never
+// switches arms between calls (a flip-flopping subject would corrupt an
+// experiment). Weights are normalized to a cumulative range; raising one
+// variant's weight only EXTENDS its slice, so subjects already inside an arm
+// stay — new subjects only ever join. Definitions are runtime (set with no
+// redeploy), scoped by tenant, backed only by generic wasi:keyvalue.
+package experiment:assign@0.1.0;
+
+/// Weighted named-variant assignment, scoped by tenant.
+interface assigner {
+    /// Why an assign call failed.
+    variant assign-error {
+        /// The experiment name has no variant set (never defined / cleared).
+        not-found,
+        /// A variant set was empty or all-zero-weight (nothing to assign to).
+        invalid-variants(string),
+        /// A backing dependency (the definition store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// One arm of an experiment. `weight` is RELATIVE (normalized across the
+    /// set) — `50/25/25` and `2/1/1` describe the same split.
+    record arm {
+        name: string,
+        weight: u32,
+    }
+
+    /// The context a subject is assigned against.
+    record context {
+        /// Tenant / org. A tenant-scoped definition wins over the global one
+        /// (tenant `""`). Lets one experiment carry different weights per tenant.
+        tenant: string,
+        /// Stable subject id (user / session). Buckets the assignment; the same
+        /// subject always lands in the same arm for a given variant set.
+        subject: string,
+    }
+
+    /// A subject's resolved arm, from `cohort`.
+    record assignment {
+        subject: string,
+        arm: string,
+    }
+
+    /// Define or replace an experiment's variant set (`""` tenant = global).
+    /// Idempotent full replace. Zero-weight variants are allowed (a defined but
+    /// currently-unallocated arm) as long as at least one weight is positive.
+    set-experiment: func(name: string, tenant: string, variants: list<arm>)
+        -> result<_, assign-error>;
+
+    /// Remove an experiment's variant set for (`name`, `tenant`), falling back
+    /// to the global definition (if any). Idempotent.
+    clear-experiment: func(name: string, tenant: string) -> result<_, assign-error>;
+
+    /// Assign `ctx.subject` to a variant of `name`. Deterministic + sticky.
+    /// Resolution: tenant definition, else global. `err(not-found)` if neither.
+    assign: func(name: string, ctx: context) -> result<string, assign-error>;
+
+    /// The experiment's effective variant set + weights for `tenant` (tenant
+    /// definition if set, else global). `err(not-found)` if undefined.
+    describe: func(name: string, tenant: string) -> result<list<arm>, assign-error>;
+
+    /// Assign a synthetic cohort `subject-0 … subject-{n-1}` — the on-grid view
+    /// for a console. `n` is clamped to 1..=1000.
+    cohort: func(name: string, tenant: string, n: u32)
+        -> result<list<assignment>, assign-error>;
+}
+
+/// What `experiment-assign` provides: the assigner, backed by key-value only.
+/// No clock, no randomness — the hash is the (deterministic) randomness.
+world experiment-assign {
+    export assigner;
+    import wasi:keyvalue/store@0.2.0-draft;
+}

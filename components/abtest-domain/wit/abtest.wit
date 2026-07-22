@@ -1,0 +1,35 @@
+// abtest:app — an A/B/n experiment console as a WIT HTTP component.
+//
+// The axis flags implies but can't reach: named weighted variants + outcome
+// measurement. Assign a subject to a variant via experiment:assign (sticky,
+// weighted), record exposures/conversions via metrics:collect, and stream the
+// per-variant conversion rate live over SSE. See EXPERIMENT.md.
+//
+// Routes:
+//   POST /api/experiments/{name}  {tenant, variants:[{name,weight}]}  define
+//   GET  /api/experiments/{name}  ?tenant=                            describe
+//   GET  /api/assign              ?exp=&tenant=&subject=              one arm
+//   GET  /api/cohort              ?exp=&tenant=&n=                    the grid
+//   POST /api/expose              {exp, tenant, subject}              exposure
+//   POST /api/convert             {exp, tenant, subject}              conversion
+//   GET  /api/results             ?exp=&tenant=                       per-arm rates
+//   GET  /api/stream              ?exp=&tenant=                       LIVE SSE
+package abtest:app@0.1.0;
+
+/// The experiment console + the SSE loop, composed from capability contracts.
+world abtest-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // weighted, sticky, named-variant assignment.
+    import experiment:assign/assigner@0.1.0;
+    // exposure / conversion counters + per-arm rates.
+    import metrics:collect/collector@0.1.0;
+    // fan-out spine + the SSE cursor: publish an event per assignment / outcome.
+    import event:bus/bus@0.1.0;
+    // event ids.
+    import id:generate/generator@0.1.0;
+    // event timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

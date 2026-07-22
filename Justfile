@@ -54,6 +54,8 @@ pipeline_wasm := rel / "pipeline_domain.wasm"
 pipeline_composed := "components/target/pipeline_domain.composed.wasm"
 flags_wasm := rel / "flags_domain.wasm"
 flags_composed := "components/target/flags_domain.composed.wasm"
+abtest_wasm := rel / "abtest_domain.wasm"
+abtest_composed := "components/target/abtest_domain.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -267,6 +269,36 @@ host-flags: compose-flags
 e2e-flags: compose-flags
     cd host && cargo build --release --bin vet-host
     cd examples/flags && cargo test --release
+
+# Compose abtest-domain (EXPERIMENT.md — an A/B/n experiment console with SSE)
+# with experiment-assign + metrics-collect + event-bus + id-generate. No auth.
+# Remaining imports are WASI (kv + config bound at deploy).
+compose-abtest: build
+    wac plug {{abtest_wasm}} \
+      --plug {{rel}}/experiment_assign.wasm \
+      --plug {{rel}}/metrics_collect.wasm \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      -o {{abtest_composed}}
+    @echo "composed abtest-domain (+ experiment + metrics + event-bus + ids) -> {{abtest_composed}}"
+
+# Run the experiment console on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3018: define control/variant-a/variant-b weights, watch 100
+# subjects split into arms (sticky as weights shift), fire conversions, and see
+# the per-arm conversion-rate bars pull apart live.
+host-abtest: compose-abtest
+    cd host && VET_TENANT=abtest cargo run --release --bin vet-host -- \
+      --component ../{{abtest_composed}} --addr 0.0.0.0:3018 \
+      --static-dir ../examples/abtest/public
+
+# Experiment e2e: compose + build host + a Rust test that defines a 50/25/25
+# experiment and proves (a) assignment is STICKY per subject, (b) two different
+# subjects can land in different arms, (c) the ~50/25/25 split holds across a
+# cohort, (d) conversions attribute to the right arm's rate, and (e) an outcome
+# recorded by one request reaches a SEPARATE held-open SSE connection live.
+e2e-abtest: compose-abtest
+    cd host && cargo build --release --bin vet-host
+    cd examples/abtest && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

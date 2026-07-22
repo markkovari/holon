@@ -66,6 +66,8 @@ comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
 | `audit:log` | append-only audit trail | kv, clocks, random |
 | `fsm:workflow` | declarative state-machine / workflow engine | kv, clocks |
 | `feature-flags`(`featureflags:guard`) | feature flags / rollouts | kv, config |
+| `experiment:assign` | weighted, sticky, named-variant A/B/n assignment | kv |
+| `metrics:collect` | atomic named counters + ratios (exposures / conversions / rates) | kv, clocks |
 
 ### AI
 | package | does | imports / composes |
@@ -141,6 +143,12 @@ catalog and a bench round:
   SSE with each subject **sticky** (`just host-flags`). Drag to 30% and ~30 of
   100 tiles light — the same 30 every eval; the axis nothing else shows: runtime
   behavior change, no redeploy. ([demo](docs/media/flags.gif))
+- **[EXPERIMENT.md](EXPERIMENT.md)** — a live **A/B/n experiment console**:
+  weighted, **sticky** named-variant assignment + conversion attribution
+  (`just host-abtest`). Two subjects land in different arms; shift a weight and
+  cohorts re-bucket without arm-hopping; convert and watch per-arm rates pull
+  apart. Introduces two reusable contracts — `experiment:assign` (the A/B/n
+  primitive flags aren't) + `metrics:collect`. ([demo](docs/media/experiment.gif))
 - **[REALTIME.md](REALTIME.md)** — **pulse**, a live chat room: a message streams
   to every open window over held-open **SSE** (real server-push on wasip2, no
   WebSocket) — one broadcast fans out to 150 concurrent connections. The one

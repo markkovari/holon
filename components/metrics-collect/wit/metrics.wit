@@ -1,0 +1,53 @@
+// metrics:collect — a tiny counter / rate store.
+//
+// The attribution half every experiment, funnel, or SLO needs: count named
+// events (`incr`), read one (`get`) or a whole family by prefix (`scan`), and
+// compute the ratio between two counters (`rate` = numerator / denominator).
+// Deliberately app-agnostic — the key namespace is the caller's (e.g.
+// `exp:checkout:variant-a:exposed`). Increments are atomic so concurrent
+// producers don't lose counts. Backed only by generic wasi:keyvalue.
+package metrics:collect@0.1.0;
+
+/// Named counters + ratios over a flat key namespace.
+interface collector {
+    /// Why a metrics call failed.
+    variant metrics-error {
+        /// A backing dependency (the counter store) was unreachable.
+        backend-unavailable(string),
+    }
+
+    /// One named counter and when it last changed.
+    record counter {
+        key: string,
+        value: u64,
+        /// Unix seconds of the last `incr` touching this key (0 if never / unknown).
+        updated: u64,
+    }
+
+    /// Atomically add `by` to `key` (creating it at `by` if absent). Returns the
+    /// new value. `by` of 0 is a no-op read-modify that still stamps `updated`.
+    incr: func(key: string, by: u64) -> result<u64, metrics-error>;
+
+    /// Read one counter's current value (0 if the key was never incremented).
+    get: func(key: string) -> result<u64, metrics-error>;
+
+    /// Read every counter whose key starts with `prefix` (for a dashboard).
+    /// Returns them in unspecified order; empty when nothing matches.
+    scan: func(prefix: string) -> result<list<counter>, metrics-error>;
+
+    /// Ratio `get(num-key) / get(denom-key)`, in 0.0..=… . Returns 0.0 when the
+    /// denominator is 0 (no division-by-zero, no error) — an unobserved rate.
+    rate: func(num-key: string, denom-key: string) -> result<f64, metrics-error>;
+
+    /// Reset one counter to 0 (removes it). Idempotent.
+    reset: func(key: string) -> result<_, metrics-error>;
+}
+
+/// What `metrics-collect` provides: the collector, backed by key-value (atomic
+/// increments) + a wall clock for the `updated` stamp.
+world metrics-collect {
+    export collector;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+}

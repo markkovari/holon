@@ -76,5 +76,14 @@ node flags.mjs
 bash to-gif.sh videos/flags/*.webm ../../docs/media/flags.gif 820 12
 ```
 
+**abtest** — A/B/n experiment console; two users in different arms, shift a
+weight (sticky re-bucket), convert tiles and watch per-arm rate bars pull apart:
+
+```bash
+just host-abtest &                      # from repo root; console on :3018
+node abtest.mjs
+bash to-gif.sh videos/abtest/*.webm ../../docs/media/experiment.gif 840 12
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.
