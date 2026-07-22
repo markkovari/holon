@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>flags — live feature rollout on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff; --on:#22c55e; --off:#334155; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115; --on:#4ade80; --off:#1e2430; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: .6rem; padding: .7rem 1rem; flex-wrap: wrap;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1rem; margin: 0; }
+  header h1 .dim { color: var(--muted); font-weight: 400; }
+  header .grow { flex: 1; }
+  button, input { font: inherit; }
+  button { padding: .4rem .7rem; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  input[type=text] { padding: .38rem .55rem; border: 1px solid var(--line); border-radius: 7px;
+                     background: var(--bg); color: var(--ink); width: 10rem; }
+  main { flex: 1; display: grid; grid-template-columns: 340px 1fr; gap: 1rem; padding: 1rem; overflow: hidden; }
+  .editor { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: .8rem;
+            overflow-y: auto; display: flex; flex-direction: column; gap: .6rem; }
+  .flag { border: 1px solid var(--line); border-radius: 10px; padding: .55rem .65rem; display: flex;
+          flex-direction: column; gap: .4rem; }
+  .flag .row { display: flex; align-items: center; gap: .5rem; }
+  .flag .name { font-weight: 600; flex: 1; }
+  .flag .src { color: var(--muted); font-size: .72rem; }
+  .flag input[type=range] { flex: 1; accent-color: var(--accent); }
+  .flag .pct { font-variant-numeric: tabular-nums; width: 3.2rem; text-align: right; color: var(--muted); font-size: .82rem; }
+  .flag .kill { color: #ef4444; border-color: #ef444455; }
+  .grid-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: .9rem;
+               display: flex; flex-direction: column; min-height: 0; }
+  .grid-wrap .head { display: flex; align-items: baseline; gap: .6rem; margin-bottom: .7rem; }
+  .grid-wrap .head .flagname { font-weight: 600; }
+  .grid-wrap .head .tally { color: var(--muted); font-size: .85rem; }
+  .grid { flex: 1; display: grid; grid-template-columns: repeat(20, 1fr); gap: 5px; align-content: start;
+          overflow-y: auto; }
+  .cell { aspect-ratio: 1; border-radius: 4px; background: var(--off); transition: background .2s; }
+  .cell.on { background: var(--on); }
+</style>
+</head>
+<body>
+<header>
+  <h1>flags <span class="dim">— runtime rollout, no redeploy</span></h1>
+  <span class="grow"></span>
+  <input type="text" id="newflag" placeholder="new flag name">
+  <button class="primary" id="add">Add flag</button>
+</header>
+
+<main>
+  <section class="editor" id="editor"></section>
+  <section class="grid-wrap">
+    <div class="head">
+      <span class="flagname" id="viewFlag">— pick a flag —</span>
+      <span class="tally" id="tally"></span>
+    </div>
+    <div class="grid" id="grid"></div>
+  </section>
+</main>
+
+<script>
+  const N = 100;
+  let flags = [];       // [{name, rule, source}]
+  let viewing = null;   // flag name whose cohort grid is shown
+
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  async function loadFlags() {
+    const r = await fetch("/api/flags?tenant=");
+    flags = (await r.json()).flags;
+    if (!viewing && flags.length) viewing = flags[0].name;
+    renderEditor();
+    renderGrid();
+  }
+
+  function ruleToPct(rule) { return typeof rule === "number" ? rule : (rule === "on" ? 100 : 0); }
+
+  function renderEditor() {
+    document.getElementById("editor").innerHTML = flags.map(f => {
+      const pct = ruleToPct(f.rule);
+      return `<div class="flag" data-flag="${esc(f.name)}">
+        <div class="row"><span class="name">${esc(f.name)}</span>
+          <span class="src">${esc(f.source)}</span>
+          <button data-view="${esc(f.name)}">view</button></div>
+        <div class="row">
+          <input type="range" min="0" max="100" value="${pct}" data-slider="${esc(f.name)}">
+          <span class="pct">${pct}%</span></div>
+        <div class="row">
+          <button data-set="${esc(f.name)}" data-rule="on">On</button>
+          <button data-set="${esc(f.name)}" data-rule="off" class="kill">Kill</button></div>
+      </div>`;
+    }).join("") || `<div style="color:var(--muted)">no flags yet — add one above</div>`;
+
+    const ed = document.getElementById("editor");
+    ed.querySelectorAll("[data-view]").forEach(b => b.onclick = () => { viewing = b.dataset.view; renderGrid(); });
+    ed.querySelectorAll("[data-set]").forEach(b => b.onclick = () => setRule(b.dataset.set, b.dataset.rule));
+    ed.querySelectorAll("[data-slider]").forEach(s => {
+      s.oninput = () => { s.parentElement.querySelector(".pct").textContent = s.value + "%"; };
+      s.onchange = () => setRule(s.dataset.slider, Number(s.value));
+    });
+  }
+
+  async function setRule(name, rule) {
+    await fetch(`/api/flags/${encodeURIComponent(name)}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tenant: "", rule })
+    });
+    viewing = name; // focus the grid on what you just changed
+  }
+
+  async function renderGrid() {
+    const grid = document.getElementById("grid");
+    document.getElementById("viewFlag").textContent = viewing || "— pick a flag —";
+    if (!viewing) { grid.innerHTML = ""; document.getElementById("tally").textContent = ""; return; }
+    const r = await fetch(`/api/cohort?flag=${encodeURIComponent(viewing)}&tenant=&n=${N}`);
+    const { on, n, cells } = await r.json();
+    document.getElementById("tally").textContent = `${on} / ${n} subjects on`;
+    grid.innerHTML = cells.map(c => `<div class="cell ${c.enabled ? "on" : ""}" title="${esc(c.subject)}"></div>`).join("");
+  }
+
+  document.getElementById("add").onclick = addFlag;
+  document.getElementById("newflag").addEventListener("keydown", e => { if (e.key === "Enter") addFlag(); });
+  async function addFlag() {
+    const el = document.getElementById("newflag");
+    const name = el.value.trim();
+    if (!name) return;
+    el.value = "";
+    await setRule(name, 0);
+  }
+
+  // Load, then tail the live stream: any rule change (from this window or
+  // another) refreshes the editor + repaints the cohort grid.
+  loadFlags();
+  const es = new EventSource("/api/stream?tenant=");
+  es.onmessage = () => loadFlags();
+</script>
+</body>
+</html>

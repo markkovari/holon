@@ -1,0 +1,34 @@
+// flags:app — a live feature-rollout console as a WIT HTTP component.
+//
+// The new axis: runtime behavior change with no redeploy, propagated to live
+// connections. Flip a flag, drag a percentage, or trip a kill-switch via
+// `featureflags:guard`; every change is published on event:bus, and
+// `GET /api/stream` pushes it as an SSE `data:` frame so every open console +
+// simulated client updates instantly. Percentage rollouts bucket on a stable
+// hash of the subject, so cohorts are STICKY — the thing you can see. See
+// FLAGS.md.
+//
+// Routes:
+//   GET  /api/flags            ?tenant=            list flags + rule + source
+//   POST /api/flags/{name}     {tenant, rule}       set a runtime rule
+//   DEL  /api/flags/{name}     ?tenant=            clear a runtime rule
+//   GET  /api/eval             ?flag=&tenant=&subject=   evaluate one flag
+//   GET  /api/cohort           ?flag=&tenant=&n=    evaluate across N subjects
+//   GET  /api/stream           ?tenant=            LIVE SSE stream of changes
+package rollout:app@0.1.0;
+
+/// The console backend + the SSE loop, composed from capability contracts.
+world flags-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // evaluation + runtime rule set/clear/list, with sticky % bucketing.
+    import featureflags:guard/evaluator@0.1.0;
+    // fan-out spine + the SSE cursor: publish a change event per rule mutation.
+    import event:bus/bus@0.1.0;
+    // change-event ids.
+    import id:generate/generator@0.1.0;
+    // change timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

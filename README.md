@@ -136,6 +136,11 @@ catalog and a bench round:
   live on a board over SSE (`just host-pipeline`). Take the downstream sink down
   and watch events retry into the DLQ, then replay them. The reliability axis
   saga doesn't show: retry-forward, not rollback. ([demo](docs/media/pipeline.gif))
+- **[FLAGS.md](FLAGS.md)** — a live **feature-rollout console**: set a flag,
+  drag a percentage, or trip a kill-switch and every open window updates over
+  SSE with each subject **sticky** (`just host-flags`). Drag to 30% and ~30 of
+  100 tiles light — the same 30 every eval; the axis nothing else shows: runtime
+  behavior change, no redeploy. ([demo](docs/media/flags.gif))
 - **[REALTIME.md](REALTIME.md)** — **pulse**, a live chat room: a message streams
   to every open window over held-open **SSE** (real server-push on wasip2, no
   WebSocket) — one broadcast fans out to 150 concurrent connections. The one

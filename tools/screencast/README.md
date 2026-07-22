@@ -67,5 +67,14 @@ node pipeline.mjs
 bash to-gif.sh videos/pipeline/*.webm ../../docs/media/pipeline.gif 820 12
 ```
 
+**flags** — rollout console; add a flag, drag it to 30% then 60% (sticky,
+monotone cohorts light up), then trip the kill-switch (all dark):
+
+```bash
+just host-flags &                       # from repo root; console on :3017
+node flags.mjs
+bash to-gif.sh videos/flags/*.webm ../../docs/media/flags.gif 820 12
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

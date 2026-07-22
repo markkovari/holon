@@ -52,6 +52,8 @@ pulse_wasm := rel / "pulse_domain.wasm"
 pulse_composed := "components/target/pulse_domain.composed.wasm"
 pipeline_wasm := rel / "pipeline_domain.wasm"
 pipeline_composed := "components/target/pipeline_domain.composed.wasm"
+flags_wasm := rel / "flags_domain.wasm"
+flags_composed := "components/target/flags_domain.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -238,6 +240,33 @@ host-pipeline: compose-pipeline
 e2e-pipeline: compose-pipeline
     cd host && cargo build --release --bin vet-host
     cd examples/pipeline && cargo test --release
+
+# Compose flags-domain (FLAGS.md — a live feature-rollout console with SSE
+# server-push) with feature-flags + event-bus + id-generate. No auth. Remaining
+# imports are WASI (kv + config bound at deploy).
+compose-flags: build
+    wac plug {{flags_wasm}} \
+      --plug {{featureflags_wasm}} \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      -o {{flags_composed}}
+    @echo "composed flags-domain (+ feature-flags + event-bus + ids) -> {{flags_composed}}"
+
+# Run the rollout console on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3017: drag a flag to 30% and watch ~30 of 100 subject tiles
+# light up instantly and stay sticky; trip the kill-switch — all dark at once.
+host-flags: compose-flags
+    cd host && VET_TENANT=flags cargo run --release --bin vet-host -- \
+      --component ../{{flags_composed}} --addr 0.0.0.0:3017 \
+      --static-dir ../examples/flags/public
+
+# Rollout e2e: compose + build host + a Rust test that sets a 30% rule and
+# proves (a) a subject is STICKY across repeated evals, (b) raising the
+# percentage never turns an already-on subject off, and (c) a rule flip made by
+# one request reaches a SEPARATE held-open SSE connection live.
+e2e-flags: compose-flags
+    cd host && cargo build --release --bin vet-host
+    cd examples/flags && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,
