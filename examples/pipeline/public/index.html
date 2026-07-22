@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pipeline — reliable event delivery on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff;
+          --pend:#f59e0b; --flight:#3b82f6; --done:#22c55e; --dead:#ef4444; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115;
+            --pend:#fbbf24; --flight:#60a5fa; --done:#4ade80; --dead:#f87171; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: .7rem; padding: .7rem 1rem; flex-wrap: wrap;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1rem; margin: 0; }
+  header h1 .dim { color: var(--muted); font-weight: 400; }
+  header .grow { flex: 1; }
+  button { font: inherit; padding: .4rem .7rem; border-radius: 7px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--ink); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  button:active { transform: translateY(1px); }
+  input { padding: .38rem .55rem; border: 1px solid var(--line); border-radius: 7px;
+          background: var(--bg); color: var(--ink); font: inherit; }
+  .sink { display: inline-flex; align-items: center; gap: .4rem; font-size: .85rem; }
+  .sink .led { width: 10px; height: 10px; border-radius: 50%; background: var(--done); }
+  .sink.down .led { background: var(--dead); }
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .8rem; padding: 1rem;
+         overflow: hidden; }
+  .lane { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          display: flex; flex-direction: column; min-height: 0; }
+  .lane > h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; margin: 0;
+               padding: .6rem .8rem; border-bottom: 1px solid var(--line); color: var(--muted);
+               display: flex; justify-content: space-between; }
+  .lane .count { color: var(--ink); }
+  .cards { flex: 1; overflow-y: auto; padding: .6rem; display: flex; flex-direction: column; gap: .45rem; }
+  .card { border: 1px solid var(--line); border-left-width: 4px; border-radius: 9px; padding: .45rem .6rem;
+          background: var(--bg); animation: pop .25s ease; }
+  @keyframes pop { from { transform: scale(.96); opacity: .4; } to { transform: none; opacity: 1; } }
+  .card .topic { font-weight: 600; font-size: .9rem; }
+  .card .meta { color: var(--muted); font-size: .74rem; display: flex; justify-content: space-between; gap: .5rem; }
+  .card .id { font-family: ui-monospace, monospace; }
+  .lane.pending  .card { border-left-color: var(--pend); }
+  .lane.flight   .card { border-left-color: var(--flight); }
+  .lane.done     .card { border-left-color: var(--done); }
+  .tray { border-top: 1px solid var(--line); background: var(--panel); max-height: 30vh; overflow-y: auto; }
+  .tray > h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--dead);
+               margin: 0; padding: .55rem 1rem; position: sticky; top: 0; background: var(--panel); }
+  .tray .card { border-left-color: var(--dead); margin: .3rem 1rem; display: flex; align-items: center; gap: .6rem; }
+  .tray .card .grow { flex: 1; }
+  .tray .empty { color: var(--muted); padding: .3rem 1rem 1rem; font-size: .85rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>pipeline <span class="dim">— at-least-once delivery, live</span></h1>
+  <span class="grow"></span>
+  <input id="topic" value="invoice.paid" size="14" aria-label="topic">
+  <button class="primary" id="send">Enqueue event</button>
+  <button id="burst">Burst ×10</button>
+  <button class="sink" id="sink"><span class="led"></span><span id="sinkLabel">Sink up</span></button>
+</header>
+
+<main>
+  <section class="lane pending"><h2>Pending <span class="count" id="c-pending">0</span></h2><div class="cards" id="l-pending"></div></section>
+  <section class="lane flight"><h2>In-flight <span class="count" id="c-flight">0</span></h2><div class="cards" id="l-flight"></div></section>
+  <section class="lane done"><h2>Done <span class="count" id="c-done">0</span></h2><div class="cards" id="l-done"></div></section>
+</main>
+
+<div class="tray">
+  <h2>Dead-letter tray</h2>
+  <div id="tray"></div>
+</div>
+
+<script>
+  // Lane state, keyed by event id. Each SSE transition moves an event's state.
+  const events = new Map(); // id -> {topic, state, attempts, at}
+  let sinkUp = true;
+
+  const LANES = { pending: "pending", "in-flight": "flight", acked: "done", retry: "pending", replayed: "pending" };
+
+  function render() {
+    const lanes = { pending: [], flight: [], done: [] };
+    for (const [id, e] of events) {
+      if (e.state === "dead") continue;
+      const lane = LANES[e.state] || "pending";
+      lanes[lane].push([id, e]);
+    }
+    for (const [name, rows] of Object.entries(lanes)) {
+      rows.sort((a, b) => b[1].at - a[1].at);
+      document.getElementById("c-" + name).textContent = rows.length;
+      document.getElementById("l-" + name).innerHTML = rows.map(([id, e]) => card(id, e)).join("");
+    }
+  }
+
+  function card(id, e) {
+    const att = e.attempts > 0 ? `· try ${e.attempts + 1}` : "";
+    return `<div class="card"><div class="topic">${esc(e.topic)}</div>
+      <div class="meta"><span class="id">${id}</span><span>${e.state} ${att}</span></div></div>`;
+  }
+
+  function esc(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+  function apply(t) {
+    // t: {id, topic, state, attempts, at, seq}
+    if (t.state === "replayed") { const cur = events.get(t.id); if (cur) cur.state = "pending"; render(); return; }
+    const cur = events.get(t.id) || { topic: t.topic, attempts: 0, at: t.at };
+    cur.topic = t.topic || cur.topic;
+    cur.state = t.state;
+    cur.attempts = t.attempts;
+    cur.at = t.at;
+    events.set(t.id, cur);
+    if (t.state === "dead") loadDead();
+    render();
+  }
+
+  async function loadDead() {
+    const r = await fetch("/api/dead-letters");
+    const { dead } = await r.json();
+    const tray = document.getElementById("tray");
+    if (!dead.length) { tray.innerHTML = `<div class="empty">empty — nothing has exhausted its retries</div>`; return; }
+    tray.innerHTML = dead.map(d => `<div class="card"><div class="grow"><div class="topic">${esc(d.topic)}</div>
+      <div class="meta"><span class="id">${d.id}</span><span>dead · ${d.attempts} attempts</span></div></div>
+      <button data-replay="${d.id}">Replay</button></div>`).join("");
+    tray.querySelectorAll("[data-replay]").forEach(b =>
+      b.onclick = async () => { await fetch(`/api/dead-letters/${b.dataset.replay}/replay`, { method: "POST" }); loadDead(); });
+  }
+
+  document.getElementById("send").onclick = enqueue;
+  document.getElementById("topic").addEventListener("keydown", e => { if (e.key === "Enter") enqueue(); });
+  async function enqueue() {
+    const topic = document.getElementById("topic").value.trim() || "event";
+    await fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ topic, payload: { at: Date.now() } }) });
+  }
+  document.getElementById("burst").onclick = async () => {
+    const topic = document.getElementById("topic").value.trim() || "event";
+    for (let i = 0; i < 10; i++)
+      fetch("/api/events", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ topic, payload: { i } }) });
+  };
+  document.getElementById("sink").onclick = async () => {
+    sinkUp = !sinkUp;
+    await fetch("/api/sink", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ up: sinkUp }) });
+    const el = document.getElementById("sink");
+    el.classList.toggle("down", !sinkUp);
+    document.getElementById("sinkLabel").textContent = sinkUp ? "Sink up" : "Sink DOWN";
+  };
+
+  // Catch up from the start, then tail the live stream.
+  fetch("/api/events?after=-1").then(r => r.json()).then(({ transitions }) => {
+    transitions.forEach(apply);
+    const es = new EventSource("/api/stream?after=-1");
+    es.onmessage = ev => { try { apply(JSON.parse(ev.data)); } catch {} };
+  });
+  loadDead();
+</script>
+</body>
+</html>

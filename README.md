@@ -131,6 +131,11 @@ catalog and a bench round:
   `conduit-domain` + `auth-guard` + `record-store` + `slug`. The strongest proof
   of the thesis: a skeptic clones the upstream suite and it passes.
   ([demo](docs/media/conduit-conformance.gif))
+- **[PIPELINE.md](PIPELINE.md)** — a reliable **event pipeline**: enqueue →
+  dispatch **at-least-once** → retry with backoff → **dead-letter** → **replay**,
+  live on a board over SSE (`just host-pipeline`). Take the downstream sink down
+  and watch events retry into the DLQ, then replay them. The reliability axis
+  saga doesn't show: retry-forward, not rollback. ([demo](docs/media/pipeline.gif))
 - **[REALTIME.md](REALTIME.md)** — **pulse**, a live chat room: a message streams
   to every open window over held-open **SSE** (real server-push on wasip2, no
   WebSocket) — one broadcast fans out to 150 concurrent connections. The one

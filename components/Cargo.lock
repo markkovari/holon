@@ -700,6 +700,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pipeline-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "pkcs1"
 version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

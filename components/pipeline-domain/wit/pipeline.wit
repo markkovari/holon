@@ -1,0 +1,35 @@
+// pipeline:app — a reliable event pipeline as a WIT HTTP component.
+//
+// The new axis: at-least-once async delivery with visible failure + recovery.
+// An event is `enqueue`d durably into outbox:dispatch; a relay pump (driven by
+// the SSE tick) `claim`s due events and dispatches them to a downstream sink.
+// When the sink is down the event is `fail`ed (backoff), and after the retry
+// ceiling it drops to `dead` — the dead-letter tray you can `replay`. Every
+// state change fans out on event:bus, and `GET /api/stream` pushes each as an
+// SSE `data:` frame so the board updates live. See PIPELINE.md.
+//
+// Routes:
+//   POST /api/events                    {topic, payload}   enqueue
+//   GET  /api/events                    ?after=seq          snapshot / catch-up
+//   GET  /api/stream                    ?after=seq          LIVE SSE stream
+//   POST /api/sink                      {up: bool}          demo knob: sink up/down
+//   GET  /api/dead-letters                                  list dead events
+//   POST /api/dead-letters/{id}/replay                      requeue a dead event
+package pipeline:app@0.1.0;
+
+/// The pipeline backend + the relay pump + the SSE loop, composed from
+/// capability contracts.
+world pipeline-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // the durable queue: enqueue / claim / ack / fail / dead-letters / replay.
+    import outbox:dispatch/queue@0.1.0;
+    // fan-out spine + the SSE cursor: publish a state-change event per transition.
+    import event:bus/bus@0.1.0;
+    // event / change ids.
+    import id:generate/generator@0.1.0;
+    // transition timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // the relay + SSE poll cadence — subscribe-duration(…).block() to sleep.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

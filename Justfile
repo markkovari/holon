@@ -50,6 +50,8 @@ saga_wasm := rel / "saga_domain.wasm"
 saga_composed := "components/target/saga_domain.composed.wasm"
 pulse_wasm := rel / "pulse_domain.wasm"
 pulse_composed := "components/target/pulse_domain.composed.wasm"
+pipeline_wasm := rel / "pipeline_domain.wasm"
+pipeline_composed := "components/target/pipeline_domain.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -210,6 +212,32 @@ host-pulse: compose-pulse
 e2e-pulse: compose-pulse
     cd host && cargo build --release --bin vet-host
     cd examples/pulse && cargo test --release
+
+# Compose pipeline-domain (PIPELINE.md — a reliable event pipeline with
+# outbox → dispatch → DLQ → replay, SSE server-push) with outbox + event-bus +
+# id-generate. No auth. Remaining imports are WASI (bound at deploy).
+compose-pipeline: build
+    wac plug {{pipeline_wasm}} \
+      --plug {{rel}}/outbox.wasm \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      -o {{pipeline_composed}}
+    @echo "composed pipeline-domain (+ outbox + event-bus + ids) -> {{pipeline_composed}}"
+
+# Run the pipeline board on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3016: POST events, toggle the sink down, watch retries drop
+# to the dead-letter tray, then Replay them — live over SSE.
+host-pipeline: compose-pipeline
+    cd host && VET_TENANT=pipeline cargo run --release --bin vet-host -- \
+      --component ../{{pipeline_composed}} --addr 0.0.0.0:3016 \
+      --static-dir ../examples/pipeline/public
+
+# Reliability e2e: compose + build host + a Rust test that enqueues events,
+# proves they deliver (acked), then takes the sink down and proves an event
+# retries and drops to the dead-letter tray, and that Replay requeues it.
+e2e-pipeline: compose-pipeline
+    cd host && cargo build --release --bin vet-host
+    cd examples/pipeline && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

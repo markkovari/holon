@@ -48,5 +48,24 @@ node conduit-term.mjs
 bash to-gif.sh videos/conduit/*.webm ../../docs/media/conduit-conformance.gif 860 12
 ```
 
+**pulse** — realtime chat; two panes side by side, a message in one appears live
+in the other over SSE:
+
+```bash
+just host-pulse &                       # from repo root; board on :3015
+node pulse.mjs
+bash to-gif.sh videos/pulse/*.webm ../../docs/media/pulse.gif 800 12
+```
+
+**pipeline** — reliable delivery board; a burst marches Pending → In-flight →
+Done, the sink is taken down so events retry into the dead-letter tray, then a
+Replay redelivers — the whole retry/backoff/DLQ story live over SSE:
+
+```bash
+just host-pipeline &                    # from repo root; board on :3016
+node pipeline.mjs
+bash to-gif.sh videos/pipeline/*.webm ../../docs/media/pipeline.gif 820 12
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.
