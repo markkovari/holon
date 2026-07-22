@@ -85,5 +85,14 @@ node abtest.mjs
 bash to-gif.sh videos/abtest/*.webm ../../docs/media/experiment.gif 840 12
 ```
 
+**search** — search-as-you-type; type to narrow ranked hits, toggle all-mode,
+filter by facet, repeat a query to see the ⚡ cached badge + hit-ratio climb:
+
+```bash
+just host-search &                      # from repo root; console on :3019
+node search.mjs
+bash to-gif.sh videos/search/*.webm ../../docs/media/search.gif 720 12
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

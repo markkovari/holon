@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>search — faceted search-as-you-type on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff; --chip:#eef2ff; --chip-on:#4f46e5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115; --chip:#20263300; --chip-on:#818cf8; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; align-items: center; }
+  .wrap { width: 100%; max-width: 780px; padding: 1.4rem 1rem; display: flex; flex-direction: column; gap: 1rem; }
+  header { display: flex; align-items: baseline; gap: .6rem; }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  header .dim { color: var(--muted); font-weight: 400; font-size: .9rem; }
+  .box { display: flex; gap: .5rem; align-items: center; }
+  .box input { flex: 1; padding: .7rem .9rem; font-size: 1.05rem; border: 1px solid var(--line);
+               border-radius: 10px; background: var(--panel); color: var(--ink); }
+  .box .mode { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .box .mode button { padding: .5rem .7rem; border: 0; background: var(--panel); color: var(--muted); cursor: pointer; font: inherit; }
+  .box .mode button.on { background: var(--accent); color: var(--accent-ink); }
+  .facets { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .chip { padding: .25rem .6rem; border-radius: 999px; border: 1px solid var(--line); background: var(--chip);
+          color: var(--ink); font-size: .82rem; cursor: pointer; }
+  .chip.on { background: var(--chip-on); color: var(--accent-ink); border-color: transparent; }
+  .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: .82rem; }
+  .meta .cached { color: #22c55e; font-weight: 600; }
+  .results { display: flex; flex-direction: column; gap: .6rem; }
+  .hit { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .7rem .85rem; }
+  .hit .t { font-weight: 600; }
+  .hit .b { color: var(--muted); font-size: .88rem; margin-top: .15rem; }
+  .hit .tags { margin-top: .35rem; display: flex; gap: .35rem; flex-wrap: wrap; }
+  .hit .tag { font-size: .72rem; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 0 .35rem; }
+  .hit .score { float: right; color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); text-align: center; padding: 2rem 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>search</h1><span class="dim">— faceted search-as-you-type · TF-IDF · cached</span></header>
+
+  <div class="box">
+    <input id="q" placeholder="Search the corpus… (try: saga, wasm, encryption)" autofocus>
+    <div class="mode">
+      <button data-mode="any" class="on">any</button>
+      <button data-mode="all">all</button>
+    </div>
+  </div>
+
+  <div class="facets" id="facets"></div>
+
+  <div class="meta">
+    <span id="count">—</span>
+    <span><span id="cached"></span> <span id="ms"></span> · hit-ratio <span id="ratio">0%</span></span>
+  </div>
+
+  <div class="results" id="results"></div>
+</div>
+
+<script>
+  const FACETS = ["kind:doc", "kind:note", "topic:wasm", "topic:distributed", "topic:reliability", "topic:security", "topic:search"];
+  let mode = "any";
+  let active = new Set();
+  let timer = null;
+
+  // render facet chips
+  document.getElementById("facets").innerHTML = FACETS.map(f =>
+    `<span class="chip" data-facet="${f}">${f}</span>`).join("");
+  document.querySelectorAll("[data-facet]").forEach(c =>
+    c.onclick = () => { const f = c.dataset.facet; active.has(f) ? active.delete(f) : active.add(f); c.classList.toggle("on"); run(); });
+
+  document.querySelectorAll("[data-mode]").forEach(b =>
+    b.onclick = () => {
+      mode = b.dataset.mode;
+      document.querySelectorAll("[data-mode]").forEach(x => x.classList.toggle("on", x === b));
+      run();
+    });
+
+  const qEl = document.getElementById("q");
+  qEl.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 140); }); // debounce
+
+  async function run() {
+    const q = qEl.value.trim();
+    if (!q) { document.getElementById("results").innerHTML = `<div class="empty">Type to search — 10 docs seeded.</div>`;
+              document.getElementById("count").textContent = "—"; document.getElementById("cached").textContent = ""; document.getElementById("ms").textContent = ""; refreshRatio(); return; }
+    const tags = [...active].join(",");
+    const url = `/api/search?q=${encodeURIComponent(q)}&mode=${mode}&tags=${encodeURIComponent(tags)}&limit=10`;
+    const r = await fetch(url);
+    const d = await r.json();
+    document.getElementById("count").textContent = `${d.total} result${d.total === 1 ? "" : "s"}`;
+    document.getElementById("cached").innerHTML = d.cached ? `<span class="cached">⚡ cached</span>` : "";
+    document.getElementById("ms").textContent = `${d.ms}ms`;
+    document.getElementById("results").innerHTML = (d.hits || []).map(h => `
+      <div class="hit"><span class="score">${(h.score ?? 0).toFixed(3)}</span>
+        <div class="t">${esc(h.title)}</div>
+        <div class="b">${esc(h.body || "")}</div>
+        <div class="tags">${(h.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join("")}</div>
+      </div>`).join("") || `<div class="empty">No matches.</div>`;
+    refreshRatio();
+  }
+
+  async function refreshRatio() {
+    const s = await (await fetch("/api/stats")).json();
+    document.getElementById("ratio").textContent = Math.round((s.hit_ratio || 0) * 100) + "%";
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+  // seed the corpus on first load (idempotent-ish for the demo), then show hint.
+  fetch("/api/seed", { method: "POST" }).finally(run);
+</script>
+</body>
+</html>

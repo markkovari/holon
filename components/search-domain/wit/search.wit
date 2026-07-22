@@ -1,0 +1,36 @@
+// search:app — faceted search-as-you-type as a WIT HTTP component.
+//
+// The read/query axis: a relevance-ranked lookup over a corpus, measured by
+// latency + cache hit-ratio (every other showcase is write/stream-shaped). The
+// engine is the search:index contract (TF-IDF over a KV inverted index); the
+// corpus is records:store; a cache short-circuits repeat queries and
+// metrics:collect tracks the hit-ratio. See SEARCH.md.
+//
+// Routes:
+//   GET  /api/search   ?q=&mode=&tags=&limit=&offset=   ranked, hydrated hits + timing + cache-hit
+//   GET  /api/doc/{id}                                   one full document
+//   POST /api/index    {id?, title, body, tags}          index / re-index
+//   POST /api/seed                                        load the demo corpus
+//   GET  /api/stats                                       doc-count + cache hit-ratio
+package search:app@0.1.0;
+
+/// The query pipeline (cache → index → hydrate → page) + the write path,
+/// composed from capability contracts.
+world search-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // the engine: inverted index + TF-IDF ranking.
+    import search:index/index@0.1.0;
+    // the corpus: full documents, hydrated from a hit's id.
+    import records:store/store@0.1.0;
+    // repeat-query short-circuit; its presence/absence is the hit/miss signal.
+    import cache:store/cache@0.1.0;
+    // hit-ratio counters (search:hit / search:miss).
+    import metrics:collect/collector@0.1.0;
+    // opaque load-more over the ranked id list.
+    import paginate:cursor/cursors@0.1.0;
+    // seed-corpus document ids.
+    import id:generate/generator@0.1.0;
+    // query timing + document timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

@@ -56,6 +56,8 @@ flags_wasm := rel / "flags_domain.wasm"
 flags_composed := "components/target/flags_domain.composed.wasm"
 abtest_wasm := rel / "abtest_domain.wasm"
 abtest_composed := "components/target/abtest_domain.composed.wasm"
+search_wasm := rel / "search_domain.wasm"
+search_composed := "components/target/search_domain.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -299,6 +301,37 @@ host-abtest: compose-abtest
 e2e-abtest: compose-abtest
     cd host && cargo build --release --bin vet-host
     cd examples/abtest && cargo test --release
+
+# Compose search-domain (SEARCH.md — faceted search-as-you-type) with the
+# engine + corpus + cache (pre-composed with its kv backing) + metrics +
+# pagination + ids. No auth. Remaining imports are WASI (kv + config).
+compose-search: build
+    wac plug {{rel}}/cache.wasm --plug {{rel}}/cache_backing.wasm -o components/target/cache.composed.wasm
+    wac plug {{search_wasm}} \
+      --plug {{searchindex_wasm}} \
+      --plug {{recordstore_wasm}} \
+      --plug components/target/cache.composed.wasm \
+      --plug {{rel}}/metrics_collect.wasm \
+      --plug {{rel}}/pagination.wasm \
+      --plug {{rel}}/id_generate.wasm \
+      -o {{search_composed}}
+    @echo "composed search-domain (+ index + records + cache + metrics + paginate + ids) -> {{search_composed}}"
+
+# Run the search console on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3019: type in the box, watch ranked hits narrow live, click a
+# facet chip to filter, and watch the cache hit-ratio climb on repeat queries.
+host-search: compose-search
+    cd host && VET_TENANT=search cargo run --release --bin vet-host -- \
+      --component ../{{search_composed}} --addr 0.0.0.0:3019 \
+      --static-dir ../examples/search/public
+
+# Search e2e: compose + build host + a Rust test that seeds the corpus and
+# proves ranked results (a rare term ranks its doc first), all-mode intersection
+# shrinks the set, a tag facet restricts hits, and the cache serves a repeat
+# query (hit-ratio rises).
+e2e-search: compose-search
+    cd host && cargo build --release --bin vet-host
+    cd examples/search && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,
