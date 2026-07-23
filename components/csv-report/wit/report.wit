@@ -1,0 +1,33 @@
+// report:app — a batch CSV import/report tool as a WIT HTTP component.
+//
+// The batch-ingest + read-back axis: paste a CSV, and the round-trip runs
+// entirely over contracts. `csv:codec` parses it to typed rows; `validate:schema`
+// checks each row against a field-rule set (types, required, ranges, one-of),
+// splitting accepted rows from rejected ones with per-field errors; accepted
+// rows persist to `records:store`. A paged report reads them back through
+// `paginate:cursor`, and `csv:codec` re-serializes the clean set for export.
+//
+// Routes:
+//   GET  /api/schema                    the active field-rule set
+//   POST /api/import  (CSV text body)   parse -> validate -> store; report rejects
+//   GET  /api/rows    ?limit=&after=    paged clean rows (opaque cursor)
+//   GET  /api/export                    the clean set re-serialized to CSV
+//   GET  /api/stats                     imported / rejected counts
+package report:app@0.1.0;
+
+/// The ingest pipeline (parse -> validate -> store) + the paged read-back and
+/// CSV export, composed from capability contracts.
+world csv-report {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // parse the uploaded text into typed records; re-serialize on export.
+    import csv:codec/codec@0.1.0;
+    // per-row typed validation against the field-rule set.
+    import validate:schema/validator@0.1.0;
+    // the clean rows: full records, hydrated + counted.
+    import records:store/store@0.1.0;
+    // opaque cursor over the report — load-more without leaking offsets.
+    import paginate:cursor/cursors@0.1.0;
+    // row timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

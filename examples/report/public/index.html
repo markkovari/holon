@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>report — batch CSV import/report on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff; --ok:#22c55e; --bad:#ef4444; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; align-items: center; }
+  .wrap { width: 100%; max-width: 860px; padding: 1.4rem 1rem; display: flex; flex-direction: column; gap: 1rem; }
+  header { display: flex; align-items: baseline; gap: .6rem; }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  header .dim { color: var(--muted); font-weight: 400; font-size: .9rem; }
+  textarea { width: 100%; min-height: 9rem; padding: .7rem .8rem; font: 13px/1.5 ui-monospace, monospace;
+             border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); resize: vertical; }
+  .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+  button { padding: .55rem .9rem; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink);
+           font: inherit; font-weight: 600; cursor: pointer; }
+  button.ghost { background: var(--panel); color: var(--ink); border: 1px solid var(--line); font-weight: 500; }
+  .tally { color: var(--muted); font-size: .85rem; }
+  .tally .ok { color: var(--ok); font-weight: 600; }
+  .tally .bad { color: var(--bad); font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line);
+          border-radius: 10px; overflow: hidden; font-size: .88rem; }
+  th, td { text-align: left; padding: .45rem .7rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; }
+  tr:last-child td { border-bottom: 0; }
+  .rejects { display: flex; flex-direction: column; gap: .35rem; }
+  .rej { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--bad);
+         border-radius: 8px; padding: .5rem .7rem; font-size: .84rem; }
+  .rej .line { color: var(--muted); font-family: ui-monospace, monospace; }
+  .rej .err { color: var(--bad); }
+  .empty { color: var(--muted); text-align: center; padding: 1.2rem 0; }
+  h3 { margin: .4rem 0 0; font-size: .95rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>report</h1><span class="dim">— paste CSV · typed validate splits clean/rejected · page · export</span></header>
+
+  <textarea id="csv"></textarea>
+  <div class="row">
+    <button id="import">Import</button>
+    <button class="ghost" id="export">Export clean CSV ↓</button>
+    <span class="tally" id="tally"></span>
+  </div>
+
+  <h3>Rejected rows</h3>
+  <div class="rejects" id="rejects"><div class="empty">Import to see per-field errors.</div></div>
+
+  <h3>Clean report <span class="tally" id="page"></span></h3>
+  <div id="rows"></div>
+  <div class="row"><button class="ghost" id="more" style="display:none">Load more</button></div>
+</div>
+
+<script>
+  const SAMPLE = `name,email,age,role
+Ada Lovelace,ada@example.com,36,admin
+Alan Turing,alan@example.com,41,user
+Grace Hopper,grace@example.com,45,guest
+Bad Email,not-an-email,30,user
+Old Wizard,wiz@example.com,999,overlord`;
+  document.getElementById("csv").value = SAMPLE;
+
+  let cursor = null;
+
+  document.getElementById("import").onclick = async () => {
+    const body = document.getElementById("csv").value;
+    const r = await fetch("/api/import", { method: "POST", headers: { "content-type": "text/csv" }, body });
+    const d = await r.json();
+    if (!r.ok) { document.getElementById("tally").innerHTML = `<span class="bad">${d.error}</span>`; return; }
+    document.getElementById("tally").innerHTML =
+      `<span class="ok">${d.imported} imported</span> · <span class="bad">${d.rejected} rejected</span>`;
+    renderRejects(d.rejects || []);
+    cursor = null; document.getElementById("rows").innerHTML = ""; loadPage();
+  };
+
+  document.getElementById("export").onclick = () => { window.location = "/api/export"; };
+  document.getElementById("more").onclick = loadPage;
+
+  function renderRejects(rejects) {
+    const el = document.getElementById("rejects");
+    el.innerHTML = rejects.length ? rejects.map(x => `
+      <div class="rej"><span class="line">line ${x.line}</span> —
+        ${x.errors.map(e => `<span class="err">${e.field}: ${e.message}</span>`).join(" · ")}
+      </div>`).join("") : `<div class="empty">All rows valid.</div>`;
+  }
+
+  async function loadPage() {
+    const q = cursor ? `?limit=3&after=${encodeURIComponent(cursor)}` : "?limit=3";
+    const d = await (await fetch("/api/rows" + q)).json();
+    const rows = d.rows || [];
+    if (!document.querySelector("#rows table")) {
+      document.getElementById("rows").innerHTML =
+        `<table><thead><tr><th>name</th><th>email</th><th>age</th><th>role</th></tr></thead><tbody></tbody></table>`;
+    }
+    const tb = document.querySelector("#rows tbody");
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${esc(r.name)}</td><td>${esc(r.email)}</td><td>${r.age ?? ""}</td><td>${esc(r.role)}</td>`;
+      tb.appendChild(tr);
+    }
+    cursor = d.next;
+    document.getElementById("more").style.display = d.next ? "" : "none";
+    const total = tb.children.length;
+    document.getElementById("page").textContent = `— ${total} shown${d.next ? " (more)" : ""}`;
+    if (!total) document.getElementById("rows").innerHTML = `<div class="empty">No clean rows yet.</div>`;
+  }
+
+  function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+  loadPage();
+</script>
+</body>
+</html>

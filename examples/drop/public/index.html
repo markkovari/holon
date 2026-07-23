@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>drop — presigned direct-upload on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff; --ok:#22c55e; --bad:#ef4444; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; align-items: center; }
+  .wrap { width: 100%; max-width: 720px; padding: 1.4rem 1rem; display: flex; flex-direction: column; gap: 1rem; }
+  header { display: flex; align-items: baseline; gap: .6rem; }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  header .dim { color: var(--muted); font-weight: 400; font-size: .9rem; }
+  .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 2rem 1rem; text-align: center;
+          background: var(--panel); cursor: pointer; }
+  .drop.over { border-color: var(--accent); }
+  .drop input { display: none; }
+  .steps { display: flex; flex-direction: column; gap: .35rem; font-size: .85rem; color: var(--muted);
+           background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .7rem .85rem; min-height: 2.4rem; }
+  .steps .s { display: flex; gap: .5rem; }
+  .steps .s b { color: var(--ink); font-weight: 600; }
+  .steps .ok { color: var(--ok); }
+  .steps .bad { color: var(--bad); }
+  .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: .82rem; }
+  .objs { display: flex; flex-direction: column; gap: .5rem; }
+  .obj { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .6rem .8rem;
+         display: flex; justify-content: space-between; align-items: center; gap: .6rem; }
+  .obj .n { font-family: ui-monospace, monospace; font-size: .82rem; }
+  .obj .sz { color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+  .obj a { color: var(--accent); text-decoration: none; font-size: .85rem; }
+  .empty { color: var(--muted); text-align: center; padding: 1.5rem 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>drop</h1><span class="dim">— presigned direct-upload · the backend authorizes + signs, never proxies</span></header>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file">
+    <div><b>Choose a file</b> or drop it here</div>
+    <div style="color:var(--muted);font-size:.85rem;margin-top:.3rem">allowed: text/plain, image/png · max 1 MiB (demo)</div>
+  </label>
+
+  <div class="steps" id="steps"><div class="empty">Pick a file to watch the ticket → upload → sign flow.</div></div>
+
+  <div class="meta"><span id="count">—</span><span id="bytes"></span></div>
+  <div class="objs" id="objs"></div>
+</div>
+
+<script>
+  const stepsEl = document.getElementById("steps");
+  const fileEl = document.getElementById("file");
+  const dropEl = document.getElementById("drop");
+
+  function steps(list) {
+    stepsEl.innerHTML = list.map(s =>
+      `<div class="s"><span class="${s.cls || ''}">${s.icon || '·'}</span><span>${s.text}</span></div>`).join("");
+  }
+
+  dropEl.addEventListener("dragover", e => { e.preventDefault(); dropEl.classList.add("over"); });
+  dropEl.addEventListener("dragleave", () => dropEl.classList.remove("over"));
+  dropEl.addEventListener("drop", e => {
+    e.preventDefault(); dropEl.classList.remove("over");
+    if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
+  });
+  fileEl.addEventListener("change", () => { if (fileEl.files[0]) upload(fileEl.files[0]); });
+
+  async function upload(file) {
+    const ct = file.type || "text/plain";
+    const log = [];
+    const show = () => steps(log);
+    log.push({ icon: "①", text: `Asking for a ticket — <b>${ct}</b>, ${file.size} bytes` }); show();
+
+    // 1. the policy answer — no bytes sent yet.
+    const tRes = await fetch("/api/tickets", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ "content-type": ct, size: file.size }),
+    });
+    if (!tRes.ok) {
+      const e = await tRes.json();
+      log.push({ icon: "✗", cls: "bad", text: `Ticket refused (${tRes.status}): <b>${e.error}</b>${e.max ? " (max " + e.max + ")" : ""}` }); show();
+      return;
+    }
+    const ticket = await tRes.json();
+    log.push({ icon: "✓", cls: "ok", text: `Ticket <b>${ticket.token.slice(0, 12)}…</b> · key <b>${ticket.object_key}</b>` });
+    log.push({ icon: "②", text: "PUTting the bytes straight to storage" }); show();
+
+    // 2. the client uploads against the ticket — the backend redeems + stores.
+    const bytes = await file.arrayBuffer();
+    const uRes = await fetch(`/api/blob/${ticket.token}`, { method: "PUT", headers: { "content-type": ct }, body: bytes });
+    if (!uRes.ok) {
+      const e = await uRes.json();
+      log.push({ icon: "✗", cls: "bad", text: `Upload failed (${uRes.status}): <b>${e.error}</b>` }); show();
+      return;
+    }
+    const up = await uRes.json();
+    log.push({ icon: "✓", cls: "ok", text: `Stored <b>${up.id}</b> · ${up.size} bytes` });
+    log.push({ icon: "③", text: "Signed download link ready below" }); show();
+    refresh();
+  }
+
+  async function refresh() {
+    const d = await (await fetch("/api/objects")).json();
+    const objs = d.objects || [];
+    const st = await (await fetch("/api/stats")).json();
+    document.getElementById("count").textContent = `${st.objects} object${st.objects === 1 ? "" : "s"}`;
+    document.getElementById("bytes").textContent = `${st.total_bytes} bytes stored`;
+    document.getElementById("objs").innerHTML = objs.length ? "" : `<div class="empty">No objects yet.</div>`;
+    for (const o of objs) {
+      const meta = await (await fetch(`/api/object/${o.id}`)).json();
+      const row = document.createElement("div");
+      row.className = "obj";
+      row.innerHTML = `<span class="n">${o.id}</span>
+        <span class="sz">${o.content_type} · ${o.size}B</span>
+        <a href="${meta.download}" target="_blank">signed download ↓</a>`;
+      document.getElementById("objs").appendChild(row);
+    }
+  }
+
+  refresh();
+</script>
+</body>
+</html>

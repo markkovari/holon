@@ -60,6 +60,10 @@ search_wasm := rel / "search_domain.wasm"
 search_composed := "components/target/search_domain.composed.wasm"
 throttle_wasm := rel / "throttle_domain.wasm"
 throttle_composed := "components/target/throttle_domain.composed.wasm"
+drop_wasm := rel / "upload_drop.wasm"
+drop_composed := "components/target/upload_drop.composed.wasm"
+report_wasm := rel / "csv_report.wasm"
+report_composed := "components/target/csv_report.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -363,6 +367,66 @@ host-ratelimit: compose-ratelimit
 e2e-ratelimit: compose-ratelimit
     cd host && cargo build --release --bin vet-host
     cd examples/ratelimit && cargo test --release
+
+# Compose upload-drop (DROP.md — a presigned direct-upload drop-box) with the
+# gate + blob store + signer + records + ids. No auth. Remaining imports are
+# WASI (kv + config bound at deploy — see CFG_* below).
+compose-drop: build
+    wac plug {{drop_wasm}} \
+      --plug {{rel}}/upload_policy.wasm \
+      --plug {{rel}}/blob_store.wasm \
+      --plug {{rel}}/webhook_sign.wasm \
+      --plug {{recordstore_wasm}} \
+      -o {{drop_composed}}
+    @echo "composed upload-drop (+ upload-policy + blob-store + webhook-sign + records) -> {{drop_composed}}"
+
+# Run the drop-box on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3021: pick a file, watch it ask for a ticket (the policy
+# answer), PUT the bytes straight to storage, then get a signed download link.
+# CFG_ALLOWED_TYPES / CFG_MAX_SIZE tune the gate (defaults: all types / 10 MiB).
+host-drop: compose-drop
+    cd host && VET_TENANT=drop \
+      CFG_ALLOWED_TYPES=text/plain,image/png CFG_MAX_SIZE=1048576 \
+      cargo run --release --bin vet-host -- \
+      --component ../{{drop_composed}} --addr 0.0.0.0:3021 \
+      --static-dir ../examples/drop/public
+
+# Drop e2e: compose + build host + a Rust test that proves a ticket is minted
+# for an allowed type, an oversized/blocked type is rejected at ticket time, a
+# redeemed ticket stores bytes, and a signed download link round-trips the bytes
+# while a tampered signature is refused.
+e2e-drop: compose-drop
+    cd host && cargo build --release --bin vet-host
+    cd examples/drop && cargo test --release
+
+# Compose csv-report (REPORT.md — batch CSV import/report) with the codec +
+# validator + records + pagination. No auth. Remaining imports are WASI
+# (kv + config bound at deploy).
+compose-report: build
+    wac plug {{report_wasm}} \
+      --plug {{rel}}/csv.wasm \
+      --plug {{rel}}/validate.wasm \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/pagination.wasm \
+      -o {{report_composed}}
+    @echo "composed csv-report (+ csv + validate + records + paginate) -> {{report_composed}}"
+
+# Run the CSV import/report tool on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3022: paste a CSV, watch valid rows import and bad rows come
+# back with per-field errors, page the clean report, then export it back to CSV.
+host-report: compose-report
+    cd host && VET_TENANT=report \
+      cargo run --release --bin vet-host -- \
+      --component ../{{report_composed}} --addr 0.0.0.0:3022 \
+      --static-dir ../examples/report/public
+
+# Report e2e: compose + build host + a Rust test that imports a CSV with a mix
+# of valid + invalid rows (proving typed validation splits them with per-field
+# errors), pages the clean set through the opaque cursor, and exports it back to
+# CSV through the same codec (round-trip).
+e2e-report: compose-report
+    cd host && cargo build --release --bin vet-host
+    cd examples/report && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

@@ -159,6 +159,21 @@ catalog and a bench round:
   countdown, and a cumulative **quota** gauge drain — then recover
   (`just host-ratelimit`). The axis nothing else shows: **backpressure you can
   see**, over `ratelimit:guard` + `quota:meter`. ([demo](docs/media/ratelimit.gif))
+- **[DROP.md](DROP.md)** — a **presigned direct-upload drop-box**: pick a file and
+  the backend answers the policy question, signs a short-lived ticket, and the
+  client PUTs the bytes straight to storage — then a **signed, expiring link**
+  round-trips them back (`just host-drop`). A blocked type is refused at ticket
+  time, before a byte moves; a tampered link is a 403. The axis nothing else
+  shows: **control path split from data path** — over `upload:policy` +
+  `blob:store` + `webhook:sign`, the first app to exercise all three.
+  ([demo](docs/media/drop.gif))
+- **[REPORT.md](REPORT.md)** — a **batch CSV import/report** tool: paste a CSV and
+  typed validation **splits it** into imported rows and rejected rows with
+  per-field errors, page the clean set through an opaque cursor, then **export it
+  back to CSV** through the same codec (`just host-report`). The axis nothing
+  else shows: **a whole file in, an accept/reject split, a clean file out** —
+  over `csv:codec` + `validate:schema` + `records` + `paginate`.
+  ([demo](docs/media/report.gif))
 - **[REALTIME.md](REALTIME.md)** — **pulse**, a live chat room: a message streams
   to every open window over held-open **SSE** (real server-push on wasip2, no
   WebSocket) — one broadcast fans out to 150 concurrent connections. The one

@@ -1,0 +1,34 @@
+// drop:app — a presigned direct-upload drop-box as a WIT HTTP component.
+//
+// The presigned-ticket axis: the backend never proxies the upload payload. It
+// only ANSWERS the policy question — "may this content-type/size be stored?" —
+// and hands back a short-lived signed ticket. The client then PUTs the bytes
+// against that ticket; the component redeems it, stores to blob:store, and
+// records the object's metadata. Downloads go out under a webhook:sign-style
+// HMAC download token, so a link can be shared without exposing the store.
+//
+// Routes:
+//   POST /api/tickets  {content-type, size}     policy check -> signed ticket
+//   PUT  /api/blob/{token}  (raw body)          redeem ticket -> store bytes
+//   GET  /api/objects                           list stored object metadata
+//   GET  /api/object/{id}                       one object's metadata + signed link
+//   GET  /api/blob/{id}?sig=&exp=               verify signed link -> stream bytes
+//   GET  /api/stats                             object count + total bytes
+package drop:app@0.1.0;
+
+/// The upload pipeline (authorize -> redeem -> store -> record) + a signed
+/// download path, composed from capability contracts.
+world upload-drop {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // the gate: content-type/size policy + signed, expiring upload tickets.
+    import upload:policy/gate@0.1.0;
+    // the object store: bytes land here, keyed by container/name.
+    import blob:store/blobstore@0.1.0;
+    // HMAC signer — mints + verifies the shareable download token.
+    import webhook:sign/signer@0.1.0;
+    // object metadata + the store-minted id that keys the blob.
+    import records:store/store@0.1.0;
+    // ticket + object timestamps, download-link expiry.
+    import wasi:clocks/wall-clock@0.2.0;
+}
