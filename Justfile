@@ -675,9 +675,21 @@ compose-status: build
     wasm-tools validate {{statuspage_composed}}
     @echo "composed status-page (+ timer + records + fsm + bus + notify) -> {{statuspage_composed}}"
 
-# Run the composed status-page under the native host.
+# Run the composed status-page under the native host. Open
+# http://127.0.0.1:3012: add a monitor (url + period >= 10s), then POST
+# /api/tick to probe — the page shows each monitor's up/degraded/down state and
+# its fsm transition history (up -> degraded -> down needs TWO failures).
 host-status: compose-status
     cd host && cargo run --release --bin vet-host -- --component ../{{statuspage_composed}} --addr 127.0.0.1:3012
+
+# Status-page e2e: compose + build host + a Rust test that adds a self-probe
+# (stays up) and a dead-port monitor, then proves the fsm walks up -> degraded
+# (one failure) -> down (a second consecutive failure), with both transitions in
+# the history log. Slow: monitors have a 10s minimum period, so it sleeps across
+# a period to force the second probe.
+e2e-status: compose-status
+    cd host && cargo build --release --bin vet-host
+    cd examples/status && cargo test --release
 
 # Compose an LLM provider into the ai-inference domain layer, satisfying its
 # `llm:inference/inference` import. Here the deterministic MOCK provider is

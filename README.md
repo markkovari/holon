@@ -159,6 +159,13 @@ catalog and a bench round:
   countdown, and a cumulative **quota** gauge drain — then recover
   (`just host-ratelimit`). The axis nothing else shows: **backpressure you can
   see**, over `ratelimit:guard` + `quota:meter`. ([demo](docs/media/ratelimit.gif))
+- **[STATUS.md](STATUS.md)** — a **status page / uptime monitor**: register a
+  monitor and it becomes a recurring **timer job** that probes its target and
+  drives an up → degraded → **down** state machine (one failure degrades, a
+  second takes it down, one good probe recovers), transitions fanning out on the
+  bus (`just host-status`). The axis nothing else shows: **the workload
+  originates from a timer, not a request** — over `sched:timer` + `fsm:workflow`
+  + `event:bus` + `notify:dispatch`. ([demo](docs/media/status.gif))
 - **[DROP.md](DROP.md)** — a **presigned direct-upload drop-box**: pick a file and
   the backend answers the policy question, signs a short-lived ticket, and the
   client PUTs the bytes straight to storage — then a **signed, expiring link**
