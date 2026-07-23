@@ -53,6 +53,7 @@ capabilities, so anything marked reusable drops into another app via
 | **otp** | `otp:totp@0.1.0` | pure compute | — | 79 KiB | ✓ |
 | **outbox** | `outbox:dispatch@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `base-backoff` | 88 KiB | ✓ |
 | **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 73 KiB | ✓ |
+| **paste-bin** | `bin:app@0.1.0` | md:render/renderer, pii:redact/redactor, records:store/store, slug:generate/generator, validate:schema/validator | — | 147 KiB | ✓ |
 | **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 72 KiB | ✓ |
 | **pipeline-domain** | `pipeline:app@0.1.0` | event:bus/bus, id:generate/generator, outbox:dispatch/queue | — | 145 KiB | ✓ |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 161 KiB | ✓ |
@@ -126,6 +127,7 @@ capabilities, so anything marked reusable drops into another app via
 - **otp** — `otp` — reference implementation of `otp:totp` (RFC 4226 HOTP / RFC 6238 TOTP)
 - **outbox** — `outbox` — reference implementation of `outbox:dispatch`
 - **pagination** — `pagination` — reference implementation of `paginate:cursor`
+- **paste-bin** — bin:app — a paste / gist bin over a chain of mostly pure-compute contracts
 - **pii-redact** — `pii-redact` — reference implementation of `pii:redact`
 - **pipeline-domain** — pipeline:app — a reliable event pipeline over composed contracts
 - **policy-guard** — `policy-guard` — reference implementation of `policy:guard`

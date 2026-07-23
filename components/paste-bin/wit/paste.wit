@@ -1,0 +1,35 @@
+// bin:app — a paste / gist bin as a WIT HTTP component.
+//
+// The pure-compute pipeline axis: everything that shapes a paste is a
+// stateless transform contract chained in a row, and only ONE contract touches
+// state. `validate:schema` checks the input; `pii:redact` masks emails / cards
+// / SSNs BEFORE anything is stored (safety at ingest, not at render);
+// `slug:generate` derives a URL-safe, de-duplicated slug from the title;
+// `md:render` turns the stored Markdown into sanitized HTML on read. The record
+// store is the only stateful piece — the rest is a fold over pure functions.
+//
+// Routes:
+//   POST /api/paste            {title?, body, syntax?}   validate -> redact -> store -> slug
+//   GET  /api/paste/{id}                                  metadata + rendered HTML + text preview
+//   GET  /api/pastes                                      recent pastes (metadata)
+//   GET  /api/raw/{id}                                    the stored (redacted) body, text/plain
+package bin:app@0.1.0;
+
+/// The paste pipeline (validate -> redact -> store -> slug) + the read-side
+/// render, composed from mostly pure-compute contracts.
+world paste-bin {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // input validation (body required + length bounds).
+    import validate:schema/validator@0.1.0;
+    // mask PII in the body BEFORE it is stored — pure compute.
+    import pii:redact/redactor@0.1.0;
+    // safe Markdown -> HTML on read — pure compute.
+    import md:render/renderer@0.1.0;
+    // URL-safe, de-duplicated slug from the title — pure compute.
+    import slug:generate/generator@0.1.0;
+    // the only stateful piece: the stored (already-redacted) pastes.
+    import records:store/store@0.1.0;
+    // paste timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

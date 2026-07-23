@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bin — a paste/gist bin on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff; --ok:#22c55e; --warn:#f2a541; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; align-items: center; }
+  .wrap { width: 100%; max-width: 820px; padding: 1.4rem 1rem; display: flex; flex-direction: column; gap: 1rem; }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  header .dim { color: var(--muted); font-size: .9rem; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 680px) { .cols { grid-template-columns: 1fr; } }
+  input, textarea { width: 100%; padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 8px;
+                    background: var(--panel); color: var(--ink); font: inherit; }
+  textarea { min-height: 15rem; font: 13px/1.5 ui-monospace, monospace; resize: vertical; }
+  button { padding: .6rem 1rem; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer; }
+  .row { display: flex; gap: .5rem; align-items: center; }
+  .render { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .8rem 1rem; min-height: 15rem; overflow: auto; }
+  .render h1, .render h2 { font-size: 1.15rem; margin: .4rem 0; }
+  .render pre { background: var(--bg); padding: .6rem; border-radius: 6px; overflow: auto; }
+  .render code { font-family: ui-monospace, monospace; }
+  .badge { font-size: .8rem; padding: .15rem .5rem; border-radius: 999px; }
+  .badge.redacted { background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); }
+  .list { display: flex; flex-direction: column; gap: .35rem; }
+  .item { display: flex; justify-content: space-between; background: var(--panel); border: 1px solid var(--line);
+          border-radius: 8px; padding: .5rem .7rem; cursor: pointer; font-size: .9rem; }
+  .item .s { color: var(--muted); font-family: ui-monospace, monospace; font-size: .78rem; }
+  .step { font-size: .78rem; color: var(--muted); }
+  .step b { color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>bin</h1><div class="dim">— a paste bin · validate → <b>redact PII</b> → store → slug · a pure-compute pipeline</div></header>
+
+  <div class="cols">
+    <div style="display:flex;flex-direction:column;gap:.5rem">
+      <input id="title" placeholder="title (optional)" value="Deploy notes">
+      <textarea id="body"># Deploy notes
+
+Ping me at ops@example.com or call 555-123-4567.
+Card on file: 4111 1111 1111 1111.
+
+- step one
+- step two
+
+`inline code` and **bold**.
+
+&lt;script&gt;alert('xss')&lt;/script&gt;</textarea>
+      <div class="row"><button id="save">Paste it</button>
+        <span class="step">redaction happens <b>before</b> storage</span></div>
+    </div>
+    <div>
+      <div class="row" style="justify-content:space-between;margin-bottom:.4rem">
+        <span class="step">rendered (safe HTML)</span>
+        <span id="redacted"></span>
+      </div>
+      <div class="render" id="render"><span class="step">Paste something to render it.</span></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="step" style="margin-bottom:.4rem">recent pastes</div>
+    <div class="list" id="list"></div>
+  </div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  $("save").onclick = async () => {
+    const r = await fetch("/api/paste", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: $("title").value, body: $("body").value }),
+    });
+    const d = await r.json();
+    if (!r.ok) { $("render").innerHTML = `<span class="step">${(d.fields || []).map(f => f.field + ": " + f.message).join(", ") || d.error}</span>`; return; }
+    show(d.id);
+    refresh();
+  };
+
+  async function show(id) {
+    const d = await (await fetch(`/api/paste/${id}`)).json();
+    $("render").innerHTML = d.html;
+    $("redacted").innerHTML = d.redacted > 0
+      ? `<span class="badge redacted">${d.redacted} PII masked</span>` : "";
+  }
+
+  async function refresh() {
+    const d = await (await fetch("/api/pastes")).json();
+    $("list").innerHTML = (d.pastes || []).map(p =>
+      `<div class="item" data-id="${p.id}"><span>${esc(p.title)} <span class="s">/${p.slug || ""}</span></span>` +
+      `<span class="s">${p.redacted ? p.redacted + " masked" : ""}</span></div>`).join("") ||
+      `<span class="step">none yet</span>`;
+    document.querySelectorAll(".item").forEach(el => el.onclick = () => show(el.dataset.id));
+  }
+
+  function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+  refresh();
+</script>
+</body>
+</html>

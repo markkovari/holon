@@ -790,6 +790,25 @@
     "reusable_as_is": true
   },
   {
+    "name": "paste-bin",
+    "package": "bin:app@0.1.0",
+    "description": "bin:app \u2014 a paste / gist bin over a chain of mostly pure-compute contracts",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "md:render/renderer",
+      "pii:redact/redactor",
+      "records:store/store",
+      "slug:generate/generator",
+      "validate:schema/validator"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 151516,
+    "wasm_sha256_12": "3a5d6d113ee5",
+    "reusable_as_is": true
+  },
+  {
     "name": "pii-redact",
     "package": "pii:redact@0.1.0",
     "description": "`pii-redact` \u2014 reference implementation of `pii:redact`",

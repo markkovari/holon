@@ -66,6 +66,8 @@ report_wasm := rel / "csv_report.wasm"
 report_composed := "components/target/csv_report.composed.wasm"
 authgate_wasm := rel / "mfa_authgate.wasm"
 authgate_composed := "components/target/mfa_authgate.composed.wasm"
+paste_wasm := rel / "paste_bin.wasm"
+paste_composed := "components/target/paste_bin.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -461,6 +463,38 @@ host-authgate: compose-authgate
 e2e-authgate: compose-authgate
     cd host && cargo build --release --bin vet-host
     cd examples/authgate && cargo test --release
+
+# Compose paste-bin (PASTE.md — a paste/gist bin) with the pure-compute
+# transform chain (validate + pii-redact + markdown + slug) plus the one
+# stateful piece (records). No auth. Remaining imports are WASI (kv).
+compose-paste: build
+    wac plug {{paste_wasm}} \
+      --plug {{validate_wasm}} \
+      --plug {{rel}}/pii_redact.wasm \
+      --plug {{rel}}/markdown.wasm \
+      --plug {{rel}}/slug.wasm \
+      --plug {{recordstore_wasm}} \
+      -o {{paste_composed}}
+    @echo "composed paste-bin (+ validate + pii-redact + markdown + slug + records) -> {{paste_composed}}"
+
+# Run the paste bin on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3024: paste Markdown (with an email or card number in it),
+# submit, and watch the PII get masked at ingest and the Markdown render to safe
+# HTML on view — a pure-compute pipeline with one stateful step.
+host-paste: compose-paste
+    cd host && VET_TENANT=paste \
+      cargo run --release --bin vet-host -- \
+      --component ../{{paste_composed}} --addr 0.0.0.0:3024 \
+      --static-dir ../examples/paste/public
+
+# Paste e2e: compose + build host + a Rust test that proves an empty body is
+# rejected (validate), PII in the body is masked BEFORE storage (the raw email
+# never appears in the stored/raw output), Markdown renders to sanitized HTML
+# (a <script> is escaped, not executed), and duplicate titles get distinct
+# slugs.
+e2e-paste: compose-paste
+    cd host && cargo build --release --bin vet-host
+    cd examples/paste && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

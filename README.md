@@ -173,6 +173,13 @@ catalog and a bench round:
   axis nothing else shows: **challenge-response auth** — prove you hold the
   secret *now*, never re-send it — over `otp:totp` + `secrets:vault` +
   `session:store`. ([demo](docs/media/authgate.gif))
+- **[PASTE.md](PASTE.md)** — a **paste / gist bin**: drop in Markdown and the app
+  is a **pure-compute pipeline** — the input is validated, **PII is masked before
+  it's stored**, the title becomes a de-duplicated slug, and the Markdown renders
+  to **safe HTML** (a raw `<script>` is escaped) on read (`just host-paste`). The
+  axis nothing else leads with: a **fold over stateless transforms** with one
+  stateful step — over `validate:schema` + `pii:redact` + `md:render` +
+  `slug:generate` + `records`. ([demo](docs/media/paste.gif))
 - **[DROP.md](DROP.md)** — a **presigned direct-upload drop-box**: pick a file and
   the backend answers the policy question, signs a short-lived ticket, and the
   client PUTs the bytes straight to storage — then a **signed, expiring link**
