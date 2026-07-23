@@ -64,6 +64,8 @@ drop_wasm := rel / "upload_drop.wasm"
 drop_composed := "components/target/upload_drop.composed.wasm"
 report_wasm := rel / "csv_report.wasm"
 report_composed := "components/target/csv_report.composed.wasm"
+authgate_wasm := rel / "mfa_authgate.wasm"
+authgate_composed := "components/target/mfa_authgate.composed.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -427,6 +429,38 @@ host-report: compose-report
 e2e-report: compose-report
     cd host && cargo build --release --bin vet-host
     cd examples/report && cargo test --release
+
+# Compose mfa-authgate (AUTHGATE.md — TOTP 2FA + challenge-response login) with
+# the otp primitive + secrets vault + session store + records. No auth-guard —
+# this app IS the second factor. secrets:vault needs a 32-byte base64 master-key
+# from config (CFG_MASTER_KEY below).
+compose-authgate: build
+    wac plug {{authgate_wasm}} \
+      --plug {{rel}}/otp.wasm \
+      --plug {{secrets_wasm}} \
+      --plug {{session_wasm}} \
+      --plug {{recordstore_wasm}} \
+      -o {{authgate_composed}}
+    @echo "composed mfa-authgate (+ otp + secrets-vault + session-store + records) -> {{authgate_composed}}"
+
+# Run the 2FA authgate on the native Rust host + serve the SPA. Open
+# http://127.0.0.1:3023: enroll an account (scan the QR / copy the secret into an
+# authenticator app), activate with the first code, then log in with a live code
+# or burn a recovery code. CFG_MASTER_KEY seals the TOTP secret in the vault.
+host-authgate: compose-authgate
+    cd host && VET_TENANT=authgate \
+      CFG_MASTER_KEY=bWZhLWRlbW8tbWFzdGVyLWtleS0zMi1ieXRlcyEhISE= \
+      cargo run --release --bin vet-host -- \
+      --component ../{{authgate_composed}} --addr 0.0.0.0:3023 \
+      --static-dir ../examples/authgate/public
+
+# Authgate e2e: compose + build host + a Rust test that provisions a secret,
+# derives a valid TOTP code from it, activates enrollment, logs in with a live
+# code (rejecting a wrong one), and burns a single-use recovery code (rejecting
+# its reuse) — proving the full challenge-response lifecycle.
+e2e-authgate: compose-authgate
+    cd host && cargo build --release --bin vet-host
+    cd examples/authgate && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

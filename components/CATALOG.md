@@ -46,6 +46,7 @@ capabilities, so anything marked reusable drops into another app via
 | **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 65 KiB | app/demo |
 | **markdown** | `md:render@0.1.0` | pure compute | — | 79 KiB | ✓ |
 | **metrics-collect** | `metrics:collect@0.1.0` | kv:atomics, kv:store | — | 67 KiB | ✓ |
+| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, records:store/store, secrets:vault/vault, session:store/store | — | 167 KiB | ✓ |
 | **money** | `money:amount@0.1.0` | pure compute | — | 56 KiB | ✓ |
 | **notify-dispatch** | `notify:dispatch@0.1.0` | config/store, http/outgoing-handler | — | 87 KiB | ✓ |
 | **openai-provider** | `openai:provider@0.1.0` | config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed` | 172 KiB | ✓ |
@@ -118,6 +119,7 @@ capabilities, so anything marked reusable drops into another app via
 - **login-app** — `login-app` — a consumer component that composes three universal
 - **markdown** — `markdown` — reference implementation of `md:render`
 - **metrics-collect** — `metrics-collect` — reference implementation of `metrics:collect`
+- **mfa-authgate** — mfa:app — TOTP 2FA enrollment + challenge-response login over composed
 - **money** — `money` — reference implementation of `money:amount`
 - **notify-dispatch** — `notify-dispatch` — reference implementation of `notify:dispatch`
 - **openai-provider** — `openai-provider` — reference implementation of `llm:inference` over an

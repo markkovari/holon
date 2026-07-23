@@ -609,6 +609,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mfa-authgate"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "money"
 version = "0.1.0"
 dependencies = [

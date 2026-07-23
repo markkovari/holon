@@ -651,6 +651,24 @@
     "reusable_as_is": true
   },
   {
+    "name": "mfa-authgate",
+    "package": "mfa:app@0.1.0",
+    "description": "mfa:app \u2014 TOTP 2FA enrollment + challenge-response login over composed",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "otp:totp/authenticator",
+      "records:store/store",
+      "secrets:vault/vault",
+      "session:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 171773,
+    "wasm_sha256_12": "4d443bd146a4",
+    "reusable_as_is": true
+  },
+  {
     "name": "money",
     "package": "money:amount@0.1.0",
     "description": "`money` \u2014 reference implementation of `money:amount`",

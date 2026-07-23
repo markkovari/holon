@@ -166,6 +166,13 @@ catalog and a bench round:
   bus (`just host-status`). The axis nothing else shows: **the workload
   originates from a timer, not a request** — over `sched:timer` + `fsm:workflow`
   + `event:bus` + `notify:dispatch`. ([demo](docs/media/status.gif))
+- **[AUTHGATE.md](AUTHGATE.md)** — a **TOTP 2FA** flow: enroll an account (mints a
+  secret **sealed in a vault** + the `otpauth://` QR), activate with a first
+  correct code (revealing single-use recovery codes), then log in with a **live**
+  code or burn a recovery code — minting a session (`just host-authgate`). The
+  axis nothing else shows: **challenge-response auth** — prove you hold the
+  secret *now*, never re-send it — over `otp:totp` + `secrets:vault` +
+  `session:store`. ([demo](docs/media/authgate.gif))
 - **[DROP.md](DROP.md)** — a **presigned direct-upload drop-box**: pick a file and
   the backend answers the policy question, signs a short-lived ticket, and the
   client PUTs the bytes straight to storage — then a **signed, expiring link**

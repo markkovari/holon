@@ -1,0 +1,38 @@
+// mfa:app — TOTP two-factor enrollment + challenge-response login, as a WIT
+// HTTP component.
+//
+// The challenge-response axis: authentication here is not "send a password" but
+// "prove you hold the shared secret RIGHT NOW". Enroll mints a TOTP secret
+// (`otp:totp`) and seals it in `secrets:vault` — the plaintext secret never
+// touches the record store. Activation requires a first correct code (proving
+// the authenticator app scanned the QR), and only then are single-use recovery
+// codes issued (their hashes stored, never the codes). Login verifies a live
+// TOTP code — or burns a recovery code — and on success mints a server-side
+// `session:store` session. The secret is write-once, read-only-to-verify.
+//
+// Routes:
+//   POST /api/enroll    {account}            provision secret -> QR uri (pending)
+//   POST /api/activate  {account, code}      verify first code -> enrolled + recovery codes
+//   POST /api/login      {account, code}      verify TOTP or recovery code -> session
+//   GET  /api/session/{id}                    look up a live session
+//   POST /api/logout     {session}            revoke
+//   GET  /api/status/{account}                enrolled? recovery codes remaining?
+package mfa:app@0.1.0;
+
+/// The 2FA lifecycle (provision -> activate -> challenge) + session issuance,
+/// composed from capability contracts.
+world mfa-authgate {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // the second-factor primitive: provision a secret + QR uri, verify codes,
+    // mint recovery codes. Holds no state — the secret is supplied per call.
+    import otp:totp/authenticator@0.1.0;
+    // the TOTP secret is envelope-encrypted here; only ciphertext hits the store.
+    import secrets:vault/vault@0.1.0;
+    // a successful challenge mints an opaque server-side session (+ CSRF).
+    import session:store/store@0.1.0;
+    // enrollment state + recovery-code hashes (never the codes or the secret).
+    import records:store/store@0.1.0;
+    // enrollment timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

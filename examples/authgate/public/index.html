@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>authgate — TOTP 2FA on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff; --ok:#22c55e; --bad:#ef4444; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 15px/1.55 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; align-items: center; }
+  .wrap { width: 100%; max-width: 520px; padding: 1.4rem 1rem; display: flex; flex-direction: column; gap: 1rem; }
+  header h1 { font-size: 1.1rem; margin: 0; }
+  header .dim { color: var(--muted); font-size: .9rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1rem; display: flex; flex-direction: column; gap: .7rem; }
+  .step { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+  input { padding: .6rem .8rem; font-size: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); width: 100%; }
+  input.code { font-family: ui-monospace, monospace; letter-spacing: .25em; text-align: center; }
+  button { padding: .6rem .9rem; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: .5rem; }
+  .row > * { flex: 1; }
+  .secret { font-family: ui-monospace, monospace; font-size: .82rem; word-break: break-all; background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; padding: .5rem .6rem; }
+  .uri { font-size: .72rem; color: var(--muted); word-break: break-all; }
+  .recovery { display: flex; flex-wrap: wrap; gap: .4rem; }
+  .recovery code { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .25rem .5rem; font-size: .82rem; }
+  .msg { font-size: .85rem; min-height: 1.2em; }
+  .msg.ok { color: var(--ok); } .msg.bad { color: var(--bad); }
+  .pill { display: inline-block; font-size: .72rem; padding: .1rem .5rem; border-radius: 999px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>authgate <span class="pill" id="state">none</span></h1>
+    <div class="dim">TOTP 2FA — the secret is sealed in the vault; you prove you hold it right now</div></header>
+
+  <div class="card">
+    <span class="step">① Enroll</span>
+    <input id="account" placeholder="account (e.g. alice@example.com)" value="alice@example.com">
+    <button id="enroll">Provision a secret</button>
+    <div id="prov" class="hide">
+      <div class="dim">Add this secret to an authenticator app (Google Authenticator, Authy…):</div>
+      <div class="secret" id="secret"></div>
+      <div class="uri" id="uri"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="step">② Activate — enter the first code</span>
+    <div class="row">
+      <input id="activateCode" class="code" placeholder="000000" maxlength="6" inputmode="numeric">
+      <button id="activate">Activate</button>
+    </div>
+    <div id="recovery" class="hide">
+      <div class="dim">Save these single-use recovery codes — shown once:</div>
+      <div class="recovery" id="recoveryList"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <span class="step">③ Log in — a live code or a recovery code</span>
+    <div class="row">
+      <input id="loginCode" class="code" placeholder="000000 or xxxx-xxxx">
+      <button id="login">Log in</button>
+    </div>
+    <div id="session" class="uri"></div>
+  </div>
+
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const acct = () => $("account").value.trim();
+  const say = (t, cls = "") => { const m = $("msg"); m.textContent = t; m.className = "msg " + cls; };
+
+  async function post(path, body) {
+    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    return { ok: r.ok, status: r.status, data: await r.json() };
+  }
+
+  async function refreshState() {
+    if (!acct()) return;
+    const s = await (await fetch(`/api/status/${encodeURIComponent(acct())}`)).json();
+    $("state").textContent = `${s.state}${s.recovery_remaining ? " · " + s.recovery_remaining + " recovery" : ""}`;
+  }
+
+  $("enroll").onclick = async () => {
+    const r = await post("/api/enroll", { account: acct() });
+    if (!r.ok) return say(r.data.error, "bad");
+    $("secret").textContent = r.data.secret;
+    $("uri").textContent = r.data.uri;
+    $("prov").classList.remove("hide");
+    say("Secret provisioned + sealed in the vault. Enter the first code to activate.", "ok");
+    refreshState();
+  };
+
+  $("activate").onclick = async () => {
+    const r = await post("/api/activate", { account: acct(), code: $("activateCode").value.trim() });
+    if (!r.ok) return say(r.data.error, "bad");
+    $("recoveryList").innerHTML = r.data.recovery_codes.map(c => `<code>${c}</code>`).join("");
+    $("recovery").classList.remove("hide");
+    say("Enrolled. You can now log in with a live code.", "ok");
+    refreshState();
+  };
+
+  $("login").onclick = async () => {
+    const r = await post("/api/login", { account: acct(), code: $("loginCode").value.trim() });
+    if (!r.ok) return say(r.data.error, "bad");
+    $("session").textContent = `session ${r.data.session.slice(0, 16)}… · via ${r.data.via} · csrf ${r.data.csrf.slice(0, 12)}…`;
+    say(`Logged in via ${r.data.via}. Session minted.`, "ok");
+    refreshState();
+  };
+
+  refreshState();
+</script>
+</body>
+</html>

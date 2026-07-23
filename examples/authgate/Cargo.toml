@@ -1,0 +1,15 @@
+[package]
+name = "authgate-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+ureq = "2"
+serde_json = "1"
+# derive TOTP codes from the returned secret to drive the challenge, exactly as
+# an authenticator app would (RFC 6238, HMAC-SHA1).
+totp-lite = "2"
+data-encoding = "2"
