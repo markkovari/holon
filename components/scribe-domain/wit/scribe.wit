@@ -1,0 +1,39 @@
+// scribe:app — a collaborative document editor as a WIT HTTP component.
+//
+// The convergence class, made live. A document is a map of fields, each field a
+// last-writer-wins CRDT register (crdt:merge `lwwmap`). Any editor sends an op
+// `{field, value, ts, replica}`; the server MERGES it into the stored CRDT state
+// and pushes the merged document to every open editor over Server-Sent-Events.
+// Two people editing at once converge — different fields both survive, the same
+// field resolves deterministically by (ts, replica) everywhere, and an edit
+// made while disconnected still merges correctly on reconnect (its timestamp is
+// captured at edit time, not receipt). See CRDT.md + SCRIBE.md.
+//
+// Merges use optimistic concurrency (record revision as the CAS token) with
+// retry: two concurrent ops that would clobber each other both re-merge onto the
+// newer state instead — the CRDT makes the retry safe because merge is
+// idempotent + commutative.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   GET  /api/docs/{doc}            the merged document + revision
+//   POST /api/docs/{doc}/ops        {field, value, ts, replica}   apply an edit
+//   GET  /api/docs/{doc}/events     ?rev=n   LIVE SSE of the merged document
+//   POST /api/docs/{doc}/presence   {user}   heartbeat
+//   GET  /api/docs/{doc}/presence            who's editing
+package scribe:app@0.1.0;
+
+/// The collaborative-editor backend + the SSE loop, composed from contracts.
+world scribe-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // conflict-free convergence: the document is an lwwmap CRDT state.
+    import crdt:merge/merger@0.1.0;
+    // durable per-document CRDT state + presence records.
+    import records:store/store@0.1.0;
+    // replica ids for editors.
+    import id:generate/generator@0.1.0;
+    // presence timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

@@ -976,6 +976,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scribe-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "search-domain"
 version = "0.1.0"
 dependencies = [

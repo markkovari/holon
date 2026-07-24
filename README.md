@@ -133,6 +133,12 @@ catalog and a bench round:
   **offline with no lock** and still converge — `merge` is commutative +
   associative + idempotent, property-tested in Rust *and* jco. The primitive the
   collaborative editor is built on. ([demo](docs/media/crdt.gif))
+- **[SCRIBE.md](SCRIBE.md)** — a **collaborative document editor**: two browsers
+  edit one doc at once with **no lock** — each field is a `crdt:merge` register,
+  merged server-side and **streamed live to every editor over SSE**. Composes
+  the convergence class (`crdt`) with realtime push (`pulse`'s SSE); different
+  fields both survive, same-field resolves by LWW, out-of-order edits don't
+  clobber. ([demo](docs/media/scribe.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

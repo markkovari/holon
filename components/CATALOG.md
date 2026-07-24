@@ -65,6 +65,7 @@ capabilities, so anything marked reusable drops into another app via
 | **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
 | **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 188 KiB | ✓ |
 | **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 91 KiB | ✓ |
+| **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, id:generate/generator, records:store/store | — | 159 KiB | ✓ |
 | **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 155 KiB | ✓ |
 | **search-index** | `search:index@0.1.0` | kv:store | — | 98 KiB | ✓ |
 | **secrets-vault** | `secrets:vault@0.1.0` | config/store, kv:store | `master-key` | 96 KiB | ✓ |
@@ -143,6 +144,7 @@ capabilities, so anything marked reusable drops into another app via
 - **record-store** — `record-store` — reference implementation of `record:store`
 - **saga-domain** — saga:app — a durable trip-booking saga over composed contracts
 - **scheduler-timer** — `scheduler-timer` — reference implementation of `sched:timer`
+- **scribe-domain** — scribe:app — a collaborative document editor over composed contracts
 - **search-domain** — search:app — faceted search-as-you-type over composed contracts
 - **search-index** — `search-index` — reference implementation of `search:index`
 - **secrets-vault** — `secrets-vault` — reference implementation of `secrets:vault`

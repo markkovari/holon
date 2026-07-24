@@ -1000,6 +1000,23 @@
     "reusable_as_is": true
   },
   {
+    "name": "scribe-domain",
+    "package": "scribe:app@0.1.0",
+    "description": "scribe:app \u2014 a collaborative document editor over composed contracts",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "crdt:merge/merger",
+      "id:generate/generator",
+      "records:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 163756,
+    "wasm_sha256_12": "3cbe3f4bc46e",
+    "reusable_as_is": true
+  },
+  {
     "name": "search-domain",
     "package": "search:app@0.1.0",
     "description": "search:app \u2014 faceted search-as-you-type over composed contracts",

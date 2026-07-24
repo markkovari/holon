@@ -115,5 +115,15 @@ node crdt.mjs
 bash to-gif.sh videos/crdt/*.webm ../../docs/media/crdt.gif 900 12
 ```
 
+**scribe** — collaborative editor; two panes on the REAL running app editing one
+document. Each pane is a distinct replica (`?rid=`); an edit in one is merged
+server-side (crdt:merge) and pushed to the other over SSE.
+
+```bash
+just host-scribe &                      # from repo root; editor on :3037
+node scribe.mjs
+bash to-gif.sh videos/scribe/*.webm ../../docs/media/scribe.gif 800 10
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

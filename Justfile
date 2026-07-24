@@ -70,6 +70,8 @@ paste_wasm := rel / "paste_bin.wasm"
 paste_composed := "components/target/paste_bin.composed.wasm"
 track_wasm := rel / "track_domain.wasm"
 track_composed := "components/target/track_domain.composed.wasm"
+scribe_wasm := rel / "scribe_domain.wasm"
+scribe_composed := "components/target/scribe_domain.composed.wasm"
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
@@ -231,6 +233,30 @@ host-pulse: compose-pulse
 e2e-pulse: compose-pulse
     cd host && cargo build --release --bin vet-host
     cd examples/pulse && cargo test --release
+
+# Compose scribe-domain (SCRIBE.md — a collaborative document editor) with the
+# crdt merge component + records + id-generate. Remaining imports are WASI.
+compose-scribe: build
+    wac plug {{scribe_wasm}} \
+      --plug {{rel}}/crdt.wasm \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/id_generate.wasm \
+      -o {{scribe_composed}}
+    @echo "composed scribe-domain (+ crdt + records + ids) -> {{scribe_composed}}"
+
+# Run the collaborative editor on the native host + serve the two-pane SPA. Open
+# two windows on http://127.0.0.1:3037 and edit the same doc — edits merge and
+# stream live to both.
+host-scribe: compose-scribe
+    cd host && VET_TENANT=scribe cargo run --release --bin vet-host -- \
+      --component ../{{scribe_composed}} --addr 0.0.0.0:3037 \
+      --static-dir ../examples/scribe/public
+
+# Collaborative-editor e2e: compose + build host + a Rust test proving two
+# concurrent edits merge (both survive) and a live SSE connection sees them.
+e2e-scribe: compose-scribe
+    cd host && cargo build --release --bin vet-host
+    cd examples/scribe && cargo test --release
 
 # Compose pipeline-domain (PIPELINE.md — a reliable event pipeline with
 # outbox → dispatch → DLQ → replay, SSE server-push) with outbox + event-bus +

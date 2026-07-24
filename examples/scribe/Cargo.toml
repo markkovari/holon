@@ -1,0 +1,12 @@
+[package]
+name = "scribe-e2e"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone crate (not in the components wasm workspace): a native HTTP client.
+[workspace]
+
+[dependencies]
+ureq = "2"
+serde_json = "1"
