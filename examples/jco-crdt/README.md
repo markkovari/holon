@@ -26,6 +26,11 @@ State is an opaque, self-describing JSON string with a `"type"` tag; `merge` and
 - **`lwwmap`** — per-key LWW map (with tombstones). `lwwmapNew` /
   `lwwmapSet(state, key, v, ts, replica)` / `lwwmapRemove(...)`. This is what
   `scribe` (the collaborative editor) uses for per-field convergence.
+- **`rga`** — text **sequence** (replicated growable array). `rgaNew` /
+  `rgaInsert(state, index, text, idBase)` / `rgaDelete(state, index, count)`.
+  Concurrent inserts at the same position **interleave deterministically** —
+  two people typing into one string, neither lost. `idBase` must be unique +
+  sortable.
 
 Timestamps and replica ids are caller-supplied, so results are deterministic —
 no wall clock inside the component.

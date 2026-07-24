@@ -31,7 +31,7 @@ same over 40 random permutations against the actual compiled wasm. Output is
 canonical (sorted keys, sorted sets), so *equal states are byte-equal* — you can
 check convergence with `==`.
 
-## Four types, one per CRDT family
+## Five types, one per CRDT family
 
 | type | family | value | conflict rule |
 |---|---|---|---|
@@ -39,10 +39,18 @@ check convergence with `==`.
 | `pn` | counter | Σ increments − Σ decrements | per-replica max (both directions) |
 | `orset` | set | present elements | **add wins** over a concurrent remove |
 | `lwwmap` | map | live `key → value` | per-key LWW (with tombstones) |
+| `rga` | **sequence** | the text | concurrent inserts **interleave**, never clobber |
 
-`lwwmap` is what `scribe` uses: a document is a map of fields, each field a
+`lwwmap` is what `scribe` uses for the document: a map of fields, each a
 last-writer-wins register, so two people editing different fields never conflict
 and two editing the same field resolve deterministically.
+
+`rga` (a replicated growable array) goes further — it's a **text sequence**
+where two people typing into the *same* field **interleave** instead of one
+winning: each character is an element anchored after another, concurrent inserts
+at the same spot order deterministically by id, and delete is a tombstone so an
+edit racing a delete both survive. This is the upgrade path from `lwwmap`'s
+per-field LWW to true concurrent character editing.
 
 ## The demo (what the gif shows)
 

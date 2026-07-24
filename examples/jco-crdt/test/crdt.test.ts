@@ -140,6 +140,35 @@ describe("LWW-Map (scribe's per-field convergence)", () => {
   });
 });
 
+describe("RGA (text sequence — concurrent typing interleaves)", () => {
+  const ins = (s: string, i: number, t: string, id: string) => c.rgaInsert(s, i, t, id);
+
+  it("builds and edits text", () => {
+    let s = ins(c.rgaNew(), 0, "hello", "0001-a");
+    assert.equal(val(s), "hello");
+    s = ins(s, 5, " world", "0002-a");
+    assert.equal(val(s), "hello world");
+    s = c.rgaDelete(s, 0, 6); // drop "hello "
+    assert.equal(val(s), "world");
+  });
+
+  it("concurrent inserts at the same spot BOTH survive and converge", () => {
+    const base = ins(c.rgaNew(), 0, "AC", "0000-seed");
+    const rx = ins(base, 1, "X", "0001-x");
+    const ry = ins(base, 1, "Y", "0002-y"); // higher id sorts first
+    assert.equal(val(c.merge(rx, ry)), "AYXC");
+    assert.equal(c.merge(rx, ry), c.merge(ry, rx)); // commutative, byte-equal
+    assertConverges([rx, ry, base], 42);
+  });
+
+  it("a delete and a concurrent edit both apply", () => {
+    const base = ins(c.rgaNew(), 0, "abc", "0000-s");
+    const deleted = c.rgaDelete(base, 1, 1); // "ac"
+    const edited = ins(base, 3, "d", "0001-e"); // "abcd"
+    assert.equal(val(c.merge(deleted, edited)), "acd");
+  });
+});
+
 describe("errors", () => {
   it("merging different types throws 'type-mismatch'", () => {
     assert.throws(

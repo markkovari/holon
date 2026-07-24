@@ -19,7 +19,7 @@ capabilities, so anything marked reusable drops into another app via
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 64 KiB | ✓ |
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 220 KiB | ✓ |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
-| **crdt** | `crdt:merge@0.1.0` | pure compute | — | 179 KiB | ✓ |
+| **crdt** | `crdt:merge@0.1.0` | pure compute | — | 208 KiB | ✓ |
 | **csv** | `csv:codec@0.1.0` | pure compute | — | 58 KiB | ✓ |
 | **csv-report** | `report:app@0.1.0` | csv:codec/codec, paginate:cursor/cursors, records:store/store, validate:schema/validator | — | 173 KiB | ✓ |
 | **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 214 KiB | app/demo |

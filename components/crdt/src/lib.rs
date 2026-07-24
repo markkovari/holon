@@ -50,6 +50,19 @@ enum State {
     },
     #[serde(rename = "lwwmap")]
     LwwMap { entries: BTreeMap<String, Reg> },
+    #[serde(rename = "rga")]
+    Rga { elems: BTreeMap<String, RgaElem> },
+}
+
+/// One character in an RGA sequence: its char, the id it was inserted *after*
+/// (`""` = the start), and a delete tombstone. The element's own id (the map
+/// key) is caller-supplied and must be globally unique + sortable — concurrent
+/// inserts at the same anchor order by id (descending), so replicas agree.
+#[derive(Serialize, Deserialize, Clone)]
+struct RgaElem {
+    ch: String,
+    after: String,
+    del: bool,
 }
 
 /// One LWW slot: a value (or `None` = tombstone) stamped `(ts, replica)`.
@@ -152,8 +165,60 @@ fn merge_states(a: State, b: State) -> Option<State> {
             }
             State::LwwMap { entries }
         }
+        (State::Rga { elems: ea }, State::Rga { elems: eb }) => {
+            // Union elements by id; a tombstone anywhere wins (delete is
+            // monotonic). Both concurrent inserts are kept — that's the point.
+            let mut elems = ea;
+            for (id, e) in eb {
+                match elems.get_mut(&id) {
+                    Some(x) => x.del = x.del || e.del,
+                    None => {
+                        elems.insert(id, e);
+                    }
+                }
+            }
+            State::Rga { elems }
+        }
         _ => return None,
     })
+}
+
+/// The sequence order of ALL elements (tombstoned included): a preorder walk of
+/// the "inserted-after" tree, siblings sharing an anchor ordered by id
+/// descending. Iterative (no recursion) so a long document can't overflow.
+fn rga_sequence(elems: &BTreeMap<String, RgaElem>) -> Vec<String> {
+    let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (id, e) in elems {
+        children.entry(e.after.clone()).or_default().push(id.clone());
+    }
+    for v in children.values_mut() {
+        v.sort(); // ascending; we push in reverse so pop yields descending
+    }
+    let mut out = Vec::with_capacity(elems.len());
+    let mut stack: Vec<String> = children.get("").into_iter().flatten().cloned().collect();
+    while let Some(id) = stack.pop() {
+        out.push(id.clone());
+        if let Some(kids) = children.get(&id) {
+            stack.extend(kids.iter().cloned());
+        }
+    }
+    out
+}
+
+/// The ids of the live (non-tombstoned) elements, in sequence order.
+fn rga_visible(elems: &BTreeMap<String, RgaElem>) -> Vec<String> {
+    rga_sequence(elems)
+        .into_iter()
+        .filter(|id| !elems.get(id).map(|e| e.del).unwrap_or(true))
+        .collect()
+}
+
+/// The text the RGA represents.
+fn rga_text(elems: &BTreeMap<String, RgaElem>) -> String {
+    rga_visible(elems)
+        .iter()
+        .filter_map(|id| elems.get(id).map(|e| e.ch.as_str()))
+        .collect()
 }
 
 /// The logical value a state represents.
@@ -180,6 +245,7 @@ fn value_of(st: State) -> Value {
             }
             Value::Object(m)
         }
+        State::Rga { elems } => Value::String(rga_text(&elems)),
     }
 }
 
@@ -300,6 +366,63 @@ impl Guest for Component {
             },
         )
     }
+
+    fn rga_new() -> String {
+        dump(&State::Rga {
+            elems: BTreeMap::new(),
+        })
+        .expect("empty rga serializes")
+    }
+
+    fn rga_insert(
+        state: String,
+        index: u32,
+        text: String,
+        id_base: String,
+    ) -> Result<String, CrdtError> {
+        let State::Rga { mut elems } = parse_state(&state, "state")? else {
+            return Err(CrdtError::InvalidState("expected an rga".into()));
+        };
+        let visible = rga_visible(&elems);
+        // insert BEFORE visible[index]; anchor = the element just before it.
+        let idx = (index as usize).min(visible.len());
+        let mut anchor = if idx == 0 {
+            String::new()
+        } else {
+            visible[idx - 1].clone()
+        };
+        // Each char becomes an element chained after the previous, so a
+        // multi-char insert stays contiguous. Ids must be unique + sortable;
+        // `id_base` carries the (ts, replica) order, the `:k` keeps chars apart.
+        for (k, ch) in text.chars().enumerate() {
+            let id = format!("{id_base}:{k:04}");
+            elems.insert(
+                id.clone(),
+                RgaElem {
+                    ch: ch.to_string(),
+                    after: anchor.clone(),
+                    del: false,
+                },
+            );
+            anchor = id;
+        }
+        dump(&State::Rga { elems })
+    }
+
+    fn rga_delete(state: String, index: u32, count: u32) -> Result<String, CrdtError> {
+        let State::Rga { mut elems } = parse_state(&state, "state")? else {
+            return Err(CrdtError::InvalidState("expected an rga".into()));
+        };
+        let visible = rga_visible(&elems);
+        let start = (index as usize).min(visible.len());
+        let end = (start + count as usize).min(visible.len());
+        for id in &visible[start..end] {
+            if let Some(e) = elems.get_mut(id) {
+                e.del = true;
+            }
+        }
+        dump(&State::Rga { elems })
+    }
 }
 
 /// Apply a single register to a key iff it beats the current stamp (the
@@ -405,5 +528,57 @@ mod tests {
         let pn = s(r#"{"type":"pn","p":{},"n":{}}"#);
         let set = s(r#"{"type":"orset","adds":{},"removes":[]}"#);
         assert!(merge_states(pn, set).is_none());
+    }
+
+    // ---- RGA (text sequence) --------------------------------------------
+    fn text(state: &str) -> String {
+        match value_of(s(state)) {
+            Value::String(t) => t,
+            v => panic!("not a string value: {v}"),
+        }
+    }
+    fn ins(state: String, index: u32, t: &str, id: &str) -> String {
+        Component::rga_insert(state, index, t.into(), id.into()).unwrap()
+    }
+
+    #[test]
+    fn rga_builds_and_edits_text() {
+        let a = ins(Component::rga_new(), 0, "hello", "0001-a");
+        assert_eq!(text(&a), "hello");
+        let a = ins(a, 5, " world", "0002-a"); // append
+        assert_eq!(text(&a), "hello world");
+        let a = ins(a, 0, "say ", "0003-a"); // prepend
+        assert_eq!(text(&a), "say hello world");
+        let a = Component::rga_delete(a, 0, 4).unwrap(); // drop "say "
+        assert_eq!(text(&a), "hello world");
+    }
+
+    /// The headline: two replicas insert at the SAME position concurrently.
+    /// Both characters survive (neither is lost, unlike LWW), and every replica
+    /// orders them identically — deterministic interleaving.
+    #[test]
+    fn rga_concurrent_inserts_both_survive_and_converge() {
+        let base = ins(Component::rga_new(), 0, "AC", "0000-seed");
+        // both insert between A and C, from different replicas
+        let rx = ins(base.clone(), 1, "X", "0001-x");
+        let ry = ins(base.clone(), 1, "Y", "0002-y");
+        // higher id sorts first among same-anchor siblings -> Y before X
+        assert_eq!(text(&Component::merge(rx.clone(), ry.clone()).unwrap()), "AYXC");
+        // commutative: merge order doesn't matter
+        assert_eq!(
+            Component::merge(rx.clone(), ry.clone()).unwrap(),
+            Component::merge(ry.clone(), rx.clone()).unwrap()
+        );
+        assert_converges(&[s(&rx), s(&ry), s(&base)]);
+    }
+
+    #[test]
+    fn rga_delete_and_concurrent_edit_both_apply() {
+        let base = ins(Component::rga_new(), 0, "abc", "0000-s");
+        let deleted = Component::rga_delete(base.clone(), 1, 1).unwrap(); // "ac"
+        let edited = ins(base.clone(), 3, "d", "0001-e"); // "abcd"
+        // merge: b stays deleted, d survives -> "acd"
+        assert_eq!(text(&Component::merge(deleted.clone(), edited.clone()).unwrap()), "acd");
+        assert_converges(&[s(&deleted), s(&edited), s(&base)]);
     }
 }

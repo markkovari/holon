@@ -82,6 +82,21 @@ interface merger {
     /// Tombstone `key` if (timestamp, replica) beats its stamp (a tombstone
     /// still participates in merge, so a concurrent-but-older set stays gone).
     lwwmap-remove: func(state: string, key: string, timestamp: u64, replica: string) -> result<string, crdt-error>;
+
+    // ---- RGA (replicated growable array — a text sequence) ----------------
+
+    /// An empty RGA text sequence. `value` returns its text as a JSON string.
+    rga-new: func() -> string;
+    /// Insert `text` at visible character `index` (clamped to the length).
+    /// Each character becomes an element anchored after the previous one, so a
+    /// multi-character insert stays contiguous. `id-base` must be globally
+    /// unique AND sortable (e.g. a zero-padded `ts-replica-seq`): concurrent
+    /// inserts at the same position order by id, so every replica agrees — two
+    /// people typing at once **interleave deterministically**, neither is lost.
+    rga-insert: func(state: string, index: u32, text: string, id-base: string) -> result<string, crdt-error>;
+    /// Tombstone `count` visible characters starting at `index`. Deletes are
+    /// monotonic, so a delete and a concurrent edit both survive the merge.
+    rga-delete: func(state: string, index: u32, count: u32) -> result<string, crdt-error>;
 }
 
 /// `crdt` provides merge/value + constructors for four CvRDT types; pure
