@@ -72,6 +72,8 @@ track_wasm := rel / "track_domain.wasm"
 track_composed := "components/target/track_domain.composed.wasm"
 scribe_wasm := rel / "scribe_domain.wasm"
 scribe_composed := "components/target/scribe_domain.composed.wasm"
+jobs_wasm := rel / "jobs_domain.wasm"
+jobs_composed := "components/target/jobs_domain.composed.wasm"
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
@@ -233,6 +235,36 @@ host-pulse: compose-pulse
 e2e-pulse: compose-pulse
     cd host && cargo build --release --bin vet-host
     cd examples/pulse && cargo test --release
+
+# Compose jobs-domain (JOBS.md — a durable background-job queue) with its
+# capabilities: the outbox (durable queue), the IN-PROCESS durable:workflow
+# backend (swap for the golem-workflow provider on a classic host), cron, the
+# idempotency guard, and record-store. Remaining imports are WASI.
+compose-jobs: build
+    wac plug {{jobs_wasm}} \
+      --plug {{rel}}/outbox.wasm \
+      --plug {{rel}}/inproc_workflow.wasm \
+      --plug {{rel}}/cron.wasm \
+      --plug {{idempotency_wasm}} \
+      --plug {{recordstore_wasm}} \
+      -o {{jobs_composed}}
+    @echo "composed jobs-domain (+ outbox + inproc-workflow + cron + idempotency + records) -> {{jobs_composed}}"
+
+# Run the job queue on the native host + serve the board SPA. Open
+# http://127.0.0.1:3038: enqueue jobs, watch them run/retry/dead-letter live,
+# replay from the DLQ. CFG tunes the outbox: 3 attempts, 1s base backoff.
+host-jobs: compose-jobs
+    cd host && VET_TENANT=jobs CFG_MAX_ATTEMPTS=2 CFG_BASE_BACKOFF=1 \
+      cargo run --release --bin vet-host -- \
+      --component ../{{jobs_composed}} --addr 0.0.0.0:3038 \
+      --static-dir ../examples/jobs/public
+
+# Job-queue e2e: compose + build host + a Rust test that enqueues jobs, drives
+# ticks, and proves success / retry-then-succeed / dead-letter / replay + the
+# exactly-once enqueue key.
+e2e-jobs: compose-jobs
+    cd host && cargo build --release --bin vet-host
+    cd examples/jobs && cargo test --release
 
 # Compose scribe-domain (SCRIBE.md — a collaborative document editor) with the
 # crdt merge component + records + id-generate. Remaining imports are WASI.

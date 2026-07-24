@@ -1,0 +1,36 @@
+[package]
+name = "jobs-domain"
+description = "Durable background-job queue: scheduling, retry/backoff, DLQ, replay; swappable execution backend (jobs:app)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "jobs:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "jobs-domain"
+
+[package.metadata.component.target.dependencies]
+"outbox:dispatch" = { path = "../outbox/wit" }
+"durable:workflow" = { path = "../../providers/golem-workflow/wit" }
+"cron:expr" = { path = "../cron/wit" }
+"idempotency:guard" = { path = "../idempotency-guard/wit" }
+"records:store" = { path = "../record-store/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

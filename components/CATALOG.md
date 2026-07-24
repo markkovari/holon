@@ -41,6 +41,8 @@ capabilities, so anything marked reusable drops into another app via
 | **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 77 KiB | ✓ |
 | **id-generate** | `id:generate@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 81 KiB | ✓ |
+| **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 77 KiB | ✓ |
+| **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 170 KiB | ✓ |
 | **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 126 KiB | ✓ |
 | **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 158 KiB | app/demo |
 | **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 74 KiB | ✓ |
@@ -122,6 +124,8 @@ capabilities, so anything marked reusable drops into another app via
 - **i18n-catalog** — `i18n-catalog` — reference implementation of `i18n:catalog`
 - **id-generate** — `id-generate` — reference implementation of `id:generate/generator`
 - **idempotency-guard** — `idempotency-guard` — reference implementation of `idempotency:guard`
+- **inproc-workflow** — `inproc-workflow` — the default execution backend for the jobs queue
+- **jobs-domain** — jobs:app — a durable background-job queue over composed contracts
 - **jsonpatch** — `jsonpatch` — reference implementation of `json:patch`
 - **link-shortener** — shortlink:app — link shortener over composed capability contracts
 - **llm-inference** — `llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`

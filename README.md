@@ -139,6 +139,13 @@ catalog and a bench round:
   the convergence class (`crdt`) with realtime push (`pulse`'s SSE); different
   fields both survive, same-field resolves by LWW, out-of-order edits don't
   clobber. ([demo](docs/media/scribe.gif))
+- **[JOBS.md](JOBS.md)** — a **durable background-job queue** (Sidekiq/Temporal-lite):
+  enqueue → run → **retry with backoff → dead-letter → replay**, plus delayed +
+  cron jobs and exactly-once enqueue. Composes `outbox` (durable queue) +
+  `cron:expr` + `idempotency` + `records`, and runs each job through the
+  **`durable:workflow`** seam — in-process by default, **Golem-provider
+  swappable** for crash-resumable execution. Live self-ticking SSE board.
+  ([demo](docs/media/jobs.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

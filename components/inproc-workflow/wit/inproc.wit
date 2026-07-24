@@ -1,0 +1,18 @@
+// inproc:workflow — an in-process implementation of durable:workflow/orchestrator.
+//
+// The DEFAULT execution backend for the jobs queue: it satisfies the same
+// `durable:workflow/orchestrator` contract the Golem wRPC provider does, but runs
+// the job body right here, synchronously. Durability of the *run* is the queue's
+// job (claim + retry + DLQ over the outbox); this component just decides
+// success/failure from the workflow id + payload. Swap it for the golem-workflow
+// provider (via `wac`/lattice) and jobs get crash-resumable durable execution
+// with no change to the queue. See JOBS.md + GOLEM.md.
+//
+// Only the blocking `trigger` is real here; `start`/`status` (async, for
+// long/crash-recovering runs) return `unavailable` — that's the Golem backend's
+// domain. Pure compute.
+package inproc:workflow@0.1.0;
+
+world workflow-inproc {
+    export durable:workflow/orchestrator@0.1.0;
+}

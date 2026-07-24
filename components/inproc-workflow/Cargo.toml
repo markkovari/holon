@@ -1,0 +1,24 @@
+[package]
+name = "inproc-workflow"
+description = "In-process durable:workflow/orchestrator backend for the jobs queue (default; Golem-swappable)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "inproc:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "workflow-inproc"
+
+[package.metadata.component.target.dependencies]
+"durable:workflow" = { path = "../../providers/golem-workflow/wit" }

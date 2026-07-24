@@ -125,5 +125,15 @@ node scribe.mjs
 bash to-gif.sh videos/scribe/*.webm ../../docs/media/scribe.gif 800 10
 ```
 
+**jobs** — durable job-queue board; a burst marches Queued → Running → Done, a
+flaky job retries with backoff then completes, a boom job dead-letters, then
+Replay requeues it. The SSE board self-ticks.
+
+```bash
+just host-jobs &                        # from repo root; board on :3038
+node jobs.mjs
+bash to-gif.sh videos/jobs/*.webm ../../docs/media/jobs.gif 900 10
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jobs — a durable job queue on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --accent-ink:#fff;
+          --queued:#64748b; --running:#d97706; --done:#16a34a; --dead:#dc2626; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --accent-ink:#0f1115;
+            --queued:#94a3b8; --running:#fbbf24; --done:#4ade80; --dead:#f87171; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--ink);
+         display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: .6rem; padding: .7rem 1rem;
+           background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 1rem; margin: 0; }
+  header .dim { color: var(--muted); font-weight: 400; }
+  .grow { flex: 1; }
+  .pill { font-size:.72rem; font-weight:700; padding:.15rem .5rem; border-radius:999px; }
+  .pill.live { background: color-mix(in srgb, var(--done) 18%, transparent); color: var(--done); }
+  .pill.off { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--muted); }
+  .bar { display:flex; gap:.5rem; padding:.7rem 1rem; background:var(--panel);
+         border-bottom:1px solid var(--line); flex-wrap:wrap; align-items:center; }
+  .bar button { padding:.4rem .7rem; border:1px solid var(--line); border-radius:8px;
+                background:var(--bg); color:var(--ink); font:inherit; font-weight:600; cursor:pointer; }
+  .bar button:hover { border-color: var(--accent); }
+  .cols { flex:1; display:grid; grid-template-columns:repeat(4,1fr); gap:12px; padding:14px; overflow:hidden; }
+  .col { display:flex; flex-direction:column; min-height:0; background:var(--panel);
+         border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .col h2 { font-size:.74rem; text-transform:uppercase; letter-spacing:.5px; margin:0;
+            padding:.6rem .7rem; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; }
+  .col h2 .n { color:var(--muted); }
+  .col .list { overflow-y:auto; padding:.5rem; display:flex; flex-direction:column; gap:.45rem; }
+  .card { border:1px solid var(--line); border-left:3px solid var(--s); border-radius:8px;
+          padding:.45rem .55rem; background:var(--bg); }
+  .card .t { font-weight:700; }
+  .card .meta { color:var(--muted); font-size:.72rem; margin-top:.15rem; font-variant-numeric:tabular-nums; }
+  .card .msg { font-size:.72rem; margin-top:.2rem; word-break:break-word; }
+  .card .msg.err { color:var(--dead); } .card .msg.ok { color:var(--done); }
+  .card button { margin-top:.35rem; font-size:.72rem; padding:.2rem .5rem; border:1px solid var(--line);
+                 border-radius:6px; background:var(--panel); color:var(--ink); cursor:pointer; }
+  h2.queued { color:var(--queued);} h2.running{color:var(--running);} h2.done{color:var(--done);} h2.dead{color:var(--dead);}
+</style>
+</head>
+<body>
+  <header>
+    <h1>⚙️ jobs <span class="dim">· durable queue → retry → DLQ → replay</span></h1>
+    <span class="pill off" id="status">connecting…</span>
+    <span class="grow"></span>
+    <span class="dim" id="backend">execution: in-process (Golem-swappable)</span>
+  </header>
+  <div class="bar">
+    <span class="dim">enqueue:</span>
+    <button data-type="email">Email (ok)</button>
+    <button data-type="flaky" data-payload='{"fail_until":3}'>Flaky (retries)</button>
+    <button data-type="boom">Boom (→ DLQ)</button>
+    <button data-type="report" data-delay="3">Delayed 3s</button>
+    <button id="burst">＋ Burst ×5</button>
+  </div>
+  <div class="cols">
+    <div class="col"><h2 class="queued">Queued <span class="n" id="n-queued">0</span></h2><div class="list" id="c-queued"></div></div>
+    <div class="col"><h2 class="running">Running <span class="n" id="n-running">0</span></h2><div class="list" id="c-running"></div></div>
+    <div class="col"><h2 class="done">Done <span class="n" id="n-done">0</span></h2><div class="list" id="c-done"></div></div>
+    <div class="col"><h2 class="dead">Dead-letter <span class="n" id="n-dead">0</span></h2><div class="list" id="c-dead"></div></div>
+  </div>
+<script>
+const $ = id => document.getElementById(id);
+const H = { "content-type": "application/json" };
+const enqueue = (type, opts = {}) =>
+  fetch("/api/jobs", { method: "POST", headers: H, body: JSON.stringify({ type, ...opts }) }).catch(() => {});
+
+document.querySelectorAll(".bar button[data-type]").forEach(b => {
+  b.onclick = () => enqueue(b.dataset.type, {
+    payload: b.dataset.payload ? JSON.parse(b.dataset.payload) : undefined,
+    delay: b.dataset.delay ? Number(b.dataset.delay) : undefined,
+  });
+});
+$("burst").onclick = () => { for (let i = 0; i < 5; i++) enqueue("email"); };
+
+const esc = s => String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const short = id => String(id).slice(0, 8);
+
+function card(j) {
+  const el = document.createElement("div");
+  el.className = "card";
+  el.style.setProperty("--s", `var(--${j.state})`);
+  const msg = j.state === "done" && j.result ? `<div class="msg ok">${esc(j.result)}</div>`
+            : j.error ? `<div class="msg err">${esc(j.error)}</div>` : "";
+  const replay = j.state === "dead" ? `<button data-replay="${esc(j.id)}">↻ Replay</button>` : "";
+  el.innerHTML = `<div class="t">${esc(j.type)}</div>
+    <div class="meta">${short(j.id)} · attempt ${j.attempts}${j.cron ? " · cron " + esc(j.cron) : ""}</div>${msg}${replay}`;
+  const rb = el.querySelector("button[data-replay]");
+  if (rb) rb.onclick = () => fetch(`/api/jobs/${rb.dataset.replay}/replay`, { method: "POST" }).catch(() => {});
+  return el;
+}
+
+function render(board) {
+  const cols = { queued: [], running: [], done: [], dead: [] };
+  for (const j of board.jobs || []) (cols[j.state] || (cols[j.state] = [])).push(j);
+  for (const s of ["queued", "running", "done", "dead"]) {
+    const list = $("c-" + s);
+    list.innerHTML = "";
+    (cols[s] || []).forEach(j => list.appendChild(card(j)));
+    $("n-" + s).textContent = (board.counts && board.counts[s]) ?? (cols[s] || []).length;
+  }
+}
+
+function connect() {
+  const es = new EventSource("/api/events");
+  es.onopen = () => { $("status").className = "pill live"; $("status").textContent = "● live"; };
+  es.onmessage = e => { try { render(JSON.parse(e.data)); } catch {} };
+  es.onerror = () => { $("status").className = "pill off"; $("status").textContent = "reconnecting…"; };
+}
+
+fetch("/api/jobs").then(r => r.json()).then(render).catch(() => {});
+connect();
+</script>
+</body>
+</html>

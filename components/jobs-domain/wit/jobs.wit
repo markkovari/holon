@@ -1,0 +1,46 @@
+// jobs:app — a durable background-job queue as a WIT HTTP component.
+//
+// The last backend class the catalog was missing: arbitrary background work with
+// scheduling, retries with backoff, dead-lettering, and replay — the
+// Sidekiq/Temporal-lite shape. It is pure composition:
+//   - outbox:dispatch      the durable work queue — enqueue (with delay), claim
+//                          under a crash-safe lease, fail (exponential backoff),
+//                          dead-letter after max attempts, replay.
+//   - durable:workflow     the EXECUTION seam — each job runs through
+//                          `orchestrator.trigger`. The default backend runs it
+//                          in-process; swap in the golem-workflow provider for
+//                          crash-resumable durable execution, no change here.
+//   - cron:expr            recurring jobs — on success, reschedule at the next
+//                          cron fire time.
+//   - idempotency:guard    exactly-once enqueue (a client key dedups retries).
+//   - records:store        the dashboard view: one job record per work item,
+//                          mirroring its state for the live board + history.
+//
+// A `tick` drains one batch (claim → run → ack/fail); the SSE board ticks itself
+// so jobs advance live. Routes (under /api):
+//   POST /api/jobs              {type, payload?, delay?, cron?, key?}  enqueue
+//   GET  /api/jobs                                                     the board
+//   POST /api/tick                                                     drain once
+//   POST /api/jobs/{id}/replay                                         requeue a dead job
+//   GET  /api/events           ?rev=n   LIVE SSE board (self-ticking)
+package jobs:app@0.1.0;
+
+/// The job-queue backend + drain loop + SSE board, composed from contracts.
+world jobs-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // the durable work queue (claim/lease/backoff/DLQ/replay).
+    import outbox:dispatch/queue@0.1.0;
+    // the execution backend — in-process by default, Golem-swappable.
+    import durable:workflow/orchestrator@0.1.0;
+    // recurring jobs: compute the next fire time on completion.
+    import cron:expr/parser@0.1.0;
+    // exactly-once enqueue.
+    import idempotency:guard/store@0.1.0;
+    // the dashboard view: one mirrored record per job.
+    import records:store/store@0.1.0;
+    // timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // the SSE tick cadence — subscribe-duration(…).block() to sleep, not spin.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}
