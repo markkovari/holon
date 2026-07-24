@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>arena — Connect Four on wasmCloud</title>
+<style>
+  :root { --bg:#f6f7f9; --panel:#fff; --ink:#1a202c; --muted:#64748b; --line:#e2e8f0;
+          --accent:#4f46e5; --red:#ef4444; --yellow:#f5c518; --slot:#e8ecf3; --grid:#3b5bdb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --panel:#171a21; --ink:#e5e9f0; --muted:#8b95a7; --line:#2a2f3a;
+            --accent:#818cf8; --red:#f87171; --yellow:#fbbf24; --slot:#0d1017; --grid:#28407e; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height:100%; margin:0; }
+  body { font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--ink);
+         display:flex; flex-direction:column; align-items:center; }
+  header { width:100%; display:flex; align-items:center; gap:.6rem; padding:.7rem 1rem;
+           background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:1rem; margin:0; }
+  header .dim { color:var(--muted); font-weight:400; }
+  .grow { flex:1; }
+  .pill { font-size:.72rem; font-weight:700; padding:.15rem .5rem; border-radius:999px; }
+  .pill.live { background:color-mix(in srgb, #16a34a 18%, transparent); color:#16a34a; }
+  .pill.off { background:color-mix(in srgb, var(--muted) 20%, transparent); color:var(--muted); }
+  main { flex:1; display:flex; flex-direction:column; align-items:center; gap:14px; padding:18px; width:100%; }
+  .bar { display:flex; gap:.5rem; align-items:center; }
+  .bar button, .bar input { font:inherit; padding:.45rem .7rem; border:1px solid var(--line); border-radius:8px;
+                            background:var(--bg); color:var(--ink); }
+  .bar button { font-weight:600; cursor:pointer; }
+  .bar button:hover { border-color:var(--accent); }
+  .status { font-size:1.05rem; font-weight:700; min-height:1.4em; text-align:center; }
+  .status .r { color:var(--red); } .status .y { color:var(--yellow); }
+  .board { display:grid; grid-template-columns:repeat(7, 1fr); gap:8px; padding:12px;
+           background:var(--grid); border-radius:14px; }
+  .col { display:grid; grid-template-rows:repeat(6, 1fr); gap:8px; cursor:pointer; }
+  .col.dis { cursor:not-allowed; }
+  .col:not(.dis):hover .cell.top-empty { box-shadow:inset 0 0 0 3px rgba(255,255,255,.35); }
+  .cell { width:min(11vw,58px); height:min(11vw,58px); border-radius:50%; background:var(--slot); transition:.15s; }
+  .cell.R { background:radial-gradient(circle at 35% 30%, #ff8a8a, var(--red)); }
+  .cell.Y { background:radial-gradient(circle at 35% 30%, #ffe57a, var(--yellow)); }
+  .cell.win { box-shadow:0 0 0 3px #fff, 0 0 14px 3px #fff; }
+  .seat { font-size:.82rem; color:var(--muted); }
+  .seat b.r { color:var(--red);} .seat b.y { color:var(--yellow); }
+</style>
+</head>
+<body>
+  <header>
+    <h1>🔴🟡 arena <span class="dim">· Connect Four</span></h1>
+    <span class="pill off" id="conn">offline</span>
+    <span class="grow"></span>
+    <span class="seat" id="me"></span>
+  </header>
+  <main>
+    <div class="bar" id="setup">
+      <input id="name" placeholder="your name" value="Player">
+      <button id="new">New game</button>
+      <input id="gid" placeholder="game id to join" size="16">
+      <button id="join">Join</button>
+    </div>
+    <div class="status" id="status">Create a game, or join one by id.</div>
+    <div class="board" id="board"></div>
+    <div class="seat" id="players"></div>
+  </main>
+<script>
+const $ = id => document.getElementById(id);
+const H = { "content-type": "application/json" };
+const qs = new URLSearchParams(location.search);
+let gameId = qs.get("game") || null;
+let token = null, seat = null, rev = -1, state = null;
+
+const api = p => `/api/games${p}`;
+const nameVal = () => ($("name").value.trim() || "Player");
+
+async function post(path, body) {
+  const r = await fetch(api(path), { method: "POST", headers: H, body: JSON.stringify(body) });
+  return { ok: r.ok, status: r.status, data: await r.json().catch(() => ({})) };
+}
+
+$("new").onclick = async () => {
+  const r = await post("", { name: nameVal() });
+  if (!r.ok) return;
+  gameId = r.data.game.id; token = r.data.token; seat = r.data.seat;
+  window.__game = { id: gameId, seat };            // for the recorder
+  history.replaceState(null, "", `?game=${gameId}`);
+  connect();
+};
+
+$("join").onclick = async () => {
+  const id = ($("gid").value.trim() || gameId);
+  if (!id) return;
+  const r = await post(`/${id}/join`, { name: nameVal() });
+  if (!r.ok) { $("status").textContent = r.data.error || "could not join"; return; }
+  gameId = id; token = r.data.token; seat = r.data.seat;
+  window.__game = { id: gameId, seat };
+  history.replaceState(null, "", `?game=${gameId}`);
+  connect();
+};
+
+async function move(col) {
+  if (!token || !state || state.status !== "active" || state.turn !== seat) return;
+  await fetch(api(`/${gameId}/move`), { method: "POST", headers: H, body: JSON.stringify({ token, col }) });
+  // the board comes back over SSE.
+}
+
+function render(g) {
+  state = g;
+  const b = g.board || ".".repeat(42);
+  const win = new Set(g.line || []);
+  const myTurn = g.status === "active" && g.turn === seat;
+  const boardEl = $("board");
+  boardEl.innerHTML = "";
+  for (let c = 0; c < g.cols; c++) {
+    const col = document.createElement("div");
+    col.className = "col" + (myTurn ? "" : " dis");
+    col.onclick = () => myTurn && move(c);
+    // display top row (5) down to bottom (0)
+    let topEmptyMarked = false;
+    for (let r = g.rows - 1; r >= 0; r--) {
+      const v = b[r * g.cols + c];
+      const cell = document.createElement("div");
+      cell.className = "cell" + (v === "R" ? " R" : v === "Y" ? " Y" : "")
+        + (win.has(r * g.cols + c) ? " win" : "");
+      if (v === "." && !topEmptyMarked) { cell.classList.add("top-empty"); topEmptyMarked = true; }
+      col.appendChild(cell);
+    }
+    boardEl.appendChild(col);
+  }
+  // status line
+  const who = s => (s === "R" ? `<span class="r">${(g.red.name)||"Red"}</span>` : `<span class="y">${(g.yellow.name)||"Yellow"}</span>`);
+  let msg;
+  if (g.status === "waiting") msg = "Waiting for an opponent…";
+  else if (g.status === "finished") msg = g.winner === "draw" ? "Draw." : `${who(g.winner)} wins! 🎉`;
+  else msg = `${who(g.turn)}'s turn` + (g.turn === seat ? " — that's you" : "");
+  $("status").innerHTML = msg;
+  $("players").innerHTML = `<b class="r">●</b> ${g.red.name||"—"} &nbsp; vs &nbsp; <b class="y">●</b> ${g.yellow.name||"waiting…"}`;
+  $("me").textContent = seat ? `you are ${seat === "R" ? "Red" : "Yellow"}` : "spectating";
+}
+
+function connect() {
+  if (!gameId) return;
+  const es = new EventSource(api(`/${gameId}/events?rev=${rev}`));
+  es.onopen = () => { $("conn").className = "pill live"; $("conn").textContent = "● live"; };
+  es.onmessage = e => { try { const g = JSON.parse(e.data); rev = g.rev; render(g); } catch {} };
+  es.onerror = () => { $("conn").className = "pill off"; $("conn").textContent = "reconnecting…"; };
+}
+
+// If loaded with ?game=, watch it (as spectator until you Join).
+if (gameId) { $("gid").value = gameId; connect(); }
+</script>
+</body>
+</html>

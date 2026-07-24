@@ -74,6 +74,8 @@ scribe_wasm := rel / "scribe_domain.wasm"
 scribe_composed := "components/target/scribe_domain.composed.wasm"
 jobs_wasm := rel / "jobs_domain.wasm"
 jobs_composed := "components/target/jobs_domain.composed.wasm"
+arena_wasm := rel / "arena_domain.wasm"
+arena_composed := "components/target/arena_domain.composed.wasm"
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
@@ -249,6 +251,29 @@ compose-jobs: build
       --plug {{recordstore_wasm}} \
       -o {{jobs_composed}}
     @echo "composed jobs-domain (+ outbox + inproc-workflow + cron + idempotency + records) -> {{jobs_composed}}"
+
+# Compose arena-domain (ARENA.md — multiplayer Connect Four) with records +
+# id-generate. Remaining imports are WASI.
+compose-arena: build
+    wac plug {{arena_wasm}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/id_generate.wasm \
+      -o {{arena_composed}}
+    @echo "composed arena-domain (+ records + ids) -> {{arena_composed}}"
+
+# Run the game on the native host + serve the SPA. Open two windows on
+# http://127.0.0.1:3039 — create a game in one, join from the other, play live.
+host-arena: compose-arena
+    cd host && VET_TENANT=arena cargo run --release --bin vet-host -- \
+      --component ../{{arena_composed}} --addr 0.0.0.0:3039 \
+      --static-dir ../examples/arena/public
+
+# Game e2e: compose + build host + a Rust test that plays a full game — create,
+# join, turn/seat/illegal-move rejection, a scripted win, and a concurrent-move
+# revision conflict.
+e2e-arena: compose-arena
+    cd host && cargo build --release --bin vet-host
+    cd examples/arena && cargo test --release
 
 # Golem-backed variant: same queue, but durable:workflow is satisfied by the
 # golem-bridge component (calls a durable Golem worker over wasi:http) instead of

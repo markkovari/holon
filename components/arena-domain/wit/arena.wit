@@ -1,0 +1,36 @@
+// arena:app — a multiplayer turn-based game (Connect Four) as a WIT HTTP
+// component.
+//
+// A backend class none of the other showcases cover: authoritative,
+// rule-enforced INTERACTIVE state. Two players share one board; every move is
+// validated server-side (it's your turn, the column isn't full, the game is
+// live), win/draw is detected on the server, and the live board is streamed to
+// both players AND any number of spectators over Server-Sent Events. Move
+// integrity uses the record store's optimistic revision check, so two moves
+// that race resolve to exactly one — no lost or double moves.
+//
+// Players hold a secret seat token (returned by create/join); spectators just
+// watch the SSE stream and can't move.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/games                 {name}         create -> {game, seat:"R", token}
+//   POST /api/games/{id}/join       {name}         join   -> {game, seat:"Y", token}
+//   GET  /api/games/{id}                           public game state
+//   POST /api/games/{id}/move       {token, col}   drop a disc (validated)
+//   GET  /api/games/{id}/events     ?rev=n         LIVE SSE of the board
+//   GET  /api/games                                lobby: open + active games
+package arena:app@0.1.0;
+
+/// The game backend + rules + SSE loop, composed from capability contracts.
+world arena-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // game state (board, players, turn) — one record per game.
+    import records:store/store@0.1.0;
+    // game ids + secret seat tokens.
+    import id:generate/generator@0.1.0;
+    // move timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // the SSE poll cadence — subscribe-duration(…).block() to sleep, not spin.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

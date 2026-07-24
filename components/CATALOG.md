@@ -10,6 +10,7 @@ capabilities, so anything marked reusable drops into another app via
 |---|---|---|---|--:|:--:|
 | **abtest-domain** | `abtest:app@0.1.0` | event:bus/bus, experiment:assign/assigner, id:generate/generator, metrics:collect/collector | — | 155 KiB | ✓ |
 | **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 124 KiB | ✓ |
+| **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 168 KiB | ✓ |
 | **audit-log** | `audit:log@0.1.0` | kv:store | — | 130 KiB | ✓ |
 | **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 130 KiB | app/demo |
 | **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — | ✓ |
@@ -94,6 +95,7 @@ capabilities, so anything marked reusable drops into another app via
 
 - **abtest-domain** — abtest:app — an A/B/n experiment console over composed contracts
 - **ai-inference** — `ai:assist` — domain-level AI verbs over a provider-agnostic LLM
+- **arena-domain** — arena:app — multiplayer Connect Four over composed contracts
 - **audit-log** — `audit-log` — reference implementation of `audit:log`
 - **bench-suite** — `bench-suite` — the HTTP overhead ladder (see wit/bench.wit)
 - **bench-suite-p3** — `bench-suite-p3` — the compute rungs of the HTTP overhead ladder on WASI p3

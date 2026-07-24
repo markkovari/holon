@@ -146,6 +146,12 @@ catalog and a bench round:
   **`durable:workflow`** seam — in-process by default, **Golem-provider
   swappable** for crash-resumable execution. Live self-ticking SSE board.
   ([demo](docs/media/jobs.gif))
+- **[ARENA.md](ARENA.md)** — a **multiplayer game** (Connect Four): the
+  *authoritative, rule-enforced interactive state* class. Two players share one
+  board, every move validated server-side (turn / seat / legal / live), win
+  detection, and the live board streamed to both players **and spectators** over
+  SSE; racing moves resolve by revision check. Composes `records` + `id` + the
+  SSE loop. ([demo](docs/media/arena.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

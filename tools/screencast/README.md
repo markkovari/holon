@@ -145,5 +145,15 @@ node jobs-golem.mjs                      # JOBS_URL defaults to the cluster DNS
 bash to-gif.sh videos/jobs-golem/*.webm ../../docs/media/jobs-golem.gif 820 9
 ```
 
+**arena** — multiplayer Connect Four; two panes on one game (Alice creates as
+Red, Bob joins as Yellow), moves validated server-side and streamed to both
+boards over SSE, red wins and the four-in-a-row glows.
+
+```bash
+just host-arena &                       # from repo root; game on :3039
+node arena.mjs
+bash to-gif.sh videos/arena/*.webm ../../docs/media/arena.gif 700 8
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.
