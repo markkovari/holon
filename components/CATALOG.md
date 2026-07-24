@@ -72,6 +72,7 @@ capabilities, so anything marked reusable drops into another app via
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
+| **textdiff** | `diff:text@0.1.0` | pure compute | — | 71 KiB | ✓ |
 | **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 150 KiB | ✓ |
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 62 KiB | ✓ |
 | **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 246 KiB | ✓ |
@@ -149,6 +150,7 @@ capabilities, so anything marked reusable drops into another app via
 - **slug** — `slug` — reference implementation of `slug:generate`
 - **static-assets** — `static-assets` — reference implementation of `static:assets`
 - **status-page** — status:app — uptime monitor over composed capability contracts
+- **textdiff** — `textdiff` — reference implementation of `diff:text`
 - **throttle-domain** — throttle:app — a live throttle wall over composed contracts
 - **track-assets** — `track-assets` — the track (project tracker) SPA embedded as `ui:assets`
 - **track-domain** — track:app — a Linear-lite project tracker over composed contracts

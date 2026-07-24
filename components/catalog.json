@@ -1123,6 +1123,19 @@
     "reusable_as_is": false
   },
   {
+    "name": "textdiff",
+    "package": "diff:text@0.1.0",
+    "description": "`textdiff` \u2014 reference implementation of `diff:text`",
+    "exports": [
+      "differ"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 73283,
+    "wasm_sha256_12": "64b1256b0764",
+    "reusable_as_is": true
+  },
+  {
     "name": "throttle-domain",
     "package": "throttle:app@0.1.0",
     "description": "throttle:app \u2014 a live throttle wall over composed contracts",

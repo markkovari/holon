@@ -1,0 +1,20 @@
+[package]
+name = "textdiff"
+description = "Line-based text diff (LCS) + unified-diff output + apply (diff:text)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "diff:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "textdiff"

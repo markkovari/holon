@@ -1,0 +1,51 @@
+// diff:text — line-based text diff (LCS edit script), unified-diff output, and
+// apply.
+//
+// History views (track / bin), review UIs, and the collaborative editor
+// (scribe) all need "what changed between these two texts" in two shapes: a
+// structured edit script to render inline, and a portable unified-diff string
+// to store or transmit. `apply` closes the loop so a stored patch reproduces
+// the target.
+//
+// Pure compute: text in, edits / patch / result out. No state, no host imports.
+package diff:text@0.1.0;
+
+/// Diff two texts and apply unified patches.
+interface differ {
+    /// One line of a line-level edit script.
+    variant op {
+        /// A line present in both texts (unchanged).
+        equal(string),
+        /// A line only in the second text (added).
+        insert(string),
+        /// A line only in the first text (removed).
+        delete(string),
+    }
+
+    /// Why applying a patch failed.
+    variant diff-error {
+        /// A hunk header or body line couldn't be parsed.
+        malformed-patch(string),
+        /// A context (` `) or delete (`-`) line didn't match the source text —
+        /// the patch doesn't apply here.
+        context-mismatch(string),
+    }
+
+    /// The line-level LCS edit script transforming `a` into `b`. Splitting is on
+    /// `\n`; a trailing newline is preserved (it becomes a trailing empty line).
+    diff-lines: func(a: string, b: string) -> list<op>;
+
+    /// A standard unified diff turning `a` into `b`, with `context` lines of
+    /// context around each change and `---`/`+++` header labels. Returns the
+    /// empty string when the texts are identical.
+    unified: func(a: string, b: string, from-label: string, to-label: string, context: u32) -> string;
+
+    /// Apply a unified diff to `a`, returning the patched text. Verifies every
+    /// context/delete line against `a`; a mismatch is a `context-mismatch`.
+    apply-unified: func(a: string, patch: string) -> result<string, diff-error>;
+}
+
+/// `textdiff` provides line diff / unified output / apply; pure compute.
+world textdiff {
+    export differ;
+}

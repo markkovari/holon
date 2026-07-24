@@ -1160,6 +1160,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "textdiff"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "throttle-domain"
 version = "0.1.0"
 dependencies = [
