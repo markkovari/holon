@@ -1,0 +1,91 @@
+// crdt:merge — state-based conflict-free replicated data types (CvRDTs).
+//
+// The convergence class no other showcase covers: many replicas mutate the
+// same value with no central lock, exchange state out of order, and still end
+// up identical. `merge` is commutative, associative, and idempotent — so
+// merge(a,b) == merge(b,a), and replaying ops in any order converges. That
+// property is the whole point (and is property-tested).
+//
+// State is an opaque, self-describing JSON string carrying a `"type"` tag;
+// `merge` and `value` dispatch on it. Four canonical types cover the three
+// CRDT families plus the map `scribe` (the collaborative editor) builds on:
+//   - lww    : last-writer-wins register  (register family)
+//   - pn     : PN-counter                 (counter family)
+//   - orset  : observed-remove set        (set family, add-wins)
+//   - lwwmap : per-key LWW map            (what scribe uses per field)
+//
+// Pure compute: state + args in, new state / value out. No host imports, no
+// stored state — the caller owns persistence. Timestamps and replica ids are
+// caller-supplied so results are deterministic (no wall clock inside).
+package crdt:merge@0.1.0;
+
+/// Merge, read, and mutate CvRDT state values.
+interface merger {
+    /// Why an operation failed.
+    variant crdt-error {
+        /// A `state` string (or a `value-json` argument) was not valid JSON.
+        invalid-json(string),
+        /// State was valid JSON but not a recognized CRDT (bad/absent `type`,
+        /// missing fields).
+        invalid-state(string),
+        /// `merge` was given two states of different CRDT types.
+        type-mismatch(string),
+    }
+
+    // ---- generic (dispatch on the state's `type` tag) --------------------
+
+    /// Merge two states of the SAME type into their least-upper-bound. The core
+    /// CRDT operation: commutative, associative, idempotent. Returns canonical
+    /// JSON (sorted keys) so equal merges are byte-equal.
+    merge: func(a: string, b: string) -> result<string, crdt-error>;
+
+    /// The logical value a state represents, as JSON:
+    ///   lww    -> the stored JSON value
+    ///   pn     -> a JSON integer (sum of increments minus decrements)
+    ///   orset  -> a JSON array of present elements (sorted)
+    ///   lwwmap -> a JSON object of live key -> value
+    value: func(state: string) -> result<string, crdt-error>;
+
+    // ---- LWW-Register -----------------------------------------------------
+
+    /// A register holding `value-json` stamped (timestamp, replica). Higher
+    /// timestamp wins; ties break on the higher replica id.
+    lww-new: func(value-json: string, timestamp: u64, replica: string) -> result<string, crdt-error>;
+    /// Set the register if (timestamp, replica) beats the current stamp;
+    /// otherwise the state is returned unchanged.
+    lww-set: func(state: string, value-json: string, timestamp: u64, replica: string) -> result<string, crdt-error>;
+
+    // ---- PN-Counter -------------------------------------------------------
+
+    /// An empty PN-counter (value 0).
+    counter-new: func() -> string;
+    /// Add `delta` (negative decrements) to `replica`'s tally.
+    counter-add: func(state: string, replica: string, delta: s64) -> result<string, crdt-error>;
+
+    // ---- OR-Set (observed-remove; concurrent add wins) --------------------
+
+    /// An empty observed-remove set.
+    orset-new: func() -> string;
+    /// Add `element` with a unique `tag` (caller-supplied, e.g. "replica:seq").
+    /// Re-adding a removed element makes it present again.
+    orset-add: func(state: string, element: string, tag: string) -> result<string, crdt-error>;
+    /// Remove `element` by tombstoning exactly the tags observed so far. A
+    /// concurrent add (a tag this remove didn't see) survives — add wins.
+    orset-remove: func(state: string, element: string) -> result<string, crdt-error>;
+
+    // ---- LWW-Map (per-key last-writer-wins) ------------------------------
+
+    /// An empty LWW map.
+    lwwmap-new: func() -> string;
+    /// Set `key` to `value-json` if (timestamp, replica) beats the key's stamp.
+    lwwmap-set: func(state: string, key: string, value-json: string, timestamp: u64, replica: string) -> result<string, crdt-error>;
+    /// Tombstone `key` if (timestamp, replica) beats its stamp (a tombstone
+    /// still participates in merge, so a concurrent-but-older set stays gone).
+    lwwmap-remove: func(state: string, key: string, timestamp: u64, replica: string) -> result<string, crdt-error>;
+}
+
+/// `crdt` provides merge/value + constructors for four CvRDT types; pure
+/// compute, no host imports.
+world crdt {
+    export merger;
+}

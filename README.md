@@ -128,6 +128,11 @@ catalog and a bench round:
   (`ai:inference`, mock LLM swappable for `openai-provider`) — with a **Vite+TS
   SPA baked into the wasm** (`just host-track`). The widest single-component
   composition in the repo. ([demo](docs/media/track.gif))
+- **[CRDT.md](CRDT.md)** — **conflict-free convergence**: a `crdt:merge`
+  component (LWW-register / PN-counter / OR-set / LWW-map) where replicas edit
+  **offline with no lock** and still converge — `merge` is commutative +
+  associative + idempotent, property-tested in Rust *and* jco. The primitive the
+  collaborative editor is built on. ([demo](docs/media/crdt.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

@@ -103,5 +103,17 @@ node ratelimit.mjs
 bash to-gif.sh videos/ratelimit/*.webm ../../docs/media/ratelimit.gif 760 12
 ```
 
+**crdt** — no UI/server (pure compute), so this recorder computes real
+`crdt.wasm` output in Node and lays three replicas across three panes: they edit
+offline and diverge, then a SYNC merges them and all converge to the identical
+state.
+
+```bash
+cd ../../examples/jco-crdt && npm run transpile   # produce gen/ (once)
+cd -                                              # back to tools/screencast
+node crdt.mjs
+bash to-gif.sh videos/crdt/*.webm ../../docs/media/crdt.gif 900 12
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.
