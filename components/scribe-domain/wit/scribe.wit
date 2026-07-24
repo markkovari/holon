@@ -18,6 +18,7 @@
 //   GET  /api/docs/{doc}            the merged document + revision
 //   POST /api/docs/{doc}/ops        {field, value, ts, replica}   apply an edit
 //   GET  /api/docs/{doc}/events     ?rev=n   LIVE SSE of the merged document
+//   GET  /api/docs/{doc}/history    ?limit=n per-revision unified diffs
 //   POST /api/docs/{doc}/presence   {user}   heartbeat
 //   GET  /api/docs/{doc}/presence            who's editing
 package scribe:app@0.1.0;
@@ -28,6 +29,8 @@ world scribe-domain {
 
     // conflict-free convergence: the document is an lwwmap CRDT state.
     import crdt:merge/merger@0.1.0;
+    // per-revision history: a unified diff of what each edit changed.
+    import diff:text/differ@0.1.0;
     // durable per-document CRDT state + presence records.
     import records:store/store@0.1.0;
     // replica ids for editors.

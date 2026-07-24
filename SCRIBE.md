@@ -9,11 +9,12 @@ they converge live.
 
 Same shape as the other showcases: one **`scribe-domain`** HTTP component that
 exports `wasi:http` and imports only WIT contracts — **`crdt:merge`** (the
-document *is* an `lwwmap` CRDT state), **`records:store`** (persist it),
-**`id:generate`** (replica ids). It's the first app to compose the convergence
-class with the realtime-push class (`pulse`'s SSE trick).
+document *is* an `lwwmap` CRDT state), **`diff:text`** (per-revision history —
+what each edit changed), **`records:store`** (persist it), **`id:generate`**
+(replica ids). It's the first app to compose the convergence class with the
+realtime-push class (`pulse`'s SSE trick).
 
-![Two editors — Alice and Bob — side by side on one document. Alice types the title "Launch plan" and it appears live in Bob's pane; Bob writes the body and it appears live in Alice's; then Alice revises the title to "— v2" while Bob appends a line to the body — different fields edited from different replicas, both survive the merge, and both panes show the identical merged document. A live two-pane recording of the running app.](docs/media/scribe.gif)
+![Two editors — Alice and Bob — side by side on one document, each with a History rail. Alice types the title "Launch plan" and it appears live in Bob's pane; Bob writes the body and it appears live in Alice's; then Alice revises the title while Bob appends a line — different fields from different replicas, both survive the merge, both panes converge, and each pane's History rail fills with per-revision unified diffs (green additions, red removals) from the diff:text component. A live two-pane recording of the running app.](docs/media/scribe.gif)
 
 ## Why it's a real CRDT app, not "last save wins"
 
@@ -50,6 +51,20 @@ There's no bespoke merge logic in the domain component — the convergence lives
 entirely in the composed `crdt:merge` contract. Swap the CRDT type and the
 conflict semantics change without touching scribe.
 
+## History, for free, by composing `diff:text`
+
+Every edit that actually changes a field's value records a history row; `GET
+/api/docs/{doc}/history` returns each revision with a **unified diff** computed
+by the `diff:text` component — the right rail in the gif. Two things fall out of
+the composition:
+
+- The diff is a real `diff:text` unified diff (`@@` hunks, `+`/`-` lines), the
+  same component `track`/`bin` use — scribe writes none of it.
+- An edit that **loses** the LWW race (an older timestamp) never changes the
+  value, so it leaves **no history row** — the history shows what actually
+  happened after convergence, not every request. The e2e asserts the losing
+  "Stale rename" never appears.
+
 ## Run it
 
 ```bash
@@ -68,8 +83,6 @@ tools/screencast/scribe.mjs` and `bash to-gif.sh videos/scribe/*.webm
   two people typing into the *same* field resolve by LWW (one wins) rather than
   interleaving characters. An RGA / text-sequence CRDT would merge concurrent
   character inserts; the `lwwmap` per field is rung 1.
-- **Per-edit history / diff** — compose `diff:text` to show what each revision
-  changed (blocked only on that PR landing).
 - **Offline queue** — buffer ops in the client while disconnected and flush on
   reconnect; the timestamps already make this correct, it just needs the client
   buffer + a `since` catch-up.

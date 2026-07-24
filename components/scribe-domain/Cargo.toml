@@ -23,6 +23,7 @@ world = "scribe-domain"
 
 [package.metadata.component.target.dependencies]
 "crdt:merge" = { path = "../crdt/wit" }
+"diff:text" = { path = "../textdiff/wit" }
 "records:store" = { path = "../record-store/wit" }
 "id:generate" = { path = "../id-generate/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }

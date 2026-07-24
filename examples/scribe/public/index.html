@@ -26,8 +26,22 @@
   .pill { display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:.72rem; font-weight:600; }
   .pill.live { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
   .pill.off { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--muted); }
-  main { flex:1; overflow-y:auto; padding: 1.2rem clamp(1rem, 5vw, 3rem); }
+  main { flex:1; overflow:hidden; display:flex; }
+  .scroll { flex:1; overflow-y:auto; padding: 1.2rem clamp(1rem, 4vw, 2.5rem); }
   .doc { max-width: 44rem; margin: 0 auto; }
+  aside { width: 340px; flex:none; border-left:1px solid var(--line); background:var(--panel);
+          overflow-y:auto; padding: 1rem 1rem 2rem; }
+  aside h2 { font-size:.78rem; text-transform:uppercase; letter-spacing:.5px; color:var(--muted);
+             margin:.2rem 0 .8rem; }
+  .rev { border:1px solid var(--line); border-radius:10px; margin-bottom:.7rem; overflow:hidden; }
+  .rev .hd { display:flex; justify-content:space-between; gap:.5rem; padding:.4rem .6rem;
+             background:var(--bg); font-size:.76rem; color:var(--muted); }
+  .rev .hd b { color:var(--ink); font-weight:600; }
+  .diff { margin:0; padding:.4rem .6rem; font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;
+          white-space:pre-wrap; word-break:break-word; }
+  .diff .add { color:#16a34a; } .diff .del { color:#dc2626; } .diff .hdr { color:var(--muted); }
+  @media (prefers-color-scheme: dark) { .diff .add { color:#4ade80; } .diff .del { color:#f87171; } }
+  @media (max-width: 760px) { aside { display:none; } }
   .title { width:100%; font-size: 1.7rem; font-weight: 800; border:0; outline:0; background:transparent;
            color:var(--ink); padding:.2rem 0; border-bottom:2px solid transparent; }
   .title:focus { border-bottom-color: var(--accent); }
@@ -51,11 +65,17 @@
     <input class="name" id="name" title="your name">
   </header>
   <main>
-    <div class="doc">
-      <input class="title" id="title" placeholder="Untitled document" autocomplete="off">
-      <div class="meta">Every field is a CRDT register — edits merge, no lock. <span id="rev"></span></div>
-      <textarea class="body" id="body" placeholder="Start writing… open this page in a second window and type in both."></textarea>
+    <div class="scroll">
+      <div class="doc">
+        <input class="title" id="title" placeholder="Untitled document" autocomplete="off">
+        <div class="meta">Every field is a CRDT register — edits merge, no lock. <span id="rev"></span></div>
+        <textarea class="body" id="body" placeholder="Start writing… open this page in a second window and type in both."></textarea>
+      </div>
     </div>
+    <aside>
+      <h2>History · diff:text</h2>
+      <div id="history"></div>
+    </aside>
   </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -109,8 +129,26 @@ function apply(d) {
 function connect() {
   const es = new EventSource(api(`/events?rev=${rev}`));
   es.onopen = () => { $("status").className = "pill live"; $("status").textContent = "● live"; };
-  es.onmessage = e => { try { apply(JSON.parse(e.data)); } catch {} };
+  es.onmessage = e => { try { apply(JSON.parse(e.data)); refreshHistory(); } catch {} };
   es.onerror = () => { $("status").className = "pill off"; $("status").textContent = "reconnecting…"; };
+}
+
+// Render each revision's unified diff (from the diff:text component) with
+// +added / -removed lines colored.
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+function diffHtml(diff) {
+  return diff.split("\n").filter(l => l && !l.startsWith("---") && !l.startsWith("+++")).map(l => {
+    const cls = l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : l.startsWith("@@") ? "hdr" : "";
+    return `<span class="${cls}">${esc(l)}</span>`;
+  }).join("\n");
+}
+async function refreshHistory() {
+  const d = await fetch(api("/history?limit=20")).then(r => r.json()).catch(() => ({ history: [] }));
+  $("history").innerHTML = (d.history || []).map(h =>
+    `<div class="rev">
+       <div class="hd"><b>${esc(h.field)}</b><span>r${h.rev} · ${esc(String(h.replica || ""))}</span></div>
+       <pre class="diff">${diffHtml(h.diff || "")}</pre>
+     </div>`).join("") || `<div class="meta">No edits yet.</div>`;
 }
 
 async function presence() {
@@ -124,6 +162,7 @@ async function presence() {
 (async () => {
   const d = await fetch(api("")).then(r => r.json()).catch(() => ({}));
   apply(d);
+  refreshHistory();
   connect();
   presence(); setInterval(presence, 4000);
 })();

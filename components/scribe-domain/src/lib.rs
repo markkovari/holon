@@ -16,6 +16,7 @@ mod bindings;
 use serde_json::{json, Value};
 
 use bindings::crdt::merge::merger as crdt;
+use bindings::diff::text::differ as textdiff;
 use bindings::id::generate::generator as ids;
 use bindings::records::store::store as records;
 use bindings::wasi::clocks::monotonic_clock;
@@ -29,6 +30,7 @@ use bindings::wasi::http::types::{
 struct Component;
 
 const DOCS: &str = "docs";
+const HISTORY: &str = "history";
 const PRESENCE: &str = "presence";
 const POLL_MS: u64 = 600;
 const MAX_TICKS: u32 = 900; // ~9 min connection cap; the client's EventSource reconnects.
@@ -53,6 +55,7 @@ impl Guest for Component {
                 let outcome = match (&method, seg.as_slice()) {
                     (Method::Get, [""]) => usage_json(),
                     (Method::Get, ["api", "docs", doc]) => get_doc(doc),
+                    (Method::Get, ["api", "docs", doc, "history"]) => get_history(doc, &path),
                     (Method::Post, ["api", "docs", doc, "ops"]) => apply_op(&request, doc),
                     (Method::Post, ["api", "docs", doc, "presence"]) => heartbeat(&request, doc),
                     (Method::Get, ["api", "docs", doc, "presence"]) => presence(doc),
@@ -124,6 +127,16 @@ fn doc_json(doc: &str, state: &str, rev: u64) -> Value {
     json!({ "doc": doc, "rev": rev, "fields": merged_doc(state) })
 }
 
+/// A field's current value as plain text (for diffing). Non-string values are
+/// rendered as their JSON.
+fn field_text(state: &str, field: &str) -> String {
+    match merged_doc(state).get(field) {
+        Some(Value::String(s)) => s.clone(),
+        Some(v) => v.to_string(),
+        None => String::new(),
+    }
+}
+
 fn get_doc(doc: &str) -> Outcome {
     let (_, state, rev) = load(doc);
     Outcome::Json(200, doc_json(doc, &state, rev).to_string())
@@ -168,12 +181,72 @@ fn apply_op(request: &IncomingRequest, doc: &str) -> Outcome {
             None => records::create(DOCS, &rec, &["doc".to_string()]),
         };
         match res {
-            Ok(entry) => return Outcome::Json(200, doc_json(doc, &new_state, entry.revision).to_string()),
+            Ok(entry) => {
+                // Record history only when the merge actually changed the field
+                // (an older LWW op that lost leaves before == after — no entry).
+                let before = field_text(&state, &field);
+                let after = field_text(&new_state, &field);
+                if before != after {
+                    record_history(doc, entry.revision, &field, &replica, &before, &after);
+                }
+                return Outcome::Json(200, doc_json(doc, &new_state, entry.revision).to_string());
+            }
             Err(records::StoreError::RevisionConflict(_)) => continue,
             Err(e) => return store_err(e),
         }
     }
     Outcome::Err(409, "too much contention, retry".into())
+}
+
+// ---- history (composes diff:text) --------------------------------------------
+
+// ponytail: history grows unbounded (one row per real change); fine for a demo.
+// Cap it (keep last N) or roll up if a doc sees heavy editing.
+fn record_history(doc: &str, rev: u64, field: &str, replica: &str, before: &str, after: &str) {
+    let h = json!({
+        "doc": doc, "rev": rev, "field": field, "replica": replica,
+        "at": now(), "before": before, "after": after,
+    });
+    let _ = records::create(HISTORY, &h.to_string(), &["doc".to_string()]);
+}
+
+/// Per-revision history, newest first: each entry carries a unified diff (from
+/// `diff:text`) of what that edit changed in the field.
+fn get_history(doc: &str, path: &str) -> Outcome {
+    let limit = query_i64(path, "limit").unwrap_or(25).clamp(1, 200) as usize;
+    let mut rows: Vec<Value> = records::find_by(HISTORY, "doc", &json!(doc).to_string())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .collect();
+    // newest first by revision
+    rows.sort_by(|a, b| b["rev"].as_u64().unwrap_or(0).cmp(&a["rev"].as_u64().unwrap_or(0)));
+    rows.truncate(limit);
+
+    let entries: Vec<Value> = rows
+        .into_iter()
+        .map(|r| {
+            let field = r["field"].as_str().unwrap_or("");
+            let before = r["before"].as_str().unwrap_or("");
+            let after = r["after"].as_str().unwrap_or("");
+            let rev = r["rev"].as_u64().unwrap_or(0);
+            let diff = textdiff::unified(
+                before,
+                after,
+                &format!("{field}@r{}", rev.saturating_sub(1)),
+                &format!("{field}@r{rev}"),
+                1,
+            );
+            json!({
+                "rev": rev,
+                "field": field,
+                "replica": r["replica"],
+                "at": r["at"],
+                "diff": diff,
+            })
+        })
+        .collect();
+    Outcome::Json(200, json!({ "doc": doc, "history": entries }).to_string())
 }
 
 // ---- presence ----------------------------------------------------------------

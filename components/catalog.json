@@ -1008,12 +1008,13 @@
     ],
     "capability_deps": [
       "crdt:merge/merger",
+      "diff:text/differ",
       "id:generate/generator",
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 163756,
-    "wasm_sha256_12": "3cbe3f4bc46e",
+    "wasm_size_bytes": 176844,
+    "wasm_sha256_12": "229eb062ada6",
     "reusable_as_is": true
   },
   {

@@ -103,6 +103,23 @@ fn concurrent_edits_merge_and_stream_live() {
     let (_, doc) = req("GET", "/api/docs/empty", None);
     assert_eq!(doc["fields"], json!({}), "unedited doc is empty: {doc}");
 
+    // ===== history: per-revision unified diffs (composes diff:text) ===========
+    let (s, h) = req("GET", "/api/docs/readme/history", None);
+    assert_eq!(s, 200, "{h}");
+    let hist = h["history"].as_array().unwrap();
+    // title (x2, but the stale one lost -> no entry) + body = 3 real changes.
+    assert!(hist.len() >= 3, "history has the real edits: {h}");
+    // newest first; each carries a unified diff from diff:text.
+    let newest = &hist[0];
+    assert!(newest["diff"].as_str().unwrap().contains("@@"), "diff present: {newest}");
+    // the stale title rename never changed the value, so it left no history row.
+    let titles: Vec<&str> =
+        hist.iter().filter(|e| e["field"] == "title").filter_map(|e| e["diff"].as_str()).collect();
+    assert!(
+        titles.iter().all(|d| !d.contains("Stale rename")),
+        "the LWW-losing edit must not appear in history: {titles:?}"
+    );
+
     // ===== live SSE: a held-open connection sees a merged edit ===============
     let found = Arc::new(AtomicBool::new(false));
     let f = found.clone();

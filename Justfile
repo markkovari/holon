@@ -239,10 +239,11 @@ e2e-pulse: compose-pulse
 compose-scribe: build
     wac plug {{scribe_wasm}} \
       --plug {{rel}}/crdt.wasm \
+      --plug {{rel}}/textdiff.wasm \
       --plug {{recordstore_wasm}} \
       --plug {{rel}}/id_generate.wasm \
       -o {{scribe_composed}}
-    @echo "composed scribe-domain (+ crdt + records + ids) -> {{scribe_composed}}"
+    @echo "composed scribe-domain (+ crdt + textdiff + records + ids) -> {{scribe_composed}}"
 
 # Run the collaborative editor on the native host + serve the two-pane SPA. Open
 # two windows on http://127.0.0.1:3037 and edit the same doc — edits merge and

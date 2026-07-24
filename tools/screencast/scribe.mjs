@@ -10,7 +10,9 @@ import { chromium } from "playwright";
 const BASE = process.env.SCRIBE_URL || "http://127.0.0.1:3037";
 const DOC = process.env.SCRIBE_DOC || "launch";
 const OUT = new URL("./videos/scribe/", import.meta.url).pathname;
-const W = 1340, H = 800;
+// wide enough that each pane clears the 760px breakpoint and shows its History
+// (diff:text) rail alongside the document.
+const W = 1720, H = 840;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const browser = await chromium.launch({ headless: true });
