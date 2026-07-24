@@ -25,6 +25,7 @@ use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
+use bindings::pdf::codec::codec as pdf;
 use bindings::records::store::store as records;
 use bindings::wasi::clocks::wall_clock;
 
@@ -74,6 +75,7 @@ impl Guest for Component {
             (Method::Get, ["api", "timer"]) => timer_get(&request),
 
             (Method::Get, ["api", "report"]) => report(&request, &path),
+            (Method::Get, ["api", "report.pdf"]) => report_pdf(&request, &path),
             _ => Outcome::Err(404, "not_found".into()),
         };
         emit(response_out, outcome);
@@ -84,6 +86,8 @@ enum Outcome {
     Json(u16, String),
     Err(u16, String),
     Auth(AuthError),
+    // status, content-type, download filename, body.
+    File(u16, String, String, Vec<u8>),
 }
 
 fn now() -> u64 {
@@ -708,9 +712,15 @@ fn report(request: &IncomingRequest, path: &str) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
+    Outcome::Json(200, report_data(&p, path).to_string())
+}
+
+/// The aggregated range report as a JSON object — shared by the JSON endpoint
+/// and the PDF export so both read exactly the same numbers.
+fn report_data(p: &Principal, path: &str) -> Value {
     let (from, to) = range(path);
     let scope_all = query_str(path, "scope").as_deref() == Some("all");
-    let entries = visible_entries(&p, &from, &to, scope_all);
+    let entries = visible_entries(p, &from, &to, scope_all);
 
     let mut by_project: BTreeMap<String, u64> = BTreeMap::new();
     let mut pnames: BTreeMap<String, String> = BTreeMap::new();
@@ -756,17 +766,78 @@ fn report(request: &IncomingRequest, path: &str) -> Outcome {
     let mut out = Map::new();
     out.insert("from".into(), json!(from));
     out.insert("to".into(), json!(to));
-    out.insert("scope".into(), json!(if scope_all && can_see_all(&p) { "all" } else { "me" }));
-    out.insert("can_see_all".into(), json!(can_see_all(&p)));
+    out.insert("scope".into(), json!(if scope_all && can_see_all(p) { "all" } else { "me" }));
+    out.insert("can_see_all".into(), json!(can_see_all(p)));
     out.insert("total_minutes".into(), json!(total));
     out.insert("by_project".into(), json!(by_project_v));
     out.insert("by_category".into(), json!(arr_named(&by_category)));
     out.insert("by_day".into(), json!(by_day_v));
     out.insert("matrix".into(), json!(matrix_v));
-    if scope_all && can_see_all(&p) {
+    if scope_all && can_see_all(p) {
         out.insert("by_user".into(), json!(arr_named(&by_user)));
     }
-    Outcome::Json(200, Value::Object(out).to_string())
+    Value::Object(out)
+}
+
+/// The same range report rendered to a downloadable PDF via `pdf:codec`.
+fn report_pdf(request: &IncomingRequest, path: &str) -> Outcome {
+    let p = match introspect(request) {
+        Ok(p) => p,
+        Err(o) => return o,
+    };
+    let r = report_data(&p, path);
+    let hm = |min: u64| format!("{}h {:02}m", min / 60, min % 60);
+    let line = |text: String, size: u32, bold: bool, gap: u32| pdf::Block { text, size, bold, gap_before: gap };
+    let mut blocks = vec![
+        line(
+            format!("{} — {}", r["from"].as_str().unwrap_or(""), r["to"].as_str().unwrap_or("")),
+            11,
+            false,
+            0,
+        ),
+        line(format!("Scope: {}", r["scope"].as_str().unwrap_or("me")), 11, false, 0),
+        line(format!("Total: {}", hm(r["total_minutes"].as_u64().unwrap_or(0))), 13, true, 4),
+    ];
+    let section = |blocks: &mut Vec<pdf::Block>, title: &str| {
+        blocks.push(line(title.to_string(), 13, true, 14));
+    };
+    let rows = |v: &Value, key: &str| -> Vec<(String, u64)> {
+        v.as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|x| (x[key].as_str().unwrap_or("(none)").to_string(), x["minutes"].as_u64().unwrap_or(0)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    section(&mut blocks, "By project");
+    for (name, min) in rows(&r["by_project"], "name") {
+        blocks.push(line(format!("{:<30} {}", trunc(&name, 30), hm(min)), 11, false, 0));
+    }
+    section(&mut blocks, "By category");
+    for (name, min) in rows(&r["by_category"], "key") {
+        blocks.push(line(format!("{:<30} {}", trunc(&name, 30), hm(min)), 11, false, 0));
+    }
+    if let Some(users) = r.get("by_user") {
+        section(&mut blocks, "By person");
+        for (name, min) in rows(users, "key") {
+            blocks.push(line(format!("{:<30} {}", trunc(&name, 30), hm(min)), 11, false, 0));
+        }
+    }
+    let doc = pdf::Document { title: "tempo — time report".to_string(), blocks };
+    let bytes = pdf::render(&doc);
+    let name = format!("tempo-report-{}_{}.pdf", r["from"].as_str().unwrap_or(""), r["to"].as_str().unwrap_or(""));
+    Outcome::File(200, "application/pdf".to_string(), name, bytes)
+}
+
+/// Truncate to `n` chars for fixed-width PDF columns (built-in fonts aren't
+/// monospaced, but short labels keep the columns readable enough).
+fn trunc(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(n - 1).collect::<String>())
+    }
 }
 
 // ---- http plumbing -----------------------------------------------------------
@@ -821,6 +892,10 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 }
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
+    if let Outcome::File(code, ctype, name, bytes) = result {
+        let disp = format!("attachment; filename=\"{}\"", name);
+        return respond(response_out, code, &ctype, Some(&disp), &bytes);
+    }
     let (code, body) = match result {
         Outcome::Json(c, b) => (c, b),
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string()),
@@ -832,13 +907,17 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
             };
             (401, json!({ "error": msg }).to_string())
         }
+        Outcome::File(..) => unreachable!(),
     };
-    respond(response_out, code, body.as_bytes());
+    respond(response_out, code, "application/json", None, body.as_bytes());
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
+fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, disposition: Option<&str>, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set(&"content-type".to_string(), &[ctype.as_bytes().to_vec()]);
+    if let Some(d) = disposition {
+        let _ = headers.set(&"content-disposition".to_string(), &[d.as_bytes().to_vec()]);
+    }
     let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);

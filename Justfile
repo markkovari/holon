@@ -78,6 +78,7 @@ arena_wasm := rel / "arena_domain.wasm"
 arena_composed := "components/target/arena_domain.composed.wasm"
 tempo_wasm := rel / "tempo_domain.wasm"
 tempo_composed := "components/target/tempo_domain.composed.wasm"
+pdf_wasm := rel / "pdf.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -261,9 +262,10 @@ compose-tempo: compose
     wac plug {{tempo_wasm}} \
       --plug {{guard_composed}} \
       --plug {{recordstore_wasm}} \
+      --plug {{pdf_wasm}} \
       -o {{tempo_composed}}
     wasm-tools validate {{tempo_composed}}
-    @echo "composed tempo-domain (+ auth-guard + records) -> {{tempo_composed}}"
+    @echo "composed tempo-domain (+ auth-guard + records + pdf) -> {{tempo_composed}}"
 
 # Run the worktime logger on the native host + serve the SPA. Open
 # http://127.0.0.1:3040: register (pick admin to create projects/categories),

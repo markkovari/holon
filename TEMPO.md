@@ -11,18 +11,21 @@ role — is what the charts render.
 
 Same shape as the other showcases: one **`tempo-domain`** HTTP component that
 exports `wasi:http` and imports only WIT contracts — the composed **auth-guard**
-(`auth:identity`) for accounts + RBAC, and **`records:store`** for the data. No
-bespoke auth, no bespoke storage. The frontend is a **React + shadcn/ui** SPA
+(`auth:identity`) for accounts + RBAC, **`records:store`** for the data, and
+**`pdf:codec`** to export a range report as a downloadable PDF. No bespoke auth,
+no bespoke storage, no PDF library. The frontend is a **React + shadcn/ui** SPA
 (Vite + Tailwind, charts by **recharts**), mobile-friendly, built to
 `examples/tempo/dist` and served by the host — no framework in the backend.
 
-![The tempo dashboard on a phone: a project lead signs in, the Reports tab shows the team's month — a donut of hours by project, bars by category / per-day / per-person (recharts) — flips the range and the Everyone/Mine scope; the Calendar tab shows today's time-grid with scheduled blocks and a tap on an empty slot adds an entry right there; the Log tab runs a pomodoro. A live recording of the running React app at a mobile viewport.](docs/media/tempo.gif)
+![The tempo dashboard on a phone: a project lead signs in, the Reports tab shows the team's month — a donut of hours by project, bars by category / per-day / per-person (recharts) — flips the range and the Everyone/Mine scope, and exports the range as a PDF; the Calendar tab shows today's time-grid with scheduled blocks, a tap on an empty slot adds an entry, and tapping a block opens an editor to change or delete it; the Log tab runs a pomodoro. A live recording of the running React app at a mobile viewport.](docs/media/tempo.gif)
 
-The SPA has three surfaces: **Log** (quick entry + pomodoro + recent list with
-edit/delete), a **Calendar** day view (a Google-calendar-style time-grid — see a
-day's entries as positioned blocks and tap an empty slot to add one at that
-time), and **Reports** (the charts). Admins get an **Admin** tab (projects,
-categories, membership).
+The SPA has three surfaces: **Log** (quick entry + pomodoro + recent list), a
+**Calendar** day view (a Google-calendar-style time-grid — see a day's entries as
+positioned blocks, tap an empty slot to add one at that time, tap a block to edit
+or delete it), and **Reports** (the charts + a **PDF** export of the current
+range). Tapping any entry — a calendar block, an unscheduled chip, or a Log-tab
+row — opens the same editor. Admins get an **Admin** tab (projects, categories,
+membership).
 
 ## The capability model
 
@@ -66,6 +69,13 @@ way the dashboard needs, in one call:
 - `by_day` — the per-day series.
 - `matrix` — project × category (for a stacked view).
 - `by_user` — per-person bars (leads/admins only).
+
+`GET /api/report.pdf?from&to&scope` runs the *same* aggregation and hands the
+totals to **`pdf:codec`**, which lays them out as a paginated PDF 1.4 file
+(built-in Helvetica, WinAnsi text, exact `xref` — no font embedding, no headless
+browser). The **Reports** tab's **PDF** button downloads it. `pdf:codec` is pure
+compute (`render: document -> list<u8>`), so any showcase can reuse it for
+receipts or summaries.
 
 The whole thing is exercised by `just e2e-tempo`: admin-only project/category
 creation, membership-gated logging (a non-member is `403`), owner edit/delete,
@@ -142,4 +152,4 @@ needs no pull credentials on the host.
 - **Admin-managed roles** — drop self-assign at register; an admin promotes to
   the global `admin` role (membership is already admin/lead-managed).
 - **Calendar grid + weekly submit** — a month grid view (the data carries `day`).
-- **Export** — CSV of a range via the `csv:codec` component.
+- **CSV export** — the range as CSV via the `csv:codec` component (PDF already ships).

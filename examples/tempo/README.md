@@ -24,7 +24,9 @@ just host-tempo          # builds the UI (Vite) + composes tempo-domain + serves
 Open `http://127.0.0.1:3040`: **register** (`admin` to create projects/categories
 and assign membership; `member` to log). An admin adds you to a project as
 **member** (log) or **lead** (log + see the project's team view). Log time or hit
-**Start timer** for a pomodoro; the **Reports** tab has the charts.
+**Start timer** for a pomodoro; the **Reports** tab has the charts and a **PDF**
+button that downloads the current range as a PDF (rendered by the `pdf:codec`
+component — no PDF library, no headless browser).
 
 ```bash
 just e2e-tempo           # the auth + membership + aggregation + timer e2e (spawns the host)

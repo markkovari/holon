@@ -1,10 +1,11 @@
 //! E2E for the tempo worktime logger (TEMPO.md) as ONE composed wasm HTTP
-//! component (tempo-domain + auth-guard + records) on the native Rust host.
+//! component (tempo-domain + auth-guard + records + pdf) on the native Rust host.
 //! Proves the capability model: admin creates projects/categories + assigns
 //! per-project membership; a user logs only against projects they belong to; a
 //! project LEAD sees that project's whole distribution (a member can't); owners
 //! edit/delete their own entries; and the pomodoro timer produces an entry.
 
+use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::time::Duration;
@@ -168,4 +169,16 @@ fn membership_capability_model() {
     let (s, entry) = req("POST", "/api/timer/stop", Some(&ada), None);
     assert_eq!(s, 201, "{entry}");
     assert!(entry["minutes"].as_u64().unwrap() >= 1);
+
+    // ===== the report exports as a real PDF (pdf:codec) =====================
+    let resp = ureq::get(&format!("{}/api/report.pdf?from=2026-07-01&to=2026-07-31&scope=all", base()))
+        .set("authorization", &format!("Bearer {boss}"))
+        .call()
+        .expect("report.pdf");
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.content_type(), "application/pdf");
+    let mut pdf = Vec::new();
+    resp.into_reader().read_to_end(&mut pdf).unwrap();
+    assert!(pdf.starts_with(b"%PDF-1.4"), "PDF header");
+    assert!(pdf.ends_with(b"%%EOF"), "PDF trailer");
 }

@@ -60,6 +60,7 @@ capabilities, so anything marked reusable drops into another app via
 | **outbox** | `outbox:dispatch@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `base-backoff` | 92 KiB | ✓ |
 | **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 76 KiB | ✓ |
 | **paste-bin** | `bin:app@0.1.0` | md:render/renderer, pii:redact/redactor, records:store/store, slug:generate/generator, validate:schema/validator | — | 151 KiB | ✓ |
+| **pdf** | `pdf:codec@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **pipeline-domain** | `pipeline:app@0.1.0` | event:bus/bus, id:generate/generator, outbox:dispatch/queue | — | 147 KiB | ✓ |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 165 KiB | ✓ |
@@ -79,7 +80,7 @@ capabilities, so anything marked reusable drops into another app via
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
-| **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 241 KiB | ✓ |
+| **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, records:store/store | — | 247 KiB | ✓ |
 | **textdiff** | `diff:text@0.1.0` | pure compute | — | 71 KiB | ✓ |
 | **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 150 KiB | ✓ |
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 62 KiB | ✓ |
@@ -146,6 +147,7 @@ capabilities, so anything marked reusable drops into another app via
 - **outbox** — `outbox` — reference implementation of `outbox:dispatch`
 - **pagination** — `pagination` — reference implementation of `paginate:cursor`
 - **paste-bin** — bin:app — a paste / gist bin over a chain of mostly pure-compute contracts
+- **pdf** — `pdf` — reference implementation of `pdf:codec/codec`
 - **pii-redact** — `pii-redact` — reference implementation of `pii:redact`
 - **pipeline-domain** — pipeline:app — a reliable event pipeline over composed contracts
 - **policy-guard** — `policy-guard` — reference implementation of `policy:guard`

@@ -1,0 +1,48 @@
+// pdf:codec — a dependency-free PDF document writer.
+//
+// Exporting a report as a PDF is on every business app's roadmap, and reaching
+// for a native PDF library (or a headless browser) is the usual — heavy — answer.
+// This is the opposite: a tiny, pure-compute codec that lays out a stream of
+// text blocks onto US-Letter pages and emits a valid PDF 1.4 file (built-in
+// Helvetica, auto-pagination, xref + trailer). Text in, PDF bytes out.
+//
+// Scope: left-aligned text blocks (headings, key/value lines, space-padded
+// table rows). No images, no embedded fonts, no wrapping — the caller controls
+// line length. That covers reports, receipts, and summaries; anything richer
+// wants a real typesetting engine.
+//
+// Pure compute: no state, no host imports.
+package pdf:codec@0.1.0;
+
+/// Lay out text blocks into a paginated PDF.
+interface codec {
+    /// One line of text. Blocks flow top-to-bottom; the writer starts a new
+    /// page when the next block won't fit.
+    record block {
+        /// The line's text. Latin-1 is rendered as-is; other code points
+        /// become `?` (the built-in fonts have no glyphs for them).
+        text: string,
+        /// Font size in points; 0 means the default (11pt).
+        size: u32,
+        /// Use Helvetica-Bold instead of Helvetica.
+        bold: bool,
+        /// Extra vertical space (points) inserted before this block — use it to
+        /// separate sections.
+        gap-before: u32,
+    }
+
+    /// A logical document: a title (rendered large at the top of page 1) and
+    /// the body blocks.
+    record document {
+        title: string,
+        blocks: list<block>,
+    }
+
+    /// Render the document to a complete PDF 1.4 file.
+    render: func(doc: document) -> list<u8>;
+}
+
+/// `pdf` provides the codec; pure compute, no host imports.
+world pdf {
+    export codec;
+}

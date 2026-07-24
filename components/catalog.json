@@ -913,6 +913,19 @@
     "reusable_as_is": true
   },
   {
+    "name": "pdf",
+    "package": "pdf:codec@0.1.0",
+    "description": "`pdf` \u2014 reference implementation of `pdf:codec/codec`",
+    "exports": [
+      "codec"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 59354,
+    "wasm_sha256_12": "bc1ef64e617c",
+    "reusable_as_is": true
+  },
+  {
     "name": "pii-redact",
     "package": "pii:redact@0.1.0",
     "description": "`pii-redact` \u2014 reference implementation of `pii:redact`",
@@ -1257,11 +1270,12 @@
       "auth:identity/rbac",
       "auth:identity/session",
       "auth:identity/types",
+      "pdf:codec/codec",
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 247146,
-    "wasm_sha256_12": "fb24d13fea48",
+    "wasm_size_bytes": 253901,
+    "wasm_sha256_12": "0b7a2d36940f",
     "reusable_as_is": true
   },
   {

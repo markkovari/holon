@@ -86,10 +86,12 @@ try {
   await page.getByRole("tab", { name: "Reports" }).click();
   await sleep(1200);
   await page.getByRole("button", { name: "Everyone" }).click();
-  await sleep(2600);
-  await page.getByRole("button", { name: "Week" }).click(); await sleep(1600);
-  await page.getByRole("button", { name: "Year" }).click(); await sleep(1600);
-  await page.getByRole("button", { name: "Month" }).click(); await sleep(1400);
+  await sleep(2400);
+  await page.getByRole("button", { name: "Week" }).click(); await sleep(1500);
+  await page.getByRole("button", { name: "Year" }).click(); await sleep(1500);
+  await page.getByRole("button", { name: "Month" }).click(); await sleep(1200);
+  // export the current range as a PDF (rendered by the pdf:codec component)
+  await page.getByRole("button", { name: "PDF" }).click(); await sleep(1800);
   // scroll to reveal the per-day + per-person charts
   await page.mouse.wheel(0, 700); await sleep(2000);
   await page.mouse.wheel(0, 700); await sleep(1800);
@@ -101,7 +103,15 @@ try {
   await page.getByTestId("daygrid").click({ position: { x: 60, y: 250 } }); // ~11:00
   await sleep(1200);
   await page.getByRole("button", { name: "Save" }).click();
-  await sleep(2200);
+  await sleep(2000);
+
+  // tap an existing block to edit it: bump the minutes and save.
+  await page.getByTestId("daygrid").getByRole("button").filter({ hasText: /Zephyr/ }).first().click();
+  await sleep(1400);
+  const mins = page.getByRole("spinbutton").first();
+  await mins.fill("120"); await sleep(800);
+  await page.getByRole("button", { name: "Save" }).click();
+  await sleep(2000);
 
   // live pomodoro on the Log tab (project/category default to the first)
   await page.getByRole("tab", { name: "Log" }).click();

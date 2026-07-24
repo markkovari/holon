@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
-import { Clock, Play, Square, Plus, LogOut, Users } from "lucide-react";
-import { api, setToken, hasToken, type Me, type Project, type Category, type Entry, type Report, type Timer } from "./api";
+import { Clock, Play, Square, Plus, LogOut, Users, Download } from "lucide-react";
+import { api, download, setToken, hasToken, type Me, type Project, type Category, type Entry, type Report, type Timer } from "./api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -125,7 +125,11 @@ function Dashboard({ me, onLogout }: { me: Me; onLogout: () => void }) {
           </TabsContent>
           <TabsContent value="reports">
             <ReportsTab report={report} range={range} setRange={setRange}
-              scopeAll={!!(scopeAll && canSeeAll)} setScopeAll={setScopeAll} canSeeAll={!!canSeeAll} />
+              scopeAll={!!(scopeAll && canSeeAll)} setScopeAll={setScopeAll} canSeeAll={!!canSeeAll}
+              onPdf={() => {
+                const sc = scopeAll && canSeeAll ? "all" : "me";
+                download(`/report.pdf?from=${from}&to=${to}&scope=${sc}`, `tempo-report-${from}_${to}.pdf`);
+              }} />
           </TabsContent>
           {isAdmin && (
             <TabsContent value="admin"><AdminTab projects={projects} onChange={refreshMeta} /></TabsContent>
@@ -405,9 +409,9 @@ function CalendarTab({ projects, cats, onChange }:
   );
 }
 
-function ReportsTab({ report, range, setRange, scopeAll, setScopeAll, canSeeAll }:
+function ReportsTab({ report, range, setRange, scopeAll, setScopeAll, canSeeAll, onPdf }:
   { report: Report | null; range: RangeKind; setRange: (r: RangeKind) => void;
-    scopeAll: boolean; setScopeAll: (b: boolean) => void; canSeeAll: boolean }) {
+    scopeAll: boolean; setScopeAll: (b: boolean) => void; canSeeAll: boolean; onPdf: () => void }) {
   const r = report;
   const projData = useMemo(() => (r?.by_project || []).map((p, i) => ({ name: p.name, value: p.minutes, fill: COLORS[i % COLORS.length] })), [r]);
   return (
@@ -417,6 +421,7 @@ function ReportsTab({ report, range, setRange, scopeAll, setScopeAll, canSeeAll 
           <Seg options={[["week", "Week"], ["month", "Month"], ["year", "Year"]]} value={range} onChange={(v) => setRange(v as RangeKind)} />
           <div className="flex-1" />
           {canSeeAll && <Seg options={[["me", "Mine"], ["all", "Everyone"]]} value={scopeAll ? "all" : "me"} onChange={(v) => setScopeAll(v === "all")} icon={<Users className="size-3.5" />} />}
+          <Button variant="outline" size="sm" onClick={onPdf}><Download className="size-4" /> PDF</Button>
         </CardContent>
       </Card>
 
