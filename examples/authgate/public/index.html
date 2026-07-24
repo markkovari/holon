@@ -26,6 +26,8 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   .row { display: flex; gap: .5rem; }
   .row > * { flex: 1; }
+  .qr { width: 180px; margin: .3rem 0 .6rem; background: #fff; border-radius: 10px; padding: 10px; }
+  .qr svg { display: block; width: 100%; height: auto; }
   .secret { font-family: ui-monospace, monospace; font-size: .82rem; word-break: break-all; background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; padding: .5rem .6rem; }
   .uri { font-size: .72rem; color: var(--muted); word-break: break-all; }
   .recovery { display: flex; flex-wrap: wrap; gap: .4rem; }
@@ -46,7 +48,9 @@
     <input id="account" placeholder="account (e.g. alice@example.com)" value="alice@example.com">
     <button id="enroll">Provision a secret</button>
     <div id="prov" class="hide">
-      <div class="dim">Add this secret to an authenticator app (Google Authenticator, Authy…):</div>
+      <div class="dim">Scan with an authenticator app (Google Authenticator, Authy…):</div>
+      <div class="qr" id="qr"></div>
+      <div class="dim">…or enter the secret by hand:</div>
       <div class="secret" id="secret"></div>
       <div class="uri" id="uri"></div>
     </div>
@@ -95,10 +99,12 @@
   $("enroll").onclick = async () => {
     const r = await post("/api/enroll", { account: acct() });
     if (!r.ok) return say(r.data.error, "bad");
+    // qr_svg is a self-contained <svg> from the qr:encode component.
+    $("qr").innerHTML = r.data.qr_svg || "";
     $("secret").textContent = r.data.secret;
     $("uri").textContent = r.data.uri;
     $("prov").classList.remove("hide");
-    say("Secret provisioned + sealed in the vault. Enter the first code to activate.", "ok");
+    say("Secret provisioned + sealed in the vault. Scan the QR, then enter the first code to activate.", "ok");
     refreshState();
   };
 

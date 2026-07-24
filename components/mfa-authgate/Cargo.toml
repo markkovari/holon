@@ -24,6 +24,7 @@ world = "mfa-authgate"
 
 [package.metadata.component.target.dependencies]
 "otp:totp" = { path = "../otp/wit" }
+"qr:encode" = { path = "../qr/wit" }
 "secrets:vault" = { path = "../secrets-vault/wit" }
 "session:store" = { path = "../session-store/wit" }
 "records:store" = { path = "../record-store/wit" }

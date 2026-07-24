@@ -27,6 +27,8 @@ world mfa-authgate {
     // the second-factor primitive: provision a secret + QR uri, verify codes,
     // mint recovery codes. Holds no state — the secret is supplied per call.
     import otp:totp/authenticator@0.1.0;
+    // render the otpauth:// URI as a scannable QR (SVG) at enrollment.
+    import qr:encode/encoder@0.1.0;
     // the TOTP secret is envelope-encrypted here; only ciphertext hits the store.
     import secrets:vault/vault@0.1.0;
     // a successful challenge mints an opaque server-side session (+ CSRF).

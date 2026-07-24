@@ -685,13 +685,14 @@
     ],
     "capability_deps": [
       "otp:totp/authenticator",
+      "qr:encode/encoder",
       "records:store/store",
       "secrets:vault/vault",
       "session:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 174436,
-    "wasm_sha256_12": "c4a244bf866c",
+    "wasm_size_bytes": 175122,
+    "wasm_sha256_12": "a0859c47f865",
     "reusable_as_is": true
   },
   {

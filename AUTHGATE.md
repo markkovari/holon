@@ -12,16 +12,18 @@ authentication as a **challenge-response** — not "send a stored password" but
 Same shape as the other showcases: one **`mfa-authgate`** HTTP component that
 exports `wasi:http` and imports only WIT contracts. The second-factor crypto is
 `otp:totp` (RFC 6238 HMAC-SHA1), the secret is envelope-encrypted in
-`secrets:vault`, the post-challenge session is `session:store` — no auth SaaS,
-no bespoke TOTP, no plaintext secret in the data store.
+`secrets:vault`, the enrollment QR is rendered by `qr:encode`, and the
+post-challenge session is `session:store` — no auth SaaS, no bespoke TOTP, no
+plaintext secret in the data store.
 
-![The authgate: enrolling provisions a TOTP secret sealed in the vault (pending), a first correct code activates it and reveals single-use recovery codes, then a live code logs in and mints a session — while a wrong code is refused and a recovery code works exactly once — all over one composed wasm component](docs/media/authgate.gif)
+![The authgate: enrolling provisions a TOTP secret sealed in the vault (pending) and shows a scannable QR (from qr:encode) plus the secret; a first correct code activates it and reveals single-use recovery codes, then a live code logs in and mints a session — while a wrong code is refused and a recovery code works exactly once — all over one composed wasm component](docs/media/authgate.gif)
 
 ## Why it's almost pure composition
 
 | authgate concern | contract | how |
 |---|---|---|
 | the TOTP secret + code verify + recovery codes | `otp:totp` | `provision(issuer, account)` → secret + QR uri; `verify(secret, code, …)`; `recovery-codes(n)` — holds no state, the secret is supplied per call |
+| the scannable enrollment QR | `qr:encode` | `svg(uri, medium, 4)` renders the `otpauth://` URI as an SVG the authenticator app scans — so the user never types the secret |
 | sealing the secret | `secrets:vault` | `put(name, secret)` envelope-encrypts under a master key; only ciphertext hits the store; `get` decrypts to verify |
 | the post-challenge session | `session:store` | `create(data, ttl)` mints an opaque id + CSRF token; `get` / `revoke` |
 | enrollment state + recovery-code hashes | `records:store` | `pending` → `enrolled`; recovery codes stored as SHA-256 hashes (never the codes, never the secret) |
@@ -71,9 +73,10 @@ No SSE — the flow is request/response.
 
 ## Component map
 
-**Reused as-is (4):** `otp:totp` (the second-factor primitive), `secrets:vault`
-(the sealed secret), `session:store` (the post-challenge session + CSRF), and
-`records:store` (enrollment state + recovery hashes). Plus host WASI:
+**Reused as-is (5):** `otp:totp` (the second-factor primitive), `qr:encode` (the
+scannable enrollment QR), `secrets:vault` (the sealed secret), `session:store`
+(the post-challenge session + CSRF), and `records:store` (enrollment state +
+recovery hashes). Plus host WASI:
 `wasi:clocks/wall-clock`, `wasi:keyvalue`, `wasi:config` (the vault master key).
 This showcase is the first app to drive `otp:totp` through its full
 provision → verify → recovery lifecycle.

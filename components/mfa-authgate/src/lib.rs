@@ -22,6 +22,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use bindings::otp::totp::authenticator as otp;
+use bindings::qr::encode::encoder as qr;
 use bindings::records::store::store as records;
 use bindings::secrets::vault::vault;
 use bindings::session::store::store as session;
@@ -102,7 +103,7 @@ fn usage_json() -> Outcome {
         json!({
             "service": "authgate",
             "about": "TOTP 2FA enrollment + challenge-response login — the secret is sealed in a vault; you prove you hold it right now",
-            "enroll": "POST /api/enroll {account} -> {uri, secret} (pending)",
+            "enroll": "POST /api/enroll {account} -> {uri, secret, qr_svg} (pending)",
             "activate": "POST /api/activate {account, code} -> {recovery_codes[]} (enrolled)",
             "login": "POST /api/login {account, code} -> {session, csrf} (TOTP or a recovery code)",
             "session": "GET /api/session/{id}",
@@ -152,7 +153,21 @@ fn enroll(request: &IncomingRequest) -> Outcome {
     if let Err(e) = write {
         return store_err(e);
     }
-    Outcome::Json(201, json!({"account": account, "uri": prov.uri, "secret": prov.secret, "state": "pending"}).to_string())
+    // render the otpauth:// URI as a scannable QR so the authenticator app can
+    // scan it instead of the user typing the secret. Fall back to just the URI
+    // if the (bounded) input somehow doesn't fit a QR.
+    let qr_svg = qr::svg(&prov.uri, qr::Ecc::Medium, 4).unwrap_or_default();
+    Outcome::Json(
+        201,
+        json!({
+            "account": account,
+            "uri": prov.uri,
+            "secret": prov.secret,
+            "qr_svg": qr_svg,
+            "state": "pending"
+        })
+        .to_string(),
+    )
 }
 
 // ---- 2. activate: first correct code -> enrolled + recovery codes ------------

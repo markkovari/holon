@@ -469,11 +469,12 @@ e2e-report: compose-report
 compose-authgate: build
     wac plug {{authgate_wasm}} \
       --plug {{rel}}/otp.wasm \
+      --plug {{rel}}/qr.wasm \
       --plug {{secrets_wasm}} \
       --plug {{session_wasm}} \
       --plug {{recordstore_wasm}} \
       -o {{authgate_composed}}
-    @echo "composed mfa-authgate (+ otp + secrets-vault + session-store + records) -> {{authgate_composed}}"
+    @echo "composed mfa-authgate (+ otp + qr + secrets-vault + session-store + records) -> {{authgate_composed}}"
 
 # Run the 2FA authgate on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3023: enroll an account (scan the QR / copy the secret into an

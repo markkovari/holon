@@ -90,6 +90,10 @@ fn enroll_activate_login_and_recovery() {
     assert_eq!(enr["state"], "pending");
     let secret = enr["secret"].as_str().expect("secret").to_string();
     assert!(enr["uri"].as_str().unwrap().starts_with("otpauth://totp/"), "otpauth uri");
+    // the otpauth URI is rendered as a scannable QR (qr:encode) so the user
+    // doesn't have to type the secret.
+    let qr = enr["qr_svg"].as_str().expect("qr_svg");
+    assert!(qr.starts_with("<svg") && qr.contains("<path"), "qr svg rendered: {}", &qr[..qr.len().min(40)]);
 
     // status shows pending, not yet usable.
     let (_, st) = req("GET", &format!("/api/status/{account}"), None);

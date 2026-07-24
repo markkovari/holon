@@ -48,7 +48,7 @@ capabilities, so anything marked reusable drops into another app via
 | **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 68 KiB | app/demo |
 | **markdown** | `md:render@0.1.0` | pure compute | — | 83 KiB | ✓ |
 | **metrics-collect** | `metrics:collect@0.1.0` | kv:atomics, kv:store | — | 71 KiB | ✓ |
-| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, records:store/store, secrets:vault/vault, session:store/store | — | 170 KiB | ✓ |
+| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 171 KiB | ✓ |
 | **money** | `money:amount@0.1.0` | pure compute | — | 59 KiB | ✓ |
 | **notify-dispatch** | `notify:dispatch@0.1.0` | config/store, http/outgoing-handler | — | 91 KiB | ✓ |
 | **openai-provider** | `openai:provider@0.1.0` | config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed` | 175 KiB | ✓ |
