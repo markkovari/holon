@@ -79,6 +79,7 @@ capabilities, so anything marked reusable drops into another app via
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
+| **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 241 KiB | ✓ |
 | **textdiff** | `diff:text@0.1.0` | pure compute | — | 71 KiB | ✓ |
 | **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 150 KiB | ✓ |
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 62 KiB | ✓ |
@@ -164,6 +165,7 @@ capabilities, so anything marked reusable drops into another app via
 - **slug** — `slug` — reference implementation of `slug:generate`
 - **static-assets** — `static-assets` — reference implementation of `static:assets`
 - **status-page** — status:app — uptime monitor over composed capability contracts
+- **tempo-domain** — tempo:app — a multi-person worktime logger over composed contracts
 - **textdiff** — `textdiff` — reference implementation of `diff:text`
 - **throttle-domain** — throttle:app — a live throttle wall over composed contracts
 - **track-assets** — `track-assets` — the track (project tracker) SPA embedded as `ui:assets`

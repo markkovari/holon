@@ -1,0 +1,45 @@
+// tempo:app — a multi-person worktime logger as a WIT HTTP component.
+//
+// Everyone logs time against a project + a work category (engineering, sales, …);
+// admins create the projects and categories. Log manually or run a live
+// "pomodoro" timer (start → stop → an entry with the elapsed minutes). Anyone
+// sees their own contribution over a week / month / year / custom range, broken
+// down by project and category; managers and admins see the whole org's
+// distribution. The reporting/aggregation axis (group + sum over a date range,
+// scoped by role) is what the charts render.
+//
+// Auth + RBAC come from the composed auth-guard (auth:identity): three global
+// roles — admin (creates projects/categories, sees all), manager (sees all),
+// member (logs + sees own). Dates are YYYY-MM-DD strings (sort = chronological),
+// so range filtering is a string compare and the client owns the calendar.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   POST|GET /api/projects        (POST admin)          projects
+//   POST|GET /api/categories      (POST admin)          work categories
+//   POST /api/entries {project, category, minutes, day, note?}   log time
+//   GET  /api/entries?from&to&scope                     list entries
+//   POST /api/timer/start {project, category, day, note?}        start a timer
+//   POST /api/timer/stop                                stop -> an entry
+//   GET  /api/timer                                     the running timer
+//   GET  /api/report?from&to&scope=me|all               aggregated totals (charts)
+package tempo:app@0.1.0;
+
+/// The worktime backend — accounts + projects/categories + entries + a running
+/// timer + range/role-scoped aggregation, composed from capability contracts.
+world tempo-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection + role grants.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: projects, categories, entries, running timers.
+    import records:store/store@0.1.0;
+    // project / category / entry ids.
+    // entry + timer timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

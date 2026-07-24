@@ -155,5 +155,16 @@ node arena.mjs
 bash to-gif.sh videos/arena/*.webm ../../docs/media/arena.gif 700 8
 ```
 
+**tempo** — worktime logger (React + shadcn), recorded at a PHONE viewport to
+show it's mobile-friendly; seeds a team via the API, then drives the SPA as a
+project lead: Reports charts (recharts donut + bars), range + Everyone/Mine
+toggles, and a pomodoro timer.
+
+```bash
+just host-tempo &                       # from repo root; builds the UI + serves :3040
+node tempo.mjs                          # seeds data, then records the SPA (mobile)
+bash to-gif.sh videos/tempo/*.webm ../../docs/media/tempo.gif 400 10
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

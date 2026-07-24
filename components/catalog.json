@@ -1245,6 +1245,26 @@
     "reusable_as_is": false
   },
   {
+    "name": "tempo-domain",
+    "package": "tempo:app@0.1.0",
+    "description": "tempo:app \u2014 a multi-person worktime logger over composed contracts",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "records:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 247146,
+    "wasm_sha256_12": "fb24d13fea48",
+    "reusable_as_is": true
+  },
+  {
     "name": "textdiff",
     "package": "diff:text@0.1.0",
     "description": "`textdiff` \u2014 reference implementation of `diff:text`",

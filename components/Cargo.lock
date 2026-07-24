@@ -1223,6 +1223,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tempo-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "textdiff"
 version = "0.1.0"
 dependencies = [

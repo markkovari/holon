@@ -76,6 +76,8 @@ jobs_wasm := rel / "jobs_domain.wasm"
 jobs_composed := "components/target/jobs_domain.composed.wasm"
 arena_wasm := rel / "arena_domain.wasm"
 arena_composed := "components/target/arena_domain.composed.wasm"
+tempo_wasm := rel / "tempo_domain.wasm"
+tempo_composed := "components/target/tempo_domain.composed.wasm"
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
@@ -251,6 +253,35 @@ compose-jobs: build
       --plug {{recordstore_wasm}} \
       -o {{jobs_composed}}
     @echo "composed jobs-domain (+ outbox + inproc-workflow + cron + idempotency + records) -> {{jobs_composed}}"
+
+# Compose tempo-domain (TEMPO.md — a multi-person worktime logger) with the
+# composed auth-guard (auth:identity) + records. Remaining imports are WASI.
+compose-tempo: compose
+    wac plug {{tempo_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      -o {{tempo_composed}}
+    wasm-tools validate {{tempo_composed}}
+    @echo "composed tempo-domain (+ auth-guard + records) -> {{tempo_composed}}"
+
+# Run the worktime logger on the native host + serve the SPA. Open
+# http://127.0.0.1:3040: register (pick admin to create projects/categories),
+# log time or run a pomodoro timer, and see your charts; managers/admins see all.
+# Build the React + shadcn SPA (Vite) to examples/tempo/dist.
+build-tempo-ui:
+    cd examples/tempo/ui && npm ci && npm run build
+
+host-tempo: compose-tempo build-tempo-ui
+    cd host && VET_TENANT=tempo cargo run --release --bin vet-host -- \
+      --component ../{{tempo_composed}} --addr 0.0.0.0:3040 \
+      --static-dir ../examples/tempo/dist
+
+# Worktime e2e: compose + build host + a Rust test — admin creates projects +
+# categories, members log entries + a pomodoro timer, and the report aggregates
+# by project/category over a range with RBAC scope (member=own, manager=all).
+e2e-tempo: compose-tempo
+    cd host && cargo build --release --bin vet-host
+    cd examples/tempo && cargo test --release
 
 # Compose arena-domain (ARENA.md — multiplayer Connect Four) with records +
 # id-generate. Remaining imports are WASI.

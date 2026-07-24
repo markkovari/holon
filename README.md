@@ -152,6 +152,11 @@ catalog and a bench round:
   detection, and the live board streamed to both players **and spectators** over
   SSE; racing moves resolve by revision check. Composes `records` + `id` + the
   SSE loop. ([demo](docs/media/arena.gif))
+- **[TEMPO.md](TEMPO.md)** — a **multi-person worktime logger**: log time by
+  project + category (or a live **pomodoro timer**), and see your contribution
+  over week/month/year/custom ranges by project and category — managers see the
+  whole team's distribution (by project + person). RBAC-scoped **reporting/charts**
+  over `auth-guard` (accounts + roles) + `records`. ([demo](docs/media/tempo.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
