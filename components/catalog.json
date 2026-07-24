@@ -195,6 +195,19 @@
     "reusable_as_is": true
   },
   {
+    "name": "cron",
+    "package": "cron:expr@0.1.0",
+    "description": "`cron` \u2014 reference implementation of `cron:expr`",
+    "exports": [
+      "parser"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 64647,
+    "wasm_sha256_12": "70797481a638",
+    "reusable_as_is": true
+  },
+  {
     "name": "csv",
     "package": "csv:codec@0.1.0",
     "description": "`csv` \u2014 reference implementation of `csv:stream/codec`",
@@ -902,6 +915,19 @@
     "config_keys": [],
     "wasm_size_bytes": 163644,
     "wasm_sha256_12": "555d438f93bb",
+    "reusable_as_is": true
+  },
+  {
+    "name": "qr",
+    "package": "qr:encode@0.1.0",
+    "description": "`qr` \u2014 reference implementation of `qr:encode`",
+    "exports": [
+      "encoder"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 81433,
+    "wasm_sha256_12": "79b729870c34",
     "reusable_as_is": true
   },
   {

@@ -1,0 +1,49 @@
+// qr:encode — QR code generation.
+//
+// Concretely fills a gap in the authgate showcase: TOTP enrollment needs the
+// scannable QR every authenticator app expects (an `otpauth://` URI as a QR),
+// not a secret string to type by hand. More broadly it's the "text/URL in,
+// scannable code out" primitive — as an SVG to embed, or unicode/ascii for a
+// terminal.
+//
+// Pure compute: string in, rendered code out. No state, no host imports. The
+// Reed-Solomon + masking is the vetted `qrcode` crate, not hand-rolled.
+package qr:encode@0.1.0;
+
+/// Encode text into a QR code in a few renderings.
+interface encoder {
+    /// Error-correction level: more recovery = a denser code.
+    enum ecc {
+        /// ~7% recovery (smallest code).
+        low,
+        /// ~15% recovery.
+        medium,
+        /// ~25% recovery.
+        quartile,
+        /// ~30% recovery (densest; good for logos over the code).
+        high,
+    }
+
+    /// Why encoding failed.
+    variant qr-error {
+        /// The input is too large to fit any QR version at this ECC level.
+        too-long(string),
+    }
+
+    /// Render `data` as a standalone SVG string (a `<svg>…</svg>` document),
+    /// `quiet-zone` modules of margin around it. Scales to any size via
+    /// viewBox — embed it directly in HTML.
+    svg: func(data: string, level: ecc, quiet-zone: u32) -> result<string, qr-error>;
+
+    /// Render as compact unicode blocks (two rows per line) for a terminal.
+    unicode: func(data: string, level: ecc) -> result<string, qr-error>;
+
+    /// The raw module matrix as JSON: `{"size": n, "modules": [[bool,…],…]}`
+    /// (true = dark). For callers that render it themselves.
+    matrix: func(data: string, level: ecc) -> result<string, qr-error>;
+}
+
+/// `qr` provides QR rendering (svg / unicode / matrix); pure compute.
+world qr {
+    export encoder;
+}

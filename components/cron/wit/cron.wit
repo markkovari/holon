@@ -1,0 +1,43 @@
+// cron:expr — parse cron expressions and compute fire times.
+//
+// `sched:timer` can schedule a callback, but nothing in the catalog turns the
+// cron string every ops team already knows ("0 */6 * * *") into the actual
+// timestamps it fires. This is that missing layer: parse a 5-field cron
+// expression (with the usual `*` `,` `-` `/`, plus month/day names and the
+// `@daily`/`@hourly`/… macros) and answer two questions — does time T match,
+// and what are the next N fire times after T.
+//
+// All times are Unix seconds in UTC. Pure compute: expression + time in, times
+// out. No state, no host imports (the caller supplies "now").
+package cron:expr@0.1.0;
+
+/// Parse cron expressions and compute fire times (UTC).
+interface parser {
+    /// Why an expression was rejected.
+    variant cron-error {
+        /// The expression was malformed (wrong field count, bad range/step,
+        /// unknown name, out-of-bounds value).
+        invalid-expression(string),
+        /// The expression is valid but never fires within the search horizon
+        /// (e.g. "0 0 30 2 *" — Feb 30th).
+        unsatisfiable(string),
+    }
+
+    /// Validate an expression; returns the normalized 5-field form (macros
+    /// expanded, names lowered to numbers) or an error.
+    parse: func(expr: string) -> result<string, cron-error>;
+
+    /// Does the cron expression fire at `unix` seconds (UTC)? Seconds are
+    /// ignored — cron fires at minute granularity, so any time within a matching
+    /// minute matches.
+    matches: func(expr: string, unix: u64) -> result<bool, cron-error>;
+
+    /// The next `count` fire times strictly after `after` (Unix seconds, UTC),
+    /// oldest first. Each is aligned to the top of its minute.
+    next: func(expr: string, after: u64, count: u32) -> result<list<u64>, cron-error>;
+}
+
+/// `cron` provides cron parsing + fire-time computation; pure compute.
+world cron {
+    export parser;
+}

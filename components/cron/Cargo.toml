@@ -1,0 +1,20 @@
+[package]
+name = "cron"
+description = "Cron expression parser + next-fire-time computation, UTC (cron:expr)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "cron:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "cron"

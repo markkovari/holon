@@ -20,6 +20,7 @@ capabilities, so anything marked reusable drops into another app via
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 220 KiB | ✓ |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
 | **crdt** | `crdt:merge@0.1.0` | pure compute | — | 214 KiB | ✓ |
+| **cron** | `cron:expr@0.1.0` | pure compute | — | 63 KiB | ✓ |
 | **csv** | `csv:codec@0.1.0` | pure compute | — | 58 KiB | ✓ |
 | **csv-report** | `report:app@0.1.0` | csv:codec/codec, paginate:cursor/cursors, records:store/store, validate:schema/validator | — | 173 KiB | ✓ |
 | **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 214 KiB | app/demo |
@@ -60,6 +61,7 @@ capabilities, so anything marked reusable drops into another app via
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 165 KiB | ✓ |
 | **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes` | 101 KiB | ✓ |
 | **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 159 KiB | ✓ |
+| **qr** | `qr:encode@0.1.0` | pure compute | — | 79 KiB | ✓ |
 | **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 69 KiB | ✓ |
 | **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 69 KiB | ✓ |
 | **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
@@ -99,6 +101,7 @@ capabilities, so anything marked reusable drops into another app via
 - **conduit-domain** — conduit:app — the RealWorld ("Conduit") spec over composed contracts
 - **config-store** — `config-store` — reference implementation of `config:store`
 - **crdt** — `crdt` — reference implementation of `crdt:merge`
+- **cron** — `cron` — reference implementation of `cron:expr`
 - **csv** — `csv` — reference implementation of `csv:stream/codec`
 - **csv-report** — report:app — batch CSV import -> typed validate -> store -> paged report ->
 - **dev-portal** — portal:app — developer portal / API-key service over composed contracts
@@ -139,6 +142,7 @@ capabilities, so anything marked reusable drops into another app via
 - **policy-guard** — `policy-guard` — reference implementation of `policy:guard`
 - **proxy-route** — proxy:route — reference implementation. Route table from wasi:config
 - **pulse-domain** — pulse:app — a realtime chat room over composed contracts
+- **qr** — `qr` — reference implementation of `qr:encode`
 - **quota** — `quota` — reference implementation of `quota:meter`
 - **rate-limiter** — `rate-limiter` — reference implementation of `ratelimit:guard`
 - **record-store** — `record-store` — reference implementation of `record:store`
