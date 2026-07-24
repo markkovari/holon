@@ -68,6 +68,9 @@ authgate_wasm := rel / "mfa_authgate.wasm"
 authgate_composed := "components/target/mfa_authgate.composed.wasm"
 paste_wasm := rel / "paste_bin.wasm"
 paste_composed := "components/target/paste_bin.composed.wasm"
+track_wasm := rel / "track_domain.wasm"
+track_composed := "components/target/track_domain.composed.wasm"
+trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
@@ -495,6 +498,53 @@ host-paste: compose-paste
 e2e-paste: compose-paste
     cd host && cargo build --release --bin vet-host
     cd examples/paste && cargo test --release
+
+# Build the track SPA (Vite + TS) into components/track-assets/static, so the
+# track-assets component's build.rs embeds it. Run before compose-track.
+build-track-ui:
+    cd examples/track/ui && npm install && npm run build
+
+# Compose track-domain (TRACK.md — a Linear-lite project tracker) — the biggest
+# composition in the repo: the pre-composed auth-guard + records + fsm + search +
+# event-bus + notify + webhook-sign + policy + paginate + markdown + the
+# pre-composed ai-inference (mock llm) + the baked SPA (track-assets). Five axes
+# in one self-contained component. Depends on `compose` (guard), `compose-ai`
+# (ai+mock-llm), and the built SPA.
+compose-track: build-track-ui compose compose-ai
+    wac plug {{track_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/fsm_workflow.wasm \
+      --plug {{searchindex_wasm}} \
+      --plug {{rel}}/event_bus.wasm \
+      --plug {{notify_wasm}} \
+      --plug {{rel}}/webhook_sign.wasm \
+      --plug {{rel}}/policy_guard.wasm \
+      --plug {{rel}}/pagination.wasm \
+      --plug {{rel}}/markdown.wasm \
+      --plug {{ai_composed}} \
+      --plug {{trackassets_wasm}} \
+      -o {{track_composed}}
+    wasm-tools validate {{track_composed}}
+    @echo "composed track-domain (+ auth-guard + records + fsm + search + bus + notify + websign + policy + paginate + md + ai + ui) -> {{track_composed}}"
+
+# Run the project tracker on the native Rust host. The SPA is BAKED into the
+# component (track-assets) — no --static-dir. Open http://127.0.0.1:3025:
+# register (first user as admin), create a project, file issues, move them
+# across the board, comment, watch the activity feed stream live over SSE, and
+# summarize a thread with AI.
+host-track: compose-track
+    cd host && VET_TENANT=track \
+      cargo run --release --bin vet-host -- \
+      --component ../{{track_composed}} --addr 0.0.0.0:3025
+
+# Track e2e: compose + build host + a Rust test driving all five axes — auth +
+# RBAC (admin creates a project, a member writes, a non-member is 403), issue
+# lifecycle over the fsm, full-text search, an SSE activity frame, the background
+# stale-sweep tick, and the AI thread summary.
+e2e-track: compose-track
+    cd host && cargo build --release --bin vet-host
+    cd examples/track && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
 # one app component — all 19 (auth-guard, records, validate, search, blob,

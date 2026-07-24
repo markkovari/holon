@@ -1128,6 +1128,49 @@
     "reusable_as_is": true
   },
   {
+    "name": "track-assets",
+    "package": "ui:assets@0.1.0",
+    "description": "`track-assets` \u2014 the track (project tracker) SPA embedded as `ui:assets`",
+    "exports": [
+      "files"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 60534,
+    "wasm_sha256_12": "35fd7ea054c6",
+    "reusable_as_is": true
+  },
+  {
+    "name": "track-domain",
+    "package": "track:app@0.1.0",
+    "description": "track:app \u2014 a Linear-lite project tracker over composed contracts",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "ai:inference/inference",
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "event:bus/bus",
+      "fsm:workflow/engine",
+      "md:render/renderer",
+      "notify:dispatch/dispatcher",
+      "paginate:cursor/cursors",
+      "policy:guard/guard",
+      "records:store/store",
+      "search:index/index",
+      "ui:assets/files",
+      "webhook:sign/signer"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 247840,
+    "wasm_sha256_12": "18e2b1a9f4a6",
+    "reusable_as_is": true
+  },
+  {
     "name": "upload-drop",
     "package": "drop:app@0.1.0",
     "description": "drop:app \u2014 a presigned direct-upload drop-box over composed contracts",

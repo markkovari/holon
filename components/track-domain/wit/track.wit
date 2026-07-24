@@ -1,0 +1,80 @@
+// track:app — a Linear-lite project tracker as a WIT HTTP component.
+//
+// The complex showcase: FIVE axes stitched into one composed app, over ~14
+// capability contracts and no bespoke business crate.
+//
+//   write   — projects / issues / comments on records:store, ids, validate, md
+//   auth    — auth-guard (register/login/session/introspect) + role gating;
+//             per-project membership is an ABAC decision via policy:guard
+//   read    — search:index (find issues by text/label) + paginate (issue lists)
+//   stream  — every mutation publishes to event:bus; GET /api/stream is a live
+//             activity feed over SSE (poll the bus cursor, no WebSocket)
+//   bg      — POST /api/tick is the timer pump: sweep stale in-progress issues
+//             and flag them (the workload the clock drives, not a request)
+//   out     — an issue transition fires a webhook:sign-signed notify:dispatch
+//   AI      — POST /api/issues/{id}/summarize condenses the comment thread via
+//             ai:inference (mock llm by default; swap in openai-provider)
+//
+// Issue lifecycle is an fsm:workflow machine: backlog -> todo -> in_progress ->
+// done (reopen from done). Membership + role decide who may write.
+//
+// Routes (auth'd unless noted):
+//   POST /auth/register {email,password,role?}     (open)
+//   POST /auth/login    {email,password}           (open) -> token
+//   GET  /auth/me
+//   POST /api/projects  {key,name}                 (admin)
+//   GET  /api/projects
+//   POST /api/projects/{pk}/members {subject,role} (admin)
+//   POST /api/issues    {project,title,body,label?,assignee?}
+//   GET  /api/issues    ?project=&status=&q=&limit=&after=
+//   GET  /api/issues/{id}
+//   POST /api/issues/{id}/move  {event}            (member)
+//   POST /api/issues/{id}/comments {body}
+//   POST /api/issues/{id}/summarize                (AI over the thread)
+//   GET  /api/stream    ?after=seq                 (SSE activity feed) (open)
+//   POST /api/tick                                 (background sweep pump)
+//   GET  /api/search    ?q=&limit=
+package track:app@0.1.0;
+
+/// The project-tracker backend: five axes composed from capability contracts.
+world track-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection for guards.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // per-project membership as an ABAC decision (member/lead can write).
+    import policy:guard/guard@0.1.0;
+
+    // the data layer: projects, issues, comments, members.
+    import records:store/store@0.1.0;
+    // issue lifecycle state machine + transition history.
+    import fsm:workflow/engine@0.1.0;
+    // comment/body markdown -> safe HTML.
+    import md:render/renderer@0.1.0;
+
+    // read axis: full-text issue search + opaque paging cursors.
+    import search:index/index@0.1.0;
+    import paginate:cursor/cursors@0.1.0;
+
+    // stream axis: every mutation publishes here; the SSE feed polls the cursor.
+    import event:bus/bus@0.1.0;
+
+    // out axis: signed outbound webhook on an issue transition.
+    import notify:dispatch/dispatcher@0.1.0;
+    import webhook:sign/signer@0.1.0;
+
+    // AI axis: condense an issue's comment thread.
+    import ai:inference/inference@0.1.0;
+
+    // the built SPA, baked into its own component; non-API GETs forward here.
+    import ui:assets/files@0.1.0;
+
+    // timestamps + SSE poll cadence.
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

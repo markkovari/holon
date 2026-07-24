@@ -120,6 +120,14 @@ Bigger apps, each one HTTP component that imports only contracts — the domain 
 composition, not a bespoke crate. Each has a design doc mapping the app to the
 catalog and a bench round:
 
+- **[TRACK.md](TRACK.md)** — a **Linear-lite project tracker**, the *complex*
+  showcase: **five axes in one component over ~15 contracts** — auth+RBAC (admin
+  creates projects, per-project **membership ABAC** via `policy:guard`), an issue
+  board on `fsm:workflow`, full-text `search`, a live **SSE activity feed**, a
+  background stale-sweep, **signed outbound webhooks**, and **AI thread-summary**
+  (`ai:inference`, mock LLM swappable for `openai-provider`) — with a **Vite+TS
+  SPA baked into the wasm** (`just host-track`). The widest single-component
+  composition in the repo. ([demo](docs/media/track.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

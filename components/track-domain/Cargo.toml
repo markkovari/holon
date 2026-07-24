@@ -1,0 +1,47 @@
+[package]
+name = "track-domain"
+description = "A Linear-lite project tracker: projects/issues/comments over auth+RBAC, search, an SSE activity feed, background sweeps, signed webhooks, and AI thread-summary (track:app)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "track-app:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "track-domain"
+
+[package.metadata.component.target.dependencies]
+"auth:identity" = { path = "../../wit" }
+# auth.wit's own world imports these; needed to merge the auth:identity package.
+"ratelimit:guard" = { path = "../rate-limiter/wit" }
+"audit:log" = { path = "../audit-log/wit" }
+"records:store" = { path = "../record-store/wit" }
+"fsm:workflow" = { path = "../fsm-workflow/wit" }
+"search:index" = { path = "../search-index/wit" }
+"event:bus" = { path = "../event-bus/wit" }
+"notify:dispatch" = { path = "../notify-dispatch/wit" }
+"webhook:sign" = { path = "../webhook-sign/wit" }
+"ai:inference" = { path = "../ai-inference/wit" }
+"llm:inference" = { path = "../llm-inference/wit" }
+"ui:assets" = { path = "../track-assets/wit" }
+"policy:guard" = { path = "../policy-guard/wit" }
+"paginate:cursor" = { path = "../pagination/wit" }
+"md:render" = { path = "../markdown/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
