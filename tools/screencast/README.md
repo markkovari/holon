@@ -135,5 +135,15 @@ node jobs.mjs
 bash to-gif.sh videos/jobs/*.webm ../../docs/media/jobs.gif 900 10
 ```
 
+**jobs-golem** — the jobs queue on the wasmCloud v2 operator (k8s) with the live
+Golem backend; jobs execute as durable Golem workers and land in Done with the
+worker's climbing counter value. Records the real cluster board.
+
+```bash
+just k8s-jobs &                         # deploy on the v2 operator (see JOBS.md)
+node jobs-golem.mjs                      # JOBS_URL defaults to the cluster DNS
+bash to-gif.sh videos/jobs-golem/*.webm ../../docs/media/jobs-golem.gif 820 9
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

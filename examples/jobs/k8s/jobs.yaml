@@ -1,0 +1,169 @@
+# The jobs queue on wasmCloud v2 (runtime-operator, runtime.wasmcloud.dev),
+# with the GOLEM execution backend live: jobs run through the golem-bridge
+# component (composed into the queue), which calls a durable Golem worker over
+# the host's wasi:http/outgoing-handler. This is the front-half the native
+# provider couldn't run under wash 2.3 — the v2 operator provides http/keyvalue
+# as host interfaces to one fused component, so no `par`/classic host is needed.
+#
+# Image: components/target/jobs_domain.golem.wasm  (just compose-jobs-golem),
+# pushed to the in-cluster registry (just k8s-jobs-push).
+#
+# Golem: the bridge dials `golem-url`. Point it at a reachable Golem gateway —
+# by default the Golem already running on the laptop, via orbstack's
+# host.docker.internal. Egress is fail-closed, so the Golem host MUST be in
+# allowedHosts. A `counters` demo agent must be deployed on that Golem (see
+# providers/golem-workflow/e2e.sh) — the path-template targets it.
+#
+# Deploy:  just k8s-jobs   (push image + kubectl apply)
+# Try it (orbstack resolves cluster DNS from the mac):
+#          open http://jobs.jobs.svc.cluster.local
+---
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: jobs
+  namespace: jobs
+spec:
+  replicas: 1
+  template:
+    spec:
+      kubernetes:
+        service:
+          name: jobs
+      hostInterfaces:
+        - namespace: wasi
+          package: http
+          interfaces: [incoming-handler]
+          config:
+            host: jobs.jobs.svc.cluster.local
+        # the golem-bridge dials Golem over this.
+        - namespace: wasi
+          package: http
+          interfaces: [outgoing-handler]
+        # outbox / records / idempotency state.
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [store]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [atomics]
+        - namespace: wasi
+          package: keyvalue
+          interfaces: [batch]
+        - namespace: wasi
+          package: config
+          interfaces: [store]
+      components:
+        - name: jobs
+          image: registry.jobs.svc.cluster.local:5000/jobs-domain-golem:0.1.2
+          poolSize: 8
+          maxInvocations: 200
+          localResources:
+            # fail-closed egress: the bridge dials the Golem gateway (connection
+            # authority) and sends golem-host as the Host header.
+            allowedHosts:
+              - "golem-proxy.jobs.svc.cluster.local"
+              - "golem-proxy.jobs.svc.cluster.local:9006"
+            config:
+              # ---- Golem backend (golem-bridge) ----
+              # wasi:http derives the Host header from the connection authority,
+              # so we can't set the gateway vhost header ourselves. Dial an
+              # in-cluster nginx that rewrites Host -> golem-agent.localhost:9006
+              # and forwards to the laptop's Golem.
+              golem-url: "http://golem-proxy.jobs.svc.cluster.local:9006"
+              # {workflow-id} is substituted with the job type; targets the demo
+              # durable CounterAgent (POST /counters/{name}/increment -> count).
+              golem-path-template: "/counters/{workflow-id}/increment"
+              golem-host: ""
+              # ---- outbox tuning (retry cap + backoff) ----
+              max-attempts: "2"
+              base-backoff: "1"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jobs
+  namespace: jobs
+spec:
+  ports: [{ name: http, port: 80, targetPort: 9191 }]
+---
+# Host-header shim: wasi:http can't set a Host distinct from the connection
+# authority, but Golem's gateway routes the CounterAgent by vhost. This nginx
+# rewrites Host -> golem-agent.localhost:9006 and forwards to the laptop's Golem
+# (reachable from pods via orbstack's host.docker.internal). The native provider
+# doesn't need this — reqwest sets Host freely.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: golem-proxy-conf
+  namespace: jobs
+data:
+  nginx.conf: |
+    events {}
+    http {
+      server {
+        listen 9006;
+        location / {
+          proxy_pass http://host.docker.internal:9006;
+          proxy_set_header Host golem-agent.localhost:9006;
+          proxy_http_version 1.1;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: golem-proxy
+  namespace: jobs
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: golem-proxy }
+  template:
+    metadata:
+      labels: { app: golem-proxy }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports: [{ containerPort: 9006 }]
+          volumeMounts:
+            - { name: conf, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf }
+      volumes:
+        - name: conf
+          configMap: { name: golem-proxy-conf }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: golem-proxy
+  namespace: jobs
+spec:
+  selector: { app: golem-proxy }
+  ports: [{ port: 9006, targetPort: 9006 }]
+---
+# Headless driver: the SSE board self-ticks only while a browser is watching, so
+# a slow pump keeps the queue draining for e2e / unattended runs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jobs-pump
+  namespace: jobs
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: jobs-pump }
+  template:
+    metadata:
+      labels: { app: jobs-pump }
+    spec:
+      containers:
+        - name: pump
+          image: curlimages/curl:8.10.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - while true; do curl -s -m 10 -X POST http://jobs.jobs.svc.cluster.local/api/tick || true; sleep 3; done
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }

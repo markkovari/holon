@@ -31,6 +31,11 @@ use bindings::wasi::http::types::{
 
 struct Component;
 
+// The board SPA, embedded so the component serves it on any host (the native
+// host also has it via --static-dir; on the v2 operator there is no static-dir,
+// so GET / must serve it here). Single source — the example's index.html.
+const BOARD: &str = include_str!("../../../examples/jobs/public/index.html");
+
 const JOBS: &str = "jobs";
 const BATCH: u32 = 10;
 const LEASE: u64 = 30;
@@ -49,7 +54,8 @@ impl Guest for Component {
             (Method::Get, ["api", "events"]) => stream_events(response_out, &path),
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
-                    (Method::Get, [""]) => usage_json(),
+                    (Method::Get, [""]) => Outcome::Html(200, BOARD.to_string()),
+                    (Method::Get, ["api"]) => usage_json(),
                     (Method::Post, ["api", "jobs"]) => enqueue(&request),
                     (Method::Get, ["api", "jobs"]) => Outcome::Json(200, board_json().to_string()),
                     (Method::Post, ["api", "tick"]) => Outcome::Json(200, drain_once().to_string()),
@@ -64,6 +70,7 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
+    Html(u16, String),
     Err(u16, String),
 }
 
@@ -406,16 +413,20 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
-        Outcome::Err(code, msg) => {
-            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
-        }
+        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
+        Outcome::Html(code, body) => respond(response_out, code, "text/html; charset=utf-8", body.as_bytes()),
+        Outcome::Err(code, msg) => respond(
+            response_out,
+            code,
+            "application/json",
+            json!({ "error": msg }).to_string().as_bytes(),
+        ),
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
+fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
     let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);

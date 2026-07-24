@@ -1,0 +1,22 @@
+// golem:bridge — a WASM implementation of durable:workflow/orchestrator that
+// bridges to a durable Golem worker over HTTP.
+//
+// The v2-operator counterpart to the native `golem-workflow` provider. The
+// wasmCloud v2 runtime provides capabilities to a component as host interfaces
+// (wasi:http, wasi:keyvalue) rather than linking native providers, and the
+// provider's Golem call is just an HTTP POST — so the same `durable:workflow`
+// contract is satisfied here by a COMPONENT that calls Golem over
+// `wasi:http/outgoing-handler`. Compose it into the jobs queue in place of the
+// in-process backend and jobs run as real durable Golem workers, on the v2
+// operator, no `par`/classic host required. See JOBS.md + GOLEM.md.
+//
+// Config (wasi:config): `golem-url` (gateway base), `golem-path-template`
+// (`{workflow-id}` substituted; default `/counters/{workflow-id}/increment`),
+// `golem-host` (optional Host header for gateway subdomain routing).
+package golem:bridge@0.1.0;
+
+world golem-bridge {
+    export durable:workflow/orchestrator@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

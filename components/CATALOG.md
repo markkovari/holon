@@ -37,12 +37,13 @@ capabilities, so anything marked reusable drops into another app via
 | **flags-domain** | `rollout:app@0.1.0` | event:bus/bus, featureflags:guard/evaluator, id:generate/generator | — | 149 KiB | ✓ |
 | **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 142 KiB | ✓ |
 | **geo** | `geo:resolve@0.1.0` | pure compute | — | 63 KiB | ✓ |
+| **golem-bridge** | `golem:bridge@0.1.0` | config/store, http/outgoing-handler | `golem-url`, `golem-host`, `golem-path-template` | 95 KiB | ✓ |
 | **helpdesk-domain** | `helpdesk:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, fsm:workflow/engine, id:generate/generator, md:render/renderer, records:store/store | — | 200 KiB | ✓ |
 | **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 77 KiB | ✓ |
 | **id-generate** | `id:generate@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 81 KiB | ✓ |
 | **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 77 KiB | ✓ |
-| **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 170 KiB | ✓ |
+| **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 177 KiB | ✓ |
 | **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 126 KiB | ✓ |
 | **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 158 KiB | app/demo |
 | **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 74 KiB | ✓ |
@@ -120,6 +121,7 @@ capabilities, so anything marked reusable drops into another app via
 - **flags-domain** — flags:app — a live feature-rollout console over composed contracts
 - **fsm-workflow** — `fsm-workflow` — reference implementation of `fsm:workflow/engine`
 - **geo** — `geo` — reference implementation of `geo:resolve`
+- **golem-bridge** — `golem-bridge` — durable:workflow/orchestrator over `wasi:http`, to Golem
 - **helpdesk-domain** — helpdesk:app — support/ticketing SaaS domain over composed contracts
 - **i18n-catalog** — `i18n-catalog` — reference implementation of `i18n:catalog`
 - **id-generate** — `id-generate` — reference implementation of `id:generate/generator`

@@ -250,6 +250,37 @@ compose-jobs: build
       -o {{jobs_composed}}
     @echo "composed jobs-domain (+ outbox + inproc-workflow + cron + idempotency + records) -> {{jobs_composed}}"
 
+# Golem-backed variant: same queue, but durable:workflow is satisfied by the
+# golem-bridge component (calls a durable Golem worker over wasi:http) instead of
+# the in-process backend. The composed wasm now imports wasi:http/outgoing-handler
+# (a host interface on the v2 operator). Point it at Golem via CFG_GOLEM_URL.
+compose-jobs-golem: build
+    wac plug {{jobs_wasm}} \
+      --plug {{rel}}/outbox.wasm \
+      --plug {{rel}}/golem_bridge.wasm \
+      --plug {{rel}}/cron.wasm \
+      --plug {{idempotency_wasm}} \
+      --plug {{recordstore_wasm}} \
+      -o components/target/jobs_domain.golem.wasm
+    @echo "composed jobs-domain GOLEM variant (+ outbox + golem-bridge + cron + idempotency + records) -> components/target/jobs_domain.golem.wasm"
+
+jobs_reg := env_var_or_default("JOBS_REG", "localhost:30501")
+
+# Deploy the jobs queue on the wasmCloud v2 operator with the GOLEM backend live.
+# Infra first (once): a v2 runtime-operator (bundles the host + NATS) in the
+# `jobs` ns, same chart as eshop:
+#   helm install jobs <wasmCloud>/charts/runtime-operator -n jobs \
+#     -f examples/eshop/k8s/values.yaml   (chart v2.5.2)
+# Golem must be reachable from pods (host.docker.internal:9006 on orbstack) with
+# a `counters` demo agent deployed (providers/golem-workflow/e2e.sh). Then open
+# http://jobs.jobs.svc.cluster.local
+k8s-jobs: compose-jobs-golem
+    kubectl apply -f examples/jobs/k8s/registry.yaml
+    kubectl -n jobs rollout status deploy/registry --timeout=90s
+    wkg oci push --insecure {{jobs_reg}} {{jobs_reg}}/jobs-domain-golem:0.1.0 components/target/jobs_domain.golem.wasm
+    kubectl apply -f examples/jobs/k8s/jobs.yaml
+    @echo "deployed jobs (golem backend) -> http://jobs.jobs.svc.cluster.local"
+
 # Run the job queue on the native host + serve the board SPA. Open
 # http://127.0.0.1:3038: enqueue jobs, watch them run/retry/dead-letter live,
 # replay from the DLQ. CFG tunes the outbox: 3 attempts, 1s base backoff.
