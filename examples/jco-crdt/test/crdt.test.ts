@@ -167,6 +167,17 @@ describe("RGA (text sequence — concurrent typing interleaves)", () => {
     const edited = ins(base, 3, "d", "0001-e"); // "abcd"
     assert.equal(val(c.merge(deleted, edited)), "acd");
   });
+
+  it("id-anchored ops (what a real editor sends) are unambiguous", () => {
+    const base = ins(c.rgaNew(), 0, "AC", "0000-seed");
+    const els = JSON.parse(c.rgaElements(base)); // [{id,ch}...]
+    assert.deepEqual(els.map((e: { ch: string }) => e.ch), ["A", "C"]);
+    const idA = els[0].id;
+    const rx = c.rgaInsertAfter(base, idA, "X", "0001-x");
+    const ry = c.rgaInsertAfter(base, idA, "Y", "0002-y");
+    assert.equal(val(c.merge(rx, ry)), "AYXC"); // both survive, deterministic
+    assert.equal(val(c.rgaDeleteIds(base, [idA])), "C");
+  });
 });
 
 describe("errors", () => {

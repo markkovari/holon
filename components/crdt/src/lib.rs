@@ -28,7 +28,7 @@ mod bindings;
 
 use bindings::exports::crdt::merge::merger::{CrdtError, Guest};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 struct Component;
@@ -423,6 +423,64 @@ impl Guest for Component {
         }
         dump(&State::Rga { elems })
     }
+
+    fn rga_insert_after(
+        state: String,
+        after_id: String,
+        text: String,
+        id_base: String,
+    ) -> Result<String, CrdtError> {
+        let State::Rga { mut elems } = parse_state(&state, "state")? else {
+            return Err(CrdtError::InvalidState("expected an rga".into()));
+        };
+        if !after_id.is_empty() && !elems.contains_key(&after_id) {
+            return Err(CrdtError::InvalidState(format!(
+                "after-id not found: {after_id}"
+            )));
+        }
+        let mut anchor = after_id;
+        for (k, ch) in text.chars().enumerate() {
+            let id = format!("{id_base}:{k:04}");
+            elems.insert(
+                id.clone(),
+                RgaElem {
+                    ch: ch.to_string(),
+                    after: anchor.clone(),
+                    del: false,
+                },
+            );
+            anchor = id;
+        }
+        dump(&State::Rga { elems })
+    }
+
+    fn rga_delete_ids(state: String, ids: Vec<String>) -> Result<String, CrdtError> {
+        let State::Rga { mut elems } = parse_state(&state, "state")? else {
+            return Err(CrdtError::InvalidState("expected an rga".into()));
+        };
+        for id in ids {
+            if let Some(e) = elems.get_mut(&id) {
+                e.del = true;
+            }
+        }
+        dump(&State::Rga { elems })
+    }
+
+    fn rga_elements(state: String) -> Result<String, CrdtError> {
+        let State::Rga { elems } = parse_state(&state, "state")? else {
+            return Err(CrdtError::InvalidState("expected an rga".into()));
+        };
+        let list: Vec<Value> = rga_visible(&elems)
+            .iter()
+            .filter_map(|id| {
+                elems
+                    .get(id)
+                    .map(|e| json!({ "id": id, "ch": e.ch }))
+            })
+            .collect();
+        serde_json::to_string(&Value::Array(list))
+            .map_err(|e| CrdtError::InvalidState(format!("serialize: {e}")))
+    }
 }
 
 /// Apply a single register to a key iff it beats the current stamp (the
@@ -570,6 +628,28 @@ mod tests {
             Component::merge(ry.clone(), rx.clone()).unwrap()
         );
         assert_converges(&[s(&rx), s(&ry), s(&base)]);
+    }
+
+    /// Id-anchored ops: what a real editor sends. A concurrent insert elsewhere
+    /// can't shift where this one lands, because it anchors to a stable id.
+    #[test]
+    fn rga_id_anchored_ops_are_unambiguous() {
+        let base = ins(Component::rga_new(), 0, "AC", "0000-seed");
+        // find the ids of A and C
+        let elems: Value = serde_json::from_str(&Component::rga_elements(base.clone()).unwrap()).unwrap();
+        let arr = elems.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        let id_a = arr[0]["id"].as_str().unwrap().to_string();
+        assert_eq!(arr[0]["ch"], "A");
+        // two replicas insert AFTER A concurrently — both survive, deterministic
+        let rx = Component::rga_insert_after(base.clone(), id_a.clone(), "X".into(), "0001-x".into()).unwrap();
+        let ry = Component::rga_insert_after(base.clone(), id_a.clone(), "Y".into(), "0002-y".into()).unwrap();
+        assert_eq!(text(&Component::merge(rx.clone(), ry.clone()).unwrap()), "AYXC");
+        // delete by id
+        let del = Component::rga_delete_ids(base.clone(), vec![id_a]).unwrap();
+        assert_eq!(text(&del), "C");
+        // inserting after an unknown id is rejected
+        assert!(Component::rga_insert_after(base, "nope".into(), "z".into(), "9-z".into()).is_err());
     }
 
     #[test]

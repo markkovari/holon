@@ -68,7 +68,7 @@
     <div class="scroll">
       <div class="doc">
         <input class="title" id="title" placeholder="Untitled document" autocomplete="off">
-        <div class="meta">Every field is a CRDT register — edits merge, no lock. <span id="rev"></span></div>
+        <div class="meta">Title is an LWW register, body is an RGA sequence — edits merge, no lock. <span id="rev"></span></div>
         <textarea class="body" id="body" placeholder="Start writing… open this page in a second window and type in both."></textarea>
       </div>
     </div>
@@ -94,35 +94,88 @@ $("name").onchange = () => { name = $("name").value.trim() || name; localStorage
 
 let rev = -1;
 const els = { title: $("title"), body: $("body") };
+const H = { "content-type": "application/json" };
+const pad = (n, w) => String(n).padStart(w, "0");
 
-// Send an edit as a CRDT op. ts is captured at edit time (so a delayed op still
-// resolves correctly by last-writer-wins); the server merges it into the doc.
-const timers = {};
-function edit(field) {
-  clearTimeout(timers[field]);
-  timers[field] = setTimeout(() => {
-    fetch(api("/ops"), {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ field, value: els[field].value, ts: Date.now(), replica }),
-    }).catch(() => {});
-  }, 220);
+// ---- title: a last-writer-wins register --------------------------------------
+// ts captured at edit time so a delayed op still resolves correctly by LWW.
+let titleTimer;
+els.title.oninput = () => {
+  clearTimeout(titleTimer);
+  titleTimer = setTimeout(() => {
+    fetch(api("/ops"), { method: "POST", headers: H,
+      body: JSON.stringify({ field: "title", value: els.title.value, ts: Date.now(), replica }) }).catch(() => {});
+  }, 200);
+};
+
+// ---- body: an RGA text sequence ----------------------------------------------
+// We track the visible elements [{id, ch}]. A local keystroke is diffed into an
+// id-anchored insert/delete op — anchored to a stable element id, NOT a position,
+// so a concurrent edit elsewhere can't make it land in the wrong place. We apply
+// our own op optimistically with PREDICTED ids (same formula the server uses), so
+// the next keystroke anchors correctly before the round-trip returns.
+let bodyEls = [];        // [{id, ch}] in order
+let bodySeq = 0;         // per-client op counter (uniqueness)
+const bodyText = () => bodyEls.map(e => e.ch).join("");
+
+// Single-region diff of two strings: {pos, del, ins}.
+function strDiff(a, b) {
+  const max = Math.min(a.length, b.length);
+  let p = 0; while (p < max && a[p] === b[p]) p++;
+  let s = 0; while (s < max - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++;
+  return { pos: p, del: a.length - p - s, ins: b.slice(p, b.length - s) };
 }
-els.title.oninput = () => edit("title");
-els.body.oninput = () => edit("body");
 
-// Apply the merged document from the server, but never stomp a field the user is
-// actively editing in THIS window.
+els.body.oninput = () => {
+  const old = bodyText(), now = els.body.value;
+  if (old === now) return;
+  const { pos, del, ins } = strDiff(old, now);
+  if (del > 0) {
+    const ids = bodyEls.slice(pos, pos + del).map(e => e.id);
+    bodyEls.splice(pos, del);                                   // optimistic
+    fetch(api("/ops"), { method: "POST", headers: H,
+      body: JSON.stringify({ field: "body", kind: "delete", ids }) }).catch(() => {});
+  }
+  if (ins) {
+    const after = pos > 0 ? bodyEls[pos - 1].id : "";
+    const ts = Date.now(), seq = bodySeq++;
+    const idBase = `${pad(ts, 13)}-${replica}-${pad(seq, 6)}`;
+    const made = [...ins].map((ch, k) => ({ id: `${idBase}:${pad(k, 4)}`, ch }));
+    bodyEls.splice(pos, 0, ...made);                            // optimistic (predicted ids)
+    fetch(api("/ops"), { method: "POST", headers: H,
+      body: JSON.stringify({ field: "body", kind: "insert", after, text: ins, ts, replica, seq }) }).catch(() => {});
+  }
+};
+
+// Reconcile the textarea to the server's converged body. While THIS window has
+// the body focused we freeze (never yank text out from under the caret) and
+// resync on the next push after blur — so bodyEls always matches what's on
+// screen and local ops anchor correctly. A window that isn't typing still shows
+// the other editor's changes live.
+// ponytail: freeze-on-focus keeps anchors correct without full OT; the tradeoff
+// is you don't see a co-editor's keystrokes until you pause. Convergence on the
+// server is always correct regardless.
+function applyBody(text, elems) {
+  if (document.activeElement === els.body) return;
+  bodyEls = elems.slice();
+  if (els.body.value !== text) els.body.value = text;
+}
+
+// Apply the merged document from the server.
 function apply(d) {
   if (typeof d.rev === "number") { rev = d.rev; $("rev").textContent = `· rev ${rev}`; }
   const f = d.fields || {};
-  for (const field of ["title", "body"]) {
-    const el = els[field];
-    const incoming = f[field] ?? "";
-    if (document.activeElement === el) continue;   // don't clobber my caret
-    if (el.value !== incoming) {
-      el.value = incoming;
-      el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
+  if (document.activeElement !== els.title) {
+    const t = f.title ?? "";
+    if (els.title.value !== t) {
+      els.title.value = t;
+      els.title.classList.remove("flash"); void els.title.offsetWidth; els.title.classList.add("flash");
     }
+  }
+  const before = els.body.value;
+  applyBody(f.body ?? "", d.body_elems ?? []);
+  if (els.body.value !== before && document.activeElement !== els.body) {
+    els.body.classList.remove("flash"); void els.body.offsetWidth; els.body.classList.add("flash");
   }
 }
 

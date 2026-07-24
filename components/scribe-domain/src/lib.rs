@@ -81,9 +81,10 @@ fn usage_json() -> Outcome {
         200,
         json!({
             "service": "scribe",
-            "about": "collaborative editor — each field is a CRDT register; edits merge and stream live to every open editor",
+            "about": "collaborative editor — scalar fields are LWW registers, the body is an RGA text sequence; edits merge and stream live over SSE",
             "doc": "GET /api/docs/{doc}",
-            "edit": "POST /api/docs/{doc}/ops {field, value, ts, replica}",
+            "edit_field": "POST /api/docs/{doc}/ops {field, value, ts, replica}",
+            "edit_body": "POST /api/docs/{doc}/ops {field:'body', kind:'insert'|'delete', after|ids, text, ts, replica, seq}",
             "stream": "GET /api/docs/{doc}/events?rev=n   (text/event-stream)",
             "presence": "POST|GET /api/docs/{doc}/presence"
         })
@@ -99,38 +100,81 @@ fn usage_json() -> Outcome {
 // ponytail: a first-write race could create two rows for a doc; the earliest-id
 // tie-break keeps reads deterministic. Harden with a keyed put or a lock if it
 // matters (rung 2).
-fn load(doc: &str) -> (Option<String>, String, u64) {
+fn load(doc: &str) -> Doc {
     let mut entries =
         records::find_by(DOCS, "doc", &json!(doc).to_string()).unwrap_or_default();
     entries.sort_by(|a, b| a.id.cmp(&b.id));
     match entries.into_iter().next() {
         Some(e) => {
-            let state = serde_json::from_str::<Value>(&e.data)
-                .ok()
-                .and_then(|d| d["state"].as_str().map(String::from))
-                .unwrap_or_else(|| crdt::lwwmap_new());
-            (Some(e.id), state, e.revision)
+            let d = serde_json::from_str::<Value>(&e.data).unwrap_or_else(|_| json!({}));
+            Doc {
+                id: Some(e.id),
+                // `meta` = scalar fields (title, …) as an lwwmap; `body` = an
+                // rga text sequence. Older single-`state` rows read as meta.
+                meta: d["meta"]
+                    .as_str()
+                    .or_else(|| d["state"].as_str())
+                    .map(String::from)
+                    .unwrap_or_else(crdt::lwwmap_new),
+                body: d["body"].as_str().map(String::from).unwrap_or_else(crdt::rga_new),
+                rev: e.revision,
+            }
         }
-        None => (None, crdt::lwwmap_new(), 0),
+        None => Doc {
+            id: None,
+            meta: crdt::lwwmap_new(),
+            body: crdt::rga_new(),
+            rev: 0,
+        },
     }
 }
 
-/// The merged document (a JSON object of field -> value) for a crdt state.
-fn merged_doc(state: &str) -> Value {
-    crdt::value(state)
+/// A loaded document: the two CRDT states + the record id/revision.
+struct Doc {
+    id: Option<String>,
+    meta: String,
+    body: String,
+    rev: u64,
+}
+
+fn record_data(doc: &str, meta: &str, body: &str) -> String {
+    json!({ "doc": doc, "meta": meta, "body": body }).to_string()
+}
+
+/// The merged scalar fields (title, …) for an lwwmap meta state.
+fn merged_doc(meta: &str) -> Value {
+    crdt::value(meta)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_else(|| json!({}))
 }
 
-fn doc_json(doc: &str, state: &str, rev: u64) -> Value {
-    json!({ "doc": doc, "rev": rev, "fields": merged_doc(state) })
+/// The current body text from the rga state.
+fn body_text(body: &str) -> String {
+    crdt::value(body)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_default()
 }
 
-/// A field's current value as plain text (for diffing). Non-string values are
-/// rendered as their JSON.
-fn field_text(state: &str, field: &str) -> String {
-    match merged_doc(state).get(field) {
+/// The full document view: scalar fields + `body` text + `body_elems` (the rga
+/// `{id, ch}` list the client maps cursor positions against for id-anchored ops).
+fn doc_json(doc: &str, d: &Doc) -> Value {
+    let mut fields = merged_doc(&d.meta);
+    if let Some(obj) = fields.as_object_mut() {
+        obj.insert("body".to_string(), Value::String(body_text(&d.body)));
+    }
+    let elems: Value = crdt::rga_elements(&d.body)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!([]));
+    json!({ "doc": doc, "rev": d.rev, "fields": fields, "body_elems": elems })
+}
+
+/// A scalar field's value as plain text (for diffing).
+fn field_text(meta: &str, field: &str) -> String {
+    match merged_doc(meta).get(field) {
         Some(Value::String(s)) => s.clone(),
         Some(v) => v.to_string(),
         None => String::new(),
@@ -138,14 +182,14 @@ fn field_text(state: &str, field: &str) -> String {
 }
 
 fn get_doc(doc: &str) -> Outcome {
-    let (_, state, rev) = load(doc);
-    Outcome::Json(200, doc_json(doc, &state, rev).to_string())
+    Outcome::Json(200, doc_json(doc, &load(doc)).to_string())
 }
 
-/// Apply one edit op, merging it into the doc's CRDT state under optimistic
-/// concurrency. `value` is stored as a JSON value (a string field is quoted);
-/// `ts` + `replica` decide LWW so concurrent edits resolve identically on every
-/// replica, and a late-arriving older edit never clobbers a newer one.
+/// Apply one edit, merging it under optimistic concurrency (record revision as
+/// the CAS token; on conflict reload + re-merge, safe because CRDT merge is
+/// idempotent). The `body` field is an rga text sequence edited with id-anchored
+/// insert/delete ops (so concurrent typing interleaves); every other field is a
+/// last-writer-wins register.
 fn apply_op(request: &IncomingRequest, doc: &str) -> Outcome {
     let body = match parse_body(request) {
         Ok(v) => v,
@@ -155,47 +199,94 @@ fn apply_op(request: &IncomingRequest, doc: &str) -> Outcome {
     if field.is_empty() {
         return Outcome::Err(422, "field required".into());
     }
-    // value may be any JSON; strings are the common case. Bound its size.
-    let value = body.get("value").cloned().unwrap_or(Value::Null);
-    if value.to_string().len() > MAX_FIELD_LEN {
-        return Outcome::Err(422, "value too long".into());
-    }
-    let ts = body["ts"].as_u64().unwrap_or_else(|| now() * 1000);
     let replica = {
         let r = body["replica"].as_str().unwrap_or("").trim();
         if r.is_empty() { ids::short_code(8) } else { r.to_string() }
     };
-    let value_json = value.to_string();
 
     for _ in 0..MAX_RETRY {
-        let (id, state, rev) = load(doc);
-        let new_state = match crdt::lwwmap_set(&state, &field, &value_json, ts, &replica) {
-            Ok(s) => s,
-            Err(e) => return crdt_err(e),
+        let cur = load(doc);
+        // Compute the new (meta, body) pair + the (field, before, after) text for
+        // history, depending on the op.
+        let (new_meta, new_body, before, after) = match field.as_str() {
+            "body" => {
+                let before = body_text(&cur.body);
+                let new_body = match apply_body_op(&cur.body, &body, &replica) {
+                    Ok(s) => s,
+                    Err(o) => return o,
+                };
+                let after = body_text(&new_body);
+                (cur.meta.clone(), new_body, before, after)
+            }
+            _ => {
+                let value = body.get("value").cloned().unwrap_or(Value::Null);
+                if value.to_string().len() > MAX_FIELD_LEN {
+                    return Outcome::Err(422, "value too long".into());
+                }
+                let ts = body["ts"].as_u64().unwrap_or_else(|| now() * 1000);
+                let before = field_text(&cur.meta, &field);
+                let new_meta = match crdt::lwwmap_set(&cur.meta, &field, &value.to_string(), ts, &replica) {
+                    Ok(s) => s,
+                    Err(e) => return crdt_err(e),
+                };
+                let after = field_text(&new_meta, &field);
+                (new_meta, cur.body.clone(), before, after)
+            }
         };
-        let rec = json!({ "doc": doc, "state": new_state }).to_string();
-        let res = match &id {
-            // expected-revision = the rev we read: a concurrent writer bumps it,
-            // we get RevisionConflict, reload + re-merge (idempotent, so safe).
-            Some(id) => records::update(DOCS, id, &rec, rev),
+
+        let rec = record_data(doc, &new_meta, &new_body);
+        let res = match &cur.id {
+            Some(id) => records::update(DOCS, id, &rec, cur.rev),
             None => records::create(DOCS, &rec, &["doc".to_string()]),
         };
         match res {
             Ok(entry) => {
-                // Record history only when the merge actually changed the field
-                // (an older LWW op that lost leaves before == after — no entry).
-                let before = field_text(&state, &field);
-                let after = field_text(&new_state, &field);
+                // History only when the value actually changed (a losing LWW op,
+                // or an idempotent re-delete, leaves before == after).
                 if before != after {
                     record_history(doc, entry.revision, &field, &replica, &before, &after);
                 }
-                return Outcome::Json(200, doc_json(doc, &new_state, entry.revision).to_string());
+                let d = Doc { id: cur.id, meta: new_meta, body: new_body, rev: entry.revision };
+                return Outcome::Json(200, doc_json(doc, &d).to_string());
             }
             Err(records::StoreError::RevisionConflict(_)) => continue,
             Err(e) => return store_err(e),
         }
     }
     Outcome::Err(409, "too much contention, retry".into())
+}
+
+/// Apply an id-anchored rga op to the body state. `kind` is `insert`
+/// (`{after, text, ts, seq}`) or `delete` (`{ids}`).
+#[allow(clippy::result_large_err)]
+fn apply_body_op(body_state: &str, req: &Value, replica: &str) -> Result<String, Outcome> {
+    match req["kind"].as_str().unwrap_or("") {
+        "insert" => {
+            let after = req["after"].as_str().unwrap_or("");
+            let text = req["text"].as_str().unwrap_or("");
+            if text.is_empty() {
+                return Err(Outcome::Err(422, "insert text required".into()));
+            }
+            if text.len() > MAX_FIELD_LEN {
+                return Err(Outcome::Err(422, "insert too long".into()));
+            }
+            // Build a globally-unique, sortable id-base: ts dominates, so later
+            // edits sort first among same-anchor siblings; replica + seq break
+            // ties. The client mints the SAME shape so it can predict ids.
+            let ts = req["ts"].as_u64().unwrap_or_else(|| now() * 1000);
+            let seq = req["seq"].as_u64().unwrap_or(0);
+            let id_base = format!("{ts:013}-{replica}-{seq:06}");
+            crdt::rga_insert_after(body_state, after, text, &id_base).map_err(crdt_err)
+        }
+        "delete" => {
+            let del_ids: Vec<String> = req["ids"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            crdt::rga_delete_ids(body_state, &del_ids).map_err(crdt_err)
+        }
+        other => Err(Outcome::Err(422, format!("unknown body op: {other}"))),
+    }
 }
 
 // ---- history (composes diff:text) --------------------------------------------
@@ -317,10 +408,10 @@ fn stream_events(response_out: ResponseOutparam, doc: &str, path: &str) {
             return;
         }
         for _ in 0..MAX_TICKS {
-            let (_, state, rev) = load(doc);
-            let frame = if (rev as i64) != cursor {
-                cursor = rev as i64;
-                format!("data: {}\n\n", doc_json(doc, &state, rev))
+            let d = load(doc);
+            let frame = if (d.rev as i64) != cursor {
+                cursor = d.rev as i64;
+                format!("data: {}\n\n", doc_json(doc, &d))
             } else {
                 ": ping\n\n".to_string()
             };

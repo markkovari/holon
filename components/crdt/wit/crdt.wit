@@ -97,6 +97,19 @@ interface merger {
     /// Tombstone `count` visible characters starting at `index`. Deletes are
     /// monotonic, so a delete and a concurrent edit both survive the merge.
     rga-delete: func(state: string, index: u32, count: u32) -> result<string, crdt-error>;
+
+    /// Insert `text` as elements chained after element `after-id` (`""` = the
+    /// start). **Id-anchored** — unlike `rga-insert`'s position, an element id is
+    /// stable under concurrency, so this is what a real editor should send: a
+    /// concurrent insert elsewhere can't shift where this one lands. `after-id`
+    /// must be `""` or an existing element id (a tombstoned one is fine).
+    rga-insert-after: func(state: string, after-id: string, text: string, id-base: string) -> result<string, crdt-error>;
+    /// Tombstone the elements with these ids (id-anchored delete). Unknown ids
+    /// are ignored; deleting is idempotent.
+    rga-delete-ids: func(state: string, ids: list<string>) -> result<string, crdt-error>;
+    /// The visible elements in sequence order, as a JSON array of `{id, ch}`.
+    /// Lets a client map cursor positions to element ids for id-anchored ops.
+    rga-elements: func(state: string) -> result<string, crdt-error>;
 }
 
 /// `crdt` provides merge/value + constructors for four CvRDT types; pure

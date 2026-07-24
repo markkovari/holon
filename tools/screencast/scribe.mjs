@@ -49,30 +49,43 @@ try {
   await B().locator("#status").filter({ hasText: "live" }).waitFor({ timeout: 10000 });
   await sleep(1000);
 
+  // caret helpers (set position deterministically; keyboard Home/End is
+  // platform-dependent in textareas) + blur so the pane resyncs to converged.
+  const caret = (frame, at) =>
+    frame().locator("#body").evaluate((el, at) => {
+      el.focus();
+      const p = at === "end" ? el.value.length : at;
+      el.setSelectionRange(p, p);
+    }, at);
+  const blur = (frame) => frame().locator("#body").evaluate((el) => el.blur());
+
   // 1. Alice titles the doc -> Bob's title fills in live over SSE
   await A().locator("#title").click();
   await type(A, "#title", "Launch plan");
-  await sleep(1700);
+  await A().locator("#title").evaluate((el) => el.blur());
+  await sleep(1400);
 
-  // 2. Bob writes the body (a different field) -> Alice sees it appear live.
-  // Different fields, edited from different replicas, both survive the merge.
-  await B().locator("#body").click();
+  // 2. Bob writes the body -> Alice sees it stream in live.
+  await caret(B, 0);
   await type(B, "#body", "Ship the CRDT showcase this week.");
-  await sleep(1900);
+  await blur(B);
+  await sleep(1600);
 
-  // 3. Edits keep flowing BOTH ways — no lock, no turn-taking. Alice revises the
-  // title while Bob's body stands; Bob appends a line while Alice's title stands.
-  await A().locator("#title").click();
-  await A().locator("#title").press("ControlOrMeta+a");
-  await type(A, "#title", "Launch plan — v2");
-  await sleep(1500);
+  // 3. THE RGA WIN: Alice edits the SAME body field — appends a line. Under
+  // last-writer-wins this would clobber Bob's text; the RGA merges them.
+  await caret(A, "end");
+  await type(A, "#body", "\nOwner: Alice · Reviewer: Bob.");
+  await blur(A);
+  await sleep(1600);
 
-  await B().locator("#body").click();
-  await B().locator("#body").press("End");
-  await type(B, "#body", "\nOwner: Bob · Reviewer: Alice.");
-  await sleep(2400);
+  // 4. Bob edits the same body again — prepends at the start, Alice's line stands.
+  await caret(B, 0);
+  await type(B, "#body", "DRAFT — ");
+  await blur(B);
+  await sleep(2200);
 
-  // hold on the converged doc — both panes show the identical merged document
+  // hold on the converged doc — both panes show the identical merged body,
+  // and both History rails show the per-revision diffs.
   await sleep(1800);
 } finally {
   await ctx.close();

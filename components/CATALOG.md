@@ -19,7 +19,7 @@ capabilities, so anything marked reusable drops into another app via
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 64 KiB | ✓ |
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 220 KiB | ✓ |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
-| **crdt** | `crdt:merge@0.1.0` | pure compute | — | 208 KiB | ✓ |
+| **crdt** | `crdt:merge@0.1.0` | pure compute | — | 214 KiB | ✓ |
 | **csv** | `csv:codec@0.1.0` | pure compute | — | 58 KiB | ✓ |
 | **csv-report** | `report:app@0.1.0` | csv:codec/codec, paginate:cursor/cursors, records:store/store, validate:schema/validator | — | 173 KiB | ✓ |
 | **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 214 KiB | app/demo |
@@ -65,7 +65,7 @@ capabilities, so anything marked reusable drops into another app via
 | **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
 | **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 188 KiB | ✓ |
 | **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 91 KiB | ✓ |
-| **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 172 KiB | ✓ |
+| **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 177 KiB | ✓ |
 | **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 155 KiB | ✓ |
 | **search-index** | `search:index@0.1.0` | kv:store | — | 98 KiB | ✓ |
 | **secrets-vault** | `secrets:vault@0.1.0` | config/store, kv:store | `master-key` | 96 KiB | ✓ |

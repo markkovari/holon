@@ -54,6 +54,38 @@ fn op(doc: &str, field: &str, value: &str, ts: u64, replica: &str) -> (u16, Valu
     )
 }
 
+/// Id-anchored body insert (an rga op).
+fn body_insert(doc: &str, after: &str, text: &str, ts: u64, replica: &str, seq: u64) -> (u16, Value) {
+    req(
+        "POST",
+        &format!("/api/docs/{doc}/ops"),
+        Some(json!({ "field": "body", "kind": "insert", "after": after, "text": text, "ts": ts, "replica": replica, "seq": seq })),
+    )
+}
+
+fn body_delete(doc: &str, ids: Vec<String>) -> (u16, Value) {
+    req(
+        "POST",
+        &format!("/api/docs/{doc}/ops"),
+        Some(json!({ "field": "body", "kind": "delete", "ids": ids })),
+    )
+}
+
+/// The body's rga elements as (id, ch) pairs, in order.
+fn elems(doc: &str) -> Vec<(String, String)> {
+    let (_, d) = req("GET", &format!("/api/docs/{doc}"), None);
+    d["body_elems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["id"].as_str().unwrap().to_string(), e["ch"].as_str().unwrap().to_string()))
+        .collect()
+}
+
+fn id_of_char(doc: &str, ch: &str) -> String {
+    elems(doc).into_iter().find(|(_, c)| c == ch).map(|(id, _)| id).expect("char present")
+}
+
 fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let bin = root.join("host/target/release/vet-host");
@@ -81,16 +113,16 @@ fn start_host() -> HostGuard {
 fn concurrent_edits_merge_and_stream_live() {
     let _host = start_host();
 
-    // ===== different fields: both edits survive the merge =====================
+    // ===== title (LWW register) + body (RGA sequence) both live on one doc ====
     let (s, _) = op("readme", "title", "Design spec", 100, "alice");
     assert_eq!(s, 200);
-    let (s, d) = op("readme", "body", "Hello world", 100, "bob");
+    let (s, d) = body_insert("readme", "", "Hello world", 100, "bob", 0);
     assert_eq!(s, 200, "{d}");
     let (_, doc) = req("GET", "/api/docs/readme", None);
     assert_eq!(doc["fields"]["title"], "Design spec", "title survived: {doc}");
     assert_eq!(doc["fields"]["body"], "Hello world", "body survived: {doc}");
 
-    // ===== same field: higher (ts, replica) wins, even arriving LATER =========
+    // ===== title: higher (ts, replica) wins, even arriving LATER ==============
     op("readme", "title", "Design proposal", 200, "bob"); // newer
     op("readme", "title", "Stale rename", 150, "carol"); // older ts, sent AFTER
     let (_, doc) = req("GET", "/api/docs/readme", None);
@@ -99,9 +131,27 @@ fn concurrent_edits_merge_and_stream_live() {
         "the newer edit must win regardless of arrival order: {doc}"
     );
 
-    // a brand-new doc is empty
+    // ===== the headline: concurrent typing in the SAME field INTERLEAVES ======
+    // Build "AC", then two replicas insert AFTER 'A' concurrently (id-anchored,
+    // so a concurrent insert can't shift where the other lands). Both survive,
+    // deterministic order (higher ts sorts first): A Y X C.
+    body_insert("doc1", "", "AC", 1, "seed", 0);
+    let a = id_of_char("doc1", "A");
+    body_insert("doc1", &a, "X", 2, "alice", 0);
+    body_insert("doc1", &a, "Y", 3, "bob", 0); // later ts -> sorts before X
+    let (_, doc) = req("GET", "/api/docs/doc1", None);
+    assert_eq!(doc["fields"]["body"], "AYXC", "concurrent inserts interleave: {doc}");
+
+    // id-anchored delete removes exactly that character
+    let c = id_of_char("doc1", "C");
+    body_delete("doc1", vec![c]);
+    let (_, doc) = req("GET", "/api/docs/doc1", None);
+    assert_eq!(doc["fields"]["body"], "AYX", "delete by id: {doc}");
+
+    // a brand-new doc is empty (no title, empty body)
     let (_, doc) = req("GET", "/api/docs/empty", None);
-    assert_eq!(doc["fields"], json!({}), "unedited doc is empty: {doc}");
+    assert_eq!(doc["fields"]["body"], "", "unedited body is empty: {doc}");
+    assert!(doc["fields"].get("title").is_none(), "no title yet: {doc}");
 
     // ===== history: per-revision unified diffs (composes diff:text) ===========
     let (s, h) = req("GET", "/api/docs/readme/history", None);
