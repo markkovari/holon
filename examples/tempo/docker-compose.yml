@@ -1,0 +1,43 @@
+# tempo as a single container, pointed at ANY Redis via REDIS_URL — a hosted one
+# (Upstash, DO Managed Valkey: use rediss:// for TLS) or the optional local
+# Valkey below. No wasmCloud, no TLS termination here — a POC that fits a $6
+# droplet. (For HTTPS later, front :8080 with a DO Load Balancer or Cloudflare.)
+#
+# Prereqs to BUILD locally (produce the artifacts the image copies in):
+#   just compose-tempo && just build-tempo-ui
+#
+# Run against a hosted Redis (the usual case):
+#   cp examples/tempo/.env.example examples/tempo/.env   # set REDIS_URL=rediss://...
+#   docker compose -f examples/tempo/docker-compose.yml --env-file examples/tempo/.env up -d --build
+#
+# Or run a bundled local Valkey instead of a hosted one:
+#   docker compose ... --profile local-redis up -d --build
+#   (and set REDIS_URL=redis://redis:6379 in .env)
+#
+# On a droplet you usually DON'T build: set TEMPO_IMAGE=ghcr.io/<you>/tempo-app:TAG.
+services:
+  tempo:
+    image: ${TEMPO_IMAGE:-tempo:local}
+    build:
+      context: ../..
+      dockerfile: examples/tempo/Dockerfile
+    environment:
+      # the full connection URL — hosted (rediss://default:PW@host:6379) or the
+      # bundled local Valkey (redis://redis:6379).
+      REDIS_URL: "${REDIS_URL:?set REDIS_URL in .env, e.g. rediss://default:PW@your-host.upstash.io:6379}"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # Optional: a local Redis, only if you're NOT using a hosted one. Enable with
+  # `--profile local-redis` and set REDIS_URL=redis://redis:6379.
+  redis:
+    image: valkey/valkey:8-alpine
+    profiles: ["local-redis"]
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-data:

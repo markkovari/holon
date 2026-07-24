@@ -1,0 +1,12 @@
+# keep the docker context small: exclude build trees + deps, keep the two
+# prebuilt artifacts the tempo image needs (components/target/*.composed.wasm
+# and examples/tempo/dist).
+**/node_modules
+host/target
+components/target/wasm32-wasip1
+components/target/*/deps
+examples/*/target
+examples/tempo/ui
+tools/screencast/videos
+tools/screencast/node_modules
+.git

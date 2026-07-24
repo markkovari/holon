@@ -84,6 +84,59 @@ just e2e-tempo      # the auth + membership + aggregation + timer e2e
 The frontend lives in `examples/tempo/ui` (Vite + React + shadcn/ui + recharts);
 `just host-tempo` builds it to `examples/tempo/dist`, which the host serves.
 
+## Deploy — the simple way (one process / one container)
+
+You don't need wasmCloud to run this. The repo's **`vet-host`** is a single
+binary that serves `wasi:http`, the SPA (`--static-dir`), and `wasi:keyvalue`
+in-process — with a built-in **Redis** backend. The whole app is one command:
+
+```bash
+vet-host --component tempo.composed.wasm --addr 0.0.0.0:8080 \
+  --kv redis --redis-url rediss://default:PW@host:25061 --static-dir dist
+```
+
+Package that as **one image** (`just docker-tempo` → `examples/tempo/Dockerfile`)
+and run it anywhere:
+
+```bash
+docker run -p 8080:8080 -e REDIS_URL='rediss://default:PW@host:25061' tempo
+```
+
+The container serves the API *and* the SPA on the same origin (no CORS, no proxy)
+and talks to a managed Redis/Valkey over TLS — the only moving parts are the
+image and the database. See `examples/tempo/Dockerfile` for the DigitalOcean
+droplet / App Platform recipe.
+
+## Publish the component (for the wasmCloud path)
+
+The composed `tempo` component (`components/target/tempo_domain.composed.wasm` —
+tempo + auth-guard + record-store) is self-contained; its only runtime imports
+are `wasi:keyvalue / http / config / clocks / random`, bound at deploy time. So
+storage (Redis, NATS, in-memory, …) is a **link choice**, not code. If you'd
+rather run it on a wasmCloud lattice (scale, multi-tenant, live linking):
+
+Publish it to GHCR as a **public** OCI artifact (the wasmCloud-native pull path):
+
+```bash
+gh auth refresh -s write:packages     # once
+just push-tempo-ghcr 0.1.0            # gh mints the token, wash does the OCI push
+# make the package Public once (GitHub → Packages → tempo → visibility)
+```
+
+or let CI do it on a `tempo-v*` tag ([`.github/workflows/tempo-ghcr.yaml`](../.github/workflows/tempo-ghcr.yaml)).
+Then any wasmCloud host pulls it anonymously and links storage to, e.g., a
+Redis/Valkey provider:
+
+```bash
+wash start component oci://ghcr.io/<owner>/tempo:0.1.0 tempo
+wash start provider ghcr.io/wasmcloud/keyvalue-redis:0.28.0 kv
+wash config put redis URL=rediss://default:<pw>@<valkey-host>:25061
+wash link put tempo kv wasi keyvalue --interface store --interface atomics --interface batch --target-config redis
+```
+
+DOCR can't host it publicly (private-only); GHCR public matches a public repo and
+needs no pull credentials on the host.
+
 ## Rungs left
 
 - **Admin-managed roles** — drop self-assign at register; an admin promotes to

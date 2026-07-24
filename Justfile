@@ -78,6 +78,7 @@ arena_wasm := rel / "arena_domain.wasm"
 arena_composed := "components/target/arena_domain.composed.wasm"
 tempo_wasm := rel / "tempo_domain.wasm"
 tempo_composed := "components/target/tempo_domain.composed.wasm"
+ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
@@ -282,6 +283,26 @@ host-tempo: compose-tempo build-tempo-ui
 e2e-tempo: compose-tempo
     cd host && cargo build --release --bin vet-host
     cd examples/tempo && cargo test --release
+
+# Publish the composed tempo component to GHCR as a public OCI artifact — the
+# wasmCloud-native pull path. `gh` mints the token, `wash` does the OCI push.
+# One-time setup:
+#   gh auth refresh -s write:packages        # add the packages scope to gh
+# After the FIRST push, make it public once: GitHub → your profile → Packages →
+# tempo → Package settings → Visibility → Public (or "Connect repository").
+# Then any wasmCloud host pulls it anonymously:
+#   wash start component oci://ghcr.io/{{ghcr_owner}}/tempo:<version> tempo
+push-tempo-ghcr version="0.1.0": compose-tempo
+    wash oci push ghcr.io/{{ghcr_owner}}/tempo:{{version}} {{tempo_composed}} \
+      --user {{ghcr_owner}} --password "$(gh auth token)"
+    @echo "pushed oci://ghcr.io/{{ghcr_owner}}/tempo:{{version}} (set the package Public once)"
+
+# Build ONE self-contained image (vet-host + composed component + built SPA).
+# No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one
+# process. Run: docker run -p 8080:8080 -e REDIS_URL=rediss://... tempo
+docker-tempo: compose-tempo build-tempo-ui
+    docker build -f examples/tempo/Dockerfile -t tempo .
+    @echo "built image 'tempo' — docker run -p 8080:8080 -e REDIS_URL=rediss://user:pw@host:25061 tempo"
 
 # Compose arena-domain (ARENA.md — multiplayer Connect Four) with records +
 # id-generate. Remaining imports are WASI.

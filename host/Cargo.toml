@@ -25,7 +25,9 @@ http-body-util = "0.1"
 bytes = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-redis = "0.27"
+# TLS (rustls + webpki roots) so `--kv redis` can dial managed `rediss://`
+# endpoints (DO Managed Valkey, Upstash, …) from a minimal container.
+redis = { version = "0.27", features = ["tls-rustls", "tls-rustls-webpki-roots"] }
 nats = "0.25"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

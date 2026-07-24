@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
@@ -228,9 +228,14 @@ function CalendarTab({ projects, cats, onChange }:
   { projects: Project[]; cats: Category[]; onChange: () => void }) {
   const [date, setDate] = useState(today());
   const [items, setItems] = useState<Entry[]>([]);
-  const [add, setAdd] = useState<{ at: number } | null>(null);
-  const [proj, setProj] = useState(""); const [cat, setCat] = useState(""); const [mins, setMins] = useState("60");
+  // add.at = minutes-from-midnight (start); add.mins = duration.
+  const [add, setAdd] = useState<{ at: number; mins: number } | null>(null);
+  // drag.start / drag.cur = minutes-from-START while dragging out a range.
+  const [drag, setDrag] = useState<{ start: number; cur: number } | null>(null);
+  const [proj, setProj] = useState(""); const [cat, setCat] = useState("");
+  const gridRef = useRef<HTMLDivElement>(null);
   const projColor = (id: string) => COLORS[Math.max(0, projects.findIndex((p) => p.id === id)) % COLORS.length];
+  const SPAN = (END_HR - START_HR) * 60;
 
   async function load() { setItems((await api<{ entries: Entry[] }>(`/entries?from=${date}&to=${date}`)).data.entries || []); }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [date]);
@@ -240,20 +245,51 @@ function CalendarTab({ projects, cats, onChange }:
   const scheduled = items.filter((e) => typeof e.start === "number" && e.start >= 0);
   const unscheduled = items.filter((e) => !(typeof e.start === "number" && e.start >= 0));
 
-  function openAt(e: React.MouseEvent) {
-    const y = e.nativeEvent.offsetY;
-    const hour = Math.min(END_HR - 1, START_HR + Math.floor(y / ROW));
-    setAdd({ at: hour * 60 });
+  // pointer Y -> minutes-from-START, snapped to 5-minute steps.
+  const snapY = (clientY: number) => {
+    const rect = gridRef.current!.getBoundingClientRect();
+    const m = Math.round(((clientY - rect.top) / ROW * 60) / 5) * 5;
+    return Math.min(SPAN, Math.max(0, m));
+  };
+
+  // Drag to sweep out a range (5-min steps); a plain tap = a 60-min block.
+  function onGridPointerDown(e: React.PointerEvent) {
+    if ((e.target as HTMLElement).closest("button")) return; // let a block handle its own click
+    const start = snapY(e.clientY);
+    setAdd(null);
+    setDrag({ start, cur: start });
+    const move = (ev: PointerEvent) => setDrag({ start, cur: snapY(ev.clientY) });
+    const up = (ev: PointerEvent) => {
+      const c = snapY(ev.clientY);
+      const a = Math.min(start, c), b = Math.max(start, c);
+      const mins = b - a < 5 ? 60 : b - a; // no real drag -> default hour
+      setAdd({ at: START_HR * 60 + a, mins });
+      setDrag(null);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   }
+
   async function save() {
     if (!add || !proj || !cat) return;
-    await api("/entries", "POST", { project: proj, category: cat, minutes: Number(mins) || 60, day: date, start: add.at });
+    await api("/entries", "POST", { project: proj, category: cat, minutes: add.mins, day: date, start: add.at });
     setAdd(null); await load(); onChange();
   }
   async function del(e: Entry) {
     if (!confirm(`Delete ${e.project_name} · ${e.category_name} (${hrs(e.minutes)})?`)) return;
     await api(`/entries/${e.id}`, "DELETE"); await load(); onChange();
   }
+
+  // the preview block (live during drag, or the pending add).
+  const ghost = drag
+    ? { top: Math.min(drag.start, drag.cur) / 60 * ROW, h: Math.max(8, Math.abs(drag.cur - drag.start) / 60 * ROW),
+        label: `${hhmm(START_HR * 60 + Math.min(drag.start, drag.cur))}–${hhmm(START_HR * 60 + Math.max(drag.start, drag.cur))}` }
+    : add
+      ? { top: (add.at / 60 - START_HR) * ROW, h: Math.max(8, add.mins / 60 * ROW),
+          label: `${hhmm(add.at)}–${hhmm(add.at + add.mins)}` }
+      : null;
 
   return (
     <div className="grid gap-4">
@@ -264,19 +300,20 @@ function CalendarTab({ projects, cats, onChange }:
           <Button variant="outline" size="icon" onClick={() => setDate(shiftDay(date, 1))}>›</Button>
           <Button variant="ghost" onClick={() => setDate(today())}>Today</Button>
           <div className="flex-1" />
-          <span className="text-sm text-muted-foreground">tap a slot to add</span>
+          <span className="text-sm text-muted-foreground">tap for 1h · drag to set the range</span>
         </CardContent>
       </Card>
 
       {add && (
         <Card className="border-primary">
-          <CardHeader><CardTitle>Add at {hhmm(add.at)}</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Add {hhmm(add.at)}–{hhmm(add.at + add.mins)} · {hrs(add.mins)}</CardTitle></CardHeader>
           <CardContent className="flex flex-wrap items-end gap-2">
             <Select value={proj} onValueChange={setProj}><SelectTrigger className="w-36"><SelectValue placeholder="project" /></SelectTrigger>
               <SelectContent>{projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select>
             <Select value={cat} onValueChange={setCat}><SelectTrigger className="w-36"><SelectValue placeholder="category" /></SelectTrigger>
               <SelectContent>{cats.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent></Select>
-            <Input className="w-24" type="number" min={1} value={mins} onChange={(e) => setMins(e.target.value)} />
+            <Input className="w-24" type="number" min={5} step={5} value={add.mins}
+              onChange={(e) => setAdd({ at: add.at, mins: Math.max(5, Number(e.target.value) || 5) })} />
             <Button onClick={save}>Save</Button>
             <Button variant="ghost" onClick={() => setAdd(null)}>Cancel</Button>
           </CardContent>
@@ -303,10 +340,16 @@ function CalendarTab({ projects, cats, onChange }:
                 <div key={i} style={{ height: ROW }} className="-mt-2 pr-2 text-right text-xs text-muted-foreground">{START_HR + i}:00</div>
               ))}
             </div>
-            <div data-testid="daygrid" className="relative flex-1 cursor-pointer rounded-md border" style={{ height: (END_HR - START_HR) * ROW }} onClick={openAt}>
+            <div ref={gridRef} data-testid="daygrid"
+              className="relative flex-1 cursor-pointer touch-none select-none rounded-md border"
+              style={{ height: (END_HR - START_HR) * ROW }} onPointerDown={onGridPointerDown}>
               {Array.from({ length: END_HR - START_HR }, (_, i) => (
                 <div key={i} style={{ top: i * ROW, height: ROW }} className="absolute inset-x-0 border-t border-border/60" />
               ))}
+              {ghost && (
+                <div className="pointer-events-none absolute inset-x-1 z-10 rounded-md border-2 border-dashed border-primary bg-primary/20 px-2 py-0.5 text-xs font-medium text-primary"
+                  style={{ top: ghost.top, height: ghost.h }}>{ghost.label}</div>
+              )}
               {scheduled.map((e) => {
                 const top = Math.max(0, ((e.start! / 60) - START_HR) * ROW);
                 const h = Math.max(22, (e.minutes / 60) * ROW - 2);
