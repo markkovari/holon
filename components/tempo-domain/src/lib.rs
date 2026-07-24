@@ -536,6 +536,19 @@ fn edit_entry(request: &IncomingRequest, id: &str) -> Outcome {
             None => return Outcome::Err(422, "unknown category".into()),
         }
     }
+    if let Some(project) = b["project"].as_str() {
+        match name_map(PROJECTS).get(project) {
+            Some(n) => {
+                // moving an entry to a project the caller can't log to is refused.
+                if !can_log(&p, project) {
+                    return Outcome::Err(403, "you are not a member of that project".into());
+                }
+                d["project"] = json!(project);
+                d["project_name"] = json!(n);
+            }
+            None => return Outcome::Err(422, "unknown project".into()),
+        }
+    }
     if let Some(note) = b["note"].as_str() {
         d["note"] = json!(note);
     }

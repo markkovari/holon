@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
-import { Clock, Play, Square, Trash2, Plus, LogOut, Users } from "lucide-react";
+import { Clock, Play, Square, Plus, LogOut, Users } from "lucide-react";
 import { api, setToken, hasToken, type Me, type Project, type Category, type Entry, type Report, type Timer } from "./api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -143,6 +143,7 @@ function LogTab({ projects, cats, onChange, entries }:
   const [mins, setMins] = useState("30");
   const [timer, setTimer] = useState<Timer | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [editing, setEditing] = useState<Entry | null>(null);
 
   useEffect(() => { if (!proj && projects[0]) setProj(projects[0].id); }, [projects]);
   useEffect(() => { if (!cat && cats[0]) setCat(cats[0].id); }, [cats]);
@@ -166,14 +167,7 @@ function LogTab({ projects, cats, onChange, entries }:
       if (r.ok) setTimer(r.data);
     }
   }
-  async function del(id: string) { await api(`/entries/${id}`, "DELETE"); onChange(); }
-  async function edit(e: Entry) {
-    const v = prompt(`Minutes for "${e.project_name} · ${e.category_name}"`, String(e.minutes));
-    if (!v) return;
-    await api(`/entries/${e.id}`, "PATCH", { minutes: Number(v) });
-    onChange();
-  }
-  const clock = `${String(Math.floor(elapsed / 3600)).padStart(2, "0")}:${String(Math.floor(elapsed / 60) % 60).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  const clock =`${String(Math.floor(elapsed / 3600)).padStart(2, "0")}:${String(Math.floor(elapsed / 60) % 60).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
 
   return (
     <div className="grid gap-4">
@@ -200,17 +194,20 @@ function LogTab({ projects, cats, onChange, entries }:
         </CardContent>
       </Card>
 
+      {editing && <EntryEditor entry={editing} projects={projects} cats={cats}
+        onDone={() => { setEditing(null); onChange(); }} />}
+
       <Card>
         <CardHeader><CardTitle>Recent entries</CardTitle></CardHeader>
         <CardContent className="grid gap-1.5">
           {entries.length === 0 && <p className="text-sm text-muted-foreground">No time logged in this range yet.</p>}
           {entries.slice(0, 12).map((e) => (
-            <div key={e.id} className="flex items-center gap-3 rounded-md border px-3 py-2 text-sm">
+            <button key={e.id} onClick={() => setEditing(e)}
+              className="flex items-center gap-3 rounded-md border px-3 py-2 text-left text-sm hover:border-primary">
               <span className="w-16 shrink-0 text-muted-foreground tabular-nums">{e.day.slice(5)}</span>
               <span className="min-w-0 flex-1 truncate"><b>{e.project_name}</b> · {e.category_name}</span>
-              <button className="tabular-nums font-medium hover:underline" onClick={() => edit(e)}>{hrs(e.minutes)}</button>
-              <Button variant="ghost" size="icon" className="size-7" onClick={() => del(e.id)}><Trash2 className="size-4 text-destructive" /></Button>
-            </div>
+              <span className="tabular-nums font-medium">{hrs(e.minutes)}</span>
+            </button>
           ))}
         </CardContent>
       </Card>
@@ -224,6 +221,43 @@ function shiftDay(iso: string, delta: number) {
   const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + delta); return d.toISOString().slice(0, 10);
 }
 
+// Edit or delete one entry — shared by the Log list and the Calendar. A blank
+// time unschedules it (removes it from the grid).
+function EntryEditor({ entry, projects, cats, onDone }:
+  { entry: Entry; projects: Project[]; cats: Category[]; onDone: () => void }) {
+  const [proj, setProj] = useState(entry.project);
+  const [cat, setCat] = useState(entry.category);
+  const [mins, setMins] = useState(entry.minutes);
+  const scheduled = typeof entry.start === "number" && entry.start >= 0;
+  const [time, setTime] = useState(scheduled ? hhmm(entry.start!) : "");
+  async function save() {
+    const start = time ? Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5)) : -1;
+    await api(`/entries/${entry.id}`, "PATCH", { project: proj, category: cat, minutes: Math.max(5, mins), start });
+    onDone();
+  }
+  return (
+    <Card className="border-primary">
+      <CardHeader><CardTitle>Edit entry · {entry.day}</CardTitle></CardHeader>
+      <CardContent className="flex flex-wrap items-end gap-2">
+        <label className="grid gap-1 text-xs text-muted-foreground">Project
+          <Select value={proj} onValueChange={setProj}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+            <SelectContent>{projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></label>
+        <label className="grid gap-1 text-xs text-muted-foreground">Category
+          <Select value={cat} onValueChange={setCat}><SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+            <SelectContent>{cats.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent></Select></label>
+        <label className="grid gap-1 text-xs text-muted-foreground">Minutes
+          <Input className="w-24" type="number" min={5} step={5} value={mins}
+            onChange={(e) => setMins(Math.max(5, Number(e.target.value) || 5))} /></label>
+        <label className="grid gap-1 text-xs text-muted-foreground">Time (blank = unscheduled)
+          <Input className="w-28" type="time" value={time} onChange={(e) => setTime(e.target.value)} /></label>
+        <Button onClick={save}>Save</Button>
+        <Button variant="destructive" onClick={async () => { await api(`/entries/${entry.id}`, "DELETE"); onDone(); }}>Delete</Button>
+        <Button variant="ghost" onClick={onDone}>Cancel</Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 function CalendarTab({ projects, cats, onChange }:
   { projects: Project[]; cats: Category[]; onChange: () => void }) {
   const [date, setDate] = useState(today());
@@ -232,6 +266,7 @@ function CalendarTab({ projects, cats, onChange }:
   const [add, setAdd] = useState<{ at: number; mins: number } | null>(null);
   // drag.start / drag.cur = minutes-from-START while dragging out a range.
   const [drag, setDrag] = useState<{ start: number; cur: number } | null>(null);
+  const [editing, setEditing] = useState<Entry | null>(null);
   const [proj, setProj] = useState(""); const [cat, setCat] = useState("");
   const gridRef = useRef<HTMLDivElement>(null);
   const projColor = (id: string) => COLORS[Math.max(0, projects.findIndex((p) => p.id === id)) % COLORS.length];
@@ -256,7 +291,7 @@ function CalendarTab({ projects, cats, onChange }:
   function onGridPointerDown(e: React.PointerEvent) {
     if ((e.target as HTMLElement).closest("button")) return; // let a block handle its own click
     const start = snapY(e.clientY);
-    setAdd(null);
+    setAdd(null); setEditing(null);
     setDrag({ start, cur: start });
     const move = (ev: PointerEvent) => setDrag({ start, cur: snapY(ev.clientY) });
     const up = (ev: PointerEvent) => {
@@ -277,10 +312,7 @@ function CalendarTab({ projects, cats, onChange }:
     await api("/entries", "POST", { project: proj, category: cat, minutes: add.mins, day: date, start: add.at });
     setAdd(null); await load(); onChange();
   }
-  async function del(e: Entry) {
-    if (!confirm(`Delete ${e.project_name} · ${e.category_name} (${hrs(e.minutes)})?`)) return;
-    await api(`/entries/${e.id}`, "DELETE"); await load(); onChange();
-  }
+  const openEdit = (e: Entry) => { setAdd(null); setEditing(e); };
 
   // the preview block (live during drag, or the pending add).
   const ghost = drag
@@ -304,7 +336,10 @@ function CalendarTab({ projects, cats, onChange }:
         </CardContent>
       </Card>
 
-      {add && (
+      {editing && <EntryEditor entry={editing} projects={projects} cats={cats}
+        onDone={() => { setEditing(null); load(); onChange(); }} />}
+
+      {add && !editing && (
         <Card className="border-primary">
           <CardHeader><CardTitle>Add {hhmm(add.at)}–{hhmm(add.at + add.mins)} · {hrs(add.mins)}</CardTitle></CardHeader>
           <CardContent className="flex flex-wrap items-end gap-2">
@@ -325,7 +360,7 @@ function CalendarTab({ projects, cats, onChange }:
           <CardHeader><CardTitle>Unscheduled</CardTitle></CardHeader>
           <CardContent className="flex flex-wrap gap-2">
             {unscheduled.map((e) => (
-              <button key={e.id} onClick={() => del(e)} className="rounded-md px-2 py-1 text-xs font-medium text-white"
+              <button key={e.id} onClick={() => openEdit(e)} className="rounded-md px-2 py-1 text-xs font-medium text-white"
                 style={{ background: projColor(e.project) }}>{e.project_name} · {e.category_name} · {hrs(e.minutes)}</button>
             ))}
           </CardContent>
@@ -354,7 +389,7 @@ function CalendarTab({ projects, cats, onChange }:
                 const top = Math.max(0, ((e.start! / 60) - START_HR) * ROW);
                 const h = Math.max(22, (e.minutes / 60) * ROW - 2);
                 return (
-                  <button key={e.id} onClick={(ev) => { ev.stopPropagation(); del(e); }}
+                  <button key={e.id} onClick={(ev) => { ev.stopPropagation(); openEdit(e); }}
                     className="absolute inset-x-1 overflow-hidden rounded-md px-2 py-1 text-left text-xs font-medium text-white shadow"
                     style={{ top, height: h, background: projColor(e.project) }}>
                     <div className="truncate">{e.project_name} · {e.category_name}</div>
