@@ -95,8 +95,17 @@ pub trait GateAgent {
 pub trait BatchAgent {
     fn new(key: String) -> Self;
     #[endpoint(post = "/submit/{item}")] fn submit(&mut self, item: String) -> String;
+    fn register(&mut self, item: String, promise: PromiseId);  // RPC: bind a waiter's promise
     #[endpoint(post = "/flush")]         fn flush(&mut self) -> String;
     #[endpoint(get = "/stats")]          fn stats(&self) -> String;
+}
+
+// A durable, per-(key,item) submitter that BLOCKS until its batch runs:
+#[agent_definition(mount = "/submit/{key}/{item}")]
+pub trait SubmitAgent {
+    fn new(key: String, item: String) -> Self;
+    #[endpoint(post = "/go")]
+    async fn go(&mut self) -> String;   // create a promise, register it, await it
 }
 ```
 
@@ -110,7 +119,16 @@ throttle    (GCRA 5/s, burst 2): 12 concurrent
   trial 0..2: 3/12 admitted -> EXACT (3)
 batch       (coalesce, max 4): 10 concurrent submits
   trial 0..2: total=10, flushed=10, pending=0 -> EXACT (no lost/dup)
+backpressure(promise): 3 submits BLOCK, the 4th fills the batch -> all 4 release
+  3 blocked while batch not full: True; 4th released all 4 with results: True
 ```
+
+**Backpressure** is the piece a shared store can't do at all: `SubmitAgent.go`
+creates a Golem **promise**, hands it to the aggregator, and **durably suspends**
+(consuming nothing, surviving restarts) until the batch flushes and completes it.
+The owner-awaits / other-worker-completes split is the documented promise pattern.
+Three submits block; the fourth fills the batch and all four wake together with
+their results — real "wait for my batch to run", not polling.
 
 Same algorithms, same load; the difference is *where the state lives*. Moving
 `gate` onto Golem was flipping `records:store` for the worker's own durable
@@ -145,6 +163,6 @@ just gate-golem   # all three patterns, exact under concurrent bursts
 - **Exact limiter without Golem** — a fixed-window counter over `wasi:keyvalue`
   atomic `increment` is exact (but less flexible than a bucket); a nice
   side-by-side with the CAS version.
-- **Backpressure with promises** — the batch aggregator flushes atomically today;
-  give each submit a Golem **promise** the caller awaits, completed on flush, so
-  the submitter blocks for its result instead of polling `stats`.
+- **Age-based flush on Golem** — self-schedule the aggregator (Golem's scheduled
+  invocation) to flush a partial batch after `max_age_ms`, completing waiters —
+  today a partial batch waits for `flush` or the next fill.

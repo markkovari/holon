@@ -1,26 +1,36 @@
-//! The `gate` request batcher as a REAL Golem agent — the exact-coalescing
-//! counterpart to the shared-store batcher in `gate-domain`.
+//! The `gate` request batcher as REAL Golem agents — exact coalescing AND true
+//! promise backpressure, the two things the shared-store `gate-domain` can't do.
 //!
-//! `#[agent_definition(mount = "/batch/{key}")]` makes **one durable worker per
-//! key**. Submits are serialized by the worker, so the buffer never loses or
-//! double-counts an item and the flush is inherently atomic — no revision CAS,
-//! no re-bucketing under a race (which the shared-store version suffers). Fire N
-//! concurrent submits and the worker accounts for EXACTLY N (`stats.total == N`).
+//! `BatchAgent` (`mount = "/batch/{key}"`) is one durable aggregator worker per
+//! key. Submits are serialized by the worker, so the buffer never loses or
+//! double-counts an item and the flush is inherently atomic — no CAS, no
+//! re-bucketing under a race.
+//!
+//! Backpressure: `register` creates a **Golem promise** per item and returns it;
+//! the caller (an ephemeral `SubmitAgent`, below) awaits it and is *durably
+//! suspended* — consuming nothing — until the batch flushes and the aggregator
+//! completes every pending promise with its result. Real "block until my batch
+//! runs", not polling.
 
-use golem_rust::{agent_definition, agent_implementation, endpoint};
+use golem_rust::{agent_definition, agent_implementation, complete_promise, endpoint, PromiseId};
 
 /// A per-key batch that coalesces submits and flushes on `MAX_SIZE`.
 #[agent_definition(mount = "/batch/{key}")]
 pub trait BatchAgent {
     fn new(key: String) -> Self;
 
-    /// Append `item`; auto-flush when the buffer reaches `MAX_SIZE`.
-    /// Returns `{size, flushed, total}`.
+    /// Fire-and-forget append; auto-flush at `MAX_SIZE`. Returns
+    /// `{size, flushed, total}`.
     #[endpoint(post = "/submit/{item}")]
     fn submit(&mut self, item: String) -> String;
 
-    /// Force-flush a partial batch (the age-timer analog). Returns
-    /// `{flushed, flushed_total}`.
+    /// Append `item` bound to the caller's `promise`; the promise is completed
+    /// with the item's result when this batch flushes (backpressure). Called via
+    /// RPC by a SubmitAgent (which owns + awaits the promise).
+    fn register(&mut self, item: String, promise: PromiseId);
+
+    /// Force-flush a partial batch (the age-timer analog), completing any pending
+    /// promises. Returns `{flushed, flushed_total}`.
     #[endpoint(post = "/flush")]
     fn flush(&mut self) -> String;
 
@@ -33,9 +43,10 @@ const MAX_SIZE: usize = 4;
 
 struct BatchImpl {
     _key: String,
-    items: Vec<String>,
-    total: u32,         // items ever submitted
-    flushed_total: u32, // items ever flushed
+    /// buffered items; `Some(promise)` for a caller awaiting backpressure.
+    pending: Vec<(String, Option<PromiseId>)>,
+    total: u32,
+    flushed_total: u32,
 }
 
 /// The "downstream work" per item — an uppercase makes coalescing visible.
@@ -44,12 +55,17 @@ fn process(item: &str) -> String {
 }
 
 impl BatchImpl {
+    /// One batched "downstream call" for the whole buffer; complete any waiter
+    /// promises with their results. Returns the number flushed.
     fn drain(&mut self) -> usize {
-        let n = self.items.len();
-        // one batched "downstream call" for the whole buffer.
-        let _results: Vec<String> = self.items.iter().map(|s| process(s)).collect();
+        let n = self.pending.len();
+        for (item, promise) in std::mem::take(&mut self.pending) {
+            let out = process(&item);
+            if let Some(pid) = promise {
+                complete_promise(&pid, out.as_bytes());
+            }
+        }
         self.flushed_total += n as u32;
-        self.items.clear();
         n
     }
 }
@@ -57,19 +73,25 @@ impl BatchImpl {
 #[agent_implementation]
 impl BatchAgent for BatchImpl {
     fn new(key: String) -> Self {
-        Self { _key: key, items: Vec::new(), total: 0, flushed_total: 0 }
+        Self { _key: key, pending: Vec::new(), total: 0, flushed_total: 0 }
     }
 
     fn submit(&mut self, item: String) -> String {
-        self.items.push(item);
+        self.pending.push((item, None));
         self.total += 1;
-        let flushed = if self.items.len() >= MAX_SIZE {
+        let flushed = self.pending.len() >= MAX_SIZE;
+        if flushed {
             self.drain();
-            true
-        } else {
-            false
-        };
-        format!("{{\"size\":{},\"flushed\":{},\"total\":{}}}", self.items.len(), flushed, self.total)
+        }
+        format!("{{\"size\":{},\"flushed\":{},\"total\":{}}}", self.pending.len(), flushed, self.total)
+    }
+
+    fn register(&mut self, item: String, promise: PromiseId) {
+        self.pending.push((item, Some(promise)));
+        self.total += 1;
+        if self.pending.len() >= MAX_SIZE {
+            self.drain(); // completes the callers' promises; their awaits return
+        }
     }
 
     fn flush(&mut self) -> String {
@@ -80,7 +102,7 @@ impl BatchAgent for BatchImpl {
     fn stats(&self) -> String {
         format!(
             "{{\"total\":{},\"flushed_total\":{},\"pending\":{}}}",
-            self.total, self.flushed_total, self.items.len()
+            self.total, self.flushed_total, self.pending.len()
         )
     }
 }

@@ -20,9 +20,11 @@ golem/                   # all three patterns as real Golem agents (one durable 
 `golem/` is the full trio as durable **Golem agents** — one single-writer worker
 per key, no CAS. `just gate-golem` deploys to a local Golem and fires concurrent
 bursts: rate limit admits **exactly** the capacity, throttle exactly `burst+1`,
-and the batch accounts for **every** submit (no loss/dup) — where the shared-store
-version below over-admits / re-buckets. Same math, different place for the state.
-(Reuses the Golem 1.5 binary from `providers/golem-workflow`.)
+the batch accounts for **every** submit (no loss/dup), and a `SubmitAgent`
+**durably blocks** on a Golem promise until its batch flushes (real
+backpressure) — where the shared-store version below over-admits / re-buckets and
+can only poll. Same math, different place for the state. (Reuses the Golem 1.5
+binary from `providers/golem-workflow`.)
 
 ## Run
 

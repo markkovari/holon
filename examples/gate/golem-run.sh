@@ -67,6 +67,21 @@ for t in range(3):
     good = s["total"] == 10 and s2["flushed_total"] == 10 and s2["pending"] == 0; ok = ok and good
     print(f"  trial {t}: total={s['total']}, flushed={s2['flushed_total']}, pending={s2['pending']} -> {'EXACT (no lost/dup)' if good else 'MISMATCH'}")
 
-print("\nEach key is a single-writer durable worker -> exact. (gate-domain's shared-store CAS over-admits / re-buckets.)")
+# 4) BACKPRESSURE — a Golem promise per submit: the caller durably suspends until
+#    its batch flushes. 3 submits block; the 4th fills the max-4 batch; all 4 wake.
+print("backpressure(promise): 3 submits BLOCK, the 4th fills the batch -> all 4 release")
+k = "bp"; res = {}; done = set()
+def go(i): res[i] = call(f"/submit/{k}/item{i}/go", "POST"); done.add(i)
+ts = [threading.Thread(target=go, args=(i,)) for i in range(3)]; [x.start() for x in ts]
+time.sleep(4)
+blocked = len(done) == 0
+ts.append(threading.Thread(target=go, args=(3,))); ts[-1].start()
+for x in ts: x.join()
+allret = len(done) == 4 and all((res.get(i) or "").find(f"ITEM{i}") >= 0 for i in range(4))
+ok = ok and blocked and allret
+print(f"  3 blocked while batch not full: {blocked}; 4th released all 4 with results: {allret}")
+
+print("\nEach key is a single-writer durable worker -> exact + real backpressure.")
+print("(gate-domain's shared-store CAS over-admits / re-buckets and can only poll, not block.)")
 raise SystemExit(0 if ok else 1)
 PY
