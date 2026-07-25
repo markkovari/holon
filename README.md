@@ -156,7 +156,14 @@ catalog and a bench round:
   project + category (or a live **pomodoro timer**), and see your contribution
   over week/month/year/custom ranges by project and category — managers see the
   whole team's distribution (by project + person). RBAC-scoped **reporting/charts**
-  over `auth-guard` (accounts + roles) + `records`. ([demo](docs/media/tempo.gif))
+  over `auth-guard` (accounts + roles) + `records`; exports the range to **PDF**
+  via `pdf:codec`. ([demo](docs/media/tempo.gif))
+- **[BOOKED.md](BOOKED.md)** — a **Calendly-lite booking service**: an owner
+  publishes resources + weekly availability, anyone books a free slot and
+  **can't double-book** — a `lock:mutex` lease guards the check-then-write, so
+  racing bookers get a `409` (an e2e fires 8 concurrent bookings; exactly one
+  wins). Recurring bookings via `rrule:recur`, `.ics` export via `ical:codec`,
+  confirmation via `email-render`. ([demo](docs/media/booked.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

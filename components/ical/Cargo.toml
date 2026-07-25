@@ -1,0 +1,20 @@
+[package]
+name = "ical"
+description = "RFC 5545 iCalendar (.ics) writer — VCALENDAR/VEVENT, folding, escaping, RRULE + VALARM (ical:codec)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "ical:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "ical"

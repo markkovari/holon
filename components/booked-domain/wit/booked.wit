@@ -1,0 +1,59 @@
+// booked:app — a Calendly-lite resource-booking service as a WIT HTTP component.
+//
+// An owner publishes bookable RESOURCES (a room, a person, a piece of kit) each
+// with weekly AVAILABILITY windows; anyone books a free slot. The headline is
+// correctness under concurrency: two people racing for the same slot must not
+// both win. A booking takes a lock:mutex lease on `book:{resource}:{day}` and
+// does its overlap-check-then-write inside that critical section, so the second
+// racer sees the conflict and gets a 409 — never a double-book.
+//
+// Recurring bookings ("every Tue for 8 weeks") expand via rrule:recur into
+// individual instances, each conflict-checked; the response reports which
+// instances booked and which clashed. Every booking renders a confirmation via
+// email:template, and any booking (or a resource's whole calendar) exports to
+// an RFC 5545 `.ics` via ical:codec — "Add to calendar" / a subscribable feed.
+//
+// Auth + RBAC come from the composed auth-guard (auth:identity): a global
+// `owner` role creates resources/availability and sees every booking; everyone
+// else books and sees/cancels their own. Dates are YYYY-MM-DD, times are
+// minutes-from-midnight — string/int compares, the client owns the calendar.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   POST|GET /api/resources                       (POST owner)   bookable things
+//   POST /api/resources/{id}/availability         (owner)        weekly windows
+//   GET  /api/resources/{id}/availability                        the windows
+//   GET  /api/resources/{id}/slots?day=YYYY-MM-DD                free slots that day
+//   GET  /api/resources/{id}/calendar.ics                        subscribable feed
+//   POST /api/bookings {resource, day, start, end, note?, repeat?}   book (locked)
+//   GET  /api/bookings?from&to                    (owner=all)    my bookings
+//   DELETE /api/bookings/{id}                                    cancel
+//   GET  /api/bookings/{id}.ics                                  one booking, .ics
+package booked:app@0.1.0;
+
+/// The booking backend — accounts + resources/availability + free-slot search +
+/// conflict-free bookings (single or recurring) + .ics export + email
+/// confirmation, composed from capability contracts.
+world booked-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection + role grants.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: resources, availability windows, bookings.
+    import records:store/store@0.1.0;
+    // the no-double-book guarantee: a lease over the booking critical section.
+    import lock:mutex/mutex@0.1.0;
+    // the booking confirmation message (stored template + render).
+    import email:template/renderer@0.1.0;
+    // "Add to calendar" / a resource's subscribable feed.
+    import ical:codec/codec@0.1.0;
+    // expand "repeat every N weeks on these days" into booking instances.
+    import rrule:recur/recur@0.1.0;
+    // booking + lease timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

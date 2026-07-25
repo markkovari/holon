@@ -131,6 +131,30 @@
     "reusable_as_is": true
   },
   {
+    "name": "booked-domain",
+    "package": "booked:app@0.1.0",
+    "description": "`booked-domain` \u2014 a Calendly-lite booking service (BOOKED.md) as ONE composed",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "email:template/renderer",
+      "ical:codec/codec",
+      "lock:mutex/mutex",
+      "records:store/store",
+      "rrule:recur/recur"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 217737,
+    "wasm_sha256_12": "28021defe4de",
+    "reusable_as_is": true
+  },
+  {
     "name": "cache",
     "package": "cache:store@0.1.0",
     "description": "`cache` \u2014 reference implementation of `cache:store`",
@@ -576,6 +600,19 @@
     ],
     "wasm_size_bytes": 79725,
     "wasm_sha256_12": "d7b08ce6fae5",
+    "reusable_as_is": true
+  },
+  {
+    "name": "ical",
+    "package": "ical:codec@0.1.0",
+    "description": "`ical` \u2014 reference implementation of `ical:codec/codec`",
+    "exports": [
+      "codec"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 61186,
+    "wasm_sha256_12": "b710d8ee795d",
     "reusable_as_is": true
   },
   {
@@ -1077,6 +1114,19 @@
     "config_keys": [],
     "wasm_size_bytes": 185512,
     "wasm_sha256_12": "d4093d70e199",
+    "reusable_as_is": true
+  },
+  {
+    "name": "rrule",
+    "package": "rrule:recur@0.1.0",
+    "description": "`rrule` \u2014 reference implementation of `rrule:recur/recur`",
+    "exports": [
+      "recur"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 61981,
+    "wasm_sha256_12": "28bdcb52cf5d",
     "reusable_as_is": true
   },
   {

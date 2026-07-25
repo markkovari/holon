@@ -16,6 +16,7 @@ capabilities, so anything marked reusable drops into another app via
 | **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — | ✓ |
 | **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 182 KiB | app/demo |
 | **blob-store** | `blob:store@0.1.0` | kv:store | — | 75 KiB | ✓ |
+| **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 212 KiB | ✓ |
 | **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 76 KiB | ✓ |
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 64 KiB | ✓ |
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 220 KiB | ✓ |
@@ -41,6 +42,7 @@ capabilities, so anything marked reusable drops into another app via
 | **golem-bridge** | `golem:bridge@0.1.0` | config/store, http/outgoing-handler | `golem-url`, `golem-host`, `golem-path-template` | 95 KiB | ✓ |
 | **helpdesk-domain** | `helpdesk:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, fsm:workflow/engine, id:generate/generator, md:render/renderer, records:store/store | — | 200 KiB | ✓ |
 | **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 77 KiB | ✓ |
+| **ical** | `ical:codec@0.1.0` | pure compute | — | 59 KiB | ✓ |
 | **id-generate** | `id:generate@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 81 KiB | ✓ |
 | **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 77 KiB | ✓ |
@@ -70,6 +72,7 @@ capabilities, so anything marked reusable drops into another app via
 | **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 69 KiB | ✓ |
 | **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 69 KiB | ✓ |
 | **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
+| **rrule** | `rrule:recur@0.1.0` | pure compute | — | 60 KiB | ✓ |
 | **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 188 KiB | ✓ |
 | **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 91 KiB | ✓ |
 | **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 177 KiB | ✓ |
@@ -103,6 +106,7 @@ capabilities, so anything marked reusable drops into another app via
 - **bench-suite-p3** — `bench-suite-p3` — the compute rungs of the HTTP overhead ladder on WASI p3
 - **billing-ledger** — ledger:app — billing ledger over composed capability contracts
 - **blob-store** — `blob-store` — reference implementation of `blob:store`
+- **booked-domain** — `booked-domain` — a Calendly-lite booking service (BOOKED.md) as ONE composed
 - **cache** — `cache` — reference implementation of `cache:store`
 - **cache-backing** — `cache-backing` — exports cache:store's `source` + `sink` over wasi:keyvalue
 - **conduit-domain** — conduit:app — the RealWorld ("Conduit") spec over composed contracts
@@ -128,6 +132,7 @@ capabilities, so anything marked reusable drops into another app via
 - **golem-bridge** — `golem-bridge` — durable:workflow/orchestrator over `wasi:http`, to Golem
 - **helpdesk-domain** — helpdesk:app — support/ticketing SaaS domain over composed contracts
 - **i18n-catalog** — `i18n-catalog` — reference implementation of `i18n:catalog`
+- **ical** — `ical` — reference implementation of `ical:codec/codec`
 - **id-generate** — `id-generate` — reference implementation of `id:generate/generator`
 - **idempotency-guard** — `idempotency-guard` — reference implementation of `idempotency:guard`
 - **inproc-workflow** — `inproc-workflow` — the default execution backend for the jobs queue
@@ -157,6 +162,7 @@ capabilities, so anything marked reusable drops into another app via
 - **quota** — `quota` — reference implementation of `quota:meter`
 - **rate-limiter** — `rate-limiter` — reference implementation of `ratelimit:guard`
 - **record-store** — `record-store` — reference implementation of `record:store`
+- **rrule** — `rrule` — reference implementation of `rrule:recur/recur`
 - **saga-domain** — saga:app — a durable trip-booking saga over composed contracts
 - **scheduler-timer** — `scheduler-timer` — reference implementation of `sched:timer`
 - **scribe-domain** — scribe:app — a collaborative document editor over composed contracts

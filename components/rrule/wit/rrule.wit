@@ -1,0 +1,61 @@
+// rrule:recur — expand an RFC 5545 recurrence rule into concrete occurrences.
+//
+// "Repeat weekly for 8 weeks", "every weekday", "every 2 weeks on Mon/Wed" —
+// the recurrence math that scheduling apps need and that's easy to get subtly
+// wrong (INTERVAL stepping, BYDAY within a week, COUNT vs UNTIL bounds, the
+// half-open expansion window). This component owns that math: given a rule and
+// a start date, it returns the occurrence dates, clipped to a window.
+//
+// Dates are `YYYY-MM-DD` strings (the same axis the domains store), so the
+// caller owns time-of-day; a recurrence is a set of DAYS. Pure compute.
+//
+// Supported: FREQ = daily | weekly, INTERVAL, BYDAY (weekly), COUNT, UNTIL.
+// Not supported (returns `unsupported`): MONTHLY / YEARLY, BYMONTHDAY,
+// BYSETPOS, sub-day frequencies. That covers the availability + "repeat every
+// N weeks on these days" cases; richer rules want a full RRULE engine.
+package rrule:recur@0.1.0;
+
+/// Expand recurrence rules to occurrence dates.
+interface recur {
+    /// How often the rule repeats.
+    enum freq {
+        daily,
+        weekly,
+    }
+
+    /// Weekday, Monday = 0 … Sunday = 6 (ISO order).
+    /// A recurrence rule, normalized (not the raw RRULE text).
+    record rule {
+        frequency: freq,
+        /// Step between periods (INTERVAL); 0 is treated as 1.
+        interval: u32,
+        /// Weekdays to emit within each weekly period (Mon=0…Sun=6). Empty for
+        /// weekly means "same weekday as the start date". Ignored for daily.
+        by-weekday: list<u8>,
+        /// Stop after this many occurrences (COUNT); 0 = unbounded (window-only).
+        count: u32,
+        /// Inclusive last date (UNTIL) as `YYYY-MM-DD`; empty = unbounded.
+        until: string,
+    }
+
+    /// Why expansion failed.
+    variant recur-error {
+        /// A date string wasn't a valid `YYYY-MM-DD`.
+        bad-date(string),
+        /// The rule uses a feature this component doesn't implement.
+        unsupported(string),
+    }
+
+    /// Expand `r` starting at `dtstart` (a `YYYY-MM-DD`), returning occurrence
+    /// dates within `[window-from, window-to]` inclusive (both `YYYY-MM-DD`).
+    /// COUNT is applied over the FULL series from `dtstart` (occurrences before
+    /// the window still consume the count), then the result is clipped to the
+    /// window. A hard cap of 366 occurrences bounds unbounded rules.
+    expand: func(dtstart: string, r: rule, window-from: string, window-to: string)
+        -> result<list<string>, recur-error>;
+}
+
+/// `rrule` provides the recur interface; pure compute, no host imports.
+world rrule {
+    export recur;
+}

@@ -1,0 +1,54 @@
+// ical:codec — an RFC 5545 iCalendar (.ics) writer.
+//
+// "Add to calendar" / calendar-feed export is on every scheduling app's
+// roadmap, and the format bites where you don't expect: CRLF line endings,
+// 75-octet line folding, escaping of `,` `;` `\` and newlines, UTC timestamps
+// in the compact `YYYYMMDDTHHMMSSZ` basic format. This is a correct,
+// dependency-free VCALENDAR/VEVENT writer — events in, a valid `.ics` document
+// out — plus optional per-event RRULE and alarms.
+//
+// Scope: publishing (format) only, which is what "download .ics" and "subscribe
+// to a feed" need. Parsing an arbitrary third-party .ics is a separate, much
+// larger job and is intentionally out of scope.
+//
+// Pure compute: no state, no host imports.
+package ical:codec@0.1.0;
+
+/// Format calendar events into an RFC 5545 document.
+interface codec {
+    /// One calendar event. Times are Unix seconds, serialized as UTC.
+    record event {
+        /// Stable unique id (becomes UID; a domain should pass its own id so
+        /// re-exports update the same event in a subscriber's calendar).
+        uid: string,
+        /// Event start, Unix seconds.
+        start: u64,
+        /// Event end, Unix seconds. If `<= start`, a 0-length event is written.
+        end: u64,
+        /// Short title (SUMMARY).
+        summary: string,
+        /// Longer description (DESCRIPTION); empty to omit.
+        description: string,
+        /// Location text (LOCATION); empty to omit.
+        location: string,
+        /// Organizer/attendee email; empty to omit the ORGANIZER line.
+        organizer: string,
+        /// Raw RRULE value, e.g. "FREQ=WEEKLY;COUNT=8" (no "RRULE:" prefix);
+        /// empty to omit. Pair with `rrule:recur` to also expand instances.
+        rrule: string,
+        /// Minutes before start to fire a VALARM display reminder; 0 = none.
+        alarm-minutes: u32,
+    }
+
+    /// Serialize one event as a complete single-event VCALENDAR document.
+    format-event: func(ev: event, prod-id: string) -> string;
+
+    /// Serialize many events as one VCALENDAR document (a subscribable feed).
+    /// `cal-name` becomes X-WR-CALNAME (shown as the calendar's title).
+    format-calendar: func(events: list<event>, prod-id: string, cal-name: string) -> string;
+}
+
+/// `ical` provides the codec; pure compute, no host imports.
+world ical {
+    export codec;
+}

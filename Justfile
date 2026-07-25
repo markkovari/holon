@@ -79,6 +79,8 @@ arena_composed := "components/target/arena_domain.composed.wasm"
 tempo_wasm := rel / "tempo_domain.wasm"
 tempo_composed := "components/target/tempo_domain.composed.wasm"
 pdf_wasm := rel / "pdf.wasm"
+booked_wasm := rel / "booked_domain.wasm"
+booked_composed := "components/target/booked_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -298,6 +300,41 @@ push-tempo-ghcr version="0.1.0": compose-tempo
     wash oci push ghcr.io/{{ghcr_owner}}/tempo:{{version}} {{tempo_composed}} \
       --user {{ghcr_owner}} --password "$(gh auth token)"
     @echo "pushed oci://ghcr.io/{{ghcr_owner}}/tempo:{{version}} (set the package Public once)"
+
+# Compose booked-domain (BOOKED.md — a Calendly-lite booking service) with the
+# composed auth-guard + records + lock-mutex (no double-book) + email-render
+# (confirmation) + ical (.ics) + rrule (recurring). Remaining imports are WASI.
+compose-booked: compose
+    wac plug {{booked_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/lock_mutex.wasm \
+      --plug {{rel}}/email_render.wasm \
+      --plug {{rel}}/ical.wasm \
+      --plug {{rel}}/rrule.wasm \
+      -o {{booked_composed}}
+    wasm-tools validate {{booked_composed}}
+    @echo "composed booked-domain (+ auth-guard + records + lock + email + ical + rrule) -> {{booked_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/booked/dist.
+build-booked-ui:
+    cd examples/booked/ui && npm ci && npm run build
+
+# Run the booking app on the native host + serve the SPA on :3041. Register as
+# `owner` to create resources + weekly availability; anyone else books free
+# slots (no double-book), gets an .ics + a confirmation.
+host-booked: compose-booked build-booked-ui
+    cd host && VET_TENANT=booked cargo run --release --bin vet-host -- \
+      --component ../{{booked_composed}} --addr 0.0.0.0:3041 \
+      --static-dir ../examples/booked/dist
+
+# Booking e2e: owner creates a resource + availability; a member books a slot;
+# a SECOND booking of the same slot is rejected (no double-book); concurrent
+# attempts leave exactly one booking; a recurrence expands to N instances; and
+# a booking exports to a valid .ics.
+e2e-booked: compose-booked
+    cd host && cargo build --release --bin vet-host
+    cd examples/booked && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one
