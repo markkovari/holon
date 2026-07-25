@@ -1,0 +1,45 @@
+// buzz:app — a live multiplayer quiz game (Kahoot-style) as a WIT HTTP component.
+//
+// A HOST (signed in) authors quizzes and runs a game: the app mints a short
+// numeric PIN, PLAYERS join anonymously with that PIN + a nickname, and the host
+// drives the game through its phases — lobby -> question -> reveal -> … -> final.
+// During a question everyone answers on their own device; on reveal the app
+// grades each answer SPEED-WEIGHTED (a correct answer earns more the sooner it
+// came) and updates a live leaderboard.
+//
+// Real-time is done by POLLING: the host screen and each player's controller GET
+// their view a few times a second (vet-host is request/response). Game state
+// lives in records:store; the PIN is minted with wasi:random; timing uses the
+// wall clock. Only the host authenticates (auth:identity); players are anonymous
+// and gated by the PIN + the player id issued on join.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   POST|GET /api/quizzes {title, questions:[{prompt,options,answer,time_limit}]}  (host)
+//   POST /api/games {quiz}                         (host) -> {pin}
+//   GET  /api/games/{pin}/host                     (host) the big-screen view
+//   POST /api/games/{pin}/start|reveal|next        (host) drive the phases
+//   POST /api/games/{pin}/join {nickname}          (player) -> {player}
+//   GET  /api/games/{pin}/play?player={id}         (player) my controller view
+//   POST /api/games/{pin}/answer {player, option}  (player) buzz in
+package buzz:app@0.1.0;
+
+/// The game backend — accounts (host) + quizzes + games/players/answers with
+/// speed-weighted scoring and a live leaderboard, composed from contracts.
+world buzz-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: the HOST registers / logs in; players are anonymous.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: quizzes, games, players, answers.
+    import records:store/store@0.1.0;
+    // mint the short numeric game PIN.
+    import wasi:random/random@0.2.0;
+    // question timing + speed-weighted scoring.
+    import wasi:clocks/wall-clock@0.2.0;
+}

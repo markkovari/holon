@@ -18,6 +18,7 @@ capabilities, so anything marked reusable drops into another app via
 | **blob-store** | `blob:store@0.1.0` | kv:store | — | 75 KiB | ✓ |
 | **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 212 KiB | ✓ |
 | **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 208 KiB | ✓ |
+| **buzz-domain** | `buzz:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 203 KiB | ✓ |
 | **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 76 KiB | ✓ |
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 64 KiB | ✓ |
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 220 KiB | ✓ |
@@ -121,6 +122,7 @@ capabilities, so anything marked reusable drops into another app via
 - **blob-store** — `blob-store` — reference implementation of `blob:store`
 - **booked-domain** — `booked-domain` — a Calendly-lite booking service (BOOKED.md) as ONE composed
 - **books-domain** — `books-domain` — a double-entry bookkeeping service (BOOKS.md) as ONE composed
+- **buzz-domain** — `buzz-domain` — a live multiplayer quiz game (BUZZ.md) as ONE composed wasm
 - **cache** — `cache` — reference implementation of `cache:store`
 - **cache-backing** — `cache-backing` — exports cache:store's `source` + `sink` over wasi:keyvalue
 - **conduit-domain** — conduit:app — the RealWorld ("Conduit") spec over composed contracts

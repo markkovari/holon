@@ -95,6 +95,8 @@ payees_wasm := rel / "payees_domain.wasm"
 payees_composed := "components/target/payees_domain.composed.wasm"
 lms_wasm := rel / "lms_domain.wasm"
 lms_composed := "components/target/lms_domain.composed.wasm"
+buzz_wasm := rel / "buzz_domain.wasm"
+buzz_composed := "components/target/buzz_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -578,6 +580,35 @@ host-lms: compose-lms build-lms-ui
 e2e-lms: compose-lms
     cd host && cargo build --release --bin vet-host
     cd examples/lms && cargo test --release
+
+# Compose buzz-domain (BUZZ.md — a live multiplayer quiz game) with auth-guard +
+# records. Remaining imports are WASI (random for the PIN, clocks for timing).
+compose-buzz: compose
+    wac plug {{buzz_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      -o {{buzz_composed}}
+    wasm-tools validate {{buzz_composed}}
+    @echo "composed buzz-domain (+ auth-guard + records) -> {{buzz_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/buzz/dist.
+build-buzz-ui:
+    cd examples/buzz/ui && npm ci && npm run build
+
+# Run the quiz game on the native host + serve the SPA on :3049. Sign in as a
+# host to run a game (get a PIN), or open on other devices to Join with the PIN
+# and a nickname; the host drives the questions and everyone buzzes in.
+host-buzz: compose-buzz build-buzz-ui
+    cd host && VET_TENANT=buzz cargo run --release --bin vet-host -- \
+      --component ../{{buzz_composed}} --addr 0.0.0.0:3049 \
+      --static-dir ../examples/buzz/dist
+
+# Game e2e: a host starts a game; two players join and answer at different speeds;
+# reveal grades speed-weighted (faster-correct > slower-correct > wrong=0); the
+# leaderboard ranks correctly; and the game ends on a podium.
+e2e-buzz: compose-buzz
+    cd host && cargo build --release --bin vet-host
+    cd examples/buzz && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one

@@ -177,6 +177,26 @@
     "reusable_as_is": true
   },
   {
+    "name": "buzz-domain",
+    "package": "buzz:app@0.1.0",
+    "description": "`buzz-domain` \u2014 a live multiplayer quiz game (BUZZ.md) as ONE composed wasm",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "records:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 208160,
+    "wasm_sha256_12": "63a7fbc9222b",
+    "reusable_as_is": true
+  },
+  {
     "name": "cache",
     "package": "cache:store@0.1.0",
     "description": "`cache` \u2014 reference implementation of `cache:store`",

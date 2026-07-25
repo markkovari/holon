@@ -199,6 +199,11 @@ catalog and a bench round:
   **auto-graded** quizzes (`quiz:grade`). Grades roll up consistently into a
   student's progress, an instructor **gradebook** (+ an `svg:chart` distribution),
   and a **certificate** (`pdf:codec`) issued on passing all. ([demo](docs/media/lms.gif))
+- **[BUZZ.md](BUZZ.md)** — a **live multiplayer quiz game** (Kahoot-style): a host
+  runs a game by **PIN**, players join anonymously on their phones and buzz in;
+  answers are graded **speed-weighted** (faster correct = more points) with a live
+  leaderboard. Real-time by polling over `auth-guard` + `records`; a host
+  big-screen + a player controller. ([demo](docs/media/buzz.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

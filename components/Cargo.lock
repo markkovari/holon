@@ -177,6 +177,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "buzz-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "cache"
 version = "0.1.0"
 dependencies = [
