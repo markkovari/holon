@@ -1,0 +1,51 @@
+// lms:app — a learning-management service as a WIT HTTP component.
+//
+// A multi-role platform: an INSTRUCTOR builds courses out of lessons (Markdown)
+// and quizzes (multiple-choice); a STUDENT enrolls, reads lessons, and takes
+// quizzes that are AUTO-GRADED by the quiz:grade component. From the graded
+// submissions the app derives everything that must reconcile — a student's
+// progress, the instructor's gradebook (per-student scores + a class
+// distribution chart via svg:chart), and a completion CERTIFICATE (pdf:codec)
+// issued once a student passes every quiz.
+//
+// Auth + RBAC come from the composed auth-guard (auth:identity): two roles,
+// `instructor` and `student` (self-assigned at register in the demo). Courses
+// are visible to all; an instructor only edits their own and only sees their own
+// gradebook; a student only sees their own submissions and progress.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   POST|GET /api/courses {code,title,description}            (POST instructor)
+//   GET  /api/courses/{id}                                    course + lessons + quizzes
+//   POST /api/courses/{id}/lessons {title,body}               (instructor owner)
+//   POST /api/courses/{id}/quizzes {title,pass_mark,questions}(instructor owner)
+//   POST /api/courses/{id}/enroll                             (student)
+//   POST /api/quizzes/{id}/submit {answers}                   (student) auto-graded
+//   GET  /api/courses/{id}/progress                           (student) my progress
+//   GET  /api/courses/{id}/gradebook                          (instructor) + chart svg
+//   GET  /api/courses/{id}/certificate.pdf                    (student, if passed all)
+package lms:app@0.1.0;
+
+/// The learning backend — accounts + courses/lessons/quizzes + enrollments +
+/// auto-graded submissions + gradebook/certificates, composed from contracts.
+world lms-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection + role grants.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: courses, lessons, quizzes, enrollments, submissions.
+    import records:store/store@0.1.0;
+    // auto-grade a submission + roll a cohort into gradebook stats.
+    import quiz:grade/grader@0.1.0;
+    // the completion certificate as a PDF.
+    import pdf:codec/codec@0.1.0;
+    // the gradebook's grade-distribution chart, server-rendered.
+    import svg:chart/charts@0.1.0;
+    // enrollment + submission timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

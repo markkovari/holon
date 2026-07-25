@@ -1,0 +1,51 @@
+// quiz:grade — auto-grading and gradebook statistics.
+//
+// The scoring math a quiz/survey/assessment app needs, kept as PURE functions so
+// the domain owns the questions and the store owns the submissions: grade a set
+// of answers against the answer key (percent + pass/fail), and roll a cohort's
+// percentage scores into gradebook stats (mean, median, spread, a pass count,
+// and a fixed 5-bin distribution for a chart). Integer percentages — no float
+// rounding to make a grade wobble.
+//
+// Pure compute: numbers in, verdicts out. No state, no host imports.
+package quiz:grade@0.1.0;
+
+/// Grade submissions and summarize a cohort.
+interface grader {
+    /// The outcome of grading one submission.
+    record grade-result {
+        /// How many answers matched the key.
+        correct: u32,
+        /// The number of questions (the key length).
+        total: u32,
+        /// correct / total as an integer percent (0..100).
+        score-pct: u32,
+        /// score-pct >= pass-mark.
+        passed: bool,
+    }
+
+    /// Grade `answers` against `key` (compared position by position; missing
+    /// answers count wrong). `pass-mark` is the passing percent.
+    grade: func(answers: list<u32>, key: list<u32>, pass-mark: u32) -> grade-result;
+
+    /// Cohort statistics over a set of percentage scores (each 0..100).
+    record stats {
+        count: u32,
+        mean: u32,
+        median: u32,
+        min: u32,
+        max: u32,
+        /// how many scores met `pass-mark`.
+        pass-count: u32,
+        /// counts in 5 bins: [0-19, 20-39, 40-59, 60-79, 80-100].
+        buckets: list<u32>,
+    }
+
+    /// Summarize `scores` (percentages) into gradebook stats.
+    distribution: func(scores: list<u32>, pass-mark: u32) -> stats;
+}
+
+/// `quiz` provides the grader; pure compute, no host imports.
+world quiz {
+    export grader;
+}

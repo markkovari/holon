@@ -55,6 +55,7 @@ capabilities, so anything marked reusable drops into another app via
 | **ledger** | `ledger:doubleentry@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 158 KiB | app/demo |
 | **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 74 KiB | ✓ |
+| **lms-domain** | `lms:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, quiz:grade/grader, records:store/store, svg:chart/charts | — | 231 KiB | ✓ |
 | **lock-mutex** | `lock:mutex@0.1.0` | kv:atomics, kv:store | — | 77 KiB | ✓ |
 | **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 68 KiB | app/demo |
 | **markdown** | `md:render@0.1.0` | pure compute | — | 83 KiB | ✓ |
@@ -75,6 +76,7 @@ capabilities, so anything marked reusable drops into another app via
 | **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes` | 101 KiB | ✓ |
 | **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 159 KiB | ✓ |
 | **qr** | `qr:encode@0.1.0` | pure compute | — | 79 KiB | ✓ |
+| **quiz-grade** | `quiz:grade@0.1.0` | pure compute | — | 54 KiB | ✓ |
 | **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 69 KiB | ✓ |
 | **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 69 KiB | ✓ |
 | **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
@@ -156,6 +158,7 @@ capabilities, so anything marked reusable drops into another app via
 - **ledger** — `ledger` — reference implementation of `ledger:doubleentry/ledger`
 - **link-shortener** — shortlink:app — link shortener over composed capability contracts
 - **llm-inference** — `llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`
+- **lms-domain** — `lms-domain` — a learning-management service (LMS.md) as ONE composed wasm
 - **lock-mutex** — `lock-mutex` — reference implementation of `lock:mutex`
 - **login-app** — `login-app` — a consumer component that composes three universal
 - **markdown** — `markdown` — reference implementation of `md:render`
@@ -176,6 +179,7 @@ capabilities, so anything marked reusable drops into another app via
 - **proxy-route** — proxy:route — reference implementation. Route table from wasi:config
 - **pulse-domain** — pulse:app — a realtime chat room over composed contracts
 - **qr** — `qr` — reference implementation of `qr:encode`
+- **quiz-grade** — `quiz-grade` — reference implementation of `quiz:grade/grader`
 - **quota** — `quota` — reference implementation of `quota:meter`
 - **rate-limiter** — `rate-limiter` — reference implementation of `ratelimit:guard`
 - **record-store** — `record-store` — reference implementation of `record:store`

@@ -681,6 +681,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lms-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "lock-mutex"
 version = "0.1.0"
 dependencies = [
@@ -987,6 +996,13 @@ name = "qrcode"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
+name = "quiz-grade"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
 
 [[package]]
 name = "quota"

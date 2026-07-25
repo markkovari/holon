@@ -814,6 +814,29 @@
     "reusable_as_is": true
   },
   {
+    "name": "lms-domain",
+    "package": "lms:app@0.1.0",
+    "description": "`lms-domain` \u2014 a learning-management service (LMS.md) as ONE composed wasm",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "pdf:codec/codec",
+      "quiz:grade/grader",
+      "records:store/store",
+      "svg:chart/charts"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 236600,
+    "wasm_sha256_12": "ec5d6a7b72db",
+    "reusable_as_is": true
+  },
+  {
     "name": "lock-mutex",
     "package": "lock:mutex@0.1.0",
     "description": "`lock-mutex` \u2014 reference implementation of `lock:mutex`",
@@ -1162,6 +1185,19 @@
     "config_keys": [],
     "wasm_size_bytes": 81433,
     "wasm_sha256_12": "79b729870c34",
+    "reusable_as_is": true
+  },
+  {
+    "name": "quiz-grade",
+    "package": "quiz:grade@0.1.0",
+    "description": "`quiz-grade` \u2014 reference implementation of `quiz:grade/grader`",
+    "exports": [
+      "grader"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 56129,
+    "wasm_sha256_12": "aaf02849ed59",
     "reusable_as_is": true
   },
   {

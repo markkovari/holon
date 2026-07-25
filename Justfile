@@ -93,6 +93,8 @@ stash_wasm := rel / "stash_domain.wasm"
 stash_composed := "components/target/stash_domain.composed.wasm"
 payees_wasm := rel / "payees_domain.wasm"
 payees_composed := "components/target/payees_domain.composed.wasm"
+lms_wasm := rel / "lms_domain.wasm"
+lms_composed := "components/target/lms_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -542,6 +544,40 @@ host-payees: compose-payees build-payees-ui
 e2e-payees: compose-payees
     cd host && cargo build --release --bin vet-host
     cd examples/payees && cargo test --release
+
+# Compose lms-domain (LMS.md — a learning platform) with auth-guard + records +
+# quiz (auto-grade + stats) + pdf (certificate) + svg-chart (gradebook chart).
+# Remaining imports are WASI.
+compose-lms: compose
+    wac plug {{lms_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/quiz_grade.wasm \
+      --plug {{pdf_wasm}} \
+      --plug {{rel}}/svg_chart.wasm \
+      -o {{lms_composed}}
+    wasm-tools validate {{lms_composed}}
+    @echo "composed lms-domain (+ auth-guard + records + quiz + pdf + svg-chart) -> {{lms_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/lms/dist.
+build-lms-ui:
+    cd examples/lms/ui && npm ci && npm run build
+
+# Run the learning platform on the native host + serve the SPA on :3048. Register
+# as `instructor` (creates courses/lessons/quizzes; seeded a demo course) or as
+# `student` (enroll, take auto-graded quizzes, see progress + certificate).
+host-lms: compose-lms build-lms-ui
+    cd host && VET_TENANT=lms cargo run --release --bin vet-host -- \
+      --component ../{{lms_composed}} --addr 0.0.0.0:3048 \
+      --static-dir ../examples/lms/dist
+
+# Learning e2e: an instructor creates a course + quiz; a student enrolls and
+# submits, which auto-grades (quiz:grade); the instructor gradebook reflects it
+# consistently; a certificate issues once every quiz is passed; and the student's
+# progress reconciles with the gradebook.
+e2e-lms: compose-lms
+    cd host && cargo build --release --bin vet-host
+    cd examples/lms && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one

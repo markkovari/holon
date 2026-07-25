@@ -194,6 +194,11 @@ catalog and a bench round:
   each IBAN is checked (country length + ISO 7064 **mod-97 checksum**) by a new
   **`iban:validate`** component before it's stored, and flagged green/red **as you
   type**. ([demo](docs/media/payees.gif))
+- **[LMS.md](LMS.md)** — a **multi-role learning platform**: instructors build
+  courses of lessons + multiple-choice quizzes; students enroll and take
+  **auto-graded** quizzes (`quiz:grade`). Grades roll up consistently into a
+  student's progress, an instructor **gradebook** (+ an `svg:chart` distribution),
+  and a **certificate** (`pdf:codec`) issued on passing all. ([demo](docs/media/lms.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
