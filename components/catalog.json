@@ -1403,6 +1403,27 @@
     "reusable_as_is": true
   },
   {
+    "name": "transit-domain",
+    "package": "transit:app@0.1.0",
+    "description": "`transit-domain` \u2014 a public-transport ticketing service (TRANSIT.md) as ONE",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "qr:encode/encoder",
+      "records:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 192392,
+    "wasm_sha256_12": "411630f8fc52",
+    "reusable_as_is": true
+  },
+  {
     "name": "upload-drop",
     "package": "drop:app@0.1.0",
     "description": "drop:app \u2014 a presigned direct-upload drop-box over composed contracts",

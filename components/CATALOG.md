@@ -88,6 +88,7 @@ capabilities, so anything marked reusable drops into another app via
 | **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 150 KiB | ✓ |
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 62 KiB | ✓ |
 | **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 246 KiB | ✓ |
+| **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 187 KiB | ✓ |
 | **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 151 KiB | ✓ |
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 78 KiB | ✓ |
 | **validate** | `validate:schema@0.1.0` | pure compute | — | 113 KiB | ✓ |
@@ -178,6 +179,7 @@ capabilities, so anything marked reusable drops into another app via
 - **throttle-domain** — throttle:app — a live throttle wall over composed contracts
 - **track-assets** — `track-assets` — the track (project tracker) SPA embedded as `ui:assets`
 - **track-domain** — track:app — a Linear-lite project tracker over composed contracts
+- **transit-domain** — `transit-domain` — a public-transport ticketing service (TRANSIT.md) as ONE
 - **upload-drop** — drop:app — a presigned direct-upload drop-box over composed contracts
 - **upload-policy** — `upload-policy` — reference implementation of `upload:policy`
 - **validate** — `validate` — reference implementation of `validate:schema`

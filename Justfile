@@ -81,6 +81,8 @@ tempo_composed := "components/target/tempo_domain.composed.wasm"
 pdf_wasm := rel / "pdf.wasm"
 booked_wasm := rel / "booked_domain.wasm"
 booked_composed := "components/target/booked_domain.composed.wasm"
+transit_wasm := rel / "transit_domain.wasm"
+transit_composed := "components/target/transit_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -335,6 +337,38 @@ host-booked: compose-booked build-booked-ui
 e2e-booked: compose-booked
     cd host && cargo build --release --bin vet-host
     cd examples/booked && cargo test --release
+
+# Compose transit-domain (TRANSIT.md — a public-transport ticketing service)
+# with auth-guard + records (single-use enforced by record-revision CAS) + qr
+# (the scannable ticket). Remaining imports are WASI.
+compose-transit: compose
+    wac plug {{transit_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/qr.wasm \
+      -o {{transit_composed}}
+    wasm-tools validate {{transit_composed}}
+    @echo "composed transit-domain (+ auth-guard + records + qr) -> {{transit_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/transit/dist.
+build-transit-ui:
+    cd examples/transit/ui && npm ci && npm run build
+
+# Run the ticketing app on the native host + serve the SPA on :3042. Register as
+# `rider` to buy fares (single / 60-min / 90-min / monthly) and show their QR;
+# as `validator` to scan + validate with the device camera.
+host-transit: compose-transit build-transit-ui
+    cd host && VET_TENANT=transit cargo run --release --bin vet-host -- \
+      --component ../{{transit_composed}} --addr 0.0.0.0:3042 \
+      --static-dir ../examples/transit/dist
+
+# Ticketing e2e: a rider buys tickets; a validator validates — a single is
+# consumed by one scan (a second is rejected); a duration ticket activates with
+# a remaining window; CONCURRENT scans of one single ticket accept exactly once;
+# a fabricated code is rejected; and a ticket renders a valid QR SVG.
+e2e-transit: compose-transit
+    cd host && cargo build --release --bin vet-host
+    cd examples/transit && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one

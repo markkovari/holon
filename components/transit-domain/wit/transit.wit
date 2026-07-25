@@ -1,0 +1,51 @@
+// transit:app — a public-transport ticketing service as a WIT HTTP component.
+//
+// Two roles. A RIDER buys a fare — a single ride, a duration ticket (60/90 min),
+// or a monthly pass — and gets a QR code (rendered by qr:encode). A VALIDATOR
+// scans that QR with a device camera and the system decides ACCEPT or REJECT,
+// activating the ticket on first scan and enforcing its rules thereafter: a
+// single is consumed by one validation; a duration/pass is valid for unlimited
+// rides until its window lapses.
+//
+// The correctness axis is single-use under concurrency: two validators scanning
+// the same single ticket at the same instant must not both accept it. Validation
+// is a compare-and-set on the ticket record's revision (records:store's built-in
+// optimistic concurrency): read the ticket + its revision, decide, then write
+// back guarded by that revision — a losing writer gets a revision-conflict,
+// re-reads the now-activated ticket, and sees "already used". No lock, always a
+// definitive answer. (booked shows the pessimistic-lease counterpart.)
+//
+// Auth + RBAC come from the composed auth-guard (auth:identity): `rider`
+// (default) buys + shows tickets; `validator` validates. The QR payload is the
+// ticket's own unguessable record id — a fabricated id matches no record and is
+// rejected, so nothing needs to be signed.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   GET  /api/fares                         the fare catalog (seeded)
+//   POST /api/tickets {fare}                buy a ticket (rider)
+//   GET  /api/tickets                       my tickets, with computed status
+//   GET  /api/tickets/{id}                  one ticket + validation history
+//   GET  /api/tickets/{id}/qr.svg           the scannable QR (image/svg+xml)
+//   POST /api/validate {code}               validate a scanned code (validator)
+package transit:app@0.1.0;
+
+/// The ticketing backend — accounts + a fare catalog + purchased tickets + QR
+/// rendering + concurrency-safe validation, composed from capability contracts.
+world transit-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection + role grants.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: fare catalog + purchased tickets.
+    import records:store/store@0.1.0;
+    // the scannable ticket QR (SVG for the rider's screen).
+    import qr:encode/encoder@0.1.0;
+    // purchase + activation + validation timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

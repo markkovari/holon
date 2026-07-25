@@ -164,6 +164,12 @@ catalog and a bench round:
   racing bookers get a `409` (an e2e fires 8 concurrent bookings; exactly one
   wins). Recurring bookings via `rrule:recur`, `.ics` export via `ical:codec`,
   confirmation via `email-render`. ([demo](docs/media/booked.gif))
+- **[TRANSIT.md](TRANSIT.md)** — **public-transport ticketing**: a **rider** buys
+  a fare (single / duration / monthly) and gets a **QR** (`qr:encode`); a
+  **validator** scans it with the device **camera** (native `BarcodeDetector`)
+  for a big **ACCEPT/REJECT**. A **single** ticket is consumed by one scan — the
+  *optimistic* concurrency counterpart to booked: `records:store` revision CAS
+  makes exactly one of 8 racing scans win. ([demo](docs/media/transit.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
