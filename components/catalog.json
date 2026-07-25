@@ -1360,6 +1360,28 @@
     "reusable_as_is": true
   },
   {
+    "name": "stash-domain",
+    "package": "stash:app@0.1.0",
+    "description": "`stash-domain` \u2014 a personal note stash (STASH.md) as ONE composed wasm HTTP",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "csv:codec/codec",
+      "records:store/store",
+      "zip:archive/archiver"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 184284,
+    "wasm_sha256_12": "b445d7da6bc5",
+    "reusable_as_is": true
+  },
+  {
     "name": "static-assets",
     "package": "ui:assets@0.1.0",
     "description": "`static-assets` \u2014 reference implementation of `static:assets`",
@@ -1677,6 +1699,19 @@
     "config_keys": [],
     "wasm_size_bytes": 63789,
     "wasm_sha256_12": "9965aa8bd39a",
+    "reusable_as_is": true
+  },
+  {
+    "name": "zip",
+    "package": "zip:archive@0.1.0",
+    "description": "`zip` \u2014 reference implementation of `zip:archive/archiver`",
+    "exports": [
+      "archiver"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 52793,
+    "wasm_sha256_12": "7d01914ee1e9",
     "reusable_as_is": true
   }
 ]

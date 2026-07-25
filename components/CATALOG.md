@@ -86,6 +86,7 @@ capabilities, so anything marked reusable drops into another app via
 | **session-store** | `session:store@0.1.0` | config/store, kv:store | `default-ttl` | 84 KiB | ✓ |
 | **shaper** | `shaper:limit@0.1.0` | pure compute | — | 13 KiB | ✓ |
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
+| **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 179 KiB | ✓ |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
 | **svg-chart** | `svg:chart@0.1.0` | pure compute | — | 85 KiB | ✓ |
@@ -102,6 +103,7 @@ capabilities, so anything marked reusable drops into another app via
 | **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 70 KiB | ✓ |
 | **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 180 KiB | app/demo |
 | **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 62 KiB | ✓ |
+| **zip** | `zip:archive@0.1.0` | pure compute | — | 51 KiB | ✓ |
 
 ## Descriptions
 
@@ -183,6 +185,7 @@ capabilities, so anything marked reusable drops into another app via
 - **session-store** — `session-store` — reference implementation of `session:store`
 - **shaper** — `shaper` — reference implementation of `shaper:limit/limiter`
 - **slug** — `slug` — reference implementation of `slug:generate`
+- **stash-domain** — `stash-domain` — a personal note stash (STASH.md) as ONE composed wasm HTTP
 - **static-assets** — `static-assets` — reference implementation of `static:assets`
 - **status-page** — status:app — uptime monitor over composed capability contracts
 - **svg-chart** — `svg-chart` — reference implementation of `svg:chart/charts`
@@ -199,3 +202,4 @@ capabilities, so anything marked reusable drops into another app via
 - **webhook-ingest** — `webhook-ingest` — reference implementation of `webhook:ingest`
 - **webhook-relay** — relay:app — webhook relay over composed capability contracts
 - **webhook-sign** — `webhook-sign` — reference implementation of `webhook:sign`
+- **zip** — `zip` — reference implementation of `zip:archive/archiver`

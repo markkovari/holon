@@ -89,6 +89,8 @@ gate_wasm := rel / "gate_domain.wasm"
 gate_composed := "components/target/gate_domain.composed.wasm"
 books_wasm := rel / "books_domain.wasm"
 books_composed := "components/target/books_domain.composed.wasm"
+stash_wasm := rel / "stash_domain.wasm"
+stash_composed := "components/target/stash_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -477,6 +479,37 @@ host-books: compose-books build-books-ui
 e2e-books: compose-books
     cd host && cargo build --release --bin vet-host
     cd examples/books && cargo test --release
+
+# Compose stash-domain (STASH.md — a note stash you export as a .zip) with
+# auth-guard + records + zip (the archive) + csv (the index inside it). Remaining
+# imports are WASI.
+compose-stash: compose
+    wac plug {{stash_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/zip.wasm \
+      --plug {{rel}}/csv.wasm \
+      -o {{stash_composed}}
+    wasm-tools validate {{stash_composed}}
+    @echo "composed stash-domain (+ auth-guard + records + zip + csv) -> {{stash_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/stash/dist.
+build-stash-ui:
+    cd examples/stash/ui && npm ci && npm run build
+
+# Run the note stash on the native host + serve the SPA on :3046. Register a new
+# account (seeded demo notes), keep notes, and hit Export .zip to download them
+# all as a real ZIP (Markdown + index.csv + manifest.json).
+host-stash: compose-stash build-stash-ui
+    cd host && VET_TENANT=stash cargo run --release --bin vet-host -- \
+      --component ../{{stash_composed}} --addr 0.0.0.0:3046 \
+      --static-dir ../examples/stash/dist
+
+# Stash e2e: notes CRUD; the export is a valid ZIP (PK header + intact central
+# directory) containing a .md per note, an index.csv, and a manifest.json.
+e2e-stash: compose-stash
+    cd host && cargo build --release --bin vet-host
+    cd examples/stash && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one

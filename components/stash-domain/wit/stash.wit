@@ -1,0 +1,40 @@
+// stash:app — a personal note stash you can export as a .zip.
+//
+// Keep short notes (title + Markdown body); the headline is "download all my
+// data": `GET /api/export.zip` bundles every note into a real ZIP — one
+// `notes/<title>.md` per note, an `index.csv` (via csv:codec), and a
+// `manifest.json` — assembled by the `zip:archive` component. No zip library in
+// the app; the archive is a link-time capability like everything else here.
+//
+// Auth comes from the composed auth-guard (auth:identity): each account owns its
+// own notes and its own export. A fresh account is seeded a couple of demo notes.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   POST|GET /api/notes {title, body}                  a note / my notes
+//   PATCH /api/notes/{id} {title?, body?}              edit
+//   DELETE /api/notes/{id}                             remove
+//   GET  /api/export.zip                               all notes as a .zip
+package stash:app@0.1.0;
+
+/// The note backend — accounts + owned notes + a ZIP export, composed from
+/// capability contracts.
+world stash-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: the notes.
+    import records:store/store@0.1.0;
+    // bundle the export into a real ZIP archive.
+    import zip:archive/archiver@0.1.0;
+    // the index.csv inside the archive.
+    import csv:codec/codec@0.1.0;
+    // note timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

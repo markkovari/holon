@@ -1,0 +1,34 @@
+// zip:archive — a ZIP archive writer.
+//
+// "Download all my data as a .zip" is on every app's roadmap, and the usual
+// answer pulls in a zip crate (and often a compression backend). This is a tiny,
+// dependency-free writer: a list of named byte blobs in, a valid `.zip` out —
+// STORE method (no compression), so it's pure byte assembly plus a CRC-32 per
+// entry, with correct local headers, a central directory, and the
+// end-of-central-directory record. Any unzip tool reads it.
+//
+// Store-only keeps it small and exact; the archive isn't smaller than its
+// inputs, which is fine for bundling already-small text/CSV/JSON. Deflate is a
+// separate, much larger job and out of scope.
+//
+// Pure compute: bytes in, bytes out. No state, no host imports.
+package zip:archive@0.1.0;
+
+/// Assemble files into a ZIP archive.
+interface archiver {
+    /// One archive member: a path/name and its raw bytes.
+    record file {
+        /// The entry name (use `/` for folders, e.g. `docs/readme.md`).
+        name: string,
+        data: list<u8>,
+    }
+
+    /// Build a complete ZIP archive (STORE method) from `files`. Entries appear
+    /// in the given order.
+    archive: func(files: list<file>) -> list<u8>;
+}
+
+/// `zip` provides the archiver; pure compute, no host imports.
+world zip {
+    export archiver;
+}

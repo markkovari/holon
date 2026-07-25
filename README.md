@@ -186,6 +186,10 @@ catalog and a bench round:
   lives in a new **`ledger:doubleentry`** component, so a lopsided entry is
   rejected before it's stored. Derives a trial balance, P&L, and balance sheet
   (assets = liabilities + equity), exported to PDF via `pdf:codec`. ([demo](docs/media/books.gif))
+- **[STASH.md](STASH.md)** — a **note stash you export as a `.zip`**: `GET
+  /api/export.zip` bundles every note into a real ZIP (a `.md` per note +
+  `index.csv` + `manifest.json`) via a new **`zip:archive`** component (STORE +
+  CRC-32) — no zip library in the app. ([demo](docs/media/stash.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
