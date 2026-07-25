@@ -25,6 +25,7 @@ capabilities, so anything marked reusable drops into another app via
 | **cron** | `cron:expr@0.1.0` | pure compute | — | 63 KiB | ✓ |
 | **csv** | `csv:codec@0.1.0` | pure compute | — | 58 KiB | ✓ |
 | **csv-report** | `report:app@0.1.0` | csv:codec/codec, paginate:cursor/cursors, records:store/store, validate:schema/validator | — | 173 KiB | ✓ |
+| **dashboards-domain** | `dashboards:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store, svg:chart/charts | — | 192 KiB | ✓ |
 | **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 214 KiB | app/demo |
 | **email-render** | `email:template@0.1.0` | kv:store | — | 81 KiB | ✓ |
 | **eshop-basket** | `eshop:basket@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, records:store/store | — | 173 KiB | ✓ |
@@ -83,6 +84,7 @@ capabilities, so anything marked reusable drops into another app via
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
+| **svg-chart** | `svg:chart@0.1.0` | pure compute | — | 85 KiB | ✓ |
 | **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, records:store/store | — | 247 KiB | ✓ |
 | **textdiff** | `diff:text@0.1.0` | pure compute | — | 71 KiB | ✓ |
 | **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 150 KiB | ✓ |
@@ -116,6 +118,7 @@ capabilities, so anything marked reusable drops into another app via
 - **cron** — `cron` — reference implementation of `cron:expr`
 - **csv** — `csv` — reference implementation of `csv:stream/codec`
 - **csv-report** — report:app — batch CSV import -> typed validate -> store -> paged report ->
+- **dashboards-domain** — `dashboards-domain` — personal metric dashboards (DASHBOARDS.md) as ONE
 - **dev-portal** — portal:app — developer portal / API-key service over composed contracts
 - **email-render** — `email-render` — reference implementation of `email:template`
 - **eshop-basket** — eshop:basket — the eShopOnDapr Basket.API over composed contracts
@@ -174,6 +177,7 @@ capabilities, so anything marked reusable drops into another app via
 - **slug** — `slug` — reference implementation of `slug:generate`
 - **static-assets** — `static-assets` — reference implementation of `static:assets`
 - **status-page** — status:app — uptime monitor over composed capability contracts
+- **svg-chart** — `svg-chart` — reference implementation of `svg:chart/charts`
 - **tempo-domain** — tempo:app — a multi-person worktime logger over composed contracts
 - **textdiff** — `textdiff` — reference implementation of `diff:text`
 - **throttle-domain** — throttle:app — a live throttle wall over composed contracts

@@ -170,6 +170,11 @@ catalog and a bench round:
   for a big **ACCEPT/REJECT**. A **single** ticket is consumed by one scan — the
   *optimistic* concurrency counterpart to booked: `records:store` revision CAS
   makes exactly one of 8 racing scans win. ([demo](docs/media/transit.gif))
+- **[DASHBOARDS.md](DASHBOARDS.md)** — **metric dashboards** whose **charts are
+  rendered to SVG on the server** by a new **`svg:chart`** component (bar / line /
+  donut / sparkline) — the frontend ships **no charting library** (its bundle is
+  ~60% smaller than tempo's). Panels over `auth-guard` + `records`, theme-aware
+  via `currentColor`. ([demo](docs/media/dashboards.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

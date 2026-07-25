@@ -83,6 +83,8 @@ booked_wasm := rel / "booked_domain.wasm"
 booked_composed := "components/target/booked_domain.composed.wasm"
 transit_wasm := rel / "transit_domain.wasm"
 transit_composed := "components/target/transit_domain.composed.wasm"
+dashboards_wasm := rel / "dashboards_domain.wasm"
+dashboards_composed := "components/target/dashboards_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -369,6 +371,37 @@ host-transit: compose-transit build-transit-ui
 e2e-transit: compose-transit
     cd host && cargo build --release --bin vet-host
     cd examples/transit && cargo test --release
+
+# Compose dashboards-domain (DASHBOARDS.md — personal metric dashboards) with
+# auth-guard + records + svg-chart (server-side SVG chart rendering). Remaining
+# imports are WASI.
+compose-dashboards: compose
+    wac plug {{dashboards_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/svg_chart.wasm \
+      -o {{dashboards_composed}}
+    wasm-tools validate {{dashboards_composed}}
+    @echo "composed dashboards-domain (+ auth-guard + records + svg-chart) -> {{dashboards_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/dashboards/dist.
+build-dashboards-ui:
+    cd examples/dashboards/ui && npm ci && npm run build
+
+# Run the dashboards app on the native host + serve the SPA on :3043. Register a
+# new account (seeded with a demo dashboard); add panels and see them rendered to
+# SVG charts on the server — the frontend has no charting library.
+host-dashboards: compose-dashboards build-dashboards-ui
+    cd host && VET_TENANT=dashboards cargo run --release --bin vet-host -- \
+      --component ../{{dashboards_composed}} --addr 0.0.0.0:3043 \
+      --static-dir ../examples/dashboards/dist
+
+# Dashboards e2e: a fresh account is seeded a demo dashboard; each panel renders
+# to a valid SVG per kind (bar/line/donut/sparkline); a new panel round-trips;
+# and one account cannot read another's dashboards.
+e2e-dashboards: compose-dashboards
+    cd host && cargo build --release --bin vet-host
+    cd examples/dashboards && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one

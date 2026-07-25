@@ -279,6 +279,27 @@
     "reusable_as_is": true
   },
   {
+    "name": "dashboards-domain",
+    "package": "dashboards:app@0.1.0",
+    "description": "`dashboards-domain` \u2014 personal metric dashboards (DASHBOARDS.md) as ONE",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "records:store/store",
+      "svg:chart/charts"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 196899,
+    "wasm_sha256_12": "569277efdab3",
+    "reusable_as_is": true
+  },
+  {
     "name": "dev-portal",
     "package": "portal:app@0.1.0",
     "description": "portal:app \u2014 developer portal / API-key service over composed contracts",
@@ -1306,6 +1327,19 @@
     "wasm_size_bytes": 190918,
     "wasm_sha256_12": "1e305039cdf3",
     "reusable_as_is": false
+  },
+  {
+    "name": "svg-chart",
+    "package": "svg:chart@0.1.0",
+    "description": "`svg-chart` \u2014 reference implementation of `svg:chart/charts`",
+    "exports": [
+      "charts"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 87830,
+    "wasm_sha256_12": "05b37076e7cb",
+    "reusable_as_is": true
   },
   {
     "name": "tempo-domain",

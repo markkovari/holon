@@ -1,0 +1,40 @@
+// dashboards:app — personal metric dashboards as a WIT HTTP component.
+//
+// A user builds dashboards out of PANELS — a title, a chart kind (bar / line /
+// donut / sparkline) and a little data series. The point: the charts are
+// rendered to SVG on the SERVER by the svg:chart component, so the frontend
+// carries NO charting library. The same SVG works in the page, an email, or a
+// report — "text in, chart out", bound at composition time like every other
+// capability here.
+//
+// Auth comes from the composed auth-guard (auth:identity): each account owns its
+// own dashboards; a fresh account is seeded a demo dashboard so it's never empty.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   POST|GET /api/dashboards {name}                       my dashboards
+//   GET  /api/dashboards/{id}                             a dashboard + its panels
+//   POST /api/dashboards/{id}/panels {title, kind, data}  add a panel
+//   DELETE /api/panels/{id}                               remove a panel
+//   GET  /api/panels/{id}/chart.svg                       the rendered SVG chart
+package dashboards:app@0.1.0;
+
+/// The dashboards backend — accounts + owned dashboards + panels + server-side
+/// SVG chart rendering, composed from capability contracts.
+world dashboards-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: dashboards + panels.
+    import records:store/store@0.1.0;
+    // render a panel's series to an SVG chart (no client-side charting library).
+    import svg:chart/charts@0.1.0;
+    // record timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

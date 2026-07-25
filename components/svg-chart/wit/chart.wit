@@ -1,0 +1,59 @@
+// svg:chart — server-side chart rendering to SVG.
+//
+// Reporting apps need charts, and the usual answer drags a JS charting library
+// (or a headless browser) into the frontend. This is the opposite: a tiny,
+// dependency-free renderer that turns a single data series into a standalone
+// `<svg>` — bar, line, donut, or sparkline. Because it's just a string, the same
+// chart renders in a browser, an email, or (rasterized) a report, with no
+// client-side charting code.
+//
+// Axes and labels are drawn in `currentColor`, so an embedded chart adapts to
+// the surrounding light/dark theme; data uses a palette (or a caller-supplied
+// per-slice color). Pure compute: data in, SVG out. No state, no host imports.
+//
+// Scope: one series per chart (the common report shape). Multi-series /
+// stacked / axes-with-gridlines-galore is a bigger renderer and out of scope.
+package svg:chart@0.1.0;
+
+/// Render a single-series chart to an SVG document.
+interface charts {
+    /// The chart shape.
+    enum kind {
+        /// Vertical bars, one per data point.
+        bar,
+        /// A line through the points (index on x).
+        line,
+        /// A donut of proportions, with a legend.
+        donut,
+        /// A tiny axis-less line for inline trends.
+        sparkline,
+    }
+
+    /// One data point: a label, a value, and an optional color (empty = palette).
+    record slice {
+        label: string,
+        value: f64,
+        color: string,
+    }
+
+    /// A chart to render.
+    record chart {
+        kind: kind,
+        /// Heading drawn at the top (empty to omit).
+        title: string,
+        /// The single data series.
+        data: list<slice>,
+        /// Pixel width; 0 = a sensible default per kind.
+        width: u32,
+        /// Pixel height; 0 = a sensible default per kind.
+        height: u32,
+    }
+
+    /// Render `c` to a complete, self-contained `<svg>…</svg>` document.
+    render: func(c: chart) -> string;
+}
+
+/// `svg-chart` provides the renderer; pure compute, no host imports.
+world chart {
+    export charts;
+}
