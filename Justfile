@@ -87,6 +87,8 @@ dashboards_wasm := rel / "dashboards_domain.wasm"
 dashboards_composed := "components/target/dashboards_domain.composed.wasm"
 gate_wasm := rel / "gate_domain.wasm"
 gate_composed := "components/target/gate_domain.composed.wasm"
+books_wasm := rel / "books_domain.wasm"
+books_composed := "components/target/books_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -443,6 +445,38 @@ e2e-gate: compose-gate
 # Golem 1.5 binary from the golem-workflow provider (fetch once via `golem-e2e`).
 gate-golem:
     bash examples/gate/golem-run.sh
+
+# Compose books-domain (BOOKS.md — double-entry bookkeeping) with auth-guard +
+# records + ledger (the debits==credits invariant + trial balance) + pdf
+# (statements). Remaining imports are WASI.
+compose-books: compose
+    wac plug {{books_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/ledger.wasm \
+      --plug {{pdf_wasm}} \
+      -o {{books_composed}}
+    wasm-tools validate {{books_composed}}
+    @echo "composed books-domain (+ auth-guard + records + ledger + pdf) -> {{books_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/books/dist.
+build-books-ui:
+    cd examples/books/ui && npm ci && npm run build
+
+# Run the bookkeeping app on the native host + serve the SPA on :3045. Register
+# a new account (seeded a demo chart + entries); post balanced journal entries
+# and read the trial balance / P&L / balance sheet (+ PDF).
+host-books: compose-books build-books-ui
+    cd host && VET_TENANT=books cargo run --release --bin vet-host -- \
+      --component ../{{books_composed}} --addr 0.0.0.0:3045 \
+      --static-dir ../examples/books/dist
+
+# Bookkeeping e2e: a balanced entry posts; an UNBALANCED entry is rejected; the
+# trial balance's debits equal its credits; the balance sheet balances
+# (assets = liabilities + equity + net income); and a statements PDF renders.
+e2e-books: compose-books
+    cd host && cargo build --release --bin vet-host
+    cd examples/books && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one

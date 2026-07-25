@@ -1,0 +1,20 @@
+[package]
+name = "ledger"
+description = "Double-entry bookkeeping core — validate entries (debits==credits) + trial balance (ledger:doubleentry)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "ledger:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "doubleentry"

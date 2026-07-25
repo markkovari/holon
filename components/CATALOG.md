@@ -17,6 +17,7 @@ capabilities, so anything marked reusable drops into another app via
 | **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 182 KiB | app/demo |
 | **blob-store** | `blob:store@0.1.0` | kv:store | — | 75 KiB | ✓ |
 | **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 212 KiB | ✓ |
+| **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 208 KiB | ✓ |
 | **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 76 KiB | ✓ |
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 64 KiB | ✓ |
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 220 KiB | ✓ |
@@ -50,6 +51,7 @@ capabilities, so anything marked reusable drops into another app via
 | **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 77 KiB | ✓ |
 | **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 177 KiB | ✓ |
 | **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 126 KiB | ✓ |
+| **ledger** | `ledger:doubleentry@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 158 KiB | app/demo |
 | **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 74 KiB | ✓ |
 | **lock-mutex** | `lock:mutex@0.1.0` | kv:atomics, kv:store | — | 77 KiB | ✓ |
@@ -112,6 +114,7 @@ capabilities, so anything marked reusable drops into another app via
 - **billing-ledger** — ledger:app — billing ledger over composed capability contracts
 - **blob-store** — `blob-store` — reference implementation of `blob:store`
 - **booked-domain** — `booked-domain` — a Calendly-lite booking service (BOOKED.md) as ONE composed
+- **books-domain** — `books-domain` — a double-entry bookkeeping service (BOOKS.md) as ONE composed
 - **cache** — `cache` — reference implementation of `cache:store`
 - **cache-backing** — `cache-backing` — exports cache:store's `source` + `sink` over wasi:keyvalue
 - **conduit-domain** — conduit:app — the RealWorld ("Conduit") spec over composed contracts
@@ -145,6 +148,7 @@ capabilities, so anything marked reusable drops into another app via
 - **inproc-workflow** — `inproc-workflow` — the default execution backend for the jobs queue
 - **jobs-domain** — jobs:app — a durable background-job queue over composed contracts
 - **jsonpatch** — `jsonpatch` — reference implementation of `json:patch`
+- **ledger** — `ledger` — reference implementation of `ledger:doubleentry/ledger`
 - **link-shortener** — shortlink:app — link shortener over composed capability contracts
 - **llm-inference** — `llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`
 - **lock-mutex** — `lock-mutex` — reference implementation of `lock:mutex`

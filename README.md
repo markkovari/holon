@@ -181,6 +181,11 @@ catalog and a bench round:
   math in a new **`shaper:limit`** component and durable per-key state over
   `records:store`. Honestly shows where a shared-store CAS over-admits and a
   single-writer worker wouldn't. ([demo](docs/media/gate.gif))
+- **[BOOKS.md](BOOKS.md)** — **double-entry bookkeeping**: a chart of accounts and
+  a journal where **every entry must balance** (debits = credits) — the invariant
+  lives in a new **`ledger:doubleentry`** component, so a lopsided entry is
+  rejected before it's stored. Derives a trial balance, P&L, and balance sheet
+  (assets = liabilities + equity), exported to PDF via `pdf:codec`. ([demo](docs/media/books.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

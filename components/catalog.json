@@ -155,6 +155,28 @@
     "reusable_as_is": true
   },
   {
+    "name": "books-domain",
+    "package": "books:app@0.1.0",
+    "description": "`books-domain` \u2014 a double-entry bookkeeping service (BOOKS.md) as ONE composed",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "ledger:doubleentry/ledger",
+      "pdf:codec/codec",
+      "records:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 213307,
+    "wasm_sha256_12": "bbb8508867c7",
+    "reusable_as_is": true
+  },
+  {
     "name": "cache",
     "package": "cache:store@0.1.0",
     "description": "`cache` \u2014 reference implementation of `cache:store`",
@@ -729,6 +751,19 @@
     "config_keys": [],
     "wasm_size_bytes": 129214,
     "wasm_sha256_12": "58b613ea4927",
+    "reusable_as_is": true
+  },
+  {
+    "name": "ledger",
+    "package": "ledger:doubleentry@0.1.0",
+    "description": "`ledger` \u2014 reference implementation of `ledger:doubleentry/ledger`",
+    "exports": [
+      "ledger"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 59153,
+    "wasm_sha256_12": "fb2eed2fe52b",
     "reusable_as_is": true
   },
   {

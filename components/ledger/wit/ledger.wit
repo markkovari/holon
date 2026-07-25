@@ -1,0 +1,78 @@
+// ledger:doubleentry — the double-entry bookkeeping core.
+//
+// The one invariant that makes accounting trustworthy: **every entry's debits
+// equal its credits**, so the books always balance. This component owns that
+// invariant and the aggregation on top of it — validate a journal entry, and
+// roll a set of entries into a trial balance whose total debits equal total
+// credits. The domain owns accounts, account types, and reports; this owns the
+// math that must never be wrong.
+//
+// Amounts are integer minor units (e.g. cents), so there is no floating-point
+// rounding to break the invariant. Pure compute: no state, no host imports.
+package ledger:doubleentry@0.1.0;
+
+/// Validate and aggregate double-entry journal entries.
+interface ledger {
+    /// Which side of the ledger a line posts to.
+    enum side {
+        debit,
+        credit,
+    }
+
+    /// One posting: an account and a positive amount on one side.
+    record line {
+        account: string,
+        /// Minor units (cents); must be > 0.
+        amount: s64,
+        side: side,
+    }
+
+    /// A journal entry — a set of lines that must balance.
+    record entry {
+        id: string,
+        memo: string,
+        lines: list<line>,
+    }
+
+    /// Why an entry (or a set of entries) is invalid.
+    variant ledger-error {
+        /// Debits didn't equal credits. Carries `(total-debits, total-credits)`.
+        unbalanced(tuple<s64, s64>),
+        /// Fewer than two lines (a real entry touches at least two accounts).
+        too-few-lines,
+        /// A line's amount was <= 0. Carries the offending account.
+        nonpositive(string),
+    }
+
+    /// Validate one entry: at least two lines, every amount > 0, and debits ==
+    /// credits.
+    validate: func(e: entry) -> result<_, ledger-error>;
+
+    /// Per-account totals after aggregating entries.
+    record account-balance {
+        account: string,
+        debits: s64,
+        credits: s64,
+        /// debits - credits (positive = a net debit balance).
+        net: s64,
+    }
+
+    /// A trial balance: per-account totals plus the grand totals, which must be
+    /// equal for the books to balance.
+    record trial {
+        accounts: list<account-balance>,
+        total-debits: s64,
+        total-credits: s64,
+        /// total-debits == total-credits.
+        balanced: bool,
+    }
+
+    /// Aggregate `entries` into a trial balance (accounts sorted by name). Errors
+    /// if ANY entry fails `validate`.
+    trial-balance: func(entries: list<entry>) -> result<trial, ledger-error>;
+}
+
+/// `doubleentry` provides the ledger core; pure compute, no host imports.
+world doubleentry {
+    export ledger;
+}

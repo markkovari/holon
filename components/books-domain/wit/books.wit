@@ -1,0 +1,46 @@
+// books:app — a double-entry bookkeeping service as a WIT HTTP component.
+//
+// A chart of accounts (each typed asset / liability / equity / income / expense)
+// and a journal of entries. Every entry must BALANCE — debits equal credits —
+// which the `ledger:doubleentry` component enforces; a lopsided entry is
+// rejected. From the balanced journal the app derives the three statements every
+// set of books produces: a trial balance, a profit & loss, and a balance sheet
+// (assets = liabilities + equity), and exports them to PDF via `pdf:codec`.
+//
+// Auth comes from the composed auth-guard (auth:identity): each account owns its
+// own books; a fresh account is seeded a demo chart + entries so the reports
+// aren't empty. Amounts are integer minor units (cents) — no float rounding to
+// break the invariant.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   POST|GET /api/accounts {code, name, type}          the chart of accounts
+//   POST /api/entries {date, memo, lines:[{account, amount, side}]}   a journal entry
+//   GET  /api/entries                                  the journal
+//   GET  /api/reports/trial                            trial balance (debits==credits)
+//   GET  /api/reports/pnl                              income - expenses = net income
+//   GET  /api/reports/balance-sheet                    assets = liabilities + equity
+//   GET  /api/reports/statement.pdf                    the statements as a PDF
+package books:app@0.1.0;
+
+/// The bookkeeping backend — accounts + balanced journal + derived statements,
+/// composed from capability contracts.
+world books-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: chart of accounts + journal entries.
+    import records:store/store@0.1.0;
+    // the double-entry invariant + trial-balance aggregation.
+    import ledger:doubleentry/ledger@0.1.0;
+    // export the statements to a downloadable PDF.
+    import pdf:codec/codec@0.1.0;
+    // entry timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}
