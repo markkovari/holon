@@ -85,6 +85,8 @@ transit_wasm := rel / "transit_domain.wasm"
 transit_composed := "components/target/transit_domain.composed.wasm"
 dashboards_wasm := rel / "dashboards_domain.wasm"
 dashboards_composed := "components/target/dashboards_domain.composed.wasm"
+gate_wasm := rel / "gate_domain.wasm"
+gate_composed := "components/target/gate_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -402,6 +404,38 @@ host-dashboards: compose-dashboards build-dashboards-ui
 e2e-dashboards: compose-dashboards
     cd host && cargo build --release --bin vet-host
     cd examples/dashboards && cargo test --release
+
+# Compose gate-domain (GATE.md — a durable traffic-shaping gateway) with records
+# (the durable per-key state) + shaper (the token-bucket / GCRA math). The three
+# patterns — rate limit, throttle, batch — are the Golem durable-worker model
+# expressed over records:store revision CAS. Remaining imports are WASI.
+compose-gate: compose
+    wac plug {{gate_wasm}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/shaper.wasm \
+      -o {{gate_composed}}
+    wasm-tools validate {{gate_composed}}
+    @echo "composed gate-domain (+ records + shaper) -> {{gate_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/gate/dist.
+build-gate-ui:
+    cd examples/gate/ui && npm ci && npm run build
+
+# Run the gateway on the native host + serve the SPA on :3044. Fire bursts at the
+# rate limiter (token bucket, 200/429), the throttle (GCRA smoothing), and submit
+# items to watch a batch coalesce and flush — all per-key, durable state.
+host-gate: compose-gate build-gate-ui
+    cd host && VET_TENANT=gate cargo run --release --bin vet-host -- \
+      --component ../{{gate_composed}} --addr 0.0.0.0:3044 \
+      --static-dir ../examples/gate/dist
+
+# Gateway e2e: a token bucket allows `capacity` then 429s then refills; GCRA
+# admits a burst then spaces with an exact retry-after; concurrent hits on one
+# key admit exactly `capacity` (durable per-key CAS = a single-writer worker);
+# and a batch coalesces submits and flushes atomically with per-item results.
+e2e-gate: compose-gate
+    cd host && cargo build --release --bin vet-host
+    cd examples/gate && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one

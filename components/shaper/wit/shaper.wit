@@ -1,0 +1,54 @@
+// shaper:limit — stateless traffic-shaping algorithms (token bucket + GCRA).
+//
+// The math behind rate limiting and smoothing, split out as PURE FUNCTIONS: the
+// caller owns the per-key state (in a durable store, or a Golem worker's memory)
+// and hands it in each call; the function returns the allow/deny decision plus
+// the new state to persist. Keeping the algorithm stateless is what lets the
+// same limiter run over Redis, over records:store with a revision CAS, or as a
+// per-key durable worker — state is a binding, not baked into the code.
+//
+// Two algorithms:
+//   * token-bucket — bursty allowance that refills continuously.
+//   * GCRA (Generic Cell Rate Algorithm) — smooth spacing with a burst budget,
+//     using a single "theoretical arrival time" timestamp (no queue, no timer).
+//
+// Pure compute: no state, no host imports.
+package shaper:limit@0.1.0;
+
+/// Rate-limit / throttle decision functions.
+interface limiter {
+    /// The verdict for one request.
+    record decision {
+        /// Whether the request may proceed.
+        allowed: bool,
+        /// If denied, how long until it would be allowed (0 when allowed).
+        retry-after-ms: u64,
+        /// Tokens left after this request (token-bucket); 0 for GCRA.
+        remaining: f64,
+    }
+
+    /// Token-bucket state: current tokens and the unix-millis they were computed.
+    record bucket {
+        tokens: f64,
+        /// Unix millis of the last update; 0 = uninitialized (starts full).
+        updated-ms: u64,
+    }
+
+    /// Token bucket. Refills to `capacity` at `refill-per-sec`, then spends
+    /// `cost`. Returns the decision and the bucket state to persist.
+    token-bucket: func(state: bucket, now-ms: u64, capacity: f64, refill-per-sec: f64, cost: f64)
+        -> tuple<decision, bucket>;
+
+    /// GCRA. `tat-ms` is the theoretical arrival time (unix millis; 0 =
+    /// uninitialized). `period-ms` is the emission interval per cell
+    /// (1000 / requests-per-second); `burst` is how many cells may arrive early;
+    /// `cost` is the cells this request weighs. Returns the decision and the new
+    /// `tat` to persist.
+    gcra: func(tat-ms: u64, now-ms: u64, period-ms: u64, burst: u32, cost: u32)
+        -> tuple<decision, u64>;
+}
+
+/// `shaper` provides the limiter algorithms; pure compute, no host imports.
+world shaper {
+    export limiter;
+}

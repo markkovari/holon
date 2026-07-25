@@ -39,6 +39,7 @@ capabilities, so anything marked reusable drops into another app via
 | **feature-flags** | `featureflags:guard@0.1.0` | config/store, kv:store | — | 77 KiB | ✓ |
 | **flags-domain** | `rollout:app@0.1.0` | event:bus/bus, featureflags:guard/evaluator, id:generate/generator | — | 149 KiB | ✓ |
 | **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 142 KiB | ✓ |
+| **gate-domain** | `gate:app@0.1.0` | records:store/store, shaper:limit/limiter | — | 157 KiB | ✓ |
 | **geo** | `geo:resolve@0.1.0` | pure compute | — | 63 KiB | ✓ |
 | **golem-bridge** | `golem:bridge@0.1.0` | config/store, http/outgoing-handler | `golem-url`, `golem-host`, `golem-path-template` | 95 KiB | ✓ |
 | **helpdesk-domain** | `helpdesk:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, fsm:workflow/engine, id:generate/generator, md:render/renderer, records:store/store | — | 200 KiB | ✓ |
@@ -81,6 +82,7 @@ capabilities, so anything marked reusable drops into another app via
 | **search-index** | `search:index@0.1.0` | kv:store | — | 98 KiB | ✓ |
 | **secrets-vault** | `secrets:vault@0.1.0` | config/store, kv:store | `master-key` | 96 KiB | ✓ |
 | **session-store** | `session:store@0.1.0` | config/store, kv:store | `default-ttl` | 84 KiB | ✓ |
+| **shaper** | `shaper:limit@0.1.0` | pure compute | — | 13 KiB | ✓ |
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
@@ -132,6 +134,7 @@ capabilities, so anything marked reusable drops into another app via
 - **feature-flags** — `feature-flags` — reference implementation of `featureflags:guard`
 - **flags-domain** — flags:app — a live feature-rollout console over composed contracts
 - **fsm-workflow** — `fsm-workflow` — reference implementation of `fsm:workflow/engine`
+- **gate-domain** — `gate-domain` — a durable traffic-shaping gateway (GATE.md) as ONE composed
 - **geo** — `geo` — reference implementation of `geo:resolve`
 - **golem-bridge** — `golem-bridge` — durable:workflow/orchestrator over `wasi:http`, to Golem
 - **helpdesk-domain** — helpdesk:app — support/ticketing SaaS domain over composed contracts
@@ -174,6 +177,7 @@ capabilities, so anything marked reusable drops into another app via
 - **search-index** — `search-index` — reference implementation of `search:index`
 - **secrets-vault** — `secrets-vault` — reference implementation of `secrets:vault`
 - **session-store** — `session-store` — reference implementation of `session:store`
+- **shaper** — `shaper` — reference implementation of `shaper:limit/limiter`
 - **slug** — `slug` — reference implementation of `slug:generate`
 - **static-assets** — `static-assets` — reference implementation of `static:assets`
 - **status-page** — status:app — uptime monitor over composed capability contracts

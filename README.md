@@ -175,6 +175,12 @@ catalog and a bench round:
   donut / sparkline) — the frontend ships **no charting library** (its bundle is
   ~60% smaller than tempo's). Panels over `auth-guard` + `records`, theme-aware
   via `currentColor`. ([demo](docs/media/dashboards.gif))
+- **[GATE.md](GATE.md)** — a **durable traffic-shaping gateway**: per-key **rate
+  limiting** (token bucket), **throttling** (GCRA), and **batching** (coalesce +
+  atomic flush) — the **Golem Cloud durable-worker patterns**, with the shaping
+  math in a new **`shaper:limit`** component and durable per-key state over
+  `records:store`. Honestly shows where a shared-store CAS over-admits and a
+  single-writer worker wouldn't. ([demo](docs/media/gate.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

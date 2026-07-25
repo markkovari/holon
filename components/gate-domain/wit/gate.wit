@@ -1,0 +1,39 @@
+// gate:app — a durable traffic-shaping gateway as a WIT HTTP component.
+//
+// Three request-shaping patterns, each keyed by client and backed by DURABLE
+// per-key state — the model a Golem Cloud worker gives you for free:
+//
+//   * rate limit  — a token bucket per key (bursty allowance, continuous refill)
+//   * throttle    — GCRA smoothing per key (even spacing + a burst budget)
+//   * batch       — coalesce many submits into one flushed batch per key
+//
+// The shaping MATH is the stateless `shaper:limit` component; the DURABILITY is
+// this domain's per-key records in `records:store`, updated under a revision
+// compare-and-set so concurrent requests to one key serialize correctly (no
+// double-spend). That CAS-guarded per-key record is exactly a Golem worker:
+// addressed by key, single-writer, state that survives restarts. Batch flush is
+// wrapped in one CAS update — the "atomic region" that guarantees a crash can't
+// flush twice or lose buffered items. See GATE.md for the full Golem mapping.
+//
+// No auth: a gateway keys by a client-supplied API key. Times are unix millis.
+//
+// Routes (under /api so a future static SPA fallback leaves them alone):
+//   POST /api/ratelimit {key, capacity?, refill?, cost?}     -> 200 / 429
+//   POST /api/throttle  {key, rate?, burst?, cost?}          -> 200 / 429
+//   POST /api/batch/submit {key, item, max_size?, max_age_ms?}
+//   GET  /api/batch/{id}                                     poll a batch
+//   POST /api/reset {key}                                    clear a key's state
+package gate:app@0.1.0;
+
+/// The gateway backend — durable per-key rate limit / throttle / batch state,
+/// with the shaping math delegated to shaper:limit.
+world gate-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // the durable per-key state (the "worker" memory): bucket, TAT, batch buffer.
+    import records:store/store@0.1.0;
+    // the stateless shaping algorithms (token bucket + GCRA).
+    import shaper:limit/limiter@0.1.0;
+    // request + refill timestamps (unix millis).
+    import wasi:clocks/wall-clock@0.2.0;
+}

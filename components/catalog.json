@@ -538,6 +538,22 @@
     "reusable_as_is": true
   },
   {
+    "name": "gate-domain",
+    "package": "gate:app@0.1.0",
+    "description": "`gate-domain` \u2014 a durable traffic-shaping gateway (GATE.md) as ONE composed",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "records:store/store",
+      "shaper:limit/limiter"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 160800,
+    "wasm_sha256_12": "465b6cdd87a0",
+    "reusable_as_is": true
+  },
+  {
     "name": "geo",
     "package": "geo:resolve@0.1.0",
     "description": "`geo` \u2014 reference implementation of `geo:resolve`",
@@ -1280,6 +1296,19 @@
     ],
     "wasm_size_bytes": 86460,
     "wasm_sha256_12": "a03a4a5dd76b",
+    "reusable_as_is": true
+  },
+  {
+    "name": "shaper",
+    "package": "shaper:limit@0.1.0",
+    "description": "`shaper` \u2014 reference implementation of `shaper:limit/limiter`",
+    "exports": [
+      "limiter"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 13881,
+    "wasm_sha256_12": "5baf86a9dc65",
     "reusable_as_is": true
   },
   {
