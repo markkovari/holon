@@ -1,0 +1,38 @@
+// payees:app — a payee book with IBAN-validated bank details.
+//
+// A directory of who you pay, where each payee's IBAN is VALIDATED before it's
+// stored — the country length and the ISO 7064 mod-97 checksum, via the
+// `iban:validate` component. A typo'd IBAN is refused with the reason; a valid
+// one is stored normalized, with its country and a grouped display form. A
+// `verify` endpoint runs the same check dry, so the UI can flag an IBAN as you
+// type.
+//
+// Auth comes from the composed auth-guard (auth:identity): each account owns its
+// own payee book; a fresh account is seeded a couple of demo payees.
+//
+// Routes (under /api so the static-dir SPA fallback leaves them alone):
+//   POST /api/register|login|logout, GET /api/me
+//   POST /api/verify {iban}                            dry-run validate (for the UI)
+//   POST|GET /api/payees {name, iban}                  add / my payees
+//   DELETE /api/payees/{id}                            remove
+package payees:app@0.1.0;
+
+/// The payee backend — accounts + owned payees with IBAN validation, composed
+/// from capability contracts.
+world payees-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: register / login / session + token introspection.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // the data layer: the payees.
+    import records:store/store@0.1.0;
+    // validate the IBAN (country length + mod-97 checksum) before storing.
+    import iban:validate/validator@0.1.0;
+    // payee timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

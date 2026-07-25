@@ -662,6 +662,19 @@
     "reusable_as_is": true
   },
   {
+    "name": "iban",
+    "package": "iban:validate@0.1.0",
+    "description": "`iban` \u2014 reference implementation of `iban:validate/validator`",
+    "exports": [
+      "validator"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 64393,
+    "wasm_sha256_12": "5ac9de84cfdd",
+    "reusable_as_is": true
+  },
+  {
     "name": "ical",
     "package": "ical:codec@0.1.0",
     "description": "`ical` \u2014 reference implementation of `ical:codec/codec`",
@@ -1019,6 +1032,27 @@
     "config_keys": [],
     "wasm_size_bytes": 155262,
     "wasm_sha256_12": "195cd12f227a",
+    "reusable_as_is": true
+  },
+  {
+    "name": "payees-domain",
+    "package": "payees:app@0.1.0",
+    "description": "`payees-domain` \u2014 a payee book (PAYEES.md) as ONE composed wasm HTTP",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/rbac",
+      "auth:identity/session",
+      "auth:identity/types",
+      "iban:validate/validator",
+      "records:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 172752,
+    "wasm_sha256_12": "f4f64fe6b7aa",
     "reusable_as_is": true
   },
   {

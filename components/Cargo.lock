@@ -568,6 +568,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "iban"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "ical"
 version = "0.1.0"
 dependencies = [
@@ -844,6 +851,15 @@ dependencies = [
 
 [[package]]
 name = "paste-bin"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "payees-domain"
 version = "0.1.0"
 dependencies = [
  "serde",

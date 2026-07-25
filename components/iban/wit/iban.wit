@@ -1,0 +1,50 @@
+// iban:validate — IBAN (International Bank Account Number) validation.
+//
+// Every app that stores bank details needs this and few do it right: an IBAN
+// isn't just a string, it carries a mod-97 checksum (ISO 7064) plus a fixed
+// length per country. This component does both — normalize, check the length
+// against the country, and verify the checksum — returning the parsed parts or a
+// typed reason it's invalid. A tiny gem with a crisp, exact test.
+//
+// Pure compute: string in, verdict out. No state, no host imports.
+package iban:validate@0.1.0;
+
+/// Validate and parse an IBAN.
+interface validator {
+    /// The parsed parts of a valid IBAN.
+    record iban-info {
+        /// ISO 3166 country code (first two letters).
+        country: string,
+        /// The two check digits.
+        check-digits: string,
+        /// The country-specific Basic Bank Account Number (the rest).
+        bban: string,
+        /// The IBAN grouped in fours for display (e.g. "GB82 WEST 1234 …").
+        formatted: string,
+        /// Total length (letters + digits, no spaces).
+        length: u32,
+    }
+
+    /// Why an IBAN is invalid.
+    variant iban-error {
+        /// Fewer than the minimum characters after normalizing.
+        too-short,
+        /// The first two characters weren't letters. Carries what was found.
+        bad-country(string),
+        /// Contained a character that isn't a letter or digit.
+        bad-char(string),
+        /// The length didn't match the country's rule. Carries `(got, expected)`.
+        bad-length(tuple<u32, u32>),
+        /// The mod-97 checksum failed (a typo somewhere in the number).
+        bad-check,
+    }
+
+    /// Normalize (strip spaces, upper-case), then validate an IBAN: country
+    /// length (for known countries) and the ISO 7064 mod-97 checksum.
+    validate: func(iban: string) -> result<iban-info, iban-error>;
+}
+
+/// `iban` provides the validator; pure compute, no host imports.
+world iban {
+    export validator;
+}

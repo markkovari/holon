@@ -45,6 +45,7 @@ capabilities, so anything marked reusable drops into another app via
 | **golem-bridge** | `golem:bridge@0.1.0` | config/store, http/outgoing-handler | `golem-url`, `golem-host`, `golem-path-template` | 95 KiB | ✓ |
 | **helpdesk-domain** | `helpdesk:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, fsm:workflow/engine, id:generate/generator, md:render/renderer, records:store/store | — | 200 KiB | ✓ |
 | **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 77 KiB | ✓ |
+| **iban** | `iban:validate@0.1.0` | pure compute | — | 62 KiB | ✓ |
 | **ical** | `ical:codec@0.1.0` | pure compute | — | 59 KiB | ✓ |
 | **id-generate** | `id:generate@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 81 KiB | ✓ |
@@ -66,6 +67,7 @@ capabilities, so anything marked reusable drops into another app via
 | **outbox** | `outbox:dispatch@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `base-backoff` | 92 KiB | ✓ |
 | **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 76 KiB | ✓ |
 | **paste-bin** | `bin:app@0.1.0` | md:render/renderer, pii:redact/redactor, records:store/store, slug:generate/generator, validate:schema/validator | — | 151 KiB | ✓ |
+| **payees-domain** | `payees:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, iban:validate/validator, records:store/store | — | 168 KiB | ✓ |
 | **pdf** | `pdf:codec@0.1.0` | pure compute | — | 57 KiB | ✓ |
 | **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **pipeline-domain** | `pipeline:app@0.1.0` | event:bus/bus, id:generate/generator, outbox:dispatch/queue | — | 147 KiB | ✓ |
@@ -144,6 +146,7 @@ capabilities, so anything marked reusable drops into another app via
 - **golem-bridge** — `golem-bridge` — durable:workflow/orchestrator over `wasi:http`, to Golem
 - **helpdesk-domain** — helpdesk:app — support/ticketing SaaS domain over composed contracts
 - **i18n-catalog** — `i18n-catalog` — reference implementation of `i18n:catalog`
+- **iban** — `iban` — reference implementation of `iban:validate/validator`
 - **ical** — `ical` — reference implementation of `ical:codec/codec`
 - **id-generate** — `id-generate` — reference implementation of `id:generate/generator`
 - **idempotency-guard** — `idempotency-guard` — reference implementation of `idempotency:guard`
@@ -165,6 +168,7 @@ capabilities, so anything marked reusable drops into another app via
 - **outbox** — `outbox` — reference implementation of `outbox:dispatch`
 - **pagination** — `pagination` — reference implementation of `paginate:cursor`
 - **paste-bin** — bin:app — a paste / gist bin over a chain of mostly pure-compute contracts
+- **payees-domain** — `payees-domain` — a payee book (PAYEES.md) as ONE composed wasm HTTP
 - **pdf** — `pdf` — reference implementation of `pdf:codec/codec`
 - **pii-redact** — `pii-redact` — reference implementation of `pii:redact`
 - **pipeline-domain** — pipeline:app — a reliable event pipeline over composed contracts

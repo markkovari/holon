@@ -190,6 +190,10 @@ catalog and a bench round:
   /api/export.zip` bundles every note into a real ZIP (a `.md` per note +
   `index.csv` + `manifest.json`) via a new **`zip:archive`** component (STORE +
   CRC-32) — no zip library in the app. ([demo](docs/media/stash.gif))
+- **[PAYEES.md](PAYEES.md)** — a **payee book with IBAN-validated bank details**:
+  each IBAN is checked (country length + ISO 7064 **mod-97 checksum**) by a new
+  **`iban:validate`** component before it's stored, and flagged green/red **as you
+  type**. ([demo](docs/media/payees.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

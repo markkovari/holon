@@ -91,6 +91,8 @@ books_wasm := rel / "books_domain.wasm"
 books_composed := "components/target/books_domain.composed.wasm"
 stash_wasm := rel / "stash_domain.wasm"
 stash_composed := "components/target/stash_domain.composed.wasm"
+payees_wasm := rel / "payees_domain.wasm"
+payees_composed := "components/target/payees_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -510,6 +512,36 @@ host-stash: compose-stash build-stash-ui
 e2e-stash: compose-stash
     cd host && cargo build --release --bin vet-host
     cd examples/stash && cargo test --release
+
+# Compose payees-domain (PAYEES.md — a payee book) with auth-guard + records +
+# iban (validate the IBAN before storing). Remaining imports are WASI.
+compose-payees: compose
+    wac plug {{payees_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/iban.wasm \
+      -o {{payees_composed}}
+    wasm-tools validate {{payees_composed}}
+    @echo "composed payees-domain (+ auth-guard + records + iban) -> {{payees_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/payees/dist.
+build-payees-ui:
+    cd examples/payees/ui && npm ci && npm run build
+
+# Run the payee book on the native host + serve the SPA on :3047. Register a new
+# account (seeded demo payees); add payees — the IBAN is validated as you type
+# (country length + mod-97 checksum) and a typo is refused with the reason.
+host-payees: compose-payees build-payees-ui
+    cd host && VET_TENANT=payees cargo run --release --bin vet-host -- \
+      --component ../{{payees_composed}} --addr 0.0.0.0:3047 \
+      --static-dir ../examples/payees/dist
+
+# Payee-book e2e: a valid IBAN is accepted (stored normalized + country); a
+# bad-checksum / wrong-length / bad-country IBAN is rejected with the reason;
+# /verify returns the parsed country + grouped form; and ownership is enforced.
+e2e-payees: compose-payees
+    cd host && cargo build --release --bin vet-host
+    cd examples/payees && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one
