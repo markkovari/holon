@@ -22,3 +22,4 @@ httpApi:
     - domain: gate.localhost:9006
       agents:
         GateAgent: {}
+        BatchAgent: {}

@@ -17,22 +17,30 @@ pub trait GateAgent {
     /// The constructor params identify the worker — one per `key`.
     fn new(key: String) -> Self;
 
-    /// Spend one token if available. Returns JSON `{allowed, remaining}`.
+    /// Spend one token if available (token bucket). Returns `{allowed, remaining}`.
     #[endpoint(post = "/take")]
     fn take(&mut self) -> String;
 
-    /// Refill to capacity (for demo replay). Returns the capacity.
+    /// GCRA smoothing to `RATE`/s with a `BURST` budget. Returns
+    /// `{allowed, retry_after_ms}`.
+    #[endpoint(post = "/throttle")]
+    fn throttle(&mut self) -> String;
+
+    /// Refill the bucket + clear the throttle (for demo replay).
     #[endpoint(post = "/reset")]
     fn reset(&mut self) -> String;
 }
 
 const CAPACITY: f64 = 10.0;
 const REFILL_PER_SEC: f64 = 1.0;
+const RATE_PER_SEC: u64 = 5; // GCRA target rate
+const BURST: u64 = 2; // GCRA burst budget (cells)
 
 struct GateImpl {
     _key: String,
     tokens: f64,
     updated_ms: u64,
+    tat: u64, // GCRA theoretical arrival time
 }
 
 fn now_ms() -> u64 {
@@ -45,7 +53,7 @@ fn now_ms() -> u64 {
 #[agent_implementation]
 impl GateAgent for GateImpl {
     fn new(key: String) -> Self {
-        Self { _key: key, tokens: CAPACITY, updated_ms: now_ms() }
+        Self { _key: key, tokens: CAPACITY, updated_ms: now_ms(), tat: 0 }
     }
 
     fn take(&mut self) -> String {
@@ -62,9 +70,27 @@ impl GateAgent for GateImpl {
         format!("{{\"allowed\":{},\"remaining\":{:.2}}}", allowed, self.tokens)
     }
 
+    fn throttle(&mut self) -> String {
+        // GCRA over one theoretical-arrival-time timestamp (no queue, no timer).
+        let now = now_ms();
+        let period = 1000 / RATE_PER_SEC; // emission interval per cell (ms)
+        let limit = BURST * period; // how far early a request may arrive
+        let tat = if self.tat == 0 { now } else { self.tat };
+        let allow_at = tat.saturating_sub(limit);
+        let allowed = now >= allow_at;
+        let retry = if allowed {
+            self.tat = tat.max(now) + period; // advance by one cell
+            0
+        } else {
+            allow_at - now
+        };
+        format!("{{\"allowed\":{},\"retry_after_ms\":{}}}", allowed, retry)
+    }
+
     fn reset(&mut self) -> String {
         self.tokens = CAPACITY;
         self.updated_ms = now_ms();
-        format!("{{\"capacity\":{}}}", CAPACITY)
+        self.tat = 0;
+        format!("{{\"capacity\":{},\"rate\":{},\"burst\":{}}}", CAPACITY, RATE_PER_SEC, BURST)
     }
 }

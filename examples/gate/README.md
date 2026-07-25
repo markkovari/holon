@@ -12,16 +12,17 @@ A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 ui/                      # Vite + React + TS + Tailwind + shadcn/ui source
 public/ -> (built)       # `npm run build` emits ../dist, which the host serves
 tests/gate.rs            # e2e: token bucket + GCRA + atomic batch flush + a concurrency probe
-golem/                   # the SAME limiter as a real Golem agent (one durable worker per key)
+golem/                   # all three patterns as real Golem agents (one durable worker per key)
 ```
 
 ## Run it on Golem (exact serialization)
 
-`golem/` is the rate limiter as a durable **Golem agent** — one single-writer
-worker per key, no CAS. `just gate-golem` deploys it to a local Golem and fires
-24 concurrent takes at one key: it admits **exactly** the capacity, every time,
-where the shared-store version below over-admits. Same math, different place for
-the state. (Reuses the Golem 1.5 binary from `providers/golem-workflow`.)
+`golem/` is the full trio as durable **Golem agents** — one single-writer worker
+per key, no CAS. `just gate-golem` deploys to a local Golem and fires concurrent
+bursts: rate limit admits **exactly** the capacity, throttle exactly `burst+1`,
+and the batch accounts for **every** submit (no loss/dup) — where the shared-store
+version below over-admits / re-buckets. Same math, different place for the state.
+(Reuses the Golem 1.5 binary from `providers/golem-workflow`.)
 
 ## Run
 

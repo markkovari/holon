@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Run the gate rate limiter as a REAL Golem agent and prove EXACT serialization:
-# fire N concurrent `take`s at one key and exactly `capacity` succeed — because a
-# Golem worker is a single-threaded durable actor per key (no CAS, no over-admit).
-# Contrast: the shared-store gate-domain over-admits under the same load.
+# Run all three gate patterns as REAL Golem agents and prove EXACT serialization:
+# fire concurrent bursts at one key and the counts are exact (rate limit admits
+# exactly capacity, throttle exactly burst+1, batch accounts for every submit) —
+# because a Golem worker is a single-threaded durable actor per key (no CAS).
+# Contrast: the shared-store gate-domain over-admits / re-buckets under the load.
 #
 # Reuses the Golem 1.5 binary vendored for the golem-workflow provider e2e.
 set -euo pipefail
@@ -23,26 +24,49 @@ fi
 echo "building + deploying the gate agent..."
 "$G" deploy -Y 2>&1 | tail -3
 
-echo "=== exact serialization: 24 concurrent takes at one key, capacity 10 ==="
+echo "=== exact serialization on Golem (a single-writer durable worker per key) ==="
 python3 - <<'PY'
-import urllib.request as u, threading, json
-def post(key, path):
-    r = u.Request(f"http://127.0.0.1:9006/gate/{key}{path}", method="POST", headers={"Host": "gate.localhost:9006"})
-    return u.urlopen(r, timeout=12).read().decode()
-def allowed(resp):
-    return json.loads(json.loads(resp))["allowed"]
+import urllib.request as u, threading, json, time
+H = {"Host": "gate.localhost:9006"}
+def call(path, method):
+    for a in range(5):
+        try: return u.urlopen(u.Request("http://127.0.0.1:9006" + path, method=method, headers=H), timeout=15).read().decode()
+        except Exception:
+            if a == 4: raise
+            time.sleep(2)
+def pj(r): return json.loads(json.loads(r))
 ok = True
-for trial in range(3):
-    key = f"golem{trial}"
-    post(key, "/reset")  # -> capacity 10
+
+# 1) RATE LIMIT — token bucket, capacity 10. 24 concurrent takes -> exactly 10.
+print("rate limit  (token bucket, capacity 10): 24 concurrent takes")
+for t in range(3):
+    k = f"rl{t}"; call(f"/gate/{k}/reset", "POST")
     res = [None] * 24
-    def hit(i, key=key): res[i] = allowed(post(key, "/take"))
-    ts = [threading.Thread(target=hit, args=(i,)) for i in range(24)]
-    [t.start() for t in ts]; [t.join() for t in ts]
-    a = sum(1 for x in res if x)
-    exact = a == 10
-    ok = ok and exact
-    print(f"  trial {trial}: {a}/24 admitted (capacity 10) -> {'EXACT' if exact else 'NOT EXACT'}")
-print("\nGolem worker = single-writer per key -> exact. (gate-domain's shared-store CAS over-admits.)")
+    def hit(i, k=k): res[i] = pj(call(f"/gate/{k}/take", "POST"))["allowed"]
+    ts = [threading.Thread(target=hit, args=(i,)) for i in range(24)]; [x.start() for x in ts]; [x.join() for x in ts]
+    a = sum(1 for x in res if x); ok = ok and a == 10
+    print(f"  trial {t}: {a}/24 admitted -> {'EXACT (10)' if a == 10 else 'got ' + str(a)}")
+
+# 2) THROTTLE — GCRA 5/s, burst 2. 12 concurrent -> exactly burst+1 = 3.
+print("throttle    (GCRA 5/s, burst 2): 12 concurrent")
+for t in range(3):
+    k = f"th{t}"; call(f"/gate/{k}/reset", "POST")
+    res = [None] * 12
+    def hit(i, k=k): res[i] = pj(call(f"/gate/{k}/throttle", "POST"))["allowed"]
+    ts = [threading.Thread(target=hit, args=(i,)) for i in range(12)]; [x.start() for x in ts]; [x.join() for x in ts]
+    a = sum(1 for x in res if x); ok = ok and a == 3
+    print(f"  trial {t}: {a}/12 admitted -> {'EXACT (3)' if a == 3 else 'got ' + str(a)}")
+
+# 3) BATCH — coalesce, max 4. 10 concurrent submits -> exactly 10 accounted, no loss/dup.
+print("batch       (coalesce, max 4): 10 concurrent submits")
+for t in range(3):
+    k = f"ba{t}"
+    def sub(i, k=k): call(f"/batch/{k}/submit/item{i}", "POST")
+    ts = [threading.Thread(target=sub, args=(i,)) for i in range(10)]; [x.start() for x in ts]; [x.join() for x in ts]
+    s = pj(call(f"/batch/{k}/stats", "GET")); call(f"/batch/{k}/flush", "POST"); s2 = pj(call(f"/batch/{k}/stats", "GET"))
+    good = s["total"] == 10 and s2["flushed_total"] == 10 and s2["pending"] == 0; ok = ok and good
+    print(f"  trial {t}: total={s['total']}, flushed={s2['flushed_total']}, pending={s2['pending']} -> {'EXACT (no lost/dup)' if good else 'MISMATCH'}")
+
+print("\nEach key is a single-writer durable worker -> exact. (gate-domain's shared-store CAS over-admits / re-buckets.)")
 raise SystemExit(0 if ok else 1)
 PY

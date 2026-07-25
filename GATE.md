@@ -77,35 +77,45 @@ The claim isn't hypothetical: `examples/gate/golem` is the same limiter as a
 **real Golem agent**, and `just gate-golem` deploys it to a local Golem and
 proves the difference.
 
-The whole agent is the durable-worker version of `shaper::token-bucket` — no
-store, no CAS, because the worker *is* the serialization point:
+All three patterns are durable-worker versions — no store, no CAS, because the
+worker *is* the serialization point. State lives in the worker's own memory
+(durable via Golem's oplog, replayed after a restart) and every invocation is
+serialized because a worker runs one at a time:
 
 ```rust
-#[agent_definition(mount = "/gate/{key}")]   // one durable worker per key
+#[agent_definition(mount = "/gate/{key}")]     // one durable worker per key
 pub trait GateAgent {
-    fn new(key: String) -> Self;             // constructor params identify the worker
-    #[endpoint(post = "/take")] fn take(&mut self) -> String;   // spend a token
-    #[endpoint(post = "/reset")] fn reset(&mut self) -> String;
+    fn new(key: String) -> Self;
+    #[endpoint(post = "/take")]     fn take(&mut self) -> String;      // token bucket
+    #[endpoint(post = "/throttle")] fn throttle(&mut self) -> String;  // GCRA
+    #[endpoint(post = "/reset")]    fn reset(&mut self) -> String;
+}
+
+#[agent_definition(mount = "/batch/{key}")]    // an aggregator worker per key
+pub trait BatchAgent {
+    fn new(key: String) -> Self;
+    #[endpoint(post = "/submit/{item}")] fn submit(&mut self, item: String) -> String;
+    #[endpoint(post = "/flush")]         fn flush(&mut self) -> String;
+    #[endpoint(get = "/stats")]          fn stats(&self) -> String;
 }
 ```
 
-State (`tokens`) lives in the worker's own memory — durable via Golem's oplog,
-replayed after a restart — and every `take` is serialized because a worker runs
-one invocation at a time. So under the **same 24-way concurrent burst that made
-`gate-domain` over-admit**, the Golem worker is **exact**:
+Under the **same concurrent bursts that made `gate-domain` over-admit / re-bucket**,
+every pattern is **exact** — `just gate-golem`:
 
 ```
-$ just gate-golem
-  trial 0: 10/24 admitted (capacity 10) -> EXACT
-  trial 1: 10/24 admitted (capacity 10) -> EXACT
-  trial 2: 10/24 admitted (capacity 10) -> EXACT
+rate limit  (token bucket, capacity 10): 24 concurrent takes
+  trial 0..2: 10/24 admitted -> EXACT (10)        # shared-store: ~16/24
+throttle    (GCRA 5/s, burst 2): 12 concurrent
+  trial 0..2: 3/12 admitted -> EXACT (3)
+batch       (coalesce, max 4): 10 concurrent submits
+  trial 0..2: total=10, flushed=10, pending=0 -> EXACT (no lost/dup)
 ```
 
-10/10, every trial — versus the shared-store CAS admitting ~16/24. Same
-algorithm, same load; the difference is *where the state lives*. Moving `gate`
-onto Golem was flipping `records:store` for the worker's own durable memory —
-the shaping math is unchanged. That's the payoff of the durable-worker model for
-stateful shaping: exact per-entity serialization + durability, with no
+Same algorithms, same load; the difference is *where the state lives*. Moving
+`gate` onto Golem was flipping `records:store` for the worker's own durable
+memory — the shaping math is unchanged. That's the payoff of the durable-worker
+model for stateful shaping: exact per-entity serialization + durability, with no
 coordination dance. (`golem-bridge` is how a composed component reaches such a
 worker over HTTP.)
 
@@ -127,7 +137,7 @@ just e2e-gate     # token bucket + GCRA (deterministic) + atomic batch flush +
 To run the **Golem** version (deploys to a local Golem, proves exact serialization):
 
 ```bash
-just gate-golem   # -> 10/24 admitted, EXACT (vs the shared-store's ~16/24)
+just gate-golem   # all three patterns, exact under concurrent bursts
 ```
 
 ## Rungs left
@@ -135,7 +145,6 @@ just gate-golem   # -> 10/24 admitted, EXACT (vs the shared-store's ~16/24)
 - **Exact limiter without Golem** — a fixed-window counter over `wasi:keyvalue`
   atomic `increment` is exact (but less flexible than a bucket); a nice
   side-by-side with the CAS version.
-- **Backpressure** — return a promise/ticket the caller awaits (throttle) instead
-  of a bare `429` — the Golem-promise story.
-- **Throttle + batch on Golem** — the agent does rate-limit today; add GCRA and a
-  batch aggregator worker (with a promise per item) for the full trio on Golem.
+- **Backpressure with promises** — the batch aggregator flushes atomically today;
+  give each submit a Golem **promise** the caller awaits, completed on flush, so
+  the submitter blocks for its result instead of polling `stats`.
