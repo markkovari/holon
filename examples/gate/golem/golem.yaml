@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://schema.golem.cloud/app/golem/1.5.0/golem.schema.json
+# The gate rate limiter as a Golem app: one durable worker per key (exact
+# serialization). Deploy to a local Golem and invoke POST /gate/{key}/take.
+manifestVersion: 1.5.0
+
+app: gate-golem
+
+environments:
+  local:
+    server: local
+    componentPresets: debug
+  cloud:
+    server: cloud
+    componentPresets: release
+components:
+  gate:agent:
+    dir: ""
+    templates: rust
+httpApi:
+  deployments:
+    local:
+    - domain: gate.localhost:9006
+      agents:
+        GateAgent: {}

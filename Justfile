@@ -437,6 +437,13 @@ e2e-gate: compose-gate
     cd host && cargo build --release --bin vet-host
     cd examples/gate && cargo test --release
 
+# Run gate as a REAL Golem agent (GATE.md) and prove EXACT serialization: a
+# durable single-writer worker per key admits exactly `capacity` under a
+# concurrent burst — where the shared-store gate-domain over-admits. Reuses the
+# Golem 1.5 binary from the golem-workflow provider (fetch once via `golem-e2e`).
+gate-golem:
+    bash examples/gate/golem-run.sh
+
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one
 # process. Run: docker run -p 8080:8080 -e REDIS_URL=rediss://... tempo

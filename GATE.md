@@ -71,10 +71,43 @@ per-entity serialization + durable state without a coordination dance — is the
 reason rate limiting / throttling / batching are such a natural fit for durable
 workers.
 
-> In this repo, `golem-bridge` reaches a live Golem backend over HTTP; moving
-> `gate` onto Golem means flipping state from `records:store` into the worker's
-> own durable memory — the WIT stays, the binding changes ("state is a link
-> choice, not code").
+## Run it on Golem — exact serialization (done)
+
+The claim isn't hypothetical: `examples/gate/golem` is the same limiter as a
+**real Golem agent**, and `just gate-golem` deploys it to a local Golem and
+proves the difference.
+
+The whole agent is the durable-worker version of `shaper::token-bucket` — no
+store, no CAS, because the worker *is* the serialization point:
+
+```rust
+#[agent_definition(mount = "/gate/{key}")]   // one durable worker per key
+pub trait GateAgent {
+    fn new(key: String) -> Self;             // constructor params identify the worker
+    #[endpoint(post = "/take")] fn take(&mut self) -> String;   // spend a token
+    #[endpoint(post = "/reset")] fn reset(&mut self) -> String;
+}
+```
+
+State (`tokens`) lives in the worker's own memory — durable via Golem's oplog,
+replayed after a restart — and every `take` is serialized because a worker runs
+one invocation at a time. So under the **same 24-way concurrent burst that made
+`gate-domain` over-admit**, the Golem worker is **exact**:
+
+```
+$ just gate-golem
+  trial 0: 10/24 admitted (capacity 10) -> EXACT
+  trial 1: 10/24 admitted (capacity 10) -> EXACT
+  trial 2: 10/24 admitted (capacity 10) -> EXACT
+```
+
+10/10, every trial — versus the shared-store CAS admitting ~16/24. Same
+algorithm, same load; the difference is *where the state lives*. Moving `gate`
+onto Golem was flipping `records:store` for the worker's own durable memory —
+the shaping math is unchanged. That's the payoff of the durable-worker model for
+stateful shaping: exact per-entity serialization + durability, with no
+coordination dance. (`golem-bridge` is how a composed component reaches such a
+worker over HTTP.)
 
 ## The data model
 
@@ -91,6 +124,12 @@ just e2e-gate     # token bucket + GCRA (deterministic) + atomic batch flush +
                   # a concurrency probe that documents the shared-store CAS breach
 ```
 
+To run the **Golem** version (deploys to a local Golem, proves exact serialization):
+
+```bash
+just gate-golem   # -> 10/24 admitted, EXACT (vs the shared-store's ~16/24)
+```
+
 ## Rungs left
 
 - **Exact limiter without Golem** — a fixed-window counter over `wasi:keyvalue`
@@ -98,5 +137,5 @@ just e2e-gate     # token bucket + GCRA (deterministic) + atomic batch flush +
   side-by-side with the CAS version.
 - **Backpressure** — return a promise/ticket the caller awaits (throttle) instead
   of a bare `429` — the Golem-promise story.
-- **Run it on Golem** — a `gate` worker per key via `golem-bridge`, contrasting
-  the exact durable-worker limiter with this shared-store approximation.
+- **Throttle + batch on Golem** — the agent does rate-limit today; add GCRA and a
+  batch aggregator worker (with a promise per item) for the full trio on Golem.
