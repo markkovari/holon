@@ -62,7 +62,7 @@ spec:
     - name: accounts-app
       type: component
       properties:
-        image: file://../../components/target/wasm32-wasip1/release/accounts_app.wasm
+        image: file://../../components/target/wasm32-wasip2/release/accounts_app.wasm
       traits:
         - type: spreadscaler
           properties:

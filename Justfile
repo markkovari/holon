@@ -7,7 +7,7 @@ set dotenv-load := true
 
 wit_dir := "wit"
 components := "components"
-rel := components / "target/wasm32-wasip1/release"
+rel := components / "target/wasm32-wasip2/release"
 guard_wasm := rel / "auth_guard.wasm"
 consumer_wasm := rel / "sample_consumer.wasm"
 ratelimit_wasm := rel / "rate_limiter.wasm"
@@ -125,9 +125,16 @@ vendor:
 wit-check:
     wasm-tools component wit {{wit_dir}}
 
-# Build all components to wasm components.
+# Build all components as WASI p2 components (wasm32-wasip2).
+#
+# Two steps on purpose. cargo-component 0.21.1 HARDCODES `--target wasm32-wasip1`
+# — it ignores both `--target` and `[build] target` — so it is used only to
+# GENERATE the bindings (`check` is enough, no codegen). The artifacts come from a
+# plain cargo build for wasm32-wasip2, where rustc + wasm-component-ld emit a
+# component directly with no wasi_snapshot_preview1 adapter in it.
 build:
-    cd {{components}} && cargo component build --release
+    cd {{components}} && cargo component check --release
+    cd {{components}} && cargo build --release --target wasm32-wasip2
 
 # Compose the rate-limiter AND audit-log into auth-guard with wac, satisfying
 # auth-guard's `ratelimit:guard/limiter` + `audit:log/recorder` imports. Output

@@ -13,11 +13,14 @@
 //!   `SubtypeChecker`, so a UI's connection validation is the real type check;
 //!   `compose` runs its `plug`, so the artifact is the artifact `wac plug` writes.
 //!
-//! What a built component does NOT tell you: its own package name. The embedded
+//! What a built component does NOT tell you: anything about itself. The embedded
 //! type says `package root:component; world root { ... }` — the world name and
-//! package from the source WIT are gone. Identity therefore comes from the `name`
-//! custom section (the crate name) and from what it exports. An app component
-//! exporting only `wasi:http` is anonymous, which is why the caller supplies ids.
+//! package from the source WIT are gone. And since these build for
+//! `wasm32-wasip2`, there is no `component-name` custom section either (that came
+//! from cargo-component's adapter path; `wasm-component-ld` writes none). So
+//! identity is ONLY what it exports — a capability is recognisable because it
+//! exports `records:store/store`, an app exporting just `wasi:http` is anonymous —
+//! which is why every caller supplies its own id.
 
 #[allow(warnings)]
 mod bindings;
@@ -789,7 +792,7 @@ mod tests {
 
     fn artifact(name: &str) -> Option<Vec<u8>> {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../target/wasm32-wasip1/release")
+            .join("../target/wasm32-wasip2/release")
             .join(format!("{name}.wasm"));
         std::fs::read(p).ok()
     }
@@ -797,7 +800,7 @@ mod tests {
     /// Panics with a usable message rather than skipping silently.
     fn require(name: &str) -> Vec<u8> {
         artifact(name).unwrap_or_else(|| {
-            panic!("components/target/wasm32-wasip1/release/{name}.wasm missing — run `just build` first")
+            panic!("components/target/wasm32-wasip2/release/{name}.wasm missing — run `just build` first")
         })
     }
 
@@ -805,7 +808,11 @@ mod tests {
     fn inspects_a_real_component() {
         let bytes = require("mesh_domain");
         let s = <Component as InspectorGuest>::inspect(bytes).expect("mesh-domain inspects");
-        assert_eq!(s.name, "mesh-domain", "identity comes from the name custom section");
+        // A wasm32-wasip2 artifact is ANONYMOUS: `wasm-component-ld` writes no
+        // `component-name` section (nor a producers tag), where cargo-component's
+        // adapter path did. A built component carries no identity of its own —
+        // which is why every caller downstream supplies an id.
+        assert!(s.name.is_empty(), "p2 artifacts carry no name section, got {:?}", s.name);
         assert_eq!(s.exports.len(), 1);
         assert_eq!(s.exports[0].raw, "wasi:http/incoming-handler@0.2.0");
         let composable: Vec<&str> = s.imports.iter().map(|i| i.raw.as_str()).collect();

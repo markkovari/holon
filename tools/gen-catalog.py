@@ -14,7 +14,7 @@ Sources of truth, laziest that works:
   - src/*.rs           -> config knob detection: string literals inside
                           *get*("...") calls, only for components that import
                           wasi:config (kv get("key") noise filtered that way)
-  - target/wasm32-wasip1/release/<name>.wasm -> size + sha256 (if built)
+  - target/wasm32-wasip2/release/<name>.wasm -> size + sha256 (if built)
 
 Usage: python3 tools/gen-catalog.py   (from the comp/ directory)
 """
@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 COMPONENTS = ROOT / "components"
-RELEASE = COMPONENTS / "target" / "wasm32-wasip1" / "release"
+RELEASE = COMPONENTS / "target" / "wasm32-wasip2" / "release"
 
 # app/demo components: listed, but flagged not-reusable-as-is.
 APP_SPECIFIC = {

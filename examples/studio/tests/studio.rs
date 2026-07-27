@@ -41,7 +41,7 @@ fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
 }
 fn rel() -> PathBuf {
-    root().join("components/target/wasm32-wasip1/release")
+    root().join("components/target/wasm32-wasip2/release")
 }
 fn tmp() -> PathBuf {
     let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/e2e");
@@ -147,7 +147,10 @@ fn studio_reflects_plans_emits_and_composes() {
     for stem in ["record_store", "resilience", "proxy_route", "zip"] {
         upload(stem);
     }
-    assert_eq!(mesh["name"], "mesh-domain", "identity from the name custom section");
+    // A wasm32-wasip2 artifact is anonymous: no `component-name` section (that was
+    // cargo-component's adapter path) and no package/world name in the embedded
+    // type. So the palette id is the caller's — here the `?id=` on the upload.
+    assert_eq!(mesh["name"], "", "p2 artifacts carry no self-identity: {}", mesh["name"]);
     let composable: Vec<&str> =
         mesh["imports"].as_array().unwrap().iter().map(|i| i["raw"].as_str().unwrap()).collect();
     assert_eq!(
@@ -164,8 +167,20 @@ fn studio_reflects_plans_emits_and_composes() {
     let host: Vec<&str> =
         mesh["host_imports"].as_array().unwrap().iter().map(|i| i["raw"].as_str().unwrap()).collect();
     assert!(host.iter().all(|h| h.starts_with("wasi:")), "{host:?}");
-    assert!(host.contains(&"wasi:http/types@0.2.0"), "{host:?}");
-    assert_eq!(host.len(), 13, "mesh-domain's own host surface: {host:?}");
+    // Match on the interface, not the version: wasm32-wasip2 injects whatever
+    // 0.2.x Rust's std carries (0.2.9/0.2.12 today), not the 0.2.0 our vendored
+    // WIT declares. That skew is why this migration waited for a host new enough
+    // to define those versions.
+    assert!(host.iter().any(|h| h.starts_with("wasi:http/types@0.2.")), "{host:?}");
+    // 16 on p2 — Rust's wasip2 std wires up the whole wasi:cli surface, including
+    // five `terminal-*` interfaces the app never touches. It was 13 under the
+    // preview1 adapter. Pinned so a std-surface change shows up here first.
+    assert_eq!(host.len(), 16, "mesh-domain's own host surface: {host:?}");
+    assert_eq!(
+        host.iter().filter(|h| h.contains("terminal-")).count(),
+        5,
+        "the wasip2 std's terminal probing: {host:?}"
+    );
 
     // The distinction a regex over WIT source cannot make: `wasi:keyvalue` is a
     // host capability too, even though it isn't "std WASI" — it arrives with
@@ -173,6 +188,7 @@ fn studio_reflects_plans_emits_and_composes() {
     let records = upload("record_store");
     let rec_host: Vec<&str> =
         records["host_imports"].as_array().unwrap().iter().map(|i| i["raw"].as_str().unwrap()).collect();
+    // keyvalue has no p2/p3 release, so this one keeps its 0.2.0-draft version.
     assert!(rec_host.contains(&"wasi:keyvalue/store@0.2.0-draft"), "{rec_host:?}");
     assert!(records["imports"].as_array().unwrap().is_empty(), "a leaf capability composes nothing");
 
@@ -194,8 +210,17 @@ fn studio_reflects_plans_emits_and_composes() {
     assert_eq!(plan["unsatisfied"].as_array().unwrap().len(), 0, "everything wired: {plan}");
     assert_eq!(plan["steps"].as_array().unwrap().len(), 1);
     assert_eq!(plan["steps"][0]["plugs"].as_array().unwrap().len(), 3);
-    // 18 host interfaces survive composition, and the plan says so.
-    assert_eq!(plan["host_needs"].as_array().unwrap().len(), 18);
+    // The union of host capabilities across the graph survives composition, and the
+    // plan says so. 22 on p2 (18 under the preview1 adapter) — the extra ones are
+    // the wasip2 std's `wasi:cli/terminal-*`.
+    let needs: Vec<&str> = plan["host_needs"].as_array().unwrap().iter()
+        .map(|h| h["raw"].as_str().unwrap()).collect();
+    assert_eq!(needs.len(), 22, "{needs:?}");
+    // The ones that actually matter: storage, egress and config all need a host.
+    for want in ["wasi:keyvalue/store@0.2.0-draft", "wasi:config/store@0.2.0-rc.1"] {
+        assert!(needs.contains(&want), "{want} missing from {needs:?}");
+    }
+    assert!(needs.iter().any(|n| n.starts_with("wasi:http/outgoing-handler@")), "{needs:?}");
 
     // A missing edge is a gap, and the gap names the interface.
     let (_, partial) = post(

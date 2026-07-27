@@ -20,7 +20,7 @@ The API is usable without the UI:
 
 ```bash
 # reflect a component
-curl -X POST --data-binary @../../components/target/wasm32-wasip1/release/mesh_domain.wasm \
+curl -X POST --data-binary @../../components/target/wasm32-wasip2/release/mesh_domain.wasm \
   -H 'content-type: application/wasm' 'localhost:3054/api/components?id=mesh-domain'
 
 # would these two fit? (wac's own subtype check)

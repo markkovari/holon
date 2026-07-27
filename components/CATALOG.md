@@ -9,112 +9,112 @@ capabilities, so anything marked reusable drops into another app via
 | component | package | deps | config knobs | size | reusable as-is |
 |---|---|---|---|--:|:--:|
 | **abtest-domain** | `abtest:app@0.1.0` | event:bus/bus, experiment:assign/assigner, id:generate/generator, metrics:collect/collector | — | 159 KiB | ✓ |
-| **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 126 KiB | ✓ |
-| **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 172 KiB | ✓ |
+| **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 124 KiB | ✓ |
+| **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 173 KiB | ✓ |
 | **audit-log** | `audit:log@0.1.0` | kv:store | — | 129 KiB | ✓ |
-| **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 132 KiB | app/demo |
+| **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 133 KiB | app/demo |
 | **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — | ✓ |
-| **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 185 KiB | app/demo |
-| **blob-store** | `blob:store@0.1.0` | kv:store | — | 75 KiB | ✓ |
-| **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 216 KiB | ✓ |
-| **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 212 KiB | ✓ |
-| **buzz-domain** | `buzz:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 207 KiB | ✓ |
-| **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 76 KiB | ✓ |
-| **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 64 KiB | ✓ |
-| **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 224 KiB | ✓ |
-| **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
-| **crdt** | `crdt:merge@0.1.0` | pure compute | — | 215 KiB | ✓ |
-| **cron** | `cron:expr@0.1.0` | pure compute | — | 63 KiB | ✓ |
-| **csv** | `csv:codec@0.1.0` | pure compute | — | 58 KiB | ✓ |
-| **csv-report** | `report:app@0.1.0` | csv:codec/codec, paginate:cursor/cursors, records:store/store, validate:schema/validator | — | 176 KiB | ✓ |
-| **dashboards-domain** | `dashboards:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store, svg:chart/charts | — | 196 KiB | ✓ |
-| **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 218 KiB | app/demo |
-| **email-render** | `email:template@0.1.0` | kv:store | — | 81 KiB | ✓ |
-| **eshop-basket** | `eshop:basket@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, records:store/store | — | 177 KiB | ✓ |
-| **eshop-catalog** | `eshop:catalog@0.1.0` | event:bus/bus, idempotency:guard/store, records:store/store | — | 177 KiB | ✓ |
-| **eshop-gateway** | `eshop:gateway@0.1.0` | proxy:route/router | — | 79 KiB | ✓ |
-| **eshop-ordering** | `eshop:ordering@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, fsm:workflow/engine, idempotency:guard/store, records:store/store, config/store | `grace-period-secs` | 195 KiB | ✓ |
-| **eshop-payment** | `eshop:payment@0.1.0` | event:bus/bus, config/store | `payment-succeeds` | 118 KiB | ✓ |
-| **event-bus** | `event:bus@0.1.0` | kv:atomics, kv:store | — | 87 KiB | ✓ |
-| **event-pusher** | `event:push@0.1.0` | proxy:route/router, config/store | `push-targets` | 53 KiB | ✓ |
-| **experiment-assign** | `experiment:assign@0.1.0` | kv:store | — | 76 KiB | ✓ |
-| **feature-flags** | `featureflags:guard@0.1.0` | config/store, kv:store | — | 77 KiB | ✓ |
+| **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 189 KiB | app/demo |
+| **blob-store** | `blob:store@0.1.0` | kv:store | — | 73 KiB | ✓ |
+| **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 221 KiB | ✓ |
+| **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 216 KiB | ✓ |
+| **buzz-domain** | `buzz:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 212 KiB | ✓ |
+| **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 75 KiB | ✓ |
+| **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 61 KiB | ✓ |
+| **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 230 KiB | ✓ |
+| **config-store** | `config:store@0.1.0` | kv:store | — | 120 KiB | ✓ |
+| **crdt** | `crdt:merge@0.1.0` | pure compute | — | 219 KiB | ✓ |
+| **cron** | `cron:expr@0.1.0` | pure compute | — | 59 KiB | ✓ |
+| **csv** | `csv:codec@0.1.0` | pure compute | — | 55 KiB | ✓ |
+| **csv-report** | `report:app@0.1.0` | csv:codec/codec, paginate:cursor/cursors, records:store/store, validate:schema/validator | — | 178 KiB | ✓ |
+| **dashboards-domain** | `dashboards:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store, svg:chart/charts | — | 200 KiB | ✓ |
+| **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 224 KiB | app/demo |
+| **email-render** | `email:template@0.1.0` | kv:store | — | 79 KiB | ✓ |
+| **eshop-basket** | `eshop:basket@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, records:store/store | — | 179 KiB | ✓ |
+| **eshop-catalog** | `eshop:catalog@0.1.0` | event:bus/bus, idempotency:guard/store, records:store/store | — | 178 KiB | ✓ |
+| **eshop-gateway** | `eshop:gateway@0.1.0` | proxy:route/router | — | 77 KiB | ✓ |
+| **eshop-ordering** | `eshop:ordering@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, fsm:workflow/engine, idempotency:guard/store, records:store/store, config/store | `grace-period-secs` | 198 KiB | ✓ |
+| **eshop-payment** | `eshop:payment@0.1.0` | event:bus/bus, config/store | `payment-succeeds` | 117 KiB | ✓ |
+| **event-bus** | `event:bus@0.1.0` | kv:atomics, kv:store | — | 86 KiB | ✓ |
+| **event-pusher** | `event:push@0.1.0` | proxy:route/router, config/store | `push-targets` | 50 KiB | ✓ |
+| **experiment-assign** | `experiment:assign@0.1.0` | kv:store | — | 74 KiB | ✓ |
+| **feature-flags** | `featureflags:guard@0.1.0` | config/store, kv:store | — | 75 KiB | ✓ |
 | **flags-domain** | `rollout:app@0.1.0` | event:bus/bus, featureflags:guard/evaluator, id:generate/generator | — | 152 KiB | ✓ |
-| **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 143 KiB | ✓ |
-| **gate-domain** | `gate:app@0.1.0` | records:store/store, shaper:limit/limiter | — | 160 KiB | ✓ |
-| **geo** | `geo:resolve@0.1.0` | pure compute | — | 63 KiB | ✓ |
-| **golem-bridge** | `golem:bridge@0.1.0` | config/store, http/outgoing-handler | `golem-url`, `golem-host`, `golem-path-template` | 95 KiB | ✓ |
-| **helpdesk-domain** | `helpdesk:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, fsm:workflow/engine, id:generate/generator, md:render/renderer, records:store/store | — | 204 KiB | ✓ |
-| **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 77 KiB | ✓ |
-| **iban** | `iban:validate@0.1.0` | pure compute | — | 62 KiB | ✓ |
-| **ical** | `ical:codec@0.1.0` | pure compute | — | 59 KiB | ✓ |
-| **id-generate** | `id:generate@0.1.0` | pure compute | — | 57 KiB | ✓ |
-| **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 81 KiB | ✓ |
-| **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 79 KiB | ✓ |
-| **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 181 KiB | ✓ |
-| **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 130 KiB | ✓ |
-| **ledger** | `ledger:doubleentry@0.1.0` | pure compute | — | 57 KiB | ✓ |
-| **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 161 KiB | app/demo |
-| **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 74 KiB | ✓ |
-| **lms-domain** | `lms:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, quiz:grade/grader, records:store/store, svg:chart/charts | — | 235 KiB | ✓ |
-| **lock-mutex** | `lock:mutex@0.1.0` | kv:atomics, kv:store | — | 77 KiB | ✓ |
-| **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 68 KiB | app/demo |
-| **markdown** | `md:render@0.1.0` | pure compute | — | 83 KiB | ✓ |
-| **mesh-domain** | `mesh:app@0.1.0` | proxy:route/router, records:store/store, resilience:breaker/breaker | — | 168 KiB | ✓ |
-| **metrics-collect** | `metrics:collect@0.1.0` | kv:atomics, kv:store | — | 71 KiB | ✓ |
-| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 174 KiB | ✓ |
-| **money** | `money:amount@0.1.0` | pure compute | — | 59 KiB | ✓ |
+| **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 144 KiB | ✓ |
+| **gate-domain** | `gate:app@0.1.0` | records:store/store, shaper:limit/limiter | — | 161 KiB | ✓ |
+| **geo** | `geo:resolve@0.1.0` | pure compute | — | 59 KiB | ✓ |
+| **golem-bridge** | `golem:bridge@0.1.0` | config/store, http/outgoing-handler | `golem-url`, `golem-host`, `golem-path-template` | 96 KiB | ✓ |
+| **helpdesk-domain** | `helpdesk:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, fsm:workflow/engine, id:generate/generator, md:render/renderer, records:store/store | — | 209 KiB | ✓ |
+| **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 75 KiB | ✓ |
+| **iban** | `iban:validate@0.1.0` | pure compute | — | 59 KiB | ✓ |
+| **ical** | `ical:codec@0.1.0` | pure compute | — | 56 KiB | ✓ |
+| **id-generate** | `id:generate@0.1.0` | pure compute | — | 54 KiB | ✓ |
+| **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 80 KiB | ✓ |
+| **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 76 KiB | ✓ |
+| **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 183 KiB | ✓ |
+| **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 129 KiB | ✓ |
+| **ledger** | `ledger:doubleentry@0.1.0` | pure compute | — | 53 KiB | ✓ |
+| **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 163 KiB | app/demo |
+| **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 71 KiB | ✓ |
+| **lms-domain** | `lms:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, quiz:grade/grader, records:store/store, svg:chart/charts | — | 236 KiB | ✓ |
+| **lock-mutex** | `lock:mutex@0.1.0` | kv:atomics, kv:store | — | 74 KiB | ✓ |
+| **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 66 KiB | app/demo |
+| **markdown** | `md:render@0.1.0` | pure compute | — | 80 KiB | ✓ |
+| **mesh-domain** | `mesh:app@0.1.0` | proxy:route/router, records:store/store, resilience:breaker/breaker | — | 169 KiB | ✓ |
+| **metrics-collect** | `metrics:collect@0.1.0` | kv:atomics, kv:store | — | 69 KiB | ✓ |
+| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 176 KiB | ✓ |
+| **money** | `money:amount@0.1.0` | pure compute | — | 56 KiB | ✓ |
 | **notify-dispatch** | `notify:dispatch@0.1.0` | config/store, http/outgoing-handler | — | 91 KiB | ✓ |
-| **openai-provider** | `openai:provider@0.1.0` | config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed` | 177 KiB | ✓ |
-| **otp** | `otp:totp@0.1.0` | pure compute | — | 83 KiB | ✓ |
+| **openai-provider** | `openai:provider@0.1.0` | config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed` | 180 KiB | ✓ |
+| **otp** | `otp:totp@0.1.0` | pure compute | — | 81 KiB | ✓ |
 | **outbox** | `outbox:dispatch@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `base-backoff` | 92 KiB | ✓ |
-| **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 76 KiB | ✓ |
-| **passkey-domain** | `passkey:app@0.1.0` | cache:store/cache, records:store/store, session:store/store, config/store, webauthn:verify/verifier | `rp-id`, `origin`, `require-uv` | 200 KiB | ✓ |
-| **paste-bin** | `bin:app@0.1.0` | md:render/renderer, pii:redact/redactor, records:store/store, slug:generate/generator, validate:schema/validator | — | 155 KiB | ✓ |
-| **payees-domain** | `payees:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, iban:validate/validator, records:store/store | — | 172 KiB | ✓ |
-| **pdf** | `pdf:codec@0.1.0` | pure compute | — | 57 KiB | ✓ |
-| **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 76 KiB | ✓ |
+| **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 73 KiB | ✓ |
+| **passkey-domain** | `passkey:app@0.1.0` | cache:store/cache, records:store/store, session:store/store, config/store, webauthn:verify/verifier | `rp-id`, `origin`, `require-uv` | 204 KiB | ✓ |
+| **paste-bin** | `bin:app@0.1.0` | md:render/renderer, pii:redact/redactor, records:store/store, slug:generate/generator, validate:schema/validator | — | 156 KiB | ✓ |
+| **payees-domain** | `payees:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, iban:validate/validator, records:store/store | — | 175 KiB | ✓ |
+| **pdf** | `pdf:codec@0.1.0` | pure compute | — | 54 KiB | ✓ |
+| **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 73 KiB | ✓ |
 | **pipeline-domain** | `pipeline:app@0.1.0` | event:bus/bus, id:generate/generator, outbox:dispatch/queue | — | 151 KiB | ✓ |
-| **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 167 KiB | ✓ |
+| **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 161 KiB | ✓ |
 | **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes` | 101 KiB | ✓ |
 | **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 163 KiB | ✓ |
-| **qr** | `qr:encode@0.1.0` | pure compute | — | 79 KiB | ✓ |
-| **quiz-grade** | `quiz:grade@0.1.0` | pure compute | — | 54 KiB | ✓ |
-| **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 69 KiB | ✓ |
-| **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 69 KiB | ✓ |
-| **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 184 KiB | ✓ |
-| **resilience** | `resilience:breaker@0.1.0` | pure compute | — | 15 KiB | ✓ |
-| **rrule** | `rrule:recur@0.1.0` | pure compute | — | 60 KiB | ✓ |
-| **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 191 KiB | ✓ |
+| **qr** | `qr:encode@0.1.0` | pure compute | — | 76 KiB | ✓ |
+| **quiz-grade** | `quiz:grade@0.1.0` | pure compute | — | 50 KiB | ✓ |
+| **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 66 KiB | ✓ |
+| **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 66 KiB | ✓ |
+| **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
+| **resilience** | `resilience:breaker@0.1.0` | pure compute | — | 16 KiB | ✓ |
+| **rrule** | `rrule:recur@0.1.0` | pure compute | — | 56 KiB | ✓ |
+| **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 196 KiB | ✓ |
 | **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 91 KiB | ✓ |
-| **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 181 KiB | ✓ |
-| **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 159 KiB | ✓ |
-| **search-index** | `search:index@0.1.0` | kv:store | — | 98 KiB | ✓ |
+| **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 183 KiB | ✓ |
+| **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 160 KiB | ✓ |
+| **search-index** | `search:index@0.1.0` | kv:store | — | 95 KiB | ✓ |
 | **secrets-vault** | `secrets:vault@0.1.0` | config/store, kv:store | `master-key` | 96 KiB | ✓ |
-| **session-store** | `session:store@0.1.0` | config/store, kv:store | `default-ttl` | 84 KiB | ✓ |
-| **shaper** | `shaper:limit@0.1.0` | pure compute | — | 13 KiB | ✓ |
-| **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
-| **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 183 KiB | ✓ |
-| **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
-| **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 189 KiB | app/demo |
-| **studio-domain** | `studio:app@0.1.0` | blob:store/blobstore, records:store/store, wit:reflect/composer, wit:reflect/inspector | — | 199 KiB | ✓ |
-| **svg-chart** | `svg:chart@0.1.0` | pure compute | — | 85 KiB | ✓ |
-| **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, records:store/store | — | 252 KiB | ✓ |
-| **textdiff** | `diff:text@0.1.0` | pure compute | — | 71 KiB | ✓ |
-| **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 153 KiB | ✓ |
-| **track-assets** | `ui:assets@0.1.0` | pure compute | — | 62 KiB | ✓ |
-| **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 250 KiB | ✓ |
-| **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 191 KiB | ✓ |
-| **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 155 KiB | ✓ |
-| **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 78 KiB | ✓ |
-| **validate** | `validate:schema@0.1.0` | pure compute | — | 113 KiB | ✓ |
-| **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — | 290 KiB | app/demo |
-| **webauthn** | `webauthn:verify@0.1.0` | pure compute | — | 190 KiB | ✓ |
-| **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 70 KiB | ✓ |
-| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 183 KiB | app/demo |
-| **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 62 KiB | ✓ |
-| **wit-reflect** | `wit:reflect@0.1.0` | pure compute | — | 1049 KiB | ✓ |
-| **zip** | `zip:archive@0.1.0` | pure compute | — | 51 KiB | ✓ |
+| **session-store** | `session:store@0.1.0` | config/store, kv:store | `default-ttl` | 83 KiB | ✓ |
+| **shaper** | `shaper:limit@0.1.0` | pure compute | — | 14 KiB | ✓ |
+| **slug** | `slug:generate@0.1.0` | pure compute | — | 75 KiB | ✓ |
+| **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 187 KiB | ✓ |
+| **static-assets** | `ui:assets@0.1.0` | pure compute | — | 643 KiB | ✓ |
+| **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 193 KiB | app/demo |
+| **studio-domain** | `studio:app@0.1.0` | blob:store/blobstore, records:store/store, wit:reflect/composer, wit:reflect/inspector | — | 202 KiB | ✓ |
+| **svg-chart** | `svg:chart@0.1.0` | pure compute | — | 82 KiB | ✓ |
+| **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, records:store/store | — | 259 KiB | ✓ |
+| **textdiff** | `diff:text@0.1.0` | pure compute | — | 68 KiB | ✓ |
+| **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 154 KiB | ✓ |
+| **track-assets** | `ui:assets@0.1.0` | pure compute | — | 58 KiB | ✓ |
+| **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 257 KiB | ✓ |
+| **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 195 KiB | ✓ |
+| **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 156 KiB | ✓ |
+| **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 76 KiB | ✓ |
+| **validate** | `validate:schema@0.1.0` | pure compute | — | 110 KiB | ✓ |
+| **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — | 301 KiB | app/demo |
+| **webauthn** | `webauthn:verify@0.1.0` | pure compute | — | 192 KiB | ✓ |
+| **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 67 KiB | ✓ |
+| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 187 KiB | app/demo |
+| **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 58 KiB | ✓ |
+| **wit-reflect** | `wit:reflect@0.1.0` | pure compute | — | 1078 KiB | ✓ |
+| **zip** | `zip:archive@0.1.0` | pure compute | — | 47 KiB | ✓ |
 
 ## Descriptions
 

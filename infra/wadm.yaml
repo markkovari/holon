@@ -21,7 +21,7 @@ spec:
     - name: auth-guard
       type: component
       properties:
-        image: file://../components/target/wasm32-wasip1/release/auth_guard.wasm
+        image: file://../components/target/wasm32-wasip2/release/auth_guard.wasm
       traits:
         - type: spreadscaler
           properties:
@@ -49,7 +49,7 @@ spec:
     - name: sample-consumer
       type: component
       properties:
-        image: file://../components/target/wasm32-wasip1/release/sample_consumer.wasm
+        image: file://../components/target/wasm32-wasip2/release/sample_consumer.wasm
       traits:
         - type: spreadscaler
           properties:
@@ -66,7 +66,7 @@ spec:
     - name: accounts-app
       type: component
       properties:
-        image: file://../components/target/wasm32-wasip1/release/accounts_app.wasm
+        image: file://../components/target/wasm32-wasip2/release/accounts_app.wasm
       traits:
         - type: spreadscaler
           properties:

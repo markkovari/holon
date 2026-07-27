@@ -115,7 +115,7 @@ cd components && cargo test -p wit-reflect   # 13 tests, no host
 
 A component cannot read the filesystem — the host preopens no directories — so
 reflection has to be **fed over HTTP**. `just seed-studio` POSTs every artifact in
-`components/target/wasm32-wasip1/release`; re-running replaces rather than
+`components/target/wasm32-wasip2/release`; re-running replaces rather than
 duplicates. You can also drop any `.wasm` onto the canvas from outside the repo.
 
 ## The e2e checks the claims, not the studio's opinion of itself

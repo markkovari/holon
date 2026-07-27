@@ -40,7 +40,7 @@ reachable from the host at `registry.wasmcloud.svc.cluster.local:5000` (NodePort
 ```bash
 # 1. push the two components to the in-cluster registry (host-side via :30500)
 wash oci push --insecure localhost:30500/vet-auth-guard:0.1.0   ../../components/target/auth_guard.composed.wasm
-wash oci push --insecure localhost:30500/vet-accounts-app:0.1.0 ../../components/target/wasm32-wasip1/release/accounts_app.wasm
+wash oci push --insecure localhost:30500/vet-accounts-app:0.1.0 ../../components/target/wasm32-wasip2/release/accounts_app.wasm
 
 # 2. host + app
 kubectl create namespace vet-clinic

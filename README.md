@@ -455,14 +455,29 @@ curl -i -H "Authorization: Bearer $TOK" localhost:8000/  # 403 (no demo:read per
 required in practice — most apps here are statically pre-composed by a
 `compose-*` recipe before they are linked or served.
 
-The components build for `wasm32-wasip1` and `cargo-component` adapts them into
-**WASI p2 components** (`wasi:*@0.2.x`) with the `wasi_snapshot_preview1`
-adapter. Targeting `wasm32-wasip2` directly drops that adapter but is *not*
-currently a win: Rust's wasip2 std pulls in the whole `wasi:cli` surface
-(`terminal-*`), so `mesh-domain` goes from 13 host imports to 16 at the same
-size, and the injected WASI version jumps to `0.2.12` — a skew against the
-`0.2.0` interfaces our vendored WIT declares. Revisit when the std surface
-narrows.
+The components build for **`wasm32-wasip2`**: rustc + `wasm-component-ld` emit a
+component directly, so there is **no `wasi_snapshot_preview1` adapter** in any
+artifact. `just build` is two steps because `cargo-component` 0.21.1 hardcodes
+`--target wasm32-wasip1` (it ignores both `--target` and `[build] target`), so it
+generates the bindings (`cargo component check`) and a plain
+`cargo build --target wasm32-wasip2` produces the artifacts.
+
+The honest trade, measured across all 109 components rather than assumed:
+
+| | wasip1 + adapter | wasip2 |
+|---|---|---|
+| adapter in the artifact | all 109 | **none** |
+| total size | 15266 KiB | 15472 KiB (**+1.3 %**) |
+| WASI imports declared | 1228 | 1680 (**+37 %**) |
+| injected WASI version | 0.2.3 | 0.2.12 |
+
+p2 is slightly *larger* and imports notably *more* — Rust's wasip2 std wires up
+the whole `wasi:cli` surface (`terminal-input/output/stdin/stdout/stderr`) where
+the preview1 adapter only surfaced what preview1 needed. What it buys is the
+removal of a legacy shim from every artifact, current 0.2.12 interfaces, and the
+supported forward path (`cargo-component` has not shipped in 16 months). The
+`0.2.12` imports need a host new enough to define them — which is why this
+followed the wasmtime 47 bump rather than preceding it.
 
 The native host (`host/`) runs on **wasmtime 47** and is pinned to **stable
 Rust** via `host/rust-toolchain.toml` — the repo's default nightly currently

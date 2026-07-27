@@ -53,7 +53,7 @@ pub(crate) fn plug_script(plan: &CompositionPlan, out_dir: &str) -> String {
     s.push_str("# components here plug in the same capability, the result contains it twice,\n");
     s.push_str("# with separate state. Use the .wac form if they must share one instance.\n");
     s.push_str("set -euo pipefail\n\n");
-    s.push_str("REL=${REL:-components/target/wasm32-wasip1/release}\n");
+    s.push_str("REL=${REL:-components/target/wasm32-wasip2/release}\n");
     s.push_str(&format!("OUT=${{OUT:-{out_dir}}}\n"));
     s.push_str("mkdir -p \"$OUT\"\n\n");
 
@@ -139,7 +139,7 @@ pub(crate) fn wac_file(nodes: &[Node], edges: &[Edge], plan: &CompositionPlan, p
         s.push_str(&format!(
             "//     --dep {}={} \\\n",
             wac_package(node),
-            format!("components/target/wasm32-wasip1/release/{}.wasm", artifact_stem(&node.id))
+            format!("components/target/wasm32-wasip2/release/{}.wasm", artifact_stem(&node.id))
         ));
     }
     s.push_str("//     -o composed.wasm\n\n");

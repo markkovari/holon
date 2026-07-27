@@ -17,5 +17,5 @@ sha2 = { workspace = true }
 wasmparser = "0.202"
 # `wac`'s own composition graph — the same code path the CLI runs, including the
 # SubtypeChecker that decides whether a plug actually fits a socket. Builds clean
-# for wasm32-wasip1 (pure Rust: wasm-encoder, wasm-metadata, petgraph, indexmap).
+# for wasm32-wasip2 (pure Rust: wasm-encoder, wasm-metadata, petgraph, indexmap).
 wac-graph = "0.6"

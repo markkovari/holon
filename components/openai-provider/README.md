@@ -45,7 +45,7 @@ The codec — request shaping (`chat_body` / `embed_body`) and response parsing
 WASI-free functions** with host unit tests (9 tests: valid OpenAI request shape,
 optional omission, JSON escaping, usage/finish-reason parsing, empty-content →
 `no-content`, bad JSON → `bad-response`, embedding extraction). Run them in a
-host crate that includes `codec.rs` (the component itself is `wasm32-wasip1`-only
+host crate that includes `codec.rs` (the component itself is `wasm32-wasip2`-only
 and can't `cargo test` directly because of the wasm bindings).
 
 The **live HTTP path is NOT driven in-process under jco**: jco backs outbound
