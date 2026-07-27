@@ -440,8 +440,26 @@ curl -i -H "Authorization: Bearer $TOK" localhost:8000/  # 403 (no demo:read per
 
 ## Toolchain
 `wasm-tools`, `wkg`, `cargo-component`, `docker compose`. Deploy adds: `wash`
-(1.x path) **or** `kubectl` + the wasmCloud operator (2.x path). `wac` is not
-required — components are linked at runtime, not statically pre-composed.
+(1.x path) **or** `kubectl` + the wasmCloud operator (2.x path). `wac` is
+required in practice — most apps here are statically pre-composed by a
+`compose-*` recipe before they are linked or served.
+
+The components build for `wasm32-wasip1` and `cargo-component` adapts them into
+**WASI p2 components** (`wasi:*@0.2.x`) with the `wasi_snapshot_preview1`
+adapter. Targeting `wasm32-wasip2` directly drops that adapter but is *not*
+currently a win: Rust's wasip2 std pulls in the whole `wasi:cli` surface
+(`terminal-*`), so `mesh-domain` goes from 13 host imports to 16 at the same
+size, and the injected WASI version jumps to `0.2.12` — a skew against the
+`0.2.0` interfaces our vendored WIT declares. Revisit when the std surface
+narrows.
+
+The native host (`host/`) runs on **wasmtime 47** and is pinned to **stable
+Rust** via `host/rust-toolchain.toml` — the repo's default nightly currently
+ICEs compiling wasmtime (`not immediate: OperandRef(Uninit @ f32)`). wasmtime 47
+implements **WASI 0.3 by default** (since 46), so serving p3 components is now a
+host-side feature rather than a runtime limitation; the linker still registers
+only the p2 worlds. `components/bench-suite-p3` remains the p3 probe and still
+runs on `wash`.
 
 ## Storage (wasi:keyvalue) — TTL & migration
 

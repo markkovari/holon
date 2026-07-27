@@ -25,22 +25,25 @@ use anyhow::Result;
 use clap::Parser;
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
-use wasmtime::component::{Component, Linker, Resource, ResourceTable};
+use wasmtime::component::{Component, HasSelf, Linker, Resource, ResourceTable};
 use wasmtime::{Config, Engine, Store};
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiView};
-use wasmtime_wasi_http::bindings::ProxyPre;
-use wasmtime_wasi_http::body::HyperOutgoingBody;
-use wasmtime_wasi_http::{WasiHttpCtx, WasiHttpView};
+use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
+use wasmtime_wasi_http::p2::bindings::ProxyPre;
+use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
+use wasmtime_wasi_http::p2::{WasiHttpCtxView, WasiHttpView};
+use wasmtime_wasi_http::WasiHttpCtx;
 
 // Generate host traits for the non-standard imports from host/wit/host.wit.
 mod bindings {
     wasmtime::component::bindgen!({
         path: "wit",
         world: "host-imports",
-        async: false,
-        trappable_imports: true,
+        // wasmtime >=34 folded `async` + `trappable_imports` into one knob;
+        // sync is the default, `trappable` keeps imports returning Result.
+        imports: { default: trappable },
         with: {
-            "wasi:keyvalue/store/bucket": super::HostBucket,
+            // wasmtime >=34 keys a resource as `interface.resource`, not `interface/resource`.
+            "wasi:keyvalue/store.bucket": super::HostBucket,
         },
     });
 }
@@ -73,6 +76,9 @@ struct Host {
     table: ResourceTable,
     wasi: WasiCtx,
     http: WasiHttpCtx,
+    /// wasi:http behaviour hooks. `[(); 0]` is upstream's zero-sized default impl
+    /// — we customise nothing, but the view has to borrow something.
+    hooks: [(); 0],
     kv: Kv,
     cache_backing: CacheBacking,
     config: Arc<HashMap<String, String>>,
@@ -83,27 +89,23 @@ fn kv_err(e: anyhow::Error) -> store::Error {
     store::Error::Other(format!("{e:#}"))
 }
 
+// wasmtime 47 projects the ctx AND the resource table together, so a host can
+// hand out both with one borrow instead of two methods that alias `self`.
 impl WasiView for Host {
-    fn ctx(&mut self) -> &mut WasiCtx {
-        &mut self.wasi
-    }
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
+    fn ctx(&mut self) -> WasiCtxView<'_> {
+        WasiCtxView { ctx: &mut self.wasi, table: &mut self.table }
     }
 }
 impl WasiHttpView for Host {
-    fn ctx(&mut self) -> &mut WasiHttpCtx {
-        &mut self.http
-    }
-    fn table(&mut self) -> &mut ResourceTable {
-        &mut self.table
+    fn http(&mut self) -> WasiHttpCtxView<'_> {
+        WasiHttpCtxView { ctx: &mut self.http, table: &mut self.table, hooks: &mut self.hooks }
     }
 }
 
 // ---- wasi:keyvalue/store host impl ---------------------------------------
 
 impl store::Host for Host {
-    fn open(&mut self, identifier: String) -> Result<Result<Resource<HostBucket>, store::Error>> {
+    fn open(&mut self, identifier: String) -> wasmtime::Result<Result<Resource<HostBucket>, store::Error>> {
         // a bucket handle is just the name; the backend lazily creates it.
         let res = self.table.push(HostBucket { name: identifier })?;
         Ok(Ok(res))
@@ -115,7 +117,7 @@ impl store::HostBucket for Host {
         &mut self,
         self_: Resource<HostBucket>,
         key: String,
-    ) -> Result<Result<Option<Vec<u8>>, store::Error>> {
+    ) -> wasmtime::Result<Result<Option<Vec<u8>>, store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
         Ok(self.kv.get(&name, &key).map_err(kv_err))
     }
@@ -125,7 +127,7 @@ impl store::HostBucket for Host {
         self_: Resource<HostBucket>,
         key: String,
         value: Vec<u8>,
-    ) -> Result<Result<(), store::Error>> {
+    ) -> wasmtime::Result<Result<(), store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
         Ok(self.kv.set(&name, &key, &value).map_err(kv_err))
     }
@@ -134,7 +136,7 @@ impl store::HostBucket for Host {
         &mut self,
         self_: Resource<HostBucket>,
         key: String,
-    ) -> Result<Result<(), store::Error>> {
+    ) -> wasmtime::Result<Result<(), store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
         Ok(self.kv.delete(&name, &key).map_err(kv_err))
     }
@@ -143,7 +145,7 @@ impl store::HostBucket for Host {
         &mut self,
         self_: Resource<HostBucket>,
         key: String,
-    ) -> Result<Result<bool, store::Error>> {
+    ) -> wasmtime::Result<Result<bool, store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
         Ok(self.kv.exists(&name, &key).map_err(kv_err))
     }
@@ -152,7 +154,7 @@ impl store::HostBucket for Host {
         &mut self,
         self_: Resource<HostBucket>,
         _cursor: Option<u64>,
-    ) -> Result<Result<store::KeyResponse, store::Error>> {
+    ) -> wasmtime::Result<Result<store::KeyResponse, store::Error>> {
         let name = self.table.get(&self_)?.name.clone();
         Ok(self
             .kv
@@ -161,7 +163,7 @@ impl store::HostBucket for Host {
             .map_err(kv_err))
     }
 
-    fn drop(&mut self, rep: Resource<HostBucket>) -> Result<()> {
+    fn drop(&mut self, rep: Resource<HostBucket>) -> wasmtime::Result<()> {
         self.table.delete(rep)?;
         Ok(())
     }
@@ -175,7 +177,7 @@ impl atomics::Host for Host {
         bucket: Resource<HostBucket>,
         key: String,
         delta: u64,
-    ) -> Result<Result<u64, store::Error>> {
+    ) -> wasmtime::Result<Result<u64, store::Error>> {
         let name = self.table.get(&bucket)?.name.clone();
         Ok(self.kv.increment(&name, &key, delta).map_err(kv_err))
     }
@@ -191,7 +193,7 @@ impl batch::Host for Host {
         &mut self,
         bucket: Resource<HostBucket>,
         keys: Vec<String>,
-    ) -> Result<Result<Vec<Option<(String, Vec<u8>)>>, store::Error>> {
+    ) -> wasmtime::Result<Result<Vec<Option<(String, Vec<u8>)>>, store::Error>> {
         let name = self.table.get(&bucket)?.name.clone();
         let mut out = Vec::with_capacity(keys.len());
         for key in keys {
@@ -208,7 +210,7 @@ impl batch::Host for Host {
         &mut self,
         bucket: Resource<HostBucket>,
         key_values: Vec<(String, Vec<u8>)>,
-    ) -> Result<Result<(), store::Error>> {
+    ) -> wasmtime::Result<Result<(), store::Error>> {
         let name = self.table.get(&bucket)?.name.clone();
         for (key, value) in key_values {
             if let Err(e) = self.kv.set(&name, &key, &value) {
@@ -222,7 +224,7 @@ impl batch::Host for Host {
         &mut self,
         bucket: Resource<HostBucket>,
         keys: Vec<String>,
-    ) -> Result<Result<(), store::Error>> {
+    ) -> wasmtime::Result<Result<(), store::Error>> {
         let name = self.table.get(&bucket)?.name.clone();
         for key in keys {
             if let Err(e) = self.kv.delete(&name, &key) {
@@ -236,16 +238,16 @@ impl batch::Host for Host {
 // ---- cache:store source + sink host impl (the cache backing store) -------
 
 impl cache_source::Host for Host {
-    fn load(&mut self, key: String) -> Result<Result<Option<Vec<u8>>, String>> {
+    fn load(&mut self, key: String) -> wasmtime::Result<Result<Option<Vec<u8>>, String>> {
         Ok(Ok(self.cache_backing.lock().unwrap().get(&key).cloned()))
     }
 }
 impl cache_sink::Host for Host {
-    fn store(&mut self, key: String, value: Vec<u8>) -> Result<Result<(), String>> {
+    fn store(&mut self, key: String, value: Vec<u8>) -> wasmtime::Result<Result<(), String>> {
         self.cache_backing.lock().unwrap().insert(key, value);
         Ok(Ok(()))
     }
-    fn remove(&mut self, key: String) -> Result<Result<(), String>> {
+    fn remove(&mut self, key: String) -> wasmtime::Result<Result<(), String>> {
         self.cache_backing.lock().unwrap().remove(&key);
         Ok(Ok(()))
     }
@@ -254,10 +256,10 @@ impl cache_sink::Host for Host {
 // ---- wasi:config/store host impl ---------------------------------------
 
 impl config::Host for Host {
-    fn get(&mut self, key: String) -> Result<Result<Option<String>, config::Error>> {
+    fn get(&mut self, key: String) -> wasmtime::Result<Result<Option<String>, config::Error>> {
         Ok(Ok(self.config.get(&key).cloned()))
     }
-    fn get_all(&mut self) -> Result<Result<Vec<(String, String)>, config::Error>> {
+    fn get_all(&mut self) -> wasmtime::Result<Result<Vec<(String, String)>, config::Error>> {
         Ok(Ok(self.config.iter().map(|(k, v)| (k.clone(), v.clone())).collect()))
     }
 }
@@ -338,7 +340,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     let mut wt_config = Config::new();
-    wt_config.async_support(true);
+    // (wasmtime >=47: async support is unconditional; `async_support` is a no-op.)
     if args.pool {
         // wasmtime's pooling allocator: pre-reserve a fixed set of instance +
         // memory + table slots and recycle them, so instantiating the
@@ -358,14 +360,14 @@ async fn main() -> Result<()> {
 
     // one linker: standard WASI + wasi-http + our keyvalue/config.
     let mut linker: Linker<Host> = Linker::new(&engine);
-    wasmtime_wasi::add_to_linker_async(&mut linker)?;
-    wasmtime_wasi_http::add_only_http_to_linker_async(&mut linker)?;
-    store::add_to_linker(&mut linker, |h| h)?;
-    atomics::add_to_linker(&mut linker, |h| h)?;
-    batch::add_to_linker(&mut linker, |h| h)?;
-    config::add_to_linker(&mut linker, |h| h)?;
-    cache_source::add_to_linker(&mut linker, |h| h)?;
-    cache_sink::add_to_linker(&mut linker, |h| h)?;
+    wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
+    wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
+    store::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
+    atomics::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
+    batch::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
+    config::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
+    cache_source::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
+    cache_sink::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
 
     // pre-instantiate the proxy (incoming-handler) world once.
     let proxy_pre = ProxyPre::new(linker.instantiate_pre(&component)?)?;
@@ -464,9 +466,10 @@ fn try_static(
             }
         }
     };
+    // wasmtime 47's HyperOutgoingBody is an UnsyncBoxBody, not a BoxBody.
     let body = Full::new(bytes::Bytes::from(bytes))
         .map_err(|never| match never {})
-        .boxed();
+        .boxed_unsync();
     Some(
         hyper::Response::builder()
             .status(200)
@@ -505,6 +508,7 @@ async fn handle_request(
         table: ResourceTable::new(),
         wasi: WasiCtxBuilder::new().inherit_stderr().build(),
         http: WasiHttpCtx::new(),
+        hooks: [],
         kv,
         cache_backing,
         config,
@@ -513,10 +517,11 @@ async fn handle_request(
 
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // hyper::body::Incoming is already Body<Data=Bytes, Error=hyper::Error>.
-    let req = store
-        .data_mut()
-        .new_incoming_request(wasmtime_wasi_http::bindings::http::types::Scheme::Http, req)?;
-    let out = store.data_mut().new_response_outparam(sender)?;
+    let req = store.data_mut().http().new_incoming_request(
+        wasmtime_wasi_http::p2::bindings::http::types::Scheme::Http,
+        req,
+    )?;
+    let out = store.data_mut().http().new_response_outparam(sender)?;
     let proxy = proxy_pre.instantiate_async(&mut store).await?;
 
     let task = tokio::task::spawn(async move {
