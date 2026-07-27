@@ -166,5 +166,16 @@ node tempo.mjs                          # seeds data, then records the SPA (mobi
 bash to-gif.sh videos/tempo/*.webm ../../docs/media/tempo.gif 400 10
 ```
 
+**mesh** — resilience playground in front of the real flaky upstream: a healthy
+call, a 300ms response failing a 100ms SLO, then a burst that trips the breaker —
+after which calls come back "shed — upstream not called" and the `shed` counter
+climbs while `calls` stops. The cooldown runs out and one probe closes it again.
+
+```bash
+just host-mesh &                        # from repo root; SPA :3050, upstream :3051
+node mesh.mjs
+bash to-gif.sh videos/mesh/*.webm ../../docs/media/mesh.gif 820 10
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

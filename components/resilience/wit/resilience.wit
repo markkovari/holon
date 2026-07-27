@@ -1,0 +1,121 @@
+// resilience:breaker — the failure-handling algorithms every caller of a remote
+// service re-implements badly: a CIRCUIT BREAKER and an EXPONENTIAL BACKOFF.
+//
+// Like shaper:limit, this is deliberately STATELESS. The caller owns the circuit
+// state (a durable record, a Golem worker's memory, a process-local map) and
+// hands it in on every call; each function returns the decision plus the state
+// to persist. That is what lets the same breaker guard a per-upstream record in
+// records:store, a per-tenant Golem worker, or an in-memory table — where the
+// state lives is a binding, not a baked-in assumption.
+//
+// The protocol is two calls around the work:
+//
+//   1. `admit`  — before the call. Denied while the circuit is OPEN, so a
+//                 known-dead upstream is never dialled (that's the whole point:
+//                 fail fast, shed load off the thing that is already hurting).
+//   2. `observe` — after the call, with the outcome. Failures trip the breaker;
+//                 successes in HALF-OPEN close it again.
+//
+// Between attempts, `backoff` says how long to wait — decorrelated jitter so a
+// thundering herd of retries doesn't re-synchronise into a second outage.
+//
+// Pure compute: no state, no host imports, no clock (the caller passes `now-ms`).
+package resilience:breaker@0.1.0;
+
+/// Circuit-breaker state machine + retry backoff, as pure functions.
+interface breaker {
+    /// Where the circuit is.
+    ///
+    /// * `closed`    — healthy, calls flow, failures are counted.
+    /// * `open`      — tripped: calls are refused without touching the upstream
+    ///                 until the cooldown elapses.
+    /// * `half-open` — cooldown elapsed: a limited number of PROBE calls are
+    ///                 admitted to test whether the upstream recovered. Enough
+    ///                 probe successes close it; one probe failure re-opens it.
+    enum circuit-state {
+        closed,
+        open,
+        half-open,
+    }
+
+    /// How the breaker trips and recovers.
+    record policy {
+        /// Failures within `window-ms` that trip the breaker (closed -> open).
+        failure-threshold: u32,
+        /// Rolling count window. Failures older than this are forgotten, so an
+        /// upstream that fails once an hour never trips.
+        window-ms: u64,
+        /// Cooldown after tripping before the first probe is admitted.
+        open-ms: u64,
+        /// Probes allowed IN FLIGHT at once while half-open (keep small — 1 or 2).
+        /// A probe's slot frees when its outcome is reported to `observe`.
+        half-open-probes: u32,
+        /// Probe successes needed to close the circuit again.
+        success-threshold: u32,
+    }
+
+    /// The circuit's persisted state. A zeroed record (`closed`, all counters 0)
+    /// is the correct starting value for a key that has never been called.
+    record circuit {
+        state: circuit-state,
+        /// Failures counted in the current window (closed) — reset on close.
+        failures: u32,
+        /// Probe successes counted while half-open.
+        successes: u32,
+        /// Start of the current failure-count window (unix millis).
+        window-start-ms: u64,
+        /// When the state last changed (unix millis) — the cooldown clock.
+        changed-ms: u64,
+        /// Probes admitted in the current half-open episode.
+        probes: u32,
+    }
+
+    /// The verdict for one attempt.
+    record admission {
+        /// Whether the caller may make the call.
+        admit: bool,
+        /// The state the circuit is in AFTER this admission decision.
+        state: circuit-state,
+        /// If denied, ms until a probe would be admitted (0 when admitted, and
+        /// 0 when denied only because the half-open probe budget is spent).
+        retry-after-ms: u64,
+    }
+
+    /// Ask permission before making the call. Returns the verdict and the
+    /// circuit state to persist (`admit` mutates it: an open circuit whose
+    /// cooldown elapsed transitions to half-open and spends a probe).
+    admit: func(state: circuit, now-ms: u64, pol: policy) -> tuple<admission, circuit>;
+
+    /// Feed the outcome back. `ok: false` counts a failure (and, from
+    /// half-open, re-opens immediately); `ok: true` counts a success (and, from
+    /// half-open, closes once `success-threshold` is reached).
+    observe: func(state: circuit, now-ms: u64, pol: policy, ok: bool) -> circuit;
+
+    /// How to space retries of a failed call.
+    record retry-policy {
+        /// Total attempts including the first (1 = no retries).
+        max-attempts: u32,
+        /// Delay before the second attempt.
+        base-ms: u32,
+        /// Growth per attempt in percent (200 = double, 100 = flat).
+        factor-pct: u32,
+        /// Ceiling for a single delay.
+        max-ms: u32,
+        /// Decorrelated jitter: pick uniformly in [base-ms, computed delay]
+        /// instead of the exact delay, so concurrent retriers spread out.
+        jitter: bool,
+    }
+
+    /// Delay in ms before `attempt` (1-based: `backoff(2, ...)` is the wait
+    /// before the SECOND attempt). Returns none when `attempt` exceeds
+    /// `max-attempts` — i.e. none means "stop retrying".
+    ///
+    /// `seed` is the caller's randomness (a request id, a timestamp); jitter is
+    /// derived from it deterministically so this stays a pure function.
+    backoff: func(attempt: u32, pol: retry-policy, seed: u64) -> option<u32>;
+}
+
+/// `resilience` provides the breaker + backoff algorithms; pure compute.
+world resilience {
+    export breaker;
+}

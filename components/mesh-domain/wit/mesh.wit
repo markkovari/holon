@@ -1,0 +1,45 @@
+// mesh:app — a resilience playground in front of a deliberately flaky upstream.
+//
+// Every service that calls another service needs the same three behaviours, and
+// almost every codebase re-invents them inline, differently, per call site:
+//
+//   * RETRY with exponential backoff + jitter — ride out a blip.
+//   * a CIRCUIT BREAKER — stop dialling an upstream that is already down, so the
+//     caller fails fast instead of piling threads onto a corpse.
+//   * an SLO — "too slow" is a failure, not a success that happens to be late.
+//
+// The ALGORITHMS are the stateless `resilience:breaker` component. The DURABILITY
+// is this domain's per-key circuit record in `records:store`, updated under a
+// revision compare-and-set so concurrent callers converge on one circuit (the
+// same shape `gate:app` uses for rate-limit state — see GATE.md). The upstream
+// hop is a REAL outgoing HTTP request through `proxy:route`, so a tripped
+// breaker is observably a request that never leaves the host.
+//
+// The demo upstream (examples/mesh, `just mesh-upstream`) fails on demand:
+// `/upstream/hit?fail=1` answers 500, `?delay=400` answers slowly, and killing
+// it entirely gives a real connect-refused. Nothing is simulated in here.
+//
+// No auth: a playground keys circuits by a client-supplied name.
+//
+// Routes (under /api so the static SPA fallback leaves them alone):
+//   POST /api/call {key, path?, ...policy}   guarded call -> 200 / 502 / 503
+//   GET  /api/circuit/{key}                  one circuit's state + counters
+//   GET  /api/circuits                       every circuit (the dashboard)
+//   POST /api/reset {key}                    forget a circuit
+package mesh:app@0.1.0;
+
+/// The resilience gateway — retry + circuit breaker + SLO over a real upstream.
+world mesh-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // the durable per-key circuit state (breaker memory that survives restarts).
+    import records:store/store@0.1.0;
+    // the stateless algorithms: breaker state machine + backoff schedule.
+    import resilience:breaker/breaker@0.1.0;
+    // the real outgoing HTTP hop to the upstream (route table from wasi:config).
+    import proxy:route/router@0.1.0;
+    // state timestamps (unix millis).
+    import wasi:clocks/wall-clock@0.2.0;
+    // call latency + the backoff sleep between attempts.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

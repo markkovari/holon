@@ -55,6 +55,7 @@ comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
 | `sched:timer` | durable timer / scheduler (one-shot + recurring) | kv, clocks |
 | `lock:mutex` | distributed advisory lease + fencing token | kv, clocks, random |
 | `proxy:route` | config-driven reverse-proxy forwarding (route table + the outgoing round trip) | http, config |
+| `resilience:breaker` | circuit breaker state machine + backoff-with-jitter schedule (stateless — caller owns the circuit) | — (pure compute) |
 | `event:push` | push delivery for `event:bus`: NATS-KV change notifications drive consumer drains | wasmcloud:messaging (host), composes proxy:route |
 
 ### Eventing & integration
@@ -204,6 +205,13 @@ catalog and a bench round:
   answers are graded **speed-weighted** (faster correct = more points) with a live
   leaderboard. Real-time by polling over `auth-guard` + `records`; a host
   big-screen + a player controller. ([demo](docs/media/buzz.gif))
+- **[MESH.md](MESH.md)** — **resilient upstream calls** in front of a
+  deliberately **flaky upstream**: retry with backoff + jitter, a **circuit
+  breaker**, and an **SLO** that counts *slow* as failed — the state machine and
+  the backoff schedule in a new **`resilience:breaker`** component, the circuit
+  durable per key over `records:store`. The hop is a real outgoing request
+  through `proxy:route`, so the proof that an open breaker sheds load is the
+  upstream's own hit counter *not moving*. ([demo](docs/media/mesh.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

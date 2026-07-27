@@ -11,10 +11,10 @@ capabilities, so anything marked reusable drops into another app via
 | **abtest-domain** | `abtest:app@0.1.0` | event:bus/bus, experiment:assign/assigner, id:generate/generator, metrics:collect/collector | — | 155 KiB | ✓ |
 | **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 124 KiB | ✓ |
 | **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 168 KiB | ✓ |
-| **audit-log** | `audit:log@0.1.0` | kv:store | — | 130 KiB | ✓ |
+| **audit-log** | `audit:log@0.1.0` | kv:store | — | 129 KiB | ✓ |
 | **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 130 KiB | app/demo |
 | **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — | ✓ |
-| **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 182 KiB | app/demo |
+| **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 181 KiB | app/demo |
 | **blob-store** | `blob:store@0.1.0` | kv:store | — | 75 KiB | ✓ |
 | **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 212 KiB | ✓ |
 | **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 208 KiB | ✓ |
@@ -23,7 +23,7 @@ capabilities, so anything marked reusable drops into another app via
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 64 KiB | ✓ |
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 220 KiB | ✓ |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
-| **crdt** | `crdt:merge@0.1.0` | pure compute | — | 214 KiB | ✓ |
+| **crdt** | `crdt:merge@0.1.0` | pure compute | — | 213 KiB | ✓ |
 | **cron** | `cron:expr@0.1.0` | pure compute | — | 63 KiB | ✓ |
 | **csv** | `csv:codec@0.1.0` | pure compute | — | 58 KiB | ✓ |
 | **csv-report** | `report:app@0.1.0` | csv:codec/codec, paginate:cursor/cursors, records:store/store, validate:schema/validator | — | 173 KiB | ✓ |
@@ -31,7 +31,7 @@ capabilities, so anything marked reusable drops into another app via
 | **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 214 KiB | app/demo |
 | **email-render** | `email:template@0.1.0` | kv:store | — | 81 KiB | ✓ |
 | **eshop-basket** | `eshop:basket@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, records:store/store | — | 173 KiB | ✓ |
-| **eshop-catalog** | `eshop:catalog@0.1.0` | event:bus/bus, idempotency:guard/store, records:store/store | — | 174 KiB | ✓ |
+| **eshop-catalog** | `eshop:catalog@0.1.0` | event:bus/bus, idempotency:guard/store, records:store/store | — | 173 KiB | ✓ |
 | **eshop-gateway** | `eshop:gateway@0.1.0` | proxy:route/router | — | 79 KiB | ✓ |
 | **eshop-ordering** | `eshop:ordering@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, fsm:workflow/engine, idempotency:guard/store, records:store/store, config/store | `grace-period-secs` | 191 KiB | ✓ |
 | **eshop-payment** | `eshop:payment@0.1.0` | event:bus/bus, config/store | `payment-succeeds` | 115 KiB | ✓ |
@@ -54,12 +54,13 @@ capabilities, so anything marked reusable drops into another app via
 | **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 177 KiB | ✓ |
 | **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 126 KiB | ✓ |
 | **ledger** | `ledger:doubleentry@0.1.0` | pure compute | — | 57 KiB | ✓ |
-| **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 158 KiB | app/demo |
+| **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 157 KiB | app/demo |
 | **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 74 KiB | ✓ |
 | **lms-domain** | `lms:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, quiz:grade/grader, records:store/store, svg:chart/charts | — | 231 KiB | ✓ |
 | **lock-mutex** | `lock:mutex@0.1.0` | kv:atomics, kv:store | — | 77 KiB | ✓ |
 | **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 68 KiB | app/demo |
 | **markdown** | `md:render@0.1.0` | pure compute | — | 83 KiB | ✓ |
+| **mesh-domain** | `mesh:app@0.1.0` | proxy:route/router, records:store/store, resilience:breaker/breaker | — | 164 KiB | ✓ |
 | **metrics-collect** | `metrics:collect@0.1.0` | kv:atomics, kv:store | — | 71 KiB | ✓ |
 | **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 171 KiB | ✓ |
 | **money** | `money:amount@0.1.0` | pure compute | — | 59 KiB | ✓ |
@@ -80,7 +81,8 @@ capabilities, so anything marked reusable drops into another app via
 | **quiz-grade** | `quiz:grade@0.1.0` | pure compute | — | 54 KiB | ✓ |
 | **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 69 KiB | ✓ |
 | **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 69 KiB | ✓ |
-| **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
+| **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 180 KiB | ✓ |
+| **resilience** | `resilience:breaker@0.1.0` | pure compute | — | 15 KiB | ✓ |
 | **rrule** | `rrule:recur@0.1.0` | pure compute | — | 60 KiB | ✓ |
 | **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 188 KiB | ✓ |
 | **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 91 KiB | ✓ |
@@ -93,20 +95,20 @@ capabilities, so anything marked reusable drops into another app via
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 85 KiB | ✓ |
 | **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 179 KiB | ✓ |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 647 KiB | ✓ |
-| **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
+| **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 185 KiB | app/demo |
 | **svg-chart** | `svg:chart@0.1.0` | pure compute | — | 85 KiB | ✓ |
 | **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, records:store/store | — | 247 KiB | ✓ |
 | **textdiff** | `diff:text@0.1.0` | pure compute | — | 71 KiB | ✓ |
 | **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 150 KiB | ✓ |
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 62 KiB | ✓ |
-| **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 246 KiB | ✓ |
+| **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 245 KiB | ✓ |
 | **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 187 KiB | ✓ |
 | **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 151 KiB | ✓ |
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 78 KiB | ✓ |
 | **validate** | `validate:schema@0.1.0` | pure compute | — | 113 KiB | ✓ |
 | **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — | 287 KiB | app/demo |
 | **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 70 KiB | ✓ |
-| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 180 KiB | app/demo |
+| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 179 KiB | app/demo |
 | **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 62 KiB | ✓ |
 | **zip** | `zip:archive@0.1.0` | pure compute | — | 51 KiB | ✓ |
 
@@ -164,6 +166,7 @@ capabilities, so anything marked reusable drops into another app via
 - **lock-mutex** — `lock-mutex` — reference implementation of `lock:mutex`
 - **login-app** — `login-app` — a consumer component that composes three universal
 - **markdown** — `markdown` — reference implementation of `md:render`
+- **mesh-domain** — `mesh-domain` — the resilience playground (MESH.md) as ONE composed wasm HTTP
 - **metrics-collect** — `metrics-collect` — reference implementation of `metrics:collect`
 - **mfa-authgate** — mfa:app — TOTP 2FA enrollment + challenge-response login over composed
 - **money** — `money` — reference implementation of `money:amount`
@@ -185,6 +188,7 @@ capabilities, so anything marked reusable drops into another app via
 - **quota** — `quota` — reference implementation of `quota:meter`
 - **rate-limiter** — `rate-limiter` — reference implementation of `ratelimit:guard`
 - **record-store** — `record-store` — reference implementation of `record:store`
+- **resilience** — `resilience` — reference implementation of `resilience:breaker/breaker`
 - **rrule** — `rrule` — reference implementation of `rrule:recur/recur`
 - **saga-domain** — saga:app — a durable trip-booking saga over composed contracts
 - **scheduler-timer** — `scheduler-timer` — reference implementation of `sched:timer`

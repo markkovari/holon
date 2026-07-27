@@ -1,0 +1,20 @@
+[package]
+name = "resilience"
+description = "Stateless failure-handling algorithms — circuit breaker + exponential backoff with jitter (resilience:breaker)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "resilience:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "resilience"

@@ -97,6 +97,8 @@ lms_wasm := rel / "lms_domain.wasm"
 lms_composed := "components/target/lms_domain.composed.wasm"
 buzz_wasm := rel / "buzz_domain.wasm"
 buzz_composed := "components/target/buzz_domain.composed.wasm"
+mesh_wasm := rel / "mesh_domain.wasm"
+mesh_composed := "components/target/mesh_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -609,6 +611,57 @@ host-buzz: compose-buzz build-buzz-ui
 e2e-buzz: compose-buzz
     cd host && cargo build --release --bin vet-host
     cd examples/buzz && cargo test --release
+
+# Compose mesh-domain (MESH.md — resilient upstream calls) with records (the
+# durable per-key circuit state) + resilience (the breaker state machine and the
+# backoff schedule) + proxy-route (the REAL outgoing HTTP hop). Remaining imports
+# are WASI: clocks for latency + the backoff sleep, config for the route table.
+compose-mesh: compose
+    wac plug {{mesh_wasm}} \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/resilience.wasm \
+      --plug {{rel}}/proxy_route.wasm \
+      -o {{mesh_composed}}
+    wasm-tools validate {{mesh_composed}}
+    @echo "composed mesh-domain (+ records + resilience + proxy-route) -> {{mesh_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/mesh/dist.
+build-mesh-ui:
+    cd examples/mesh/ui && npm ci && npm run build
+
+# The deliberately flaky upstream mesh protects callers from (std-only, ~100
+# lines). Fails on demand per request: /hit?fail=1, ?fail_n=2&id=x, ?delay=400.
+# `host-mesh` starts it for you; run it alone to keep it up across host restarts.
+mesh-upstream:
+    cd examples/mesh && cargo run --release --bin flaky -- 127.0.0.1:3051
+
+# Run the resilience playground on the native host + serve the SPA on :3050, with
+# the flaky upstream on :3051 (started here, killed on exit). Hammer the upstream
+# with failures and watch the breaker trip — while it is OPEN the upstream's hit
+# counter stops moving, because the request never leaves the host.
+host-mesh: compose-mesh build-mesh-ui
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd examples/mesh && cargo build --release --bin flaky
+    ./target/release/flaky 127.0.0.1:3051 &
+    UPSTREAM_PID=$!
+    trap 'kill $UPSTREAM_PID 2>/dev/null || true' EXIT
+    cd ../../host && VET_TENANT=mesh \
+      CFG_ROUTES='/upstream=http://127.0.0.1:3051/,/dead=http://127.0.0.1:3052/' \
+      cargo run --release --bin vet-host -- \
+      --component ../{{mesh_composed}} --addr 0.0.0.0:3050 \
+      --static-dir ../examples/mesh/dist
+
+# Resilience e2e against the REAL flaky upstream: retries ride out a two-request
+# blip; `failure_threshold` failures trip the breaker and while it is OPEN the
+# upstream's own hit counter proves it is never dialled; a half-open probe closes
+# it again; a response slower than `slo_ms` counts as failed despite its 200; an
+# unreachable upstream trips the breaker but a missing route (our config bug)
+# does not.
+e2e-mesh: compose-mesh
+    cd host && cargo build --release --bin vet-host
+    cd examples/mesh && cargo build --release --bin flaky && cargo test --release
+
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one
