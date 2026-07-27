@@ -470,6 +470,7 @@ The honest trade, measured across all 109 components rather than assumed:
 | total size | 15266 KiB | 15472 KiB (**+1.3 %**) |
 | WASI imports declared | 1228 | 1680 (**+37 %**) |
 | injected WASI version | 0.2.3 | 0.2.12 |
+| name + producers section | written by the adapter | written by `just build` (step 3) |
 
 p2 is slightly *larger* and imports notably *more* — Rust's wasip2 std wires up
 the whole `wasi:cli` surface (`terminal-input/output/stdin/stdout/stderr`) where

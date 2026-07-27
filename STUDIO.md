@@ -57,10 +57,17 @@ world root { import records:store/store@0.1.0; ... }
 ```
 
 The source world (`mesh-domain`) and package (`mesh:app@0.1.0`) are **gone** —
-`wac plug` doesn't need them, so `wit-component` doesn't keep them. Identity comes
-from the `name` custom section (the crate name) and from what the thing exports: a
-capability is identifiable because it exports `records:store/store`, while an app
-that exports only `wasi:http/incoming-handler` is anonymous. That's why the studio
+`wac plug` doesn't need them, so `wit-component` doesn't keep them.
+
+What's left is the `component-name` custom section, and on `wasm32-wasip2` **nothing
+writes it by default**: `wasm-component-ld` doesn't, where cargo-component's old
+adapter path did. This repo's `just build` stamps it back on with `wasm-tools
+metadata add` (~35 bytes, idempotent), so components built here do report a name —
+but treat it as a hint. A p2 component from anywhere else arrives anonymous.
+
+The identity you can actually rely on is **what the thing exports**: a capability is
+recognisable because it exports `records:store/store`, while an app that exports
+only `wasi:http/incoming-handler` is unidentifiable either way. That's why the studio
 takes an id on upload, and why `.wac` output names such a component
 `<id>:component` — the same convention `components/login-app/compose.wac` uses.
 

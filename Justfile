@@ -127,14 +127,33 @@ wit-check:
 
 # Build all components as WASI p2 components (wasm32-wasip2).
 #
-# Two steps on purpose. cargo-component 0.21.1 HARDCODES `--target wasm32-wasip1`
-# — it ignores both `--target` and `[build] target` — so it is used only to
-# GENERATE the bindings (`check` is enough, no codegen). The artifacts come from a
-# plain cargo build for wasm32-wasip2, where rustc + wasm-component-ld emit a
-# component directly with no wasi_snapshot_preview1 adapter in it.
+# Three steps, each for a reason:
+#
+# 1. cargo-component 0.21.1 HARDCODES `--target wasm32-wasip1` — it ignores both
+#    `--target` and `[build] target` — so it is used only to GENERATE the bindings
+#    (`check` is enough, no codegen).
+# 2. a plain cargo build for wasm32-wasip2, where rustc + wasm-component-ld emit a
+#    component directly with no wasi_snapshot_preview1 adapter in it.
+# 3. stamp the name + producers section back on. `wasm-component-ld` writes
+#    neither, where cargo-component's adapter path did, so without this every
+#    artifact is anonymous: `wasm-tools metadata show` reports `unknown(0)` and
+#    `wit:reflect` cannot read a component's own name. ~35 bytes per artifact, and
+#    idempotent — re-running `build` doesn't accumulate sections.
 build:
-    cd {{components}} && cargo component check --release
-    cd {{components}} && cargo build --release --target wasm32-wasip2
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd {{components}}
+    cargo component check --release
+    cargo build --release --target wasm32-wasip2
+    rustv=$(rustc --version | cut -d' ' -f2)
+    stamped=0
+    for f in target/wasm32-wasip2/release/*.wasm; do
+      name=$(basename "$f" .wasm | tr '_' '-')
+      wasm-tools metadata add --name "$name" --language "Rust=$rustv" "$f" -o "$f.named"
+      mv "$f.named" "$f"
+      stamped=$((stamped+1))
+    done
+    echo "built $stamped components (wasm32-wasip2, named, no preview1 adapter)"
 
 # Compose the rate-limiter AND audit-log into auth-guard with wac, satisfying
 # auth-guard's `ratelimit:guard/limiter` + `audit:log/recorder` imports. Output

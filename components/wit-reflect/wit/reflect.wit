@@ -57,11 +57,12 @@ interface inspector {
     /// What a component is, from the outside.
     record surface {
         /// The name in the component's `component-name` custom section, or empty.
-        /// Expect EMPTY for anything built for `wasm32-wasip2`: that section came
-        /// from cargo-component's adapter path, and `wasm-component-ld` writes
-        /// none. A built component's package/world name is not preserved either,
-        /// so identity is only what it exports — and an app exporting nothing but
-        /// `wasi:http` is anonymous. Callers supply their own ids.
+        /// A HINT, not an identity: nothing on the `wasm32-wasip2` path writes this
+        /// section by default, so it is present only when someone stamped it (this
+        /// repo's `just build` does, via `wasm-tools metadata add`). A component's
+        /// own package/world name is never preserved in the binary, so an app that
+        /// exports nothing but `wasi:http` may be unidentifiable — callers supply
+        /// their own ids.
         name: string,
         /// Interfaces it exports — what it can be plugged in to satisfy.
         exports: list<iface-ref>,

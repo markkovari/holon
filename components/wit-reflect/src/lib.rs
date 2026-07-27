@@ -13,14 +13,14 @@
 //!   `SubtypeChecker`, so a UI's connection validation is the real type check;
 //!   `compose` runs its `plug`, so the artifact is the artifact `wac plug` writes.
 //!
-//! What a built component does NOT tell you: anything about itself. The embedded
+//! What a built component does NOT tell you: its own package name. The embedded
 //! type says `package root:component; world root { ... }` — the world name and
-//! package from the source WIT are gone. And since these build for
-//! `wasm32-wasip2`, there is no `component-name` custom section either (that came
-//! from cargo-component's adapter path; `wasm-component-ld` writes none). So
-//! identity is ONLY what it exports — a capability is recognisable because it
-//! exports `records:store/store`, an app exporting just `wasi:http` is anonymous —
-//! which is why every caller supplies its own id.
+//! package from the source WIT are gone. A `component-name` section can carry the
+//! crate name, but on `wasm32-wasip2` nothing writes one by default
+//! (`wasm-component-ld` doesn't; cargo-component's adapter path used to), so this
+//! repo's `just build` stamps it back with `wasm-tools metadata add`. Treat it as
+//! a hint, not a guarantee: a p2 component from elsewhere arrives anonymous, and
+//! an app exporting only `wasi:http` is unidentifiable either way. Hence ids.
 
 #[allow(warnings)]
 mod bindings;
@@ -808,11 +808,11 @@ mod tests {
     fn inspects_a_real_component() {
         let bytes = require("mesh_domain");
         let s = <Component as InspectorGuest>::inspect(bytes).expect("mesh-domain inspects");
-        // A wasm32-wasip2 artifact is ANONYMOUS: `wasm-component-ld` writes no
-        // `component-name` section (nor a producers tag), where cargo-component's
-        // adapter path did. A built component carries no identity of its own —
-        // which is why every caller downstream supplies an id.
-        assert!(s.name.is_empty(), "p2 artifacts carry no name section, got {:?}", s.name);
+        // The name is here because `just build` stamps it back on: wasm32-wasip2
+        // artifacts come out anonymous (`wasm-component-ld` writes no name section,
+        // where cargo-component's adapter path did). A p2 component from ANYWHERE
+        // ELSE will have an empty name, which is why callers still supply ids.
+        assert_eq!(s.name, "mesh-domain", "the build's `wasm-tools metadata add` pass");
         assert_eq!(s.exports.len(), 1);
         assert_eq!(s.exports[0].raw, "wasi:http/incoming-handler@0.2.0");
         let composable: Vec<&str> = s.imports.iter().map(|i| i.raw.as_str()).collect();

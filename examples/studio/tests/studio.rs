@@ -147,10 +147,10 @@ fn studio_reflects_plans_emits_and_composes() {
     for stem in ["record_store", "resilience", "proxy_route", "zip"] {
         upload(stem);
     }
-    // A wasm32-wasip2 artifact is anonymous: no `component-name` section (that was
-    // cargo-component's adapter path) and no package/world name in the embedded
-    // type. So the palette id is the caller's — here the `?id=` on the upload.
-    assert_eq!(mesh["name"], "", "p2 artifacts carry no self-identity: {}", mesh["name"]);
+    // Present because `just build` stamps it on — a wasm32-wasip2 artifact is
+    // anonymous otherwise, and a p2 component from outside this repo still will be.
+    // The palette id remains the caller's (the `?id=` on the upload).
+    assert_eq!(mesh["name"], "mesh-domain", "the build's metadata pass restores it");
     let composable: Vec<&str> =
         mesh["imports"].as_array().unwrap().iter().map(|i| i["raw"].as_str().unwrap()).collect();
     assert_eq!(

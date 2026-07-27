@@ -31,7 +31,7 @@ capabilities, so anything marked reusable drops into another app via
 | **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 224 KiB | app/demo |
 | **email-render** | `email:template@0.1.0` | kv:store | — | 79 KiB | ✓ |
 | **eshop-basket** | `eshop:basket@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, records:store/store | — | 179 KiB | ✓ |
-| **eshop-catalog** | `eshop:catalog@0.1.0` | event:bus/bus, idempotency:guard/store, records:store/store | — | 178 KiB | ✓ |
+| **eshop-catalog** | `eshop:catalog@0.1.0` | event:bus/bus, idempotency:guard/store, records:store/store | — | 179 KiB | ✓ |
 | **eshop-gateway** | `eshop:gateway@0.1.0` | proxy:route/router | — | 77 KiB | ✓ |
 | **eshop-ordering** | `eshop:ordering@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, fsm:workflow/engine, idempotency:guard/store, records:store/store, config/store | `grace-period-secs` | 198 KiB | ✓ |
 | **eshop-payment** | `eshop:payment@0.1.0` | event:bus/bus, config/store | `payment-succeeds` | 117 KiB | ✓ |
@@ -80,7 +80,7 @@ capabilities, so anything marked reusable drops into another app via
 | **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 163 KiB | ✓ |
 | **qr** | `qr:encode@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **quiz-grade** | `quiz:grade@0.1.0` | pure compute | — | 50 KiB | ✓ |
-| **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 66 KiB | ✓ |
+| **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 67 KiB | ✓ |
 | **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 66 KiB | ✓ |
 | **record-store** | `records:store@0.1.0` | kv:batch, kv:store | — | 181 KiB | ✓ |
 | **resilience** | `resilience:breaker@0.1.0` | pure compute | — | 16 KiB | ✓ |
@@ -104,7 +104,7 @@ capabilities, so anything marked reusable drops into another app via
 | **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 154 KiB | ✓ |
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 58 KiB | ✓ |
 | **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 257 KiB | ✓ |
-| **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 195 KiB | ✓ |
+| **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 196 KiB | ✓ |
 | **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 156 KiB | ✓ |
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 76 KiB | ✓ |
 | **validate** | `validate:schema@0.1.0` | pure compute | — | 110 KiB | ✓ |
