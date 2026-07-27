@@ -94,6 +94,7 @@ comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
 | `json:patch` | RFC 6902 JSON Patch + RFC 7386 Merge Patch |
 | `md:render` | safe Markdown → HTML |
 | `ui:assets` | embedded static bundle (the built SPA) served as a capability (build.rs `include_bytes!`) |
+| `wit:reflect` | a component's real import/export surface, read from its binary; subtype-checked plug/socket fit, build planning, and composition **for real** via `wac-graph` (imports nothing — it is the wac engine in wasm) |
 
 ### Composition (the whole point)
 
@@ -222,6 +223,16 @@ catalog and a bench round:
   only accounts, credentials and sessions. The e2e is a **virtual authenticator** —
   a real P-256 key — so every check is proven to bite, phishing origin included.
   ([demo](docs/media/passkey.gif))
+- **[STUDIO.md](STUDIO.md)** — a **composition studio** for this catalog: an
+  **xyflow canvas** whose node ports are each component's *real* WIT interfaces,
+  read out of the binary by a new **`wit:reflect`** component. A connection is
+  offered only where **`wac`'s own subtype checker** says the plug fits the socket,
+  and the same graph is emitted three ways — a `wac plug` script, a declarative
+  `.wac` file, and a wasmCloud v2 `WorkloadDeployment` — which are **not
+  equivalent** (instance sharing, cycles, what survives into the artifact). It also
+  **composes for real**: `wac-graph` runs *inside* the wasm, so Compose returns the
+  same artifact `wac plug` writes — and the e2e serves it to prove it runs.
+  ([demo](docs/media/studio.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

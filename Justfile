@@ -101,6 +101,8 @@ mesh_wasm := rel / "mesh_domain.wasm"
 mesh_composed := "components/target/mesh_domain.composed.wasm"
 passkey_wasm := rel / "passkey_domain.wasm"
 passkey_composed := "components/target/passkey_domain.composed.wasm"
+studio_wasm := rel / "studio_domain.wasm"
+studio_composed := "components/target/studio_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -709,6 +711,67 @@ host-passkey: compose-passkey build-passkey-ui
 e2e-passkey: compose-passkey
     cd host && cargo build --release --bin vet-host
     cd examples/passkey && cargo test --release
+
+# Compose studio-domain (STUDIO.md — the composition studio) with wit-reflect
+# (inspection + wac's own composition engine) + records (surfaces + saved
+# canvases) + blob-store (the uploaded component bytes). Remaining imports are
+# WASI. Note wit_reflect.wasm is ~1 MB: it carries wasmparser and wac-graph, so
+# the studio can compose for real instead of printing instructions.
+compose-studio: build
+    wac plug {{studio_wasm}} \
+      --plug {{rel}}/wit_reflect.wasm \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/blob_store.wasm \
+      -o {{studio_composed}}
+    wasm-tools validate {{studio_composed}}
+    @echo "composed studio-domain (+ wit-reflect + records + blob) -> {{studio_composed}}"
+
+# Build the React + xyflow SPA (Vite) to examples/studio/dist.
+build-studio-ui:
+    cd examples/studio/ui && npm ci && npm run build
+
+# Feed the studio every component in this repo, by POSTing the actual .wasm
+# artifacts — a component cannot read the filesystem (the host preopens no
+# directories), so reflection has to be fed over HTTP. Re-running is safe: an
+# upload with the same id replaces it. Needs `just host-studio` already running.
+seed-studio addr="127.0.0.1:3054":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ok=0; skipped=0
+    for f in {{rel}}/*.wasm; do
+      name=$(basename "$f" .wasm | tr '_' '-')
+      code=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary "@$f" \
+        -H 'content-type: application/wasm' "http://{{addr}}/api/components?id=$name" || echo 000)
+      if [ "$code" = "201" ]; then ok=$((ok+1)); else skipped=$((skipped+1)); echo "  $code $name"; fi
+    done
+    echo "seeded $ok components ($skipped not accepted)"
+
+# Run the studio on the native host + serve the SPA on :3054, then seed it with
+# every component in the repo. Drag components onto the canvas, wire the handles
+# (only type-compatible connections are allowed — that check is wac's own), and
+# read off the wac plug script, the .wac file, and the wasmCloud workload. Hit
+# Compose to download a real composed component.
+host-studio: compose-studio build-studio-ui
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd host && cargo build --release --bin vet-host
+    VET_TENANT=studio ./target/release/vet-host \
+      --component ../{{studio_composed}} --addr 127.0.0.1:3054 \
+      --static-dir ../examples/studio/dist &
+    HOST_PID=$!
+    trap 'kill $HOST_PID 2>/dev/null || true' EXIT
+    for _ in $(seq 1 100); do curl -sf http://127.0.0.1:3054/ >/dev/null && break; sleep 0.2; done
+    cd .. && just seed-studio
+    echo "studio on http://127.0.0.1:3054"
+    wait $HOST_PID
+
+# Studio e2e: reflect real components over HTTP, refuse an illegal edge (wac's
+# subtype check says no), plan a two-level build in the right order, emit all
+# three forms, and COMPOSE FOR REAL — then prove the composed component is the
+# same artifact `wac plug` writes and that the host will actually serve it.
+e2e-studio: compose-studio
+    cd host && cargo build --release --bin vet-host
+    cd examples/studio && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one

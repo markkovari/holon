@@ -1,0 +1,49 @@
+// studio:app — a composition studio for wasm components.
+//
+// The repo's 105 components are wired together by hand: 55 `wac plug` lines in a
+// Justfile, and a `gen-catalog.py` that scrapes WIT with regexes to produce a
+// catalog nothing consumes programmatically. This app makes that graph a thing
+// you can see and edit, and it is honest about what a graph means:
+//
+//   * drop a `.wasm` in and it is INSPECTED, not registered from a manifest —
+//     `wit:reflect` reads the component's own import/export sections;
+//   * a connection is offered only where `wac`'s SubtypeChecker says the plug
+//     actually fits the socket, so an illegal edge cannot be drawn;
+//   * the same canvas emits a `wac plug` script, a declarative `.wac` file, and a
+//     wasmCloud v2 `WorkloadDeployment` — which are NOT equivalent, and the
+//     differences are exactly what people get wrong by hand;
+//   * and it composes for real: `POST /api/compose` returns a component
+//     `wasm-tools validate` accepts and the host can serve.
+//
+// The app itself owns almost nothing: uploaded bytes in `blob:store`, surfaces
+// and saved graphs in `records:store`, and every interesting answer delegated to
+// `wit:reflect`. That is the point — the studio is glue.
+//
+// No auth: a local dev tool. Routes live under /api so the SPA fallback leaves
+// them alone.
+//
+//   POST /api/components?id=NAME   raw .wasm body -> inspect + store
+//   GET  /api/components           the palette (surfaces only, never bytes)
+//   POST /api/components/delete    {id}
+//   POST /api/plan                 {nodes:[id], edges:[{plug,socket,iface}]} -> plan
+//   POST /api/satisfies            {socket, plug} -> [interface] wac would wire
+//   POST /api/emit                 {nodes, edges, form, meta} -> text artifact
+//   POST /api/compose              {nodes, edges, root} -> composed .wasm bytes
+//   GET/POST/PUT /api/graphs[/id]  save + reload a canvas
+package studio:app@0.1.0;
+
+/// The studio backend: a palette of reflected components, saved graphs, and the
+/// four things a graph can turn into.
+world studio-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // inspection, planning, emitting, and real composition.
+    import wit:reflect/inspector@0.1.0;
+    import wit:reflect/composer@0.1.0;
+    // surfaces + saved canvases.
+    import records:store/store@0.1.0;
+    // the uploaded component bytes — needed again at compose time.
+    import blob:store/blobstore@0.1.0;
+    // timestamps on uploads and graphs.
+    import wasi:clocks/wall-clock@0.2.0;
+}

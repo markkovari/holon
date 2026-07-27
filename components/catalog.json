@@ -13,8 +13,8 @@
       "metrics:collect/collector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 159275,
-    "wasm_sha256_12": "a746065f1545",
+    "wasm_size_bytes": 162822,
+    "wasm_sha256_12": "45deb44ccfe4",
     "reusable_as_is": true
   },
   {
@@ -28,8 +28,8 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 127556,
-    "wasm_sha256_12": "c47d4b708b64",
+    "wasm_size_bytes": 129236,
+    "wasm_sha256_12": "0e35e95ad243",
     "reusable_as_is": true
   },
   {
@@ -44,8 +44,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 172961,
-    "wasm_sha256_12": "f3a80392d7e0",
+    "wasm_size_bytes": 176606,
+    "wasm_sha256_12": "6c334be7d7b8",
     "reusable_as_is": true
   },
   {
@@ -60,8 +60,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 133023,
-    "wasm_sha256_12": "6ddd8f181702",
+    "wasm_size_bytes": 132820,
+    "wasm_sha256_12": "0027fc0d5414",
     "reusable_as_is": true
   },
   {
@@ -76,8 +76,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 133985,
-    "wasm_sha256_12": "8bad7251f3f8",
+    "wasm_size_bytes": 135882,
+    "wasm_sha256_12": "82bfcbbd7c8c",
     "reusable_as_is": false
   },
   {
@@ -111,8 +111,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 186270,
-    "wasm_sha256_12": "1c48d92decd1",
+    "wasm_size_bytes": 190277,
+    "wasm_sha256_12": "24489e1b65b0",
     "reusable_as_is": false
   },
   {
@@ -150,8 +150,8 @@
       "rrule:recur/recur"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 217732,
-    "wasm_sha256_12": "6f0e92b4b0d8",
+    "wasm_size_bytes": 221881,
+    "wasm_sha256_12": "74d8856b3f5b",
     "reusable_as_is": true
   },
   {
@@ -172,8 +172,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 213302,
-    "wasm_sha256_12": "0cd9ddd77bfb",
+    "wasm_size_bytes": 217380,
+    "wasm_sha256_12": "c97cf7ba80e2",
     "reusable_as_is": true
   },
   {
@@ -192,8 +192,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 208155,
-    "wasm_sha256_12": "4ed45c59985a",
+    "wasm_size_bytes": 212545,
+    "wasm_sha256_12": "a96304896afc",
     "reusable_as_is": true
   },
   {
@@ -244,8 +244,8 @@
       "slug:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 225606,
-    "wasm_sha256_12": "10dc6e75d6e5",
+    "wasm_size_bytes": 229919,
+    "wasm_sha256_12": "b22152bf207b",
     "reusable_as_is": true
   },
   {
@@ -272,8 +272,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 218699,
-    "wasm_sha256_12": "fd604d137415",
+    "wasm_size_bytes": 220561,
+    "wasm_sha256_12": "541928d667de",
     "reusable_as_is": true
   },
   {
@@ -316,8 +316,8 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 177238,
-    "wasm_sha256_12": "98fefe270bc1",
+    "wasm_size_bytes": 181030,
+    "wasm_sha256_12": "a93d9890e405",
     "reusable_as_is": true
   },
   {
@@ -337,8 +337,8 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 196894,
-    "wasm_sha256_12": "57e36528118a",
+    "wasm_size_bytes": 200942,
+    "wasm_sha256_12": "7140cb96625a",
     "reusable_as_is": true
   },
   {
@@ -363,8 +363,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 219426,
-    "wasm_sha256_12": "12e009567d6a",
+    "wasm_size_bytes": 223790,
+    "wasm_sha256_12": "cb1e9a110bd8",
     "reusable_as_is": false
   },
   {
@@ -396,8 +396,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 177549,
-    "wasm_sha256_12": "c56a73320b2a",
+    "wasm_size_bytes": 181386,
+    "wasm_sha256_12": "a63d1b0997ec",
     "reusable_as_is": true
   },
   {
@@ -413,8 +413,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 177846,
-    "wasm_sha256_12": "61c2a8ae83e0",
+    "wasm_size_bytes": 181529,
+    "wasm_sha256_12": "68f0eb8eda59",
     "reusable_as_is": true
   },
   {
@@ -454,8 +454,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 195633,
-    "wasm_sha256_12": "18c4367fbc6c",
+    "wasm_size_bytes": 199684,
+    "wasm_sha256_12": "cab12d4e333d",
     "reusable_as_is": true
   },
   {
@@ -475,8 +475,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 118465,
-    "wasm_sha256_12": "9103e044c5a5",
+    "wasm_size_bytes": 121821,
+    "wasm_sha256_12": "8f6149b387e2",
     "reusable_as_is": true
   },
   {
@@ -560,8 +560,8 @@
       "id:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 152891,
-    "wasm_sha256_12": "b3d4227d9915",
+    "wasm_size_bytes": 156382,
+    "wasm_sha256_12": "d9ff55743232",
     "reusable_as_is": true
   },
   {
@@ -575,8 +575,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 145594,
-    "wasm_sha256_12": "61cbf7cc5537",
+    "wasm_size_bytes": 147237,
+    "wasm_sha256_12": "54e02a7a2623",
     "reusable_as_is": true
   },
   {
@@ -591,8 +591,8 @@
       "shaper:limit/limiter"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 160795,
-    "wasm_sha256_12": "f72eee50c8aa",
+    "wasm_size_bytes": 164713,
+    "wasm_sha256_12": "dcf2967f6d55",
     "reusable_as_is": true
   },
   {
@@ -656,8 +656,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 204874,
-    "wasm_sha256_12": "656ae1b66f87",
+    "wasm_size_bytes": 209077,
+    "wasm_sha256_12": "5372be46a1a2",
     "reusable_as_is": true
   },
   {
@@ -750,8 +750,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 79331,
-    "wasm_sha256_12": "8551903ed2ca",
+    "wasm_size_bytes": 81131,
+    "wasm_sha256_12": "27be4885472b",
     "reusable_as_is": true
   },
   {
@@ -769,8 +769,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 181867,
-    "wasm_sha256_12": "9461a33ae6ee",
+    "wasm_size_bytes": 185610,
+    "wasm_sha256_12": "bad5377bbb75",
     "reusable_as_is": true
   },
   {
@@ -782,8 +782,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 129209,
-    "wasm_sha256_12": "263db7b45327",
+    "wasm_size_bytes": 133725,
+    "wasm_sha256_12": "4e24d81b2c56",
     "reusable_as_is": true
   },
   {
@@ -816,8 +816,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 161482,
-    "wasm_sha256_12": "abe8a7f36aa5",
+    "wasm_size_bytes": 165181,
+    "wasm_sha256_12": "fc563d09f9b6",
     "reusable_as_is": false
   },
   {
@@ -852,8 +852,8 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 236595,
-    "wasm_sha256_12": "7dd65ad91c17",
+    "wasm_size_bytes": 241089,
+    "wasm_sha256_12": "3bebbdbca670",
     "reusable_as_is": true
   },
   {
@@ -915,8 +915,8 @@
       "resilience:breaker/breaker"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 168228,
-    "wasm_sha256_12": "34b01899168c",
+    "wasm_size_bytes": 172152,
+    "wasm_sha256_12": "bcd9da2739df",
     "reusable_as_is": true
   },
   {
@@ -950,8 +950,8 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 175117,
-    "wasm_sha256_12": "8fa29990ba32",
+    "wasm_size_bytes": 178995,
+    "wasm_sha256_12": "5616ffddb1f9",
     "reusable_as_is": true
   },
   {
@@ -1008,8 +1008,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 179754,
-    "wasm_sha256_12": "0c53f2f219a4",
+    "wasm_size_bytes": 181430,
+    "wasm_sha256_12": "a4cd054bc55a",
     "reusable_as_is": true
   },
   {
@@ -1103,8 +1103,8 @@
         "description": "demand the UV flag (biometric/PIN), not just user presence (default false)"
       }
     ],
-    "wasm_size_bytes": 201724,
-    "wasm_sha256_12": "c2e41cd2ff2d",
+    "wasm_size_bytes": 205179,
+    "wasm_sha256_12": "85849acea405",
     "reusable_as_is": true
   },
   {
@@ -1122,8 +1122,8 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 155257,
-    "wasm_sha256_12": "7418c29f8d0a",
+    "wasm_size_bytes": 158923,
+    "wasm_sha256_12": "011667a27938",
     "reusable_as_is": true
   },
   {
@@ -1143,8 +1143,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 172747,
-    "wasm_sha256_12": "6166bd1c3030",
+    "wasm_size_bytes": 176727,
+    "wasm_sha256_12": "ff4b27c1852b",
     "reusable_as_is": true
   },
   {
@@ -1186,8 +1186,8 @@
       "outbox:dispatch/queue"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 151422,
-    "wasm_sha256_12": "fb7f60f8739a",
+    "wasm_size_bytes": 155060,
+    "wasm_sha256_12": "a01d161ae9e6",
     "reusable_as_is": true
   },
   {
@@ -1201,8 +1201,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 169511,
-    "wasm_sha256_12": "47976cc996bb",
+    "wasm_size_bytes": 171089,
+    "wasm_sha256_12": "7b909c13b172",
     "reusable_as_is": true
   },
   {
@@ -1239,8 +1239,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 163639,
-    "wasm_sha256_12": "0526680e5fa1",
+    "wasm_size_bytes": 167350,
+    "wasm_sha256_12": "7af2c78790a2",
     "reusable_as_is": true
   },
   {
@@ -1323,8 +1323,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 184910,
-    "wasm_sha256_12": "7ca01793a234",
+    "wasm_size_bytes": 188418,
+    "wasm_sha256_12": "47b9e5e24965",
     "reusable_as_is": true
   },
   {
@@ -1370,8 +1370,8 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 192702,
-    "wasm_sha256_12": "ddb9aa9c8e14",
+    "wasm_size_bytes": 196291,
+    "wasm_sha256_12": "db103a2199d7",
     "reusable_as_is": true
   },
   {
@@ -1404,8 +1404,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 182261,
-    "wasm_sha256_12": "730763f58744",
+    "wasm_size_bytes": 186132,
+    "wasm_sha256_12": "db4077eb4390",
     "reusable_as_is": true
   },
   {
@@ -1424,8 +1424,8 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 159568,
-    "wasm_sha256_12": "9b3b6b21a4e8",
+    "wasm_size_bytes": 163331,
+    "wasm_sha256_12": "7ec63c498a6e",
     "reusable_as_is": true
   },
   {
@@ -1529,8 +1529,8 @@
       "zip:archive/archiver"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 184279,
-    "wasm_sha256_12": "0a2a244b738a",
+    "wasm_size_bytes": 188392,
+    "wasm_sha256_12": "7fd1e4b586db",
     "reusable_as_is": true
   },
   {
@@ -1562,9 +1562,27 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 190382,
-    "wasm_sha256_12": "cb9fba3dbf8a",
+    "wasm_size_bytes": 194020,
+    "wasm_sha256_12": "cb87a962d3d3",
     "reusable_as_is": false
+  },
+  {
+    "name": "studio-domain",
+    "package": "studio:app@0.1.0",
+    "description": "`studio-domain` \u2014 the composition studio (STUDIO.md) as ONE composed wasm HTTP",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "blob:store/blobstore",
+      "records:store/store",
+      "wit:reflect/composer",
+      "wit:reflect/inspector"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 204161,
+    "wasm_sha256_12": "e77c2d289ebd",
+    "reusable_as_is": true
   },
   {
     "name": "svg-chart",
@@ -1596,8 +1614,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 253896,
-    "wasm_sha256_12": "f07cd9acae7c",
+    "wasm_size_bytes": 258775,
+    "wasm_sha256_12": "ae75bbd031f2",
     "reusable_as_is": true
   },
   {
@@ -1627,8 +1645,8 @@
       "ratelimit:guard/limiter"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 154112,
-    "wasm_sha256_12": "f2e6c5b5f07f",
+    "wasm_size_bytes": 157647,
+    "wasm_sha256_12": "43e98c5cf7b0",
     "reusable_as_is": true
   },
   {
@@ -1670,8 +1688,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 251346,
-    "wasm_sha256_12": "3b21574e358c",
+    "wasm_size_bytes": 256055,
+    "wasm_sha256_12": "e9d6cded23e1",
     "reusable_as_is": true
   },
   {
@@ -1691,8 +1709,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 192387,
-    "wasm_sha256_12": "d00c8396a051",
+    "wasm_size_bytes": 196455,
+    "wasm_sha256_12": "0585be7f142e",
     "reusable_as_is": true
   },
   {
@@ -1709,8 +1727,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 155458,
-    "wasm_sha256_12": "982088f1ab0f",
+    "wasm_size_bytes": 159270,
+    "wasm_sha256_12": "258121a2d420",
     "reusable_as_is": true
   },
   {
@@ -1754,8 +1772,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 115772,
-    "wasm_sha256_12": "89002c06204e",
+    "wasm_size_bytes": 115867,
+    "wasm_sha256_12": "df2d3609375e",
     "reusable_as_is": true
   },
   {
@@ -1795,8 +1813,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 294096,
-    "wasm_sha256_12": "0df8a323b926",
+    "wasm_size_bytes": 297602,
+    "wasm_sha256_12": "fb751c9ca6a1",
     "reusable_as_is": false
   },
   {
@@ -1808,8 +1826,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 194755,
-    "wasm_sha256_12": "be9a663b4cc0",
+    "wasm_size_bytes": 195390,
+    "wasm_sha256_12": "f0c29dff15de",
     "reusable_as_is": true
   },
   {
@@ -1849,8 +1867,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 183946,
-    "wasm_sha256_12": "f9925f1c8b93",
+    "wasm_size_bytes": 187841,
+    "wasm_sha256_12": "0a4f501f84cf",
     "reusable_as_is": false
   },
   {
@@ -1864,6 +1882,20 @@
     "config_keys": [],
     "wasm_size_bytes": 63784,
     "wasm_sha256_12": "12a1122a3347",
+    "reusable_as_is": true
+  },
+  {
+    "name": "wit-reflect",
+    "package": "wit:reflect@0.1.0",
+    "description": "`wit-reflect` \u2014 reference implementation of `wit:reflect`",
+    "exports": [
+      "inspector",
+      "composer"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 1074231,
+    "wasm_sha256_12": "10f7bca09ec4",
     "reusable_as_is": true
   },
   {

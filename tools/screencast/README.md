@@ -193,5 +193,17 @@ node passkey.mjs                        # navigates to localhost:3053 (the RP ID
 bash to-gif.sh videos/passkey/*.webm ../../docs/media/passkey.gif 700 10
 ```
 
+**studio** — the composition studio (React + **@xyflow/react**) with the repo's own
+109 components in the palette: place four, drag export handles onto matching import
+handles (the plan flips from "Unsatisfied (3)" to zero), flip through the three
+emitted forms — `wac plug` script, `.wac` file, wasmCloud workload — and hit Compose
+for a real composed component. Needs the palette seeded, which `host-studio` does.
+
+```bash
+just host-studio &                      # from repo root; SPA :3054, seeds 109 components
+node studio.mjs
+bash to-gif.sh videos/studio/*.webm ../../docs/media/studio.gif 780 6
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

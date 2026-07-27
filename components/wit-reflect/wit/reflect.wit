@@ -1,0 +1,236 @@
+// wit:reflect — components describe themselves, and compose themselves.
+//
+// Everything in this repo is assembled by hand: 55 `wac plug` lines in a
+// Justfile, and a `tools/gen-catalog.py` that scrapes WIT with regexes. Both
+// work, and both are blind in the same way — nothing in the loop actually reads
+// the *binary* contract. The regex catalog strips `@version` off imports, cannot
+// tell an import a sibling component satisfies from one only a host can, and
+// cannot answer the only question that matters when wiring two components
+// together: would this plug actually fit this socket?
+//
+// This component answers it from the artifact itself:
+//
+//   * `inspect`   — the component's real surface, read out of its own
+//                   component-model import/export sections: every interface it
+//                   imports, exports, and needs a HOST for, with versions intact.
+//   * `satisfies` — which of a socket's imports a plug would satisfy, decided by
+//                   `wac`'s own SubtypeChecker. Not name matching: an export
+//                   whose type is not a subtype of the import does not fit, and
+//                   this says so before you wire it up.
+//   * `plan`      — a graph of components + intended edges, turned into a build
+//                   order, the set of still-unsatisfied imports, and the
+//                   warnings that decide whether the thing can ship at all.
+//   * `compose`   — the composed component, for real. `wac-graph`'s `plug` is the
+//                   same code path the `wac` CLI runs, so the bytes this returns
+//                   are the bytes `wac plug` would have written.
+//   * `emit-*`    — the same graph as a `wac plug` script, a declarative `.wac`
+//                   file, or a wasmCloud v2 `WorkloadDeployment`.
+//
+// The last three are the point: ONE graph has several legitimate expressions,
+// they are NOT equivalent, and the differences are exactly what a person gets
+// wrong. `wac plug` gives every socket its own copy of a plug; a `.wac` file can
+// share one instance between two consumers. A static composition erases a
+// contract at build time; a wasmCloud workload keeps it and lets the runtime
+// link it. This component knows which is which, so a UI can show it.
+//
+// Pure compute: no storage, no clock, no network. Bytes in, answers out.
+package wit:reflect@0.1.0;
+
+/// Reading a component's own contract out of the binary.
+interface inspector {
+    /// One interface, as it appears in a component's import/export section:
+    /// `records:store/store@0.1.0`.
+    record iface-ref {
+        /// The verbatim name — what `wac` and wasmCloud both key on.
+        raw: string,
+        /// `records`
+        namespace: string,
+        /// `store` — the package within the namespace. (`pkg`, because `package`
+        /// is a WIT keyword.)
+        pkg: string,
+        /// `store` (the interface within the package)
+        name: string,
+        /// `0.1.0`, or empty when the name carries no version.
+        version: string,
+    }
+
+    /// What a component is, from the outside.
+    record surface {
+        /// The name in the component's `name` custom section (the crate name),
+        /// or empty. This is the ONLY identity a built component carries — a
+        /// component's own package name is not preserved in the binary, so an
+        /// app component that exports nothing but `wasi:http` is anonymous.
+        name: string,
+        /// Interfaces it exports — what it can be plugged in to satisfy.
+        exports: list<iface-ref>,
+        /// Imports another COMPONENT could satisfy. These are the composable
+        /// edges, and the only ones `wac plug` can erase.
+        imports: list<iface-ref>,
+        /// Imports only a HOST can satisfy (`wasi:*`, `wasmcloud:*`) — a runtime
+        /// capability, never a composition edge. Distinguishing these two is the
+        /// thing a regex over WIT source cannot do.
+        host-imports: list<iface-ref>,
+        size-bytes: u64,
+        /// First 12 hex chars of the sha256, matching the catalog's convention.
+        sha256: string,
+        /// How many nested component instances this artifact already contains.
+        /// Composition adds them up, and wasmtime refuses to instantiate past
+        /// ~30 — the reason `vet-domain` cannot be fused in one piece.
+        nested-instances: u32,
+    }
+
+    variant reflect-error {
+        /// The bytes are a core wasm module, or not wasm at all.
+        not-a-component(string),
+        /// Malformed or truncated (a partial upload lands here).
+        bad-wasm(string),
+    }
+
+    /// Read a component's surface from its bytes.
+    inspect: func(bytes: list<u8>) -> result<surface, reflect-error>;
+}
+
+/// Deciding, ordering, and performing composition.
+interface composer {
+    use inspector.{surface, iface-ref, reflect-error};
+
+    /// A component on the canvas. `surface` is what `inspect` returned; `id` is
+    /// the caller's handle for it (a node id, a name).
+    record node {
+        id: string,
+        surface: surface,
+    }
+
+    /// "Plug `plug` into `socket` to satisfy `iface`." One edge per interface,
+    /// even though `wac plug` works per COMPONENT — see `plug-step.also-satisfies`.
+    record edge {
+        plug: string,
+        socket: string,
+        iface: string,
+    }
+
+    /// One `wac plug` invocation.
+    record plug-step {
+        /// Position in the build order; step 0 has no dependencies.
+        order: u32,
+        socket: string,
+        plugs: list<string>,
+        /// Suggested output artifact name.
+        output: string,
+        /// Interfaces this step satisfies that the caller did NOT draw an edge
+        /// for. `wac plug` matches every common interface between a plug's
+        /// exports and the socket's imports — it cannot be told to satisfy just
+        /// one. Surfacing that is the difference between a UI that lies and one
+        /// that doesn't.
+        also-satisfies: list<string>,
+    }
+
+    /// A non-host import with no edge into it: the composition is incomplete and
+    /// the artifact will still import this when built.
+    record gap {
+        node: string,
+        iface: iface-ref,
+    }
+
+    /// Why a graph can't be built as a static composition (it may still be fine
+    /// as a wasmCloud workload, where the runtime links at invoke time).
+    record problem {
+        /// `cycle`, `nested-instance-limit`, `unknown-node`, `not-exported`,
+        /// `not-imported`, `self-plug`, `host-import-edge`
+        kind: string,
+        detail: string,
+    }
+
+    /// What a graph amounts to.
+    record composition-plan {
+        /// Build order for the static form. Empty when the graph is cyclic.
+        steps: list<plug-step>,
+        /// Imports left over after every edge is applied.
+        unsatisfied: list<gap>,
+        /// Host capabilities the finished thing still needs — these become
+        /// `hostInterfaces` in a workload, or host imports on the native host.
+        host-needs: list<iface-ref>,
+        /// A static composition cannot contain a cycle; a linked deployment can.
+        cyclic: bool,
+        /// Total nested instances the composed artifact would contain, and
+        /// whether that clears wasmtime's limit.
+        instance-count: u32,
+        over-instance-limit: bool,
+        /// Topological depth per node — leaves at 0. A UI can lay the graph out
+        /// left-to-right from this without a layout library.
+        depth: list<tuple<string, u32>>,
+        /// The node nothing plugs into: the composition root.
+        roots: list<string>,
+        problems: list<problem>,
+    }
+
+    /// Which of the socket's imports this plug would satisfy, by `wac`'s own
+    /// subtype check — the exact test `wac plug` applies. An empty list means
+    /// these two do not fit together, whatever their interface names suggest.
+    satisfies: func(socket: list<u8>, plug: list<u8>) -> result<list<string>, reflect-error>;
+
+    /// Plan a graph. Never fails: an unbuildable graph comes back with the
+    /// problems that make it unbuildable, because that is what a UI must show.
+    plan: func(nodes: list<node>, edges: list<edge>) -> composition-plan;
+
+    /// A component and its bytes, for composing.
+    record part {
+        id: string,
+        bytes: list<u8>,
+    }
+
+    variant compose-error {
+        /// A node in the graph has no bytes, or vice versa.
+        missing-part(string),
+        /// The graph cannot be composed statically (cycle, no root, …).
+        unbuildable(string),
+        /// `wac` refused: nothing matched, or a type didn't fit.
+        plug-failed(string),
+        /// The graph was built but could not be encoded.
+        encode-failed(string),
+    }
+
+    /// Compose for real, returning the artifact `wac plug` would have written.
+    /// `root` names the socket whose composed form is returned.
+    compose: func(parts: list<part>, edges: list<edge>, root: string) -> result<list<u8>, compose-error>;
+
+    /// The graph as a shell script of `wac plug` invocations, in build order —
+    /// the form 55 recipes in this repo already use.
+    emit-plug-script: func(p: composition-plan, out-dir: string) -> string;
+
+    /// The graph as a declarative `wac compose` source file. Strictly more
+    /// expressive than the script: a capability instantiated once here is SHARED
+    /// by every consumer wired to it, where the script gives each socket its own
+    /// copy. If your graph has a diamond, this is the form that means it.
+    emit-wac: func(nodes: list<node>, edges: list<edge>, p: composition-plan, package-name: string) -> string;
+
+    /// Deployment knobs for the workload form.
+    record workload-meta {
+        name: string,
+        namespace: string,
+        /// OCI prefix images are pushed to, e.g. `registry.studio.svc.cluster.local:5000`.
+        registry: string,
+        tag: string,
+        replicas: u32,
+        pool-size: u32,
+        max-invocations: u32,
+        /// Cluster hostname for vhost routing when something serves HTTP.
+        http-host: string,
+    }
+
+    /// The graph as a wasmCloud v2 `WorkloadDeployment` (`runtime.wasmcloud.dev`).
+    ///
+    /// The v2 model is NOT the link-trait model: components in one workload are
+    /// linked in-process by the runtime, so a composable edge needs no manifest
+    /// entry at all — only host imports appear, as `hostInterfaces`. One entry
+    /// per interface, deliberately: an entry binds to a component only if that
+    /// component's world covers EVERY interface listed, so merging `store` and
+    /// `atomics` into one entry silently skips components that import only one.
+    emit-workload: func(nodes: list<node>, p: composition-plan, meta: workload-meta) -> string;
+}
+
+/// `wit-reflect` provides inspection and composition; pure compute.
+world wit-reflect {
+    export inspector;
+    export composer;
+}

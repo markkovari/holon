@@ -1,0 +1,21 @@
+[package]
+name = "wit-reflect"
+description = "Components describe and compose themselves: read a component's real import/export surface, subtype-check a plug against a socket, and compose for real via wac-graph (wit:reflect)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+sha2 = { workspace = true }
+# The component model, read from the binary. Pinned to the version wac-graph
+# uses so there is exactly one copy of it in the artifact.
+wasmparser = "0.202"
+# `wac`'s own composition graph — the same code path the CLI runs, including the
+# SubtypeChecker that decides whether a plug actually fits a socket. Builds clean
+# for wasm32-wasip1 (pure Rust: wasm-encoder, wasm-metadata, petgraph, indexmap).
+wac-graph = "0.6"
