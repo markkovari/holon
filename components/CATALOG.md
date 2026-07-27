@@ -69,6 +69,7 @@ capabilities, so anything marked reusable drops into another app via
 | **otp** | `otp:totp@0.1.0` | pure compute | — | 83 KiB | ✓ |
 | **outbox** | `outbox:dispatch@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `base-backoff` | 92 KiB | ✓ |
 | **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 76 KiB | ✓ |
+| **passkey-domain** | `passkey:app@0.1.0` | cache:store/cache, records:store/store, session:store/store, config/store, webauthn:verify/verifier | `rp-id`, `origin`, `require-uv` | 196 KiB | ✓ |
 | **paste-bin** | `bin:app@0.1.0` | md:render/renderer, pii:redact/redactor, records:store/store, slug:generate/generator, validate:schema/validator | — | 151 KiB | ✓ |
 | **payees-domain** | `payees:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, iban:validate/validator, records:store/store | — | 168 KiB | ✓ |
 | **pdf** | `pdf:codec@0.1.0` | pure compute | — | 57 KiB | ✓ |
@@ -107,6 +108,7 @@ capabilities, so anything marked reusable drops into another app via
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 78 KiB | ✓ |
 | **validate** | `validate:schema@0.1.0` | pure compute | — | 113 KiB | ✓ |
 | **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — | 287 KiB | app/demo |
+| **webauthn** | `webauthn:verify@0.1.0` | pure compute | — | 190 KiB | ✓ |
 | **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 70 KiB | ✓ |
 | **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 179 KiB | app/demo |
 | **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 62 KiB | ✓ |
@@ -175,6 +177,7 @@ capabilities, so anything marked reusable drops into another app via
 - **otp** — `otp` — reference implementation of `otp:totp` (RFC 4226 HOTP / RFC 6238 TOTP)
 - **outbox** — `outbox` — reference implementation of `outbox:dispatch`
 - **pagination** — `pagination` — reference implementation of `paginate:cursor`
+- **passkey-domain** — `passkey-domain` — passwordless sign-in (PASSKEY.md) as ONE composed wasm HTTP
 - **paste-bin** — bin:app — a paste / gist bin over a chain of mostly pure-compute contracts
 - **payees-domain** — `payees-domain` — a payee book (PAYEES.md) as ONE composed wasm HTTP
 - **pdf** — `pdf` — reference implementation of `pdf:codec/codec`
@@ -213,6 +216,7 @@ capabilities, so anything marked reusable drops into another app via
 - **upload-policy** — `upload-policy` — reference implementation of `upload:policy`
 - **validate** — `validate` — reference implementation of `validate:schema`
 - **vet-domain** — `vet-domain` — the vet-clinic domain as a WIT HTTP component (FULL PARITY)
+- **webauthn** — `webauthn` — reference implementation of `webauthn:verify/verifier`
 - **webhook-ingest** — `webhook-ingest` — reference implementation of `webhook:ingest`
 - **webhook-relay** — relay:app — webhook relay over composed capability contracts
 - **webhook-sign** — `webhook-sign` — reference implementation of `webhook:sign`

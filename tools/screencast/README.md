@@ -177,5 +177,21 @@ node mesh.mjs
 bash to-gif.sh videos/mesh/*.webm ../../docs/media/mesh.gif 820 10
 ```
 
+**passkey** — passwordless WebAuthn sign-in, driven by Chromium's CDP **virtual
+authenticator** (`WebAuthn.addVirtualAuthenticator`): a real CTAP2 authenticator
+with a real key pair, minus the biometric prompt — which is the only reason this
+one is recordable at all. Enrols "ada", adds a second device (a second virtual
+authenticator, since the first is in `excludeCredentials`), signs out, then signs
+back in with **no username** via the discoverable credential.
+
+Restart the host before re-recording: its kv is in-memory, and an existing "ada"
+makes the first enrolment correctly refuse without a session.
+
+```bash
+just host-passkey &                     # from repo root; SPA on :3053
+node passkey.mjs                        # navigates to localhost:3053 (the RP ID)
+bash to-gif.sh videos/passkey/*.webm ../../docs/media/passkey.gif 700 10
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.

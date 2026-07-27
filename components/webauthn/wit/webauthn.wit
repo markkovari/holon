@@ -1,0 +1,126 @@
+// webauthn:verify — the server half of WebAuthn / passkeys.
+//
+// A passkey login is a challenge-response over a key pair the authenticator
+// (Touch ID, Windows Hello, a phone, a YubiKey) generated and never releases.
+// The browser does the easy part; the RELYING PARTY has to do the exacting part,
+// and it is all parsing and cryptography with no state:
+//
+//   * decode the authenticator's CBOR (attestation object, COSE public key),
+//   * check the ceremony bindings — type, challenge, origin, RP ID hash,
+//   * check the flags — user present, and user verified when required,
+//   * verify an ECDSA/RSA signature over `authData || sha256(clientDataJSON)`,
+//   * refuse a signature counter that went backwards (a cloned authenticator).
+//
+// Every one of those is a place implementations get subtly, silently wrong — an
+// unchecked origin or a skipped challenge turns a passkey into a replayable
+// bearer token. So it lives here once, as a contract, and the app is left with
+// what it should own: which user, which credential, which session.
+//
+// The RP owns all state. `register` returns the credential to store; `authenticate`
+// takes that credential back plus the new counter to persist. Pure compute: no
+// storage, no clock, no randomness (the RP issues and stores the challenge).
+//
+// Supported algorithms: ES256 (COSE -7, what nearly every platform authenticator
+// uses) and RS256 (COSE -257, some Windows Hello configurations). Anything else
+// is refused by name rather than ignored.
+package webauthn:verify@0.1.0;
+
+/// Verification of the two WebAuthn ceremonies: registration and assertion.
+interface verifier {
+    /// What the relying party requires of a ceremony. All of it must match, and
+    /// a mismatch is a hard failure — that is the whole security model.
+    record expectations {
+        /// The RP ID the credential is scoped to (a domain, e.g. `localhost`).
+        rp-id: string,
+        /// The exact origin the browser must report (e.g. `http://localhost:3053`).
+        origin: string,
+        /// The challenge this RP issued for this ceremony, base64url, as sent to
+        /// the browser. Single-use — the caller must not accept it twice.
+        challenge: string,
+        /// Require the `UV` flag: the authenticator actually verified the human
+        /// (biometric / PIN), not merely that someone touched it.
+        require-user-verification: bool,
+    }
+
+    /// A registered credential — exactly what the relying party stores per user.
+    record credential {
+        /// Credential ID, base64url (what `allowCredentials` sends back).
+        id: string,
+        /// The COSE-encoded public key, verbatim from the authenticator.
+        public-key: list<u8>,
+        /// COSE algorithm: -7 = ES256, -257 = RS256.
+        alg: s32,
+        /// Signature counter at registration; must strictly increase after.
+        sign-count: u32,
+        /// Authenticator model identifier, hex (all-zero = privacy-preserving).
+        aaguid: string,
+        /// The human was verified during registration.
+        user-verified: bool,
+        /// The credential is eligible for backup / already synced (BE / BS flags
+        /// — i.e. a "multi-device" passkey rather than one bound to this device).
+        backup-eligible: bool,
+        backed-up: bool,
+        /// Attestation statement format seen (`none`, `packed`, `fido-u2f`, …).
+        attestation-format: string,
+    }
+
+    /// What a successful login yields — the counter to persist, and how strongly
+    /// the human was authenticated this time.
+    record assertion {
+        sign-count: u32,
+        user-verified: bool,
+        backed-up: bool,
+    }
+
+    /// Why a ceremony was refused. Distinct cases on purpose: an operator needs
+    /// to tell "wrong origin" (an attack, or a misconfigured RP ID) apart from
+    /// "bad signature" (a broken or malicious authenticator).
+    variant verify-error {
+        /// A field was not valid base64url / CBOR / JSON.
+        bad-encoding(string),
+        /// `clientData.type` was not the expected ceremony.
+        bad-type(string),
+        /// `clientData.challenge` is not the challenge we issued (replay).
+        challenge-mismatch,
+        /// `clientData.origin` is not ours (phishing) — carries what was seen.
+        origin-mismatch(string),
+        /// `authData.rpIdHash` is not sha256(rp-id).
+        rp-id-mismatch,
+        /// The `UP` flag was clear: nobody touched the authenticator.
+        user-not-present,
+        /// `require-user-verification` was set but the `UV` flag was clear.
+        user-not-verified,
+        /// The credential's COSE `alg` is one we refuse to verify.
+        unsupported-algorithm(s32),
+        /// The signature did not verify under the stored public key.
+        bad-signature,
+        /// The counter did not increase — a cloned authenticator, or a replay.
+        /// Carries the counter that was presented.
+        counter-regressed(u32),
+        /// Structurally wrong (short buffer, missing CBOR key, no attested
+        /// credential data, …).
+        malformed(string),
+    }
+
+    /// Verify a `navigator.credentials.create()` response and return the
+    /// credential to store for this user.
+    ///
+    /// Attestation *trust* is deliberately not decided here: the statement's
+    /// format is reported, and `packed` self-attestation is signature-checked,
+    /// but no metadata service is consulted and no format is required. An RP that
+    /// must restrict authenticator models should check `aaguid` against its own
+    /// allow-list — that is policy, not verification.
+    register: func(exp: expectations, client-data-json: list<u8>, attestation-object: list<u8>)
+        -> result<credential, verify-error>;
+
+    /// Verify a `navigator.credentials.get()` response against the stored
+    /// credential. On success, persist `assertion.sign-count` over the stored one.
+    authenticate: func(exp: expectations, cred: credential, client-data-json: list<u8>,
+                       authenticator-data: list<u8>, signature: list<u8>)
+        -> result<assertion, verify-error>;
+}
+
+/// `webauthn` provides passkey verification; pure compute, no host imports.
+world webauthn {
+    export verifier;
+}

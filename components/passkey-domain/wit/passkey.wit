@@ -1,0 +1,51 @@
+// passkey:app — passwordless sign-in with real WebAuthn passkeys.
+//
+// The next rung after AUTHGATE.md's TOTP: instead of a shared secret both sides
+// know, the authenticator (Touch ID, Windows Hello, a phone, a security key)
+// holds a private key it never releases and signs a fresh challenge. There is no
+// password to phish, reuse, or leak — and the origin check makes a lookalike
+// domain unable to use a credential at all.
+//
+// The VERIFICATION is the `webauthn:verify` component (CBOR + COSE parsing,
+// ceremony bindings, ES256/RS256 signatures, counter regression). This domain
+// owns only what an app should own:
+//
+//   * accounts + which credentials belong to whom (`records:store`)
+//   * single-use challenges with a TTL (`cache:store` — that is what a cache IS)
+//   * sessions after a successful ceremony (`session:store`)
+//   * the RP identity, from CONFIG, never from the request (see below)
+//
+// The RP ID and origin come from `wasi:config`. This matters: if a client could
+// send the origin it should be checked against, the origin check — the thing that
+// makes passkeys unphishable — would verify nothing.
+//
+// Routes (under /api so the static SPA fallback leaves them alone):
+//   GET  /api/config                    rp id + origin the browser must match
+//   POST /api/register/begin  {username}
+//   POST /api/register/finish {username, id, client_data_json, attestation_object}
+//   POST /api/login/begin     {username?}   (omit for a discoverable passkey)
+//   POST /api/login/finish    {id, client_data_json, authenticator_data, signature}
+//   GET  /api/me                        the session's account + its passkeys
+//   POST /api/credentials/delete {id}
+//   POST /api/logout
+package passkey:app@0.1.0;
+
+/// The relying party: accounts, credentials, challenges, sessions.
+world passkey-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // accounts + registered credentials (id, public key, counter).
+    import records:store/store@0.1.0;
+    // challenges: unguessable, single-use, and they expire on their own.
+    import cache:store/cache@0.1.0;
+    // the session a completed ceremony mints.
+    import session:store/store@0.1.0;
+    // the ceremony verification itself.
+    import webauthn:verify/verifier@0.1.0;
+    // challenges + user handles.
+    import wasi:random/random@0.2.0;
+    // timestamps on credentials.
+    import wasi:clocks/wall-clock@0.2.0;
+    // rp-id / origin / require-uv — deployment facts, not request data.
+    import wasi:config/store@0.2.0-rc.1;
+}

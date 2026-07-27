@@ -1,0 +1,25 @@
+[package]
+name = "webauthn"
+description = "WebAuthn / passkey verification: CBOR + COSE parsing, ceremony binding checks, ES256/RS256 assertion signatures (webauthn:verify)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+p256 = { workspace = true }
+rsa = { workspace = true }
+
+[package.metadata.component]
+package = "webauthn:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "webauthn"

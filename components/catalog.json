@@ -1076,6 +1076,38 @@
     "reusable_as_is": true
   },
   {
+    "name": "passkey-domain",
+    "package": "passkey:app@0.1.0",
+    "description": "`passkey-domain` \u2014 passwordless sign-in (PASSKEY.md) as ONE composed wasm HTTP",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "cache:store/cache",
+      "records:store/store",
+      "session:store/store",
+      "wasi:config/store",
+      "webauthn:verify/verifier"
+    ],
+    "config_keys": [
+      {
+        "name": "rp-id",
+        "description": "the RP ID credentials are scoped to (default `localhost`)"
+      },
+      {
+        "name": "origin",
+        "description": "the exact origin the browser must report (default `http://localhost:3053`)"
+      },
+      {
+        "name": "require-uv",
+        "description": "demand the UV flag (biometric/PIN), not just user presence (default false)"
+      }
+    ],
+    "wasm_size_bytes": 201724,
+    "wasm_sha256_12": "c2e41cd2ff2d",
+    "reusable_as_is": true
+  },
+  {
     "name": "paste-bin",
     "package": "bin:app@0.1.0",
     "description": "bin:app \u2014 a paste / gist bin over a chain of mostly pure-compute contracts",
@@ -1766,6 +1798,19 @@
     "wasm_size_bytes": 294096,
     "wasm_sha256_12": "0df8a323b926",
     "reusable_as_is": false
+  },
+  {
+    "name": "webauthn",
+    "package": "webauthn:verify@0.1.0",
+    "description": "`webauthn` \u2014 reference implementation of `webauthn:verify/verifier`",
+    "exports": [
+      "verifier"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 194755,
+    "wasm_sha256_12": "be9a663b4cc0",
+    "reusable_as_is": true
   },
   {
     "name": "webhook-ingest",

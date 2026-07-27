@@ -42,6 +42,7 @@ comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
 | `policy:guard` | row-level / attribute-based authorization (ABAC) | kv |
 | `session:store` | server-side sessions + CSRF | kv, clocks, random, config |
 | `otp:totp` | TOTP / HOTP 2FA (RFC 6238 / 4226) | clocks, random |
+| `webauthn:verify` | WebAuthn / passkey ceremonies: CBOR + COSE, ceremony bindings, ES256/RS256 signatures, counter regression | — (pure compute) |
 | `login:app` | a register/login app composed from config+secrets+session | composes config:store, secrets:vault, session:store |
 
 ### Traffic & reliability
@@ -212,6 +213,15 @@ catalog and a bench round:
   durable per key over `records:store`. The hop is a real outgoing request
   through `proxy:route`, so the proof that an open breaker sheds load is the
   upstream's own hit counter *not moving*. ([demo](docs/media/mesh.gif))
+- **[PASSKEY.md](PASSKEY.md)** — **passwordless sign-in** with real **WebAuthn
+  passkeys**: the authenticator (Touch ID / Windows Hello / a phone) keeps the
+  private key and signs a single-use challenge — the next rung after `authgate`'s
+  TOTP. A new **`webauthn:verify`** component does the exacting half (CBOR + COSE
+  parsing, the type / challenge / **origin** / RP-ID bindings, ES256+RS256
+  signatures, the counter that catches a **cloned** authenticator); the app keeps
+  only accounts, credentials and sessions. The e2e is a **virtual authenticator** —
+  a real P-256 key — so every check is proven to bite, phishing origin included.
+  ([demo](docs/media/passkey.gif))
 - **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
 - **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,

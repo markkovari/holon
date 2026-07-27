@@ -99,6 +99,8 @@ buzz_wasm := rel / "buzz_domain.wasm"
 buzz_composed := "components/target/buzz_domain.composed.wasm"
 mesh_wasm := rel / "mesh_domain.wasm"
 mesh_composed := "components/target/mesh_domain.composed.wasm"
+passkey_wasm := rel / "passkey_domain.wasm"
+passkey_composed := "components/target/passkey_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
@@ -662,6 +664,51 @@ e2e-mesh: compose-mesh
     cd host && cargo build --release --bin vet-host
     cd examples/mesh && cargo build --release --bin flaky && cargo test --release
 
+# Compose passkey-domain (PASSKEY.md — passwordless WebAuthn sign-in) with
+# webauthn (the ceremony verification: CBOR/COSE + ES256/RS256 signatures) +
+# records (accounts + credentials) + cache (single-use challenges with a TTL) +
+# session-store (the session a completed ceremony mints). Remaining imports are
+# WASI: random for challenges, clocks, and config for the RP id + origin.
+compose-passkey: build
+    wac plug {{rel}}/cache.wasm --plug {{rel}}/cache_backing.wasm -o components/target/cache.composed.wasm
+    wac plug {{passkey_wasm}} \
+      --plug {{rel}}/webauthn.wasm \
+      --plug {{recordstore_wasm}} \
+      --plug components/target/cache.composed.wasm \
+      --plug {{session_wasm}} \
+      -o {{passkey_composed}}
+    wasm-tools validate {{passkey_composed}}
+    @echo "composed passkey-domain (+ webauthn + records + cache + session) -> {{passkey_composed}}"
+
+# Build the React + shadcn SPA (Vite) to examples/passkey/dist.
+build-passkey-ui:
+    cd examples/passkey/ui && npm ci && npm run build
+
+# Run passwordless sign-in on the native host + serve the SPA on :3053. Pick a
+# username and hit Create passkey — the browser prompts for Touch ID / Windows
+# Hello / your phone, and there is no password anywhere in the flow. Then sign out
+# and sign back in with the passkey (or with no username at all, if your
+# authenticator stores discoverable credentials).
+#
+# The RP id + origin come from CONFIG, never the request — that is what makes the
+# origin check meaningful. WebAuthn needs a secure context: http://localhost
+# counts, a LAN IP does not, so use localhost (not 0.0.0.0:3053) in the browser.
+host-passkey: compose-passkey build-passkey-ui
+    cd host && VET_TENANT=passkey \
+      CFG_RP_ID=localhost CFG_ORIGIN=http://localhost:3053 \
+      cargo run --release --bin vet-host -- \
+      --component ../{{passkey_composed}} --addr 127.0.0.1:3053 \
+      --static-dir ../examples/passkey/dist
+
+# Passkey e2e with a VIRTUAL AUTHENTICATOR: the test holds a P-256 key and
+# performs the real ceremonies over HTTP (CBOR attestation object, COSE key,
+# DER-encoded ECDSA over authData || sha256(clientDataJSON)). It registers, logs
+# in, and then proves each check bites: a replayed challenge, a phishing origin,
+# a credential from another RP, a signature from the wrong key, and a counter
+# that went backwards are all refused — by reason.
+e2e-passkey: compose-passkey
+    cd host && cargo build --release --bin vet-host
+    cd examples/passkey && cargo test --release
 
 # Build ONE self-contained image (vet-host + composed component + built SPA).
 # No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one
