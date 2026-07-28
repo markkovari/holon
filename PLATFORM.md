@@ -1,5 +1,13 @@
 # Platform plan — a wasm-first multi-tenant PaaS (with a docker lane)
 
+> **The forks in this plan are now decided in [`docs/adr/`](docs/adr/).** This file
+> stays the narrative and the phase order; the ADRs own the individual decisions
+> and win where they disagree. Start with
+> [ADR-0011](docs/adr/0011-slice-one-scope.md) for what the first slice actually
+> is, and the [index](docs/adr/README.md) for the open risks — notably that the
+> keyvalue `buckets:` allow-list this plan's isolation model depends on has never
+> been exercised (only blobstore has).
+
 The product: an open service where tenants deploy **signed wasm components**
 (and, secondarily, plain docker images) onto a shared wasmCloud v2 lattice on
 k8s. Tenants compose apps from a **catalog** of components — private or
