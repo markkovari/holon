@@ -1013,6 +1013,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "platform-domain"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "policy-guard"
 version = "0.1.0"
 dependencies = [

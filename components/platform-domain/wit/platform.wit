@@ -1,0 +1,61 @@
+// platform:app — the multi-tenant wasm deployment platform's control plane.
+//
+// Decisions this implements live in docs/adr/. In one paragraph: people sign in
+// (ADR-0009, auth-guard), upload components or use built-in / others' public ones
+// (ADR-0006/0007, digest-pinned OCI with the WIT surface as the contract), build a
+// graph, choose a deployment strategy (ADR-0005, fused or linked), and hit save —
+// at which point this component RENDERS Kubernetes manifests, stamps the tenant's
+// isolation onto them (ADR-0008), and hands them to a small native applier that
+// holds the only cluster credential (ADR-0003) for a server-side apply (ADR-0004).
+//
+// What this component deliberately does NOT do: talk to Kubernetes. It cannot —
+// `wasi:http` validates TLS against webpki roots and the API server presents a
+// cluster-CA certificate. The applier exists for that one reason, and it
+// re-validates every namespace it is asked to write rather than trusting us.
+//
+// The renderer is a pure function — (graph, strategy, tenant, plan) -> manifests —
+// and is the highest-consequence code here, so it is unit-tested against the
+// manifests already known to work on this cluster (examples/eshop/k8s/eshop.yaml,
+// vet-domain-v2.yaml) rather than against its own opinion.
+//
+// Routes (under /api so a static SPA fallback leaves them alone):
+//   POST /api/register {email, password}          local account (ADR-0009)
+//   POST /api/login    {email, password}          -> session token
+//   GET  /api/me
+//   POST /api/components?id=NAME                  raw .wasm body -> reflect + store
+//   GET  /api/components                          catalog: own + org + public
+//   POST /api/components/publish {id, visibility} private|org|public (ADR-0007)
+//   POST /api/deployments {name, nodes, edges, strategy}
+//   GET  /api/deployments  |  GET /api/deployments/{id}
+//   POST /api/deployments/{id}/save               render + apply, new revision
+//   GET  /api/deployments/{id}/manifests          the rendered YAML (read-only)
+//   GET  /api/internal/revisions                  what the applier re-applies
+package platform:app@0.1.0;
+
+/// The control plane: accounts, catalog, deployments, and the renderer.
+world platform-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // accounts, sessions, roles — already tenant-scoped, roles resolved
+    // server-side so a token cannot grant itself one (ADR-0009).
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+    // ownership and cross-tenant visibility as rules, not hand-coded ifs.
+    import policy:guard/guard@0.1.0;
+    // tenants, projects, deployments, revisions, catalog rows.
+    import records:store/store@0.1.0;
+    // uploaded component bytes, staged before a registry push (ADR-0006).
+    import blob:store/blobstore@0.1.0;
+    // per-tenant deployment budgets (ADR-0008).
+    import quota:meter/meter@0.1.0;
+    // inspect an upload, plan a graph, compose a fused artifact (ADR-0005/0006).
+    import wit:reflect/inspector@0.1.0;
+    import wit:reflect/composer@0.1.0;
+    // the applier hop: the ONLY way out to Kubernetes (ADR-0003).
+    import wasi:http/outgoing-handler@0.2.0;
+    // revision timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+    // applier URL + shared secret, registry prefix, platform tenant.
+    import wasi:config/store@0.2.0-rc.1;
+}

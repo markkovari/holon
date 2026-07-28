@@ -1,0 +1,4 @@
+[toolchain]
+# Stable, for the same reason host/ is pinned: the repo's default nightly ICEs on
+# some of this dependency tree, and a native binary has no need for nightly.
+channel = "stable"

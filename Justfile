@@ -101,6 +101,8 @@ mesh_wasm := rel / "mesh_domain.wasm"
 mesh_composed := "components/target/mesh_domain.composed.wasm"
 passkey_wasm := rel / "passkey_domain.wasm"
 passkey_composed := "components/target/passkey_domain.composed.wasm"
+platform_wasm := rel / "platform_domain.wasm"
+platform_composed := "components/target/platform_domain.composed.wasm"
 studio_wasm := rel / "studio_domain.wasm"
 studio_composed := "components/target/studio_domain.composed.wasm"
 ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
@@ -790,6 +792,95 @@ host-studio: compose-studio build-studio-ui
     cd .. && just seed-studio
     echo "studio on http://127.0.0.1:3054"
     wait $HOST_PID
+
+# Compose platform-domain (docs/adr/ — the multi-tenant deployment platform) with
+# the composed auth-guard (accounts/sessions/RBAC) + policy-guard (ownership and
+# visibility as rules) + records (tenants/deployments/revisions) + blob (staged
+# uploads) + quota (per-tenant budgets) + wit-reflect (inspect/plan/compose).
+# Remaining imports are WASI — including outgoing-handler, which reaches exactly
+# one place: the applier (ADR-0003).
+compose-platform: compose
+    wac plug {{platform_wasm}} \
+      --plug {{guard_composed}} \
+      --plug {{rel}}/policy_guard.wasm \
+      --plug {{recordstore_wasm}} \
+      --plug {{rel}}/blob_store.wasm \
+      --plug {{rel}}/quota.wasm \
+      --plug {{rel}}/wit_reflect.wasm \
+      -o {{platform_composed}}
+    wasm-tools validate {{platform_composed}}
+    @echo "composed platform-domain (+ auth-guard + policy + records + blob + quota + wit-reflect) -> {{platform_composed}}"
+
+# Build the native applier — the only process with a Kubernetes credential.
+build-applier:
+    cd applier && cargo build --release
+
+# Run the platform locally: the applier in VALIDATE-ONLY mode (it builds no
+# Kubernetes client at all, so nothing can reach a cluster) plus the control plane
+# on :3057. This is the safe local loop; see `host-platform-live` to actually apply.
+host-platform: compose-platform build-applier
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SECRET=${APPLIER_SECRET:-dev-secret}
+    ./applier/target/release/applier --addr 127.0.0.1:8088 --secret "$SECRET" --validate-only &
+    APPLIER=$!
+    trap 'kill $APPLIER 2>/dev/null || true' EXIT
+    cd host && cargo build --release --bin vet-host
+    VET_TENANT=platform \
+      CFG_APPLIER_URL=http://127.0.0.1:8088 CFG_APPLIER_SECRET="$SECRET" \
+      CFG_REGISTRY=registry.platform.svc.cluster.local:5000 \
+      CFG_CLUSTER_SUFFIX=svc.cluster.local \
+      ./target/release/vet-host --component ../{{platform_composed}} \
+      --addr 127.0.0.1:3057 --kv memory
+
+# The same, but the applier really applies (needs a reachable cluster + kubeconfig).
+# Deliberately a separate recipe: nothing in the default loop can touch a cluster.
+host-platform-live: compose-platform build-applier
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SECRET=${APPLIER_SECRET:-dev-secret}
+    ./applier/target/release/applier --addr 127.0.0.1:8088 --secret "$SECRET" \
+      --dry-run --platform-url http://127.0.0.1:3057 --reapply-interval 60 &
+    APPLIER=$!
+    trap 'kill $APPLIER 2>/dev/null || true' EXIT
+    cd host && cargo build --release --bin vet-host
+    VET_TENANT=platform \
+      CFG_APPLIER_URL=http://127.0.0.1:8088 CFG_APPLIER_SECRET="$SECRET" \
+      CFG_REGISTRY=registry.platform.svc.cluster.local:5000 \
+      CFG_CLUSTER_SUFFIX=svc.cluster.local \
+      ./target/release/vet-host --component ../{{platform_composed}} \
+      --addr 127.0.0.1:3057 --kv memory
+
+# Tear down everything the platform created: every namespace it labelled as its
+# own, plus any local host/applier processes still holding ports. Safe to run at
+# any time, and safe when nothing is deployed.
+#
+# It selects by LABEL (platform.comp/managed=true), never by name, so it can only
+# remove namespaces the platform itself created — `just platform-teardown` cannot
+# take out `jobs`, `eshop` or anything you own.
+platform-teardown:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    echo "-- platform-managed namespaces:"
+    kubectl get ns -l platform.comp/managed=true --no-headers 2>/dev/null | awk '{print "   " $1, $2}' || true
+    kubectl delete ns -l platform.comp/managed=true --wait=false 2>/dev/null || true
+    echo "-- local processes:"
+    pkill -f 'vet-host' 2>/dev/null && echo "   stopped vet-host" || echo "   no vet-host running"
+    pkill -f 'release/applier' 2>/dev/null && echo "   stopped applier" || echo "   no applier running"
+    docker rm -f comp-registry >/dev/null 2>&1 && echo "   removed the local comp-registry container" || true
+    echo "-- left behind ON PURPOSE: artifacts already pushed to a registry."
+    echo "   registry:2 has deletion disabled by default, and clearing it would"
+    echo "   wipe images other namespaces depend on. Restart the registry pod if"
+    echo "   you want its (ephemeral) storage reset."
+
+# Platform e2e: sign in, upload components, refuse a deploy with no digest
+# (ADR-0006), record a push, then save under BOTH strategies and assert the
+# rendered manifests — namespace, one hostInterfaces entry per interface, the
+# isolation stamp, digest pinning. The applier runs validate-only, so this needs no
+# cluster and cannot touch one.
+e2e-platform: compose-platform build-applier
+    cd host && cargo build --release --bin vet-host
+    cd examples/platform && cargo test --release
 
 # Studio e2e: reflect real components over HTTP, refuse an illegal edge (wac's
 # subtype check says no), plan a two-level build in the right order, emit all

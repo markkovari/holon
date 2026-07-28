@@ -1191,6 +1191,52 @@
     "reusable_as_is": true
   },
   {
+    "name": "platform-domain",
+    "package": "platform:app@0.1.0",
+    "description": "`platform-domain` \u2014 the platform control plane (docs/adr/) as ONE composed wasm",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/types",
+      "blob:store/blobstore",
+      "policy:guard/guard",
+      "quota:meter/meter",
+      "records:store/store",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler",
+      "wit:reflect/composer",
+      "wit:reflect/inspector"
+    ],
+    "config_keys": [
+      {
+        "name": "applier-url",
+        "description": "where the applier listens, e.g. http://127.0.0.1:8088"
+      },
+      {
+        "name": "applier-secret",
+        "description": "shared secret; the applier rejects requests without it"
+      },
+      {
+        "name": "registry",
+        "description": "OCI prefix images are pushed to and pinned from"
+      },
+      {
+        "name": "cluster-suffix",
+        "description": "DNS suffix for the operator's Host routing"
+      },
+      {
+        "name": "id",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 279953,
+    "wasm_sha256_12": "bad082bbaed6",
+    "reusable_as_is": true
+  },
+  {
     "name": "policy-guard",
     "package": "policy:guard@0.1.0",
     "description": "`policy-guard` \u2014 reference implementation of `policy:guard`",
