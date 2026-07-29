@@ -77,7 +77,7 @@ fn json_of(r: ureq::Response) -> Value {
 
 fn start_host() -> Kill {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/vet-host");
+    let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/passkey_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-passkey`)");
     assert!(component.exists(), "composed wasm missing (just compose-passkey)");
@@ -89,7 +89,7 @@ fn start_host() -> Kill {
         .env("CFG_RP_ID", RP)
         .env("CFG_ORIGIN", ORIGIN)
         .spawn()
-        .expect("spawn vet-host");
+        .expect("spawn comp-host");
     let guard = Kill(child);
     for _ in 0..200 {
         if let Ok(r) = ureq::get(&format!("http://{ADDR}/")).call() {

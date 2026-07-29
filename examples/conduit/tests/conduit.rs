@@ -1,5 +1,5 @@
 //! E2E for the conduit domain (CONDUIT.md rung 1) running as ONE composed wasm
-//! HTTP component on the NATIVE Rust host (`host/` vet-host over wasmtime). No
+//! HTTP component on the NATIVE Rust host (`host/` comp-host over wasmtime). No
 //! Node, no jco: every route is the Rust conduit-domain component orchestrating
 //! auth-guard + records:store, linked into one .wasm and served over real HTTP.
 //!
@@ -59,7 +59,7 @@ fn req(method: &str, path: &str, token: Option<&str>, body: Option<Value>) -> (u
 
 fn start_host() -> HostGuard {
     let root = repo_root();
-    let bin = root.join("host/target/release/vet-host");
+    let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/conduit_domain.composed.wasm");
     assert!(bin.exists(), "host binary not built: {bin:?} (run `just e2e-conduit`)");
     assert!(component.exists(), "composed wasm missing: {component:?} (run `just compose-conduit`)");
@@ -68,7 +68,7 @@ fn start_host() -> HostGuard {
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
         .env("VET_TENANT", "conduit")
         .spawn()
-        .expect("spawn vet-host");
+        .expect("spawn comp-host");
     let guard = HostGuard(child);
 
     // Wait for the listener to come up (GET / -> 200 usage).

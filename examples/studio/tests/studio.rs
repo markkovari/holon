@@ -94,7 +94,7 @@ fn upload(stem: &str) -> Value {
 }
 
 fn start_studio() -> Kill {
-    let bin = root().join("host/target/release/vet-host");
+    let bin = root().join("host/target/release/comp-host");
     let component = root().join("components/target/studio_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-studio`)");
     assert!(component.exists(), "composed wasm missing (just compose-studio)");
@@ -102,7 +102,7 @@ fn start_studio() -> Kill {
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
         .env("VET_TENANT", "studio")
         .spawn()
-        .expect("spawn vet-host");
+        .expect("spawn comp-host");
     let guard = Kill(child);
     for _ in 0..200 {
         if let Ok(r) = ureq::get(&format!("http://{ADDR}/")).call() {
@@ -347,7 +347,7 @@ fn studio_reflects_plans_emits_and_composes() {
 
     // ===== the composed component actually RUNS =============================
     // The whole point: a graph wired in a browser produced a working app.
-    let bin = root().join("host/target/release/vet-host");
+    let bin = root().join("host/target/release/comp-host");
     let child = Command::new(&bin)
         .args(["--component", studio_out.to_str().unwrap(), "--addr", RUN_ADDR, "--kv", "memory"])
         .env("VET_TENANT", "mesh")

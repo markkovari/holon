@@ -6,7 +6,7 @@ connections**, and whether one posted message fans out to all of them. Every
 request goes browser → hyper → wasmtime → `pulse_domain.composed.wasm`
 (pulse-domain + record-store + event-bus + id-generate) → `wasi:keyvalue`.
 
-- Host: `just host-pulse` (vet-host, release), Apple M4 (10 cores), macOS
+- Host: `just host-pulse` (comp-host, release), Apple M4 (10 cores), macOS
 - Point ops: `oha -c 20` (8s). Fan-out: N `curl -sN` SSE readers held open, one
   broadcast posted, count how many received it. `bench/pulse-bench.sh [memory|nats]`
 - Backends: NATS = JetStream KV in Docker; memory = in-process HashMap
@@ -44,7 +44,7 @@ request goes browser → hyper → wasmtime → `pulse_domain.composed.wasm`
 
 ```bash
 docker compose -f infra/compose.yaml up -d nats     # for the NATS column
-just compose-pulse && (cd host && cargo build --release --bin vet-host)
+just compose-pulse && (cd host && cargo build --release --bin comp-host)
 bench/pulse-bench.sh memory
 bench/pulse-bench.sh nats
 ```

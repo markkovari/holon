@@ -36,7 +36,7 @@ cd examples/tempo/ui && npm install && npm run dev   # (proxy /api to :3040)
 
 ## Deploy (self-contained, cheapest)
 
-No wasmCloud needed — `vet-host` runs the component + serves the SPA + provides
+No wasmCloud needed — `comp-host` runs the component + serves the SPA + provides
 Redis-backed storage in one process. `Dockerfile` builds that as one image;
 `docker-compose.yml` runs it pointed at any Redis via **`REDIS_URL`** — HTTP
 only, a POC that fits a $6 droplet:

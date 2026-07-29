@@ -14,7 +14,7 @@ just conformance-conduit        # from repo root: build + compose + host + hurl
 HOST=http://127.0.0.1:3008 bash run.sh
 ```
 
-`run.sh` starts `vet-host` with the composed `conduit_domain` wasm (in-memory KV,
+`run.sh` starts `comp-host` with the composed `conduit_domain` wasm (in-memory KV,
 so each run is clean), waits for readiness, and runs `hurl --test` over every
 `hurl/*.hurl` file with `host` + `uid` variables. Requires [`hurl`](https://hurl.dev).
 

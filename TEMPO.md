@@ -96,12 +96,12 @@ The frontend lives in `examples/tempo/ui` (Vite + React + shadcn/ui + recharts);
 
 ## Deploy — the simple way (one process / one container)
 
-You don't need wasmCloud to run this. The repo's **`vet-host`** is a single
+You don't need wasmCloud to run this. The repo's **`comp-host`** is a single
 binary that serves `wasi:http`, the SPA (`--static-dir`), and `wasi:keyvalue`
 in-process — with a built-in **Redis** backend. The whole app is one command:
 
 ```bash
-vet-host --component tempo.composed.wasm --addr 0.0.0.0:8080 \
+comp-host --component tempo.composed.wasm --addr 0.0.0.0:8080 \
   --kv redis --redis-url rediss://default:PW@host:25061 --static-dir dist
 ```
 

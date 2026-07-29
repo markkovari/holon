@@ -6,20 +6,38 @@ in [ADR-0001](0001-use-adrs.md).
 `PLATFORM.md` remains the narrative plan and the phase order; these own the forks
 inside it. Where they disagree, the ADR wins.
 
+**[`../WHY.md`](../WHY.md) is the value proposition, with the measurements behind it.**
+**Read [ADR-0019](0019-the-density-number.md) for the numbers themselves.** The
+multi-tenant density bet PLATFORM.md was built on is falsified (ADR-0012, ADR-0014). What
+survives, measured: **2.3 Mi per extra component inside a host against 70 Mi for a
+component in its own pod, and 1.2 ms saved per network hop avoided** — and under load,
+**identical throughput and CPU, 3.2× less memory, and a 36% better p99**
+([ADR-0020](0020-the-density-number-under-load.md)). So the value here is
+decomposing one app into many components, not packing many tenants onto one host — and a
+single-component app should be a container, not a wasm workload.
+
 | # | decision | status |
 |---|---|---|
 | [0001](0001-use-adrs.md) | Record architecture decisions as ADRs | accepted |
-| [0002](0002-tenant-is-a-namespace.md) | A tenant is a Kubernetes namespace | accepted |
+| [0002](0002-tenant-is-a-namespace.md) | A tenant is a Kubernetes namespace | accepted; isolation unit revised by [0014](0014-an-application-owns-a-host.md) |
 | [0003](0003-control-plane-is-wasm-plus-applier.md) | The control plane is a wasm app plus a small native applier | accepted |
 | [0004](0004-reconcile-by-server-side-apply-on-save.md) | Reconcile by server-side apply on save | accepted |
 | [0005](0005-deployment-strategy-is-a-tenant-choice.md) | Deployment strategy is a tenant choice: fused or linked | accepted |
-| [0006](0006-artifacts-are-digest-pinned-oci.md) | Artifacts are digest-pinned OCI; the WIT surface is the contract | accepted |
+| [0006](0006-artifacts-are-digest-pinned-oci.md) | Artifacts are digest-pinned OCI; the WIT surface is the contract | accepted; durability + auth revised by [0017](0017-the-applier-pushes-and-the-registry-is-a-cache.md) |
 | [0007](0007-component-visibility-and-sharing.md) | Component visibility: private, org, public — and what public costs | accepted |
 | [0008](0008-isolation-is-stamped-never-authored.md) | Isolation is stamped by the platform, never authored by tenants | storage half superseded by [0012](0012-keyvalue-isolation-needs-a-cooperative-component.md) |
 | [0009](0009-identity-reuses-auth-guard.md) | Sign-in reuses `auth-guard`; OIDC is a later swap | accepted |
 | [0010](0010-config-and-secrets.md) | Config is `wasi:config`; secrets never enter a manifest | accepted |
 | [0011](0011-slice-one-scope.md) | Slice 1 is single-tenant, both strategies, one cluster | accepted |
 | [0012](0012-keyvalue-isolation-needs-a-cooperative-component.md) | Per-tenant keyvalue isolation needs a cooperative component | accepted |
+| [0013](0013-unenforceable-capabilities-are-denied-by-omission.md) | A capability the host cannot partition is denied by omission | superseded by [0014](0014-an-application-owns-a-host.md) |
+| [0014](0014-an-application-owns-a-host.md) | An application owns a host | accepted, confirmed by [0015](0015-a-bucket-name-is-not-a-boundary.md) |
+| [0015](0015-a-bucket-name-is-not-a-boundary.md) | A bucket name is not a boundary, and `hostInterfaces[].name` does not work | accepted |
+| [0016](0016-deleting-an-app-is-reconciled-not-remembered.md) | Deleting an app is reconciled, not remembered | accepted |
+| [0017](0017-the-applier-pushes-and-the-registry-is-a-cache.md) | The applier pushes, and the registry is a cache | accepted; auth reasoning corrected by [0018](0018-the-platform-deploys-a-running-app.md) |
+| [0018](0018-the-platform-deploys-a-running-app.md) | The platform deploys a running app, and what that took | accepted |
+| [0019](0019-the-density-number.md) | The density number, measured: 2.3 Mi per component, 70 Mi per app | accepted (idle/cold-start figures) |
+| [0020](0020-the-density-number-under-load.md) | The same density number, under load: free throughput, 3.2× memory, better tail | accepted |
 
 ## The shape these add up to
 
@@ -39,20 +57,28 @@ inside it. Where they disagree, the ADR wins.
 
 | piece | where | state |
 |---|---|---|
-| renderer (`(graph, strategy, tenant, plan) → manifests`) | `components/platform-domain/src/render.rs` | **done** — pure, 16 unit tests |
+| renderer (`(graph, strategy, tenant, plan) → manifests`) | `components/platform-domain/src/render.rs` | **done** — pure, 17 unit tests |
 | control plane (accounts, catalog, deployments, revisions) | `components/platform-domain/src/lib.rs` | **done** |
 | applier (SSA + validation + re-apply loop) | `applier/` | **done** — 7 unit tests, validate-only mode needs no cluster |
-| both strategies, planner-validated | ADR-0005 | **done** — refuses a strategy the graph can't support |
+| both strategies, planner-validated | ADR-0005 | **done, both proven live** (ADR-0018) — `fused` serves; `linked` wires 4 components in-process, no edges in the manifest |
 | digest pinning enforced | ADR-0006 | **done** — a save with no digest is a 409 |
-| isolation stamp (namespace, egress, blobstore containers) | ADR-0008 | **partial** — namespace + egress + blobstore work; **keyvalue does not isolate** (ADR-0012) |
+| isolation stamp (namespace, egress, blobstore containers) | ADR-0008 | **done** — and now per-app rather than per-tenant (ADR-0014) |
+| a host per application (private data NATS, own engine, own endpoint) | ADR-0014 | **done and measured on a cluster** (ADR-0015) — a rendered host pod registers, a workload pins to it, and an app on its own bus cannot read another's buckets |
+| image allow-list on the applier | ADR-0014 | **done** — a `Deployment` may only run the platform's two pinned images, and no host namespaces, privilege, hostPath or service account |
+| delete an app (prune + orphan host reaping) | ADR-0016 | **done** — `DELETE /api/deployments/{id}?confirm=<app>`, label-scoped prune, and a sweep that reaps only what has neither a revision nor a live pod |
+| drift correction (ADR-0004's re-apply) | `applier/` | **proven live** (ADR-0018) — Service deleted and host scaled to 0, both restored next pass, and the app's data survived the pod |
 | e2e | `examples/platform/tests/platform.rs` | **done** — no cluster required |
-| registry push (the digest source) | — | **the gap.** `POST /api/internal/pushed` is the seam; nothing pushes yet |
+| registry push (the digest source) | ADR-0017 | **done and proven against a real registry** — the applier pushes from the reconcile loop; upload → `deployable: true`, manifest resolves by the pinned digest |
+| the registry itself | `examples/platform/k8s/registry.yaml` | **applied and in use** — 20Gi PVC, no NodePort; it served the live run (ADR-0018) |
+| the whole path, live | ADR-0018 | **done** — upload → push → deploy → **serving HTTP with its own keyvalue**, plus a real delete. Found 3 bugs no review would have |
 | `public` visibility | ADR-0007 | refused with `501` until signing exists |
 | tenant secrets | ADR-0010 | refused until `secretFrom` is proven |
 | studio canvas as the editor | ADR-0011 item 9 | not wired — the API is what exists |
-| a second tenant | ADR-0008 gate | **blocked** — adversarial test written, run on a cluster, and FAILED (ADR-0012). Refusal now enforced in code |
+| a second tenant, apps that touch keyvalue | ADR-0008 gate | **blocked** — adversarial test run on a cluster and FAILED (ADR-0012); enforced in code |
+| a second tenant, apps that do not | ADR-0013 | **open** — HTTP/config/blobstore-only graphs are host-partitioned, so the gate does not apply to them |
+| dedicated host per tenant (the escape hatch, and the tier) | ADR-0013 | **available** — `grant-shared-state=true` plus `template.spec.environment`, no catalog change needed |
 | tenant config (`localResources.config`) | ADR-0010 | not wired — a deployed app cannot be configured yet, so `mesh` on the cluster answers `no route configured` |
-| shared-host scheduling (`template.spec.environment`) | — | **done** — a workload in `tenant-<x>` runs on the shared host in another namespace |
+| namespace scaffolding applied | ADR-0002 | **done** — it rides along with every save, because the app's host pod needs it (ADR-0014) |
 
 Run it: `just host-platform` (applier in validate-only — it builds no Kubernetes
 client, so the default loop cannot touch a cluster), `just e2e-platform`,
@@ -65,11 +91,15 @@ client, so the default loop cannot touch a cluster), `just e2e-platform`,
   same records. The bucket is chosen by the guest's `store::open(name)`, not by
   manifest config, and every capability here hardcodes `"default"`. See
   [ADR-0012](0012-keyvalue-isolation-needs-a-cooperative-component.md); the gate is
-  now enforced in code, not in prose.
-- **Namespace `NetworkPolicy` is inert for shared-host workloads** — the component
-  runs in a pod in the HOST's namespace, so a policy in the tenant's namespace
-  selects nothing. Egress control rests entirely on `allowedHosts` (found in the
-  same run).
+  now **resolved** by ADR-0014 rather than worked around: the interface is bindable
+  again because each application runs on its own host, whose data plane
+  (`--data-nats-url`) is a loopback NATS sidecar in the app's own pod. Nothing else
+  can reach the bus, so there is no bucket to allow-list. ADR-0013's default-deny was
+  the interim answer and is superseded.
+- ~~Namespace `NetworkPolicy` is inert for shared-host workloads~~ → **fixed by
+  ADR-0014**: the app's host pod runs in the tenant's own namespace, so the policy
+  selects it. It now has to allow the host's own egress (control-plane NATS, registry)
+  or the app never registers.
 - ~~The operator may not reconcile namespaces created after install~~ → **it does.**
   It holds ClusterRoles and runs with `-allow-shared-hosts=true`, and
   `template.spec.environment` schedules a workload onto a host in another namespace.
@@ -79,7 +109,29 @@ client, so the default loop cannot touch a cluster), `just e2e-platform`,
 - **`wasi:keyvalue` has no CAS**, so all RMW state is best-effort and `lock:mutex`
   is advisory (ADR-0008). A published consistency envelope, not a bug to fix.
 - **Per-workload CPU isolation is weak** (fuel traps composed apps), so
-  noisy-neighbour risk is metered, not prevented (ADR-0008).
+  noisy-neighbour risk is metered, not prevented *within* an app (ADR-0008). Between
+  apps it is now a pod boundary (ADR-0014).
+- ~~A rendered host pod has never been run.~~ → **run and measured** (ADR-0015),
+  which also found and fixed a probe bug in it.
+- **`NetworkPolicy` is enforced by nothing on this cluster** — no CNI daemonset, no
+  policy controller, and a pod in an unlabelled namespace reached the registry. Every
+  policy this platform emits is therefore documentation here, and the control that
+  actually holds is `allowedHosts`, enforced by the wasmCloud host in the runtime
+  (ADR-0018). Do not count the policies as a layer until the cluster enforces them.
+- **`hostInterfaces[].name` is documented but broken** on wash 2.5.2 — setting it
+  stops the workload linking at all (`resource implementation is missing`). Worth an
+  upstream issue; `components/kv-probe` is the repro.
+- **A host's bucket namespace is flat and guest-addressable.** Any component can
+  `open()` any name on its host, including one belonging to another app. This is why a
+  naming scheme is not an isolation mechanism (ADR-0015).
+- ~~Deleting an app leaves its `Host` object behind~~ → **ADR-0016**, which also
+  supplied the delete path the platform turned out not to have at all. Both residual
+  risks are now closed: a live host whose object is deleted **re-registers in ~5s with
+  the same host ID** (measured, so a wrong reap is a flap not an outage, and the sweep
+  additionally requires no live pod), and an app delete requires `?confirm=<app>`
+  because it destroys the storage claim. Still open: whether a workload's readiness
+  flaps during those seconds, and retention (a soft delete keeping the PVC for a
+  window) rather than only a confirmation prompt.
 - **Host plugins are not an authoring surface** — "plugin" in the v2 model means the
   host's built-ins, and nothing here has ever registered one (ADR-0005). Per-tenant
   KV backends wait on upstream #5051.

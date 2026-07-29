@@ -1,0 +1,23 @@
+// kv:probe — an instrument, not a feature.
+//
+// Answers two questions about the operator's `hostInterfaces[].name` that no
+// manifest in this repo has ever exercised (docs/adr/0012, docs/adr/0015):
+//
+//   1. Do two workloads on ONE host, whose keyvalue entries carry different
+//      `name:` values, get different stores? Or is `name` only a disambiguator
+//      over one shared bucket?
+//   2. When a component opens a name no entry declares, does it fail closed?
+//
+// Every catalog component hardcodes `open("default")`, so neither question can be
+// asked with one. This takes the name from the query string, keeping its world down
+// to http + keyvalue so a link failure cannot be confused with a naming failure.
+package kv:probe@0.1.0;
+
+world kv-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    // `batch` is imported because every component that binds keyvalue on this host
+    // imports it too (record-store does). Whether that is load-bearing is exactly
+    // what the next run tells us.
+    import wasi:keyvalue/batch@0.2.0-draft;
+}

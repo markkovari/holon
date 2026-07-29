@@ -205,20 +205,20 @@ compose-conduit: compose
 
 # Run the conduit app (CONDUIT.md rung 1) on the native Rust host, in-memory KV.
 host-conduit: compose-conduit
-    cd host && VET_TENANT=conduit cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=conduit cargo run --release --bin comp-host -- \
       --component ../{{conduit_composed}} --addr 0.0.0.0:3008
 
 # conduit e2e: build the composed app + native host, then a Rust test that spawns
 # the host and drives the full API (users/profiles/articles/comments/favorites).
 e2e-conduit: compose-conduit
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/conduit && cargo test --release
 
 # RealWorld conformance (CONDUIT.md rung 4): the OFFICIAL Hurl suite (vendored in
 # examples/conduit/conformance/hurl) against the composed app on the native host.
 # Requires `hurl` (https://hurl.dev) — like `wash`, not bundled.
 conformance-conduit: compose-conduit
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     bash examples/conduit/conformance/run.sh
 
 # Compose saga-domain (SAGA.md — a durable trip-booking saga) with the durable
@@ -238,19 +238,19 @@ compose-saga: build
 # Run the saga app on the native Rust host. Use --kv nats to prove durability
 # (state survives a restart); memory is fine for the happy/compensation paths.
 host-saga: compose-saga
-    cd host && VET_TENANT=saga cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=saga cargo run --release --bin comp-host -- \
       --component ../{{saga_composed}} --addr 0.0.0.0:3012
 
 # Saga e2e: compose + build host + a Rust test that spawns the host and drives
 # commit, compensation, and (NATS) resume-after-restart over real HTTP.
 e2e-saga: compose-saga
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/saga && cargo test --release
 
 # Durability proof (SAGA.md rung 3): start a saga on NATS KV, advance it, KILL
 # the host, restart, and show it resumes. Requires NATS on :4222.
 durable-saga: compose-saga
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     bash examples/saga/durability.sh
 
 # Golem provider (GOLEM.md): unit tests (contract + Value mapping + provider
@@ -268,7 +268,7 @@ golem-e2e:
 # and asserts it committed with golem-issued refs + the worker's state advanced.
 # Requires the Golem binary (run `just golem-e2e` once to fetch it).
 saga-golem: compose-saga
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     bash examples/saga/golem-legs.sh
 
 # Compose pulse-domain (REALTIME.md — a realtime chat room with SSE server-push)
@@ -284,14 +284,14 @@ compose-pulse: build
 # Run the chat app on the native Rust host + serve the two-pane SPA. Open two
 # browser windows on http://127.0.0.1:3015 and watch messages stream live.
 host-pulse: compose-pulse
-    cd host && VET_TENANT=pulse cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=pulse cargo run --release --bin comp-host -- \
       --component ../{{pulse_composed}} --addr 0.0.0.0:3015 \
       --static-dir ../examples/pulse/public
 
 # Realtime e2e: compose + build host + a Rust test that posts a message and
 # proves a SEPARATE held-open SSE connection receives it live.
 e2e-pulse: compose-pulse
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/pulse && cargo test --release
 
 # Compose jobs-domain (JOBS.md — a durable background-job queue) with its
@@ -327,7 +327,7 @@ build-tempo-ui:
     cd examples/tempo/ui && npm ci && npm run build
 
 host-tempo: compose-tempo build-tempo-ui
-    cd host && VET_TENANT=tempo cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=tempo cargo run --release --bin comp-host -- \
       --component ../{{tempo_composed}} --addr 0.0.0.0:3040 \
       --static-dir ../examples/tempo/dist
 
@@ -335,7 +335,7 @@ host-tempo: compose-tempo build-tempo-ui
 # categories, members log entries + a pomodoro timer, and the report aggregates
 # by project/category over a range with RBAC scope (member=own, manager=all).
 e2e-tempo: compose-tempo
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/tempo && cargo test --release
 
 # Publish the composed tempo component to GHCR as a public OCI artifact — the
@@ -374,7 +374,7 @@ build-booked-ui:
 # `owner` to create resources + weekly availability; anyone else books free
 # slots (no double-book), gets an .ics + a confirmation.
 host-booked: compose-booked build-booked-ui
-    cd host && VET_TENANT=booked cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=booked cargo run --release --bin comp-host -- \
       --component ../{{booked_composed}} --addr 0.0.0.0:3041 \
       --static-dir ../examples/booked/dist
 
@@ -383,7 +383,7 @@ host-booked: compose-booked build-booked-ui
 # attempts leave exactly one booking; a recurrence expands to N instances; and
 # a booking exports to a valid .ics.
 e2e-booked: compose-booked
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/booked && cargo test --release
 
 # Compose transit-domain (TRANSIT.md — a public-transport ticketing service)
@@ -406,7 +406,7 @@ build-transit-ui:
 # `rider` to buy fares (single / 60-min / 90-min / monthly) and show their QR;
 # as `validator` to scan + validate with the device camera.
 host-transit: compose-transit build-transit-ui
-    cd host && VET_TENANT=transit cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=transit cargo run --release --bin comp-host -- \
       --component ../{{transit_composed}} --addr 0.0.0.0:3042 \
       --static-dir ../examples/transit/dist
 
@@ -415,7 +415,7 @@ host-transit: compose-transit build-transit-ui
 # a remaining window; CONCURRENT scans of one single ticket accept exactly once;
 # a fabricated code is rejected; and a ticket renders a valid QR SVG.
 e2e-transit: compose-transit
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/transit && cargo test --release
 
 # Compose dashboards-domain (DASHBOARDS.md — personal metric dashboards) with
@@ -438,7 +438,7 @@ build-dashboards-ui:
 # new account (seeded with a demo dashboard); add panels and see them rendered to
 # SVG charts on the server — the frontend has no charting library.
 host-dashboards: compose-dashboards build-dashboards-ui
-    cd host && VET_TENANT=dashboards cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=dashboards cargo run --release --bin comp-host -- \
       --component ../{{dashboards_composed}} --addr 0.0.0.0:3043 \
       --static-dir ../examples/dashboards/dist
 
@@ -446,7 +446,7 @@ host-dashboards: compose-dashboards build-dashboards-ui
 # to a valid SVG per kind (bar/line/donut/sparkline); a new panel round-trips;
 # and one account cannot read another's dashboards.
 e2e-dashboards: compose-dashboards
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/dashboards && cargo test --release
 
 # Compose gate-domain (GATE.md — a durable traffic-shaping gateway) with records
@@ -469,7 +469,7 @@ build-gate-ui:
 # rate limiter (token bucket, 200/429), the throttle (GCRA smoothing), and submit
 # items to watch a batch coalesce and flush — all per-key, durable state.
 host-gate: compose-gate build-gate-ui
-    cd host && VET_TENANT=gate cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=gate cargo run --release --bin comp-host -- \
       --component ../{{gate_composed}} --addr 0.0.0.0:3044 \
       --static-dir ../examples/gate/dist
 
@@ -478,7 +478,7 @@ host-gate: compose-gate build-gate-ui
 # key admit exactly `capacity` (durable per-key CAS = a single-writer worker);
 # and a batch coalesces submits and flushes atomically with per-item results.
 e2e-gate: compose-gate
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/gate && cargo test --release
 
 # Run gate as a REAL Golem agent (GATE.md) and prove EXACT serialization: a
@@ -509,7 +509,7 @@ build-books-ui:
 # a new account (seeded a demo chart + entries); post balanced journal entries
 # and read the trial balance / P&L / balance sheet (+ PDF).
 host-books: compose-books build-books-ui
-    cd host && VET_TENANT=books cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=books cargo run --release --bin comp-host -- \
       --component ../{{books_composed}} --addr 0.0.0.0:3045 \
       --static-dir ../examples/books/dist
 
@@ -517,7 +517,7 @@ host-books: compose-books build-books-ui
 # trial balance's debits equal its credits; the balance sheet balances
 # (assets = liabilities + equity + net income); and a statements PDF renders.
 e2e-books: compose-books
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/books && cargo test --release
 
 # Compose stash-domain (STASH.md — a note stash you export as a .zip) with
@@ -541,14 +541,14 @@ build-stash-ui:
 # account (seeded demo notes), keep notes, and hit Export .zip to download them
 # all as a real ZIP (Markdown + index.csv + manifest.json).
 host-stash: compose-stash build-stash-ui
-    cd host && VET_TENANT=stash cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=stash cargo run --release --bin comp-host -- \
       --component ../{{stash_composed}} --addr 0.0.0.0:3046 \
       --static-dir ../examples/stash/dist
 
 # Stash e2e: notes CRUD; the export is a valid ZIP (PK header + intact central
 # directory) containing a .md per note, an index.csv, and a manifest.json.
 e2e-stash: compose-stash
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/stash && cargo test --release
 
 # Compose payees-domain (PAYEES.md — a payee book) with auth-guard + records +
@@ -570,7 +570,7 @@ build-payees-ui:
 # account (seeded demo payees); add payees — the IBAN is validated as you type
 # (country length + mod-97 checksum) and a typo is refused with the reason.
 host-payees: compose-payees build-payees-ui
-    cd host && VET_TENANT=payees cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=payees cargo run --release --bin comp-host -- \
       --component ../{{payees_composed}} --addr 0.0.0.0:3047 \
       --static-dir ../examples/payees/dist
 
@@ -578,7 +578,7 @@ host-payees: compose-payees build-payees-ui
 # bad-checksum / wrong-length / bad-country IBAN is rejected with the reason;
 # /verify returns the parsed country + grouped form; and ownership is enforced.
 e2e-payees: compose-payees
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/payees && cargo test --release
 
 # Compose lms-domain (LMS.md — a learning platform) with auth-guard + records +
@@ -603,7 +603,7 @@ build-lms-ui:
 # as `instructor` (creates courses/lessons/quizzes; seeded a demo course) or as
 # `student` (enroll, take auto-graded quizzes, see progress + certificate).
 host-lms: compose-lms build-lms-ui
-    cd host && VET_TENANT=lms cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=lms cargo run --release --bin comp-host -- \
       --component ../{{lms_composed}} --addr 0.0.0.0:3048 \
       --static-dir ../examples/lms/dist
 
@@ -612,7 +612,7 @@ host-lms: compose-lms build-lms-ui
 # consistently; a certificate issues once every quiz is passed; and the student's
 # progress reconciles with the gradebook.
 e2e-lms: compose-lms
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/lms && cargo test --release
 
 # Compose buzz-domain (BUZZ.md — a live multiplayer quiz game) with auth-guard +
@@ -633,7 +633,7 @@ build-buzz-ui:
 # host to run a game (get a PIN), or open on other devices to Join with the PIN
 # and a nickname; the host drives the questions and everyone buzzes in.
 host-buzz: compose-buzz build-buzz-ui
-    cd host && VET_TENANT=buzz cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=buzz cargo run --release --bin comp-host -- \
       --component ../{{buzz_composed}} --addr 0.0.0.0:3049 \
       --static-dir ../examples/buzz/dist
 
@@ -641,7 +641,7 @@ host-buzz: compose-buzz build-buzz-ui
 # reveal grades speed-weighted (faster-correct > slower-correct > wrong=0); the
 # leaderboard ranks correctly; and the game ends on a podium.
 e2e-buzz: compose-buzz
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/buzz && cargo test --release
 
 # Compose mesh-domain (MESH.md — resilient upstream calls) with records (the
@@ -680,7 +680,7 @@ host-mesh: compose-mesh build-mesh-ui
     trap 'kill $UPSTREAM_PID 2>/dev/null || true' EXIT
     cd ../../host && VET_TENANT=mesh \
       CFG_ROUTES='/upstream=http://127.0.0.1:3051/,/dead=http://127.0.0.1:3052/' \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{mesh_composed}} --addr 0.0.0.0:3050 \
       --static-dir ../examples/mesh/dist
 
@@ -691,7 +691,7 @@ host-mesh: compose-mesh build-mesh-ui
 # unreachable upstream trips the breaker but a missing route (our config bug)
 # does not.
 e2e-mesh: compose-mesh
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/mesh && cargo build --release --bin flaky && cargo test --release
 
 # Compose passkey-domain (PASSKEY.md — passwordless WebAuthn sign-in) with
@@ -726,7 +726,7 @@ build-passkey-ui:
 host-passkey: compose-passkey build-passkey-ui
     cd host && VET_TENANT=passkey \
       CFG_RP_ID=localhost CFG_ORIGIN=http://localhost:3053 \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{passkey_composed}} --addr 127.0.0.1:3053 \
       --static-dir ../examples/passkey/dist
 
@@ -737,7 +737,7 @@ host-passkey: compose-passkey build-passkey-ui
 # a credential from another RP, a signature from the wrong key, and a counter
 # that went backwards are all refused — by reason.
 e2e-passkey: compose-passkey
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/passkey && cargo test --release
 
 # Compose studio-domain (STUDIO.md — the composition studio) with wit-reflect
@@ -782,8 +782,8 @@ seed-studio addr="127.0.0.1:3054":
 host-studio: compose-studio build-studio-ui
     #!/usr/bin/env bash
     set -euo pipefail
-    cd host && cargo build --release --bin vet-host
-    VET_TENANT=studio ./target/release/vet-host \
+    cd host && cargo build --release --bin comp-host
+    VET_TENANT=studio ./target/release/comp-host \
       --component ../{{studio_composed}} --addr 127.0.0.1:3054 \
       --static-dir ../examples/studio/dist &
     HOST_PID=$!
@@ -825,12 +825,12 @@ host-platform: compose-platform build-applier
     ./applier/target/release/applier --addr 127.0.0.1:8088 --secret "$SECRET" --validate-only &
     APPLIER=$!
     trap 'kill $APPLIER 2>/dev/null || true' EXIT
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     VET_TENANT=platform \
       CFG_APPLIER_URL=http://127.0.0.1:8088 CFG_APPLIER_SECRET="$SECRET" \
       CFG_REGISTRY=registry.platform.svc.cluster.local:5000 \
       CFG_CLUSTER_SUFFIX=svc.cluster.local \
-      ./target/release/vet-host --component ../{{platform_composed}} \
+      ./target/release/comp-host --component ../{{platform_composed}} \
       --addr 127.0.0.1:3057 --kv memory
 
 # The same, but the applier really applies (needs a reachable cluster + kubeconfig).
@@ -839,16 +839,21 @@ host-platform-live: compose-platform build-applier
     #!/usr/bin/env bash
     set -euo pipefail
     SECRET=${APPLIER_SECRET:-dev-secret}
+    # The registry the applier PUSHES to and the manifests PIN must be the same
+    # string, which is why both sides read one variable. From a laptop that is the
+    # NodePort; in-cluster it is the Service DNS name.
+    REG=${PLATFORM_REGISTRY:-localhost:30501}
     ./applier/target/release/applier --addr 127.0.0.1:8088 --secret "$SECRET" \
-      --dry-run --platform-url http://127.0.0.1:3057 --reapply-interval 60 &
+      --dry-run --platform-url http://127.0.0.1:3057 --reapply-interval 60 \
+      --registry "$REG" --registry-scheme http &
     APPLIER=$!
     trap 'kill $APPLIER 2>/dev/null || true' EXIT
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     VET_TENANT=platform \
       CFG_APPLIER_URL=http://127.0.0.1:8088 CFG_APPLIER_SECRET="$SECRET" \
-      CFG_REGISTRY=registry.platform.svc.cluster.local:5000 \
+      CFG_REGISTRY="$REG" \
       CFG_CLUSTER_SUFFIX=svc.cluster.local \
-      ./target/release/vet-host --component ../{{platform_composed}} \
+      ./target/release/comp-host --component ../{{platform_composed}} \
       --addr 127.0.0.1:3057 --kv memory
 
 # Tear down everything the platform created: every namespace it labelled as its
@@ -865,7 +870,7 @@ platform-teardown:
     kubectl get ns -l platform.comp/managed=true --no-headers 2>/dev/null | awk '{print "   " $1, $2}' || true
     kubectl delete ns -l platform.comp/managed=true --wait=false 2>/dev/null || true
     echo "-- local processes:"
-    pkill -f 'vet-host' 2>/dev/null && echo "   stopped vet-host" || echo "   no vet-host running"
+    pkill -f 'comp-host' 2>/dev/null && echo "   stopped comp-host" || echo "   no comp-host running"
     pkill -f 'release/applier' 2>/dev/null && echo "   stopped applier" || echo "   no applier running"
     docker rm -f comp-registry >/dev/null 2>&1 && echo "   removed the local comp-registry container" || true
     echo "-- left behind ON PURPOSE: artifacts already pushed to a registry."
@@ -879,7 +884,7 @@ platform-teardown:
 # isolation stamp, digest pinning. The applier runs validate-only, so this needs no
 # cluster and cannot touch one.
 e2e-platform: compose-platform build-applier
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/platform && cargo test --release
 
 # Studio e2e: reflect real components over HTTP, refuse an illegal edge (wac's
@@ -887,11 +892,11 @@ e2e-platform: compose-platform build-applier
 # three forms, and COMPOSE FOR REAL — then prove the composed component is the
 # same artifact `wac plug` writes and that the host will actually serve it.
 e2e-studio: compose-studio
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/studio && cargo test --release
 
-# Build ONE self-contained image (vet-host + composed component + built SPA).
-# No wasmCloud — vet-host serves http + the SPA + Redis-backed storage in one
+# Build ONE self-contained image (comp-host + composed component + built SPA).
+# No wasmCloud — comp-host serves http + the SPA + Redis-backed storage in one
 # process. Run: docker run -p 8080:8080 -e REDIS_URL=rediss://... tempo
 docker-tempo: compose-tempo build-tempo-ui
     docker build -f examples/tempo/Dockerfile -t tempo .
@@ -909,7 +914,7 @@ compose-arena: build
 # Run the game on the native host + serve the SPA. Open two windows on
 # http://127.0.0.1:3039 — create a game in one, join from the other, play live.
 host-arena: compose-arena
-    cd host && VET_TENANT=arena cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=arena cargo run --release --bin comp-host -- \
       --component ../{{arena_composed}} --addr 0.0.0.0:3039 \
       --static-dir ../examples/arena/public
 
@@ -917,7 +922,7 @@ host-arena: compose-arena
 # join, turn/seat/illegal-move rejection, a scripted win, and a concurrent-move
 # revision conflict.
 e2e-arena: compose-arena
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/arena && cargo test --release
 
 # Golem-backed variant: same queue, but durable:workflow is satisfied by the
@@ -956,7 +961,7 @@ k8s-jobs: compose-jobs-golem
 # replay from the DLQ. CFG tunes the outbox: 3 attempts, 1s base backoff.
 host-jobs: compose-jobs
     cd host && VET_TENANT=jobs CFG_MAX_ATTEMPTS=2 CFG_BASE_BACKOFF=1 \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{jobs_composed}} --addr 0.0.0.0:3038 \
       --static-dir ../examples/jobs/public
 
@@ -964,7 +969,7 @@ host-jobs: compose-jobs
 # ticks, and proves success / retry-then-succeed / dead-letter / replay + the
 # exactly-once enqueue key.
 e2e-jobs: compose-jobs
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/jobs && cargo test --release
 
 # Compose scribe-domain (SCRIBE.md — a collaborative document editor) with the
@@ -982,14 +987,14 @@ compose-scribe: build
 # two windows on http://127.0.0.1:3037 and edit the same doc — edits merge and
 # stream live to both.
 host-scribe: compose-scribe
-    cd host && VET_TENANT=scribe cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=scribe cargo run --release --bin comp-host -- \
       --component ../{{scribe_composed}} --addr 0.0.0.0:3037 \
       --static-dir ../examples/scribe/public
 
 # Collaborative-editor e2e: compose + build host + a Rust test proving two
 # concurrent edits merge (both survive) and a live SSE connection sees them.
 e2e-scribe: compose-scribe
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/scribe && cargo test --release
 
 # Compose pipeline-domain (PIPELINE.md — a reliable event pipeline with
@@ -1007,7 +1012,7 @@ compose-pipeline: build
 # http://127.0.0.1:3016: POST events, toggle the sink down, watch retries drop
 # to the dead-letter tray, then Replay them — live over SSE.
 host-pipeline: compose-pipeline
-    cd host && VET_TENANT=pipeline cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=pipeline cargo run --release --bin comp-host -- \
       --component ../{{pipeline_composed}} --addr 0.0.0.0:3016 \
       --static-dir ../examples/pipeline/public
 
@@ -1015,7 +1020,7 @@ host-pipeline: compose-pipeline
 # proves they deliver (acked), then takes the sink down and proves an event
 # retries and drops to the dead-letter tray, and that Replay requeues it.
 e2e-pipeline: compose-pipeline
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/pipeline && cargo test --release
 
 # Compose flags-domain (FLAGS.md — a live feature-rollout console with SSE
@@ -1033,7 +1038,7 @@ compose-flags: build
 # http://127.0.0.1:3017: drag a flag to 30% and watch ~30 of 100 subject tiles
 # light up instantly and stay sticky; trip the kill-switch — all dark at once.
 host-flags: compose-flags
-    cd host && VET_TENANT=flags cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=flags cargo run --release --bin comp-host -- \
       --component ../{{flags_composed}} --addr 0.0.0.0:3017 \
       --static-dir ../examples/flags/public
 
@@ -1042,7 +1047,7 @@ host-flags: compose-flags
 # percentage never turns an already-on subject off, and (c) a rule flip made by
 # one request reaches a SEPARATE held-open SSE connection live.
 e2e-flags: compose-flags
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/flags && cargo test --release
 
 # Compose abtest-domain (EXPERIMENT.md — an A/B/n experiment console with SSE)
@@ -1062,7 +1067,7 @@ compose-abtest: build
 # subjects split into arms (sticky as weights shift), fire conversions, and see
 # the per-arm conversion-rate bars pull apart live.
 host-abtest: compose-abtest
-    cd host && VET_TENANT=abtest cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=abtest cargo run --release --bin comp-host -- \
       --component ../{{abtest_composed}} --addr 0.0.0.0:3018 \
       --static-dir ../examples/abtest/public
 
@@ -1072,7 +1077,7 @@ host-abtest: compose-abtest
 # cohort, (d) conversions attribute to the right arm's rate, and (e) an outcome
 # recorded by one request reaches a SEPARATE held-open SSE connection live.
 e2e-abtest: compose-abtest
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/abtest && cargo test --release
 
 # Compose search-domain (SEARCH.md — faceted search-as-you-type) with the
@@ -1094,7 +1099,7 @@ compose-search: build
 # http://127.0.0.1:3019: type in the box, watch ranked hits narrow live, click a
 # facet chip to filter, and watch the cache hit-ratio climb on repeat queries.
 host-search: compose-search
-    cd host && VET_TENANT=search cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=search cargo run --release --bin comp-host -- \
       --component ../{{search_composed}} --addr 0.0.0.0:3019 \
       --static-dir ../examples/search/public
 
@@ -1103,7 +1108,7 @@ host-search: compose-search
 # shrinks the set, a tag facet restricts hits, and the cache serves a repeat
 # query (hit-ratio rises).
 e2e-search: compose-search
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/search && cargo test --release
 
 # Compose throttle-domain (RATELIMIT.md — a live throttle wall) with the two
@@ -1124,7 +1129,7 @@ compose-ratelimit: build
 # CFG_MAX_ATTEMPTS / CFG_LOCKOUT_WINDOW tune the wall (defaults 5 / 300s).
 host-ratelimit: compose-ratelimit
     cd host && VET_TENANT=throttle CFG_MAX_ATTEMPTS=10 CFG_LOCKOUT_WINDOW=15 \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{throttle_composed}} --addr 0.0.0.0:3020 \
       --static-dir ../examples/ratelimit/public
 
@@ -1132,7 +1137,7 @@ host-ratelimit: compose-ratelimit
 # 429 at the ceiling, a quota `remaining` that decrements, lockout after a burst
 # of failures, and a verdict reaching a SEPARATE held-open SSE connection.
 e2e-ratelimit: compose-ratelimit
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/ratelimit && cargo test --release
 
 # Compose upload-drop (DROP.md — a presigned direct-upload drop-box) with the
@@ -1154,7 +1159,7 @@ compose-drop: build
 host-drop: compose-drop
     cd host && VET_TENANT=drop \
       CFG_ALLOWED_TYPES=text/plain,image/png CFG_MAX_SIZE=1048576 \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{drop_composed}} --addr 0.0.0.0:3021 \
       --static-dir ../examples/drop/public
 
@@ -1163,7 +1168,7 @@ host-drop: compose-drop
 # redeemed ticket stores bytes, and a signed download link round-trips the bytes
 # while a tampered signature is refused.
 e2e-drop: compose-drop
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/drop && cargo test --release
 
 # Compose csv-report (REPORT.md — batch CSV import/report) with the codec +
@@ -1183,7 +1188,7 @@ compose-report: build
 # back with per-field errors, page the clean report, then export it back to CSV.
 host-report: compose-report
     cd host && VET_TENANT=report \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{report_composed}} --addr 0.0.0.0:3022 \
       --static-dir ../examples/report/public
 
@@ -1192,7 +1197,7 @@ host-report: compose-report
 # errors), pages the clean set through the opaque cursor, and exports it back to
 # CSV through the same codec (round-trip).
 e2e-report: compose-report
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/report && cargo test --release
 
 # Compose mfa-authgate (AUTHGATE.md — TOTP 2FA + challenge-response login) with
@@ -1216,7 +1221,7 @@ compose-authgate: build
 host-authgate: compose-authgate
     cd host && VET_TENANT=authgate \
       CFG_MASTER_KEY=bWZhLWRlbW8tbWFzdGVyLWtleS0zMi1ieXRlcyEhISE= \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{authgate_composed}} --addr 0.0.0.0:3023 \
       --static-dir ../examples/authgate/public
 
@@ -1225,7 +1230,7 @@ host-authgate: compose-authgate
 # code (rejecting a wrong one), and burns a single-use recovery code (rejecting
 # its reuse) — proving the full challenge-response lifecycle.
 e2e-authgate: compose-authgate
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/authgate && cargo test --release
 
 # Compose paste-bin (PASTE.md — a paste/gist bin) with the pure-compute
@@ -1247,7 +1252,7 @@ compose-paste: build
 # HTML on view — a pure-compute pipeline with one stateful step.
 host-paste: compose-paste
     cd host && VET_TENANT=paste \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{paste_composed}} --addr 0.0.0.0:3024 \
       --static-dir ../examples/paste/public
 
@@ -1257,7 +1262,7 @@ host-paste: compose-paste
 # (a <script> is escaped, not executed), and duplicate titles get distinct
 # slugs.
 e2e-paste: compose-paste
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/paste && cargo test --release
 
 # Build the track SPA (Vite + TS) into components/track-assets/static, so the
@@ -1296,7 +1301,7 @@ compose-track: build-track-ui compose compose-ai
 # summarize a thread with AI.
 host-track: compose-track
     cd host && VET_TENANT=track \
-      cargo run --release --bin vet-host -- \
+      cargo run --release --bin comp-host -- \
       --component ../{{track_composed}} --addr 0.0.0.0:3025
 
 # Track e2e: compose + build host + a Rust test driving all five axes — auth +
@@ -1304,7 +1309,7 @@ host-track: compose-track
 # lifecycle over the fsm, full-text search, an SSE activity frame, the background
 # stale-sweep tick, and the AI thread summary.
 e2e-track: compose-track
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/track && cargo test --release
 
 # FULL-PARITY compose: plug every capability the parity vet-domain imports into
@@ -1367,31 +1372,31 @@ compose-vet-lattice: build
 # Node, no wasmCloud — `host/` is its own native binary that serves the
 # component's HTTP and satisfies its keyvalue/config imports in-process.
 host: compose-vet
-    cd host && cargo run --release --bin vet-host -- --component ../{{vet_composed}} --addr 127.0.0.1:3007
+    cd host && cargo run --release --bin comp-host -- --component ../{{vet_composed}} --addr 127.0.0.1:3007
 
 # Run the FULL-PARITY app on the native host + serve the built React SPA. One
 # Rust binary = UI + API. The whole vet-clinic, no Node. (--kv memory default.)
 host-full: compose-vet-full
-    cd host && cargo run --release --bin vet-host -- --component ../{{vet_full_composed}} \
+    cd host && cargo run --release --bin comp-host -- --component ../{{vet_full_composed}} \
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public
 
 # Same, persisted to Redis (any redis-compatible server, e.g. valkey :6379).
 host-redis: compose-vet-full
-    cd host && cargo run --release --bin vet-host -- --component ../{{vet_full_composed}} \
+    cd host && cargo run --release --bin comp-host -- --component ../{{vet_full_composed}} \
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
       --kv redis --redis-url redis://127.0.0.1:6379
 
 # Run the helpdesk app (HELPDESK.md rung 1) on the native host, persisted to
 # NATS JetStream KV. Same bytes the jco example serves — different host.
 host-helpdesk: compose-helpdesk
-    cd host && VET_TENANT=helpdesk cargo run --release --bin vet-host -- \
+    cd host && VET_TENANT=helpdesk cargo run --release --bin comp-host -- \
       --component ../{{helpdesk_composed}} --addr 0.0.0.0:3007 \
       --static-dir ../examples/jco-helpdesk/public \
       --kv nats --nats-url 127.0.0.1:4222
 
 # Same, persisted to NATS JetStream KV (:4222 by default).
 host-nats: compose-vet-full
-    cd host && cargo run --release --bin vet-host -- --component ../{{vet_full_composed}} \
+    cd host && cargo run --release --bin comp-host -- --component ../{{vet_full_composed}} \
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
       --kv nats --nats-url 127.0.0.1:4222
 
@@ -1475,7 +1480,7 @@ compose-shortlink: build
 
 # Run the composed link-shortener under the native host.
 host-shortlink: compose-shortlink
-    cd host && cargo run --release --bin vet-host -- --component ../{{shortlink_composed}} --addr 127.0.0.1:3008
+    cd host && cargo run --release --bin comp-host -- --component ../{{shortlink_composed}} --addr 127.0.0.1:3008
 
 # Compose the dev-portal app: the composed auth-guard (auth:identity) +
 # record-store + id-generate + quota + policy-guard + outbox + webhook-sign +
@@ -1497,7 +1502,7 @@ compose-portal: compose
 
 # Run the composed dev-portal under the native host.
 host-portal: compose-portal
-    cd host && cargo run --release --bin vet-host -- --component ../{{portal_composed}} --addr 127.0.0.1:3009
+    cd host && cargo run --release --bin comp-host -- --component ../{{portal_composed}} --addr 127.0.0.1:3009
 
 # Compose the webhook-relay app: the composed webhook-ingest (HMAC verify +
 # replay dedup) + jsonpatch + outbox + webhook-sign + notify-dispatch +
@@ -1519,7 +1524,7 @@ compose-relay: compose-webhook
 
 # Run the composed webhook-relay under the native host.
 host-relay: compose-relay
-    cd host && cargo run --release --bin vet-host -- --component ../{{relay_composed}} --addr 127.0.0.1:3010
+    cd host && cargo run --release --bin comp-host -- --component ../{{relay_composed}} --addr 127.0.0.1:3010
 
 # Compose the billing-ledger app: money + record-store + idempotency-guard +
 # quota + csv + outbox. Idempotency-key replay cache on the write path,
@@ -1538,7 +1543,7 @@ compose-ledger: build
 
 # Run the composed billing-ledger under the native host.
 host-ledger: compose-ledger
-    cd host && cargo run --release --bin vet-host -- --component ../{{ledger_composed}} --addr 127.0.0.1:3011
+    cd host && cargo run --release --bin comp-host -- --component ../{{ledger_composed}} --addr 127.0.0.1:3011
 
 # Compose the status-page app: scheduler-timer + record-store + fsm-workflow +
 # event-bus + notify-dispatch. Timer-driven probes over outgoing HTTP; state
@@ -1559,7 +1564,7 @@ compose-status: build
 # /api/tick to probe — the page shows each monitor's up/degraded/down state and
 # its fsm transition history (up -> degraded -> down needs TWO failures).
 host-status: compose-status
-    cd host && cargo run --release --bin vet-host -- --component ../{{statuspage_composed}} --addr 127.0.0.1:3012
+    cd host && cargo run --release --bin comp-host -- --component ../{{statuspage_composed}} --addr 127.0.0.1:3012
 
 # Status-page e2e: compose + build host + a Rust test that adds a self-probe
 # (stays up) and a dead-port monitor, then proves the fsm walks up -> degraded
@@ -1567,7 +1572,7 @@ host-status: compose-status
 # the history log. Slow: monitors have a 10s minimum period, so it sleeps across
 # a period to force the second probe.
 e2e-status: compose-status
-    cd host && cargo build --release --bin vet-host
+    cd host && cargo build --release --bin comp-host
     cd examples/status && cargo test --release
 
 # Compose an LLM provider into the ai-inference domain layer, satisfying its
@@ -1659,3 +1664,158 @@ k8s-collapse:
 # Full local check: vendor (if needed), validate WIT, build, validate components.
 check: wit-check validate
     @echo "OK — contract resolves and both components build clean"
+
+# ---------------------------------------------------------------------------
+# Self-hosting lane (tier 1 of docs/SELFHOST.md): comp-host + systemd + a
+# per-app URL. No Kubernetes, no operator, no NATS.
+# ---------------------------------------------------------------------------
+
+build-selfhost:
+    cd selfhost && cargo build --release
+
+# Cross-build a STATIC comp-host for a Linux box.
+#
+# musl on purpose: the result has no glibc version to match, so one binary runs on
+# Debian, Ubuntu or Alpine. Needs `cross` and a running docker/orbstack. Takes ~4
+# minutes cold, because wasmtime.
+#
+#   just selfhost-build-host              # x86_64 (most VPSes)
+#   just selfhost-build-host aarch64      # ARM boxes, Pi, Hetzner/Oracle ARM
+selfhost-build-host arch="x86_64":
+    cd host && cross build --release --target {{arch}}-unknown-linux-musl
+    @file host/target/{{arch}}-unknown-linux-musl/release/comp-host
+    @ls -la host/target/{{arch}}-unknown-linux-musl/release/comp-host | awk '{printf "  %.0f MB\n", $5/1048576}'
+
+# ONE-TIME per box. Installs the runtime and makes Caddy read what this lane writes.
+#
+# Without this, `selfhost-deploy` would install a unit pointing at a comp-host that
+# does not exist, and drop site files into a directory Caddy never reads — so it would
+# look like it worked and serve nothing.
+selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    BIN=host/target/{{arch}}-unknown-linux-musl/release/comp-host
+    scp "$BIN" {{host}}:/tmp/comp-host
+    ssh {{host}} "set -e; \
+      sudo install -m 0755 /tmp/comp-host /usr/local/bin/comp-host; rm -f /tmp/comp-host; \
+      sudo mkdir -p /srv/comp /etc/comp /etc/caddy/comp; \
+      sudo chmod 0711 /etc/comp; \
+      /usr/local/bin/comp-host --help >/dev/null && echo '  comp-host installed:' && /usr/local/bin/comp-host --help | head -1"
+    @# Caddy only reads files it is told to. An import line at the end of the Caddyfile
+    @# is top-level, which is where site blocks belong.
+    ssh {{host}} "set -e; \
+      sudo touch /etc/caddy/Caddyfile; \
+      grep -qF 'import /etc/caddy/comp/*.caddy' /etc/caddy/Caddyfile || \
+        echo 'import /etc/caddy/comp/*.caddy' | sudo tee -a /etc/caddy/Caddyfile >/dev/null; \
+      sudo caddy validate --config /etc/caddy/Caddyfile 2>&1 | tail -2 || true"
+    just selfhost-tsip {{host}}
+    @echo "  bootstrapped {{host}} — `just selfhost-deploy <app> {{host}}` will work now"
+
+# Render one app's systemd unit, env file and route WITHOUT touching a box.
+# Read the output before you trust it to a server.
+selfhost-render app router="caddy": build-selfhost
+    ./selfhost/target/release/selfhost render apps/{{app}}.toml \
+      --out target/selfhost --router {{router}}
+    @echo "--- unit ---";  cat target/selfhost/{{app}}/comp-{{app}}.service
+    @echo "--- route ---"; cat target/selfhost/{{app}}/{{app}}.*
+
+# Refuse the collisions a single spec cannot see: two apps on one port, one
+# domain, or one name. Run it in CI over apps/*.toml.
+selfhost-check: build-selfhost
+    ./selfhost/target/release/selfhost validate apps/*.toml
+
+# Ship one app to one box: compose, render, copy, restart, route.
+#
+# Needs on the box: comp-host at /usr/local/bin, caddy (or traefik), and an ssh
+# key. It is deliberately plain scp+systemctl — for a handful of machines a
+# control plane costs more than it saves (docs/SELFHOST.md).
+selfhost-deploy app host router="caddy": build-selfhost
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ART=$(python3 -c "import tomllib,sys;print(tomllib.load(open('apps/{{app}}.toml','rb'))['artifact'])")
+    if [ ! -f "$ART" ]; then
+      echo "missing $ART — run the app's compose recipe first (just compose-{{app}})" >&2
+      exit 1
+    fi
+    ./selfhost/target/release/selfhost validate apps/*.toml
+    # Fail here, not with a unit that cannot start. The binary is the one thing the
+    # deploy does NOT ship — it is 38 MB and identical for every app on the box.
+    if ! ssh {{host}} "test -x /usr/local/bin/comp-host"; then
+      echo "{{host}} has no /usr/local/bin/comp-host — run: just selfhost-bootstrap {{host}}" >&2
+      exit 1
+    fi
+    ./selfhost/target/release/selfhost render apps/{{app}}.toml --out target/selfhost --router {{router}}
+    D=target/selfhost/{{app}}
+    # 0644 on the artifact: the unit runs under DynamicUser, a transient uid that
+    # must still be able to read it. 0600 on the env file: it may hold secrets and
+    # systemd reads it as root before dropping privileges.
+    ssh {{host}} "sudo mkdir -p /srv/comp/{{app}} /etc/comp /etc/caddy/comp"
+    scp "$ART" {{host}}:/tmp/{{app}}.wasm
+    scp "$D/comp-{{app}}.service" {{host}}:/tmp/
+    scp "$D/{{app}}.env" {{host}}:/tmp/
+    scp "$D"/{{app}}.caddy {{host}}:/tmp/ 2>/dev/null || scp "$D"/{{app}}.yml {{host}}:/tmp/
+    ssh {{host}} "set -e; \
+      sudo install -m 0644 /tmp/{{app}}.wasm /srv/comp/{{app}}/app.wasm; \
+      sudo install -m 0600 /tmp/{{app}}.env /etc/comp/{{app}}.env; \
+      sudo install -m 0644 /tmp/comp-{{app}}.service /etc/systemd/system/comp-{{app}}.service; \
+      if [ -f /tmp/{{app}}.serve.sh ]; then \
+        sudo install -m 0755 /tmp/{{app}}.serve.sh /srv/comp/{{app}}/serve.sh; \
+      elif [ -f /tmp/{{app}}.caddy ]; then \
+        sudo install -m 0644 /tmp/{{app}}.caddy /etc/caddy/comp/{{app}}.caddy; \
+      else \
+        sudo install -m 0644 /tmp/{{app}}.yml /etc/traefik/comp/{{app}}.yml; \
+      fi; \
+      sudo systemctl daemon-reload; \
+      sudo systemctl enable --now comp-{{app}}; \
+      sudo systemctl restart comp-{{app}}; \
+      if [ -f /srv/comp/{{app}}/serve.sh ]; then sudo /srv/comp/{{app}}/serve.sh; fi; \
+      rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/{{app}}.env \
+            /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh"
+    just selfhost-tsip {{host}}
+    ssh {{host}} "sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy 2>/dev/null || true"
+    @echo "deployed {{app}} to {{host}}"
+
+# Pin Caddy's TS_IP to this box's Tailscale address, so that `bind {$TS_IP}` in a
+# tailnet route means what it says.
+#
+# This matters more than it looks: Caddy substitutes {$TS_IP} from its OWN
+# environment, so if nothing sets it the bind resolves to empty and Caddy listens on
+# EVERY interface — the exact opposite of private, silently. Idempotent; on a box with
+# no tailscale it reports that and changes nothing.
+selfhost-tsip host:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    IP=$(ssh {{host}} "tailscale ip -4 2>/dev/null | head -1" || true)
+    if [ -z "$IP" ]; then
+      echo "  {{host}}: no tailscale address — a tailnet route here would bind nothing." >&2
+      echo "  Install tailscale, or set access = \"public\" for apps on this box." >&2
+      exit 0
+    fi
+    ssh {{host}} "set -e; \
+      sudo mkdir -p /etc/systemd/system/caddy.service.d; \
+      printf '[Service]\nEnvironment=TS_IP=%s\n' '$IP' | \
+        sudo tee /etc/systemd/system/caddy.service.d/ts-ip.conf >/dev/null; \
+      sudo systemctl daemon-reload"
+    echo "  {{host}}: Caddy TS_IP=$IP (tailnet routes bind there only)"
+
+# Is it up, and what is it doing?
+selfhost-status app host:
+    ssh {{host}} "systemctl status comp-{{app}} --no-pager -n 15 || true"
+
+# Remove an app from a box, including its state.
+selfhost-remove app host:
+    ssh {{host}} "set -e; \
+      sudo systemctl disable --now comp-{{app}} || true; \
+      sudo rm -f /etc/systemd/system/comp-{{app}}.service /etc/comp/{{app}}.env \
+                 /etc/caddy/comp/{{app}}.caddy /etc/traefik/comp/{{app}}.yml; \
+      sudo rm -rf /srv/comp/{{app}} /var/lib/private/comp/{{app}} /var/lib/comp/{{app}}; \
+      sudo systemctl daemon-reload; sudo systemctl reload caddy 2>/dev/null || true"
+    @echo "removed {{app}} from {{host}} (including its state)"
+
+# Ship every app in apps/ to one box. The fleet-of-one-machine case.
+selfhost-deploy-all host router="caddy":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in apps/*.toml; do
+      just selfhost-deploy "$(basename "$f" .toml)" {{host}} {{router}}
+    done

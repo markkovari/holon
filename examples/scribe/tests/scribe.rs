@@ -88,7 +88,7 @@ fn id_of_char(doc: &str, ch: &str) -> String {
 
 fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/vet-host");
+    let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/scribe_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-scribe`)");
     assert!(component.exists(), "composed wasm missing (just compose-scribe)");
@@ -96,7 +96,7 @@ fn start_host() -> HostGuard {
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
         .env("VET_TENANT", "scribe")
         .spawn()
-        .expect("spawn vet-host");
+        .expect("spawn comp-host");
     let guard = HostGuard(child);
     for _ in 0..200 {
         if let Ok(r) = ureq::get(&base()).call() {

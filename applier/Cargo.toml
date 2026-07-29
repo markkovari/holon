@@ -24,3 +24,6 @@ serde_yaml = "0.9"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# For OCI digests. The push itself is four HTTP calls on the reqwest client we
+# already have, so it needs no registry crate — see `push_artifact`.
+sha2 = "0.10"

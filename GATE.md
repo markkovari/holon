@@ -33,7 +33,7 @@ stands in for that worker** — same idea, approximated over a shared store.
 
 ## The three patterns → their Golem mapping
 
-| pattern | here (on `vet-host`) | on Golem Cloud |
+| pattern | here (on `comp-host`) | on Golem Cloud |
 |---|---|---|
 | **rate limit** | token bucket in a per-key record; `shaper::token-bucket` computes refill+spend | a `ratelimiter-{key}` worker holding the bucket in durable memory |
 | **throttle** | GCRA over one per-key `tat` timestamp; `shaper::gcra` | a worker holding the TAT; deny returns an exact `retry-after` |

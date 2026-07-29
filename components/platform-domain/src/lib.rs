@@ -12,6 +12,14 @@
 //!   applier-secret  shared secret; the applier rejects requests without it
 //!   registry        OCI prefix images are pushed to and pinned from
 //!   cluster-suffix  DNS suffix for the operator's Host routing
+//!   scheduler-nats  the platform's control-plane NATS, which each app's host dials
+//!                   to register and receive scheduling (no application data)
+//!   host-image      `wash` image for the per-application host pod (ADR-0014)
+//!   nats-image      NATS image for that pod's private data-plane sidecar
+//!   platform-namespace       where the registry lives
+//!   control-plane-namespace  where the operator + scheduler NATS live (defaults to
+//!                   platform-namespace; a tenant's NetworkPolicy must allow egress
+//!                   to both, or an app's host never registers)
 
 #[allow(warnings)]
 mod bindings;
@@ -72,9 +80,14 @@ impl Guest for Component {
             (Method::Get, ["api", "deployments", id]) => deployment_get(&request, id),
             (Method::Post, ["api", "deployments", id, "save"]) => deployment_save(&request, id),
             (Method::Get, ["api", "deployments", id, "manifests"]) => manifests(&request, id),
+            (Method::Delete, ["api", "deployments", id]) => deployment_delete(&request, id, &query),
 
             // The applier polls this to re-apply current revisions (ADR-0004).
             (Method::Get, ["api", "internal", "revisions"]) => internal_revisions(&request),
+            // The push path (ADR-0017), reconciled like everything else: the applier
+            // asks what needs pushing, fetches the bytes, pushes, then reports back.
+            (Method::Get, ["api", "internal", "pending-pushes"]) => internal_pending(&request),
+            (Method::Get, ["api", "internal", "artifact"]) => internal_artifact(&request, &query),
             // The seam the push step calls once an artifact is in the registry.
             (Method::Post, ["api", "internal", "pushed"]) => internal_pushed(&request),
             _ => Outcome::Err(404, "not_found".into()),
@@ -86,6 +99,8 @@ impl Guest for Component {
 enum Outcome {
     Json(u16, String),
     Text(u16, String, String),
+    /// A body that is not text — the staged `.wasm` the pusher fetches.
+    Bytes(u16, String, Vec<u8>),
     Err(u16, String),
 }
 
@@ -147,7 +162,8 @@ fn register(request: &IncomingRequest) -> Outcome {
                 let doc = json!({
                     "tenant": tenant, "owner": p.subject, "created": now(),
                     "plan": { "replicas": 1, "pool_size": 8, "max_invocations": 200,
-                              "max_deployments": DEPLOYMENT_BUDGET, "egress": [] },
+                              "max_deployments": DEPLOYMENT_BUDGET, "egress": [],
+                              "storage": "1Gi", "host_cpu": "100m", "host_memory": "256Mi" },
                     "namespace_applied": false
                 });
                 let _ = records::create(ACCOUNTS, &doc.to_string(), &["tenant".to_string()]);
@@ -387,6 +403,62 @@ fn component_publish(request: &IncomingRequest) -> Outcome {
 
 /// Record that an artifact reached the registry. This is the seam the push step
 /// calls; until it is called, the row is not deployable (ADR-0006).
+/// Components with no `oci_ref` yet — the work queue for the pusher.
+///
+/// Derived state, not a queue with its own lifecycle: "needs pushing" IS "has no
+/// registry reference", so a lost or duplicated message cannot desynchronise
+/// anything, and a re-push after the registry loses a blob needs no bookkeeping.
+///
+/// The exports and imports travel with it because the OCI config blob `wkg` writes
+/// contains them, and the pusher must produce a byte-identical shape or the operator
+/// gets an artifact it cannot read. They are already known from upload-time
+/// reflection, so the pusher never has to parse the wasm.
+fn internal_pending(request: &IncomingRequest) -> Outcome {
+    if !internal_ok(request) {
+        return Outcome::Err(401, "internal endpoint".into());
+    }
+    let raws = |v: &Value| -> Vec<Value> {
+        v.as_array()
+            .map(|a| a.iter().filter_map(|r| r["raw"].as_str().map(|s| json!(s))).collect())
+            .unwrap_or_default()
+    };
+    let mut out = Vec::new();
+    for e in records::list_records(CATALOG, 1000, "").map(|p| p.entries).unwrap_or_default() {
+        let Ok(row) = serde_json::from_str::<Value>(&e.data) else { continue };
+        if !row["oci_ref"].as_str().unwrap_or_default().is_empty() {
+            continue;
+        }
+        out.push(json!({
+            "key": row["key"],
+            "repo": row["key"],
+            "sha256": row["surface"]["sha256"],
+            "size_bytes": row["surface"]["size_bytes"],
+            "exports": raws(&row["surface"]["exports"]),
+            "imports": raws(&row["surface"]["imports"]),
+        }));
+    }
+    Outcome::Json(200, json!({ "pending": out }).to_string())
+}
+
+/// The staged bytes for one component, so the pusher can send them to the registry.
+///
+/// A pull, not a push: the wasm side never streams megabytes outward (it has one
+/// awkward outgoing-body handshake and no reason to exercise it), and it matches the
+/// direction the applier already polls in.
+fn internal_artifact(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    if !internal_ok(request) {
+        return Outcome::Err(401, "internal endpoint".into());
+    }
+    let key = query.get("key").and_then(|v| v.as_str()).unwrap_or_default();
+    if key.is_empty() {
+        return Outcome::Err(422, "?key=<tenant>/<id> required".into());
+    }
+    match blob::get(BIN, key) {
+        Ok(bytes) => Outcome::Bytes(200, "application/wasm".into(), bytes),
+        Err(_) => Outcome::Err(404, "no staged bytes for that key".into()),
+    }
+}
+
 fn internal_pushed(request: &IncomingRequest) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
@@ -401,7 +473,12 @@ fn internal_pushed(request: &IncomingRequest) -> Outcome {
     }
     match find_one(CATALOG, "key", &key) {
         Some((rec, rev, mut row)) => {
-            let repo = format!("{}/{}", cfg("registry", "registry.platform.svc.cluster.local:5000"), row["id"].as_str().unwrap_or_default());
+            // `<tenant>/<id>`, not `<id>`: two tenants may both own a component called
+            // `mesh-domain`, and a shared repo path would put their artifacts in one
+            // place — harmless for correctness (blobs are content-addressed and the
+            // reference is a digest) but it leaks one tenant's component names to
+            // anyone who can list the other's repo.
+            let repo = format!("{}/{}", cfg("registry", "registry.platform.svc.cluster.local:5000"), key);
             row["oci_ref"] = json!(format!("{repo}@{digest}"));
             let _ = records::update(CATALOG, &rec, &row.to_string(), rev);
             Outcome::Json(200, json!({ "key": key, "oci_ref": row["oci_ref"] }).to_string())
@@ -490,6 +567,11 @@ fn plan_of(tenant: &str) -> TenantPlan {
                 .as_array()
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
+            // An application is a pod now (ADR-0014), so a plan prices its host and
+            // its storage directly.
+            storage: p["storage"].as_str().unwrap_or("1Gi").to_string(),
+            host_cpu: p["host_cpu"].as_str().unwrap_or("100m").to_string(),
+            host_memory: p["host_memory"].as_str().unwrap_or("256Mi").to_string(),
         },
         max_deployments: p["max_deployments"].as_u64().unwrap_or(DEPLOYMENT_BUDGET),
     }
@@ -687,32 +769,6 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
     let Some((rec, rev, mut doc)) = owned_deployment(&p, id) else {
         return Outcome::Err(404, "not_found".into());
     };
-    // ADR-0008's release gate, and it is no longer hypothetical: the adversarial
-    // test FAILED on a real cluster (ADR-0012). Two tenants running the same app
-    // share one keyvalue bucket, so a second tenant's deployment would read the
-    // first's records. Refuse until storage isolation actually works.
-    if cfg("allow-multi-tenant", "false") != "true" {
-        let tenants = records::list_records(ACCOUNTS, 100, "")
-            .map(|page| page.entries.len())
-            .unwrap_or(0);
-        let first = records::list_records(ACCOUNTS, 100, "")
-            .map(|page| page.entries)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
-            .min_by_key(|v| v["created"].as_u64().unwrap_or(0))
-            .and_then(|v| v["tenant"].as_str().map(String::from))
-            .unwrap_or_default();
-        if tenants > 1 && first != p.tenant {
-            return Outcome::Err(
-                403,
-                format!(
-                    "multi-tenant deploys are gated: two tenants on this host share one keyvalue bucket, so `{}` would read `{first}`'s records (docs/adr/0012). Set allow-multi-tenant=true only on a host where storage isolation is proven.",
-                    p.tenant
-                ),
-            );
-        }
-    }
     // A save may also update the graph in the same request.
     if let Ok(b) = body(request) {
         for key in ["nodes", "edges", "strategy"] {
@@ -741,8 +797,15 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
         parts: &parts,
         plan: &tenant_plan,
         http_host: &http_host,
-        // Shared-host scheduling: platform infrastructure, not tenant input.
-        environment: &cfg("environment", ""),
+        // The app's own host is rendered alongside it; these name the images and the
+        // control-plane bus it registers on (ADR-0014). Platform config, never tenant
+        // input — the applier independently refuses any other image.
+        scheduler_nats: &cfg("scheduler-nats", "nats://nats.platform.svc.cluster.local:4222"),
+        host_image: &cfg("host-image", "ghcr.io/wasmcloud/wash:2.5.2"),
+        nats_image: &cfg("nats-image", "docker.io/nats:2.12.8-alpine"),
+        platform_ns: &cfg("platform-namespace", "platform"),
+        control_plane_ns: &cfg("control-plane-namespace", &cfg("platform-namespace", "platform")),
+        max_deployments: tenant_plan.max_deployments as u32,
     }) {
         Ok(m) => m,
         Err(e) => return Outcome::Err(422, e.detail()),
@@ -754,6 +817,10 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
         "deployment": id, "tenant": p.tenant, "revision": next,
         "strategy": strategy.as_str(), "manifests": manifests,
         "namespace": render::namespace_for(&p.tenant), "saved": now(),
+        // The applier's host reaper needs the live set of environments, and a
+        // revision is the only thing it polls. Without this, every host looks like
+        // an orphan.
+        "env": render::env_for(&p.tenant, &name),
     });
     let _ = records::create(REVISIONS, &revision_doc.to_string(), &["deployment".to_string(), "tenant".to_string()]);
 
@@ -829,15 +896,83 @@ fn internal_revisions(request: &IncomingRequest) -> Outcome {
     )
 }
 
+
+/// Delete a deployment: its Kubernetes footprint, then its records.
+///
+/// The footprint goes first. If it were the other way round and the prune failed, the
+/// platform would have forgotten an app that is still running — an orphan nothing
+/// would ever clean up, because the reaper's idea of "live" comes from the records
+/// this would have deleted.
+///
+/// The tenant's namespace, quota and NetworkPolicy stay: they belong to the tenant,
+/// not to this app, and the tenant's other apps are still in there.
+fn deployment_delete(
+    request: &IncomingRequest,
+    id: &str,
+    query: &Map<String, Value>,
+) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "unauthorized".into());
+    };
+    let Some((rec, _rev, doc)) = owned_deployment(&p, id) else {
+        return Outcome::Err(404, "not_found".into());
+    };
+    let name = doc["name"].as_str().unwrap_or("app").to_string();
+
+    // This destroys the app's storage claim, and nothing here can bring it back
+    // (ADR-0016). So the caller has to name what they are deleting: `428 Precondition
+    // Required` is exactly "the request must be made conditional", and an accidental
+    // or replayed DELETE cannot satisfy it.
+    if query.get("confirm").and_then(|v| v.as_str()) != Some(name.as_str()) {
+        return Outcome::Err(
+            428,
+            format!(
+                "deleting `{name}` also destroys its storage, permanently. Re-send with ?confirm={name} to mean it."
+            ),
+        );
+    }
+    let ns = render::namespace_for(&p.tenant);
+    let env = render::env_for(&p.tenant, &name);
+
+    let pruned = match prune_via_applier(&ns, &env) {
+        Ok(v) => v,
+        // Refuse rather than half-delete: the records are the reaper's source of
+        // truth, so dropping them now would strand whatever is still running.
+        Err(e) => return Outcome::Err(502, format!("nothing was deleted: {e}")),
+    };
+
+    for e in records::list_records(REVISIONS, 1000, "").map(|pg| pg.entries).unwrap_or_default() {
+        if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
+            if v["deployment"] == json!(id) {
+                let _ = records::delete(REVISIONS, &e.id);
+            }
+        }
+    }
+    let _ = records::delete(DEPLOYMENTS, &rec);
+    Outcome::Json(200, json!({ "deleted": id, "env": env, "applier": pruned }).to_string())
+}
+
 // ---- the applier hop (ADR-0003) --------------------------------------------
 
 fn apply_via_applier(namespace: &str, manifests: &str) -> Result<Value, String> {
+    post_to_applier("/apply", &json!({ "namespace": namespace, "manifests": manifests }))
+        .map_err(|e| if e.contains("no applier-url") { "no applier-url configured — nothing was applied".to_string() } else { e })
+}
+
+/// Delete one application's footprint (ADR-0015's reconciliation). The applier
+/// re-derives what to delete from the env label, so the platform sends a selector
+/// rather than a list of names it could get wrong.
+fn prune_via_applier(namespace: &str, env: &str) -> Result<Value, String> {
+    post_to_applier("/prune", &json!({ "namespace": namespace, "env": env }))
+}
+
+fn post_to_applier(path: &str, body: &Value) -> Result<Value, String> {
     let url = cfg("applier-url", "");
     if url.is_empty() {
-        return Err("no applier-url configured — nothing was applied".into());
+        return Err("no applier-url configured".into());
     }
     let secret = cfg("applier-secret", "");
-    let payload = json!({ "namespace": namespace, "manifests": manifests }).to_string();
+    let payload = body.to_string();
 
     let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
         (Scheme::Https, r)
@@ -858,7 +993,7 @@ fn apply_via_applier(namespace: &str, manifests: &str) -> Result<Value, String> 
     let _ = req.set_method(&Method::Post);
     let _ = req.set_scheme(Some(&scheme));
     let _ = req.set_authority(Some(&authority));
-    let _ = req.set_path_with_query(Some(&format!("{base}/apply")));
+    let _ = req.set_path_with_query(Some(&format!("{base}{path}")));
     // Order matters and is not optional: take the body handles, hand the request to
     // the host, and only THEN write. The outgoing stream is drained by the host as
     // part of sending, so writing more than the initial buffer BEFORE `handle`
@@ -1006,6 +1141,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, ctype, body) = match result {
         Outcome::Json(c, b) => (c, "application/json".to_string(), b.into_bytes()),
         Outcome::Text(c, ct, b) => (c, ct, b.into_bytes()),
+        Outcome::Bytes(c, ct, b) => (c, ct, b),
         Outcome::Err(c, m) => (
             c,
             "application/json".to_string(),

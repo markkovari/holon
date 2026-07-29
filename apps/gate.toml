@@ -1,0 +1,31 @@
+# An app, as a person writes it. This is the ONLY hand-authored file in the
+# self-hosting lane — `selfhost` renders everything else (docs/SELFHOST.md).
+#
+#   just selfhost-render gate            # see what would be written
+#   just selfhost-deploy gate my-vps     # compose, ship, restart, route
+name = "gate"
+# Tailnet-only, which is the default — a forgotten `access` must not put an app on
+# the public internet. The name has to resolve to the box's Tailscale address (a custom
+# DNS record in the tailnet, or split DNS); MagicDNS alone gives one name per machine.
+access = "tailnet"
+domain = "gate.example.com"
+artifact = "components/target/gate_domain.composed.wasm"
+
+# Loopback port. Omit it and one is derived from the name, stably — `selfhost
+# validate` is what refuses two apps landing on the same one.
+# port = 30011
+
+# memory loses state on restart; redis/nats persist. See SELFHOST.md's open question.
+kv = "memory"
+
+# Read by the Kubernetes lane (tier 3), ignored here. Present so that moving this app
+# up a tier is an edit rather than a rewrite.
+components = ["gate-domain", "record-store", "shaper"]
+strategy = "fused"
+
+# KEEP TABLES LAST. In TOML every key after a `[table]` header belongs to that table,
+# so a `components = [...]` line below this point would be parsed as config and
+# rejected. `wasi:config` keys go here: `grace-period-secs` arrives as
+# CFG_GRACE_PERIOD_SECS, which is what comp-host maps back to the config key.
+[config]
+grace-period-secs = "5"

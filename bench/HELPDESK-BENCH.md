@@ -5,7 +5,7 @@ per-capability calls: every request below goes browser → hyper → wasmtime �
 `helpdesk_domain.composed.wasm` (helpdesk-domain + auth-guard + record-store +
 fsm-workflow + id-generate + markdown) → `wasi:keyvalue` backend.
 
-- Host: `just host-helpdesk` (vet-host binary, release), Apple M4 (10 cores), macOS
+- Host: `just host-helpdesk` (comp-host binary, release), Apple M4 (10 cores), macOS
 - Load: `oha -z 10s -c 20` (login/spa 5s), localhost
 - Backends: NATS = JetStream KV in Docker on the same machine (durable,
   disk-persisted per write); memory = in-process HashMap

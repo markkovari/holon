@@ -1,0 +1,120 @@
+# The platform's own OCI registry (ADR-0017). Platform infrastructure, applied by
+# hand or by the chart — NOT by the applier, which only ever writes `tenant-*`
+# namespaces.
+#
+# Three things differ from the throwaway registries in `examples/*/k8s/`:
+#
+# 1. **A PVC.** Those run on the container filesystem, so a restart loses every image
+#    — which under digest pinning (ADR-0006) does not make deployments stale, it makes
+#    them un-re-appliable. The live `jobs` registry has `volumes: null` today.
+# 2. **No NodePort.** Nothing outside the cluster needs to reach it: the applier pushes
+#    from inside, and host pods pull from inside. A NodePort exists in the dev
+#    registries only so a laptop can push, which is the workflow this replaces.
+# 3. **A NetworkPolicy** instead of authentication — see the note below.
+#
+# On auth (revising ADR-0006, which called it a slice-1 prerequisite): the wasmCloud
+# host authenticates pulls from a docker config it looks for on disk, so requiring
+# credentials means mounting a pull Secret into every app's host pod in every tenant
+# namespace. The threat that buys is already closed elsewhere: component egress is
+# `allowedHosts` fail-closed and the platform never allow-lists the registry, so
+# tenant code cannot reach it at all — only the host pod running it can, and that pod
+# is ours. So the boundary here is the network path, not a password.
+#
+# Durability note: the registry is a CACHE, not the source of truth. Uploaded bytes
+# live in `blob:store`, and anything missing from the registry is re-pushed by the
+# applier's next pass (ADR-0017). That is what makes one `local-path` PVC acceptable —
+# losing it costs re-pushes, not artifacts.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    platform.comp/infra: "true"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: platform
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registry
+  namespace: platform
+spec:
+  replicas: 1
+  # ReadWriteOnce plus a filesystem-backed registry: never two writers.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: registry }
+  template:
+    metadata:
+      labels: { app: registry, platform.comp/infra: "true" }
+    spec:
+      containers:
+        - name: registry
+          image: registry:2
+          ports: [{ containerPort: 5000 }]
+          env:
+            # Deletes enabled so a component can actually be removed from the
+            # registry; reclaiming the space still needs a `registry garbage-collect`
+            # run, which is a documented wart in ADR-0017, not a solved problem.
+            - { name: REGISTRY_STORAGE_DELETE_ENABLED, value: "true" }
+            - { name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY, value: /var/lib/registry }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/registry }
+          readinessProbe:
+            httpGet: { path: /v2/, port: 5000 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: registry-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registry
+  namespace: platform
+spec:
+  selector: { app: registry }
+  ports:
+    - { name: http, port: 5000, targetPort: 5000 }
+---
+# Only the platform's own pods and platform-managed host pods may reach :5000. This is
+# the boundary that stands in for authentication, so it is the object to read carefully
+# if you are ever tempted to widen it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: registry-ingress
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels: { app: registry }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        # The platform's own namespace (the applier pushes from here).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+        # Any tenant namespace, but only pods the platform manages — which is the app
+        # host pods that have to pull. A tenant's COMPONENT cannot use this: it reaches
+        # the network only through `wasi:http/outgoing-handler`, which is allow-listed
+        # per component and never includes the registry.
+        - namespaceSelector:
+            matchExpressions:
+              - { key: platform.comp/managed, operator: In, values: ["true"] }
+          podSelector:
+            matchLabels: { platform.comp/managed: "true" }
+      ports:
+        - { protocol: TCP, port: 5000 }

@@ -51,7 +51,7 @@ fn req(method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
 
 fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/vet-host");
+    let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/pipeline_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-pipeline`)");
     assert!(component.exists(), "composed wasm missing (just compose-pipeline)");
@@ -62,7 +62,7 @@ fn start_host() -> HostGuard {
         .env("CFG_MAX_ATTEMPTS", "1")
         .env("CFG_BASE_BACKOFF", "1")
         .spawn()
-        .expect("spawn vet-host");
+        .expect("spawn comp-host");
     let guard = HostGuard(child);
     for _ in 0..200 {
         if let Ok(r) = ureq::get(&base()).call() {

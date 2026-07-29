@@ -18,7 +18,7 @@ and a **player controller**.
 
 ## Real-time without a socket
 
-vet-host is request/response, so real-time is **polling**: the host screen and
+comp-host is request/response, so real-time is **polling**: the host screen and
 each player's controller `GET` their view a few times a second, and the host's
 `start` / `reveal` / `next` `POST`s move the shared game (in `records:store`)
 between phases. At Kahoot's ~second cadence that's indistinguishable from push —

@@ -82,7 +82,7 @@ fn start_upstream() -> Kill {
 }
 
 fn start_host() -> Kill {
-    let bin = root().join("host/target/release/vet-host");
+    let bin = root().join("host/target/release/comp-host");
     let component = root().join("components/target/mesh_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-mesh`)");
     assert!(component.exists(), "composed wasm missing (just compose-mesh)");
@@ -92,7 +92,7 @@ fn start_host() -> Kill {
         // the proxy:route table — /upstream is the flaky server, /dead is nothing.
         .env("CFG_ROUTES", format!("/upstream=http://{UPSTREAM}/,/dead=http://{DEAD}/"))
         .spawn()
-        .expect("spawn vet-host");
+        .expect("spawn comp-host");
     let guard = Kill(child);
     for _ in 0..200 {
         if let Ok(r) = ureq::get(&format!("http://{HOST}/")).call() {

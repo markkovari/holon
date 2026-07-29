@@ -56,7 +56,7 @@ fn code_for(secret_b32: &str) -> String {
 
 fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
-    let bin = root.join("host/target/release/vet-host");
+    let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/mfa_authgate.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-authgate`)");
     assert!(component.exists(), "composed wasm missing (just compose-authgate)");
@@ -65,7 +65,7 @@ fn start_host() -> HostGuard {
         .env("VET_TENANT", "authgate")
         .env("CFG_MASTER_KEY", MASTER_KEY)
         .spawn()
-        .expect("spawn vet-host");
+        .expect("spawn comp-host");
     let guard = HostGuard(child);
     for _ in 0..200 {
         if let Ok(r) = ureq::get(&base()).call() {

@@ -1,18 +1,25 @@
-//! `vet-host` — a NATIVE Rust server that runs the composed `vet-domain` wasm
-//! component over wasmtime. No Node, no wasmCloud: this binary IS the host.
+//! `comp-host` — a NATIVE Rust server that runs ANY composed wasm component over
+//! wasmtime. No Node, no Kubernetes, no wasmCloud, no NATS required: this binary IS
+//! the host.
 //!
-//! It loads `vet_domain.composed.wasm` (the whole vet-clinic backend as one
-//! component — vet-domain + auth-guard + records + validate + search), serves
-//! its `wasi:http/incoming-handler` export over a hyper TCP listener, and
-//! satisfies the component's imports host-side:
+//! It started life running one app (hence its old name, `vet-host`) and is now the
+//! self-hosting lane for anything in this repo: point it at a composed artifact from
+//! `just compose-<app>`, and it serves that component's
+//! `wasi:http/incoming-handler` export over a hyper TCP listener while satisfying
+//! the component's imports host-side:
 //!   - standard WASI (cli/clocks/random/io/filesystem) via wasmtime-wasi
 //!   - wasi:http via wasmtime-wasi-http
-//!   - wasi:keyvalue@0.2.0-draft  -> an in-memory store implemented here
-//!   - wasi:config@0.2.0-draft    -> the process environment (VET_* keys)
+//!   - wasi:keyvalue@0.2.0-draft  -> in-memory, Redis or NATS JetStream (--kv)
+//!   - wasi:config@0.2.0-draft    -> the process environment, two ways:
+//!       * `CFG_GRACE_PERIOD_SECS=5` -> config key `grace-period-secs` (generic,
+//!         use this for anything new — it is how the platform component is run)
+//!       * a block of vet-clinic defaults overridable with `VET_*`, kept because
+//!         the older example suites rely on them. App-specific, and a cleanup
+//!         candidate once nothing needs it.
 //!
 //! The SAME .wasm runs under jco (examples/jco-vet-domain) and on wasmCloud;
 //! this is a third host, proving the component is host-agnostic. Swap the
-//! in-memory KV for redis/sqlite/NATS and the component is unchanged.
+//! in-memory KV for redis/NATS and the component is unchanged.
 
 mod kv;
 use kv::KvBackend;
@@ -265,7 +272,9 @@ impl config::Host for Host {
 }
 
 // ---- config: the deployment knobs the vet-clinic components read ----------
-// Sane defaults so the host runs with zero setup; override via env (VET_*).
+// App-specific defaults, from when this host only ran the vet-clinic. They stay
+// because the older example suites depend on them; anything new should use the
+// generic `CFG_*` passthrough below instead of adding to this list.
 
 fn build_config() -> HashMap<String, String> {
     let mut c = HashMap::new();
@@ -303,7 +312,7 @@ fn build_config() -> HashMap<String, String> {
 // ---- CLI -----------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "vet-host", about = "Run the composed vet-domain wasm over wasmtime")]
+#[command(name = "comp-host", about = "Run the composed vet-domain wasm over wasmtime")]
 struct Args {
     /// Path to the composed component wasm.
     #[arg(long, default_value = "../components/target/vet_domain.composed.wasm")]
@@ -381,10 +390,10 @@ async fn main() -> Result<()> {
 
     let addr: SocketAddr = args.addr.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    println!("vet-host: serving {} on http://{}", args.component, addr);
-    println!("vet-host: kv backend = {} | allocator = {}", args.kv, if args.pool { "pooling" } else { "on-demand" });
+    println!("comp-host: serving {} on http://{}", args.component, addr);
+    println!("comp-host: kv backend = {} | allocator = {}", args.kv, if args.pool { "pooling" } else { "on-demand" });
     if let Some(d) = static_dir.as_ref() {
-        println!("vet-host: serving static SPA from {}", d.display());
+        println!("comp-host: serving static SPA from {}", d.display());
     }
 
     let engine = Arc::new(engine);

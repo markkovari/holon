@@ -16,6 +16,9 @@
 //!   0003  the applier re-validates and rejects anything aimed elsewhere
 //!   0007  another tenant cannot see or use a private component
 //!   0004  a save creates a revision, and the applier can list what to re-apply
+//!   0014  each application gets its OWN host — private data NATS, own engine, own
+//!         endpoint — so two apps of one tenant share no storage and no compute, and
+//!         `wasi:keyvalue` is bindable again
 
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -49,6 +52,7 @@ fn req(method: &str, path: &str, token: Option<&str>, body: Option<Value>) -> (u
     let mut r = match method {
         "GET" => ureq::get(&url),
         "POST" => ureq::post(&url),
+        "DELETE" => ureq::delete(&url),
         m => panic!("method {m}"),
     };
     if let Some(t) = token {
@@ -120,7 +124,7 @@ fn require_port_free(addr: &str, what: &str) {
     {
         panic!(
             "{addr} is already in use, so this test would run against that process instead of its own {what}. \
-             Stop it first (e.g. `pkill -f vet-host`, `pkill -f release/applier`)."
+             Stop it first (e.g. `pkill -f comp-host`, `pkill -f release/applier`)."
         );
     }
 }
@@ -143,7 +147,7 @@ fn start_all() -> (Kill, Kill) {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    let host = root().join("host/target/release/vet-host");
+    let host = root().join("host/target/release/comp-host");
     let component = root().join("components/target/platform_domain.composed.wasm");
     assert!(component.exists(), "composed wasm missing (just compose-platform)");
     let platform = Command::new(&host)
@@ -154,7 +158,7 @@ fn start_all() -> (Kill, Kill) {
         .env("CFG_REGISTRY", "registry.platform.svc.cluster.local:5000")
         .env("CFG_CLUSTER_SUFFIX", "svc.cluster.local")
         .spawn()
-        .expect("spawn vet-host");
+        .expect("spawn comp-host");
     let platform = Kill(platform);
     for _ in 0..200 {
         if let Ok(r) = ureq::get(&format!("http://{PLATFORM}/")).call() {
@@ -256,7 +260,7 @@ fn platform_signs_in_renders_and_applies() {
     assert!(yaml.contains("namespace: tenant-ada"));
     assert!(yaml.contains("platform.comp/strategy: linked"));
     // 0005 linked: every component present, edges absent (the runtime links them).
-    assert_eq!(yaml.matches("        - name: ").count(), 4, "{yaml}");
+    assert_eq!(yaml.matches("          poolSize:").count(), 4, "{yaml}");
     assert!(!yaml.contains("records:store/store"), "an edge must not appear: {yaml}");
     // 0006: digests, never tags.
     assert!(yaml.contains(&format!("@{DIGEST}")));
@@ -264,10 +268,19 @@ fn platform_signs_in_renders_and_applies() {
     // 0005: one hostInterfaces entry per interface, never merged.
     assert!(yaml.contains("interfaces: [store]"), "{yaml}");
     assert!(!yaml.contains("interfaces: [store, atomics]"));
-    // 0008/0012: the isolation stamp the tenant never wrote. keyvalue is NOT
-    // isolated — proven on a real cluster — so the manifest says so instead of
-    // carrying a bucket key nothing reads.
-    assert!(yaml.contains("NOT tenant-isolated"), "kv honesty: {yaml}");
+    // 0014: the app's own host, which is what makes keyvalue safe to bind. Its data
+    // plane must be on loopback — a Service URL here would put every app back on one
+    // shared bus, which is exactly the leak ADR-0012 measured.
+    assert!(yaml.contains("kind: Deployment"), "the app's host: {yaml}");
+    assert!(yaml.contains("--data-nats-url=nats://127.0.0.1:4222"), "{yaml}");
+    assert!(yaml.contains("      environment: app-ada-api\n"), "workload pinned to it: {yaml}");
+    assert!(yaml.contains("kind: PersistentVolumeClaim"), "durable storage: {yaml}");
+    // The namespace and its guardrails travel with it, or the host pod has nowhere to
+    // run and no route to the control plane.
+    assert!(yaml.contains("kind: Namespace"), "{yaml}");
+    assert!(yaml.contains("kind: NetworkPolicy"), "{yaml}");
+    // 0008/0012: still no keyvalue bucket key, because nothing reads one. The
+    // boundary is the private bus, not a manifest field.
     assert!(!yaml.contains("bucket: t-ada"), "must not fake kv isolation: {yaml}");
     assert!(yaml.contains("allowedHosts:"), "fail-closed egress is explicit: {yaml}");
     assert!(yaml.contains("permits no egress"), "this plan has none: {yaml}");
@@ -283,7 +296,7 @@ fn platform_signs_in_renders_and_applies() {
     assert_eq!(code, 200, "fused save: {fused}");
     assert_eq!(fused["revision"], 2, "a save is a revision (0004)");
     let yaml = text_of(&format!("/api/deployments/{id}/manifests"), &token);
-    assert_eq!(yaml.matches("        - name: ").count(), 1, "fused is one artifact: {yaml}");
+    assert_eq!(yaml.matches("          poolSize:").count(), 1, "fused is one artifact: {yaml}");
     assert!(yaml.contains("platform.comp/strategy: fused"));
     // ...and it still needs every host interface the graph did.
     assert!(yaml.contains("interfaces: [store]"), "{yaml}");
@@ -337,15 +350,15 @@ fn platform_signs_in_renders_and_applies() {
     assert_eq!(code, 201, "creating a draft is fine");
     let (_, eve_deployments) = req("GET", "/api/deployments", Some(&eve), None);
     let sid = eve_deployments["deployments"][0]["id"].as_str().unwrap().to_string();
-    // ADR-0012's gate fires before anything else: two tenants on one host share a
-    // keyvalue bucket, proven on a real cluster, so a second tenant cannot deploy at
-    // all until that is fixed. This is the release gate ADR-0008 asked for, in code.
+    // ADR-0012's gate is LIFTED (ADR-0014): a second tenant no longer shares storage
+    // with the first, because neither shares a host. Eve's save fails on the one
+    // thing that should still stop it — she cannot use ada's private component.
     let (code, denied) = req("POST", &format!("/api/deployments/{sid}/save"), Some(&eve), Some(json!({})));
-    assert_eq!(code, 403, "{denied}");
+    assert_eq!(code, 422, "{denied}");
     let msg = denied["error"].as_str().unwrap();
-    assert!(msg.contains("multi-tenant deploys are gated"), "{msg}");
-    assert!(msg.contains("share one keyvalue bucket"), "{msg}");
-    assert!(msg.contains("adr/0012"), "the refusal cites the evidence: {msg}");
+    assert!(msg.contains("not visible to you"), "refused for ownership, not storage: {msg}");
+    assert!(!msg.contains("adr/0012"), "the storage gate is lifted (0014): {msg}");
+
     // Eve cannot read ada's deployment at all.
     assert_eq!(req("GET", &format!("/api/deployments/{id}"), Some(&eve), None).0, 404);
     assert_eq!(req("GET", &format!("/api/deployments/{id}/manifests"), Some(&eve), None).0, 404);
@@ -368,8 +381,81 @@ fn platform_signs_in_renders_and_applies() {
     );
     assert_eq!(code, 200, "{orgd}");
     assert_eq!(orgd["visibility"], "org");
-}
 
+    // ===== 0014: a second app of the same tenant shares nothing =============
+    // The level the cluster test failed at before (ADR-0012 proved two *tenants*
+    // leaked; two *apps* of one tenant leaked for the same reason). Same components,
+    // same namespace, same everything except the app — so if any isolation-bearing
+    // name were derived from the tenant alone, it would collide here.
+    let (code, second) = req(
+        "POST",
+        "/api/deployments",
+        Some(&token),
+        Some(json!({ "name": "billing", "strategy": "linked", "nodes": nodes, "edges": edges })),
+    );
+    assert_eq!(code, 201, "{second}");
+    let bid = second["id"].as_str().unwrap().to_string();
+    let (code, saved2) = req("POST", &format!("/api/deployments/{bid}/save"), Some(&token), Some(json!({})));
+    assert_eq!(code, 200, "second app saves: {saved2}");
+
+    let a = text_of(&format!("/api/deployments/{id}/manifests"), &token);
+    let b = text_of(&format!("/api/deployments/{bid}/manifests"), &token);
+    // Separate hosts, separate storage, separate scheduling target.
+    assert!(a.contains("environment: app-ada-api") && b.contains("environment: app-ada-billing"), "{b}");
+    assert!(a.contains("app-ada-api-host") && b.contains("app-ada-billing-host"));
+    assert!(a.contains("app-ada-api-data") && b.contains("app-ada-billing-data"), "separate claims");
+    assert!(!b.contains("app-ada-api"), "no name from the other app appears: {b}");
+    // Both bind keyvalue, which is only sound because neither shares a bus.
+    assert!(a.contains("interfaces: [store]") && b.contains("interfaces: [store]"));
+    assert!(a.contains("--data-nats-url=nats://127.0.0.1:4222"));
+    // The applier accepted the host pod, which means its image allow-list matched.
+    let applied = saved2["applier"]["applied"].as_array().unwrap();
+    assert!(applied.iter().any(|x| x == "Deployment/app-ada-billing-host"), "{applied:?}");
+    assert!(applied.iter().any(|x| x == "PersistentVolumeClaim/app-ada-billing-data"), "{applied:?}");
+    // Every object carries the env, which is what makes deleting an app one selector.
+    assert!(b.contains("platform.comp/env: app-ada-billing"), "{b}");
+
+    // ===== 0015: deleting an app removes its footprint, then its records =====
+    // Until this existed there was no delete path at all, so an app's host pod, claim
+    // and self-registered `Host` outlived it (measured on a cluster).
+    // An unconfirmed delete is refused: it would destroy the app's storage.
+    let (code, unconfirmed) = req("DELETE", &format!("/api/deployments/{bid}"), Some(&token), None);
+    assert_eq!(code, 428, "{unconfirmed}");
+    assert!(unconfirmed["error"].as_str().unwrap().contains("?confirm=billing"), "{unconfirmed}");
+    // Naming the WRONG app does not count either.
+    assert_eq!(
+        req("DELETE", &format!("/api/deployments/{bid}?confirm=api"), Some(&token), None).0,
+        428,
+        "the token must name the app being deleted"
+    );
+
+    let (code, deleted) = req("DELETE", &format!("/api/deployments/{bid}?confirm=billing"), Some(&token), None);
+    assert_eq!(code, 200, "{deleted}");
+    assert_eq!(deleted["env"], "app-ada-billing");
+    assert_eq!(deleted["applier"]["validated_only"], true, "{deleted}");
+    assert_eq!(deleted["applier"]["env"], "app-ada-billing");
+
+    // The deployment and its revisions are gone; the tenant's other app is untouched.
+    assert_eq!(req("GET", &format!("/api/deployments/{bid}"), Some(&token), None).0, 404);
+    assert_eq!(req("GET", &format!("/api/deployments/{id}"), Some(&token), None).0, 200);
+    let revs = json_of(
+        ureq::get(&format!("http://{PLATFORM}/api/internal/revisions"))
+            .set("x-platform-secret", SECRET)
+            .call()
+            .expect("revisions"),
+    );
+    let list = revs["revisions"].as_array().cloned().unwrap_or_default();
+    assert!(
+        list.iter().all(|r| r["deployment"] != json!(bid)),
+        "a deleted app must leave no revision — the reaper reads this to decide what is live: {list:?}"
+    );
+    // ...and what remains still carries its env, or the reaper would call it an orphan.
+    assert!(list.iter().all(|r| r["env"].as_str().is_some_and(|e| e.starts_with("app-"))), "{list:?}");
+
+    // Another tenant cannot delete it.
+    let (code, _) = req("DELETE", &format!("/api/deployments/{id}?confirm=api"), Some(&eve), None);
+    assert_eq!(code, 404, "eve must not be able to delete ada's app");
+}
 /// The applier's own boundary, exercised over HTTP rather than as a unit test:
 /// it refuses a payload aimed at a namespace the request does not name.
 #[test]

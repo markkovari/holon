@@ -1,12 +1,25 @@
 # Platform plan — a wasm-first multi-tenant PaaS (with a docker lane)
 
-> **The forks in this plan are now decided in [`docs/adr/`](docs/adr/).** This file
-> stays the narrative and the phase order; the ADRs own the individual decisions
-> and win where they disagree. Start with
-> [ADR-0011](docs/adr/0011-slice-one-scope.md) for what the first slice actually
-> is, and the [index](docs/adr/README.md) for the open risks — notably that the
-> keyvalue `buckets:` allow-list this plan's isolation model depends on has never
-> been exercised (only blobstore has).
+> **Read [`docs/WHY.md`](docs/WHY.md) first. This plan's central bet is falsified.**
+>
+> The isolation model below rests on shared hostgroups with per-tenant keyvalue
+> buckets — "the density economics". That does not work: the bucket is chosen by the
+> guest, not by manifest config, and two tenants were measured reading each other's
+> records ([ADR-0012](docs/adr/0012-keyvalue-isolation-needs-a-cooperative-component.md)).
+> Each application now owns a host with a private data bus
+> ([ADR-0014](docs/adr/0014-an-application-owns-a-host.md)), which costs the
+> multi-tenant density this plan was priced on.
+>
+> What survives, measured: **2.3 Mi per extra component inside a host against 70 Mi
+> for a component in its own pod, and 1.2 ms saved per network hop avoided**
+> ([ADR-0019](docs/adr/0019-the-density-number.md)). So the value is decomposing one
+> app into many components — not packing many tenants onto one host. A
+> single-component app should be a container.
+>
+> The forks in this plan are decided in [`docs/adr/`](docs/adr/); the ADRs win where
+> they disagree, and several sections below (isolation model, phase 2's density
+> assumption, the `buckets:` allow-list) are superseded rather than pending. The
+> [index](docs/adr/README.md) has the current state and the open risks.
 
 The product: an open service where tenants deploy **signed wasm components**
 (and, secondarily, plain docker images) onto a shared wasmCloud v2 lattice on

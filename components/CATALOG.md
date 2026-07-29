@@ -53,6 +53,7 @@ capabilities, so anything marked reusable drops into another app via
 | **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 183 KiB | ✓ |
 | **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 129 KiB | ✓ |
+| **kv-probe** | `kv:probe@0.1.0` | kv:batch, kv:store | — | 73 KiB | ✓ |
 | **ledger** | `ledger:doubleentry@0.1.0` | pure compute | — | 53 KiB | ✓ |
 | **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 163 KiB | app/demo |
 | **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 71 KiB | ✓ |
@@ -75,7 +76,7 @@ capabilities, so anything marked reusable drops into another app via
 | **pdf** | `pdf:codec@0.1.0` | pure compute | — | 54 KiB | ✓ |
 | **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 73 KiB | ✓ |
 | **pipeline-domain** | `pipeline:app@0.1.0` | event:bus/bus, id:generate/generator, outbox:dispatch/queue | — | 151 KiB | ✓ |
-| **platform-domain** | `platform:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, blob:store/blobstore, policy:guard/guard, quota:meter/meter, records:store/store, config/store, http/outgoing-handler, wit:reflect/composer, wit:reflect/inspector | `applier-url`, `applier-secret`, `registry`, `cluster-suffix`, `id` | 273 KiB | ✓ |
+| **platform-domain** | `platform:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, blob:store/blobstore, policy:guard/guard, quota:meter/meter, records:store/store, config/store, http/outgoing-handler, wit:reflect/composer, wit:reflect/inspector | `applier-url`, `applier-secret`, `registry`, `cluster-suffix`, `scheduler-nats`, `host-image`, `nats-image`, `platform-namespace`, `control-plane-namespace`, `id`, `key`, `confirm` | 302 KiB | ✓ |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 161 KiB | ✓ |
 | **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes` | 101 KiB | ✓ |
 | **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 163 KiB | ✓ |
@@ -164,6 +165,7 @@ capabilities, so anything marked reusable drops into another app via
 - **inproc-workflow** — `inproc-workflow` — the default execution backend for the jobs queue
 - **jobs-domain** — jobs:app — a durable background-job queue over composed contracts
 - **jsonpatch** — `jsonpatch` — reference implementation of `json:patch`
+- **kv-probe** — `kv-probe` — an instrument for one specific unknown (see wit/probe.wit)
 - **ledger** — `ledger` — reference implementation of `ledger:doubleentry/ledger`
 - **link-shortener** — shortlink:app — link shortener over composed capability contracts
 - **llm-inference** — `llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`

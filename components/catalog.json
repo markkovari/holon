@@ -787,6 +787,22 @@
     "reusable_as_is": true
   },
   {
+    "name": "kv-probe",
+    "package": "kv:probe@0.1.0",
+    "description": "`kv-probe` \u2014 an instrument for one specific unknown (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "wasi:keyvalue/batch",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 75753,
+    "wasm_sha256_12": "0b7ea51aa13c",
+    "reusable_as_is": true
+  },
+  {
     "name": "ledger",
     "package": "ledger:doubleentry@0.1.0",
     "description": "`ledger` \u2014 reference implementation of `ledger:doubleentry/ledger`",
@@ -1228,12 +1244,40 @@
         "description": "DNS suffix for the operator's Host routing"
       },
       {
+        "name": "scheduler-nats",
+        "description": "the platform's control-plane NATS, which each app's host dials"
+      },
+      {
+        "name": "host-image",
+        "description": "`wash` image for the per-application host pod (ADR-0014)"
+      },
+      {
+        "name": "nats-image",
+        "description": "NATS image for that pod's private data-plane sidecar"
+      },
+      {
+        "name": "platform-namespace",
+        "description": "where the registry lives"
+      },
+      {
+        "name": "control-plane-namespace",
+        "description": "where the operator + scheduler NATS live (defaults to"
+      },
+      {
         "name": "id",
+        "description": ""
+      },
+      {
+        "name": "key",
+        "description": ""
+      },
+      {
+        "name": "confirm",
         "description": ""
       }
     ],
-    "wasm_size_bytes": 279953,
-    "wasm_sha256_12": "bad082bbaed6",
+    "wasm_size_bytes": 310174,
+    "wasm_sha256_12": "5e2b76450ba2",
     "reusable_as_is": true
   },
   {

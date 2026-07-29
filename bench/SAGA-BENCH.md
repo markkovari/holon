@@ -5,7 +5,7 @@ request goes browser → hyper → wasmtime → `saga_domain.composed.wasm`
 (saga-domain + fsm-workflow + record-store + idempotency-guard + event-bus +
 id-generate + scheduler-timer) → `wasi:keyvalue`.
 
-- Host: `just host-saga` (vet-host, release), Apple M4 (10 cores), macOS
+- Host: `just host-saga` (comp-host, release), Apple M4 (10 cores), macOS
 - Load: `oha -c 20` (8s) for the point reads/writes; a sequential loop for the
   full-saga latency (each iteration `POST /trips` then `POST /trips/{id}/run`)
 - Backends: NATS = JetStream KV in Docker on the same box; memory = in-process HashMap
@@ -50,7 +50,7 @@ id-generate + scheduler-timer) → `wasi:keyvalue`.
 
 ```bash
 docker compose -f infra/compose.yaml up -d nats     # for the NATS column
-just compose-saga && (cd host && cargo build --release --bin vet-host)
+just compose-saga && (cd host && cargo build --release --bin comp-host)
 bench/saga-bench.sh memory
 bench/saga-bench.sh nats
 just durable-saga                                    # the restart-resume proof

@@ -3,7 +3,7 @@
 //! auth-guard (`auth:identity`) for the host, `records:store` for game state,
 //! `wasi:random` for the PIN, and the wall clock for timing + speed-weighted
 //! scoring. Players are anonymous, gated by the PIN + the id issued on join.
-//! Real-time is client polling — vet-host is request/response.
+//! Real-time is client polling — comp-host is request/response.
 
 #[allow(warnings)]
 mod bindings;

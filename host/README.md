@@ -1,4 +1,4 @@
-# vet-host — a native Rust host for the vet-clinic wasm
+# comp-host — a native Rust host for the vet-clinic wasm
 
 A **native binary** (not a wasm component, not Node, not wasmCloud) that runs the
 composed `vet_domain.composed.wasm` over [wasmtime](https://wasmtime.dev). This

@@ -5,7 +5,7 @@ request below goes browser → hyper → wasmtime → `conduit_domain.composed.w
 (conduit-domain + auth-guard + record-store + slug) → `wasi:keyvalue` backend.
 Same harness shape as the helpdesk round, so the numbers are comparable.
 
-- Host: `just host-conduit` (vet-host binary, release), Apple M4 (10 cores), macOS
+- Host: `just host-conduit` (comp-host binary, release), Apple M4 (10 cores), macOS
 - Load: `oha -c 20`, 10s per route (3s for create), localhost — `bench/conduit-bench.sh`
 - Backends: NATS = JetStream KV in Docker on the same machine (durable,
   disk-persisted per write); memory = in-process HashMap
@@ -57,7 +57,7 @@ Same harness shape as the helpdesk round, so the numbers are comparable.
 ```bash
 docker compose -f infra/compose.yaml up -d nats     # for the NATS column
 just compose-conduit                                # build + compose the app
-cd host && cargo build --release --bin vet-host && cd ..
+cd host && cargo build --release --bin comp-host && cd ..
 bench/conduit-bench.sh memory                       # in-process HashMap
 bench/conduit-bench.sh nats                         # JetStream KV
 ```

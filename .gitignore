@@ -1,5 +1,7 @@
 # Rust / cargo-component build output
 /components/target/
+# rendered units/routes — output, not source
+/target/selfhost/
 /components/bench-suite-p3/target/
 **/*.wasm
 

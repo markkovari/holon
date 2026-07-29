@@ -816,7 +816,7 @@ vet-clinic's 19+. Its redirect hot path is deliberately thin: one cache read,
 one atomic click increment, a 302. The question: does a small graph move the
 per-request-instantiation wall from Rounds 2/4?
 
-Native `vet-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
+Native `comp-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
 100 % success everywhere (no non-2xx/3xx):
 
 | route | on-demand | `--pool` |
@@ -860,7 +860,7 @@ since vet-clinic, and unlike the link shortener every interesting route does
 REAL cross-component work: bearer introspection (auth-guard), ABAC rule
 evaluation (policy-guard), or an atomic quota reserve.
 
-Native `vet-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
+Native `comp-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
 100 % success (all 200s — the bench key's limit is 10⁹ so quota never trips):
 
 | route | on-demand | `--pool` |
@@ -910,7 +910,7 @@ fsm-workflow + event-bus + notify-dispatch) is the first TIMER-driven app — wo
 originates from `sched:timer`, not a request. Together they extend the graph-size
 axis of Rounds 9/10 with three more points: 6, 7, and 10 modules.
 
-Native `vet-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
+Native `comp-host`, `--kv memory`, same laptop, loopback oha, 10 s per row,
 100 % success everywhere:
 
 **webhook-relay** (:3010)
