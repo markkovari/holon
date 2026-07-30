@@ -29,5 +29,14 @@ clap = { version = "4", features = ["derive"] }
 # endpoints (DO Managed Valkey, Upstash, …) from a minimal container.
 redis = { version = "0.27", features = ["tls-rustls", "tls-rustls-webpki-roots"] }
 nats = "0.25"
+# `bundled` compiles SQLite itself: no system libsqlite3 to match, which keeps the
+# static musl cross-build for a VPS working (see just selfhost-build-host).
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Not used directly. Adding rusqlite re-resolved the lockfile (which is gitignored)
+# and `nuid` — pulled in by the old `nats` 0.25 client — has a loose enough `rand`
+# requirement that it grabbed 0.10, where `rand::distributions` was renamed. This
+# constrains what nuid unifies to. The real fix is moving off `nats` 0.25 to
+# `async-nats`, a bigger change than this backend deserves.
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

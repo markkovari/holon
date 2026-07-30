@@ -38,10 +38,11 @@ pub struct Spec {
     /// duplicates either way.
     #[serde(default)]
     pub port: Option<u16>,
-    /// `memory` (lost on restart), `redis`, or `nats`.
+    /// `sqlite` (default: one file under `StateDirectory`, survives a restart),
+    /// `memory` (lost on restart — honest only for caches), `redis` or `nats`.
     #[serde(default = "default_kv")]
     pub kv: String,
-    /// Backend URL for `kv = "redis" | "nats"`.
+    /// Backend URL for `kv = "redis" | "nats"`. `sqlite` and `memory` need none.
     #[serde(default)]
     pub kv_url: Option<String>,
     /// Optional built SPA directory to serve for non-API GETs.
@@ -75,7 +76,10 @@ pub struct Spec {
 }
 
 fn default_kv() -> String {
-    "memory".into()
+    // sqlite, not memory: `Restart=always` means restarts are routine, so a default
+    // that silently loses data is the wrong one. comp-host puts the file in
+    // $STATE_DIRECTORY, which the unit already declares — so this needs no path.
+    "sqlite".into()
 }
 fn default_access() -> String {
     // Fail closed: private unless the spec says otherwise.
@@ -159,10 +163,12 @@ pub fn check(spec: &Spec) -> Result<()> {
             spec.domain
         );
     }
-    if !matches!(spec.kv.as_str(), "memory" | "redis" | "nats") {
-        bail!("kv must be memory|redis|nats, got {:?}", spec.kv);
+    if !matches!(spec.kv.as_str(), "memory" | "sqlite" | "redis" | "nats") {
+        bail!("kv must be memory|sqlite|redis|nats, got {:?}", spec.kv);
     }
-    if spec.kv != "memory" && spec.kv_url.is_none() {
+    // Only the network backends need an address. sqlite derives its path from the
+    // unit's StateDirectory, which is the point of it.
+    if matches!(spec.kv.as_str(), "redis" | "nats") && spec.kv_url.is_none() {
         bail!("kv = {:?} needs kv_url", spec.kv);
     }
     for k in spec.config.keys() {
@@ -413,7 +419,9 @@ artifact = "components/target/gate_domain.composed.wasm"
     #[test]
     fn a_minimal_spec_needs_three_lines() {
         let s = spec(MINIMAL);
-        assert_eq!(s.kv, "memory");
+        // Durable by default: a spec that says nothing must not lose data on the
+        // first restart, and `Restart=always` makes restarts routine.
+        assert_eq!(s.kv, "sqlite");
         assert!(s.pooling, "pooling defaults on — it is what makes per-request instantiation cheap");
         assert_eq!(port_of(&s), derived_port("gate"));
     }
@@ -556,6 +564,17 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(out.contains("--set-path /gate"), "{out}");
         assert!(out.contains(&format!("http://127.0.0.1:{}", port_of(&spec(MINIMAL)))));
         assert!(out.starts_with("#!/usr/bin/env bash"), "it is a script, not config");
+    }
+
+    #[test]
+    fn sqlite_needs_no_url_and_no_path() {
+        let s = spec(MINIMAL);
+        let unit = render_unit(&s, &Layout::default());
+        assert!(unit.contains("--kv sqlite"), "{unit}");
+        // No --sqlite-path: comp-host reads $STATE_DIRECTORY, which this unit already
+        // declares, and under DynamicUser that path is private to the app.
+        assert!(!unit.contains("--sqlite-path"), "{unit}");
+        assert!(unit.contains("StateDirectory=comp/gate"), "{unit}");
     }
 
     #[test]

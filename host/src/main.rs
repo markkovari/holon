@@ -9,7 +9,8 @@
 //! the component's imports host-side:
 //!   - standard WASI (cli/clocks/random/io/filesystem) via wasmtime-wasi
 //!   - wasi:http via wasmtime-wasi-http
-//!   - wasi:keyvalue@0.2.0-draft  -> in-memory, Redis or NATS JetStream (--kv)
+//!   - wasi:keyvalue@0.2.0-draft  -> in-memory, sqlite, Redis or NATS (--kv). Only
+//!     `memory` loses its contents on restart; the other three survive one.
 //!   - wasi:config@0.2.0-draft    -> the process environment, two ways:
 //!       * `CFG_GRACE_PERIOD_SECS=5` -> config key `grace-period-secs` (generic,
 //!         use this for anything new — it is how the platform component is run)
@@ -331,6 +332,11 @@ struct Args {
     /// Redis URL for --kv redis.
     #[arg(long, default_value = "redis://127.0.0.1:6379")]
     redis_url: String,
+    /// File for `--kv sqlite`. Defaults to `$STATE_DIRECTORY/kv.db`, which systemd
+    /// sets for a unit with `StateDirectory=` — private to the app's uid under
+    /// `DynamicUser=yes`. Falls back to ./comp-kv.db when run by hand.
+    #[arg(long)]
+    sqlite_path: Option<String>,
     /// NATS URL for --kv nats (JetStream KV).
     #[arg(long, default_value = "127.0.0.1:4222")]
     nats_url: String,
@@ -382,7 +388,8 @@ async fn main() -> Result<()> {
     let proxy_pre = ProxyPre::new(linker.instantiate_pre(&component)?)?;
 
     // shared, process-lifetime state.
-    let kv_backend: Kv = kv::build(&args.kv, &args.redis_url, &args.nats_url)?;
+    let sqlite_path = args.sqlite_path.clone().unwrap_or_else(kv::SqliteKv::default_path);
+    let kv_backend: Kv = kv::build(&args.kv, &args.redis_url, &args.nats_url, &sqlite_path)?;
     let cache_backing: CacheBacking = Arc::new(Mutex::new(HashMap::new()));
     let config = Arc::new(build_config());
     let static_dir: Arc<Option<std::path::PathBuf>> =

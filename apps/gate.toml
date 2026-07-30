@@ -15,8 +15,10 @@ artifact = "components/target/gate_domain.composed.wasm"
 # validate` is what refuses two apps landing on the same one.
 # port = 30011
 
-# memory loses state on restart; redis/nats persist. See SELFHOST.md's open question.
-kv = "memory"
+# sqlite is the default: one file in this unit's StateDirectory, so it survives the
+# restarts `Restart=always` guarantees. `memory` is honest only for a cache; redis and
+# nats need a `kv_url` and a daemon.
+kv = "sqlite"
 
 # Read by the Kubernetes lane (tier 3), ignored here. Present so that moving this app
 # up a tier is an edit rather than a rewrite.

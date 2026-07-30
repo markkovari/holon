@@ -142,21 +142,38 @@ is not. `fused` still packs as many *components* as you like into one app at **2
 each**, so you are not giving up the component model, only the sharing of one runtime
 between apps.
 
-### The open question, and it is real
+### State: sqlite, by default
 
-`kv = "memory"` **loses all state when the process restarts** — and `Restart=always` means
-restarts happen. So today tier 1 is honest only for stateless apps, or with `kv = "redis"`
-pointed at a Redis you run.
+`kv = "sqlite"` is the default, and it needed to be — `Restart=always` makes restarts
+routine, so a default that silently loses data is the wrong one.
 
-Three ways out, none built yet:
+One file per app, no daemon, no configuration: `comp-host` writes to
+`$STATE_DIRECTORY/kv.db`, which systemd exports for any unit with `StateDirectory=`, and
+which under `DynamicUser=yes` only that app's transient uid can read. So the spec says
+`kv = "sqlite"` and nothing else — no path, no URL.
 
-1. **A sqlite backend for `comp-host`.** One file per app under `StateDirectory`, no daemon,
-   survives restarts. Cheapest and best fit for a VPS. **Recommended.**
-2. **One Redis per box**, a DB number per app. Works now, costs a daemon (~10 Mi) and gives
-   you an eviction policy you must think about.
-3. **`wasmcloud:postgres`.** `comp-host` has no postgres plugin, but the wasmCloud host
-   does (`wash host --postgres-url`) — worth knowing for tier 2/3, and it would want
-   components written against that interface rather than `wasi:keyvalue`.
+Proven rather than asserted: write a value, kill the process, start it again, read it
+back. The same sequence under `--kv memory` returns `found: false`.
+
+It is also **inspectable**, which is why it beat a pure-Rust embedded store:
+
+```
+$ sqlite3 /var/lib/private/comp/gate/kv.db 'select bucket, key, cast(value as text) from kv'
+orders|42|paid
+```
+
+WAL journalling plus `synchronous=NORMAL`: durable across process death, readers do not
+block the writer, and no fsync per commit. And `increment` runs in an IMMEDIATE
+transaction, so it is **genuinely atomic** — better than the memory and NATS backends,
+which read-modify-write. Verified with 8 threads × 50 increments landing on exactly 400.
+
+The other options remain: `memory` for a pure cache, `redis` or `nats` (each needs a
+`kv_url`) when apps on *different* boxes must share state.
+
+**The limit that no backend can fix:** `wasi:keyvalue` has no compare-and-swap, so a
+component doing read-then-write across two calls is still racy however strong the store
+(ADR-0008). SQLite makes the host's `increment` atomic; it cannot hand a guest a
+transaction.
 
 ---
 
