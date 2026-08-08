@@ -1,0 +1,126 @@
+{
+ "stores": [
+  {
+   "name": "default",
+   "open": "ok",
+   "keys": 0,
+   "expected": true
+  },
+  {
+   "name": "b-app-eve-shop",
+   "open": "refused"
+  },
+  {
+   "name": "app-eve-shop",
+   "open": "refused"
+  },
+  {
+   "name": "eve-shop",
+   "open": "refused"
+  },
+  {
+   "name": "eve",
+   "open": "refused"
+  },
+  {
+   "name": "shop",
+   "open": "refused"
+  },
+  {
+   "name": "eve/shop",
+   "open": "refused"
+  },
+  {
+   "name": "b-app-eve-shop/",
+   "open": "refused"
+  },
+  {
+   "name": "../b-app-eve-shop",
+   "open": "refused"
+  },
+  {
+   "name": "default/../b-app-eve-shop",
+   "open": "refused"
+  },
+  {
+   "name": "DEFAULT",
+   "open": "refused"
+  },
+  {
+   "name": "default ",
+   "open": "refused"
+  },
+  {
+   "name": " default",
+   "open": "refused"
+  },
+  {
+   "name": "",
+   "open": "refused"
+  },
+  {
+   "name": "*",
+   "open": "refused"
+  },
+  {
+   "name": "%2e%2e",
+   "open": "refused"
+  }
+ ],
+ "egress": [
+  {
+   "target": "127.0.0.1:4222",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "localhost:4222",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "127.0.0.1:3401",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "169.254.169.254:80",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "100.64.0.1:3401",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "100.127.255.254:80",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "10.0.0.1:80",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "192.168.1.1:80",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "[::1]:4222",
+   "lateral": true,
+   "result": "refused:address"
+  },
+  {
+   "target": "example.com:80",
+   "lateral": false,
+   "result": "connected"
+  }
+ ],
+ "foreign_opens": 0,
+ "foreign_keys": 0,
+ "connections": 0,
+ "verdict": "contained"
+}

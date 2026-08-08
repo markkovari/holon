@@ -1,0 +1,23 @@
+[package]
+name = "comp-lattice"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "What a node and the reconciler need from the fabric between them, as three traits — and one implementation of them over NATS."
+
+# Native, and its own workspace root like host/, reconciler/ and cli/. It is a
+# LIBRARY rather than a binary because it is the one thing those three genuinely
+# share: the wire contract between a node and the reconciler.
+[workspace]
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+futures = "0.3"
+bytes = "1"
+async-nats = "0.38"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

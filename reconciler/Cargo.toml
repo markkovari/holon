@@ -1,0 +1,51 @@
+[package]
+name = "comp-reconciler"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Diffs desired manifests against observed lattice inventory and issues start/stop commands over NATS. Holds the lattice credential; holds no business logic (docs/adr/0022)."
+
+# A NATIVE binary, deliberately outside the components/ (wasm32) workspace — same
+# arrangement as host/. It exists because a wasm component has no background: this
+# needs a held subscription and a timer. Same reason `applier` existed (ADR-0003),
+# different dangerous credential.
+[workspace]
+
+[lib]
+name = "comp_reconciler"
+path = "src/lib.rs"
+
+[[bin]]
+name = "comp-reconciler"
+path = "src/main.rs"
+
+[[bin]]
+name = "comp-ingress"
+path = "src/bin/ingress.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+# The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
+# broker; `--nats-url` selects the one implementation that ships.
+comp-lattice = { path = "../lattice" }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# For content addressing. The optional OCI mirror push is four HTTP calls on the
+# reqwest client we already have, so it needs no registry crate — see src/oci.rs.
+sha2 = "0.10"
+
+# comp-ingress: terminates HTTP and spreads it across an app's replicas. A second
+# binary here rather than a sixth crate, because it needs exactly two things this
+# crate already has — the NodeInventory shape and the lattice client.
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
+http-body-util = "0.1"
+bytes = "1"
+
+[dev-dependencies]
+# Only to stand up a fake registry in the OCI push test. Nothing here serves HTTP.
+axum = "0.8"

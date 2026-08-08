@@ -1,0 +1,61 @@
+[
+  {
+    "app": "shop",
+    "tenant": "eve",
+    "strategy": "fused",
+    "components": [
+      {
+        "id": "gate",
+        "digest": "",
+        "replicas": 1,
+        "placement": {
+          "mode": "spread",
+          "nodes": [],
+          "constraints": {}
+        },
+        "host_needs": [
+          "wasi:keyvalue/store",
+          "wasi:keyvalue/batch"
+        ],
+        "config": {},
+        "secrets": [],
+        "egress": []
+      }
+    ],
+    "links": [],
+    "ingress": {
+      "host": "shop.eve.test",
+      "component": "gate"
+    }
+  },
+  {
+    "app": "probe",
+    "tenant": "alice",
+    "strategy": "fused",
+    "components": [
+      {
+        "id": "adversary",
+        "digest": "",
+        "replicas": 1,
+        "placement": {
+          "mode": "spread",
+          "nodes": [],
+          "constraints": {}
+        },
+        "host_needs": [
+          "wasi:keyvalue/store",
+          "wasi:keyvalue/batch",
+          "wasi:http/outgoing-handler"
+        ],
+        "config": {},
+        "secrets": [],
+        "egress": []
+      }
+    ],
+    "links": [],
+    "ingress": {
+      "host": "probe.alice.test",
+      "component": "adversary"
+    }
+  }
+]

@@ -175,6 +175,10 @@ const DIGEST: &str = "sha256:111111111111111111111111111111111111111111111111111
 const DIGEST2: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 
 #[test]
+#[ignore = "drives the deleted applier + asserts rendered YAML. The lane it tested is \
+gone (ADR-0021/0022); the harness below — require_port_free, Kill, req, upload — is \
+worth keeping and the assertions need rewriting against the JSON manifest. Until then \
+the end-to-end path is exercised by hand, per ADR-0025."]
 fn platform_signs_in_renders_and_applies() {
     let (_applier, _platform) = start_all();
 
@@ -459,6 +463,10 @@ fn platform_signs_in_renders_and_applies() {
 /// The applier's own boundary, exercised over HTTP rather than as a unit test:
 /// it refuses a payload aimed at a namespace the request does not name.
 #[test]
+#[ignore = "drives the deleted applier + asserts rendered YAML. The lane it tested is \
+gone (ADR-0021/0022); the harness below — require_port_free, Kill, req, upload — is \
+worth keeping and the assertions need rewriting against the JSON manifest. Until then \
+the end-to-end path is exercised by hand, per ADR-0025."]
 fn applier_refuses_a_cross_namespace_payload() {
     let applier_bin = root().join("applier/target/release/applier");
     assert!(applier_bin.exists(), "applier not built");
