@@ -44,7 +44,7 @@ redis = { version = "0.27", features = ["tls-rustls", "tls-rustls-webpki-roots"]
 comp-lattice = { path = "../lattice" }
 # Still direct for `--kv nats`, which is a STORE and not the transport — see
 # docs/adr/0027 on why conflating those two was the mistake.
-async-nats = "0.38"
+async-nats = "0.49"
 futures = "0.3"
 # `bundled` compiles SQLite itself: no system libsqlite3 to match, which keeps the
 # static musl cross-build for a VPS working (see just selfhost-build-host).

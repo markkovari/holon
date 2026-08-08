@@ -201,7 +201,7 @@ pub fn component_ls() -> Result<()> {
     Ok(())
 }
 
-pub fn app_create(name: &str, strategy: &str, components: &[String], links: &[String]) -> Result<()> {
+pub fn app_create(name: &str, strategy: &str, components: &[String], links: &[String], org: Option<&str>) -> Result<()> {
     let s = load()?;
     let edges: Result<Vec<Value>> = links
         .iter()
@@ -219,7 +219,12 @@ pub fn app_create(name: &str, strategy: &str, components: &[String], links: &[St
         "name": name, "strategy": strategy,
         "nodes": components, "edges": edges?,
     });
-    let v = call(&s, "POST", "/api/deployments", Some(body.to_string().into_bytes()), "application/json")?;
+    // `?org=` selects whose deployment this is; omitted means the caller's own.
+    let path = match org {
+        Some(o) => format!("/api/deployments?org={o}"),
+        None => "/api/deployments".to_string(),
+    };
+    let v = call(&s, "POST", &path, Some(body.to_string().into_bytes()), "application/json")?;
     println!("created {} ({})", v["name"].as_str().unwrap_or(name), v["id"].as_str().unwrap_or("?"));
     println!("  `comp app deploy {}` to save and place it", v["id"].as_str().unwrap_or("<id>"));
     Ok(())
@@ -288,5 +293,63 @@ pub fn app_rm(id: &str, confirm: &str) -> Result<()> {
     )?;
     println!("deleted {}", v["deleted"].as_str().unwrap_or(id));
     println!("  {}", v["note"].as_str().unwrap_or("the lattice stops it shortly"));
+    Ok(())
+}
+
+// ---- organisations ---------------------------------------------------------
+
+pub fn org_create(name: &str) -> Result<()> {
+    let s = load()?;
+    let v = call(&s, "POST", "/api/orgs", Some(json!({ "name": name }).to_string().into_bytes()),
+                 "application/json")?;
+    println!("created org {} ({})", v["name"].as_str().unwrap_or(name), v["id"].as_str().unwrap_or("?"));
+    println!("  `comp org invite {}` to add someone", v["id"].as_str().unwrap_or("<id>"));
+    Ok(())
+}
+
+pub fn org_ls() -> Result<()> {
+    let s = load()?;
+    let v = call(&s, "GET", "/api/orgs", None, "application/json")?;
+    let rows = v["orgs"].as_array().cloned().unwrap_or_default();
+    println!("{:<24} {:<24} {}", "ID", "NAME", "YOUR ROLE");
+    for r in rows {
+        println!("{:<24} {:<24} {}", r["id"].as_str().unwrap_or("?"),
+                 r["name"].as_str().unwrap_or("?"), r["role"].as_str().unwrap_or("?"));
+    }
+    Ok(())
+}
+
+pub fn org_invite(org: &str, role: &str) -> Result<()> {
+    let s = load()?;
+    let v = call(&s, "POST", &format!("/api/orgs/{org}/invites"),
+                 Some(json!({ "role": role }).to_string().into_bytes()), "application/json")?;
+    println!("invite code: {}", v["code"].as_str().unwrap_or("?"));
+    println!("  role {} · single use · redeem with `comp org join <code>`",
+             v["role"].as_str().unwrap_or(role));
+    Ok(())
+}
+
+pub fn org_join(code: &str) -> Result<()> {
+    let s = load()?;
+    let v = call(&s, "POST", "/api/orgs/join",
+                 Some(json!({ "code": code }).to_string().into_bytes()), "application/json")?;
+    println!("joined {} as {}", v["org"].as_str().unwrap_or("?"), v["role"].as_str().unwrap_or("?"));
+    Ok(())
+}
+
+pub fn org_members(org: &str) -> Result<()> {
+    let s = load()?;
+    let v = call(&s, "GET", &format!("/api/orgs/{org}/members"), None, "application/json")?;
+    println!("{:<30} {}", "SUBJECT", "ROLE");
+    for m in v["members"].as_array().cloned().unwrap_or_default() {
+        println!("{:<30} {}", m["subject"].as_str().unwrap_or("?"), m["role"].as_str().unwrap_or("?"));
+    }
+    Ok(())
+}
+
+pub fn org_remove(org: &str, subject: &str) -> Result<()> {
+    let s = load()?;
+    call(&s, "DELETE", &format!("/api/orgs/{org}/members/{subject}"), None, "application/json")?;
+    println!("removed {subject} from {org}");
     Ok(())
 }
