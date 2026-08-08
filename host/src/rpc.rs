@@ -31,22 +31,23 @@ pub fn prefix(lattice: &str, instance_id: &str) -> String {
     format!("comp.{lattice}.rpc.{instance_id}")
 }
 
-/// Build the per-interface client map for one instance's REMOTE imports.
+/// A client per linked interface — for EVERY link, local target or not.
 ///
-/// Only entries whose target is not running locally: a local link keeps the direct
-/// in-process path, which is ADR-0019's 1.2 ms and the entire reason for
-/// co-locating a graph by default.
+/// There is deliberately no local short-circuit. Two separately started components
+/// have no in-process path between them: the host satisfies an import from a host
+/// capability or from wRPC, full stop. Skipping a co-located target leaves its
+/// import unbound and the instance refuses to start. Components that do link
+/// in-process were fused by `wac` at build time, which is ADR-0005's other strategy
+/// and a different mechanism.
+///
+/// The loopback case costs about 0.3% — measured, not assumed.
 pub async fn remote_clients(
     nats: Arc<async_nats::Client>,
     lattice: &str,
     links: &std::collections::BTreeMap<String, String>,
-    is_local: impl Fn(&str) -> bool,
 ) -> Result<std::collections::BTreeMap<String, NatsInvoke>> {
     let mut out = std::collections::BTreeMap::new();
     for (iface, target) in links {
-        if is_local(target) {
-            continue;
-        }
         out.insert(iface.clone(), client(nats.clone(), lattice, target, None).await?);
     }
     Ok(out)
@@ -171,7 +172,71 @@ impl WrpcCtx<Transport> for RpcCtx {
     }
 }
 
-/// Serve every function this component exports, so another node can call them.
+/// Actually serve this component's exports, so a remote import has something to
+/// call. The mirror of `link_remote_imports`, and the half without which a bound
+/// import reaches nobody.
+///
+/// One subscription per exported function, on the instance's own subject prefix and
+/// in a **queue group named for the instance**. That is where cross-node load
+/// spreading and failover come from: N replicas of one component join one group,
+/// NATS hands each invocation to exactly one of them, and a replica going away
+/// needs no deregistration.
+///
+/// `make_store` is called per invocation, so a served call gets the same fresh
+/// `Store` — and therefore the same scope, limits and egress policy — that an HTTP
+/// request gets. A served invocation is not a privileged path.
+pub async fn serve_exports_over<T>(
+    engine: &wasmtime::Engine,
+    component: &Component,
+    pre: InstancePre<T>,
+    client: &NatsInvoke,
+    make_store: impl Fn() -> wasmtime::Store<T> + Send + Clone + 'static,
+) -> Result<usize>
+where
+    T: wasmtime_wasi::WasiView + wrpc_runtime_wasmtime::WrpcView + 'static,
+{
+    use futures::StreamExt as _;
+
+    let mut served = 0;
+    for (iface, func, ty) in exported_functions(engine, component) {
+        let invocations = client
+            .serve_function(
+                make_store.clone(),
+                pre.clone(),
+                std::collections::HashMap::new(),
+                ty,
+                &iface,
+                &func,
+            )
+            .await
+            .with_context(|| format!("serving {iface}#{func}"))?;
+
+        let label = format!("{iface}#{func}");
+        tokio::spawn(async move {
+            let mut invocations = std::pin::pin!(invocations);
+            while let Some(item) = invocations.next().await {
+                match item {
+                    // Each invocation runs on its own task: a slow caller must not
+                    // hold up the next one, which is the same reason the HTTP path
+                    // spawns per connection.
+                    Ok((_cx, fut)) => {
+                        let label = label.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = fut.await {
+                                eprintln!("comp-host: serving {label} failed: {e:#}");
+                            }
+                        });
+                    }
+                    Err(e) => eprintln!("comp-host: {label} invocation stream error: {e:#}"),
+                }
+            }
+        });
+        served += 1;
+    }
+    Ok(served)
+}
+
+/// Every function this component exports, so another node can call them.
 ///
 /// Enumerated from the component's own type rather than from a manifest: the
 /// component is the authority on what it exports, and a list maintained anywhere
@@ -180,17 +245,10 @@ impl WrpcCtx<Transport> for RpcCtx {
 /// Only top-level interface exports are served. A component's default (bare
 /// function) exports are its own entry point — `wasi:http/incoming-handler` is the
 /// obvious one — and are reached through the door rather than the bus.
-pub fn serve_exports<T>(
+pub fn exported_functions(
     engine: &wasmtime::Engine,
     component: &Component,
-    pre: InstancePre<T>,
-    client: &NatsInvoke,
-    store: impl Fn() -> wasmtime::Store<T> + Send + Clone + 'static,
-) -> Vec<(String, String, types::ComponentFunc)>
-where
-    T: wasmtime_wasi::WasiView + wrpc_runtime_wasmtime::WrpcView + 'static,
-{
-    let _ = (pre, client, store);
+) -> Vec<(String, String, types::ComponentFunc)> {
     let ty = component.component_type();
     let mut out = Vec::new();
     for (name, item) in ty.exports(engine) {

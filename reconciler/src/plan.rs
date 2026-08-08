@@ -338,7 +338,30 @@ pub fn plan(
         // placement and pays a NATS hop for the edges it splits.
         if m.strategy == Strategy::Linked {
             for c in m.components.iter().filter(|c| c.id != root.id) {
-                for (node, _) in &nodes {
+                // A plug with placement of its OWN goes where it says, which is what
+                // makes a graph span nodes: pin it to a GPU box, or a jurisdiction,
+                // and the link to it becomes a wRPC call instead of an in-process
+                // one. Anything without its own placement still rides along with the
+                // root, because co-location is faster and should stay the default.
+                let spans = !c.placement.constraints.is_empty()
+                    || c.placement.mode == Mode::Pinned
+                    || !c.placement.nodes.is_empty();
+                let targets = if spans {
+                    match place(c, observed) {
+                        Ok(n) => n,
+                        Err(reason) => {
+                            out.unschedulable.push(Unschedulable {
+                                tenant: m.tenant.clone(),
+                                app: m.app.clone(),
+                                reason: format!("`{}`: {reason}", c.id),
+                            });
+                            continue;
+                        }
+                    }
+                } else {
+                    nodes.clone()
+                };
+                for (node, _) in &targets {
                     want.insert(key(m, &c.id, &c.digest, node), (1, m, c));
                 }
             }
@@ -956,6 +979,66 @@ mod tests {
         )
         .expect("parses");
         assert!(!inv.kv_shared, "an absent kv_shared must read as node-local");
+    }
+
+    #[test]
+    fn a_plug_with_its_own_placement_lands_on_a_different_node() {
+        // The change that makes a graph SPAN. Without it every component of a
+        // linked app is pinned to the root's nodes and a cross-node call can never
+        // happen, however well the transport works.
+        let mut plug = comp("store", "sha256:b", 1);
+        plug.placement.constraints.insert("role".into(), "data".into());
+        // The root is pinned to the web tier too, so the test asserts placement
+        // rather than tie-breaking order.
+        let mut root = comp("api", "sha256:a", 1);
+        root.placement.constraints.insert("role".into(), "web".into());
+        let m = app(
+            vec![root, plug],
+            vec![Link { plug: "store".into(), socket: "api".into(), iface: "records:store/store@0.1.0".into() }],
+            Strategy::Linked,
+        );
+        let obs = vec![node("edge", &[("role", "web")], &[]), node("data-1", &[("role", "data")], &[])];
+        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let where_ = |c: &str| {
+            out.commands
+                .iter()
+                .find(|x| matches!(x, Command::Start { component, .. } if component == c))
+                .map(|x| x.node().to_string())
+        };
+        assert_eq!(where_("api").as_deref(), Some("edge"));
+        assert_eq!(where_("store").as_deref(), Some("data-1"), "the plug follows its own placement");
+        assert_ne!(where_("api"), where_("store"), "the graph must actually span");
+    }
+
+    #[test]
+    fn a_plug_without_its_own_placement_still_rides_along() {
+        // Co-location stays the default: it is faster (ADR-0019's 1.2ms) and the
+        // spanning case should be opted into, not fallen into.
+        let m = app(
+            vec![comp("api", "sha256:a", 1), comp("store", "sha256:b", 1)],
+            vec![Link { plug: "store".into(), socket: "api".into(), iface: "records:store/store@0.1.0".into() }],
+            Strategy::Linked,
+        );
+        let obs = vec![node("n1", &[], &[]), node("n2", &[], &[])];
+        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let nodes: std::collections::BTreeSet<&str> =
+            out.commands.iter().map(|c| c.node()).collect();
+        assert_eq!(nodes.len(), 1, "both parts on one node: {nodes:?}");
+    }
+
+    #[test]
+    fn a_plug_that_cannot_be_placed_is_reported_against_its_own_name() {
+        // "app unschedulable" without saying which component is a bad error when a
+        // graph has ten of them.
+        let mut plug = comp("store", "sha256:b", 1);
+        plug.placement.constraints.insert("role".into(), "gpu".into());
+        let m = app(
+            vec![comp("api", "sha256:a", 1), plug],
+            vec![],
+            Strategy::Linked,
+        );
+        let out = plan(&[m], &[node("n1", &[], &[])], &mut Hysteresis::default(), &Cfg::default());
+        assert!(out.unschedulable[0].reason.starts_with("`store`:"), "{:?}", out.unschedulable);
     }
 
     #[test]
