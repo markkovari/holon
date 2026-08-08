@@ -83,7 +83,22 @@ host, the lattice crate and the reconciler were all on **0.38**, giving two inco
 `async_nats::Client` types in one tree. The same shape as the wasmtime pin and equally
 non-negotiable. All three are on 0.49 and everything still passes.
 
-**Open: `WrpcView` demands a client that one lane does not have.** The trait requires every
+**Resolved, and my analysis of it was wrong.** Both "blockers" below dissolved on reading
+`Invoke` itself instead of inferring from `link_instance`'s signature.
+
+*The multi-target problem did not exist.* `Invoke::invoke(&self, cx, instance, func, …)`
+takes the instance as a **per-call argument**. A store is not limited to one remote target;
+the transport can dispatch on the interface name, which is exactly what a link table needs.
+
+*The two-lane problem did not need a refactor.* `Invoke` is a plain trait with three
+associated types, so a small enum can BE one: `Transport::Lattice(map)` delegates,
+`Transport::Solo` refuses with a sentence naming the fix. Borrowing the associated types
+from the NATS client means the refusing variant never constructs a stream it cannot make.
+About thirty lines, against the "make `Host` generic over the transport" refactor I had
+recommended. Recorded because the wrong recommendation was confident and would have cost
+days.
+
+**Was open: `WrpcView` demands a client that one lane does not have.** The trait requires every
 `Store` to hold a live `Invoke` client. A single-app run — `comp-host --component x.wasm` —
 has no NATS at all, and that is the *point* of that lane: it is what the self-hosting story
 and around thirty example recipes use. Three ways out, none obviously right:
@@ -101,8 +116,35 @@ ids. Whether wRPC wants a client per target, or treats the prefix as a namespace
 an address, needs reading its invocation path properly rather than inferring from a
 signature.
 
-I stopped here rather than pick (c) because it is cheap. That would trade a lie in the
+*(Historical: this was the reasoning at the time. The enum above is the answer none of the
+three options was.)* I stopped rather than pick (c) because it is cheap. That would trade a lie in the
 architecture for a green tick, and the lane it damages is the one people actually run.
+
+## The call side, wired
+
+`Host` implements `WrpcView`. At start, an instance's link table is split: targets running
+in this process keep the direct in-process path, and the rest become wRPC clients keyed by
+the interface they arrive through. `link_remote_imports` then binds those interfaces in the
+linker **before** `instantiate_pre`, so an import with neither a host impl nor a link still
+fails at start — omission stays fail-closed (ADR-0013).
+
+A bound import is indistinguishable from a local one to the guest: it calls a function, and
+whether that crosses a machine is a placement decision it never sees. That is what the
+component model is for, and why this belongs in the linker rather than at a call site.
+
+Resources are explicitly not carried across yet — `link_instance` is given empty resource
+maps. wRPC encodes a resource as opaque bytes whose meaning is application-specific, and
+nothing here has defined that meaning, so an interface carrying one must be refused at
+placement rather than handed a blob the far side cannot interpret.
+
+## Still missing: the serve side
+
+Nothing yet exposes a component's exports over wRPC, so a bound import has nobody to call.
+`ServeExt::serve_function` is the mirror of the above and `serve_exports` already enumerates
+what to serve; what remains is spawning those tasks at start with the instance's own subject
+prefix and a queue group, and letting `plan.rs` place a graph across nodes instead of
+co-locating it. Until both exist there is no end-to-end test, and this is **not** claimed to
+work.
 
 ## What is settled and kept
 
