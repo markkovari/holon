@@ -1819,3 +1819,9 @@ slow-backend: compose-gate build-reconciler
 orgs: compose-platform build-reconciler
     cd host && cargo build --release --bin comp-host
     bash bench/adversarial/orgs.sh
+
+# Cross-node invocation: ONE app whose graph is split over two nodes, so one link
+# is an in-process call and the other must cross the wire. See docs/adr/0032.
+split-graph: compose build-reconciler
+    cd host && cargo build --release --bin comp-host
+    bash bench/adversarial/split-graph.sh

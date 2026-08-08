@@ -388,24 +388,30 @@ async fn start(
     .context("compile task")?
     .map_err(|e| anyhow::anyhow!("compiling the artifact for {id}: {e}"))?;
 
-    // Which of this instance's links point somewhere else. A local target keeps
-    // the direct in-process path; only the rest become wRPC clients.
-    let local: std::collections::BTreeSet<String> =
-        agent.instances.read().unwrap().keys().cloned().collect();
+    // EVERY link becomes a wRPC client, including one whose target is running in
+    // this very process.
+    //
+    // That reads wrong and is not. There is no in-process path between two
+    // SEPARATELY STARTED components: the host satisfies an import from a host
+    // capability or from wRPC, and nothing else. Skipping a local target leaves its
+    // import unbound and the instance fails to start with "a matching
+    // implementation was not found in the linker" — measured, by trying it.
+    //
+    // Components that link in-process do so because `wac` fused them at build time,
+    // which is a different mechanism entirely (ADR-0005's two strategies).
+    //
+    // It also costs almost nothing: co-located over the loopback bus measured 2,795
+    // rps against 2,788 for the same graph, i.e. inside noise. A local short-circuit
+    // would be an optimisation worth roughly 0.3%, and would first require building
+    // instance-to-instance linking that does not exist.
     let remotes = match (&agent.nats, scope.links.is_empty()) {
         (Some(nats), false) => {
-            crate::rpc::remote_clients(nats.clone(), &agent.lattice, &scope.links, |t| {
-                local.contains(t)
-            })
-            .await?
+            crate::rpc::remote_clients(nats.clone(), &agent.lattice, &scope.links).await?
         }
         _ => Default::default(),
     };
     if !remotes.is_empty() {
-        eprintln!(
-            "comp-host: {id} links {} interface(s) to components on other nodes",
-            remotes.len()
-        );
+        eprintln!("comp-host: {id} links {} interface(s) over wrpc", remotes.len());
     }
 
     let mut linker = crate::build_linker(&agent.engine)?;
@@ -416,13 +422,34 @@ async fn start(
         let n = crate::rpc::link_remote_imports(&agent.engine, &mut linker, &component, &remotes)?;
         eprintln!("comp-host: {id} bound {n} interface(s) over wrpc");
     }
-    let pre = wasmtime_wasi_http::p2::bindings::ProxyPre::new(linker.instantiate_pre(&component)?)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "{id} does not export wasi:http/incoming-handler ({e}). Runtime-linking a \
-                 plug component in-process is not built yet — deploy it fused for now"
+    let ipre = linker.instantiate_pre(&component)?;
+    // A component that exports `wasi:http/incoming-handler` gets a door; one that
+    // does not is a plug, reachable over the bus only. Both are legal instances —
+    // before the serve side existed, the second could not start at all.
+    let pre = wasmtime_wasi_http::p2::bindings::ProxyPre::new(ipre.clone()).ok();
+
+    // Serve this instance's exports so a remote import has something to call. On the
+    // instance's own subject, in a queue group named for it, so N replicas share the
+    // work and a departing one needs no deregistration.
+    if let Some(nats) = &agent.nats {
+        let exports = crate::rpc::exported_functions(&agent.engine, &component);
+        if !exports.is_empty() {
+            let serve_client =
+                crate::rpc::client(nats.clone(), &agent.lattice, &id, Some(&id)).await?;
+            let (kv, cache, sc, rem) =
+                (agent.kv.clone(), agent.cache_backing.clone(), scope.clone(), remotes.clone());
+            let engine = agent.engine.clone();
+            let n = crate::rpc::serve_exports_over(
+                &agent.engine,
+                &component,
+                ipre,
+                &serve_client,
+                move || crate::store_for(&engine, sc.clone(), kv.clone(), cache.clone(), rem.clone()),
             )
-        })?;
+            .await?;
+            eprintln!("comp-host: {id} serves {n} function(s) to the lattice");
+        }
+    }
 
     agent
         .instances

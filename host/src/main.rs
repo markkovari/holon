@@ -90,7 +90,13 @@ pub type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 /// boot for the only component it would ever run.
 pub struct Instance {
     pub scope: SharedScope,
-    pub pre: ProxyPre<Host>,
+    /// The HTTP world, when this component exports one.
+    ///
+    /// `None` for a plug: it exports interfaces other components call, not a door
+    /// requests arrive at. Before cross-node serving existed a plug could not start
+    /// at all; now it starts, serves its exports over the bus, and simply never
+    /// appears in the route table.
+    pub pre: Option<ProxyPre<Host>>,
     /// Clients for this instance's REMOTE imports, keyed by interface. Built once
     /// at start, because resolving a target per request would put a lookup on the
     /// hot path for something that only changes when placement does.
@@ -710,7 +716,7 @@ async fn main() -> Result<()> {
                 .into_scope(&limits),
             );
             let component = Component::from_file(&engine, &args.component)?;
-            let pre = ProxyPre::new(build_linker(&engine)?.instantiate_pre(&component)?)?;
+            let pre = Some(ProxyPre::new(build_linker(&engine)?.instantiate_pre(&component)?)?);
             let id = scope.id();
             instances
                 .write()
@@ -879,7 +885,9 @@ fn resolve(
 
     let routes = routes.read().unwrap();
     let id = routes.get(&host).or_else(|| routes.get(CATCH_ALL))?;
-    instances.read().unwrap().get(id).cloned()
+    // A plug is in the instance table but has no HTTP world, so it can never be
+    // reached through the door even if something routed to it by mistake.
+    instances.read().unwrap().get(id).filter(|i| i.pre.is_some()).cloned()
 }
 
 fn not_found() -> hyper::Response<HyperOutgoingBody> {
@@ -980,15 +988,20 @@ fn content_type(p: &std::path::Path) -> &'static str {
     }
 }
 
-/// Drive one HTTP request through the component's incoming-handler.
-async fn handle_request(
-    engine: Arc<Engine>,
-    instance: Arc<Instance>,
+
+/// One `Store` with this instance's scope, limits and egress policy.
+///
+/// Factored out because a wRPC-served invocation must get exactly the same store an
+/// HTTP request gets — same tenant boundary, same memory cap, same CPU slice, same
+/// allow-list. A second construction path would be a second place for one of those
+/// to be forgotten, and they are the ones ADR-0023 is about.
+pub fn store_for(
+    engine: &Engine,
+    scope: SharedScope,
     kv: Kv,
     cache_backing: CacheBacking,
-    req: hyper::Request<hyper::body::Incoming>,
-) -> Result<hyper::Response<HyperOutgoingBody>> {
-    let scope = instance.scope.clone();
+    remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
+) -> Store<Host> {
     let (mem_cap, slice_ms) = (scope.mem_cap, scope.slice_ms);
     let host = Host {
         table: ResourceTable::new(),
@@ -1000,30 +1013,34 @@ async fn handle_request(
         scope,
         limits: wasmtime::StoreLimits::default(),
         rpc: rpc::RpcCtx::new(
-            if instance.remotes.is_empty() {
-                rpc::Transport::Solo
-            } else {
-                rpc::Transport::Lattice(instance.remotes.clone())
-            },
+            if remotes.is_empty() { rpc::Transport::Solo } else { rpc::Transport::Lattice(remotes) },
             Some(std::time::Duration::from_secs(30)),
         ),
     };
-    let mut store = Store::new(&engine, host);
-
-    // The `Store` is where a tenant boundary is cheapest to enforce, because one
-    // already exists per request. Two limits ride on it:
-    //
-    //   * linear memory, per app, under the fleet-wide pooling ceiling; and
-    //   * a CPU slice, after which the guest YIELDS to the tokio scheduler rather
-    //     than trapping. Yielding is the point — a busy component should be slow,
-    //     not broken, while its neighbours stay responsive.
+    let mut store = Store::new(engine, host);
     store.limiter(move |h| &mut h.limits);
-    store.data_mut().limits = wasmtime::StoreLimitsBuilder::new()
-        .memory_size(mem_cap)
-        .trap_on_grow_failure(true)
-        .build();
+    store.data_mut().limits =
+        wasmtime::StoreLimitsBuilder::new().memory_size(mem_cap).trap_on_grow_failure(true).build();
     store.set_epoch_deadline(slice_ms);
     store.epoch_deadline_async_yield_and_update(slice_ms);
+    store
+}
+
+/// Drive one HTTP request through the component's incoming-handler.
+async fn handle_request(
+    engine: Arc<Engine>,
+    instance: Arc<Instance>,
+    kv: Kv,
+    cache_backing: CacheBacking,
+    req: hyper::Request<hyper::body::Incoming>,
+) -> Result<hyper::Response<HyperOutgoingBody>> {
+    let mut store = store_for(
+        &engine,
+        instance.scope.clone(),
+        kv,
+        cache_backing,
+        instance.remotes.clone(),
+    );
 
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // hyper::body::Incoming is already Body<Data=Bytes, Error=hyper::Error>.
@@ -1032,7 +1049,10 @@ async fn handle_request(
         req,
     )?;
     let out = store.data_mut().http().new_response_outparam(sender)?;
-    let proxy = instance.pre.instantiate_async(&mut store).await?;
+    let Some(pre) = instance.pre.as_ref() else {
+        anyhow::bail!("{} serves no HTTP; it is reachable through links only", instance.scope.id())
+    };
+    let proxy = pre.instantiate_async(&mut store).await?;
 
     let task = tokio::task::spawn(async move {
         proxy
