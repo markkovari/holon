@@ -14,3 +14,4 @@
 # NOTE: wit/ (including wit/deps/ and wkg.lock) IS version-controlled on
 # purpose — the contract and its pinned, vendored WASI dependencies are part of
 # the repo so the build is reproducible offline.
+sweep.json

@@ -142,6 +142,13 @@ struct Host {
     limits: wasmtime::StoreLimits,
 }
 
+// `impl WrpcView for Host` belongs here and is NOT written, deliberately. See the
+// blocker at the bottom of `rpc.rs`: the trait requires every store to hold a live
+// wRPC client, and a single-app run has no NATS to build one from. Writing it would
+// mean either forcing a broker into a lane whose whole point is not needing one, or
+// making `Host` generic over the transport — a large change that wants deciding
+// rather than defaulting into.
+
 /// Map a backend error to the wasi:keyvalue `error` variant.
 fn kv_err(e: anyhow::Error) -> store::Error {
     store::Error::Other(format!("{e:#}"))

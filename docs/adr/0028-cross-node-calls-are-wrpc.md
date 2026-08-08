@@ -73,6 +73,46 @@ already knows or a NATS client already is. One wrinkle found and recorded: `Invo
 implemented on `Client`, not on `Arc<Client>`, so the client is cloned per instance rather
 than shared behind a pointer. It is a handle over one connection, so that is cheap.
 
+## Two blockers, found by trying
+
+Attempting the wiring surfaced one hard dependency problem, now fixed, and one design
+question that is not mine to settle by guessing.
+
+**Fixed: async-nats was split.** `wrpc-transport-nats` 0.31 needs async-nats **0.49**; the
+host, the lattice crate and the reconciler were all on **0.38**, giving two incompatible
+`async_nats::Client` types in one tree. The same shape as the wasmtime pin and equally
+non-negotiable. All three are on 0.49 and everything still passes.
+
+**Open: `WrpcView` demands a client that one lane does not have.** The trait requires every
+`Store` to hold a live `Invoke` client. A single-app run — `comp-host --component x.wasm` —
+has no NATS at all, and that is the *point* of that lane: it is what the self-hosting story
+and around thirty example recipes use. Three ways out, none obviously right:
+
+| | cost |
+|---|---|
+| make `Host` generic over the transport, null impl for the single-app lane | correct; touches every capability impl and every `Store` on the request path |
+| split the lanes into two `Host` types | duplicates the capability impls — the security-critical ones (ADR-0023), exactly what must not exist twice |
+| connect NATS unconditionally | cheapest; silently makes the broker-free lane depend on a broker, which is a lie about what the lane is for |
+
+**Also open: one store implies one remote prefix.** `link_instance` resolves its target from
+the client in `WrpcCtx`, so a component importing from two different remote instances cannot
+be served by one client — and a link table is explicitly many interfaces to many instance
+ids. Whether wRPC wants a client per target, or treats the prefix as a namespace rather than
+an address, needs reading its invocation path properly rather than inferring from a
+signature.
+
+I stopped here rather than pick (c) because it is cheap. That would trade a lie in the
+architecture for a green tick, and the lane it damages is the one people actually run.
+
+## What is settled and kept
+
+* `WrpcCtx` is satisfiable by our types — asserted at compile time.
+* **The addressing scheme**: `comp.<lattice>.rpc.<tenant>/<app>/<component>`, with a queue
+  group on the serve side so replicas share invocations and failover is free. That is what
+  NATS queue groups were wanted for from the start.
+* **Which exports are worth serving and which imports are linkable**, both read from the
+  component's own type rather than from a manifest that could drift from it.
+
 ## What is still not built
 
 The deferral itself stands: nothing in this repo has yet made a WIT call over a wire. The

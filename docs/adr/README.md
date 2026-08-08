@@ -48,6 +48,7 @@ single-component app should be a container, not a wasm workload.
 | [0028](0028-cross-node-calls-are-wrpc.md) | Cross-node calls are wRPC; the codec I designed should never have existed | accepted |
 | [0029](0029-one-address-in-front-of-n-replicas.md) | One address in front of N replicas, and its table comes from inventory | accepted; its balancer replaced by [0030](0030-least-outstanding.md) |
 | [0030](0030-least-outstanding.md) | Least-outstanding, because round robin collapsed on a real fleet | accepted |
+| [0031](0031-an-org-owns-a-deployment.md) | An organisation owns a deployment, and a person can be in several | accepted |
 
 ## The shape these add up to
 

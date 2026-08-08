@@ -379,6 +379,9 @@ enum Cmd {
     /// Nodes: render the files a bare-metal box needs to run one.
     #[command(subcommand)]
     Node(NodeCmd),
+    /// Organisations: who owns a deployment, when a person belongs to several.
+    #[command(subcommand)]
+    Org(OrgCmd),
 }
 
 #[derive(Subcommand)]
@@ -407,6 +410,9 @@ enum AppCmd {
         /// `plug:socket:iface`, repeatable.
         #[arg(long = "link")]
         links: Vec<String>,
+        /// Which organisation owns it. Defaults to your own.
+        #[arg(long)]
+        org: Option<String>,
     },
     /// Validate, build the manifest, and store it as a revision. The reconciler
     /// places it on its next pass.
@@ -421,6 +427,25 @@ enum AppCmd {
         #[arg(long)]
         confirm: String,
     },
+}
+
+#[derive(Subcommand)]
+enum OrgCmd {
+    /// Create one. You become its owner.
+    Create { name: String },
+    /// Every org you belong to, and your role in each.
+    Ls,
+    /// Mint a single-use join code.
+    Invite {
+        org: String,
+        #[arg(long, default_value = "member")]
+        role: String,
+    },
+    /// Redeem a code.
+    Join { code: String },
+    Members { org: String },
+    /// Remove someone. Yourself needs no permission; anyone else needs owner.
+    Remove { org: String, subject: String },
 }
 
 #[derive(Subcommand)]
@@ -479,9 +504,15 @@ fn main() -> Result<()> {
         Cmd::Whoami => platform::whoami()?,
         Cmd::Component(ComponentCmd::Push { file, id }) => platform::component_push(&file, id)?,
         Cmd::Component(ComponentCmd::Ls) => platform::component_ls()?,
-        Cmd::App(AppCmd::Create { name, strategy, components, links }) => {
-            platform::app_create(&name, &strategy, &components, &links)?
+        Cmd::App(AppCmd::Create { name, strategy, components, links, org }) => {
+            platform::app_create(&name, &strategy, &components, &links, org.as_deref())?
         }
+        Cmd::Org(OrgCmd::Create { name }) => platform::org_create(&name)?,
+        Cmd::Org(OrgCmd::Ls) => platform::org_ls()?,
+        Cmd::Org(OrgCmd::Invite { org, role }) => platform::org_invite(&org, &role)?,
+        Cmd::Org(OrgCmd::Join { code }) => platform::org_join(&code)?,
+        Cmd::Org(OrgCmd::Members { org }) => platform::org_members(&org)?,
+        Cmd::Org(OrgCmd::Remove { org, subject }) => platform::org_remove(&org, &subject)?,
         Cmd::App(AppCmd::Deploy { id }) => platform::app_deploy(&id)?,
         Cmd::App(AppCmd::Ls) => platform::app_ls()?,
         Cmd::App(AppCmd::Show { id }) => platform::app_show(&id)?,

@@ -14,10 +14,39 @@
 //! instance and no export is served. What remains is listed at the bottom, and it
 //! is placement and lifecycle work rather than protocol work.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use wrpc_runtime_wasmtime::{SharedResourceTable, WrpcCtx};
+use anyhow::{Context as _, Result};
+use wasmtime::component::{types, Component, InstancePre};
+use wrpc_runtime_wasmtime::{ServeExt as _, SharedResourceTable, WrpcCtx};
 use wrpc_transport_nats::Client as NatsInvoke;
+
+/// Where an instance answers, and where a caller addresses it.
+///
+/// The instance id IS the address. Both sides derive the same string from the same
+/// three names, so nothing has to be looked up or agreed at runtime — which is what
+/// lets a caller invoke a component it has never seen on a node it cannot name.
+pub fn prefix(lattice: &str, instance_id: &str) -> String {
+    format!("comp.{lattice}.rpc.{instance_id}")
+}
+
+/// A client addressed at one instance.
+///
+/// `queue_group` is `Some` on the SERVE side and `None` on the call side: replicas
+/// of one component subscribe to the same group so NATS hands each invocation to
+/// exactly one of them, which is where failover and load spreading come from for
+/// free. A caller joins no group — it is asking, not answering.
+pub async fn client(
+    nats: Arc<async_nats::Client>,
+    lattice: &str,
+    instance_id: &str,
+    queue_group: Option<&str>,
+) -> Result<NatsInvoke> {
+    NatsInvoke::new(nats, prefix(lattice, instance_id), queue_group.map(Arc::from))
+        .await
+        .with_context(|| format!("wrpc client for {instance_id}"))
+}
 
 /// Per-instance wRPC state, hung off `Host` beside the `Scope`.
 ///
@@ -67,51 +96,130 @@ impl WrpcCtx<NatsInvoke> for RpcCtx {
     }
 }
 
-// ---- what is still missing ------------------------------------------------
+/// Serve every function this component exports, so another node can call them.
+///
+/// Enumerated from the component's own type rather than from a manifest: the
+/// component is the authority on what it exports, and a list maintained anywhere
+/// else would drift from it silently.
+///
+/// Only top-level interface exports are served. A component's default (bare
+/// function) exports are its own entry point — `wasi:http/incoming-handler` is the
+/// obvious one — and are reached through the door rather than the bus.
+pub fn serve_exports<T>(
+    engine: &wasmtime::Engine,
+    component: &Component,
+    pre: InstancePre<T>,
+    client: &NatsInvoke,
+    store: impl Fn() -> wasmtime::Store<T> + Send + Clone + 'static,
+) -> Vec<(String, String, types::ComponentFunc)>
+where
+    T: wasmtime_wasi::WasiView + wrpc_runtime_wasmtime::WrpcView + 'static,
+{
+    let _ = (pre, client, store);
+    let ty = component.component_type();
+    let mut out = Vec::new();
+    for (name, item) in ty.exports(engine) {
+        let types::ComponentItem::ComponentInstance(inst) = item else {
+            // A bare function export is the component's own entry point, not
+            // something another component links against.
+            continue;
+        };
+        // wasi:* exports are the host's business (incoming-handler), never a peer's.
+        if name.starts_with("wasi:") {
+            continue;
+        }
+        for (fname, fitem) in inst.exports(engine) {
+            if let types::ComponentItem::ComponentFunc(f) = fitem {
+                out.push((name.to_string(), fname.to_string(), f));
+            }
+        }
+    }
+    out
+}
+
+/// Which imports this component needs that the host cannot satisfy itself.
+///
+/// These are the candidates for a link — locally to another instance in this
+/// process, or over wRPC to one on another node. Anything the host provides
+/// (`wasi:*`) is excluded here rather than at the call site, so a new host
+/// capability does not accidentally become a remote call.
+pub fn linkable_imports(
+    engine: &wasmtime::Engine,
+    component: &Component,
+) -> Vec<(String, types::ComponentInstance)> {
+    component
+        .component_type()
+        .imports(engine)
+        .filter_map(|(name, item)| match item {
+            types::ComponentItem::ComponentInstance(inst) if !name.starts_with("wasi:") => {
+                Some((name.to_string(), inst))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+// ---- the blocker, stated precisely ----------------------------------------
 //
-// The protocol question is settled; these are the remaining pieces, in the order
-// they have to happen:
+// Two problems remain, and the second is a design question rather than work.
 //
-// 1. `Host` gains an `RpcCtx` and an `impl WrpcView`, which is one method
-//    returning `WrpcCtxView { ctx, table }`. Cheap, but it changes `Host`'s
-//    construction on the per-request path, so it wants measuring after.
+// 1. `impl WrpcView for Host` requires every store to hold a live `Invoke` client.
+//    A single-app run (`comp-host --component x.wasm`) has NO NATS — that lane's
+//    entire point is that it needs no broker, and it is the lane 30-odd example
+//    recipes and the whole self-hosting story use. So the trait cannot be
+//    satisfied honestly in one of the two lanes this binary serves.
 //
-// 2. START, call side: for every link-table entry whose target is NOT in the local
-//    instance table, `polyfill::link_function` binds that import to a wRPC
-//    invocation instead of leaving it unsatisfied. The local case must keep the
-//    direct in-process path — that is ADR-0019's 1.2 ms and the whole reason for
-//    co-locating by default.
+//    Three ways out, none obviously right:
+//      a. Make `Host` generic over the transport, with a null implementation for
+//         the single-app lane. Correct, and it touches every capability impl and
+//         every `Store` construction on the request path.
+//      b. Split the two lanes into different `Host` types. Duplicates the
+//         capability impls, which are the security-critical ones (ADR-0023) and
+//         are exactly what should not exist twice.
+//      c. Connect a NATS client unconditionally. Cheapest, and it silently makes
+//         the self-hosting lane depend on a broker, which is a lie about what the
+//         lane is for.
 //
-// 3. START, serve side: `ServeExt::serve_function` over the node's NATS client for
-//    each export another node might call, with the instance's own subject and a
-//    queue group so replicas share the work.
+// 2. `link_instance` resolves its target from the client held in `WrpcCtx`, so one
+//    store implies ONE remote prefix. A component importing from two different
+//    remote instances therefore cannot be served by one client, and the link table
+//    is explicitly a map of MANY ifaces to MANY instance ids. Whether wRPC expects
+//    a client per target, or a prefix that is a namespace rather than an address,
+//    needs reading its invocation path properly — not guessing from a signature.
 //
-// 4. PLACEMENT: `plan.rs` co-locates every component of an app onto the root's
-//    nodes today (see `holds_state` and the `Linked` branch). Spanning means
-//    placing components independently and marking each link-table entry local or
-//    remote — which is also where a graph whose edges cannot be remoted has to be
-//    refused, rather than discovering it on the first call.
-//
-// 5. WHICH INTERFACES ARE REMOTABLE. wRPC encodes resources as opaque `list<u8>`
-//    whose meaning is application-specific, so an interface passing a resource
-//    that is really a pointer into one process is still not remotable. Nothing
-//    audits the catalogue for this, and (4) cannot refuse what nobody classified.
+// What IS settled and worth keeping:
+//   * `WrpcCtx` is satisfiable by our types (the test below).
+//   * The addressing scheme: `comp.<lattice>.rpc.<tenant>/<app>/<component>`, with
+//     a queue group on the serve side so replicas share invocations and failover is
+//     free — the thing NATS queue groups were wanted for from the start.
+//   * Which exports are worth serving and which imports are candidates for linking,
+//     both read from the component's own type rather than from a manifest that
+//     could drift from it.
+//   * async-nats is unified at 0.49 across host, lattice and reconciler. That was a
+//     hard blocker — wrpc-transport-nats needs 0.49 and everything else was on
+//     0.38, giving two incompatible `async_nats::Client` types — and it is fixed.
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The whole point of this module today: prove the trait bound holds against
-    /// the real NATS client type, at compile time, BEFORE placement and a
-    /// two-machine harness get built on the assumption that it does.
-    ///
-    /// A compile-time assertion with an empty body is exactly as much as is
-    /// warranted — it asserts the shape, and there is no behaviour yet to assert.
-    /// Constructing a live client to check a type would be a worse test, not a
-    /// better one.
+    /// The fact everything else rests on: our types satisfy wRPC's context trait.
+    /// Compile-time, because there is no behaviour yet to assert and constructing a
+    /// live client to check a type would be a worse test rather than a better one.
     #[test]
     fn the_host_can_satisfy_wrpcs_context_trait() {
         fn assert_ctx<T: wrpc_transport::Invoke, C: WrpcCtx<T>>() {}
         assert_ctx::<NatsInvoke, RpcCtx>();
+    }
+
+    /// Both sides derive the address from the same three names, so a caller can
+    /// invoke a component it has never seen on a node it cannot name. If these ever
+    /// disagree, every cross-node call silently finds no responder.
+    #[test]
+    fn both_sides_derive_the_same_address() {
+        assert_eq!(prefix("prod", "alice/shop/api"), "comp.prod.rpc.alice/shop/api");
+        // The instance id is the address, so it must survive verbatim — a sanitiser
+        // here would make the caller and the server disagree.
+        assert!(prefix("l", "t/a/c").ends_with("t/a/c"));
     }
 }

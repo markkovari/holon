@@ -1813,3 +1813,9 @@ five-nodes: compose-gate build-reconciler
 slow-backend: compose-gate build-reconciler
     cd host && cargo build --release --bin comp-host
     bash bench/adversarial/slow-backend.sh
+
+# Organisations end to end: three people, one shared org, and a fourth party
+# refused at both read and write. See docs/adr/0031.
+orgs: compose-platform build-reconciler
+    cd host && cargo build --release --bin comp-host
+    bash bench/adversarial/orgs.sh

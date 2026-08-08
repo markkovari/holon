@@ -20,6 +20,7 @@
 #[allow(warnings)]
 mod bindings;
 mod manifest;
+mod orgs;
 
 use serde_json::{json, Map, Value};
 
@@ -49,6 +50,9 @@ const CATALOG: &str = "catalog";
 const DEPLOYMENTS: &str = "deployments";
 const REVISIONS: &str = "revisions";
 const BIN: &str = "wasm";
+/// How long a join code is good for. Long enough to hand over, short enough that a
+/// leaked one in a chat log is usually already dead.
+const INVITE_TTL: u64 = 7 * 24 * 3600;
 /// Deployments per tenant in slice 1. Enforced through `quota:meter`, whose limit
 /// is a caller-supplied parameter — the platform is the entitlement store.
 const DEPLOYMENT_BUDGET: u64 = 5;
@@ -66,11 +70,20 @@ impl Guest for Component {
             (Method::Post, ["api", "login"]) => login(&request),
             (Method::Get, ["api", "me"]) => me(&request),
 
+            (Method::Post, ["api", "orgs"]) => org_create(&request),
+            (Method::Get, ["api", "orgs"]) => org_list(&request),
+            (Method::Post, ["api", "orgs", "join"]) => org_join(&request),
+            (Method::Get, ["api", "orgs", org, "members"]) => org_members(&request, org),
+            (Method::Post, ["api", "orgs", org, "invites"]) => org_invite(&request, org),
+            (Method::Delete, ["api", "orgs", org, "members", subject]) => {
+                org_remove(&request, org, subject)
+            }
+
             (Method::Post, ["api", "components"]) => component_add(&request, &query),
             (Method::Get, ["api", "components"]) => components_list(&request),
             (Method::Post, ["api", "components", "publish"]) => component_publish(&request),
 
-            (Method::Post, ["api", "deployments"]) => deployment_create(&request),
+            (Method::Post, ["api", "deployments"]) => deployment_create(&request, &query),
             (Method::Get, ["api", "deployments"]) => deployments_list(&request),
             (Method::Get, ["api", "deployments", id]) => deployment_get(&request, id),
             (Method::Post, ["api", "deployments", id, "save"]) => deployment_save(&request, id),
@@ -103,7 +116,7 @@ enum Outcome {
     Structured(u16, Value),
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     wall_clock::now().seconds
 }
 
@@ -162,12 +175,32 @@ fn register(request: &IncomingRequest) -> Outcome {
                     "tenant": tenant, "owner": p.subject, "created": now(),
                     "plan": { "replicas": 1, "pool_size": 8, "max_invocations": 200,
                               "max_deployments": DEPLOYMENT_BUDGET, "egress": [],
-                              "storage": "1Gi", "host_cpu": "100m", "host_memory": "256Mi" },
-                    "namespace_applied": false
+                              "constraints": {} },
                 });
                 let _ = records::create(ACCOUNTS, &doc.to_string(), &["tenant".to_string()]);
             }
-            Outcome::Json(201, json!({ "subject": p.subject, "tenant": p.tenant }).to_string())
+            // A solo organisation, so there is never a code path where someone has
+            // no org to deploy into and no second shape for "personal" work. If it
+            // already exists this account is joining an existing tenant, and the
+            // first account there owns it.
+            if orgs::role_of(&p.subject, &tenant).is_none() {
+                let role = match find_one(orgs::ORGS, "id", &tenant) {
+                    None => {
+                        let _ = orgs::create(&tenant, &p.subject, &email);
+                        orgs::Role::Owner
+                    }
+                    // An existing org is NOT joined automatically by anyone who
+                    // guesses its tenant name — that would make registration an
+                    // access-control bypass. They need an invite.
+                    Some(_) => orgs::Role::Viewer,
+                };
+                let _ = role;
+            }
+            Outcome::Structured(
+                201,
+                json!({ "subject": p.subject, "tenant": p.tenant,
+                        "orgs": orgs::memberships(&p.subject) }),
+            )
         }
         Err(e) => auth_err(e),
     }
@@ -499,11 +532,109 @@ fn internal_ok(request: &IncomingRequest) -> bool {
         .unwrap_or(false)
 }
 
-// ---- deployments ------------------------------------------------------------
 
-fn deployment_create(request: &IncomingRequest) -> Outcome {
+// ---- organisations ----------------------------------------------------------
+
+/// The org a caller acts on behalf of when they name none: their own.
+///
+/// Created at registration so there is never a code path where someone has no org.
+fn personal_org(p: &auth_types::Principal) -> String {
+    p.tenant.clone()
+}
+
+fn org_create(request: &IncomingRequest) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
+    };
+    let b = match body(request) {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    let name = str_of(&b, "name");
+    match orgs::create(&name, &p.subject, &p.subject) {
+        Ok(doc) => Outcome::Json(201, doc.to_string()),
+        Err(e) => Outcome::Err(422, e),
+    }
+}
+
+fn org_list(request: &IncomingRequest) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    Outcome::Structured(200, json!({ "orgs": orgs::memberships(&p.subject) }))
+}
+
+fn org_invite(request: &IncomingRequest, org: &str) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    // Only an owner may widen who can touch an org's deployments.
+    let q: Map<String, Value> = [("org".to_string(), json!(org))].into_iter().collect();
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), &q, orgs::Role::Owner) {
+        return Outcome::Err(code, msg);
+    }
+    let role = body(request)
+        .ok()
+        .and_then(|b| b["role"].as_str().and_then(orgs::Role::parse))
+        .unwrap_or(orgs::Role::Member);
+    match orgs::invite(org, role, &p.subject, INVITE_TTL) {
+        Ok(v) => Outcome::Structured(201, v),
+        Err(e) => Outcome::Err(422, e),
+    }
+}
+
+fn org_join(request: &IncomingRequest) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let b = match body(request) {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    match orgs::redeem(&str_of(&b, "code"), &p.subject, &p.subject) {
+        Ok(v) => Outcome::Structured(200, v),
+        Err(e) => Outcome::Err(422, e),
+    }
+}
+
+fn org_members(request: &IncomingRequest, org: &str) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let q: Map<String, Value> = [("org".to_string(), json!(org))].into_iter().collect();
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), &q, orgs::Role::Viewer) {
+        return Outcome::Err(code, msg);
+    }
+    Outcome::Structured(200, json!({ "org": org, "members": orgs::members(org) }))
+}
+
+fn org_remove(request: &IncomingRequest, org: &str, subject: &str) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let q: Map<String, Value> = [("org".to_string(), json!(org))].into_iter().collect();
+    // Leaving is always allowed; removing someone else needs owner.
+    let need = if subject == p.subject { orgs::Role::Viewer } else { orgs::Role::Owner };
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), &q, need) {
+        return Outcome::Err(code, msg);
+    }
+    match orgs::remove_member(org, subject) {
+        Ok(()) => Outcome::Structured(200, json!({ "org": org, "removed": subject })),
+        Err(e) => Outcome::Err(422, e),
+    }
+}
+
+// ---- deployments ------------------------------------------------------------
+
+fn deployment_create(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    // Which org this is for. `?org=` or the caller's own, and membership at member
+    // level is checked here rather than after the record exists.
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
     };
     let b = match body(request) {
         Ok(v) => v,
@@ -517,11 +648,13 @@ fn deployment_create(request: &IncomingRequest) -> Outcome {
     if name.is_empty() {
         return Outcome::Err(422, "name required".into());
     }
-    // Per-tenant deployment budget. `quota:meter`'s limit is a parameter, so the
-    // platform is the entitlement store (ADR-0008).
-    let budget = plan_of(&p.tenant).max_deployments;
+    // Per-ORG deployment budget: three people in one company share one allowance,
+    // and one person in three companies does not carry theirs between them.
+    // `quota:meter`'s limit is a parameter, so the platform is the entitlement
+    // store (ADR-0008).
+    let budget = plan_of(&org).max_deployments;
     if let Err(quota::QuotaError::Exceeded(remaining)) =
-        quota::reserve(&format!("deployments/{}", p.tenant), 1, budget, 0)
+        quota::reserve(&format!("deployments/{org}"), 1, budget, 0)
     {
         return Outcome::Err(
             402,
@@ -529,12 +662,12 @@ fn deployment_create(request: &IncomingRequest) -> Outcome {
         );
     }
     let doc = json!({
-        "tenant": p.tenant, "name": name, "owner": p.subject,
+        "org": org, "tenant": p.tenant, "name": name, "owner": p.subject,
         "strategy": strategy.as_str(),
         "nodes": b["nodes"].clone(), "edges": b["edges"].clone(),
         "created": now(), "revision": 0, "status": "draft",
     });
-    match records::create(DEPLOYMENTS, &doc.to_string(), &["tenant".to_string()]) {
+    match records::create(DEPLOYMENTS, &doc.to_string(), &["org".to_string(), "tenant".to_string()]) {
         Ok(rec) => Outcome::Json(201, json!({ "id": rec.id, "name": name }).to_string()),
         Err(_) => Outcome::Err(500, "could not create".into()),
     }
@@ -578,27 +711,54 @@ fn plan_of(tenant: &str) -> TenantPlan {
     }
 }
 
-fn owned_deployment(p: &auth_types::Principal, id: &str) -> Option<(String, u64, Value)> {
+/// A deployment the caller may act on, and at what level.
+///
+/// Ownership is by ORG membership, not by tenant equality. That is the whole point
+/// of orgs: three people in one company must reach the same deployments, and one
+/// person in three companies must not carry access between them.
+///
+/// Falls back to the record's `tenant` for rows written before orgs existed, so a
+/// migration is not required to keep an old deployment reachable by its author.
+fn owned_deployment(
+    p: &auth_types::Principal,
+    id: &str,
+    need: orgs::Role,
+) -> Option<(String, u64, Value)> {
     let (rec, rev, doc) = records::get(DEPLOYMENTS, id)
         .ok()
         .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|v| (e.id, e.revision, v)))?;
-    (doc["tenant"] == json!(p.tenant)).then_some((rec, rev, doc))
+    let owner = doc["org"]
+        .as_str()
+        .or_else(|| doc["tenant"].as_str())
+        .unwrap_or_default()
+        .to_string();
+    match orgs::role_of(&p.subject, &owner) {
+        Some(have) if have >= need => Some((rec, rev, doc)),
+        _ => None,
+    }
 }
 
 fn deployments_list(request: &IncomingRequest) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    let rows: Vec<Value> = records::find_by(DEPLOYMENTS, "tenant", &json!(p.tenant).to_string())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|e| {
-            serde_json::from_str::<Value>(&e.data).ok().map(|v| {
-                json!({ "id": e.id, "name": v["name"], "strategy": v["strategy"],
-                        "revision": v["revision"], "status": v["status"] })
-            })
-        })
+    // Every org the caller belongs to, not just their own. A person contracting
+    // for three companies sees three sets of deployments in one listing, which is
+    // the thing orgs exist to make possible.
+    let mine: Vec<String> = orgs::memberships(&p.subject)
+        .iter()
+        .filter_map(|m| m["id"].as_str().map(String::from))
         .collect();
+    let mut rows: Vec<Value> = Vec::new();
+    for org in &mine {
+        for e in records::find_by(DEPLOYMENTS, "org", &json!(org).to_string()).unwrap_or_default() {
+            if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
+                rows.push(json!({ "id": e.id, "org": org, "name": v["name"],
+                                  "strategy": v["strategy"], "revision": v["revision"],
+                                  "status": v["status"] }));
+            }
+        }
+    }
     Outcome::Json(200, json!({ "deployments": rows }).to_string())
 }
 
@@ -606,7 +766,7 @@ fn deployment_get(request: &IncomingRequest, id: &str) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    match owned_deployment(&p, id) {
+    match owned_deployment(&p, id, orgs::Role::Viewer) {
         Some((_, _, mut doc)) => {
             doc["id"] = json!(id);
             Outcome::Json(200, doc.to_string())
@@ -913,7 +1073,8 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    let Some((rec, rev, mut doc)) = owned_deployment(&p, id) else {
+    // Saving deploys code on the org's behalf; a viewer must not.
+    let Some((rec, rev, mut doc)) = owned_deployment(&p, id, orgs::Role::Member) else {
         return Outcome::Err(404, "not_found".into());
     };
     // A save may also update the graph in the same request.
@@ -932,10 +1093,23 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(parts) => parts,
         Err(o) => return o,
     };
-    let tenant_plan = plan_of(&p.tenant);
+    // THE isolation change. Everything downstream that used the personal tenant —
+    // the plan, the hostname, and critically `env_for`, which becomes the storage
+    // bucket a running instance gets — is keyed by the owning ORG instead.
+    //
+    // ADR-0012's property is unchanged and now wider: two orgs cannot see each
+    // other's data for the same reason two tenants could not, because the host
+    // still names the bucket from a control-plane record the guest cannot write.
+    let owner_org = doc["org"]
+        .as_str()
+        .or_else(|| doc["tenant"].as_str())
+        .unwrap_or(&p.tenant)
+        .to_string();
+    let tenant_plan = plan_of(&owner_org);
     let name = doc["name"].as_str().unwrap_or("app").to_string();
     let suffix = cfg("ingress-suffix", "apps.local");
-    let ingress_host = format!("{}.{}.{}", manifest::dns_label(&name), manifest::dns_label(&p.tenant), suffix);
+    let ingress_host =
+        format!("{}.{}.{}", manifest::dns_label(&name), manifest::dns_label(&owner_org), suffix);
 
     let edges: Vec<(String, String, String)> = doc["edges"]
         .as_array()
@@ -959,7 +1133,7 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
         .unwrap_or_default();
 
     let doc_manifest = match manifest::build(&ManifestInput {
-        tenant: &p.tenant,
+        tenant: &owner_org,
         name: &name,
         strategy,
         parts: &parts,
@@ -975,9 +1149,9 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
     // A revision is the unit of rollback: the desired state, verbatim (ADR-0004).
     let next = doc["revision"].as_u64().unwrap_or(0) + 1;
     let revision_doc = json!({
-        "deployment": id, "tenant": p.tenant, "revision": next,
+        "deployment": id, "tenant": owner_org, "revision": next,
         "strategy": strategy.as_str(), "manifest": doc_manifest,
-        "saved": now(), "env": manifest::env_for(&p.tenant, &name),
+        "org": owner_org, "saved": now(), "env": manifest::env_for(&owner_org, &name),
     });
     let _ = records::create(REVISIONS, &revision_doc.to_string(), &["deployment".to_string(), "tenant".to_string()]);
 
@@ -1003,7 +1177,7 @@ fn manifests(request: &IncomingRequest, id: &str) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    if owned_deployment(&p, id).is_none() {
+    if owned_deployment(&p, id, orgs::Role::Viewer).is_none() {
         return Outcome::Err(404, "not_found".into());
     }
     let latest = records::find_by(REVISIONS, "deployment", &json!(id).to_string())
@@ -1063,7 +1237,9 @@ fn deployment_delete(
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "unauthorized".into());
     };
-    let Some((rec, _rev, doc)) = owned_deployment(&p, id) else {
+    // Deleting destroys the app's storage permanently (ADR-0016), so it is an
+    // owner action rather than a member one.
+    let Some((rec, _rev, doc)) = owned_deployment(&p, id, orgs::Role::Owner) else {
         return Outcome::Err(404, "not_found".into());
     };
     let name = doc["name"].as_str().unwrap_or("app").to_string();
@@ -1080,7 +1256,9 @@ fn deployment_delete(
             ),
         );
     }
-    let env = manifest::env_for(&p.tenant, &name);
+    let owner_org =
+        doc["org"].as_str().or_else(|| doc["tenant"].as_str()).unwrap_or(&p.tenant).to_string();
+    let env = manifest::env_for(&owner_org, &name);
 
     for e in records::list_records(REVISIONS, 1000, "").map(|pg| pg.entries).unwrap_or_default() {
         if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
@@ -1143,7 +1321,7 @@ fn surface_from(v: &Value) -> inspector::Surface {
     }
 }
 
-fn find_one(coll: &str, field: &str, value: &str) -> Option<(String, u64, Value)> {
+pub(crate) fn find_one(coll: &str, field: &str, value: &str) -> Option<(String, u64, Value)> {
     records::find_by(coll, field, &json!(value).to_string())
         .ok()?
         .into_iter()
