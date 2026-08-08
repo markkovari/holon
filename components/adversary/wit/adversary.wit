@@ -1,0 +1,30 @@
+// probe:adversary — a tenant that misbehaves on purpose.
+//
+// ADR-0023 collapsed every tenant on a node into one `comp-host` process and said
+// plainly that this makes the host's capability implementations a trust boundary
+// rather than a convenience. It also said the claim is unproven until something
+// actually attacks it, and that "the known leak is closed" is a weaker sentence
+// than "the boundary holds".
+//
+// This is the thing that attacks it. Two questions, both of which have a wrong
+// answer that is a breach rather than a bug:
+//
+//   1. Can a guest reach a store the platform did not give it? ADR-0012 measured
+//      exactly this happening, so the dictionary below includes the shapes that
+//      leak WOULD have used — a neighbour's app id, its derived bucket name, and
+//      the plain `default` every catalogue component hardcodes.
+//   2. Can a guest reach anything off the box? On a lattice node the interesting
+//      targets are not on the internet: they are the NATS bus, the cloud metadata
+//      endpoint, this host's own listener, and the tailnet the other nodes are on.
+//
+// It imports `outgoing-handler` deliberately — kv-probe omits it to keep a link
+// failure distinguishable from a naming failure, but here the outbound path IS
+// half the question.
+package probe:adversary@0.1.0;
+
+world adversary {
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/batch@0.2.0-draft;
+}

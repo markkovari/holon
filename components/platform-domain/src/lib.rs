@@ -1,29 +1,25 @@
 //! `platform-domain` — the platform control plane (docs/adr/) as ONE composed wasm
 //! HTTP component. Exports `wasi:http`; imports only contracts.
 //!
-//! It owns every decision and none of the cluster access. On save it renders
-//! manifests (`render.rs`, pure) and POSTs them to the native applier, which holds
-//! the only cluster credential and re-validates the namespace before applying
-//! (ADR-0003). This component cannot reach the Kubernetes API and is not supposed
-//! to be able to.
+//! It owns every decision and none of the infrastructure access. On save it builds
+//! a desired-state manifest (`manifest.rs`, pure) and stores it as a revision. It
+//! pushes nothing anywhere: the native reconciler polls the current revisions and
+//! makes the lattice match them (ADR-0022). This component holds no lattice
+//! credential and is not supposed to be able to start code on any node.
+//!
+//! That split is the same one ADR-0003 drew around the Kubernetes credential — the
+//! dangerous capability lives in a small native process that holds no business
+//! logic, because this one is what tenants send HTTP to. Only the substrate changed.
 //!
 //! Config (wasi:config/store):
-//!   applier-url     where the applier listens, e.g. http://127.0.0.1:8088
-//!   applier-secret  shared secret; the applier rejects requests without it
-//!   registry        OCI prefix images are pushed to and pinned from
-//!   cluster-suffix  DNS suffix for the operator's Host routing
-//!   scheduler-nats  the platform's control-plane NATS, which each app's host dials
-//!                   to register and receive scheduling (no application data)
-//!   host-image      `wash` image for the per-application host pod (ADR-0014)
-//!   nats-image      NATS image for that pod's private data-plane sidecar
-//!   platform-namespace       where the registry lives
-//!   control-plane-namespace  where the operator + scheduler NATS live (defaults to
-//!                   platform-namespace; a tenant's NetworkPolicy must allow egress
-//!                   to both, or an app's host never registers)
+//!   applier-secret   shared secret the reconciler presents on `/api/internal/*`
+//!                    (name kept for compatibility with existing deployments)
+//!   ingress-suffix   DNS suffix an app is reachable on, e.g. `apps.local`;
+//!                    an app answers to `<app>.<tenant>.<suffix>`
 
 #[allow(warnings)]
 mod bindings;
-mod render;
+mod manifest;
 
 use serde_json::{json, Map, Value};
 
@@ -41,11 +37,10 @@ use bindings::wit::reflect::inspector;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
-    Fields, IncomingRequest, Method, OutgoingBody, OutgoingRequest, OutgoingResponse,
-    RequestOptions, ResponseOutparam, Scheme,
+    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
 
-use render::{HostIface, Part, Plan, RenderInput, Strategy};
+use manifest::{HostIface, ManifestInput, Part, Plan, Strategy};
 
 struct Component;
 
@@ -102,6 +97,10 @@ enum Outcome {
     /// A body that is not text — the staged `.wasm` the pusher fetches.
     Bytes(u16, String, Vec<u8>),
     Err(u16, String),
+    /// An error with structure. `Err` renders `{"error": "<sentence>"}`, which is
+    /// all a human needs; a client that has to DO something with the failure —
+    /// highlight a port, offer a component to add — needs the parts named.
+    Structured(u16, Value),
 }
 
 fn now() -> u64 {
@@ -359,8 +358,8 @@ fn components_list(request: &IncomingRequest) -> Outcome {
         .map(|row| {
             json!({
                 "id": row["id"], "tenant": row["tenant"], "visibility": row["visibility"],
-                "uploaded": row["uploaded"], "oci_ref": row["oci_ref"],
-                "deployable": row["oci_ref"].as_str().unwrap_or("").contains("@sha256:"),
+                "uploaded": row["uploaded"], "digest": row["digest"],
+                "deployable": row["digest"].as_str().unwrap_or("").starts_with("sha256:"),
                 "surface": row["surface"],
             })
         })
@@ -425,7 +424,7 @@ fn internal_pending(request: &IncomingRequest) -> Outcome {
     let mut out = Vec::new();
     for e in records::list_records(CATALOG, 1000, "").map(|p| p.entries).unwrap_or_default() {
         let Ok(row) = serde_json::from_str::<Value>(&e.data) else { continue };
-        if !row["oci_ref"].as_str().unwrap_or_default().is_empty() {
+        if !row["digest"].as_str().unwrap_or_default().is_empty() {
             continue;
         }
         out.push(json!({
@@ -473,15 +472,13 @@ fn internal_pushed(request: &IncomingRequest) -> Outcome {
     }
     match find_one(CATALOG, "key", &key) {
         Some((rec, rev, mut row)) => {
-            // `<tenant>/<id>`, not `<id>`: two tenants may both own a component called
-            // `mesh-domain`, and a shared repo path would put their artifacts in one
-            // place — harmless for correctness (blobs are content-addressed and the
-            // reference is a digest) but it leaks one tenant's component names to
-            // anyone who can list the other's repo.
-            let repo = format!("{}/{}", cfg("registry", "registry.platform.svc.cluster.local:5000"), key);
-            row["oci_ref"] = json!(format!("{repo}@{digest}"));
+            // The bare content address, with no registry host in front of it
+            // (ADR-0024). A node fetches by digest from the object store, so a
+            // reference that named a registry would name something no node can
+            // reach — and would make the same bytes have two identities.
+            row["digest"] = json!(digest);
             let _ = records::update(CATALOG, &rec, &row.to_string(), rev);
-            Outcome::Json(200, json!({ "key": key, "oci_ref": row["oci_ref"] }).to_string())
+            Outcome::Json(200, json!({ "key": key, "digest": row["digest"] }).to_string())
         }
         None => Outcome::Err(404, "not_found".into()),
     }
@@ -567,11 +564,15 @@ fn plan_of(tenant: &str) -> TenantPlan {
                 .as_array()
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
                 .unwrap_or_default(),
-            // An application is a pod now (ADR-0014), so a plan prices its host and
-            // its storage directly.
-            storage: p["storage"].as_str().unwrap_or("1Gi").to_string(),
-            host_cpu: p["host_cpu"].as_str().unwrap_or("100m").to_string(),
-            host_memory: p["host_memory"].as_str().unwrap_or("256Mi").to_string(),
+            // An application is no longer a pod, so a plan no longer prices one.
+            // What it prices instead is WHERE the app may run: node labels the
+            // reconciler matches, which is the multicloud/multiregion knob.
+            constraints: p["constraints"]
+                .as_object()
+                .map(|o| {
+                    o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
+                })
+                .unwrap_or_default(),
         },
         max_deployments: p["max_deployments"].as_u64().unwrap_or(DEPLOYMENT_BUDGET),
     }
@@ -691,28 +692,57 @@ fn resolve_parts(
         ));
     }
     if !plan.unsatisfied.is_empty() {
-        let g = &plan.unsatisfied[0];
-        return Err(Outcome::Err(
+        // Every gap, and for each one the components that would fill it.
+        //
+        // This used to return `unsatisfied[0]` as a sentence. The difference
+        // matters: one string lets a UI say "wire it", a gap with candidates lets
+        // it say "add this". The candidates cost one pass over rows the catalog
+        // listing already loads.
+        let visible: Vec<Value> = records::list_records(CATALOG, 500, "")
+            .map(|page| page.entries)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+            .filter(|r| may_use(p, r))
+            .collect();
+        let gaps: Vec<Value> = plan
+            .unsatisfied
+            .iter()
+            .map(|g| {
+                let candidates: Vec<Value> = visible
+                    .iter()
+                    .filter(|r| {
+                        r["surface"]["exports"]
+                            .as_array()
+                            .map(|a| a.iter().any(|x| x["raw"] == json!(g.iface.raw)))
+                            .unwrap_or(false)
+                    })
+                    .filter_map(|r| r["id"].as_str().map(|s| json!(s)))
+                    .collect();
+                json!({ "component": g.node, "interface": g.iface.raw, "candidates": candidates })
+            })
+            .collect();
+        return Err(Outcome::Structured(
             422,
-            format!("`{}` still needs {} — wire it or add the component", g.node, g.iface.raw),
+            json!({ "error": "unsatisfied_imports", "gaps": gaps }),
         ));
     }
 
     let part_of = |row: &Value| -> Result<Part, Outcome> {
         let surface = surface_from(&row["surface"]);
-        let oci = row["oci_ref"].as_str().unwrap_or_default().to_string();
-        if !oci.contains("@sha256:") {
+        let digest = row["digest"].as_str().unwrap_or_default().to_string();
+        if !digest.starts_with("sha256:") {
             return Err(Outcome::Err(
                 409,
                 format!(
-                    "component `{}` is not in the registry yet — push it before deploying (ADR-0006 pins digests, never tags)",
+                    "component `{}` has not been distributed yet — it has no content address, and a deployment can only name bytes by digest (ADR-0006)",
                     row["id"].as_str().unwrap_or_default()
                 ),
             ));
         }
         Ok(Part {
             name: row["id"].as_str().unwrap_or_default().to_string(),
-            image: oci,
+            digest,
             host_imports: surface
                 .host_imports
                 .iter()
@@ -742,7 +772,44 @@ fn resolve_parts(
                 .iter()
                 .find(|r| r["id"] == json!(root))
                 .ok_or_else(|| Outcome::Err(500, "root vanished".into()))?;
-            let mut part = part_of(root_row)?;
+            // COMPOSE, for real.
+            //
+            // This branch used to pin the root's OWN digest and return — `compose`
+            // was imported and never called, so a "fused" deployment shipped the
+            // root alone with its imports unsatisfied. Nothing caught it because
+            // the manifest looked identical either way.
+            let mut cparts = Vec::new();
+            for row in &rows {
+                let id = row["id"].as_str().unwrap_or_default().to_string();
+                let key = format!("{}/{}", row["tenant"].as_str().unwrap_or_default(), id);
+                let Ok(bytes) = blob::get(BIN, &key) else {
+                    return Err(Outcome::Err(
+                        409,
+                        format!("component `{id}` has no staged bytes to compose from — re-upload it"),
+                    ));
+                };
+                cparts.push(composer::Part { id, bytes });
+            }
+            let fused = composer::compose(&cparts, &edges, &root).map_err(|e| {
+                Outcome::Err(422, format!("fused: {}", compose_detail(&e)))
+            })?;
+
+            // The composed artifact is a new component with a new identity, staged
+            // like any other. The EXISTING pending-push queue then distributes it
+            // with no new machinery: "pending" is still just "has no digest".
+            let fused_id = format!("{root}-fused");
+            let key = format!("{}/{}", p.tenant, fused_id);
+            if blob::put(BIN, &key, &fused, "application/wasm").is_err() {
+                return Err(Outcome::Err(500, "could not stage the composed artifact".into()));
+            }
+
+            let mut part = Part {
+                name: fused_id.clone(),
+                digest: String::new(),
+                host_imports: Vec::new(),
+                nested_instances: 0,
+                serves_http: true,
+            };
             // The composed artifact needs every host interface in the graph.
             let mut host: Vec<HostIface> = Vec::new();
             for h in &plan.host_needs {
@@ -757,7 +824,87 @@ fn resolve_parts(
             }
             part.host_imports = host;
             part.nested_instances = plan.instance_count;
+            // The composed artifact is a component like any other: a catalog row
+            // with staged bytes and no digest. The EXISTING distribution queue then
+            // picks it up with no new machinery at all, because "pending" is still
+            // derived from "has no digest" rather than from a queue someone has to
+            // keep in step.
+            part.digest = stage_fused(&p.tenant, &fused_id, &key, root_row, &plan);
+            if !part.digest.starts_with("sha256:") {
+                return Err(Outcome::Err(
+                    409,
+                    format!(
+                        "`{fused_id}` was composed and staged, but has not been distributed yet — save again in a moment"
+                    ),
+                ));
+            }
             Ok(vec![part])
+        }
+    }
+}
+
+/// A readable sentence for a `compose` failure.
+fn compose_detail(e: &composer::ComposeError) -> String {
+    match e {
+        composer::ComposeError::MissingPart(s) => format!("a component has no bytes to compose: {s}"),
+        composer::ComposeError::Unbuildable(s) => format!("the graph cannot be composed statically: {s}"),
+        composer::ComposeError::PlugFailed(s) => format!("wac refused the plug: {s}"),
+        composer::ComposeError::EncodeFailed(s) => format!("the composed graph could not be encoded: {s}"),
+    }
+}
+
+/// Record the composed artifact as a catalog row, and return its digest once the
+/// distributor has given it one.
+///
+/// Deliberately NOT hashed here. The component has no sha2, and it does not need
+/// one: the distributor content-addresses the bytes it actually fetched, which is a
+/// stronger check than a hash computed by the same process that wrote them.
+/// Omitting `surface.sha256` also skips the distributor's prefix check, which
+/// exists to catch a mangled transfer of a hash the catalog already knew.
+fn stage_fused(
+    tenant: &str,
+    fused_id: &str,
+    key: &str,
+    root_row: &Value,
+    plan: &composer::CompositionPlan,
+) -> String {
+    // The fused surface is the root's exports (composition preserves them) over the
+    // graph's host needs (composition unions them).
+    let host_imports: Vec<Value> = plan
+        .host_needs
+        .iter()
+        .map(|h| json!({ "raw": format!("{}:{}/{}", h.namespace, h.pkg, h.name),
+                         "namespace": h.namespace, "pkg": h.pkg, "name": h.name }))
+        .collect();
+    let surface = json!({
+        "exports": root_row["surface"]["exports"],
+        "imports": host_imports,
+        "host_imports": host_imports,
+        "nested_instances": plan.instance_count,
+    });
+    match find_one(CATALOG, "key", key) {
+        Some((rec, rev, mut row)) => {
+            let digest = row["digest"].as_str().unwrap_or_default().to_string();
+            // Re-staging the same graph must not orphan a digest that already
+            // describes different bytes.
+            if row["surface"] != surface {
+                row["surface"] = surface;
+                row["digest"] = json!("");
+                let _ = records::update(CATALOG, &rec, &row.to_string(), rev);
+                return String::new();
+            }
+            digest
+        }
+        None => {
+            let row = json!({
+                "key": key, "id": fused_id, "tenant": tenant,
+                "uploader": root_row["uploader"], "visibility": "private",
+                "description": "composed artifact, generated by a fused deployment",
+                "surface": surface, "digest": "", "generated": true, "added": now(),
+            });
+            let _ = records::create(CATALOG, &row.to_string(),
+                &["key".to_string(), "id".to_string(), "tenant".to_string()]);
+            String::new()
         }
     }
 }
@@ -787,67 +934,69 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
     };
     let tenant_plan = plan_of(&p.tenant);
     let name = doc["name"].as_str().unwrap_or("app").to_string();
-    let suffix = cfg("cluster-suffix", "svc.cluster.local");
-    let http_host = format!("{}.{}.{}", name, render::namespace_for(&p.tenant), suffix);
+    let suffix = cfg("ingress-suffix", "apps.local");
+    let ingress_host = format!("{}.{}.{}", manifest::dns_label(&name), manifest::dns_label(&p.tenant), suffix);
 
-    let manifests = match render::render(&RenderInput {
+    let edges: Vec<(String, String, String)> = doc["edges"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|e| {
+                    (
+                        e["plug"].as_str().unwrap_or_default().to_string(),
+                        e["socket"].as_str().unwrap_or_default().to_string(),
+                        e["iface"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let root = parts
+        .iter()
+        .find(|p| p.serves_http)
+        .or_else(|| parts.first())
+        .map(|p| p.name.clone())
+        .unwrap_or_default();
+
+    let doc_manifest = match manifest::build(&ManifestInput {
         tenant: &p.tenant,
         name: &name,
         strategy,
         parts: &parts,
         plan: &tenant_plan,
-        http_host: &http_host,
-        // The app's own host is rendered alongside it; these name the images and the
-        // control-plane bus it registers on (ADR-0014). Platform config, never tenant
-        // input — the applier independently refuses any other image.
-        scheduler_nats: &cfg("scheduler-nats", "nats://nats.platform.svc.cluster.local:4222"),
-        host_image: &cfg("host-image", "ghcr.io/wasmcloud/wash:2.5.2"),
-        nats_image: &cfg("nats-image", "docker.io/nats:2.12.8-alpine"),
-        platform_ns: &cfg("platform-namespace", "platform"),
-        control_plane_ns: &cfg("control-plane-namespace", &cfg("platform-namespace", "platform")),
-        max_deployments: tenant_plan.max_deployments as u32,
+        edges: &edges,
+        root: &root,
+        ingress_host: &ingress_host,
     }) {
         Ok(m) => m,
         Err(e) => return Outcome::Err(422, e.detail()),
     };
 
-    // A revision is the unit of rollback: the rendered manifests, verbatim.
+    // A revision is the unit of rollback: the desired state, verbatim (ADR-0004).
     let next = doc["revision"].as_u64().unwrap_or(0) + 1;
     let revision_doc = json!({
         "deployment": id, "tenant": p.tenant, "revision": next,
-        "strategy": strategy.as_str(), "manifests": manifests,
-        "namespace": render::namespace_for(&p.tenant), "saved": now(),
-        // The applier's host reaper needs the live set of environments, and a
-        // revision is the only thing it polls. Without this, every host looks like
-        // an orphan.
-        "env": render::env_for(&p.tenant, &name),
+        "strategy": strategy.as_str(), "manifest": doc_manifest,
+        "saved": now(), "env": manifest::env_for(&p.tenant, &name),
     });
     let _ = records::create(REVISIONS, &revision_doc.to_string(), &["deployment".to_string(), "tenant".to_string()]);
 
-    // Hand it to the applier — the only path to Kubernetes (ADR-0003).
-    let applied = apply_via_applier(&render::namespace_for(&p.tenant), &manifests);
     doc["revision"] = json!(next);
-    doc["status"] = json!(match &applied {
-        Ok(_) => "applied",
-        Err(_) => "apply_failed",
-    });
+    // There is nothing to apply. The reconciler polls the current revision and
+    // makes the lattice match it, so a save is complete when it is stored — which
+    // also means a save can no longer half-succeed against a cluster that was
+    // reachable a moment ago (ADR-0022).
+    doc["status"] = json!("saved");
     doc["last_saved"] = json!(now());
     let _ = records::update(DEPLOYMENTS, &rec, &doc.to_string(), rev);
 
-    match applied {
-        Ok(report) => Outcome::Json(
-            200,
-            json!({ "id": id, "revision": next, "strategy": strategy.as_str(),
-                    "namespace": render::namespace_for(&p.tenant), "applier": report })
-            .to_string(),
-        ),
-        Err(detail) => Outcome::Json(
-            502,
-            json!({ "id": id, "revision": next, "error": "apply_failed", "detail": detail,
-                    "hint": "the manifests are stored — GET /api/deployments/{id}/manifests" })
-            .to_string(),
-        ),
-    }
+    Outcome::Json(
+        200,
+        json!({ "id": id, "revision": next, "strategy": strategy.as_str(),
+                "app": name, "ingress": ingress_host,
+                "components": doc_manifest["components"].as_array().map(|a| a.len()).unwrap_or(0) })
+        .to_string(),
+    )
 }
 
 fn manifests(request: &IncomingRequest, id: &str) -> Outcome {
@@ -863,12 +1012,14 @@ fn manifests(request: &IncomingRequest, id: &str) -> Outcome {
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
         .max_by_key(|v| v["revision"].as_u64().unwrap_or(0));
     match latest {
-        Some(v) => Outcome::Text(
+        // The desired-state document itself, not a rendered string. It used to be
+        // YAML for a human to `kubectl apply`; nothing applies it now, so it is
+        // returned as the object the reconciler actually consumes.
+        Some(v) => Outcome::Structured(
             200,
-            "text/yaml; charset=utf-8".into(),
-            v["manifests"].as_str().unwrap_or_default().to_string(),
+            json!({ "revision": v["revision"], "saved": v["saved"], "manifest": v["manifest"] }),
         ),
-        None => Outcome::Err(404, "no revision yet — save first".into()),
+        None => Outcome::Err(404, "no revision yet — deploy first".into()),
     }
 }
 
@@ -897,15 +1048,13 @@ fn internal_revisions(request: &IncomingRequest) -> Outcome {
 }
 
 
-/// Delete a deployment: its Kubernetes footprint, then its records.
+/// Delete a deployment: drop its records, and the lattice follows.
 ///
-/// The footprint goes first. If it were the other way round and the prune failed, the
-/// platform would have forgotten an app that is still running — an orphan nothing
-/// would ever clean up, because the reaper's idea of "live" comes from the records
-/// this would have deleted.
-///
-/// The tenant's namespace, quota and NetworkPolicy stay: they belong to the tenant,
-/// not to this app, and the tenant's other apps are still in there.
+/// This used to prune a Kubernetes footprint first, because the platform forgetting
+/// an app that was still running left an orphan nothing would ever clean up. That
+/// whole hazard is gone: the reconciler derives desired state from these records
+/// every pass, so an app that leaves them stops on its own within a pass or two.
+/// ADR-0016's two-signals-before-reaping apparatus goes with it.
 fn deployment_delete(
     request: &IncomingRequest,
     id: &str,
@@ -931,15 +1080,7 @@ fn deployment_delete(
             ),
         );
     }
-    let ns = render::namespace_for(&p.tenant);
-    let env = render::env_for(&p.tenant, &name);
-
-    let pruned = match prune_via_applier(&ns, &env) {
-        Ok(v) => v,
-        // Refuse rather than half-delete: the records are the reaper's source of
-        // truth, so dropping them now would strand whatever is still running.
-        Err(e) => return Outcome::Err(502, format!("nothing was deleted: {e}")),
-    };
+    let env = manifest::env_for(&p.tenant, &name);
 
     for e in records::list_records(REVISIONS, 1000, "").map(|pg| pg.entries).unwrap_or_default() {
         if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
@@ -949,106 +1090,20 @@ fn deployment_delete(
         }
     }
     let _ = records::delete(DEPLOYMENTS, &rec);
-    Outcome::Json(200, json!({ "deleted": id, "env": env, "applier": pruned }).to_string())
+    Outcome::Json(
+        200,
+        json!({ "deleted": id, "env": env,
+                "note": "the lattice stops it on the next reconcile pass" })
+        .to_string(),
+    )
 }
 
-// ---- the applier hop (ADR-0003) --------------------------------------------
-
-fn apply_via_applier(namespace: &str, manifests: &str) -> Result<Value, String> {
-    post_to_applier("/apply", &json!({ "namespace": namespace, "manifests": manifests }))
-        .map_err(|e| if e.contains("no applier-url") { "no applier-url configured — nothing was applied".to_string() } else { e })
-}
-
-/// Delete one application's footprint (ADR-0015's reconciliation). The applier
-/// re-derives what to delete from the env label, so the platform sends a selector
-/// rather than a list of names it could get wrong.
-fn prune_via_applier(namespace: &str, env: &str) -> Result<Value, String> {
-    post_to_applier("/prune", &json!({ "namespace": namespace, "env": env }))
-}
-
-fn post_to_applier(path: &str, body: &Value) -> Result<Value, String> {
-    let url = cfg("applier-url", "");
-    if url.is_empty() {
-        return Err("no applier-url configured".into());
-    }
-    let secret = cfg("applier-secret", "");
-    let payload = body.to_string();
-
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
-        (Scheme::Https, r)
-    } else if let Some(r) = url.strip_prefix("http://") {
-        (Scheme::Http, r)
-    } else {
-        return Err(format!("applier-url must be http(s): {url}"));
-    };
-    let (authority, base) = match rest.find('/') {
-        Some(i) => (rest[..i].to_string(), rest[i..].to_string()),
-        None => (rest.to_string(), String::new()),
-    };
-
-    let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
-    let _ = headers.set(&"x-platform-secret".to_string(), &[secret.as_bytes().to_vec()]);
-    let req = OutgoingRequest::new(headers);
-    let _ = req.set_method(&Method::Post);
-    let _ = req.set_scheme(Some(&scheme));
-    let _ = req.set_authority(Some(&authority));
-    let _ = req.set_path_with_query(Some(&format!("{base}{path}")));
-    // Order matters and is not optional: take the body handles, hand the request to
-    // the host, and only THEN write. The outgoing stream is drained by the host as
-    // part of sending, so writing more than the initial buffer BEFORE `handle`
-    // blocks forever waiting for a consumer that does not exist yet.
-    //
-    // Every existing `proxy:route` call in this repo is a GET with an empty body,
-    // so this is the first payload here big enough to hit it — a manifest set for
-    // four components is a few KiB, which is over one write budget.
-    let out = req.body().map_err(|_| "applier body".to_string())?;
-    let stream = out.write().map_err(|_| "applier stream".to_string())?;
-    let future = bindings::wasi::http::outgoing_handler::handle(req, Some(RequestOptions::new()))
-        .map_err(|e| format!("applier unreachable: {e:?}"))?;
-    {
-        let bytes = payload.as_bytes();
-        let mut written = 0usize;
-        while written < bytes.len() {
-            // Respect the stream's advertised budget rather than assuming 4 KiB.
-            let budget = stream.check_write().map_err(|e| format!("check-write: {e:?}"))? as usize;
-            let end = (written + budget.max(1)).min(bytes.len());
-            stream
-                .write(&bytes[written..end])
-                .map_err(|e| format!("write: {e:?}"))?;
-            written = end;
-        }
-        stream.blocking_flush().map_err(|e| format!("flush: {e:?}"))?;
-        drop(stream);
-        OutgoingBody::finish(out, None).map_err(|_| "finish".to_string())?;
-    }
-    future.subscribe().block();
-    let resp = future
-        .get()
-        .ok_or("no response")?
-        .map_err(|_| "response taken".to_string())?
-        .map_err(|e| format!("applier http: {e:?}"))?;
-    let status = resp.status();
-    let mut body = Vec::new();
-    if let Ok(incoming) = resp.consume() {
-        if let Ok(stream) = incoming.stream() {
-            while let Ok(chunk) = stream.blocking_read(8192) {
-                if chunk.is_empty() {
-                    break;
-                }
-                body.extend_from_slice(&chunk);
-            }
-        }
-    }
-    let parsed: Value = serde_json::from_slice(&body).unwrap_or_else(|_| json!({ "raw": String::from_utf8_lossy(&body) }));
-    if (200..300).contains(&status) {
-        Ok(parsed)
-    } else {
-        Err(format!("applier returned {status}: {parsed}"))
-    }
-}
-
-// ---- surfaces + plumbing ---------------------------------------------------
+// ---- the applier hop: removed ---------------------------------------------
+//
+// `apply_via_applier` / `prune_via_applier` / `post_to_applier` used to live here.
+// They are gone with Kubernetes: the platform no longer pushes anything anywhere.
+// It stores desired state and the reconciler pulls it (ADR-0022), which is why a
+// save can no longer half-succeed and why deleting an app needs no prune call.
 
 fn surface_json(s: &inspector::Surface) -> Value {
     let refs = |list: &Vec<inspector::IfaceRef>| -> Vec<Value> {
@@ -1147,6 +1202,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
             "application/json".to_string(),
             json!({ "error": m }).to_string().into_bytes(),
         ),
+        Outcome::Structured(c, v) => (c, "application/json".to_string(), v.to_string().into_bytes()),
     };
     let headers = Fields::new();
     let _ = headers.set(&"content-type".to_string(), &[ctype.into_bytes()]);

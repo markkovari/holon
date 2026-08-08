@@ -205,7 +205,8 @@ compose-conduit: compose
 
 # Run the conduit app (CONDUIT.md rung 1) on the native Rust host, in-memory KV.
 host-conduit: compose-conduit
-    cd host && VET_TENANT=conduit cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app conduit --config-file ../examples/defaults.conf --config default-tenant=conduit \
       --component ../{{conduit_composed}} --addr 0.0.0.0:3008
 
 # conduit e2e: build the composed app + native host, then a Rust test that spawns
@@ -238,7 +239,8 @@ compose-saga: build
 # Run the saga app on the native Rust host. Use --kv nats to prove durability
 # (state survives a restart); memory is fine for the happy/compensation paths.
 host-saga: compose-saga
-    cd host && VET_TENANT=saga cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app saga --config-file ../examples/defaults.conf --config default-tenant=saga \
       --component ../{{saga_composed}} --addr 0.0.0.0:3012
 
 # Saga e2e: compose + build host + a Rust test that spawns the host and drives
@@ -284,7 +286,8 @@ compose-pulse: build
 # Run the chat app on the native Rust host + serve the two-pane SPA. Open two
 # browser windows on http://127.0.0.1:3015 and watch messages stream live.
 host-pulse: compose-pulse
-    cd host && VET_TENANT=pulse cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app pulse --config-file ../examples/defaults.conf --config default-tenant=pulse \
       --component ../{{pulse_composed}} --addr 0.0.0.0:3015 \
       --static-dir ../examples/pulse/public
 
@@ -327,7 +330,8 @@ build-tempo-ui:
     cd examples/tempo/ui && npm ci && npm run build
 
 host-tempo: compose-tempo build-tempo-ui
-    cd host && VET_TENANT=tempo cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app tempo --config-file ../examples/defaults.conf --config default-tenant=tempo \
       --component ../{{tempo_composed}} --addr 0.0.0.0:3040 \
       --static-dir ../examples/tempo/dist
 
@@ -374,7 +378,8 @@ build-booked-ui:
 # `owner` to create resources + weekly availability; anyone else books free
 # slots (no double-book), gets an .ics + a confirmation.
 host-booked: compose-booked build-booked-ui
-    cd host && VET_TENANT=booked cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app booked --config-file ../examples/defaults.conf --config default-tenant=booked \
       --component ../{{booked_composed}} --addr 0.0.0.0:3041 \
       --static-dir ../examples/booked/dist
 
@@ -406,7 +411,8 @@ build-transit-ui:
 # `rider` to buy fares (single / 60-min / 90-min / monthly) and show their QR;
 # as `validator` to scan + validate with the device camera.
 host-transit: compose-transit build-transit-ui
-    cd host && VET_TENANT=transit cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app transit --config-file ../examples/defaults.conf --config default-tenant=transit \
       --component ../{{transit_composed}} --addr 0.0.0.0:3042 \
       --static-dir ../examples/transit/dist
 
@@ -438,7 +444,8 @@ build-dashboards-ui:
 # new account (seeded with a demo dashboard); add panels and see them rendered to
 # SVG charts on the server — the frontend has no charting library.
 host-dashboards: compose-dashboards build-dashboards-ui
-    cd host && VET_TENANT=dashboards cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app dashboards --config-file ../examples/defaults.conf --config default-tenant=dashboards \
       --component ../{{dashboards_composed}} --addr 0.0.0.0:3043 \
       --static-dir ../examples/dashboards/dist
 
@@ -469,7 +476,8 @@ build-gate-ui:
 # rate limiter (token bucket, 200/429), the throttle (GCRA smoothing), and submit
 # items to watch a batch coalesce and flush — all per-key, durable state.
 host-gate: compose-gate build-gate-ui
-    cd host && VET_TENANT=gate cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app gate --config-file ../examples/defaults.conf --config default-tenant=gate \
       --component ../{{gate_composed}} --addr 0.0.0.0:3044 \
       --static-dir ../examples/gate/dist
 
@@ -509,7 +517,8 @@ build-books-ui:
 # a new account (seeded a demo chart + entries); post balanced journal entries
 # and read the trial balance / P&L / balance sheet (+ PDF).
 host-books: compose-books build-books-ui
-    cd host && VET_TENANT=books cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app books --config-file ../examples/defaults.conf --config default-tenant=books \
       --component ../{{books_composed}} --addr 0.0.0.0:3045 \
       --static-dir ../examples/books/dist
 
@@ -541,7 +550,8 @@ build-stash-ui:
 # account (seeded demo notes), keep notes, and hit Export .zip to download them
 # all as a real ZIP (Markdown + index.csv + manifest.json).
 host-stash: compose-stash build-stash-ui
-    cd host && VET_TENANT=stash cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app stash --config-file ../examples/defaults.conf --config default-tenant=stash \
       --component ../{{stash_composed}} --addr 0.0.0.0:3046 \
       --static-dir ../examples/stash/dist
 
@@ -570,7 +580,8 @@ build-payees-ui:
 # account (seeded demo payees); add payees — the IBAN is validated as you type
 # (country length + mod-97 checksum) and a typo is refused with the reason.
 host-payees: compose-payees build-payees-ui
-    cd host && VET_TENANT=payees cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app payees --config-file ../examples/defaults.conf --config default-tenant=payees \
       --component ../{{payees_composed}} --addr 0.0.0.0:3047 \
       --static-dir ../examples/payees/dist
 
@@ -603,7 +614,8 @@ build-lms-ui:
 # as `instructor` (creates courses/lessons/quizzes; seeded a demo course) or as
 # `student` (enroll, take auto-graded quizzes, see progress + certificate).
 host-lms: compose-lms build-lms-ui
-    cd host && VET_TENANT=lms cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app lms --config-file ../examples/defaults.conf --config default-tenant=lms \
       --component ../{{lms_composed}} --addr 0.0.0.0:3048 \
       --static-dir ../examples/lms/dist
 
@@ -633,7 +645,8 @@ build-buzz-ui:
 # host to run a game (get a PIN), or open on other devices to Join with the PIN
 # and a nickname; the host drives the questions and everyone buzzes in.
 host-buzz: compose-buzz build-buzz-ui
-    cd host && VET_TENANT=buzz cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app buzz --config-file ../examples/defaults.conf --config default-tenant=buzz \
       --component ../{{buzz_composed}} --addr 0.0.0.0:3049 \
       --static-dir ../examples/buzz/dist
 
@@ -678,9 +691,9 @@ host-mesh: compose-mesh build-mesh-ui
     ./target/release/flaky 127.0.0.1:3051 &
     UPSTREAM_PID=$!
     trap 'kill $UPSTREAM_PID 2>/dev/null || true' EXIT
-    cd ../../host && VET_TENANT=mesh \
-      CFG_ROUTES='/upstream=http://127.0.0.1:3051/,/dead=http://127.0.0.1:3052/' \
+    cd ../../host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=mesh --config routes='/upstream=http://127.0.0.1:3051/,/dead=http://127.0.0.1:3052/' \
       --component ../{{mesh_composed}} --addr 0.0.0.0:3050 \
       --static-dir ../examples/mesh/dist
 
@@ -724,9 +737,9 @@ build-passkey-ui:
 # origin check meaningful. WebAuthn needs a secure context: http://localhost
 # counts, a LAN IP does not, so use localhost (not 0.0.0.0:3053) in the browser.
 host-passkey: compose-passkey build-passkey-ui
-    cd host && VET_TENANT=passkey \
-      CFG_RP_ID=localhost CFG_ORIGIN=http://localhost:3053 \
+    cd host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=passkey --config rp-id=localhost --config origin=http://localhost:3053 \
       --component ../{{passkey_composed}} --addr 127.0.0.1:3053 \
       --static-dir ../examples/passkey/dist
 
@@ -783,7 +796,8 @@ host-studio: compose-studio build-studio-ui
     #!/usr/bin/env bash
     set -euo pipefail
     cd host && cargo build --release --bin comp-host
-    VET_TENANT=studio ./target/release/comp-host \
+    ./target/release/comp-host \
+      --config default-tenant=studio \
       --component ../{{studio_composed}} --addr 127.0.0.1:3054 \
       --static-dir ../examples/studio/dist &
     HOST_PID=$!
@@ -797,8 +811,9 @@ host-studio: compose-studio build-studio-ui
 # the composed auth-guard (accounts/sessions/RBAC) + policy-guard (ownership and
 # visibility as rules) + records (tenants/deployments/revisions) + blob (staged
 # uploads) + quota (per-tenant budgets) + wit-reflect (inspect/plan/compose).
-# Remaining imports are WASI — including outgoing-handler, which reaches exactly
-# one place: the applier (ADR-0003).
+# Remaining imports are WASI. Note it no longer needs outgoing-handler for anything:
+# with the applier gone (ADR-0022) the control plane makes no outbound calls at all,
+# so it runs with egress denied.
 compose-platform: compose
     wac plug {{platform_wasm}} \
       --plug {{guard_composed}} \
@@ -811,79 +826,60 @@ compose-platform: compose
     wasm-tools validate {{platform_composed}}
     @echo "composed platform-domain (+ auth-guard + policy + records + blob + quota + wit-reflect) -> {{platform_composed}}"
 
-# Build the native applier — the only process with a Kubernetes credential.
-build-applier:
-    cd applier && cargo build --release
+# Build the native reconciler — the only process holding a lattice credential.
+build-reconciler:
+    cd reconciler && cargo build --release
 
-# Run the platform locally: the applier in VALIDATE-ONLY mode (it builds no
-# Kubernetes client at all, so nothing can reach a cluster) plus the control plane
-# on :3057. This is the safe local loop; see `host-platform-live` to actually apply.
-host-platform: compose-platform build-applier
-    #!/usr/bin/env bash
-    set -euo pipefail
-    SECRET=${APPLIER_SECRET:-dev-secret}
-    ./applier/target/release/applier --addr 127.0.0.1:8088 --secret "$SECRET" --validate-only &
-    APPLIER=$!
-    trap 'kill $APPLIER 2>/dev/null || true' EXIT
-    cd host && cargo build --release --bin comp-host
-    VET_TENANT=platform \
-      CFG_APPLIER_URL=http://127.0.0.1:8088 CFG_APPLIER_SECRET="$SECRET" \
-      CFG_REGISTRY=registry.platform.svc.cluster.local:5000 \
-      CFG_CLUSTER_SUFFIX=svc.cluster.local \
-      ./target/release/comp-host --component ../{{platform_composed}} \
-      --addr 127.0.0.1:3057 --kv memory
-
-# The same, but the applier really applies (needs a reachable cluster + kubeconfig).
-# Deliberately a separate recipe: nothing in the default loop can touch a cluster.
-host-platform-live: compose-platform build-applier
-    #!/usr/bin/env bash
-    set -euo pipefail
-    SECRET=${APPLIER_SECRET:-dev-secret}
-    # The registry the applier PUSHES to and the manifests PIN must be the same
-    # string, which is why both sides read one variable. From a laptop that is the
-    # NodePort; in-cluster it is the Service DNS name.
-    REG=${PLATFORM_REGISTRY:-localhost:30501}
-    ./applier/target/release/applier --addr 127.0.0.1:8088 --secret "$SECRET" \
-      --dry-run --platform-url http://127.0.0.1:3057 --reapply-interval 60 \
-      --registry "$REG" --registry-scheme http &
-    APPLIER=$!
-    trap 'kill $APPLIER 2>/dev/null || true' EXIT
-    cd host && cargo build --release --bin comp-host
-    VET_TENANT=platform \
-      CFG_APPLIER_URL=http://127.0.0.1:8088 CFG_APPLIER_SECRET="$SECRET" \
-      CFG_REGISTRY="$REG" \
-      CFG_CLUSTER_SUFFIX=svc.cluster.local \
-      ./target/release/comp-host --component ../{{platform_composed}} \
-      --addr 127.0.0.1:3057 --kv memory
-
-# Tear down everything the platform created: every namespace it labelled as its
-# own, plus any local host/applier processes still holding ports. Safe to run at
-# any time, and safe when nothing is deployed.
+# The whole platform locally: NATS, the control plane on :8080, the reconciler, and
+# one lattice node on :3401. Then drive it with `./cli/target/release/comp`:
 #
-# It selects by LABEL (platform.comp/managed=true), never by name, so it can only
-# remove namespaces the platform itself created — `just platform-teardown` cannot
-# take out `jobs`, `eshop` or anything you own.
+#   comp login --url http://127.0.0.1:8080 --email you@example.com --password ... --register
+#   comp component push components/target/gate_domain.composed.wasm --id gate
+#   comp app create shop --component gate && comp app ls && comp app deploy <id>
+host-platform: compose-platform build-reconciler
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SECRET=${PLATFORM_SECRET:-dev-secret}
+    STATE=$(mktemp -d)
+    cd host && cargo build --release --bin comp-host && cd ..
+    cd cli && cargo build --release && cd ..
+    nats-server -js -sd "$STATE/nats" -a 127.0.0.1 -p 4222 >"$STATE/nats.log" 2>&1 &
+    trap 'kill %1 %2 %3 2>/dev/null || true' EXIT
+    sleep 1
+    ./host/target/release/comp-host --component {{platform_composed}} \
+      --addr 127.0.0.1:8080 --kv sqlite --sqlite-path "$STATE/platform.db" \
+      --tenant platform --app control-plane \
+      --config applier-secret="$SECRET" --config ingress-suffix=apps.local &
+    sleep 2
+    ./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8080 \
+      --secret "$SECRET" --nats-url nats://127.0.0.1:4222 --lattice dev --interval 3 &
+    echo "platform on :8080 | node on :3401 | state in $STATE"
+    ./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4222 --node dev-1 \
+      --lattice dev --addr 127.0.0.1:3401 --state-dir "$STATE/node" \
+      --kv sqlite --sqlite-path "$STATE/node.db"
+
+# Stop every local platform process. Safe to run at any time, and safe when
+# nothing is running.
+#
+# It no longer deletes namespaces, because there are none (ADR-0021). Instances on
+# a lattice node are stopped by deleting the deployment — `comp app rm` — which the
+# reconciler then converges; killing a host here only stops this box.
 platform-teardown:
     #!/usr/bin/env bash
     set -uo pipefail
-    echo "-- platform-managed namespaces:"
-    kubectl get ns -l platform.comp/managed=true --no-headers 2>/dev/null | awk '{print "   " $1, $2}' || true
-    kubectl delete ns -l platform.comp/managed=true --wait=false 2>/dev/null || true
     echo "-- local processes:"
     pkill -f 'comp-host' 2>/dev/null && echo "   stopped comp-host" || echo "   no comp-host running"
-    pkill -f 'release/applier' 2>/dev/null && echo "   stopped applier" || echo "   no applier running"
+    pkill -f 'comp-reconciler' 2>/dev/null && echo "   stopped comp-reconciler" || echo "   no reconciler running"
+    pkill -f 'nats-server -js -sd' 2>/dev/null && echo "   stopped nats-server" || echo "   no local nats running"
     docker rm -f comp-registry >/dev/null 2>&1 && echo "   removed the local comp-registry container" || true
-    echo "-- left behind ON PURPOSE: artifacts already pushed to a registry."
-    echo "   registry:2 has deletion disabled by default, and clearing it would"
-    echo "   wipe images other namespaces depend on. Restart the registry pod if"
-    echo "   you want its (ephemeral) storage reset."
+    echo "-- left behind ON PURPOSE: artifacts in a JetStream object store are"
+    echo "   content-addressed, so they are cheap to keep and safe to re-push."
 
 # Platform e2e: sign in, upload components, refuse a deploy with no digest
 # (ADR-0006), record a push, then save under BOTH strategies and assert the
 # rendered manifests — namespace, one hostInterfaces entry per interface, the
-# isolation stamp, digest pinning. The applier runs validate-only, so this needs no
-# cluster and cannot touch one.
-e2e-platform: compose-platform build-applier
+# isolation stamp, digest pinning. Needs no cluster and no NATS.
+e2e-platform: compose-platform build-reconciler
     cd host && cargo build --release --bin comp-host
     cd examples/platform && cargo test --release
 
@@ -914,7 +910,9 @@ compose-arena: build
 # Run the game on the native host + serve the SPA. Open two windows on
 # http://127.0.0.1:3039 — create a game in one, join from the other, play live.
 host-arena: compose-arena
-    cd host && VET_TENANT=arena cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --config registry=registry.platform.svc.cluster.local:5000 --config cluster-suffix=svc.cluster.local --config registry="$REG" --config cluster-suffix=svc.cluster.local \
+      --app arena --config-file ../examples/defaults.conf --config default-tenant=arena \
       --component ../{{arena_composed}} --addr 0.0.0.0:3039 \
       --static-dir ../examples/arena/public
 
@@ -941,27 +939,13 @@ compose-jobs-golem: build
 
 jobs_reg := env_var_or_default("JOBS_REG", "localhost:30501")
 
-# Deploy the jobs queue on the wasmCloud v2 operator with the GOLEM backend live.
-# Infra first (once): a v2 runtime-operator (bundles the host + NATS) in the
-# `jobs` ns, same chart as eshop:
-#   helm install jobs <wasmCloud>/charts/runtime-operator -n jobs \
-#     -f examples/eshop/k8s/values.yaml   (chart v2.5.2)
-# Golem must be reachable from pods (host.docker.internal:9006 on orbstack) with
-# a `counters` demo agent deployed (providers/golem-workflow/e2e.sh). Then open
-# http://jobs.jobs.svc.cluster.local
-k8s-jobs: compose-jobs-golem
-    kubectl apply -f examples/jobs/k8s/registry.yaml
-    kubectl -n jobs rollout status deploy/registry --timeout=90s
-    wkg oci push --insecure {{jobs_reg}} {{jobs_reg}}/jobs-domain-golem:0.1.0 components/target/jobs_domain.golem.wasm
-    kubectl apply -f examples/jobs/k8s/jobs.yaml
-    @echo "deployed jobs (golem backend) -> http://jobs.jobs.svc.cluster.local"
-
 # Run the job queue on the native host + serve the board SPA. Open
 # http://127.0.0.1:3038: enqueue jobs, watch them run/retry/dead-letter live,
 # replay from the DLQ. CFG tunes the outbox: 3 attempts, 1s base backoff.
 host-jobs: compose-jobs
-    cd host && VET_TENANT=jobs CFG_MAX_ATTEMPTS=2 CFG_BASE_BACKOFF=1 \
+    cd host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=jobs --config max-attempts=2 --config base-backoff=1 \
       --component ../{{jobs_composed}} --addr 0.0.0.0:3038 \
       --static-dir ../examples/jobs/public
 
@@ -987,7 +971,8 @@ compose-scribe: build
 # two windows on http://127.0.0.1:3037 and edit the same doc — edits merge and
 # stream live to both.
 host-scribe: compose-scribe
-    cd host && VET_TENANT=scribe cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app scribe --config-file ../examples/defaults.conf --config default-tenant=scribe \
       --component ../{{scribe_composed}} --addr 0.0.0.0:3037 \
       --static-dir ../examples/scribe/public
 
@@ -1012,7 +997,8 @@ compose-pipeline: build
 # http://127.0.0.1:3016: POST events, toggle the sink down, watch retries drop
 # to the dead-letter tray, then Replay them — live over SSE.
 host-pipeline: compose-pipeline
-    cd host && VET_TENANT=pipeline cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app pipeline --config-file ../examples/defaults.conf --config default-tenant=pipeline \
       --component ../{{pipeline_composed}} --addr 0.0.0.0:3016 \
       --static-dir ../examples/pipeline/public
 
@@ -1038,7 +1024,8 @@ compose-flags: build
 # http://127.0.0.1:3017: drag a flag to 30% and watch ~30 of 100 subject tiles
 # light up instantly and stay sticky; trip the kill-switch — all dark at once.
 host-flags: compose-flags
-    cd host && VET_TENANT=flags cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app flags --config-file ../examples/defaults.conf --config default-tenant=flags \
       --component ../{{flags_composed}} --addr 0.0.0.0:3017 \
       --static-dir ../examples/flags/public
 
@@ -1067,7 +1054,8 @@ compose-abtest: build
 # subjects split into arms (sticky as weights shift), fire conversions, and see
 # the per-arm conversion-rate bars pull apart live.
 host-abtest: compose-abtest
-    cd host && VET_TENANT=abtest cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app abtest --config-file ../examples/defaults.conf --config default-tenant=abtest \
       --component ../{{abtest_composed}} --addr 0.0.0.0:3018 \
       --static-dir ../examples/abtest/public
 
@@ -1099,7 +1087,8 @@ compose-search: build
 # http://127.0.0.1:3019: type in the box, watch ranked hits narrow live, click a
 # facet chip to filter, and watch the cache hit-ratio climb on repeat queries.
 host-search: compose-search
-    cd host && VET_TENANT=search cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app search --config-file ../examples/defaults.conf --config default-tenant=search \
       --component ../{{search_composed}} --addr 0.0.0.0:3019 \
       --static-dir ../examples/search/public
 
@@ -1128,8 +1117,9 @@ compose-ratelimit: build
 # ceiling and the key LOCK with a countdown, and the quota gauge drain — live.
 # CFG_MAX_ATTEMPTS / CFG_LOCKOUT_WINDOW tune the wall (defaults 5 / 300s).
 host-ratelimit: compose-ratelimit
-    cd host && VET_TENANT=throttle CFG_MAX_ATTEMPTS=10 CFG_LOCKOUT_WINDOW=15 \
+    cd host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=throttle --config max-attempts=10 --config lockout-window=15 \
       --component ../{{throttle_composed}} --addr 0.0.0.0:3020 \
       --static-dir ../examples/ratelimit/public
 
@@ -1157,9 +1147,9 @@ compose-drop: build
 # answer), PUT the bytes straight to storage, then get a signed download link.
 # CFG_ALLOWED_TYPES / CFG_MAX_SIZE tune the gate (defaults: all types / 10 MiB).
 host-drop: compose-drop
-    cd host && VET_TENANT=drop \
-      CFG_ALLOWED_TYPES=text/plain,image/png CFG_MAX_SIZE=1048576 \
+    cd host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=drop --config allowed-types=text/plain,image/png --config max-size=1048576 \
       --component ../{{drop_composed}} --addr 0.0.0.0:3021 \
       --static-dir ../examples/drop/public
 
@@ -1187,8 +1177,9 @@ compose-report: build
 # http://127.0.0.1:3022: paste a CSV, watch valid rows import and bad rows come
 # back with per-field errors, page the clean report, then export it back to CSV.
 host-report: compose-report
-    cd host && VET_TENANT=report \
+    cd host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=report \
       --component ../{{report_composed}} --addr 0.0.0.0:3022 \
       --static-dir ../examples/report/public
 
@@ -1219,9 +1210,9 @@ compose-authgate: build
 # authenticator app), activate with the first code, then log in with a live code
 # or burn a recovery code. CFG_MASTER_KEY seals the TOTP secret in the vault.
 host-authgate: compose-authgate
-    cd host && VET_TENANT=authgate \
-      CFG_MASTER_KEY=bWZhLWRlbW8tbWFzdGVyLWtleS0zMi1ieXRlcyEhISE= \
+    cd host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=authgate --config master-key=bWZhLWRlbW8tbWFzdGVyLWtleS0zMi1ieXRlcyEhISE= \
       --component ../{{authgate_composed}} --addr 0.0.0.0:3023 \
       --static-dir ../examples/authgate/public
 
@@ -1251,8 +1242,9 @@ compose-paste: build
 # submit, and watch the PII get masked at ingest and the Markdown render to safe
 # HTML on view — a pure-compute pipeline with one stateful step.
 host-paste: compose-paste
-    cd host && VET_TENANT=paste \
+    cd host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=paste \
       --component ../{{paste_composed}} --addr 0.0.0.0:3024 \
       --static-dir ../examples/paste/public
 
@@ -1300,8 +1292,9 @@ compose-track: build-track-ui compose compose-ai
 # across the board, comment, watch the activity feed stream live over SSE, and
 # summarize a thread with AI.
 host-track: compose-track
-    cd host && VET_TENANT=track \
+    cd host && \
       cargo run --release --bin comp-host -- \
+        --config default-tenant=track \
       --component ../{{track_composed}} --addr 0.0.0.0:3025
 
 # Track e2e: compose + build host + a Rust test driving all five axes — auth +
@@ -1389,7 +1382,8 @@ host-redis: compose-vet-full
 # Run the helpdesk app (HELPDESK.md rung 1) on the native host, persisted to
 # NATS JetStream KV. Same bytes the jco example serves — different host.
 host-helpdesk: compose-helpdesk
-    cd host && VET_TENANT=helpdesk cargo run --release --bin comp-host -- \
+    cd host && cargo run --release --bin comp-host -- \
+      --app helpdesk --config-file ../examples/defaults.conf --config default-tenant=helpdesk \
       --component ../{{helpdesk_composed}} --addr 0.0.0.0:3007 \
       --static-dir ../examples/jco-helpdesk/public \
       --kv nats --nats-url 127.0.0.1:4222
@@ -1433,21 +1427,6 @@ host-eshop: compose-eshop
     examples/eshop/run-local.sh
 
 eshop_reg := env_var_or_default("ESHOP_REG", "localhost:30500")
-
-# Deploy eshop on wasmCloud v2 / k8s: push the six service images to the
-# in-cluster registry (NodePort 30500) and apply the WorkloadDeployments.
-# Infra first (once): helm install eshop <wasmCloud>/charts/runtime-operator \
-#   -n eshop -f examples/eshop/k8s/values.yaml   (chart v2.5.2 verified)
-# Then open http://gateway.eshop.svc.cluster.local (orbstack svc DNS).
-k8s-eshop: compose-eshop
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-identity:0.1.1 {{eshopidentity_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-catalog:0.1.3 {{eshopcatalog_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-basket:0.1.2 {{eshopbasket_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-ordering:0.1.3 {{eshopordering_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-payment:0.1.2 {{eshoppayment_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/eshop-gateway:0.1.3 {{eshopgateway_composed}}
-    wkg oci push --insecure {{eshop_reg}} {{eshop_reg}}/event-pusher:0.1.0 components/target/event_pusher.composed.wasm
-    kubectl apply -f examples/eshop/k8s/registry.yaml -f examples/eshop/k8s/eshop.yaml
 
 # Compose the idempotency-guard into webhook-ingest, satisfying its
 # `idempotency:guard/store` import. Demonstrates one component composing another.
@@ -1635,32 +1614,6 @@ deploy: build
 # single lattice host. Needs kubectl + the operator + components pushed to the
 # in-cluster registry (see README). `ns` defaults to comp-auth.
 ns := "comp-auth"
-deploy-k8s:
-    kubectl apply -f infra/k8s/host.yaml
-    kubectl apply -f infra/k8s/app.yaml
-    @just k8s-collapse
-
-# Scale every host ReplicaSet except the newest to 0, so exactly one host runs.
-# The operator can leave two RSes at 1 after a rollout, splitting the lattice
-# (http provider and component land on different pods, wrpc calls fail). This
-# makes a single co-located host deterministic — no manual `kubectl scale`.
-k8s-collapse:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    sel="app.kubernetes.io/instance=comp-auth-host"
-    live=$(kubectl get rs -n {{ns}} -l "$sel" \
-      --sort-by='{.metadata.annotations.deployment\.kubernetes\.io/revision}' \
-      -o custom-columns=N:.metadata.name,D:.spec.replicas --no-headers \
-      | awk '$2>0{print $1}')
-    n=$(echo "$live" | grep -c . || true)
-    if [ "$n" -le 1 ]; then echo "single host already; nothing to collapse"; exit 0; fi
-    # keep the last (newest revision), scale the rest to 0
-    keep=$(echo "$live" | tail -1)
-    for rs in $(echo "$live" | sed '$d'); do
-      echo "scaling stale host RS $rs -> 0 (keeping $keep)"
-      kubectl scale rs "$rs" -n {{ns}} --replicas=0
-    done
-
 # Full local check: vendor (if needed), validate WIT, build, validate components.
 check: wit-check validate
     @echo "OK — contract resolves and both components build clean"
@@ -1671,7 +1624,7 @@ check: wit-check validate
 # ---------------------------------------------------------------------------
 
 build-selfhost:
-    cd selfhost && cargo build --release
+    cd cli && cargo build --release
 
 # Cross-build a STATIC comp-host for a Linux box.
 #
@@ -1714,7 +1667,7 @@ selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch)
 # Render one app's systemd unit, env file and route WITHOUT touching a box.
 # Read the output before you trust it to a server.
 selfhost-render app router="caddy": build-selfhost
-    ./selfhost/target/release/selfhost render apps/{{app}}.toml \
+    ./cli/target/release/comp node render apps/{{app}}.toml \
       --out target/selfhost --router {{router}}
     @echo "--- unit ---";  cat target/selfhost/{{app}}/comp-{{app}}.service
     @echo "--- route ---"; cat target/selfhost/{{app}}/{{app}}.*
@@ -1722,7 +1675,7 @@ selfhost-render app router="caddy": build-selfhost
 # Refuse the collisions a single spec cannot see: two apps on one port, one
 # domain, or one name. Run it in CI over apps/*.toml.
 selfhost-check: build-selfhost
-    ./selfhost/target/release/selfhost validate apps/*.toml
+    ./cli/target/release/comp node validate apps/*.toml
 
 # Ship one app to one box: compose, render, copy, restart, route.
 #
@@ -1737,14 +1690,14 @@ selfhost-deploy app host router="caddy": build-selfhost
       echo "missing $ART — run the app's compose recipe first (just compose-{{app}})" >&2
       exit 1
     fi
-    ./selfhost/target/release/selfhost validate apps/*.toml
+    ./cli/target/release/comp node validate apps/*.toml
     # Fail here, not with a unit that cannot start. The binary is the one thing the
     # deploy does NOT ship — it is 38 MB and identical for every app on the box.
     if ! ssh {{host}} "test -x /usr/local/bin/comp-host"; then
       echo "{{host}} has no /usr/local/bin/comp-host — run: just selfhost-bootstrap {{host}}" >&2
       exit 1
     fi
-    ./selfhost/target/release/selfhost render apps/{{app}}.toml --out target/selfhost --router {{router}}
+    ./cli/target/release/comp node render apps/{{app}}.toml --out target/selfhost --router {{router}}
     D=target/selfhost/{{app}}
     # 0644 on the artifact: the unit runs under DynamicUser, a transient uid that
     # must still be able to read it. 0600 on the env file: it may hold secrets and
@@ -1819,3 +1772,44 @@ selfhost-deploy-all host router="caddy":
     for f in apps/*.toml; do
       just selfhost-deploy "$(basename "$f" .toml)" {{host}} {{router}}
     done
+
+# ADR-0023's falsifying measurement, ADR-0026's numbers: two tenants in ONE
+# comp-host process, one of them hostile, isolation and throughput from the SAME
+# run. Needs nats-server and oha; needs no cluster and no second machine.
+#
+#   just adversarial                                    # address backstop (the real test)
+#   MANIFEST=bench/adversarial/two-tenants-denyall.json just adversarial
+#
+# Re-run this when the linker gains a capability, a kv backend changes, or anyone
+# proposes relaxing the address deny-list.
+adversarial: compose-gate build-reconciler
+    cd components && cargo component build -p adversary --release --target wasm32-wasip2
+    cd host && cargo build --release --bin comp-host
+    bash bench/adversarial/run.sh
+
+# The test that would have caught the split-brain bug: one app, two replicas, two
+# nodes — does the second replica CONTINUE the first one's count, or start its own?
+#
+#   just shared-state              # --kv nats: it continues
+#   KV=sqlite just shared-state    # node-local: the reconciler REFUSES to place it
+#
+# Needs nats-server. See docs/adr/0027.
+shared-state: compose-gate build-reconciler
+    cd host && cargo build --release --bin comp-host
+    bash bench/adversarial/shared-state.sh
+
+# Routing across replicas, on five nodes and two machines: 3 here, 2 on the Pi,
+# one comp-ingress in front, one deployment with replicas: 5. Every response says
+# which node answered, so the balance is visible from outside. Then both Pi nodes
+# are killed and traffic must keep flowing.
+#
+# Needs nats-server, and ssh to the Pi (override MAC= and PI=). See docs/adr/0029.
+five-nodes: compose-gate build-reconciler
+    cd host && cargo build --release --bin comp-host
+    bash bench/adversarial/five-nodes.sh
+
+# Round robin's weak case, on a real heterogeneous fleet: 2 Mac nodes + 2 Pi nodes,
+# same load, both algorithms. See docs/adr/0030 — the difference was 10x.
+slow-backend: compose-gate build-reconciler
+    cd host && cargo build --release --bin comp-host
+    bash bench/adversarial/slow-backend.sh

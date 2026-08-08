@@ -19,25 +19,35 @@ single-component app should be a container, not a wasm workload.
 | # | decision | status |
 |---|---|---|
 | [0001](0001-use-adrs.md) | Record architecture decisions as ADRs | accepted |
-| [0002](0002-tenant-is-a-namespace.md) | A tenant is a Kubernetes namespace | accepted; isolation unit revised by [0014](0014-an-application-owns-a-host.md) |
-| [0003](0003-control-plane-is-wasm-plus-applier.md) | The control plane is a wasm app plus a small native applier | accepted |
-| [0004](0004-reconcile-by-server-side-apply-on-save.md) | Reconcile by server-side apply on save | accepted |
+| [0002](0002-tenant-is-a-namespace.md) | A tenant is a Kubernetes namespace | superseded by [0021](0021-there-is-no-kubernetes.md) |
+| [0003](0003-control-plane-is-wasm-plus-applier.md) | The control plane is a wasm app plus a small native applier | applier half superseded by [0022](0022-desired-state-is-a-manifest.md); the split itself stands |
+| [0004](0004-reconcile-by-server-side-apply-on-save.md) | Reconcile by server-side apply on save | superseded by [0022](0022-desired-state-is-a-manifest.md) |
 | [0005](0005-deployment-strategy-is-a-tenant-choice.md) | Deployment strategy is a tenant choice: fused or linked | accepted |
 | [0006](0006-artifacts-are-digest-pinned-oci.md) | Artifacts are digest-pinned OCI; the WIT surface is the contract | accepted; durability + auth revised by [0017](0017-the-applier-pushes-and-the-registry-is-a-cache.md) |
 | [0007](0007-component-visibility-and-sharing.md) | Component visibility: private, org, public — and what public costs | accepted |
-| [0008](0008-isolation-is-stamped-never-authored.md) | Isolation is stamped by the platform, never authored by tenants | storage half superseded by [0012](0012-keyvalue-isolation-needs-a-cooperative-component.md) |
+| [0008](0008-isolation-is-stamped-never-authored.md) | Isolation is stamped by the platform, never authored by tenants | superseded by [0023](0023-isolation-is-a-linker-boundary.md); its release gate re-met in [0026](0026-the-adversarial-run.md) |
 | [0009](0009-identity-reuses-auth-guard.md) | Sign-in reuses `auth-guard`; OIDC is a later swap | accepted |
 | [0010](0010-config-and-secrets.md) | Config is `wasi:config`; secrets never enter a manifest | accepted |
-| [0011](0011-slice-one-scope.md) | Slice 1 is single-tenant, both strategies, one cluster | accepted |
-| [0012](0012-keyvalue-isolation-needs-a-cooperative-component.md) | Per-tenant keyvalue isolation needs a cooperative component | accepted |
-| [0013](0013-unenforceable-capabilities-are-denied-by-omission.md) | A capability the host cannot partition is denied by omission | superseded by [0014](0014-an-application-owns-a-host.md) |
-| [0014](0014-an-application-owns-a-host.md) | An application owns a host | accepted, confirmed by [0015](0015-a-bucket-name-is-not-a-boundary.md) |
-| [0015](0015-a-bucket-name-is-not-a-boundary.md) | A bucket name is not a boundary, and `hostInterfaces[].name` does not work | accepted |
-| [0016](0016-deleting-an-app-is-reconciled-not-remembered.md) | Deleting an app is reconciled, not remembered | accepted |
+| [0011](0011-slice-one-scope.md) | Slice 1 is single-tenant, both strategies, one cluster | superseded by [0025](0025-slice-one-on-the-lattice.md) |
+| [0012](0012-keyvalue-isolation-needs-a-cooperative-component.md) | Per-tenant keyvalue isolation needs a cooperative component | accepted; **answered** by [0023](0023-isolation-is-a-linker-boundary.md) |
+| [0013](0013-unenforceable-capabilities-are-denied-by-omission.md) | A capability the host cannot partition is denied by omission | superseded by [0023](0023-isolation-is-a-linker-boundary.md) |
+| [0014](0014-an-application-owns-a-host.md) | An application owns a host | superseded by [0023](0023-isolation-is-a-linker-boundary.md) |
+| [0015](0015-a-bucket-name-is-not-a-boundary.md) | A bucket name is not a boundary, and `hostInterfaces[].name` does not work | generalised by [0023](0023-isolation-is-a-linker-boundary.md) |
+| [0016](0016-deleting-an-app-is-reconciled-not-remembered.md) | Deleting an app is reconciled, not remembered | reaping half superseded by [0021](0021-there-is-no-kubernetes.md) |
 | [0017](0017-the-applier-pushes-and-the-registry-is-a-cache.md) | The applier pushes, and the registry is a cache | accepted; auth reasoning corrected by [0018](0018-the-platform-deploys-a-running-app.md) |
 | [0018](0018-the-platform-deploys-a-running-app.md) | The platform deploys a running app, and what that took | accepted |
 | [0019](0019-the-density-number.md) | The density number, measured: 2.3 Mi per component, 70 Mi per app | accepted (idle/cold-start figures) |
 | [0020](0020-the-density-number-under-load.md) | The same density number, under load: free throughput, 3.2× memory, better tail | accepted |
+| [0021](0021-there-is-no-kubernetes.md) | There is no Kubernetes; nodes are a lattice you join | accepted |
+| [0022](0022-desired-state-is-a-manifest.md) | Desired state is a manifest; the reconciler pulls it | accepted |
+| [0023](0023-isolation-is-a-linker-boundary.md) | Isolation is a linker boundary, not a process boundary | accepted; measured in [0026](0026-the-adversarial-run.md); its backend table corrected by [0027](0027-a-spread-app-needs-a-shared-store.md) |
+| [0024](0024-artifacts-are-content-addressed.md) | An artifact is its digest, and the object store is a cache | accepted |
+| [0025](0025-slice-one-on-the-lattice.md) | Slice one, on the lattice: two boxes, one killed node | accepted; its cross-node reasoning corrected by [0028](0028-cross-node-calls-are-wrpc.md) |
+| [0026](0026-the-adversarial-run.md) | The adversarial run: contained, at 10.5k rps, in 56 MiB | accepted; **discharges 0023's measurement** |
+| [0027](0027-a-spread-app-needs-a-shared-store.md) | A spread app needs a shared store, and the platform now refuses otherwise | accepted |
+| [0028](0028-cross-node-calls-are-wrpc.md) | Cross-node calls are wRPC; the codec I designed should never have existed | accepted |
+| [0029](0029-one-address-in-front-of-n-replicas.md) | One address in front of N replicas, and its table comes from inventory | accepted; its balancer replaced by [0030](0030-least-outstanding.md) |
+| [0030](0030-least-outstanding.md) | Least-outstanding, because round robin collapsed on a real fleet | accepted |
 
 ## The shape these add up to
 

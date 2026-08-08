@@ -15,9 +15,19 @@ name = "comp-host"
 path = "src/main.rs"
 
 [dependencies]
-wasmtime = { version = "47", features = ["component-model", "async"] }
-wasmtime-wasi = "47"
-wasmtime-wasi-http = "47"
+# PINNED TO 45 BY wrpc-runtime-wasmtime, not by choice.
+#
+# wrpc 0.31 builds against wasmtime 45; taking 47 would put two incompatible
+# `Store`/`Linker`/`Component` types in one tree, which is the same shape of
+# problem the old `nats`/`rand` conflict was. Downgrading cost nothing measurable
+# — every API this host uses is identical across 45 and 47, and the whole suite
+# passed unchanged — so the cheap direction is to follow wrpc and bump when it
+# does, rather than reimplement its wasmtime glue to stay one minor ahead.
+#
+# Bump all four together when wrpc supports a newer one.
+wasmtime = { version = "45", features = ["component-model", "async"] }
+wasmtime-wasi = "45"
+wasmtime-wasi-http = "45"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
@@ -28,15 +38,30 @@ clap = { version = "4", features = ["derive"] }
 # TLS (rustls + webpki roots) so `--kv redis` can dial managed `rediss://`
 # endpoints (DO Managed Valkey, Upstash, …) from a minimal container.
 redis = { version = "0.27", features = ["tls-rustls", "tls-rustls-webpki-roots"] }
-nats = "0.25"
+# The fabric between a node and the reconciler, as three traits (inventory,
+# commands, artifacts) with one implementation over NATS. The host holds
+# `Arc<dyn ...>` and never names a broker.
+comp-lattice = { path = "../lattice" }
+# Still direct for `--kv nats`, which is a STORE and not the transport — see
+# docs/adr/0027 on why conflating those two was the mistake.
+async-nats = "0.38"
+futures = "0.3"
 # `bundled` compiles SQLite itself: no system libsqlite3 to match, which keeps the
 # static musl cross-build for a VPS working (see just selfhost-build-host).
 rusqlite = { version = "0.32", features = ["bundled"] }
-# Not used directly. Adding rusqlite re-resolved the lockfile (which is gitignored)
-# and `nuid` — pulled in by the old `nats` 0.25 client — has a loose enough `rand`
-# requirement that it grabbed 0.10, where `rand::distributions` was renamed. This
-# constrains what nuid unifies to. The real fix is moving off `nats` 0.25 to
-# `async-nats`, a bigger change than this backend deserves.
-rand = "0.8"
+# Artifacts are content-addressed; the digest is verified before anything is
+# compiled, because the object store is not a trust boundary and the digest is.
+sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Component-native RPC: the component model's own value encoding on the wire,
+# with dynamic (runtime type introspection) invocation — which is exactly what
+# binding an unsatisfied import at start time needs. This replaces a hand-rolled
+# `Val` <-> JSON codec that was going to be a worse version of something already
+# specified, and that could not represent the type set faithfully anyway.
+#
+# It is a bytecodealliance project rather than a wasmCloud one: adopting it does
+# not re-adopt the provider model ADR-0012 was about.
+wrpc-runtime-wasmtime = "0.31"
+wrpc-transport-nats = "0.31"
+wrpc-transport = "0.29"
