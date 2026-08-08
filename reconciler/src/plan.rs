@@ -275,6 +275,9 @@ pub fn plan(
 ) -> Outcome {
     let mut out = Outcome::default();
     let mut want: BTreeMap<Key, (u32, &Manifest, &Component)> = BTreeMap::new();
+    // Load this pass has already committed, so apps placed later in the same pass
+    // see the earlier ones rather than all racing to the same node.
+    let mut pending: BTreeMap<String, usize> = BTreeMap::new();
 
     for m in desired {
         let Some(root) = m.root() else {
@@ -285,7 +288,7 @@ pub fn plan(
             });
             continue;
         };
-        let nodes = match place(root, observed) {
+        let nodes = match place(root, observed, &pending) {
             Ok(n) => n,
             Err(reason) => {
                 out.unschedulable.push(Unschedulable {
@@ -330,6 +333,7 @@ pub fn plan(
         }
         for (node, count) in &nodes {
             want.insert(key(m, &root.id, &root.digest, node), (*count, m, root));
+            *pending.entry(node.clone()).or_default() += *count as usize;
         }
         // The rest of the graph follows the root onto the same nodes, one each.
         // That is what keeps every link local, which is what makes a link table
@@ -347,7 +351,7 @@ pub fn plan(
                     || c.placement.mode == Mode::Pinned
                     || !c.placement.nodes.is_empty();
                 let targets = if spans {
-                    match place(c, observed) {
+                    match place(c, observed, &pending) {
                         Ok(n) => n,
                         Err(reason) => {
                             out.unschedulable.push(Unschedulable {
@@ -363,6 +367,7 @@ pub fn plan(
                 };
                 for (node, _) in &targets {
                     want.insert(key(m, &c.id, &c.digest, node), (1, m, c));
+                    *pending.entry(node.clone()).or_default() += 1;
                 }
             }
         }
@@ -480,7 +485,17 @@ fn key(m: &Manifest, component: &str, digest: &str, node: &str) -> Key {
 }
 
 /// Which nodes run how many, or why none can.
-fn place(c: &Component, observed: &[NodeInventory]) -> Result<Vec<(String, u32)>, String> {
+fn place(
+    c: &Component,
+    observed: &[NodeInventory],
+    // What THIS pass has already decided to put on each node.
+    //
+    // Without it, every app in a pass ranks against the same unchanged inventory
+    // and they all choose the same node — the inventory only catches up a
+    // heartbeat later, by which time the whole batch has landed in one place.
+    // Measured: six apps, three nodes, 6/0/0.
+    pending: &BTreeMap<String, usize>,
+) -> Result<Vec<(String, u32)>, String> {
     let eligible: Vec<&NodeInventory> = observed.iter().filter(|n| fits(c, n)).collect();
 
     match c.placement.mode {
@@ -509,19 +524,32 @@ fn place(c: &Component, observed: &[NodeInventory]) -> Result<Vec<(String, u32)>
             if c.replicas == 0 {
                 return Ok(Vec::new());
             }
-            // Stability beats evenness. Sort by what is already running here, so a
-            // node joining does not shuffle every existing replica onto it — the
-            // fair share lands on nodes that already hold instances first.
-            let mut ranked: Vec<(&NodeInventory, u32)> =
-                eligible.iter().map(|n| (*n, running_on(c, n))).collect();
-            ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.node.cmp(&b.0.node)));
+            // Three keys, in this order, and each is load-bearing:
+            //
+            //  1. replicas of THIS component already here, DESCENDING — stability.
+            //     A node joining must not shuffle every existing replica onto it.
+            //  2. total instances on the node, ASCENDING — balance ACROSS apps.
+            //     Without this, every new app scores 0 on key 1 and the tie-break
+            //     is the node name, so N different apps all land on the
+            //     alphabetically first node. Measured: six apps, five nodes, one
+            //     machine holding all six. That is worse than pinning tenants to
+            //     machines, which is the thing this platform exists not to do.
+            //  3. the name — determinism, so the plan is a pure function.
+            let mut ranked: Vec<(&NodeInventory, u32, usize)> = eligible
+                .iter()
+                .map(|n| {
+                    let observed_load: usize = n.instances.iter().map(|i| i.count as usize).sum();
+                    (*n, running_on(c, n), observed_load + pending.get(&n.node).copied().unwrap_or(0))
+                })
+                .collect();
+            ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)).then(a.0.node.cmp(&b.0.node)));
 
             let n = ranked.len() as u32;
             let (base, rem) = (c.replicas / n, c.replicas % n);
             Ok(ranked
                 .iter()
                 .enumerate()
-                .map(|(i, (node, _))| {
+                .map(|(i, (node, _, _))| {
                     (node.node.clone(), base + if (i as u32) < rem { 1 } else { 0 })
                 })
                 .filter(|(_, count)| *count > 0)
@@ -1039,6 +1067,42 @@ mod tests {
         );
         let out = plan(&[m], &[node("n1", &[], &[])], &mut Hysteresis::default(), &Cfg::default());
         assert!(out.unschedulable[0].reason.starts_with("`store`:"), "{:?}", out.unschedulable);
+    }
+
+    #[test]
+    fn different_apps_spread_across_nodes_instead_of_piling_onto_one() {
+        // THE bug this ranking exists for. Every app is new, so every node scores 0
+        // on "replicas of this component" — and without a load key the tie-break is
+        // the node name, putting all six on the alphabetically first node.
+        let mut obs = vec![node("n1", &[], &[]), node("n2", &[], &[]), node("n3", &[], &[])];
+        let apps: Vec<Manifest> = ["a", "b", "c", "d", "e", "f"]
+            .iter()
+            .map(|n| {
+                let mut m = app(vec![comp(n, "sha256:x", 1)], vec![], Strategy::Linked);
+                m.app = n.to_string();
+                m
+            })
+            .collect();
+        converge(&apps, &mut obs, 3);
+        let per_node: Vec<usize> = obs.iter().map(|n| n.instances.len()).collect();
+        assert_eq!(per_node.iter().sum::<usize>(), 6);
+        assert!(
+            per_node.iter().all(|c| *c == 2),
+            "six apps over three nodes should be 2/2/2, got {per_node:?}"
+        );
+    }
+
+    #[test]
+    fn balancing_across_apps_does_not_break_stability_within_one() {
+        // Key 1 still wins: an existing replica must not move just because its node
+        // is now carrying more total load than a neighbour.
+        let m = app(vec![comp("api", "sha256:a", 1)], vec![], Strategy::Linked);
+        let mut busy = node("busy", &[], &[]);
+        running(&mut busy, "api", "sha256:a", 1);
+        running(&mut busy, "other", "sha256:z", 5);
+        let idle = node("idle", &[], &[]);
+        let out = plan(&[m], &[busy, idle], &mut Hysteresis::default(), &Cfg::default());
+        assert!(out.commands.is_empty(), "it must stay put: {:?}", out.commands);
     }
 
     #[test]
