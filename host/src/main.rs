@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use clap::Parser;
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
@@ -91,6 +91,10 @@ pub type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 pub struct Instance {
     pub scope: SharedScope,
     pub pre: ProxyPre<Host>,
+    /// Clients for this instance's REMOTE imports, keyed by interface. Built once
+    /// at start, because resolving a target per request would put a lookup on the
+    /// hot path for something that only changes when placement does.
+    pub remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
     /// How many replicas this node was asked for.
     ///
     /// Not N copies of anything: one `InstancePre` already serves concurrent
@@ -140,14 +144,18 @@ struct Host {
     scope: SharedScope,
     /// Per-store resource ceiling. Set from the scope in `handle_request`.
     limits: wasmtime::StoreLimits,
+    /// How this store reaches components on other nodes. `Solo` off a lattice, so
+    /// the single-app lane needs no broker and says so if something tries.
+    rpc: rpc::RpcCtx,
 }
 
-// `impl WrpcView for Host` belongs here and is NOT written, deliberately. See the
-// blocker at the bottom of `rpc.rs`: the trait requires every store to hold a live
-// wRPC client, and a single-app run has no NATS to build one from. Writing it would
-// mean either forcing a broker into a lane whose whole point is not needing one, or
-// making `Host` generic over the transport — a large change that wants deciding
-// rather than defaulting into.
+impl wrpc_runtime_wasmtime::WrpcView for Host {
+    type Invoke = rpc::Transport;
+
+    fn wrpc(&mut self) -> wrpc_runtime_wasmtime::WrpcCtxView<'_, Self::Invoke> {
+        wrpc_runtime_wasmtime::WrpcCtxView { ctx: &mut self.rpc, table: &mut self.table }
+    }
+}
 
 /// Map a backend error to the wasi:keyvalue `error` variant.
 fn kv_err(e: anyhow::Error) -> store::Error {
@@ -707,7 +715,10 @@ async fn main() -> Result<()> {
             instances
                 .write()
                 .unwrap()
-                .insert(id.clone(), Arc::new(Instance { scope, pre, count: 1 }));
+                .insert(
+                    id.clone(),
+                    Arc::new(Instance { scope, pre, remotes: Default::default(), count: 1 }),
+                );
             // The catch-all exists ONLY here. A lattice node routes by Host header
             // and 404s on a miss — a fallback there would send one tenant's traffic
             // into another tenant's component on a bad DNS record.
@@ -724,7 +735,15 @@ async fn main() -> Result<()> {
             let node = args.node.clone().unwrap_or_else(|| {
                 hostname().unwrap_or_else(|| format!("node-{}", std::process::id()))
             });
+            // The node's own NATS connection, shared with the agent so wRPC clients
+            // ride the same link rather than opening a second one per instance.
+            let raw_nats = Arc::new(
+                async_nats::connect(nats_url_for_lattice)
+                    .await
+                    .with_context(|| format!("connecting to NATS at {nats_url_for_lattice}"))?,
+            );
             let ag = Arc::new(agent::Agent {
+                nats: Some(raw_nats),
                 node,
                 labels: args.labels.iter().cloned().collect(),
                 lattice: args.lattice.clone(),
@@ -980,6 +999,14 @@ async fn handle_request(
         cache_backing,
         scope,
         limits: wasmtime::StoreLimits::default(),
+        rpc: rpc::RpcCtx::new(
+            if instance.remotes.is_empty() {
+                rpc::Transport::Solo
+            } else {
+                rpc::Transport::Lattice(instance.remotes.clone())
+            },
+            Some(std::time::Duration::from_secs(30)),
+        ),
     };
     let mut store = Store::new(&engine, host);
 

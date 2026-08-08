@@ -90,6 +90,8 @@ pub struct Agent {
     pub instances: Instances,
     pub routes: Routes,
     pub limits: Limits,
+    /// The node's NATS connection, for building wRPC clients. `None` off a lattice.
+    pub nats: Option<Arc<async_nats::Client>>,
     pub state_dir: PathBuf,
     pub heartbeat_secs: u64,
     /// Where this node can be reached by an ingress, `host:port`. A node bound to
@@ -347,6 +349,7 @@ async fn start(
                 Arc::new(Instance {
                     scope: e.scope.clone(),
                     pre: e.pre.clone(),
+                    remotes: e.remotes.clone(),
                     count: cmd.count.max(1),
                 })
             })
@@ -385,7 +388,34 @@ async fn start(
     .context("compile task")?
     .map_err(|e| anyhow::anyhow!("compiling the artifact for {id}: {e}"))?;
 
-    let linker = crate::build_linker(&agent.engine)?;
+    // Which of this instance's links point somewhere else. A local target keeps
+    // the direct in-process path; only the rest become wRPC clients.
+    let local: std::collections::BTreeSet<String> =
+        agent.instances.read().unwrap().keys().cloned().collect();
+    let remotes = match (&agent.nats, scope.links.is_empty()) {
+        (Some(nats), false) => {
+            crate::rpc::remote_clients(nats.clone(), &agent.lattice, &scope.links, |t| {
+                local.contains(t)
+            })
+            .await?
+        }
+        _ => Default::default(),
+    };
+    if !remotes.is_empty() {
+        eprintln!(
+            "comp-host: {id} links {} interface(s) to components on other nodes",
+            remotes.len()
+        );
+    }
+
+    let mut linker = crate::build_linker(&agent.engine)?;
+    // Bind the remote half BEFORE pre-instantiating: an import with no host impl
+    // and no link is what makes `instantiate_pre` fail, and failing there is how
+    // omission stays fail-closed (ADR-0013).
+    if !remotes.is_empty() {
+        let n = crate::rpc::link_remote_imports(&agent.engine, &mut linker, &component, &remotes)?;
+        eprintln!("comp-host: {id} bound {n} interface(s) over wrpc");
+    }
     let pre = wasmtime_wasi_http::p2::bindings::ProxyPre::new(linker.instantiate_pre(&component)?)
         .map_err(|e| {
             anyhow::anyhow!(
@@ -398,7 +428,7 @@ async fn start(
         .instances
         .write()
         .unwrap()
-        .insert(id.clone(), Arc::new(Instance { scope: scope.clone(), pre, count }));
+        .insert(id.clone(), Arc::new(Instance { scope: scope.clone(), pre, remotes, count }));
     if let Some(host) = ingress_host {
         agent.routes.write().unwrap().insert(host.to_ascii_lowercase(), id.clone());
     }

@@ -31,6 +31,27 @@ pub fn prefix(lattice: &str, instance_id: &str) -> String {
     format!("comp.{lattice}.rpc.{instance_id}")
 }
 
+/// Build the per-interface client map for one instance's REMOTE imports.
+///
+/// Only entries whose target is not running locally: a local link keeps the direct
+/// in-process path, which is ADR-0019's 1.2 ms and the entire reason for
+/// co-locating a graph by default.
+pub async fn remote_clients(
+    nats: Arc<async_nats::Client>,
+    lattice: &str,
+    links: &std::collections::BTreeMap<String, String>,
+    is_local: impl Fn(&str) -> bool,
+) -> Result<std::collections::BTreeMap<String, NatsInvoke>> {
+    let mut out = std::collections::BTreeMap::new();
+    for (iface, target) in links {
+        if is_local(target) {
+            continue;
+        }
+        out.insert(iface.clone(), client(nats.clone(), lattice, target, None).await?);
+    }
+    Ok(out)
+}
+
 /// A client addressed at one instance.
 ///
 /// `queue_group` is `Some` on the SERVE side and `None` on the call side: replicas
@@ -53,30 +74,84 @@ pub async fn client(
 /// One connection per node: an invocation carries its own subject, so nothing about
 /// the client is tenant-specific. What IS tenant-specific — which subject an import
 /// resolves to — lives in the link table on the `Scope`, and never in here.
+/// What a store can invoke through, in a binary that serves two lanes.
+///
+/// This is the answer to the problem that stalled the last attempt: `WrpcView`
+/// requires EVERY store to hold an `Invoke`, and a single-app run has no NATS. The
+/// fix is not to make `Host` generic over the transport — it is one enum that IS an
+/// `Invoke`, delegating on a lattice and refusing politely off it.
+///
+/// The associated types are borrowed wholesale from the NATS client, so the
+/// refusing variant never has to construct a stream it has no way to make.
+pub enum Transport {
+    /// On a lattice: one client per remote TARGET, keyed by the WIT interface the
+    /// import came in through.
+    ///
+    /// A client is addressed at one instance by its subject prefix, but `invoke`
+    /// receives the interface name per call — so dispatching on that name is what
+    /// lets a single store reach several different remote components, which a link
+    /// table explicitly allows and one client alone could not do.
+    Lattice(std::collections::BTreeMap<String, NatsInvoke>),
+    /// The single-app lane, which has no bus by design. An import bound to a remote
+    /// instance fails here with a sentence saying so, rather than the host either
+    /// pretending to have a broker or refusing to start at all.
+    Solo,
+}
+
+impl wrpc_transport::Invoke for Transport {
+    type Context = <NatsInvoke as wrpc_transport::Invoke>::Context;
+    type Outgoing = <NatsInvoke as wrpc_transport::Invoke>::Outgoing;
+    type Incoming = <NatsInvoke as wrpc_transport::Invoke>::Incoming;
+
+    async fn invoke<P>(
+        &self,
+        cx: Self::Context,
+        instance: &str,
+        func: &str,
+        params: bytes::Bytes,
+        paths: impl AsRef<[P]> + Send,
+    ) -> Result<(Self::Outgoing, Self::Incoming)>
+    where
+        P: AsRef<[Option<usize>]> + Send + Sync,
+    {
+        match self {
+            Transport::Lattice(by_iface) => {
+                let c = by_iface.get(instance).with_context(|| {
+                    format!(
+                        "no remote is linked for `{instance}` — the link table named no \
+                         target for it, which should have been refused at start"
+                    )
+                })?;
+                c.invoke(cx, instance, func, params, paths).await
+            }
+            Transport::Solo => anyhow::bail!(
+                "`{instance}#{func}` is on another node, and this host is not joined to a \
+                 lattice — start it with --lattice-nats, or deploy the graph fused"
+            ),
+        }
+    }
+}
+
 pub struct RpcCtx {
-    /// `Invoke` is implemented on `Client` itself, not on `Arc<Client>`, so the
-    /// client is cloned per instance rather than shared behind a pointer. It is a
-    /// handle over one NATS connection, so a clone is cheap — the connection is
-    /// not duplicated.
-    client: NatsInvoke,
+    client: Transport,
     shared: SharedResourceTable,
     timeout: Option<Duration>,
 }
 
 impl RpcCtx {
-    pub fn new(client: NatsInvoke, timeout: Option<Duration>) -> Self {
+    pub fn new(client: Transport, timeout: Option<Duration>) -> Self {
         Self { client, shared: SharedResourceTable::default(), timeout }
     }
 }
 
-impl WrpcCtx<NatsInvoke> for RpcCtx {
+impl WrpcCtx<Transport> for RpcCtx {
     /// Per-invocation headers. Nothing needs them yet; when tracing crosses a node
     /// boundary this is where the span context goes.
-    fn context(&self) -> <NatsInvoke as wrpc_transport::Invoke>::Context {
+    fn context(&self) -> <Transport as wrpc_transport::Invoke>::Context {
         None
     }
 
-    fn client(&self) -> &NatsInvoke {
+    fn client(&self) -> &Transport {
         &self.client
     }
 
@@ -135,6 +210,52 @@ where
         }
     }
     out
+}
+
+/// Bind every import whose target lives on another node to a wRPC invocation.
+///
+/// This is the whole of cross-node calling from the caller's side. A bound import
+/// is indistinguishable from a local one to the guest — it calls a function, and
+/// whether that crosses a machine is a placement decision it never sees. That is
+/// the property the component model is for, and the reason this belongs in the
+/// linker rather than at any call site.
+///
+/// Imports NOT in `remotes` are left alone: either the host satisfies them
+/// (`wasi:*`) or they are linked locally in-process, which is ADR-0019's 1.2 ms.
+pub fn link_remote_imports<V>(
+    engine: &wasmtime::Engine,
+    linker: &mut wasmtime::component::Linker<V>,
+    component: &Component,
+    remotes: &std::collections::BTreeMap<String, NatsInvoke>,
+) -> Result<usize>
+where
+    V: wasmtime_wasi::WasiView + wrpc_runtime_wasmtime::WrpcView + 'static,
+{
+    let mut bound = 0;
+    for (name, ty) in linkable_imports(engine, component) {
+        if !remotes.contains_key(&name) {
+            continue;
+        }
+        let mut inst = linker
+            .instance(&name)
+            .map_err(|e| anyhow::anyhow!("opening linker instance `{name}`: {e}"))?;
+        wrpc_runtime_wasmtime::link_instance(
+            engine,
+            &mut inst,
+            // No guest- or host-owned resources across a node yet. wRPC encodes a
+            // resource as opaque bytes whose meaning is application-specific
+            // (ADR-0028), and nothing here has defined that meaning — so an
+            // interface carrying one is refused at placement rather than silently
+            // handed a blob the other side cannot interpret.
+            [],
+            std::collections::HashMap::new(),
+            ty,
+            name.clone(),
+        )
+        .map_err(|e| anyhow::anyhow!("linking `{name}` over wrpc: {e}"))?;
+        bound += 1;
+    }
+    Ok(bound)
 }
 
 /// Which imports this component needs that the host cannot satisfy itself.
@@ -209,7 +330,7 @@ mod tests {
     #[test]
     fn the_host_can_satisfy_wrpcs_context_trait() {
         fn assert_ctx<T: wrpc_transport::Invoke, C: WrpcCtx<T>>() {}
-        assert_ctx::<NatsInvoke, RpcCtx>();
+        assert_ctx::<Transport, RpcCtx>();
     }
 
     /// Both sides derive the address from the same three names, so a caller can
