@@ -223,7 +223,7 @@ pub async fn run(agent: Arc<Agent>, fabric: Fabric) -> Result<()> {
                         // node does not linger long enough to hold a replica hostage.
                         let ttl = Duration::from_secs(agent.heartbeat_secs * 3);
                         if let Err(e) = inventory.publish(&agent.node, bytes, ttl).await {
-                            eprintln!("comp-host: heartbeat failed: {e}");
+                            eprintln!("comp-host: heartbeat failed: {e:#}");
                         }
                     }
                     Err(e) => eprintln!("comp-host: could not serialise inventory: {e}"),

@@ -1825,3 +1825,14 @@ orgs: compose-platform build-reconciler
 split-graph: compose build-reconciler
     cd host && cargo build --release --bin comp-host
     bash bench/adversarial/split-graph.sh
+
+# Multi-tenant benchmark: 2 organisations, 5 members each, both deploying and both
+# under load at once — control plane cost, data plane throughput, and whether
+# isolation survives the load, all from ONE run. See docs/adr/0033.
+#
+#   just tenancy-bench                       # 3 nodes, 20s, 40 conns per org
+#   NODES=5 DURATION=60s CONNS=100 just tenancy-bench
+tenancy-bench: compose-platform compose-gate build-reconciler
+    cd host && cargo build --release --bin comp-host
+    cd cli && cargo build --release
+    bash bench/tenancy/run.sh
