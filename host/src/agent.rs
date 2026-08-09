@@ -113,6 +113,11 @@ impl Agent {
         self.state_dir.join("instances.json")
     }
 
+    /// Where compiled artifacts live, keyed by the digest of the wasm they came from.
+    fn cache_dir(&self) -> PathBuf {
+        self.state_dir.join("cache")
+    }
+
     /// Everything running here, for the inventory and for the ledger.
     fn snapshot(&self) -> Vec<RunningInstance> {
         // Reverse the route table once rather than per instance: a node holds few
@@ -387,8 +392,43 @@ async fn start(
     // Compilation is slow and blocking; a start command must not stall the
     // heartbeat behind it.
     let engine = agent.engine.clone();
-    let component = tokio::task::spawn_blocking(move || {
-        wasmtime::component::Component::from_file(&engine, &path)
+    // Compile once per artifact per node, not once per start. ADR-0037 measured a
+    // 33ms cold start of which 31ms was `Component::from_file` recompiling bytes
+    // this node had already compiled — on every start, every re-placement after a
+    // node dies, and every reboot.
+    let cache = agent.cache_dir();
+    let _ = std::fs::create_dir_all(&cache);
+    let cwasm = cache.join(format!("{}.cwasm", scope.digest.trim_start_matches("sha256:")));
+    let engine = agent.engine.clone();
+    let (component, from_cache) = tokio::task::spawn_blocking(move || {
+        // SAFETY: `deserialize_file` trusts its input completely — it maps machine
+        // code straight in. The only thing that makes that acceptable is where the
+        // file comes from: written by this process, into a host-private directory,
+        // named for the digest whose bytes we verified before compiling. Nothing
+        // off the wire is ever deserialised, and a file that came from anywhere
+        // else would be arbitrary code execution.
+        if cwasm.exists() {
+            match unsafe { wasmtime::component::Component::deserialize_file(&engine, &cwasm) } {
+                Ok(c) => return Ok((c, true)),
+                // A cache written by a different wasmtime build, or a truncated
+                // write, must not be fatal — it is a cache. Drop it and compile.
+                Err(e) => {
+                    eprintln!("comp-host: ignoring unusable {}: {e}", cwasm.display());
+                    let _ = std::fs::remove_file(&cwasm);
+                }
+            }
+        }
+        let c = wasmtime::component::Component::from_file(&engine, &path)?;
+        // Write via a temp file in the same directory, then rename. Two starts of
+        // the same digest can race here, and a half-written .cwasm that another
+        // start deserialises is the one failure this cache must never cause.
+        if let Ok(bytes) = c.serialize() {
+            let tmp = cwasm.with_extension(format!("tmp.{}", std::process::id()));
+            if std::fs::write(&tmp, &bytes).is_ok() {
+                let _ = std::fs::rename(&tmp, &cwasm);
+            }
+        }
+        Ok::<_, anyhow::Error>((c, false))
     })
     .await
     .context("compile task")?
@@ -468,12 +508,13 @@ async fn start(
         agent.routes.write().unwrap().insert(host.to_ascii_lowercase(), id.clone());
     }
     eprintln!(
-        "comp-host: started {id} ({}) in {} ms (fetch {} ms, compile {} ms, link {} ms)",
+        "comp-host: started {id} ({}) in {} us (fetch {} us, {} {} us, link {} us)",
         scope.digest,
-        t0.elapsed().as_millis(),
-        t_fetch.as_millis(),
-        t_compile.as_millis(),
-        t_link.as_millis(),
+        t0.elapsed().as_micros(),
+        t_fetch.as_micros(),
+        if from_cache { "cache-load" } else { "compile" },
+        t_compile.as_micros(),
+        t_link.as_micros(),
     );
     Ok(())
 }

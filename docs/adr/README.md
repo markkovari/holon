@@ -57,6 +57,7 @@ single-component app should be a container, not a wasm workload.
 | [0037](0037-what-a-cold-start-costs.md) | What a cold start costs, and why scale-to-zero is affordable | accepted |
 | [0038](0038-autoscaling-on-observed-concurrency.md) | Autoscaling on observed concurrency (min/max/target) | accepted |
 | [0039](0039-comp-versus-wasmcloud.md) | comp vs wasmCloud 2.x, same component, both machines | accepted |
+| [0040](0040-compiled-artifacts-are-cached.md) | Compiled artifacts are cached (81x faster starts) | accepted |
 
 ## The shape these add up to
 
