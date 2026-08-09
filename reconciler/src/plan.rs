@@ -45,12 +45,9 @@ pub enum Mode {
 /// over the wrong window is how autoscalers oscillate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Scale {
-    /// `0` is accepted and scales the app away — but nothing brings it BACK on a
-    /// request today: with no replica placed there is no route, and the ingress
-    /// answers 503. ADR-0037 measured a 33 ms start, so activation-on-request is
-    /// affordable; until it exists, treat `min: 0` as "park this app", not as
-    /// scale-to-zero.
-    /// ponytail: activation path pending; min 1 is the usable floor.
+    /// `0` parks the app, and a request brings it back: the ingress asks the
+    /// reconciler to place a replica and holds the request while it starts —
+    /// measured at 49 ms for the caller that pays for it, 2 ms after (ADR-0042).
     pub min: u32,
     pub max: u32,
     /// Concurrent requests one replica should carry before another is added.
