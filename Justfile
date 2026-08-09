@@ -822,9 +822,10 @@ compose-platform: compose
       --plug {{rel}}/blob_store.wasm \
       --plug {{rel}}/quota.wasm \
       --plug {{rel}}/wit_reflect.wasm \
+      --plug {{secrets_wasm}} \
       -o {{platform_composed}}
     wasm-tools validate {{platform_composed}}
-    @echo "composed platform-domain (+ auth-guard + policy + records + blob + quota + wit-reflect) -> {{platform_composed}}"
+    @echo "composed platform-domain (+ auth-guard + policy + records + blob + quota + wit-reflect + secrets-vault) -> {{platform_composed}}"
 
 # Build the native reconciler — the only process holding a lattice credential.
 build-reconciler:

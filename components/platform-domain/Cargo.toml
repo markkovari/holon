@@ -32,6 +32,7 @@ world = "platform-domain"
 "blob:store" = { path = "../blob-store/wit" }
 "quota:meter" = { path = "../quota/wit" }
 "wit:reflect" = { path = "../wit-reflect/wit" }
+"secrets:vault" = { path = "../secrets-vault/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
 "wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }

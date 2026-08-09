@@ -49,6 +49,10 @@ world platform-domain {
     import blob:store/blobstore@0.1.0;
     // per-tenant deployment budgets (ADR-0008).
     import quota:meter/meter@0.1.0;
+
+    // Secrets by REFERENCE (ADR-0010): the platform checks that a reference
+    // resolves and never reads the value into a manifest, a revision or a log.
+    import secrets:vault/vault@0.1.0;
     // inspect an upload, plan a graph, compose a fused artifact (ADR-0005/0006).
     import wit:reflect/inspector@0.1.0;
     import wit:reflect/composer@0.1.0;

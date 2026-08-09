@@ -151,7 +151,8 @@ async fn main() -> Result<()> {
     let known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>> =
         std::sync::Arc::new(std::sync::RwLock::new((Vec::new(), Vec::new())));
     if !args.dry_run {
-        serve_activations(commands.clone(), known.clone(), cfg.clone(), command_timeout).await;
+        serve_activations(commands.clone(), known.clone(), cfg.clone(), args.clone(), command_timeout)
+            .await;
     }
     let mut hyst = Hysteresis::default();
     let period = Duration::from_secs(interval.max(1));
@@ -221,7 +222,7 @@ async fn main() -> Result<()> {
             continue;
         }
         for c in &outcome.commands {
-            if let Err(e) = send(commands.as_ref(), command_timeout, c).await {
+            if let Err(e) = send(commands.as_ref(), &args, &http, command_timeout, c).await {
                 // Logged and dropped on purpose. The next pass re-derives from
                 // scratch, so a failed command costs one interval — cheaper and far
                 // more predictable than a per-command retry state machine.
@@ -291,18 +292,76 @@ async fn fetch_inventory(inventory: &dyn Inventory) -> Result<Vec<NodeInventory>
     Ok(out)
 }
 
-async fn send(bus: &dyn CommandBus, command_timeout: u64, cmd: &Command) -> Result<()> {
+/// Turn a planned command into the bytes a host receives.
+///
+/// A start that grants secrets picks up two extra fields here and nowhere else: the
+/// `key -> ref` map the host looks guest strings up in, and a token authorising
+/// exactly those references. The reconciler never sees a secret VALUE — it asks the
+/// platform for a capability and passes it on (ADR-0051).
+async fn wire_command(
+    args: &Args,
+    http: &reqwest::Client,
+    cmd: &Command,
+) -> Result<serde_json::Value> {
+    let mut body = serde_json::to_value(cmd)?;
+    let Command::Start { secrets, tenant, app, component, node, .. } = cmd else {
+        return Ok(body);
+    };
+
+    // ALWAYS rewritten, even when empty. The planner carries secrets as a list and
+    // the host looks them up as a map, so the shapes differ — and converting only
+    // the non-empty case left every ordinary start sending a list into a field the
+    // host reads as a map. It refused all of them: "invalid type: sequence,
+    // expected a map". Caught by the e2e suite on the first run after the change,
+    // which is what it is for.
+    body["secrets"] = json!(secrets
+        .iter()
+        .map(|s| (s.key.clone(), s.reference.clone()))
+        .collect::<std::collections::BTreeMap<_, _>>());
+    if secrets.is_empty() {
+        return Ok(body);
+    }
+    let instance = format!("{tenant}/{app}/{component}@{node}");
+    let refs: Vec<&str> = secrets.iter().map(|s| s.reference.as_str()).collect();
+    let url = format!("{}/api/internal/fetch-token", args.platform_url.trim_end_matches('/'));
+    let res = http
+        .post(&url)
+        .header("x-platform-secret", &args.secret)
+        .json(&json!({ "instance": instance, "refs": refs }))
+        .send()
+        .await
+        .context("asking for a fetch token")?;
+    if !res.status().is_success() {
+        anyhow::bail!("the platform refused a fetch token: {}", res.status());
+    }
+    let token = res.json::<serde_json::Value>().await.context("reading the fetch token")?;
+    let token = token["token"].as_str().unwrap_or_default().to_string();
+    if token.is_empty() {
+        anyhow::bail!("the platform returned an empty fetch token");
+    }
+    body["fetch_token"] = json!(token);
+    Ok(body)
+}
+
+async fn send(
+    bus: &dyn CommandBus,
+    args: &Args,
+    http: &reqwest::Client,
+    command_timeout: u64,
+    cmd: &Command,
+) -> Result<()> {
     let verb = match cmd {
         Command::Start { .. } => "start",
         Command::Stop { .. } => "stop",
     };
+    let body = wire_command(args, http, cmd).await?;
     // "Nothing is listening on that node" and "that node is slow" are kept distinct
     // by the implementation; both surface here as an error with the reason.
     let reply = bus
         .send(
             cmd.node(),
             verb,
-            serde_json::to_vec(cmd)?,
+            serde_json::to_vec(&body)?,
             Duration::from_secs(command_timeout),
         )
         .await?;
@@ -583,8 +642,10 @@ async fn serve_activations(
     bus: std::sync::Arc<dyn CommandBus>,
     known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>>,
     cfg: Cfg,
+    args: Args,
     command_timeout: u64,
 ) {
+    let http = reqwest::Client::new();
     let mut rx = match bus.serve("reconciler").await {
         Ok(rx) => rx,
         Err(e) => {
@@ -602,7 +663,11 @@ async fn serve_activations(
                 .ok()
                 .and_then(|v| v["host"].as_str().map(str::to_string))
                 .unwrap_or_default();
-            let body = match activate(bus.as_ref(), &known, &cfg, command_timeout, &host).await {
+            let body = match activate(
+                bus.as_ref(), &known, &cfg, &args, &http, command_timeout, &host,
+            )
+            .await
+            {
                 Ok(v) => v,
                 Err(e) => serde_json::json!({ "error": format!("{e:#}") }),
             };
@@ -615,6 +680,8 @@ async fn activate(
     bus: &dyn CommandBus,
     known: &std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>,
     cfg: &Cfg,
+    args: &Args,
+    http: &reqwest::Client,
     command_timeout: u64,
     host: &str,
 ) -> Result<serde_json::Value> {
@@ -649,7 +716,7 @@ async fn activate(
         .iter()
         .find(|c| matches!(c, Command::Start { .. }))
         .context("already placed, or nothing to start")?;
-    send(bus, command_timeout, start).await?;
+    send(bus, args, http, command_timeout, start).await?;
 
     let node = start.node().to_string();
     let address = observed

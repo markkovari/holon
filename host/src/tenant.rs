@@ -39,6 +39,25 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BucketId(String);
 
+/// A secret reference, as the PLATFORM wrote it — `vault://<org>/<name>`.
+///
+/// Private field for the same reason as `BucketId`: nothing outside this module can
+/// build one, so a `SecretRef` reaching the fetch path is proof it came from a
+/// manifest the platform validated. A guest string can never become one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SecretRef(String);
+
+impl SecretRef {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[cfg(test)]
+    pub fn for_test(r: &str) -> Self {
+        SecretRef(r.to_string())
+    }
+}
+
 impl BucketId {
     pub fn as_str(&self) -> &str {
         &self.0
@@ -254,6 +273,14 @@ pub struct Scope {
     /// is a key into this map and can never be a bucket name.
     buckets: BTreeMap<String, BucketId>,
     pub cfg: BTreeMap<String, String>,
+    /// Guest-visible key -> the reference the platform granted. The guest asks for
+    /// `"stripe"`; it cannot ask for `vault://globex/stripe`, because it cannot
+    /// name one at all (ADR-0051).
+    secrets: BTreeMap<String, SecretRef>,
+    /// Authorises fetching exactly the references above, for a bounded time. A
+    /// capability, not a secret: it is worth what this manifest was worth, which is
+    /// why it can live in the ledger on disk (ADR-0022).
+    pub fetch_token: String,
     pub egress: EgressPolicy,
     /// `import iface -> instance id`. An import with no entry and no host impl
     /// means the instance refuses to start, so omission fails closed.
@@ -296,6 +323,12 @@ pub struct StartCommand {
     pub config: BTreeMap<String, String>,
     #[serde(default)]
     pub links: BTreeMap<String, String>,
+    /// `key -> vault://<org>/<name>`, validated by the platform at save (ADR-0050).
+    #[serde(default)]
+    pub secrets: BTreeMap<String, String>,
+    /// Authorises fetching exactly those references, and nothing else.
+    #[serde(default)]
+    pub fetch_token: String,
     #[serde(default)]
     pub host_needs: Vec<String>,
     /// Stamped by the platform, never authored by a tenant (ADR-0008).
@@ -332,6 +365,11 @@ impl StartCommand {
 
         Scope {
             buckets,
+            // Wrapped here and nowhere else: this is the only place a string from a
+            // start command becomes a `SecretRef`, which is what makes the newtype
+            // a boundary rather than a label.
+            secrets: self.secrets.into_iter().map(|(k, r)| (k, SecretRef(r))).collect(),
+            fetch_token: self.fetch_token,
             egress: EgressPolicy::new(
                 &self.egress,
                 limits.allow_private_egress,
@@ -358,6 +396,8 @@ mod tests {
 
     fn scope(tenant: &str, app: &str) -> Scope {
         StartCommand {
+            secrets: Default::default(),
+            fetch_token: String::new(),
             tenant: tenant.into(),
             app: app.into(),
             component: "api".into(),

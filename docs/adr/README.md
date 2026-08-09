@@ -64,6 +64,11 @@ single-component app should be a container, not a wasm workload.
 | [0044](0044-subjects-carry-a-version.md) | Subjects carry a version | accepted |
 | [0045](0045-shedding-feeds-autoscaling.md) | Shedding feeds autoscaling — a refused request is unmet demand | accepted |
 | [0046](0046-what-the-signal-cannot-say.md) | What the signal cannot say — wedged vs saturated, at-ceiling, and absent vs idle | accepted |
+| [0047](0047-config-is-declared-and-checked.md) | Config is declared by the uploader and checked at save | accepted |
+| [0048](0048-does-this-plug-fit.md) | Does this plug fit? — the real subtype check, and typed request bodies | accepted |
+| [0049](0049-the-org-can-see-it.md) | The org can see it — ADR-0007's middle row, and a market endpoint | accepted |
+| [0050](0050-secrets-by-reference.md) | Secrets, by reference — stored, validated, not yet readable at runtime | accepted |
+| [0051](0051-the-secret-reader.md) | The secret reader — a key, a handle, and one explicit reveal | accepted |
 
 ## The shape these add up to
 

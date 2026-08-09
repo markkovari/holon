@@ -31,6 +31,9 @@ wasmtime-wasi-http = "45"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "signal"] }
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
+# Fetching a granted secret from the platform (ADR-0051). rustls rather than the
+# system store so a node needs no OpenSSL wherever it is installed.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 http-body-util = "0.1"
 bytes = "1"
 anyhow = "1"

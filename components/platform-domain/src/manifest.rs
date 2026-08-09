@@ -85,6 +85,14 @@ impl Strategy {
 #[derive(Clone, Debug)]
 pub struct Part {
     pub name: String,
+    /// Config this component was given, already validated against the keys its
+    /// uploader declared. Empty is legal; unknown is not, and is refused before a
+    /// `Part` is ever built (ADR-0010).
+    pub config: std::collections::BTreeMap<String, String>,
+    /// Secrets this component asks for, BY REFERENCE. Validated at save — every ref
+    /// resolves and belongs to this org — and the value is never read, so it cannot
+    /// reach a manifest, a revision, or a log (ADR-0010).
+    pub secrets: Vec<(String, String)>,
     /// The content address of the bytes — `sha256:...`, bare. ADR-0024: the digest
     /// IS the identity, and a node fetches by it from the object store.
     pub digest: String,
@@ -310,10 +318,13 @@ pub fn build(input: &ManifestInput) -> Result<Value, ManifestError> {
                     "constraints": constraints,
                 },
                 "host_needs": host_needs,
-                // Tenant config is not wired yet (ADR-0010 promises it); the field
-                // exists so a node's start command has one shape either way.
-                "config": {},
-                "secrets": [],
+                // Validated at save against the keys the uploader declared, so a
+                // node never receives a key the component does not read.
+                "config": p.config,
+                "secrets": p.secrets
+                    .iter()
+                    .map(|(key, r)| json!({ "key": key, "ref": r }))
+                    .collect::<Vec<_>>(),
                 // Stamped, never authored. A tenant that could write this could
                 // write its own way off the box.
                 "egress": if is_root || input.strategy == Strategy::Fused { egress.clone() } else { vec![] },
@@ -352,6 +363,8 @@ mod tests {
     fn part(name: &str, digest: &str) -> Part {
         Part {
             name: name.into(),
+            config: Default::default(),
+            secrets: Vec::new(),
             digest: digest.into(),
             host_imports: vec![],
             nested_instances: 1,

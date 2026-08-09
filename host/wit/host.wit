@@ -17,4 +17,8 @@ world host-imports {
     // in-memory map, mirroring the jco cache-backing shim).
     import cache:store/source@0.1.0;
     import cache:store/sink@0.1.0;
+    // Secrets the component was GRANTED, by key. The host resolves the key to a
+    // reference it holds and fetches the value; the guest never sees a reference
+    // (ADR-0051).
+    import comp:secrets/reader@0.1.0;
 }
