@@ -43,15 +43,28 @@ trap cleanup EXIT
 # storage the real path does. (Worth knowing when re-reading ADR-0033's 100k rps:
 # oha's "success rate" counts completed requests, not 2xx, so a wall of 429s reads
 # as 100% success there too.)
-ssh -n -o BatchMode=yes "$LOAD_HOST" \
-  "bash -lc 'printf %s \"{\\\"key\\\":\\\"s\\\",\\\"capacity\\\":100000000,\\\"refill\\\":100000000}\" > ~/comp-load.json'"
+printf %s '{"key":"s","capacity":100000000,"refill":100000000}' > "$SP/body.json"
+if [ "$LOAD_HOST" != local ]; then
+  scp -q "$SP/body.json" "$LOAD_HOST:comp-load.json"
+fi
 
+# LOAD_HOST=local runs the generator here instead of on the load box. Off-box is
+# better (ADR-0036) because a kill cannot then quietly reduce offered load through a
+# local shortcut — but for an A/B of one ingress setting against another on the same
+# fleet, both sides are affected identically and the comparison still holds. Used
+# when the load box is asleep.
 remote_oha() {
   local label=$1; shift
-  ssh -n -o BatchMode=yes "$LOAD_HOST" \
-    "bash -lc 'oha --output-format json --no-tui -m POST -D ~/comp-load.json \
-      -H content-type:application/json -H Host:shop.eve.test $* \
-      http://$MAC:8090/api/ratelimit'" >"$SP/oha-$label.json" 2>"$SP/oha-$label.err"
+  if [ "$LOAD_HOST" = local ]; then
+    oha --output-format json --no-tui -m POST -D "$SP/body.json" \
+      -H content-type:application/json -H Host:shop.eve.test "$@" \
+      "http://127.0.0.1:8090/api/ratelimit" >"$SP/oha-$label.json" 2>"$SP/oha-$label.err"
+  else
+    ssh -n -o BatchMode=yes "$LOAD_HOST" \
+      "bash -lc 'oha --output-format json --no-tui -m POST -D ~/comp-load.json \
+        -H content-type:application/json -H Host:shop.eve.test $* \
+        http://$MAC:8090/api/ratelimit'" >"$SP/oha-$label.json" 2>"$SP/oha-$label.err"
+  fi
   python3 bench/stress/summarise.py "$SP/oha-$label.json" "$label"
 }
 
@@ -75,8 +88,11 @@ sleep 3
   --secret test-secret --nats-url nats://127.0.0.1:4232 --lattice stress --interval 3 \
   >"$SP/rec.log" 2>&1 & PIDS+=($!)
 # 0.0.0.0, because the load is arriving from another machine — the whole point.
+# SHED=0 restores the pre-ADR-0041 behaviour (queue without bound) so the two can
+# be compared on the same fleet, same rate, same generator.
 ./reconciler/target/release/comp-ingress --addr 0.0.0.0:8090 \
-  --nats-url nats://127.0.0.1:4232 --lattice stress --refresh-secs 2 >"$SP/ingress.log" 2>&1 & PIDS+=($!)
+  --nats-url nats://127.0.0.1:4232 --lattice stress --refresh-secs 2 \
+  --max-inflight "${SHED:-64}" >"$SP/ingress.log" 2>&1 & PIDS+=($!)
 
 echo "  settling (5 replicas over 4 nodes, two machines)..."
 sleep 26
