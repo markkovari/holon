@@ -47,3 +47,11 @@ echo "=== every start this node logged ==="
 grep "started .* in " "$SP/n1.log" | sed 's/comp-host: /  /'
 echo
 python3 bench/coldstart/summarise.py "$SP/n1.log"
+
+# The branch that must never brick a node: a .cwasm written by a different wasmtime
+# build, or a truncated write. It is machine code loaded with `deserialize_file`,
+# which trusts its input, so the failure has to be caught and the file dropped
+# rather than propagated.
+echo
+echo "=== a corrupt cache must fall back to compiling, not fail the start ==="
+python3 bench/coldstart/corrupt.py "$SP"

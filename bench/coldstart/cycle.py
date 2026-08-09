@@ -46,18 +46,20 @@ print(f"  instance {key}, digest {start_cmd['digest'][:19]}...")
 
 warm, cold = [], []
 for i in range(n):
-    # Every other iteration also deletes the cached .wasm, so the object-store pull
-    # is separated from the compile rather than averaged into it.
+    # Every other iteration deletes BOTH caches — the pulled .wasm and the compiled
+    # .cwasm — so the run contains real cold starts and not just re-pulls that still
+    # hit the compile cache.
     evict = i % 2 == 1
     nats_req("stop", stop_cmd)
     if evict:
-        d = f"{sp}/n1/artifacts"
-        for f in os.listdir(d) if os.path.isdir(d) else []:
-            os.remove(os.path.join(d, f))
+        for d in (f"{sp}/n1/artifacts", f"{sp}/n1/cache"):
+            if os.path.isdir(d):
+                for f in os.listdir(d):
+                    os.remove(os.path.join(d, f))
     ack, _ = nats_req("start", start_cmd)
     served = probe()
     (cold if evict else warm).append((ack, served))
-    tag = "cache evicted" if evict else "cache warm   "
+    tag = "cold (both caches cleared)" if evict else "warm                      "
     print(f"    {i + 1:2}. {tag}  ack {1000 * ack:7.0f} ms   first request served after "
           + (f"{1000 * served:6.0f} ms" if served is not None else "NEVER"))
 
