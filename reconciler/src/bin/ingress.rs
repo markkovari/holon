@@ -31,6 +31,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use comp_lattice::{nats::NatsLattice, CommandBus, Inventory};
+use comp_reconciler::settings;
 use comp_reconciler::plan::NodeInventory;
 use http_body_util::BodyExt;
 use hyper::server::conn::http1;
@@ -50,12 +51,19 @@ struct Args {
 
     /// Seconds between inventory refreshes. The table is read on every request and
     /// refreshed on a timer, because a request must never wait on the bus.
-    #[arg(long, default_value = "3")]
-    refresh_secs: u64,
+    /// Config file. Defaults to $COMP_CONFIG, then ./comp.toml if it exists.
+    #[arg(long)]
+    config: Option<std::path::PathBuf>,
+
+    // The tunables below take their default from the config file when the flag is
+    // absent, so they are Option here rather than carrying a clap default — a clap
+    // default is indistinguishable from a value someone typed.
+    #[arg(long, env = "COMP_REFRESH_SECS")]
+    refresh_secs: Option<u64>,
 
     /// Seconds to wait on a backend before trying another replica.
-    #[arg(long, default_value = "30")]
-    backend_timeout: u64,
+    #[arg(long, env = "COMP_BACKEND_TIMEOUT")]
+    backend_timeout: Option<u64>,
 
     /// How to choose among the replicas of an app.
     ///
@@ -83,8 +91,17 @@ struct Args {
     /// ponytail: one global bound; per-node capacity would need nodes to advertise
     /// what they can take, which is the same missing input as capacity-weighted
     /// placement.
-    #[arg(long, default_value = "64")]
-    max_inflight: usize,
+    #[arg(long, env = "COMP_MAX_INFLIGHT")]
+    max_inflight: Option<usize>,
+
+    /// How many SLOW backends one request may spend before giving up. A refused
+    /// connection is skipped for free and never counted against this.
+    #[arg(long, env = "COMP_SLOW_BUDGET")]
+    slow_budget: Option<usize>,
+
+    /// Seconds to hold a request while a scaled-to-zero app is activated.
+    #[arg(long, env = "COMP_ACTIVATION_TIMEOUT")]
+    activation_timeout: Option<u64>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -166,6 +183,7 @@ async fn activate(
     activating: &Activating,
     table: &Arc<RwLock<Table>>,
     host: &str,
+    timeout_secs: u64,
 ) -> Option<Backend> {
     let lock = activation_lock(activating, host);
     let _held = lock.lock().await;
@@ -177,7 +195,7 @@ async fn activate(
 
     let payload = serde_json::json!({ "host": host }).to_string().into_bytes();
     let reply = commands
-        .send("reconciler", "activate", payload, Duration::from_secs(10))
+        .send("reconciler", "activate", payload, Duration::from_secs(timeout_secs))
         .await
         .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&reply).ok()?;
@@ -254,6 +272,15 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let addr: SocketAddr = args.addr.parse()?;
 
+    // Resolve every tunable once, here, so no call site has to know where a value
+    // came from.
+    let file = comp_reconciler::settings::File::load(args.config.as_deref())?.ingress;
+    let refresh_secs = settings::pick(args.refresh_secs, file.refresh_secs, 3);
+    let backend_timeout = settings::pick(args.backend_timeout, file.backend_timeout, 30);
+    let max_inflight = settings::pick(args.max_inflight, file.max_inflight, 64);
+    let slow_budget = settings::pick(args.slow_budget, file.slow_budget, 2);
+    let activation_timeout = settings::pick(args.activation_timeout, file.activation_timeout, 10);
+
     let fabric = Arc::new(
         NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(15)).await?,
     );
@@ -286,7 +313,7 @@ async fn main() -> Result<()> {
     // ask the bus for its route would put the control plane on the data path, which
     // is the thing this design keeps apart.
     {
-        let (inventory, table, every) = (inventory.clone(), table.clone(), args.refresh_secs);
+        let (inventory, table, every) = (inventory.clone(), table.clone(), refresh_secs);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(every.max(1)));
             loop {
@@ -332,7 +359,7 @@ async fn main() -> Result<()> {
     // a dead node's inventory.
     if let Some(load) = load_out {
         let per_host = per_host.clone();
-        let every = args.refresh_secs.max(1);
+        let every = refresh_secs.max(1);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(every));
             loop {
@@ -372,10 +399,11 @@ async fn main() -> Result<()> {
             next.clone(),
             inflight.clone(),
             per_host.clone(),
-            args.backend_timeout,
+            backend_timeout,
             args.balance,
-            args.max_inflight,
+            max_inflight,
         );
+        let (slow_budget, activation_timeout) = (slow_budget, activation_timeout);
         let (commands, activating) = (commands.clone(), activating.clone());
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
@@ -390,7 +418,7 @@ async fn main() -> Result<()> {
                 async move {
                     forward(
                         table, client, next, inflight, per_host, commands, activating, mode,
-                        max_inflight, timeout, req,
+                        max_inflight, slow_budget, activation_timeout, timeout, req,
                     )
                     .await
                 }
@@ -427,6 +455,8 @@ async fn forward(
     activating: Activating,
     mode: Balance,
     max_inflight: usize,
+    slow_budget: usize,
+    activation_timeout: u64,
     timeout: u64,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<ProxyBody>> {
@@ -449,7 +479,7 @@ async fn forward(
         // Nothing placed. Rather than refuse, ask the reconciler to start one and
         // hold this request while it does — a scaled-to-zero app is meant to come
         // back on demand, and ADR-0040 made that cost 0.43 ms of actual work.
-        match activate(&commands, &activating, &table, &host).await {
+        match activate(&commands, &activating, &table, &host, activation_timeout).await {
             Some(b) => backends = vec![b],
             // 503, not 404: the app may exist and simply have no replica up. A 404
             // would tell a caller to stop retrying, which is the wrong advice.
@@ -484,10 +514,9 @@ async fn forward(
     // exactly what killing a two-node machine out of three did (0.04% of requests,
     // for 13s). A refused connection is an instant RST and costs nothing to skip; a
     // timeout is the one that turns a retry into a stampede, so only it is budgeted.
-    const SLOW_BUDGET: usize = 2;
     let mut slow = 0;
     for backend in ranked.into_iter() {
-        if slow >= SLOW_BUDGET {
+        if slow >= slow_budget {
             break;
         }
         // Skip a saturated replica the way a dead one is skipped. The check above

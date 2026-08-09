@@ -1,0 +1,61 @@
+# Every tunable in the reconciler and the ingress, with the value it defaults to.
+#
+# Copy to `comp.toml` next to the binaries, or point at it with `--config` or
+# `$COMP_CONFIG`. Every key is optional: set the one you care about and leave the
+# rest out. A key that is misspelled is an ERROR rather than being ignored, because a
+# typo that is silently dropped leaves you believing you changed something.
+#
+# Precedence: command-line flag, then environment variable, then this file, then the
+# default. A flag typed while debugging beats a file written months ago.
+#
+# Nothing here is calibrated. These are the numbers the platform was measured with,
+# and the ADR that measured each one is named so you can see what moving it costs.
+
+[reconciler]
+# Seconds between reconcile passes. Also the floor on how fast anything is noticed,
+# other than an activation (ADR-0042), which bypasses this loop entirely.
+interval = 10
+
+# THE COOLDOWN. Consecutive passes a surplus must persist before anything is
+# stopped. Deficits are acted on immediately — under-replicated is the bad
+# direction — and only shrinking waits (ADR-0022). This is what stops an autoscaled
+# app flapping, and what makes a scaled-to-zero app take ~5s to park again.
+settle_passes = 2
+
+# Commands per pass, so a mass event (a machine dying) drains over several passes
+# instead of stampeding every survivor at once (ADR-0035).
+max_commands = 20
+
+# Seconds to wait for a node to acknowledge a command. The ack means "will serve",
+# not "received" — a node sends it after the instance is built (ADR-0037).
+command_timeout = 10
+
+# Seconds an inventory entry survives without a heartbeat. This is the failover
+# detection time: ADR-0035 measured a dead machine being noticed 11-12s after the
+# kill with this at 15. Lower it and a slow node looks dead; raise it and traffic
+# keeps being offered to a corpse for longer.
+inventory_ttl = 15
+
+[ingress]
+# Seconds between refreshes of the route table from inventory.
+refresh_secs = 3
+
+# Seconds to wait on a backend before treating it as slow.
+backend_timeout = 30
+
+# Requests in flight to ONE NODE before this ingress sheds with 503; 0 disables
+# shedding entirely. ADR-0041 measured the difference: with no bound, an overloaded
+# node answered p99 42 SECONDS with zero errors; with 64, p99 747ms and slightly
+# more useful work done. Not calibrated — it depends on what a node can take, which
+# nodes do not advertise.
+max_inflight = 64
+
+# How many SLOW backends one request may spend before giving up. Refused connections
+# are skipped for free and never counted here: a dead node costs nothing to walk
+# past, while a slow one is what turns a retry into a stampede (ADR-0035).
+slow_budget = 2
+
+# Seconds to hold a request while a scaled-to-zero app is started. ADR-0042 measured
+# the whole activation at 49ms, so this is a ceiling for when something is wrong,
+# not a budget anything normally approaches.
+activation_timeout = 10

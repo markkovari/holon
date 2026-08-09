@@ -4,3 +4,4 @@
 
 pub mod oci;
 pub mod plan;
+pub mod settings;
