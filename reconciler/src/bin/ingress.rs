@@ -352,13 +352,14 @@ async fn main() -> Result<()> {
     let next = Arc::new(AtomicUsize::new(0));
     let inflight: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
     let per_host: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
+    let shed: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
 
     // Publish observed concurrency per host so the reconciler can autoscale on it.
     // A short TTL on the bucket means a dead ingress stops voting on its own rather
     // than pinning an app at whatever it last saw — the same mechanism that retires
     // a dead node's inventory.
     if let Some(load) = load_out {
-        let per_host = per_host.clone();
+        let (per_host, shed) = (per_host.clone(), shed.clone());
         let every = refresh_secs.max(1);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(every));
@@ -371,11 +372,17 @@ async fn main() -> Result<()> {
                     .map(|(h, c)| (h.clone(), c.load(Ordering::Relaxed)))
                     .collect();
                 for (host, n) in sample {
+                    // Taken and RESET: this is what was refused during the interval,
+                    // not since the process started. A cumulative count would keep
+                    // asking for replicas long after the pressure was gone.
+                    let refused =
+                        counter(&shed, &host).swap(0, Ordering::Relaxed);
                     // The key is the host with dots swapped: NATS KV keys may not
                     // contain arbitrary punctuation, and `shop.eve.test` would be a
                     // subject wildcard boundary rather than one key.
                     let key = host.replace('.', "_");
-                    let body = serde_json::json!({ "host": host, "inflight": n });
+                    let body =
+                        serde_json::json!({ "host": host, "inflight": n, "shed": refused });
                     let _ = load
                         .publish(&key, body.to_string().into_bytes(), Duration::from_secs(30))
                         .await;
@@ -393,12 +400,13 @@ async fn main() -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
         let io = TokioIo::new(stream);
-        let (table, client, next, inflight, per_host, timeout, mode, max_inflight) = (
+        let (table, client, next, inflight, per_host, shed, timeout, mode, max_inflight) = (
             table.clone(),
             client.clone(),
             next.clone(),
             inflight.clone(),
             per_host.clone(),
+            shed.clone(),
             backend_timeout,
             args.balance,
             max_inflight,
@@ -407,17 +415,18 @@ async fn main() -> Result<()> {
         let (commands, activating) = (commands.clone(), activating.clone());
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
-                let (table, client, next, inflight, per_host) = (
+                let (table, client, next, inflight, per_host, shed) = (
                     table.clone(),
                     client.clone(),
                     next.clone(),
                     inflight.clone(),
                     per_host.clone(),
+                    shed.clone(),
                 );
                 let (commands, activating) = (commands.clone(), activating.clone());
                 async move {
                     forward(
-                        table, client, next, inflight, per_host, commands, activating, mode,
+                        table, client, next, inflight, per_host, shed, commands, activating, mode,
                         max_inflight, slow_budget, activation_timeout, timeout, req,
                     )
                     .await
@@ -451,6 +460,11 @@ async fn forward(
     // above cannot answer it: several apps share a node, so its value says how busy
     // the node is, not how busy this app is.
     per_host: InFlight,
+    // Requests refused since the last publish. Shedding creates a blind spot in the
+    // autoscaling signal: a shed request never becomes in-flight, so concurrency
+    // UNDERSTATES demand exactly when demand is highest and the app most needs
+    // replicas. Counting refusals is what closes it (ADR-0045).
+    shed: InFlight,
     commands: Arc<dyn CommandBus>,
     activating: Activating,
     mode: Balance,
@@ -495,6 +509,7 @@ async fn forward(
     // would join a queue with no bound and no way for the caller to see it — the 46
     // second p99 in ADR-0036. A 503 now is information the caller can act on.
     if !ranked.is_empty() && ranked.iter().all(|b| saturated(b, &inflight, max_inflight)) {
+        counter(&shed, &host).fetch_add(1, Ordering::Relaxed);
         return Ok(status(
             503,
             &format!(

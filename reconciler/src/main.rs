@@ -120,6 +120,14 @@ async fn main() -> Result<()> {
     )
     .await
     .map(|l| std::sync::Arc::new(l) as std::sync::Arc<dyn Inventory>)
+    .map_err(|e| {
+        // Silently falling back to "no load samples" made autoscaling look broken
+        // when it was never connected: the bucket had the signal, the ingress was
+        // publishing, and this end simply never read it. An optional input still has
+        // to say when it is absent.
+        eprintln!("comp-reconciler: no load signal, autoscaling will not fire: {e:#}");
+        e
+    })
     .ok();
     let commands: std::sync::Arc<dyn CommandBus> = fabric.clone();
     let artifacts: std::sync::Arc<dyn Artifacts> = fabric.clone();
@@ -487,16 +495,38 @@ mod tests {
     }
 }
 
-/// Observed concurrency per ingress host. Several ingresses may publish; their
-/// samples are SUMMED, because two ingresses each seeing 5 in flight means the app
-/// is carrying 10, not 5.
+/// Observed demand per ingress host. Several ingresses may publish; their samples are
+/// SUMMED, because two ingresses each seeing 5 in flight means the app is carrying
+/// 10, not 5.
 async fn read_load(load: &dyn Inventory) -> comp_reconciler::plan::Load {
+    let Ok(entries) = load.read_all().await else { return Default::default() };
+    fold_load(&entries)
+}
+
+/// Demand is in-flight PLUS refused.
+///
+/// Shedding (ADR-0041) creates a blind spot in the autoscaling signal: a shed request
+/// never becomes in-flight, so concurrency understates demand exactly when demand is
+/// highest. Left alone, the two features fight — the ingress refuses traffic while
+/// the reconciler sees a calm app and declines to grow it.
+///
+/// Counting a refusal as one unit of unmet concurrency is deliberately crude. It is
+/// not a measurement of how much load was turned away, and it does not need to be:
+/// its job is to push `desired` upward while refusals continue, and `max` is where it
+/// stops. An app that is shedding should go to its ceiling; that is what the ceiling
+/// is for.
+///
+/// Pure, so the arithmetic can be tested without a bus.
+fn fold_load(entries: &[comp_lattice::Entry]) -> comp_reconciler::plan::Load {
     let mut out = comp_reconciler::plan::Load::new();
-    let Ok(entries) = load.read_all().await else { return out };
     for e in entries {
         let Ok(v) = serde_json::from_slice::<serde_json::Value>(&e.value) else { continue };
-        let (Some(host), Some(n)) = (v["host"].as_str(), v["inflight"].as_u64()) else { continue };
-        *out.entry(host.to_string()).or_default() += n as u32;
+        let Some(host) = v["host"].as_str() else { continue };
+        let inflight = v["inflight"].as_u64().unwrap_or(0);
+        // Absent on an older ingress, which must read as "no refusals" rather than
+        // as a parse failure that drops the whole sample.
+        let shed = v["shed"].as_u64().unwrap_or(0);
+        *out.entry(host.to_string()).or_default() += (inflight + shed) as u32;
     }
     out
 }
@@ -595,4 +625,52 @@ async fn activate(
         .context("started on a node with no advertised address")?;
     eprintln!("comp-reconciler: activated {host} on {node}");
     Ok(serde_json::json!({ "node": node, "address": address }))
+}
+
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+    use comp_lattice::Entry;
+
+    fn entry(json: &str) -> Entry {
+        Entry { key: "k".into(), value: json.as_bytes().to_vec() }
+    }
+
+    #[test]
+    fn demand_counts_refusals_as_well_as_requests_in_flight() {
+        // THE point of this change: an app being shed is an app that needs more
+        // replicas, and in-flight alone cannot say so.
+        let load = fold_load(&[entry(r#"{"host":"a.test","inflight":3,"shed":40}"#)]);
+        assert_eq!(load.get("a.test"), Some(&43));
+    }
+
+    #[test]
+    fn several_ingresses_are_summed() {
+        // Two ingresses each seeing 5 means the app carries 10, not 5.
+        let load = fold_load(&[
+            entry(r#"{"host":"a.test","inflight":5,"shed":0}"#),
+            entry(r#"{"host":"a.test","inflight":5,"shed":2}"#),
+        ]);
+        assert_eq!(load.get("a.test"), Some(&12));
+    }
+
+    #[test]
+    fn an_older_ingress_without_the_field_still_counts() {
+        // A mixed fleet during a rollout is normal (ADR-0044). A missing `shed` must
+        // read as zero refusals, not as an unparseable sample to be dropped.
+        let load = fold_load(&[entry(r#"{"host":"a.test","inflight":7}"#)]);
+        assert_eq!(load.get("a.test"), Some(&7));
+    }
+
+    #[test]
+    fn junk_is_skipped_without_losing_the_rest() {
+        let load = fold_load(&[
+            entry("not json at all"),
+            entry(r#"{"nohost":true}"#),
+            entry(r#"{"host":"b.test","inflight":1,"shed":1}"#),
+        ]);
+        assert_eq!(load.get("b.test"), Some(&2));
+        assert_eq!(load.len(), 1);
+    }
 }

@@ -1,0 +1,36 @@
+[
+  {
+    "app": "shop",
+    "tenant": "eve",
+    "strategy": "fused",
+    "components": [
+      {
+        "id": "gate",
+        "digest": "",
+        "replicas": 1,
+        "placement": {
+          "mode": "spread",
+          "nodes": [],
+          "constraints": {}
+        },
+        "host_needs": [
+          "wasi:keyvalue/store",
+          "wasi:keyvalue/batch"
+        ],
+        "config": {},
+        "secrets": [],
+        "egress": [],
+        "scale": {
+          "min": 1,
+          "max": 4,
+          "target": 20
+        }
+      }
+    ],
+    "links": [],
+    "ingress": {
+      "host": "shop.eve.test",
+      "component": "gate"
+    }
+  }
+]
