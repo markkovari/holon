@@ -103,6 +103,25 @@ pub trait Artifacts: Send + Sync {
 /// this module IS the wire contract. It lives here rather than in either of them
 /// so that changing it is one edit rather than two that can disagree.
 pub mod wire {
+    /// The wire contract version, carried in every subject.
+    ///
+    /// Not decoration. A fleet is upgraded one machine at a time, so mixed versions
+    /// are the NORMAL state during any rollout, and a payload that changes shape
+    /// without changing its subject is misparsed in silence by whichever side is
+    /// older. We watched exactly that on wasmCloud (ADR-0039): a 2.3.0 host against a
+    /// 2.5.2 control plane reported `Placement: True` and then never ran the
+    /// workload, with nothing in either log naming a version mismatch.
+    ///
+    /// With the version in the subject, an old node simply does not receive commands
+    /// from a new reconciler — it goes quiet, its inventory expires, and the fleet
+    /// treats it as absent (ADR-0022). "Absent" is a state this platform already
+    /// handles correctly and can be seen from the outside; "present but silently
+    /// misparsing" is neither.
+    ///
+    /// Bump this when the shape of a command or an inventory entry changes
+    /// incompatibly — not for additive fields, which serde already tolerates.
+    pub const V: &str = "v1";
+
     /// Where a node's inventory entry lives. The key is the node id.
     pub const INVENTORY: &str = "comp-inventory";
     /// Where artifacts live, keyed by their own sha256.
@@ -113,19 +132,54 @@ pub mod wire {
     /// second shape in there would be a parse error on every pass.
     pub const LOAD: &str = "comp-load";
 
-    /// Commands addressed to one node, as `comp.<lattice>.cmd.<node>.<verb>`.
+    /// Commands addressed to one node, as `comp.<v>.<lattice>.cmd.<node>.<verb>`.
     pub fn command_subject(lattice: &str, node: &str, verb: &str) -> String {
-        format!("comp.{lattice}.cmd.{node}.{verb}")
+        format!("comp.{V}.{lattice}.cmd.{node}.{verb}")
     }
 
     /// Everything addressed to this node.
     pub fn command_wildcard(lattice: &str, node: &str) -> String {
-        format!("comp.{lattice}.cmd.{node}.>")
+        format!("comp.{V}.{lattice}.cmd.{node}.>")
     }
 
     /// The last token of a command subject.
     pub fn verb_of(subject: &str) -> &str {
         subject.rsplit('.').next().unwrap_or("")
+    }
+
+    /// Where a component serves its exports, as `comp.<v>.<lattice>.rpc.<instance>`.
+    ///
+    /// Versioned for the same reason as commands, and separately from them: the
+    /// data plane and the control plane can move independently, and a shared
+    /// constant is what keeps them from being changed together by accident.
+    pub fn rpc_prefix(lattice: &str, instance_id: &str) -> String {
+        format!("comp.{V}.{lattice}.rpc.{instance_id}")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn every_subject_carries_the_version() {
+            // The whole point: a fleet mid-upgrade must not have two versions
+            // talking past each other on one subject.
+            for s in [
+                command_subject("l", "n1", "start"),
+                command_wildcard("l", "n1"),
+                rpc_prefix("l", "t/a/c"),
+            ] {
+                assert!(s.starts_with(&format!("comp.{V}.")), "{s}");
+            }
+        }
+
+        #[test]
+        fn the_verb_survives_the_extra_token() {
+            // `verb_of` takes the LAST token, so an added prefix must not disturb
+            // it — this is the function that would break quietly.
+            assert_eq!(verb_of(&command_subject("l", "n1", "start")), "start");
+            assert_eq!(verb_of(&command_subject("l", "node.with.dots", "stop")), "stop");
+        }
     }
 }
 
@@ -138,12 +192,12 @@ mod tests {
         // Both binaries build and parse this string independently. If they ever
         // disagree, every command silently becomes "unknown verb".
         let s = wire::command_subject("prod", "box-a", "start");
-        assert_eq!(s, "comp.prod.cmd.box-a.start");
+        assert_eq!(s, "comp.v1.prod.cmd.box-a.start");
         assert_eq!(wire::verb_of(&s), "start");
         assert_eq!(wire::verb_of(&wire::command_subject("l", "n", "drain")), "drain");
         // The wildcard must match what `command_subject` produces.
         let w = wire::command_wildcard("prod", "box-a");
-        assert_eq!(w, "comp.prod.cmd.box-a.>");
+        assert_eq!(w, "comp.v1.prod.cmd.box-a.>");
         assert!(s.starts_with(w.trim_end_matches('>')));
     }
 }
