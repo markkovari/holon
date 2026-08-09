@@ -18,9 +18,9 @@
 //! credential, no manifest access, and keeps working while the control plane is
 //! down — the same property the node ledger buys on the other side.
 //!
-//! Failure handling is inventory expiry plus one retry: a node that stops
-//! heartbeating disappears from the table within a TTL, and a node that dies
-//! between refreshes costs one request a retry against a different replica.
+//! Failure handling is inventory expiry plus retry-past-the-dead: a node that stops
+//! heartbeating disappears from the table within a TTL, and nodes that die between
+//! refreshes cost a request the walk past them rather than a 502.
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
@@ -184,6 +184,23 @@ async fn main() -> Result<()> {
         NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(15)).await?,
     );
     let inventory: Arc<dyn Inventory> = fabric;
+    // Best effort: an ingress that cannot open the load bucket still routes. Load is
+    // an input to autoscaling, not to serving, and conflating them would make a
+    // control-plane hiccup an outage.
+    let load_out: Option<Arc<dyn Inventory>> = match NatsLattice::connect_bucket(
+        &args.nats_url,
+        &args.lattice,
+        Duration::from_secs(30),
+        comp_lattice::wire::LOAD,
+    )
+    .await
+    {
+        Ok(l) => Some(Arc::new(l)),
+        Err(e) => {
+            eprintln!("comp-ingress: not publishing load ({e:#})");
+            None
+        }
+    };
     let table: Arc<RwLock<Table>> = Arc::new(RwLock::new(Table::default()));
 
     // Refreshed on a timer and read from a lock per request. A request that had to
@@ -228,6 +245,39 @@ async fn main() -> Result<()> {
     );
     let next = Arc::new(AtomicUsize::new(0));
     let inflight: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
+    let per_host: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
+
+    // Publish observed concurrency per host so the reconciler can autoscale on it.
+    // A short TTL on the bucket means a dead ingress stops voting on its own rather
+    // than pinning an app at whatever it last saw — the same mechanism that retires
+    // a dead node's inventory.
+    if let Some(load) = load_out {
+        let per_host = per_host.clone();
+        let every = args.refresh_secs.max(1);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(every));
+            loop {
+                tick.tick().await;
+                let sample: Vec<(String, usize)> = per_host
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .map(|(h, c)| (h.clone(), c.load(Ordering::Relaxed)))
+                    .collect();
+                for (host, n) in sample {
+                    // The key is the host with dots swapped: NATS KV keys may not
+                    // contain arbitrary punctuation, and `shop.eve.test` would be a
+                    // subject wildcard boundary rather than one key.
+                    let key = host.replace('.', "_");
+                    let body = serde_json::json!({ "host": host, "inflight": n });
+                    let _ = load
+                        .publish(&key, body.to_string().into_bytes(), Duration::from_secs(30))
+                        .await;
+                }
+            }
+        });
+    }
+
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!(
         "comp-ingress: listening on http://{addr} | lattice {} | balance {:?}",
@@ -237,19 +287,27 @@ async fn main() -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
         let io = TokioIo::new(stream);
-        let (table, client, next, inflight, timeout, mode) = (
+        let (table, client, next, inflight, per_host, timeout, mode) = (
             table.clone(),
             client.clone(),
             next.clone(),
             inflight.clone(),
+            per_host.clone(),
             args.backend_timeout,
             args.balance,
         );
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
-                let (table, client, next, inflight) =
-                    (table.clone(), client.clone(), next.clone(), inflight.clone());
-                async move { forward(table, client, next, inflight, mode, timeout, req).await }
+                let (table, client, next, inflight, per_host) = (
+                    table.clone(),
+                    client.clone(),
+                    next.clone(),
+                    inflight.clone(),
+                    per_host.clone(),
+                );
+                async move {
+                    forward(table, client, next, inflight, per_host, mode, timeout, req).await
+                }
             });
             if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
                 eprintln!("comp-ingress: connection error: {e}");
@@ -275,6 +333,10 @@ async fn forward(
     client: Client,
     next: Arc<AtomicUsize>,
     inflight: InFlight,
+    // Concurrency per HOST, which is what autoscaling needs. The per-node counter
+    // above cannot answer it: several apps share a node, so its value says how busy
+    // the node is, not how busy this app is.
+    per_host: InFlight,
     mode: Balance,
     timeout: u64,
     req: hyper::Request<hyper::body::Incoming>,
@@ -289,6 +351,10 @@ async fn forward(
         .unwrap_or_default()
         .to_ascii_lowercase();
 
+    // Held for the whole request INCLUDING retries: a request being retried is
+    // still a request the app owes an answer to.
+    let _busy_host = Busy::on(counter(&per_host, &host));
+
     let backends = table.read().unwrap().routes.get(&host).cloned().unwrap_or_default();
     if backends.is_empty() {
         // 503, not 404: the app may exist and simply have no replica up. A 404
@@ -301,10 +367,20 @@ async fn forward(
     let bytes = body.collect().await.context("reading the request body")?.to_bytes();
 
     let mut last = String::new();
-    // One retry against a DIFFERENT replica. A node that died between inventory
-    // refreshes should cost one request a retry, not a failure — but retrying
-    // forever would turn one sick backend into a stampede.
-    for backend in ranked.into_iter().take(2) {
+    // Walk the ranking past dead replicas, but spend at most `SLOW_BUDGET` on slow
+    // ones. The two failures are not alike and treating them alike cost a measured
+    // outage: least-outstanding ranks a DEAD node FIRST, because a node answering
+    // nothing has nothing in flight. With `.take(2)` — one retry — two corpses at
+    // the top of the ranking exhausted the budget and the request 502'd, which is
+    // exactly what killing a two-node machine out of three did (0.04% of requests,
+    // for 13s). A refused connection is an instant RST and costs nothing to skip; a
+    // timeout is the one that turns a retry into a stampede, so only it is budgeted.
+    const SLOW_BUDGET: usize = 2;
+    let mut slow = 0;
+    for backend in ranked.into_iter() {
+        if slow >= SLOW_BUDGET {
+            break;
+        }
         let _busy = Busy::on(counter(&inflight, &backend.node));
         let uri: hyper::Uri = format!(
             "http://{}{}",
@@ -331,7 +407,10 @@ async fn forward(
                 return Ok(hyper::Response::from_parts(rp, rb.boxed()));
             }
             Ok(Err(e)) => last = format!("{} refused: {e}", backend.node),
-            Err(_) => last = format!("{} timed out", backend.node),
+            Err(_) => {
+                slow += 1;
+                last = format!("{} timed out", backend.node);
+            }
         }
     }
     Ok(status(502, &format!("every replica of {host:?} failed; last: {last}\n")))

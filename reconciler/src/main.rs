@@ -96,6 +96,18 @@ async fn main() -> Result<()> {
             .await?,
     );
     let inventory: std::sync::Arc<dyn Inventory> = fabric.clone();
+    // The load bucket is optional on purpose: a fleet with no ingress publishing
+    // (or an older one) reads as "no samples", and `desired_replicas` treats a
+    // missing sample as "leave it alone" rather than as zero traffic.
+    let load_in: Option<std::sync::Arc<dyn Inventory>> = NatsLattice::connect_bucket(
+        &args.nats_url,
+        &args.lattice,
+        Duration::from_secs(30),
+        comp_lattice::wire::LOAD,
+    )
+    .await
+    .map(|l| std::sync::Arc::new(l) as std::sync::Arc<dyn Inventory>)
+    .ok();
     let commands: std::sync::Arc<dyn CommandBus> = fabric.clone();
     let artifacts: std::sync::Arc<dyn Artifacts> = fabric.clone();
 
@@ -144,7 +156,15 @@ async fn main() -> Result<()> {
             }
         };
 
-        let outcome = plan(&desired, &observed, &mut hyst, &cfg);
+        // An unreadable load bucket is an empty sample set, NOT a reason to skip the
+        // pass: autoscaling is an enhancement to the diff, and a manifest with fixed
+        // replicas must keep reconciling whether or not anyone is publishing load.
+        let load = match &load_in {
+            Some(l) => read_load(l.as_ref()).await,
+            None => Default::default(),
+        };
+
+        let outcome = plan(&desired, &observed, &load, &mut hyst, &cfg);
         report(&args, &http, &outcome).await;
 
         if outcome.commands.is_empty() {
@@ -403,6 +423,7 @@ mod tests {
             tenant: "alice".into(),
             strategy: Strategy::Linked,
             components: vec![Component {
+                scale: None,
                 id: "api".into(),
                 digest: "sha256:abc".into(),
                 replicas: 2,
@@ -439,4 +460,18 @@ mod tests {
         assert!(m.links.is_empty());
         assert!(m.ingress.is_none());
     }
+}
+
+/// Observed concurrency per ingress host. Several ingresses may publish; their
+/// samples are SUMMED, because two ingresses each seeing 5 in flight means the app
+/// is carrying 10, not 5.
+async fn read_load(load: &dyn Inventory) -> comp_reconciler::plan::Load {
+    let mut out = comp_reconciler::plan::Load::new();
+    let Ok(entries) = load.read_all().await else { return out };
+    for e in entries {
+        let Ok(v) = serde_json::from_slice::<serde_json::Value>(&e.value) else { continue };
+        let (Some(host), Some(n)) = (v["host"].as_str(), v["inflight"].as_u64()) else { continue };
+        *out.entry(host.to_string()).or_default() += n as u32;
+    }
+    out
 }

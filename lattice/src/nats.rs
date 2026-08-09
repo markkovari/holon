@@ -31,6 +31,17 @@ impl NatsLattice {
     /// agree, and is exactly the kind of thing a second implementation would do
     /// differently. Said out loud here rather than discovered later.
     pub async fn connect(url: &str, lattice: &str, inventory_ttl: Duration) -> Result<Self> {
+        Self::connect_bucket(url, lattice, inventory_ttl, wire::INVENTORY).await
+    }
+
+    /// The same thing against a named bucket, so the load signal can reuse this
+    /// wholesale instead of growing a fourth trait for one map of counters.
+    pub async fn connect_bucket(
+        url: &str,
+        lattice: &str,
+        inventory_ttl: Duration,
+        bucket: &str,
+    ) -> Result<Self> {
         let client = async_nats::connect(url)
             .await
             .with_context(|| format!("connecting to NATS at {url}"))?;
@@ -39,7 +50,7 @@ impl NatsLattice {
         // Created rather than assumed, so a fresh lattice needs no setup step.
         let kv = js
             .create_key_value(async_nats::jetstream::kv::Config {
-                bucket: wire::INVENTORY.into(),
+                bucket: bucket.into(),
                 max_age: inventory_ttl,
                 ..Default::default()
             })

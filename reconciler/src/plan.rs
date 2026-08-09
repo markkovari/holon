@@ -37,6 +37,54 @@ pub enum Mode {
     Pinned,
 }
 
+/// How many replicas an app should have, as a function of how busy it is.
+///
+/// `target` is concurrent requests per replica, not requests per second: it is what
+/// the ingress can actually observe (it holds an in-flight counter per backend
+/// already), and it needs no clock or window. Rate needs both, and a rate averaged
+/// over the wrong window is how autoscalers oscillate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Scale {
+    /// `0` is accepted and scales the app away — but nothing brings it BACK on a
+    /// request today: with no replica placed there is no route, and the ingress
+    /// answers 503. ADR-0037 measured a 33 ms start, so activation-on-request is
+    /// affordable; until it exists, treat `min: 0` as "park this app", not as
+    /// scale-to-zero.
+    /// ponytail: activation path pending; min 1 is the usable floor.
+    pub min: u32,
+    pub max: u32,
+    /// Concurrent requests one replica should carry before another is added.
+    #[serde(default = "one")]
+    pub target: u32,
+}
+
+/// Observed concurrency per ingress host, as published by the ingress.
+pub type Load = BTreeMap<String, u32>;
+
+/// How many replicas this component should have right now.
+///
+/// Pure, and separate from placement, so the "how many" question can be tested
+/// without a fleet to put them on.
+pub fn desired_replicas(c: &Component, m: &Manifest, load: &Load) -> u32 {
+    let Some(scale) = &c.scale else {
+        return c.replicas;
+    };
+    // An app nobody has reported on is not an app with no traffic — it is an app
+    // the ingress has not published yet (it has just started, or it is the pass
+    // before the first sample). Falling to `min` on a missing key would scale a
+    // busy app to zero every time the ingress restarts.
+    let Some(host) = m.ingress.as_ref().map(|i| i.host.as_str()) else {
+        return c.replicas.clamp(scale.min.max(1), scale.max.max(1));
+    };
+    let Some(&inflight) = load.get(host) else {
+        return c.replicas.clamp(scale.min, scale.max.max(scale.min));
+    };
+    let target = scale.target.max(1);
+    // Round up: at target 10, eleven concurrent requests need two replicas, not one.
+    let want = inflight.div_ceil(target);
+    want.clamp(scale.min, scale.max.max(scale.min))
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Placement {
     #[serde(default)]
@@ -56,6 +104,12 @@ pub struct Component {
     pub digest: String,
     #[serde(default = "one")]
     pub replicas: u32,
+    /// Autoscaling bounds. `None` means `replicas` is a fixed count, which is what
+    /// every existing manifest means and why this is an Option rather than a
+    /// defaulted struct — a default of `min: 1, max: 1` would read as "autoscaling
+    /// is on and pinned", and the two are different states to debug.
+    #[serde(default)]
+    pub scale: Option<Scale>,
     #[serde(default)]
     pub placement: Placement,
     /// Stamped from `plan.host_needs` at save, never authored. Present so this
@@ -270,6 +324,7 @@ type Key = (String, String, String, String, String); // tenant, app, component, 
 pub fn plan(
     desired: &[Manifest],
     observed: &[NodeInventory],
+    load: &Load,
     hyst: &mut Hysteresis,
     cfg: &Cfg,
 ) -> Outcome {
@@ -288,7 +343,8 @@ pub fn plan(
             });
             continue;
         };
-        let nodes = match place(root, observed, &pending) {
+        let want_replicas = desired_replicas(root, m, load);
+        let nodes = match place(root, want_replicas, observed, &pending) {
             Ok(n) => n,
             Err(reason) => {
                 out.unschedulable.push(Unschedulable {
@@ -351,7 +407,7 @@ pub fn plan(
                     || c.placement.mode == Mode::Pinned
                     || !c.placement.nodes.is_empty();
                 let targets = if spans {
-                    match place(c, observed, &pending) {
+                    match place(c, c.replicas, observed, &pending) {
                         Ok(n) => n,
                         Err(reason) => {
                             out.unschedulable.push(Unschedulable {
@@ -487,6 +543,9 @@ fn key(m: &Manifest, component: &str, digest: &str, node: &str) -> Key {
 /// Which nodes run how many, or why none can.
 fn place(
     c: &Component,
+    // How many to place. Passed in rather than read off `c.replicas`, because with
+    // autoscaling the count is a function of load and `c` is only the policy.
+    replicas: u32,
     observed: &[NodeInventory],
     // What THIS pass has already decided to put on each node.
     //
@@ -521,7 +580,7 @@ fn place(
         )),
         Mode::Daemon => Ok(eligible.iter().map(|n| (n.node.clone(), 1)).collect()),
         Mode::Spread => {
-            if c.replicas == 0 {
+            if replicas == 0 {
                 return Ok(Vec::new());
             }
             // Three keys, in this order, and each is load-bearing:
@@ -545,7 +604,7 @@ fn place(
             ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)).then(a.0.node.cmp(&b.0.node)));
 
             let n = ranked.len() as u32;
-            let (base, rem) = (c.replicas / n, c.replicas % n);
+            let (base, rem) = (replicas / n, replicas % n);
             Ok(ranked
                 .iter()
                 .enumerate()
@@ -615,6 +674,7 @@ mod tests {
             id: id.into(),
             digest: digest.into(),
             replicas,
+            scale: None,
             placement: Placement::default(),
             host_needs: Vec::new(),
             config: BTreeMap::new(),
@@ -642,7 +702,7 @@ mod tests {
         let mut hyst = Hysteresis::default();
         let mut last = Outcome::default();
         for _ in 0..passes {
-            last = plan(desired, observed, &mut hyst, &cfg);
+            last = plan(desired, observed, &Load::new(), &mut hyst, &cfg);
             for cmd in &last.commands {
                 apply(observed, cmd);
             }
@@ -688,7 +748,7 @@ mod tests {
         // Under-replicated is the bad direction: it must never wait for hysteresis.
         let m = app(vec![comp("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 2, "{:?}", out.commands);
         assert!(out.commands.iter().all(|c| matches!(c, Command::Start { count: 1, .. })));
     }
@@ -702,10 +762,10 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        let first = plan(&[m.clone()], &obs, &mut hyst, &cfg);
+        let first = plan(&[m.clone()], &obs, &Load::new(), &mut hyst, &cfg);
         assert!(first.commands.is_empty(), "must not stop on the first sighting");
         // Absolute: "hold 1", not "drop 2". Re-sending it is a no-op.
-        let second = plan(&[m], &obs, &mut hyst, &cfg);
+        let second = plan(&[m], &obs, &Load::new(), &mut hyst, &cfg);
         assert!(matches!(&second.commands[..], [Command::Start { count: 1, node, .. }] if node == "box-a"),
             "{:?}", second.commands);
     }
@@ -722,10 +782,10 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        assert!(plan(&[m.clone()], &[over.clone()], &mut hyst, &cfg).commands.is_empty());
-        assert!(plan(&[m.clone()], &[exact], &mut hyst, &cfg).commands.is_empty());
+        assert!(plan(&[m.clone()], &[over.clone()], &Load::new(), &mut hyst, &cfg).commands.is_empty());
+        assert!(plan(&[m.clone()], &[exact], &Load::new(), &mut hyst, &cfg).commands.is_empty());
         assert!(
-            plan(&[m], &[over], &mut hyst, &cfg).commands.is_empty(),
+            plan(&[m], &[over], &Load::new(), &mut hyst, &cfg).commands.is_empty(),
             "the counter must have restarted, not carried over"
         );
     }
@@ -771,7 +831,7 @@ mod tests {
             node("no-kv", &[("region", "eu-central")], &[]),
             node("good", &[("region", "eu-central")], &["wasi:keyvalue/store@0.2.0-draft"]),
         ];
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 1);
         assert_eq!(out.commands[0].node(), "good");
     }
@@ -781,7 +841,7 @@ mod tests {
         let mut c = comp("api", "sha256:a", 1);
         c.placement.constraints.insert("region".into(), "antarctica".into());
         let m = app(vec![c], vec![], Strategy::Linked);
-        let out = plan(&[m], &[node("box-a", &[], &[])], &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("box-a", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty());
         assert_eq!(out.unschedulable.len(), 1);
         assert!(out.unschedulable[0].reason.contains("antarctica"), "{:?}", out.unschedulable);
@@ -795,7 +855,7 @@ mod tests {
         c.placement.mode = Mode::Pinned;
         c.placement.nodes = vec!["box-gpu".into()];
         let m = app(vec![c], vec![], Strategy::Linked);
-        let out = plan(&[m], &[node("box-a", &[], &[])], &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("box-a", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty());
         assert!(out.unschedulable[0].reason.contains("box-gpu"), "{:?}", out.unschedulable);
     }
@@ -845,7 +905,7 @@ mod tests {
             }],
             Strategy::Linked,
         );
-        let out = plan(&[m], &[node("box-a", &[], &[])], &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("box-a", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         let api = out
             .commands
             .iter()
@@ -877,7 +937,7 @@ mod tests {
             }],
             Strategy::Fused,
         );
-        let out = plan(&[m], &[node("box-a", &[], &[])], &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("box-a", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 1);
         assert!(matches!(&out.commands[0], Command::Start { component, .. } if component == "api"));
     }
@@ -890,11 +950,11 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        let first = plan(&[m.clone()], &[a.clone()], &mut hyst, &cfg);
+        let first = plan(&[m.clone()], &[a.clone()], &Load::new(), &mut hyst, &cfg);
         assert_eq!(first.commands.len(), 1, "the new one comes up alone first");
         assert!(matches!(&first.commands[0], Command::Start { digest, .. } if digest == "sha256:new"));
 
-        let second = plan(&[m], &[a], &mut hyst, &cfg);
+        let second = plan(&[m], &[a], &Load::new(), &mut hyst, &cfg);
         assert!(second.commands.iter().any(
             |c| matches!(c, Command::Stop { digest, .. } if digest == "sha256:old")
         ));
@@ -911,8 +971,8 @@ mod tests {
         running(&mut a, "api", "sha256:a", 1);
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
-        plan(&[], &[a.clone()], &mut hyst, &cfg);
-        let out = plan(&[], &[a], &mut hyst, &cfg);
+        plan(&[], &[a.clone()], &Load::new(), &mut hyst, &cfg);
+        let out = plan(&[], &[a], &Load::new(), &mut hyst, &cfg);
         assert!(matches!(&out.commands[0], Command::Stop { app, .. } if app == "mesh"));
     }
 
@@ -924,7 +984,7 @@ mod tests {
         let obs: Vec<NodeInventory> =
             (0..50).map(|i| node(&format!("box-{i:02}"), &[], &[])).collect();
         let cfg = Cfg { max_commands: 20, ..Cfg::default() };
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &cfg);
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &cfg);
         assert_eq!(out.commands.len(), 20);
         assert_eq!(out.deferred, 30);
     }
@@ -939,7 +999,7 @@ mod tests {
         let m = app(vec![stateful("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
                        node("box-b", &[], &["wasi:keyvalue/store"])];
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "nothing may be placed: {:?}", out.commands);
         let reason = &out.unschedulable[0].reason;
         assert!(reason.contains("diverge in silence"), "{reason}");
@@ -954,7 +1014,7 @@ mod tests {
         let mut b = shared("box-b");
         a.host_ifaces = vec!["wasi:keyvalue/store".into()];
         b.host_ifaces = vec!["wasi:keyvalue/store".into()];
-        let out = plan(&[m], &[a, b], &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[a, b], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 2, "{:?}", out.unschedulable);
         assert!(out.unschedulable.is_empty());
     }
@@ -966,7 +1026,7 @@ mod tests {
         let m = app(vec![stateful("api", "sha256:a", 1)], vec![], Strategy::Linked);
         let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
                        node("box-b", &[], &["wasi:keyvalue/store"])];
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 1);
         assert!(out.unschedulable.is_empty());
     }
@@ -977,7 +1037,7 @@ mod tests {
         // blanket ban on spreading.
         let m = app(vec![comp("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 2);
         assert!(out.unschedulable.is_empty());
     }
@@ -993,7 +1053,7 @@ mod tests {
         );
         let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
                        node("box-b", &[], &["wasi:keyvalue/store"])];
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "{:?}", out.commands);
         assert!(out.unschedulable[0].reason.contains("diverge"));
     }
@@ -1026,7 +1086,7 @@ mod tests {
             Strategy::Linked,
         );
         let obs = vec![node("edge", &[("role", "web")], &[]), node("data-1", &[("role", "data")], &[])];
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         let where_ = |c: &str| {
             out.commands
                 .iter()
@@ -1048,7 +1108,7 @@ mod tests {
             Strategy::Linked,
         );
         let obs = vec![node("n1", &[], &[]), node("n2", &[], &[])];
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         let nodes: std::collections::BTreeSet<&str> =
             out.commands.iter().map(|c| c.node()).collect();
         assert_eq!(nodes.len(), 1, "both parts on one node: {nodes:?}");
@@ -1065,7 +1125,7 @@ mod tests {
             vec![],
             Strategy::Linked,
         );
-        let out = plan(&[m], &[node("n1", &[], &[])], &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("n1", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert!(out.unschedulable[0].reason.starts_with("`store`:"), "{:?}", out.unschedulable);
     }
 
@@ -1101,7 +1161,7 @@ mod tests {
         running(&mut busy, "api", "sha256:a", 1);
         running(&mut busy, "other", "sha256:z", 5);
         let idle = node("idle", &[], &[]);
-        let out = plan(&[m], &[busy, idle], &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[busy, idle], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "it must stay put: {:?}", out.commands);
     }
 
@@ -1120,8 +1180,96 @@ mod tests {
         );
         let mut obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
         converge(&[m.clone()], &mut obs, 3);
-        let out = plan(&[m], &obs, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "not settled: {:?}", out.commands);
         assert!(out.unschedulable.is_empty());
     }
+
+    fn scaled(min: u32, max: u32, target: u32) -> Component {
+        let mut c = comp("gate", "sha256:aa", 1);
+        c.scale = Some(Scale { min, max, target });
+        c
+    }
+
+    fn app_with(c: Component, host: &str) -> Manifest {
+        let mut m = app(vec![c], vec![], Strategy::Fused);
+        m.ingress = Some(Ingress { host: host.into(), component: "gate".into() });
+        m
+    }
+
+    #[test]
+    fn replicas_track_concurrency_between_min_and_max() {
+        let m = app_with(scaled(1, 10, 10), "shop.eve.test");
+        let mut load = Load::new();
+        for (inflight, want) in [(0, 1), (1, 1), (10, 1), (11, 2), (25, 3), (100, 10), (500, 10)] {
+            load.insert("shop.eve.test".into(), inflight);
+            assert_eq!(
+                desired_replicas(&m.components[0], &m, &load),
+                want,
+                "{inflight} in flight at target 10 should want {want}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_sample_holds_the_count_instead_of_scaling_to_min() {
+        // THE failure mode. The ingress restarting, or the very first pass before a
+        // sample exists, must not read as "no traffic" — that would scale a busy app
+        // to `min` (possibly zero) precisely when nobody is watching it.
+        let mut c = scaled(0, 10, 10);
+        c.replicas = 4;
+        let m = app_with(c, "shop.eve.test");
+        assert_eq!(
+            desired_replicas(&m.components[0], &m, &Load::new()),
+            4,
+            "no sample must hold the current count, not collapse to min"
+        );
+    }
+
+    #[test]
+    fn an_app_with_no_scale_block_is_untouched_by_load() {
+        // Every existing manifest is this case. Load must be inert for them.
+        let m = app_with(comp("gate", "sha256:aa", 3), "shop.eve.test");
+        let load = Load::from([("shop.eve.test".to_string(), 900)]);
+        assert_eq!(desired_replicas(&m.components[0], &m, &load), 3);
+    }
+
+    #[test]
+    fn scale_to_zero_is_reachable_and_a_request_brings_it_back() {
+        let m = app_with(scaled(0, 5, 10), "shop.eve.test");
+        let idle = Load::from([("shop.eve.test".to_string(), 0)]);
+        assert_eq!(desired_replicas(&m.components[0], &m, &idle), 0, "idle scales to zero");
+        let one = Load::from([("shop.eve.test".to_string(), 1)]);
+        assert_eq!(desired_replicas(&m.components[0], &m, &one), 1, "one request brings it back");
+    }
+
+    #[test]
+    fn a_nonsense_scale_block_cannot_produce_a_nonsense_count() {
+        // max below min, and a target of zero, are both things a hand-written
+        // manifest will contain eventually. Neither may panic or divide by zero.
+        let m = app_with(scaled(3, 1, 0), "shop.eve.test");
+        let load = Load::from([("shop.eve.test".to_string(), 7)]);
+        let n = desired_replicas(&m.components[0], &m, &load);
+        assert!(n >= 3, "min must still hold when max is below it, got {n}");
+    }
+
+    #[test]
+    fn scaling_up_actually_places_the_new_replicas() {
+        // desired_replicas is arithmetic; this checks the number reaches placement.
+        let m = app_with(scaled(1, 4, 10), "shop.eve.test");
+        let nodes = vec![node("n1", &[], &[]), node("n2", &[], &[])];
+        let load = Load::from([("shop.eve.test".to_string(), 31)]);
+        let mut h = Hysteresis::default();
+        let out = plan(&[m], &nodes, &load, &mut h, &Cfg::default());
+        let total: u32 = out
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                Command::Start { count, .. } => Some(*count),
+                _ => None,
+            })
+            .sum();
+        assert_eq!(total, 4, "31 in flight at target 10 is 4 replicas: {:?}", out.commands);
+    }
+
 }

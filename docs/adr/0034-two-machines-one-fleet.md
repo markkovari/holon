@@ -2,6 +2,12 @@
 
 Status: accepted. Extends ADR-0033 (two orgs under load) across a second machine.
 
+> **Correction (ADR-0036):** the throughput figures below (~102 000 rps per org)
+> are wrong — they were the ingress answering 503 with no route, which never
+> proxies. Corrected: ~3 300 rps per org, p99 17 ms, 100% `200`. The placement,
+> isolation and memory results are unaffected.
+
+
 ## The claim being tested
 
 ADR-0033 measured two organisations on one box. The obvious way to pass that test

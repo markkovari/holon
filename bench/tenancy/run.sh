@@ -139,8 +139,8 @@ echo
 echo "=== 3. both orgs under load at once, ${DURATION} x ${CONNS} conns each ==="
 LOAD=()
 for org in acme globex; do
-  oha -z "$DURATION" -c "$CONNS" --no-tui -m POST -d '{"key":"load"}' \
-    -H 'content-type: application/json' -H "Host: shop.$org.bench.test" \
+  oha -z "$DURATION" -c "$CONNS" --no-tui -m POST -d '{"key":"load","capacity":100000000,"refill":100000000}' \
+    -H 'content-type: application/json' -H "Host: shop1.$org.bench.test" \
     http://127.0.0.1:8095/api/ratelimit >"$SP/oha-$org.txt" 2>&1 &
   LOAD+=($!)
 done
@@ -148,7 +148,17 @@ done
 # background job, and the servers started above never exit — measured, by hanging.
 wait "${LOAD[@]}"
 for org in acme globex; do
-  printf "  %-8s %s\n" "$org" "$(awk '/Requests\/sec/{r=$2} /Success rate/{s=$3} /^  50.00%/{p50=$3} /^  99.00%/{p99=$3} END{printf "%8.0f rps  p50 %-9s p99 %-9s success %s", r, p50, p99, s}' "$SP/oha-$org.txt")"
+  printf "  %-8s %s\n" "$org" "$(awk '/Requests\/sec/{r=$2} /^  50.00%/{p50=$3} /^  99.00%/{p99=$3} END{printf "%8.0f rps  p50 %-9s p99 %-9s", r, p50, p99}' "$SP/oha-$org.txt")"
+  # oha's "success rate" counts COMPLETED requests, not 2xx. Reporting it alone once
+  # published 102k rps that were 1.5M ingress 503s: the apps had been renamed to
+  # shop1..N and the load still asked for `shop.<org>`, so nothing was ever routed
+  # to a component. The status codes are the assertion; the rps is just a number.
+  codes=$(awk '/Status code distribution/{f=1;next} /^$/{f=0} f{gsub(/[][]/,"");printf "%s:%s ", $1, $2}' "$SP/oha-$org.txt")
+  printf "           codes: %s\n" "$codes"
+  case "$codes" in
+    *200:*) ;;
+    *) echo "           ^^ NO 2xx AT ALL — this measured an error path, not the platform" ;;
+  esac
 done
 
 echo

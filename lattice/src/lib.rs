@@ -107,6 +107,11 @@ pub mod wire {
     pub const INVENTORY: &str = "comp-inventory";
     /// Where artifacts live, keyed by their own sha256.
     pub const ARTIFACTS: &str = "comp-artifacts";
+    /// Observed concurrency per ingress host, published by the ingress and read by
+    /// the reconciler. A separate bucket from inventory rather than a key prefix
+    /// inside it: `read_all` deserialises every entry as a `NodeInventory`, and a
+    /// second shape in there would be a parse error on every pass.
+    pub const LOAD: &str = "comp-load";
 
     /// Commands addressed to one node, as `comp.<lattice>.cmd.<node>.<verb>`.
     pub fn command_subject(lattice: &str, node: &str, verb: &str) -> String {
