@@ -4,6 +4,13 @@
 - **Date:** 2026-08-08
 - **Exercises:** [ADR-0031](0031-an-org-owns-a-deployment.md)'s ownership model and [ADR-0023](0023-isolation-is-a-linker-boundary.md)'s boundary, together
 
+> **Correction ([ADR-0036](0036-open-loop-stress-and-a-correction.md)):** the throughput
+> figures below (~102 000 rps per org) are wrong — they were the ingress answering 503
+> with no route, which never proxies, and `oha`'s "success rate" counts completed
+> requests rather than 2xx. Corrected on the same hardware: ~3 300 rps per org, p50
+> 8.6 ms, p99 17 ms, 100% `200`. The control-plane, placement, isolation and memory
+> results are unaffected.
+
 ## Why one run
 
 Every measurement so far took one app on a quiet fleet. That is not what the platform is

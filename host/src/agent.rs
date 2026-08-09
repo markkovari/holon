@@ -374,7 +374,13 @@ async fn start(
         }
     }
 
+    // Phase timings, because "cold start" is three different costs and only one of
+    // them is worth optimising. Reported on the start line so the number comes from
+    // the node doing the work rather than from a stopwatch on the other side of a
+    // NATS round trip.
+    let t0 = std::time::Instant::now();
     let path = fetch_artifact(agent, &cmd.digest, artifacts).await?;
+    let t_fetch = t0.elapsed();
     let count = cmd.count.max(1);
     let scope = Arc::new(cmd.into_scope(&agent.limits));
 
@@ -387,6 +393,7 @@ async fn start(
     .await
     .context("compile task")?
     .map_err(|e| anyhow::anyhow!("compiling the artifact for {id}: {e}"))?;
+    let t_compile = t0.elapsed() - t_fetch;
 
     // EVERY link becomes a wRPC client, including one whose target is running in
     // this very process.
@@ -423,6 +430,7 @@ async fn start(
         eprintln!("comp-host: {id} bound {n} interface(s) over wrpc");
     }
     let ipre = linker.instantiate_pre(&component)?;
+    let t_link = t0.elapsed() - t_fetch - t_compile;
     // A component that exports `wasi:http/incoming-handler` gets a door; one that
     // does not is a plug, reachable over the bus only. Both are legal instances —
     // before the serve side existed, the second could not start at all.
@@ -459,7 +467,14 @@ async fn start(
     if let Some(host) = ingress_host {
         agent.routes.write().unwrap().insert(host.to_ascii_lowercase(), id.clone());
     }
-    eprintln!("comp-host: started {id} ({})", scope.digest);
+    eprintln!(
+        "comp-host: started {id} ({}) in {} ms (fetch {} ms, compile {} ms, link {} ms)",
+        scope.digest,
+        t0.elapsed().as_millis(),
+        t_fetch.as_millis(),
+        t_compile.as_millis(),
+        t_link.as_millis(),
+    );
     Ok(())
 }
 
