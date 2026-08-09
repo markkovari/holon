@@ -16,10 +16,11 @@ use serde::{Deserialize, Serialize};
 
 // ---- desired state ---------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Strategy {
     /// One artifact, `wac plug`-composed at save. Only the root exists at runtime.
+    #[default]
     Fused,
     /// N components, runtime-linked by the host from a link table.
     Linked,

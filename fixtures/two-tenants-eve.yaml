@@ -1,0 +1,16 @@
+# One of TWO tenants sharing a single host process — the isolation measurement
+# (ADR-0023). Each tenant is its own file: one app per document reads better and
+# stops a converter quietly dropping the second one, which is how this was
+# nearly lost.
+
+version: comp/v1
+app: shop
+tenant: eve
+strategy: fused
+
+components:
+  - id: gate
+
+ingress:
+  host: shop.eve.test
+  component: gate

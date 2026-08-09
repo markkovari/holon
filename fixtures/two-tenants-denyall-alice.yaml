@@ -1,0 +1,14 @@
+# The same pair with egress denied outright, so the adversary cannot reach the
+# bus it would use to talk around the host.
+
+version: comp/v1
+app: probe
+tenant: alice
+strategy: fused
+
+components:
+  - id: adversary
+
+ingress:
+  host: probe.alice.test
+  component: adversary

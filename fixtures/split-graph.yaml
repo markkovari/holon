@@ -1,0 +1,32 @@
+# A graph split across nodes: gate's two imports are satisfied at runtime, so
+# every call crosses the bus and the hop cost is what is being measured.
+
+version: comp/v1
+app: split
+tenant: alice
+strategy: linked
+
+components:
+  - id: gate
+    placement:
+      mode: spread
+      constraints:
+        role: web
+  - id: shaper
+  - id: record-store
+    placement:
+      mode: spread
+      constraints:
+        role: data
+
+links:
+  - from: gate
+    import: records:store/store@0.1.0
+    to: record-store
+  - from: gate
+    import: shaper:limit/limiter@0.1.0
+    to: shaper
+
+ingress:
+  host: split.alice.test
+  component: gate

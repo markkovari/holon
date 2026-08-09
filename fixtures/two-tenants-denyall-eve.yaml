@@ -1,0 +1,14 @@
+# The same pair with egress denied outright, so the adversary cannot reach the
+# bus it would use to talk around the host.
+
+version: comp/v1
+app: shop
+tenant: eve
+strategy: fused
+
+components:
+  - id: gate
+
+ingress:
+  host: shop.eve.test
+  component: gate

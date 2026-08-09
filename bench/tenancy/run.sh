@@ -27,7 +27,8 @@ PIDS=(); trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; sleep 1' E
 mkdir -p "$SP/nats" "$SP/plat"
 C=./cli/target/release/comp
 run() { local who=$1; shift; COMP_CREDENTIALS="$SP/$who.json" $C "$@"; }
-ms() { python3 -c "import time;print(int(time.time()*1000))"; }
+# `date +%s%3N` is GNU-only; this is the portable spelling and costs no process.
+ms() { perl -MTime::HiRes=time -e "printf(\"%d\", time()*1000)"; }
 
 nats-server -js -sd "$SP/nats" -a 0.0.0.0 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
 ./host/target/release/comp-host --component components/target/platform_domain.composed.wasm \
@@ -110,30 +111,9 @@ done
 t1=$(ms); printf "  create+deploy   2 apps     %5d ms (includes waiting for distribution)\n" $((t1-t0))
 sleep 16
 echo "  placement — every node should hold apps from BOTH orgs:"
-if [ -n "$PI" ]; then
-  ssh -n -i "$KEY" -o IdentitiesOnly=yes "markkovari@$PI" \
-    "bash -lc 'for f in ~/comp-lattice/b*.log; do n=\$(basename \$f .log); grep -h started \$f | sed \"s|^|pi-\${n#b} |\"; done'" > "$SP/pi-placed.txt" 2>/dev/null
-fi
-python3 - "$SP" <<'PYINNER'
-import re, sys, collections, glob, os
-sp = sys.argv[1]
-by_node = collections.defaultdict(set)
-for f in sorted(glob.glob(f"{sp}/n*.log")):
-    node = os.path.basename(f).replace(".log", "")
-    for line in open(f):
-        m = re.search(r"started (\w[\w-]*)/", line)
-        if m: by_node[node].add(m.group(1))
-if os.path.exists(f"{sp}/pi-placed.txt"):
-    for line in open(f"{sp}/pi-placed.txt"):
-        m = re.match(r"(\S+)\s+.*started (\w[\w-]*)/", line)
-        if m: by_node[m.group(1)].add(m.group(2))
-mixed = 0
-for node, orgs in sorted(by_node.items()):
-    if len(orgs) > 1: mixed += 1
-    print(f"    {node:10} {' + '.join(sorted(orgs))}{'  <- both orgs' if len(orgs) > 1 else ''}")
-print(f"\n  {mixed}/{len(by_node)} node(s) hold BOTH organisations"
-      f" — {'tenants are NOT mapped to machines' if mixed else 'WARNING: each node holds one org only'}")
-PYINNER
+# Straight from inventory, which already covers the remote nodes — this used to
+# scrape every host's log and ssh to the Pi to collect the ones it could not see.
+./reconciler/target/release/comp-bench tenants --nats-url nats://127.0.0.1:4232 --lattice bench
 
 echo
 echo "=== 3. both orgs under load at once, ${DURATION} x ${CONNS} conns each ==="

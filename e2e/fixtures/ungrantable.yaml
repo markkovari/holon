@@ -1,0 +1,18 @@
+# MUST BE REFUSED. A capability no host in this fleet can grant. Omission fails
+# closed at placement rather than trapping in front of a user (ADR-0013).
+#
+# `host_needs` is normally stamped from the component's own WIT and never authored;
+# it is written out here precisely so the refusal can be asserted.
+version: comp/v1
+app: ungrantable
+tenant: e2e
+strategy: fused
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:blobstore/blobstore
+
+ingress:
+  host: ungrantable.e2e.test
+  component: gate

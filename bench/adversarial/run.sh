@@ -5,15 +5,14 @@ set -uo pipefail
 cd /Users/markkovari/DEV/markkovari/experiments/comp
 SP=${SP:-$(mktemp -d)}
 HERE=bench/adversarial
-MANIFEST=${MANIFEST:-$HERE/two-tenants.json}
+SPECS=${SPECS:-"--spec fixtures/two-tenants-eve.yaml --spec fixtures/two-tenants-alice.yaml"}
 rm -rf $SP/adv $SP/natsA && mkdir -p $SP/adv $SP/natsA
 PIDS=()
 trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; sleep 1' EXIT
 
 nats-server -js -sd $SP/natsA -a 127.0.0.1 -p 4232 >$SP/natsA.log 2>&1 & PIDS+=($!)
-python3 $HERE/stub-control-plane.py "$MANIFEST" \
-  '{"gate":"components/target/gate_domain.composed.wasm","adversary":"components/target/wasm32-wasip2/release/adversary.wasm"}' \
-  8099 >$SP/plat2.log 2>&1 & PIDS+=($!)
+./reconciler/target/release/comp-stub $SPECS \
+  --artifact gate=components/target/gate_domain.composed.wasm --artifact adversary=components/target/wasm32-wasip2/release/adversary.wasm --port 8099 >$SP/plat2.log 2>&1 & PIDS+=($!)
 sleep 2
 
 # ONE host process. Both tenants live in it. That is the whole point.
@@ -32,16 +31,14 @@ echo "  pid $(pgrep -f 'node solo' | head -1) — one process, two tenants"
 
 echo
 echo "=== seeding eve with data the adversary will try to read ==="
-python3 - <<'PY'
-import json, urllib.request
-for i in range(25):
-    r = urllib.request.Request("http://127.0.0.1:3401/api/ratelimit",
-        data=json.dumps({"key": f"eve-secret-customer-{i}"}).encode(),
-        headers={"content-type": "application/json", "Host": "shop.eve.test"})
-    try: urllib.request.urlopen(r, timeout=8).read()
-    except Exception as e: print("  seed failed:", str(e)[:70]); break
-else: print("  wrote 25 rate-limit records into eve's store")
-PY
+# 25 distinct keys, so the adversary has something with a shape to look for.
+seeded=0
+for i in $(seq 0 24); do
+  curl -s -o /dev/null --max-time 8 -X POST http://127.0.0.1:3401/api/ratelimit \
+    -H 'content-type: application/json' -H 'Host: shop.eve.test' \
+    -d "{\"key\":\"eve-secret-customer-$i\"}" && seeded=$((seeded+1))
+done
+echo "  wrote $seeded rate-limit records into eve's store"
 echo "  eve's rows (sqlite only; nats keeps them in JetStream):"
 sqlite3 $SP/adv/kv.db "SELECT bucket, count(*) FROM kv GROUP BY bucket;" 2>/dev/null | sed 's/^/    /' || echo "    (nats backend)"
 
@@ -53,28 +50,25 @@ oha -z 20s -c 50 --no-tui -m POST -d '{"key":"load"}' \
 OHA=$!
 sleep 6
 echo "--- sweep, taken mid-load ---"
-python3 - <<'PY'
-import json, urllib.request
-r = urllib.request.Request("http://127.0.0.1:3401/sweep?neighbour=eve/shop",
-    headers={"Host": "probe.alice.test"})
-try:
-    d = json.loads(urllib.request.urlopen(r, timeout=60).read())
-except Exception as e:
-    print("  SWEEP FAILED:", str(e)[:120]); raise SystemExit(1)
-print(f"  verdict: {d['verdict']}")
-print(f"  foreign store opens : {d['foreign_opens']}")
-print(f"  foreign keys read   : {d['foreign_keys']}")
-print(f"  connections opened  : {d['connections']}")
-print("  stores:")
-for s in d["stores"]:
-    mark = "  <-- BREACH" if s.get("open") == "ok" and not s.get("expected") else ""
-    print(f"    {s['name']!r:38} {s['open']:8} keys={s.get('keys','-')}{mark}")
-print("  egress:")
-for e in d["egress"]:
-    mark = "  <-- BREACH" if e["result"] == "CONNECTED" else ""
-    print(f"    {e['target']:24} {e['result']}{mark}")
-json.dump(d, open("sweep.json","w"), indent=1)
-PY
+# The sweep result is one document; jq formats it and flags the breaches. Saved to
+# sweep.json as well, because ADR-0023's claim is "zero", and a claim like that
+# should have the raw evidence beside it.
+if ! curl -sf --max-time 60 -H 'Host: probe.alice.test' \
+     "http://127.0.0.1:3401/sweep?neighbour=eve/shop" > sweep.json; then
+  echo "  SWEEP FAILED"; exit 1
+fi
+jq -r '
+  "  verdict: \(.verdict)",
+  "  foreign store opens : \(.foreign_opens)",
+  "  foreign keys read   : \(.foreign_keys)",
+  "  connections opened  : \(.connections)",
+  "  stores:",
+  (.stores[] | "    \(.name)  \(.open)  keys=\(.keys // "-")" +
+     (if .open == "ok" and (.expected | not) then "  <-- BREACH" else "" end)),
+  "  egress:",
+  (.egress[] | "    \(.target)  \(.result)" +
+     (if .result == "CONNECTED" then "  <-- BREACH" else "" end))
+' sweep.json
 wait $OHA
 echo
 echo "--- throughput, same run ---"
