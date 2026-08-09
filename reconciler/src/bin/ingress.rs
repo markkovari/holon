@@ -353,13 +353,14 @@ async fn main() -> Result<()> {
     let inflight: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
     let per_host: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
     let shed: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
+    let served: InFlight = Arc::new(RwLock::new(BTreeMap::new()));
 
     // Publish observed concurrency per host so the reconciler can autoscale on it.
     // A short TTL on the bucket means a dead ingress stops voting on its own rather
     // than pinning an app at whatever it last saw — the same mechanism that retires
     // a dead node's inventory.
     if let Some(load) = load_out {
-        let (per_host, shed) = (per_host.clone(), shed.clone());
+        let (per_host, shed, served) = (per_host.clone(), shed.clone(), served.clone());
         let every = refresh_secs.max(1);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(every));
@@ -375,14 +376,18 @@ async fn main() -> Result<()> {
                     // Taken and RESET: this is what was refused during the interval,
                     // not since the process started. A cumulative count would keep
                     // asking for replicas long after the pressure was gone.
-                    let refused =
-                        counter(&shed, &host).swap(0, Ordering::Relaxed);
+                    let refused = counter(&shed, &host).swap(0, Ordering::Relaxed);
+                    let answered = counter(&served, &host).swap(0, Ordering::Relaxed);
                     // The key is the host with dots swapped: NATS KV keys may not
                     // contain arbitrary punctuation, and `shop.eve.test` would be a
                     // subject wildcard boundary rather than one key.
                     let key = host.replace('.', "_");
-                    let body =
-                        serde_json::json!({ "host": host, "inflight": n, "shed": refused });
+                    let body = serde_json::json!({
+                        "host": host,
+                        "inflight": n,
+                        "shed": refused,
+                        "served": answered,
+                    });
                     let _ = load
                         .publish(&key, body.to_string().into_bytes(), Duration::from_secs(30))
                         .await;
@@ -400,13 +405,14 @@ async fn main() -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
         let io = TokioIo::new(stream);
-        let (table, client, next, inflight, per_host, shed, timeout, mode, max_inflight) = (
+        let (table, client, next, inflight, per_host, shed, served, timeout, mode, max_inflight) = (
             table.clone(),
             client.clone(),
             next.clone(),
             inflight.clone(),
             per_host.clone(),
             shed.clone(),
+            served.clone(),
             backend_timeout,
             args.balance,
             max_inflight,
@@ -415,18 +421,20 @@ async fn main() -> Result<()> {
         let (commands, activating) = (commands.clone(), activating.clone());
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
-                let (table, client, next, inflight, per_host, shed) = (
+                let (table, client, next, inflight, per_host, shed, served) = (
                     table.clone(),
                     client.clone(),
                     next.clone(),
                     inflight.clone(),
                     per_host.clone(),
                     shed.clone(),
+                    served.clone(),
                 );
                 let (commands, activating) = (commands.clone(), activating.clone());
                 async move {
                     forward(
-                        table, client, next, inflight, per_host, shed, commands, activating, mode,
+                        table, client, next, inflight, per_host, shed, served, commands, activating,
+                        mode,
                         max_inflight, slow_budget, activation_timeout, timeout, req,
                     )
                     .await
@@ -465,6 +473,10 @@ async fn forward(
     // UNDERSTATES demand exactly when demand is highest and the app most needs
     // replicas. Counting refusals is what closes it (ADR-0045).
     shed: InFlight,
+    // Responses a backend actually produced this interval. Without it, "every
+    // replica is busy" and "every replica is wedged" publish the same shed count,
+    // and scaling up a wedged component just makes more wedged instances.
+    served: InFlight,
     commands: Arc<dyn CommandBus>,
     activating: Activating,
     mode: Balance,
@@ -557,6 +569,10 @@ async fn forward(
 
         match tokio::time::timeout(Duration::from_secs(timeout), client.request(out)).await {
             Ok(Ok(resp)) => {
+                // Any completed response counts, not just 2xx: a 429 from a rate
+                // limiter is the component doing its job. What is being measured is
+                // "is the fleet answering at all", not "is it answering happily".
+                counter(&served, &host).fetch_add(1, Ordering::Relaxed);
                 let (mut rp, rb) = resp.into_parts();
                 // Which replica answered. The single most useful thing an ingress
                 // can tell you, and the only way to see the balance from outside.
