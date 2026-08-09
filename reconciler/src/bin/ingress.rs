@@ -67,6 +67,24 @@ struct Args {
     /// one fleet.
     #[arg(long, value_enum, default_value_t = Balance::LeastOutstanding)]
     balance: Balance,
+
+    /// Requests in flight to one node before this ingress starts shedding, per node
+    /// rather than per app: what saturates is the machine, and an app that keeps
+    /// queueing onto a node everyone else is also waiting on is the thing to stop.
+    ///
+    /// 0 disables shedding and restores the old behaviour, which ADR-0036 measured:
+    /// with the fast half of the fleet killed, the survivor served 880 of 2690 rps
+    /// with ZERO errors and a p99 of 46 SECONDS. Nothing failed; everything waited.
+    /// A caller cannot retry a queue it cannot see, and 46s of holding a connection
+    /// is worse for it than a 503 it could take elsewhere in milliseconds.
+    ///
+    /// The default is a starting point, not a calibrated number — it is high enough
+    /// not to trip on a healthy fleet and low enough that the queue stays bounded.
+    /// ponytail: one global bound; per-node capacity would need nodes to advertise
+    /// what they can take, which is the same missing input as capacity-weighted
+    /// placement.
+    #[arg(long, default_value = "64")]
+    max_inflight: usize,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -121,6 +139,14 @@ impl Drop for Busy {
 ///
 /// Returns an ORDER rather than one choice so the retry path reuses the same
 /// judgement instead of a second, differently-wrong rule.
+/// Is this node already carrying `bound` requests?
+///
+/// Split out from the walk below so the shedding rule can be tested directly: a
+/// rule that only exists inside an async proxy loop is a rule nobody checks.
+fn saturated(b: &Backend, inflight: &InFlight, bound: usize) -> bool {
+    bound > 0 && counter(inflight, &b.node).load(Ordering::Relaxed) >= bound
+}
+
 fn order<'a>(
     backends: &'a [Backend],
     mode: Balance,
@@ -287,7 +313,7 @@ async fn main() -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
         let io = TokioIo::new(stream);
-        let (table, client, next, inflight, per_host, timeout, mode) = (
+        let (table, client, next, inflight, per_host, timeout, mode, max_inflight) = (
             table.clone(),
             client.clone(),
             next.clone(),
@@ -295,6 +321,7 @@ async fn main() -> Result<()> {
             per_host.clone(),
             args.backend_timeout,
             args.balance,
+            args.max_inflight,
         );
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
@@ -306,7 +333,10 @@ async fn main() -> Result<()> {
                     per_host.clone(),
                 );
                 async move {
-                    forward(table, client, next, inflight, per_host, mode, timeout, req).await
+                    forward(
+                        table, client, next, inflight, per_host, mode, max_inflight, timeout, req,
+                    )
+                    .await
                 }
             });
             if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
@@ -338,6 +368,7 @@ async fn forward(
     // the node is, not how busy this app is.
     per_host: InFlight,
     mode: Balance,
+    max_inflight: usize,
     timeout: u64,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<ProxyBody>> {
@@ -363,6 +394,18 @@ async fn forward(
     }
 
     let ranked = order(&backends, mode, &next, &inflight);
+
+    // Shed rather than queue. If every replica is already at the bound, this request
+    // would join a queue with no bound and no way for the caller to see it — the 46
+    // second p99 in ADR-0036. A 503 now is information the caller can act on.
+    if !ranked.is_empty() && ranked.iter().all(|b| saturated(b, &inflight, max_inflight)) {
+        return Ok(status(
+            503,
+            &format!(
+                "every replica of {host:?} is at {max_inflight} in flight; shedding\n"
+            ),
+        ));
+    }
     let (parts, body) = req.into_parts();
     let bytes = body.collect().await.context("reading the request body")?.to_bytes();
 
@@ -380,6 +423,12 @@ async fn forward(
     for backend in ranked.into_iter() {
         if slow >= SLOW_BUDGET {
             break;
+        }
+        // Skip a saturated replica the way a dead one is skipped. The check above
+        // only fires when EVERY replica is saturated; this is what steers around a
+        // single hot node while the others still have room.
+        if saturated(backend, &inflight, max_inflight) {
+            continue;
         }
         let _busy = Busy::on(counter(&inflight, &backend.node));
         let uri: hyper::Uri = format!(
@@ -599,4 +648,47 @@ mod tests {
         assert_eq!(picked, vec!["n1", "n2", "n3"]);
         assert_eq!(b[3 % b.len()].node, "n1", "and then it wraps");
     }
+
+    #[test]
+    fn a_node_at_the_bound_is_saturated_and_zero_disables_the_rule() {
+        let inflight = inflight_of(&[("n1", 63), ("n2", 64), ("n3", 999)]);
+        let b = |n: &str| Backend { node: n.into(), address: "127.0.0.1:1".into() };
+        assert!(!saturated(&b("n1"), &inflight, 64), "63 of 64 still has room");
+        assert!(saturated(&b("n2"), &inflight, 64), "at the bound is saturated");
+        assert!(saturated(&b("n3"), &inflight, 64));
+        // 0 is the escape hatch back to the old behaviour, and it must be total:
+        // an operator who turns shedding off must not get it at 999 in flight.
+        assert!(!saturated(&b("n3"), &inflight, 0), "0 must disable shedding entirely");
+    }
+
+    #[test]
+    fn shedding_steers_around_a_hot_node_before_it_refuses_anything() {
+        // The rule that matters most: one saturated replica must NOT cost the app a
+        // 503 while its siblings are idle. Only an entirely saturated set sheds.
+        let inflight = inflight_of(&[("hot", 64), ("cool", 0)]);
+        let backends = vec![
+            Backend { node: "hot".into(), address: "127.0.0.1:1".into() },
+            Backend { node: "cool".into(), address: "127.0.0.1:2".into() },
+        ];
+        let all_full = backends.iter().all(|b| saturated(b, &inflight, 64));
+        assert!(!all_full, "one hot node must not shed the whole app");
+        let usable: Vec<&Backend> =
+            backends.iter().filter(|b| !saturated(b, &inflight, 64)).collect();
+        assert_eq!(usable.len(), 1);
+        assert_eq!(usable[0].node, "cool", "traffic goes to the replica with room");
+    }
+
+    #[test]
+    fn a_fully_saturated_app_sheds_rather_than_queueing() {
+        // ADR-0036: with nothing shedding, the survivor took every connection and
+        // answered a p99 of 46 SECONDS. Every replica at the bound is the state that
+        // produced it, and it must now be a refusal instead.
+        let inflight = inflight_of(&[("n1", 64), ("n2", 70)]);
+        let backends = vec![
+            Backend { node: "n1".into(), address: "127.0.0.1:1".into() },
+            Backend { node: "n2".into(), address: "127.0.0.1:2".into() },
+        ];
+        assert!(backends.iter().all(|b| saturated(b, &inflight, 64)));
+    }
+
 }
