@@ -1,0 +1,24 @@
+# MUST BE REFUSED. Two components offering `gate` the same interface: an import is
+# keyed by interface everywhere it appears, so these cannot be told apart, and the
+# link table would silently keep whichever came last.
+version: comp/v1
+app: conflict
+tenant: e2e
+strategy: linked
+
+components:
+  - id: gate
+  - id: record-store
+  - id: shaper
+
+links:
+  - from: gate
+    import: records:store/store@0.1.0
+    to: record-store
+  - from: gate
+    import: records:store/store@0.1.0
+    to: shaper
+
+ingress:
+  host: conflict.e2e.test
+  component: gate

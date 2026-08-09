@@ -1,0 +1,26 @@
+# Three components wired at runtime — the case a fused build cannot exercise.
+# `gate` imports two interfaces and the host binds each over wRPC from the link
+# table below, so a wrong table shows up as a failure to start rather than as a
+# wrong answer.
+version: comp/v1
+app: linked
+tenant: e2e
+strategy: linked
+
+components:
+  - id: gate
+  - id: record-store
+  - id: shaper
+
+links:
+  # `from` consumes the interface, `to` provides it.
+  - from: gate
+    import: records:store/store@0.1.0
+    to: record-store
+  - from: gate
+    import: shaper:limit/limiter@0.1.0
+    to: shaper
+
+ingress:
+  host: linked.e2e.test
+  component: gate

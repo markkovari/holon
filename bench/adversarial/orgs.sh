@@ -63,7 +63,7 @@ run linus app create sneak --component gate --org acme-corp 2>&1 | head -2 | sed
 
 echo
 echo "=== whose storage bucket did it get? ==="
-run ada app manifest "$ID" 2>/dev/null | python3 -c "
-import json,sys
-d=json.load(sys.stdin)['manifest']
-print('   ', d['tenant'], '/', d['app'], '-> env', d['env'], '| ingress', d['ingress']['host'])"
+# jq rather than a language runtime: this is one field out of one document, which
+# is what jq is for.
+run ada app manifest "$ID" 2>/dev/null | jq -r '.manifest |
+  "    \(.tenant)/\(.app) -> env \(.env) | ingress \(.ingress.host)"' 

@@ -31,8 +31,8 @@ trap cleanup EXIT
 
 mkdir -p "$SP/nats"
 nats-server -js -sd "$SP/nats" -a 0.0.0.0 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-python3 $HERE/stub-control-plane.py $HERE/five-replicas.json \
-  '{"gate":"components/target/gate_domain.composed.wasm"}' 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
+./reconciler/target/release/comp-stub --spec fixtures/five-replicas.yaml \
+  --artifact gate=components/target/gate_domain.composed.wasm --port 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 2
 
 for n in 1 2; do
@@ -55,7 +55,7 @@ sleep 3
 echo "  settling (5 replicas over 4 nodes, two machines)..."
 sleep 26
 echo "=== before ==="
-python3 bench/failover/where.py "$SP" "$PI" "$KEY"
+./reconciler/target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice fail
 
 # The kills, on a timer, so the load generator below runs uninterrupted across them.
 ( sleep 15; echo "$(date +%s) kill mac-2" >>"$SP/events.txt"
@@ -75,20 +75,20 @@ PIDS+=($!)
     printf "%s %s\n" "$(date +%s)" \
       "$(nats --server 127.0.0.1:4232 kv ls comp-inventory 2>/dev/null | while read -r k; do
            nats --server 127.0.0.1:4232 kv get comp-inventory "$k" --raw 2>/dev/null; echo; done \
-         | python3 -c "import sys,json;print(sum(i.get('count',0) for l in sys.stdin if l.strip() for i in json.loads(l).get('instances',[])))" 2>/dev/null)"
+         | ./reconciler/target/release/comp-bench replicas 2>/dev/null)"
     sleep 1
   done ) >"$SP/replicas.txt" 2>/dev/null & PIDS+=($!)
 
 echo
 echo "=== load across both failures: 100s, bucketed per second ==="
-python3 bench/failover/through.py "$SP" 100
+./reconciler/target/release/comp-bench load "http://127.0.0.1:8090/api/ratelimit" --host shop.eve.test --secs 100 --rate 2600 --events "$SP/events.txt"
 
 echo
 echo "=== after ==="
-python3 bench/failover/where.py "$SP" "$PI" "$KEY"
+./reconciler/target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice fail
 echo
 echo "=== how long the fleet ran under-replicated ==="
-python3 bench/failover/converge.py "$SP"
+./reconciler/target/release/comp-bench converge "$SP/replicas.txt" --events "$SP/events.txt" --want 5
 echo
 echo "=== what the reconciler did (re-placements, in order) ==="
 grep -h "started" "$SP"/mac*.log | sed 's/ (sha.*//;s/comp-host: //' | cat -n | sed 's/^/  /'

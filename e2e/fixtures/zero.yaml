@@ -1,0 +1,19 @@
+# Parked until someone asks for it. `min: 0` means no replica is placed at all;
+# the request that arrives is held while one starts (ADR-0042, ~49ms).
+version: comp/v1
+app: zero
+tenant: e2e
+strategy: fused
+
+components:
+  - id: gate
+    replicas: 0
+    scale:
+      min: 0
+      max: 2
+      # Concurrent requests per replica, not requests per second.
+      target: 10
+
+ingress:
+  host: zero.e2e.test
+  component: gate

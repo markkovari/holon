@@ -65,13 +65,13 @@ remote_oha() {
         -H content-type:application/json -H Host:shop.eve.test $* \
         http://$MAC:8090/api/ratelimit'" >"$SP/oha-$label.json" 2>"$SP/oha-$label.err"
   fi
-  python3 bench/stress/summarise.py "$SP/oha-$label.json" "$label"
+  ./reconciler/target/release/comp-bench summarise "$SP/oha-$label.json" "$label"
 }
 
 mkdir -p "$SP/nats"
 nats-server -js -sd "$SP/nats" -a 0.0.0.0 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-python3 $HERE/stub-control-plane.py $HERE/five-replicas.json \
-  '{"gate":"components/target/gate_domain.composed.wasm"}' 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
+./reconciler/target/release/comp-stub --spec fixtures/five-replicas.yaml \
+  --artifact gate=components/target/gate_domain.composed.wasm --port 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 2
 for n in 1 2; do
   mkdir -p "$SP/mac$n"
@@ -96,7 +96,7 @@ sleep 3
 
 echo "  settling (5 replicas over 4 nodes, two machines)..."
 sleep 26
-python3 bench/failover/where.py "$SP" "$PI" "$KEY"
+./reconciler/target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice stress
 
 echo
 echo "=== 1. ceiling: closed-loop from $LOAD_HOST, 200 connections, 10s ==="
@@ -105,7 +105,9 @@ echo "=== 1. ceiling: closed-loop from $LOAD_HOST, 200 connections, 10s ==="
 # on the box being measured, which is why it is so much larger — the difference is
 # the network, not the platform.
 remote_oha ceiling -c 200 -z 10s
-CEIL=$(python3 -c "import json;print(int(json.load(open('$SP/oha-ceiling.json'))['summary']['requestsPerSec']))")
+# One field out of oha's JSON. `comp-bench summarise` prints the whole line; this
+# wants just the rate, so it takes it from the same file with the same tool.
+CEIL=$(./reconciler/target/release/comp-bench summarise "$SP/oha-ceiling.json" ceiling | awk '{print int($2)}')
 RATE=${RATE:-$((CEIL * 60 / 100))}
 echo "  -> ceiling ${CEIL} rps; open-loop rate set to ${RATE} rps (60%)"
 
@@ -141,4 +143,4 @@ remote_oha killed -q "$RATE" -c 200 -z 70s --latency-correction
 
 echo
 echo "=== after ==="
-python3 bench/failover/where.py "$SP" "$PI" "$KEY"
+./reconciler/target/release/comp-bench inventory --nats-url nats://127.0.0.1:4232 --lattice stress

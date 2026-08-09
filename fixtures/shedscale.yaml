@@ -1,0 +1,18 @@
+# Deliberately small max against a low ingress bound, so load hits the SHED path
+# rather than the fleet's real capacity (ADR-0045).
+
+version: comp/v1
+app: shop
+tenant: eve
+strategy: fused
+
+components:
+  - id: gate
+    scale:
+      min: 1
+      max: 4
+      target: 20
+
+ingress:
+  host: shop.eve.test
+  component: gate

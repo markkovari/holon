@@ -1,0 +1,23 @@
+# A stateful app asked to spread. On nodes with node-local stores this must be
+# REFUSED — every replica would get its own store under one bucket name and
+# diverge in silence.
+
+version: comp/v1
+app: shop
+tenant: eve
+strategy: fused
+
+components:
+  - id: gate
+    replicas: 2
+    # Normally stamped from the component's WIT by `wit-reflect`, never authored.
+    # Written out here because it is what marks the app STATEFUL, and the refusal
+    # under test depends on it — the conversion to YAML dropped it once, and the
+    # scenario silently stopped testing anything.
+    host_needs:
+      - wasi:keyvalue/store
+      - wasi:keyvalue/batch
+
+ingress:
+  host: shop.eve.test
+  component: gate

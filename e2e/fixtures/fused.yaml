@@ -1,0 +1,13 @@
+# The simplest thing that works: one composed artifact, one hostname.
+# `wac` erased the imports at build time, so there is nothing to wire.
+version: comp/v1
+app: fused
+tenant: e2e
+strategy: fused
+
+components:
+  - id: gate
+
+ingress:
+  host: fused.e2e.test
+  component: gate

@@ -40,8 +40,8 @@ fi
 # --- comp side: one node, one ingress, the same component -------------------
 mkdir -p "$SP/nats" "$SP/n1"
 nats-server -js -sd "$SP/nats" -a 127.0.0.1 -p 4232 >"$SP/nats.log" 2>&1 & PIDS+=($!)
-python3 $HERE/stub-control-plane.py bench/versus/one-replica.json \
-  '{"gate":"components/target/gate_domain.composed.wasm"}' 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
+./reconciler/target/release/comp-stub --spec fixtures/one-replica.yaml \
+  --artifact gate=components/target/gate_domain.composed.wasm --port 8099 >"$SP/plat.log" 2>&1 & PIDS+=($!)
 sleep 2
 ./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4232 --node n1 \
   --lattice versus --addr 127.0.0.1:3861 --advertise-addr 127.0.0.1:3861 \
@@ -70,7 +70,7 @@ run() { # label url host
   oha -z "$DURATION" -c "$CONNS" --no-tui --output-format json -m POST -d "$BODY" \
     -H 'content-type: application/json' -H "Host: $3" \
     "$2/api/ratelimit" >"$SP/oha-$1.json" 2>"$SP/oha-$1.err"
-  python3 bench/stress/summarise.py "$SP/oha-$1.json" "$1"
+  ./reconciler/target/release/comp-bench summarise "$SP/oha-$1.json" "$1"
 }
 echo
 echo "=== ${DURATION} x ${CONNS} connections per lane ==="

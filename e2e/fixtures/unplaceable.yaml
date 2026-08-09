@@ -1,0 +1,17 @@
+# MUST BE REFUSED. A constraint no node advertises. The reason has to name the
+# constraint, or an operator cannot tell this from "the fleet is full".
+version: comp/v1
+app: unplaceable
+tenant: e2e
+strategy: fused
+
+components:
+  - id: gate
+    placement:
+      mode: spread
+      constraints:
+        region: mars
+
+ingress:
+  host: unplaceable.e2e.test
+  component: gate

@@ -1,0 +1,14 @@
+# One replica, for the head-to-head against wasmCloud: both platforms run the
+# same component at the same count so the number means something.
+
+version: comp/v1
+app: shop
+tenant: eve
+strategy: fused
+
+components:
+  - id: gate
+
+ingress:
+  host: shop.eve.test
+  component: gate

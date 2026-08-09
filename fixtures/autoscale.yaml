@@ -1,0 +1,18 @@
+# min 1, max 4, target 20 concurrent per replica. The autoscaling check drives
+# load at it and watches the replica count follow.
+
+version: comp/v1
+app: shop
+tenant: eve
+strategy: fused
+
+components:
+  - id: gate
+    scale:
+      min: 1
+      max: 4
+      target: 10
+
+ingress:
+  host: shop.eve.test
+  component: gate

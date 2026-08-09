@@ -1,0 +1,15 @@
+# Five replicas of one app, spread over whatever nodes exist. Used by the
+# failover, balancing and HA benchmarks, which vary the FLEET rather than this.
+
+version: comp/v1
+app: shop
+tenant: eve
+strategy: fused
+
+components:
+  - id: gate
+    replicas: 5
+
+ingress:
+  host: shop.eve.test
+  component: gate

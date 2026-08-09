@@ -31,10 +31,13 @@ comp-lattice = { path = "../lattice" }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+serde_norway = "0.9"
+# comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
+axum = "0.8"
 serde_json = "1"
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 # For content addressing. The optional OCI mirror push is four HTTP calls on the
 # reqwest client we already have, so it needs no registry crate — see src/oci.rs.
 sha2 = "0.10"
@@ -48,5 +51,12 @@ http-body-util = "0.1"
 bytes = "1"
 
 [dev-dependencies]
-# Only to stand up a fake registry in the OCI push test. Nothing here serves HTTP.
-axum = "0.8"
+tempfile = "3"
+
+[[bin]]
+name = "comp-stub"
+path = "src/bin/stub.rs"
+
+[[bin]]
+name = "comp-bench"
+path = "src/bin/bench.rs"
