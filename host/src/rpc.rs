@@ -28,7 +28,7 @@ use wrpc_transport_nats::Client as NatsInvoke;
 /// three names, so nothing has to be looked up or agreed at runtime — which is what
 /// lets a caller invoke a component it has never seen on a node it cannot name.
 pub fn prefix(lattice: &str, instance_id: &str) -> String {
-    format!("comp.{lattice}.rpc.{instance_id}")
+    comp_lattice::wire::rpc_prefix(lattice, instance_id)
 }
 
 /// A client per linked interface — for EVERY link, local target or not.
@@ -396,7 +396,7 @@ mod tests {
     /// disagree, every cross-node call silently finds no responder.
     #[test]
     fn both_sides_derive_the_same_address() {
-        assert_eq!(prefix("prod", "alice/shop/api"), "comp.prod.rpc.alice/shop/api");
+        assert_eq!(prefix("prod", "alice/shop/api"), "comp.v1.prod.rpc.alice/shop/api");
         // The instance id is the address, so it must survive verbatim — a sanitiser
         // here would make the caller and the server disagree.
         assert!(prefix("l", "t/a/c").ends_with("t/a/c"));

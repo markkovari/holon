@@ -82,6 +82,22 @@ pub fn desired_replicas(c: &Component, m: &Manifest, load: &Load) -> u32 {
     want.clamp(scale.min, scale.max.max(scale.min))
 }
 
+/// What a node can take, as it advertises it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Capacity {
+    #[serde(default)]
+    pub cpus: usize,
+}
+
+impl Capacity {
+    /// Never zero: a node that advertises nothing (an older host, or a field we
+    /// could not parse) must still be placeable, and dividing by its weight must
+    /// not panic. One is the pessimistic reading — it gets the smallest share.
+    pub fn weight(&self) -> usize {
+        self.cpus.max(1)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Placement {
     #[serde(default)]
@@ -230,6 +246,10 @@ pub struct NodeInventory {
     /// anywhere else: a node bound to `0.0.0.0` knows its port and not its address.
     #[serde(default)]
     pub address: String,
+    /// What this node can take. The host has published it all along; nothing read
+    /// it, so a 4-core Pi and a 10-core laptop were treated as equals.
+    #[serde(default)]
+    pub capacity: Capacity,
     #[serde(default)]
     pub instances: Vec<RunningInstance>,
 }
@@ -538,6 +558,40 @@ fn key(m: &Manifest, component: &str, digest: &str, node: &str) -> Key {
 }
 
 /// Which nodes run how many, or why none can.
+/// Split `total` across `weights` in proportion, using largest remainder.
+///
+/// Integer arithmetic on purpose: floats here would make placement depend on the
+/// order of a summation, and `plan` is meant to be a pure function whose output can
+/// be asserted exactly.
+///
+/// Largest remainder rather than repeated rounding because the total must be exact —
+/// handing out 5 replicas when 4 were asked for is a bug that shows up as cost.
+fn proportional(total: u32, weights: &[usize]) -> Vec<u32> {
+    // A weight of zero would make the whole split degenerate and lose replicas, so
+    // it reads as the smallest share rather than as no share. Callers pass
+    // `Capacity::weight()`, which is already clamped; this keeps the function
+    // total-preserving for any input rather than only for careful ones.
+    let weights: Vec<usize> = weights.iter().map(|w| (*w).max(1)).collect();
+    let sum: usize = weights.iter().sum::<usize>().max(1);
+    let mut out: Vec<u32> = Vec::with_capacity(weights.len());
+    let mut remainders: Vec<(usize, usize)> = Vec::with_capacity(weights.len());
+    let mut given = 0u32;
+    for (i, w) in weights.iter().enumerate() {
+        let exact = total as usize * w;
+        let whole = (exact / sum) as u32;
+        out.push(whole);
+        given += whole;
+        remainders.push((exact % sum, i));
+    }
+    // Biggest leftover first; ties go to the earlier node, which is already the
+    // ranked order, so the result stays deterministic.
+    remainders.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    for (_, i) in remainders.into_iter().take((total - given) as usize) {
+        out[i] += 1;
+    }
+    out
+}
+
 fn place(
     c: &Component,
     // How many to place. Passed in rather than read off `c.replicas`, because with
@@ -598,16 +652,36 @@ fn place(
                     (*n, running_on(c, n), observed_load + pending.get(&n.node).copied().unwrap_or(0))
                 })
                 .collect();
-            ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)).then(a.0.node.cmp(&b.0.node)));
+            // Key 2 is load PER CPU, not raw load: a 4-core Pi and a 10-core laptop
+            // are not interchangeable, and treating them as equals hands the small
+            // machine the same work as the big one. Cross-multiplied rather than
+            // divided so it stays integer arithmetic and never divides by zero.
+            ranked.sort_by(|a, b| {
+                let (aw, bw) = (a.0.capacity.weight(), b.0.capacity.weight());
+                b.1.cmp(&a.1)
+                    .then((a.2 * bw).cmp(&(b.2 * aw)))
+                    .then(a.0.node.cmp(&b.0.node))
+            });
 
-            let n = ranked.len() as u32;
-            let (base, rem) = (replicas / n, replicas % n);
+            // And the split is proportional for the same reason. wasmCloud puts 3 of
+            // 4 replicas on a 10-core box and 1 on a 4-core one (ADR-0039); an even
+            // split would put 2 on each and make the Pi the bottleneck for the app.
+            let weights: Vec<usize> =
+                ranked.iter().map(|(n, _, _)| n.capacity.weight()).collect();
+            let shares: Vec<u32> = if (replicas as usize) <= ranked.len() {
+                // Fewer replicas than nodes: take the RANKING's answer, one each.
+                // Proportional-by-capacity would hand a single replica to the
+                // biggest machine even when it is the busiest per core — capacity is
+                // about dividing many replicas, and the ranking is what already
+                // knows who should get the next one.
+                (0..ranked.len()).map(|i| u32::from((i as u32) < replicas)).collect()
+            } else {
+                proportional(replicas, &weights)
+            };
             Ok(ranked
                 .iter()
-                .enumerate()
-                .map(|(i, (node, _, _))| {
-                    (node.node.clone(), base + if (i as u32) < rem { 1 } else { 0 })
-                })
+                .zip(shares)
+                .map(|((node, _, _), count)| (node.node.clone(), count))
                 .filter(|(_, count)| *count > 0)
                 .collect())
         }
@@ -631,8 +705,15 @@ fn running_on(c: &Component, n: &NodeInventory) -> u32 {
 mod tests {
     use super::*;
 
+    fn sized(name: &str, cpus: usize) -> NodeInventory {
+        let mut n = node(name, &[], &[]);
+        n.capacity = Capacity { cpus };
+        n
+    }
+
     fn node(name: &str, labels: &[(&str, &str)], ifaces: &[&str]) -> NodeInventory {
         NodeInventory {
+            capacity: Capacity::default(),
             node: name.into(),
             labels: labels.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             host_ifaces: ifaces.iter().map(|s| s.to_string()).collect(),
@@ -1267,6 +1348,93 @@ mod tests {
             })
             .sum();
         assert_eq!(total, 4, "31 in flight at target 10 is 4 replicas: {:?}", out.commands);
+    }
+
+
+    #[test]
+    fn a_proportional_split_is_exact_and_favours_the_bigger_node() {
+        // The wasmCloud case from ADR-0039: 4 replicas over a 10-core and a 4-core
+        // machine. It placed 3 and 1; an even split would have been 2 and 2, making
+        // the small machine the bottleneck for the whole app.
+        assert_eq!(proportional(4, &[10, 4]), vec![3, 1]);
+        // Exactness matters more than proportion: every split must sum to the total.
+        for total in 0..20u32 {
+            for weights in [vec![10, 4], vec![1, 1, 1], vec![8, 4, 2, 1], vec![5]] {
+                let got = proportional(total, &weights);
+                assert_eq!(got.iter().sum::<u32>(), total, "{total} over {weights:?} -> {got:?}");
+            }
+        }
+        assert_eq!(proportional(6, &[1, 1, 1]), vec![2, 2, 2], "equal nodes split evenly");
+        assert_eq!(proportional(1, &[10, 4]), vec![1, 0], "one replica goes to the bigger");
+        assert_eq!(proportional(3, &[0, 0]), vec![2, 1], "a node advertising nothing still counts");
+    }
+
+    #[test]
+    fn spread_gives_the_bigger_machine_the_bigger_share() {
+        let mut c = comp("gate", "sha256:aa", 4);
+        c.placement.mode = Mode::Spread;
+        let m = app(vec![c], vec![], Strategy::Fused);
+        let obs = vec![sized("mac", 10), sized("pi", 4)];
+        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let mut got: Vec<(String, u32)> = out
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                Command::Start { node, count, .. } => Some((node.clone(), *count)),
+                _ => None,
+            })
+            .collect();
+        got.sort();
+        assert_eq!(got, vec![("mac".to_string(), 3), ("pi".to_string(), 1)], "10:4 cores -> 3:1");
+    }
+
+    #[test]
+    fn a_busy_big_node_still_loses_to_an_idle_small_one() {
+        // Per-CPU load, not raw load. Ten instances on ten cores is busier per core
+        // than two instances on four, and the ranking has to say so — otherwise the
+        // big machine keeps winning simply because it is big.
+        let mut mac = sized("mac", 10);
+        mac.instances = vec![RunningInstance {
+            tenant: "t".into(),
+            app: "other".into(),
+            component: "x".into(),
+            digest: "sha256:zz".into(),
+            count: 10,
+            ingress_host: None,
+        }];
+        let mut pi = sized("pi", 4);
+        pi.instances = vec![RunningInstance {
+            tenant: "t".into(),
+            app: "other".into(),
+            component: "x".into(),
+            digest: "sha256:zz".into(),
+            count: 2,
+            ingress_host: None,
+        }];
+        let mut c = comp("gate", "sha256:aa", 1);
+        c.placement.mode = Mode::Spread;
+        let m = app(vec![c], vec![], Strategy::Fused);
+        let out = plan(&[m], &vec![mac, pi], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let node = out.commands.iter().find_map(|c| match c {
+            Command::Start { node, .. } => Some(node.clone()),
+            _ => None,
+        });
+        assert_eq!(node.as_deref(), Some("pi"), "1.0 per core beats 0.5 per core");
+    }
+
+    #[test]
+    fn a_node_that_advertises_no_capacity_is_still_placeable() {
+        // Every host before this change published capacity that nothing read, and an
+        // older one may publish none at all. It must not vanish from placement, and
+        // must not divide by zero.
+        let old = node("old", &[], &[]);
+        assert_eq!(old.capacity.weight(), 1);
+        let mut c = comp("gate", "sha256:aa", 2);
+        c.placement.mode = Mode::Spread;
+        let m = app(vec![c], vec![], Strategy::Fused);
+        let out = plan(&[m], &vec![old], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        assert!(out.unschedulable.is_empty(), "{:?}", out.unschedulable);
+        assert!(!out.commands.is_empty(), "a node with no advertised capacity must still be used");
     }
 
 }
