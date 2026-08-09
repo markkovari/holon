@@ -55,31 +55,71 @@ pub struct Scale {
     pub target: u32,
 }
 
-/// Observed concurrency per ingress host, as published by the ingress.
+/// Observed demand per ingress host, as published by the ingress.
 pub type Load = BTreeMap<String, u32>;
+
+/// A component at its ceiling with demand still arriving.
+///
+/// Autoscaling cannot fix this — `max` is the operator's stated limit — so the only
+/// useful thing to do is say so. Without it a fleet pinned at `max` and shedding
+/// looks exactly like a fleet that is correctly sized.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AtCeiling {
+    pub tenant: String,
+    pub app: String,
+    pub component: String,
+    pub max: u32,
+    /// What the demand actually asked for, before it was clamped.
+    pub wanted: u32,
+}
 
 /// How many replicas this component should have right now.
 ///
 /// Pure, and separate from placement, so the "how many" question can be tested
 /// without a fleet to put them on.
-pub fn desired_replicas(c: &Component, m: &Manifest, load: &Load) -> u32 {
+pub fn desired_replicas(c: &Component, m: &Manifest, load: Option<&Load>, running: u32) -> u32 {
+    desired_and_wanted(c, m, load, running).0
+}
+
+/// The clamped count and what demand actually asked for, so a caller can tell the
+/// difference between "4 is right" and "4 is all you allowed".
+fn desired_and_wanted(
+    c: &Component,
+    m: &Manifest,
+    load: Option<&Load>,
+    running: u32,
+) -> (u32, u32) {
     let Some(scale) = &c.scale else {
-        return c.replicas;
+        return (c.replicas, c.replicas);
+    };
+    let hold = |n: u32| {
+        let lo = scale.min;
+        let hi = scale.max.max(scale.min);
+        (n.clamp(lo, hi), n)
+    };
+    // No signal at all is NOT no traffic. Falling back to the manifest's `replicas`
+    // would shrink an app that had scaled up, at the exact moment nobody can see
+    // what it is carrying — so hold what is actually running instead. Same rule as
+    // ADR-0022's "a failed poll means we know nothing, so we change nothing",
+    // applied to the whole signal rather than to one host's sample.
+    let Some(load) = load else {
+        return hold(running.max(scale.min));
     };
     // An app nobody has reported on is not an app with no traffic — it is an app
     // the ingress has not published yet (it has just started, or it is the pass
     // before the first sample). Falling to `min` on a missing key would scale a
     // busy app to zero every time the ingress restarts.
     let Some(host) = m.ingress.as_ref().map(|i| i.host.as_str()) else {
-        return c.replicas.clamp(scale.min.max(1), scale.max.max(1));
+        return hold(running.max(scale.min));
     };
-    let Some(&inflight) = load.get(host) else {
-        return c.replicas.clamp(scale.min, scale.max.max(scale.min));
+    // A host with no sample yet is the same case: hold, do not collapse.
+    let Some(&demand) = load.get(host) else {
+        return hold(running.max(scale.min));
     };
     let target = scale.target.max(1);
     // Round up: at target 10, eleven concurrent requests need two replicas, not one.
-    let want = inflight.div_ceil(target);
-    want.clamp(scale.min, scale.max.max(scale.min))
+    let wanted = demand.div_ceil(target);
+    (wanted.clamp(scale.min, scale.max.max(scale.min)), wanted)
 }
 
 /// What a node can take, as it advertises it.
@@ -199,6 +239,39 @@ impl Manifest {
             .map(|l| (l.iface.clone(), format!("{}/{}/{}", self.tenant, self.app, l.plug)))
             .collect()
     }
+
+    /// Two links giving one component the same interface from different providers.
+    ///
+    /// This has to be caught rather than resolved. An import is keyed by INTERFACE —
+    /// in the link table above, in `Scope.links`, and in wasmtime's linker — so two
+    /// providers of `records:store/store` for one component are not two things the
+    /// component can tell apart. Left alone, `collect()` keeps whichever came last
+    /// and the app deploys wired to a provider nobody chose, silently, with the
+    /// losing link still sitting in the manifest looking honoured.
+    ///
+    /// Telling them apart needs NAMED imports — the same interface imported twice
+    /// under different instance names — which is not something this platform can
+    /// bind today. So: refuse, and say which links collide.
+    /// ponytail: revisit if named-import linking becomes available; the manifest
+    /// shape would need a name per link, not just an interface.
+    fn conflicting_links(&self) -> Vec<String> {
+        let mut seen: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+        for l in &self.links {
+            seen.entry((l.socket.as_str(), l.iface.as_str()))
+                .or_default()
+                .push(l.plug.as_str());
+        }
+        seen.into_iter()
+            .filter(|(_, plugs)| plugs.len() > 1)
+            .map(|((socket, iface), plugs)| {
+                format!(
+                    "`{socket}` is given `{iface}` by {} — an import is keyed by \
+                     interface, so these cannot be told apart; keep one",
+                    plugs.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(" and ")
+                )
+            })
+            .collect()
+    }
 }
 
 // ---- observed state --------------------------------------------------------
@@ -304,6 +377,9 @@ pub struct Unschedulable {
 pub struct Outcome {
     pub commands: Vec<Command>,
     pub unschedulable: Vec<Unschedulable>,
+    /// Components that wanted more replicas than `max` allows.
+    #[serde(default)]
+    pub at_ceiling: Vec<AtCeiling>,
     /// Commands the cap dropped this pass. Never silently truncated — a dropped
     /// command reads as "converged" otherwise, and it is not.
     pub deferred: usize,
@@ -341,7 +417,7 @@ type Key = (String, String, String, String, String); // tenant, app, component, 
 pub fn plan(
     desired: &[Manifest],
     observed: &[NodeInventory],
-    load: &Load,
+    load: Option<&Load>,
     hyst: &mut Hysteresis,
     cfg: &Cfg,
 ) -> Outcome {
@@ -360,7 +436,31 @@ pub fn plan(
             });
             continue;
         };
-        let want_replicas = desired_replicas(root, m, load);
+        // Ambiguous wiring is refused before anything is placed: deploying half a
+        // link table is worse than deploying nothing, because it looks like it worked.
+        let conflicts = m.conflicting_links();
+        if !conflicts.is_empty() {
+            out.unschedulable.push(Unschedulable {
+                tenant: m.tenant.clone(),
+                app: m.app.clone(),
+                reason: conflicts.join("; "),
+            });
+            continue;
+        }
+
+        let running: u32 = observed.iter().map(|n| running_on(root, n)).sum();
+        let (want_replicas, wanted) = desired_and_wanted(root, m, load, running);
+        if let Some(scale) = &root.scale {
+            if wanted > scale.max.max(scale.min) {
+                out.at_ceiling.push(AtCeiling {
+                    tenant: m.tenant.clone(),
+                    app: m.app.clone(),
+                    component: root.id.clone(),
+                    max: scale.max.max(scale.min),
+                    wanted,
+                });
+            }
+        }
         let nodes = match place(root, want_replicas, observed, &pending) {
             Ok(n) => n,
             Err(reason) => {
@@ -780,7 +880,7 @@ mod tests {
         let mut hyst = Hysteresis::default();
         let mut last = Outcome::default();
         for _ in 0..passes {
-            last = plan(desired, observed, &Load::new(), &mut hyst, &cfg);
+            last = plan(desired, observed, None, &mut hyst, &cfg);
             for cmd in &last.commands {
                 apply(observed, cmd);
             }
@@ -826,7 +926,7 @@ mod tests {
         // Under-replicated is the bad direction: it must never wait for hysteresis.
         let m = app(vec![comp("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 2, "{:?}", out.commands);
         assert!(out.commands.iter().all(|c| matches!(c, Command::Start { count: 1, .. })));
     }
@@ -840,10 +940,10 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        let first = plan(&[m.clone()], &obs, &Load::new(), &mut hyst, &cfg);
+        let first = plan(&[m.clone()], &obs, None, &mut hyst, &cfg);
         assert!(first.commands.is_empty(), "must not stop on the first sighting");
         // Absolute: "hold 1", not "drop 2". Re-sending it is a no-op.
-        let second = plan(&[m], &obs, &Load::new(), &mut hyst, &cfg);
+        let second = plan(&[m], &obs, None, &mut hyst, &cfg);
         assert!(matches!(&second.commands[..], [Command::Start { count: 1, node, .. }] if node == "box-a"),
             "{:?}", second.commands);
     }
@@ -860,10 +960,10 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        assert!(plan(&[m.clone()], &[over.clone()], &Load::new(), &mut hyst, &cfg).commands.is_empty());
-        assert!(plan(&[m.clone()], &[exact], &Load::new(), &mut hyst, &cfg).commands.is_empty());
+        assert!(plan(&[m.clone()], &[over.clone()], None, &mut hyst, &cfg).commands.is_empty());
+        assert!(plan(&[m.clone()], &[exact], None, &mut hyst, &cfg).commands.is_empty());
         assert!(
-            plan(&[m], &[over], &Load::new(), &mut hyst, &cfg).commands.is_empty(),
+            plan(&[m], &[over], None, &mut hyst, &cfg).commands.is_empty(),
             "the counter must have restarted, not carried over"
         );
     }
@@ -909,7 +1009,7 @@ mod tests {
             node("no-kv", &[("region", "eu-central")], &[]),
             node("good", &[("region", "eu-central")], &["wasi:keyvalue/store@0.2.0-draft"]),
         ];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 1);
         assert_eq!(out.commands[0].node(), "good");
     }
@@ -919,7 +1019,7 @@ mod tests {
         let mut c = comp("api", "sha256:a", 1);
         c.placement.constraints.insert("region".into(), "antarctica".into());
         let m = app(vec![c], vec![], Strategy::Linked);
-        let out = plan(&[m], &[node("box-a", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("box-a", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty());
         assert_eq!(out.unschedulable.len(), 1);
         assert!(out.unschedulable[0].reason.contains("antarctica"), "{:?}", out.unschedulable);
@@ -933,7 +1033,7 @@ mod tests {
         c.placement.mode = Mode::Pinned;
         c.placement.nodes = vec!["box-gpu".into()];
         let m = app(vec![c], vec![], Strategy::Linked);
-        let out = plan(&[m], &[node("box-a", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("box-a", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty());
         assert!(out.unschedulable[0].reason.contains("box-gpu"), "{:?}", out.unschedulable);
     }
@@ -983,7 +1083,7 @@ mod tests {
             }],
             Strategy::Linked,
         );
-        let out = plan(&[m], &[node("box-a", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("box-a", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
         let api = out
             .commands
             .iter()
@@ -1015,7 +1115,7 @@ mod tests {
             }],
             Strategy::Fused,
         );
-        let out = plan(&[m], &[node("box-a", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("box-a", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 1);
         assert!(matches!(&out.commands[0], Command::Start { component, .. } if component == "api"));
     }
@@ -1028,11 +1128,11 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        let first = plan(&[m.clone()], &[a.clone()], &Load::new(), &mut hyst, &cfg);
+        let first = plan(&[m.clone()], &[a.clone()], None, &mut hyst, &cfg);
         assert_eq!(first.commands.len(), 1, "the new one comes up alone first");
         assert!(matches!(&first.commands[0], Command::Start { digest, .. } if digest == "sha256:new"));
 
-        let second = plan(&[m], &[a], &Load::new(), &mut hyst, &cfg);
+        let second = plan(&[m], &[a], None, &mut hyst, &cfg);
         assert!(second.commands.iter().any(
             |c| matches!(c, Command::Stop { digest, .. } if digest == "sha256:old")
         ));
@@ -1049,8 +1149,8 @@ mod tests {
         running(&mut a, "api", "sha256:a", 1);
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
-        plan(&[], &[a.clone()], &Load::new(), &mut hyst, &cfg);
-        let out = plan(&[], &[a], &Load::new(), &mut hyst, &cfg);
+        plan(&[], &[a.clone()], None, &mut hyst, &cfg);
+        let out = plan(&[], &[a], None, &mut hyst, &cfg);
         assert!(matches!(&out.commands[0], Command::Stop { app, .. } if app == "mesh"));
     }
 
@@ -1062,7 +1162,7 @@ mod tests {
         let obs: Vec<NodeInventory> =
             (0..50).map(|i| node(&format!("box-{i:02}"), &[], &[])).collect();
         let cfg = Cfg { max_commands: 20, ..Cfg::default() };
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &cfg);
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &cfg);
         assert_eq!(out.commands.len(), 20);
         assert_eq!(out.deferred, 30);
     }
@@ -1077,7 +1177,7 @@ mod tests {
         let m = app(vec![stateful("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
                        node("box-b", &[], &["wasi:keyvalue/store"])];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "nothing may be placed: {:?}", out.commands);
         let reason = &out.unschedulable[0].reason;
         assert!(reason.contains("diverge in silence"), "{reason}");
@@ -1092,7 +1192,7 @@ mod tests {
         let mut b = shared("box-b");
         a.host_ifaces = vec!["wasi:keyvalue/store".into()];
         b.host_ifaces = vec!["wasi:keyvalue/store".into()];
-        let out = plan(&[m], &[a, b], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[a, b], None, &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 2, "{:?}", out.unschedulable);
         assert!(out.unschedulable.is_empty());
     }
@@ -1104,7 +1204,7 @@ mod tests {
         let m = app(vec![stateful("api", "sha256:a", 1)], vec![], Strategy::Linked);
         let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
                        node("box-b", &[], &["wasi:keyvalue/store"])];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 1);
         assert!(out.unschedulable.is_empty());
     }
@@ -1115,7 +1215,7 @@ mod tests {
         // blanket ban on spreading.
         let m = app(vec![comp("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 2);
         assert!(out.unschedulable.is_empty());
     }
@@ -1131,7 +1231,7 @@ mod tests {
         );
         let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
                        node("box-b", &[], &["wasi:keyvalue/store"])];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "{:?}", out.commands);
         assert!(out.unschedulable[0].reason.contains("diverge"));
     }
@@ -1164,7 +1264,7 @@ mod tests {
             Strategy::Linked,
         );
         let obs = vec![node("edge", &[("role", "web")], &[]), node("data-1", &[("role", "data")], &[])];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         let where_ = |c: &str| {
             out.commands
                 .iter()
@@ -1186,7 +1286,7 @@ mod tests {
             Strategy::Linked,
         );
         let obs = vec![node("n1", &[], &[]), node("n2", &[], &[])];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         let nodes: std::collections::BTreeSet<&str> =
             out.commands.iter().map(|c| c.node()).collect();
         assert_eq!(nodes.len(), 1, "both parts on one node: {nodes:?}");
@@ -1203,7 +1303,7 @@ mod tests {
             vec![],
             Strategy::Linked,
         );
-        let out = plan(&[m], &[node("n1", &[], &[])], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[node("n1", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.unschedulable[0].reason.starts_with("`store`:"), "{:?}", out.unschedulable);
     }
 
@@ -1239,7 +1339,7 @@ mod tests {
         running(&mut busy, "api", "sha256:a", 1);
         running(&mut busy, "other", "sha256:z", 5);
         let idle = node("idle", &[], &[]);
-        let out = plan(&[m], &[busy, idle], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[busy, idle], None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "it must stay put: {:?}", out.commands);
     }
 
@@ -1258,7 +1358,7 @@ mod tests {
         );
         let mut obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
         converge(&[m.clone()], &mut obs, 3);
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "not settled: {:?}", out.commands);
         assert!(out.unschedulable.is_empty());
     }
@@ -1282,7 +1382,7 @@ mod tests {
         for (inflight, want) in [(0, 1), (1, 1), (10, 1), (11, 2), (25, 3), (100, 10), (500, 10)] {
             load.insert("shop.eve.test".into(), inflight);
             assert_eq!(
-                desired_replicas(&m.components[0], &m, &load),
+                desired_replicas(&m.components[0], &m, Some(&load), 0),
                 want,
                 "{inflight} in flight at target 10 should want {want}"
             );
@@ -1298,7 +1398,7 @@ mod tests {
         c.replicas = 4;
         let m = app_with(c, "shop.eve.test");
         assert_eq!(
-            desired_replicas(&m.components[0], &m, &Load::new()),
+            desired_replicas(&m.components[0], &m, Some(&Load::new()), 4),
             4,
             "no sample must hold the current count, not collapse to min"
         );
@@ -1309,16 +1409,16 @@ mod tests {
         // Every existing manifest is this case. Load must be inert for them.
         let m = app_with(comp("gate", "sha256:aa", 3), "shop.eve.test");
         let load = Load::from([("shop.eve.test".to_string(), 900)]);
-        assert_eq!(desired_replicas(&m.components[0], &m, &load), 3);
+        assert_eq!(desired_replicas(&m.components[0], &m, Some(&load), 0), 3);
     }
 
     #[test]
     fn scale_to_zero_is_reachable_and_a_request_brings_it_back() {
         let m = app_with(scaled(0, 5, 10), "shop.eve.test");
         let idle = Load::from([("shop.eve.test".to_string(), 0)]);
-        assert_eq!(desired_replicas(&m.components[0], &m, &idle), 0, "idle scales to zero");
+        assert_eq!(desired_replicas(&m.components[0], &m, Some(&idle), 0), 0, "idle scales to zero");
         let one = Load::from([("shop.eve.test".to_string(), 1)]);
-        assert_eq!(desired_replicas(&m.components[0], &m, &one), 1, "one request brings it back");
+        assert_eq!(desired_replicas(&m.components[0], &m, Some(&one), 0), 1, "one request brings it back");
     }
 
     #[test]
@@ -1327,7 +1427,7 @@ mod tests {
         // manifest will contain eventually. Neither may panic or divide by zero.
         let m = app_with(scaled(3, 1, 0), "shop.eve.test");
         let load = Load::from([("shop.eve.test".to_string(), 7)]);
-        let n = desired_replicas(&m.components[0], &m, &load);
+        let n = desired_replicas(&m.components[0], &m, Some(&load), 0);
         assert!(n >= 3, "min must still hold when max is below it, got {n}");
     }
 
@@ -1338,7 +1438,7 @@ mod tests {
         let nodes = vec![node("n1", &[], &[]), node("n2", &[], &[])];
         let load = Load::from([("shop.eve.test".to_string(), 31)]);
         let mut h = Hysteresis::default();
-        let out = plan(&[m], &nodes, &load, &mut h, &Cfg::default());
+        let out = plan(&[m], &nodes, Some(&load), &mut h, &Cfg::default());
         let total: u32 = out
             .commands
             .iter()
@@ -1375,7 +1475,7 @@ mod tests {
         c.placement.mode = Mode::Spread;
         let m = app(vec![c], vec![], Strategy::Fused);
         let obs = vec![sized("mac", 10), sized("pi", 4)];
-        let out = plan(&[m], &obs, &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         let mut got: Vec<(String, u32)> = out
             .commands
             .iter()
@@ -1414,7 +1514,7 @@ mod tests {
         let mut c = comp("gate", "sha256:aa", 1);
         c.placement.mode = Mode::Spread;
         let m = app(vec![c], vec![], Strategy::Fused);
-        let out = plan(&[m], &vec![mac, pi], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &vec![mac, pi], None, &mut Hysteresis::default(), &Cfg::default());
         let node = out.commands.iter().find_map(|c| match c {
             Command::Start { node, .. } => Some(node.clone()),
             _ => None,
@@ -1432,9 +1532,131 @@ mod tests {
         let mut c = comp("gate", "sha256:aa", 2);
         c.placement.mode = Mode::Spread;
         let m = app(vec![c], vec![], Strategy::Fused);
-        let out = plan(&[m], &vec![old], &Load::new(), &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &vec![old], None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.unschedulable.is_empty(), "{:?}", out.unschedulable);
         assert!(!out.commands.is_empty(), "a node with no advertised capacity must still be used");
+    }
+
+
+    #[test]
+    fn losing_the_signal_holds_the_fleet_instead_of_shrinking_it() {
+        // The failure this prevents: an app scaled to 6 loses its load signal and
+        // collapses back to the manifest's `replicas` — shrinking under load at the
+        // exact moment nobody can see what it is carrying.
+        let m = app_with(scaled(1, 10, 10), "shop.eve.test");
+        assert_eq!(desired_replicas(&m.components[0], &m, None, 6), 6, "hold what runs");
+        assert_eq!(desired_replicas(&m.components[0], &m, None, 0), 1, "but never below min");
+        // A host with no sample yet is the same case, not a reason to collapse.
+        let empty = Load::new();
+        assert_eq!(desired_replicas(&m.components[0], &m, Some(&empty), 6), 6);
+    }
+
+    #[test]
+    fn hitting_the_ceiling_is_reported_rather_than_silently_clamped() {
+        // `max` is the operator's limit, so nothing here can fix it — but a fleet
+        // pinned at max with demand still arriving must not look identical to one
+        // that is correctly sized.
+        let m = app_with(scaled(1, 2, 10), "shop.eve.test");
+        let load = Load::from([("shop.eve.test".to_string(), 500)]);
+        let obs = vec![node("n1", &[], &[]), node("n2", &[], &[])];
+        let out = plan(&[m], &obs, Some(&load), &mut Hysteresis::default(), &Cfg::default());
+        assert_eq!(out.at_ceiling.len(), 1, "{:?}", out.at_ceiling);
+        let c = &out.at_ceiling[0];
+        assert_eq!((c.max, c.wanted), (2, 50), "clamped to 2, demand asked for 50");
+    }
+
+    #[test]
+    fn an_app_within_its_ceiling_reports_nothing() {
+        let m = app_with(scaled(1, 10, 10), "shop.eve.test");
+        let load = Load::from([("shop.eve.test".to_string(), 25)]);
+        let obs = vec![node("n1", &[], &[])];
+        let out = plan(&[m], &obs, Some(&load), &mut Hysteresis::default(), &Cfg::default());
+        assert!(out.at_ceiling.is_empty(), "{:?}", out.at_ceiling);
+    }
+
+
+    #[test]
+    fn two_providers_of_one_interface_are_refused_rather_than_one_winning() {
+        // The silent version of this bug: `link_table` collects into a map keyed by
+        // interface, so the second link overwrites the first and the app deploys
+        // wired to a provider nobody chose — with the losing link still in the
+        // manifest, looking honoured.
+        let root = comp("gate", "sha256:aa", 1);
+        let a = comp("store-a", "sha256:bb", 1);
+        let b = comp("store-b", "sha256:cc", 1);
+        let m = app(
+            vec![root, a, b],
+            vec![
+                Link {
+                    plug: "store-a".into(),
+                    socket: "gate".into(),
+                    iface: "records:store/store@0.1.0".into(),
+                },
+                Link {
+                    plug: "store-b".into(),
+                    socket: "gate".into(),
+                    iface: "records:store/store@0.1.0".into(),
+                },
+            ],
+            Strategy::Linked,
+        );
+        let obs = vec![node("n1", &[], &[])];
+        let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
+        assert!(out.commands.is_empty(), "nothing may be placed: {:?}", out.commands);
+        assert_eq!(out.unschedulable.len(), 1);
+        let why = &out.unschedulable[0].reason;
+        for expected in ["gate", "records:store/store@0.1.0", "store-a", "store-b"] {
+            assert!(why.contains(expected), "{expected:?} missing from {why:?}");
+        }
+    }
+
+    #[test]
+    fn the_same_interface_for_different_components_is_fine() {
+        // Two components each importing `records:store/store` from their own
+        // provider is normal wiring, not a conflict — the key is (component, iface).
+        let m = app(
+            vec![
+                comp("gate", "sha256:aa", 1),
+                comp("api", "sha256:dd", 1),
+                comp("store-a", "sha256:bb", 1),
+                comp("store-b", "sha256:cc", 1),
+            ],
+            vec![
+                Link {
+                    plug: "store-a".into(),
+                    socket: "gate".into(),
+                    iface: "records:store/store@0.1.0".into(),
+                },
+                Link {
+                    plug: "store-b".into(),
+                    socket: "api".into(),
+                    iface: "records:store/store@0.1.0".into(),
+                },
+            ],
+            Strategy::Linked,
+        );
+        assert!(m.conflicting_links().is_empty(), "{:?}", m.conflicting_links());
+    }
+
+    #[test]
+    fn one_component_may_import_several_different_interfaces() {
+        let m = app(
+            vec![comp("gate", "sha256:aa", 1), comp("store", "sha256:bb", 1)],
+            vec![
+                Link {
+                    plug: "store".into(),
+                    socket: "gate".into(),
+                    iface: "records:store/store@0.1.0".into(),
+                },
+                Link {
+                    plug: "store".into(),
+                    socket: "gate".into(),
+                    iface: "records:store/query@0.1.0".into(),
+                },
+            ],
+            Strategy::Linked,
+        );
+        assert!(m.conflicting_links().is_empty(), "{:?}", m.conflicting_links());
     }
 
 }

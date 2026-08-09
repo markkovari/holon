@@ -190,14 +190,18 @@ async fn main() -> Result<()> {
         // An unreadable load bucket is an empty sample set, NOT a reason to skip the
         // pass: autoscaling is an enhancement to the diff, and a manifest with fixed
         // replicas must keep reconciling whether or not anyone is publishing load.
+        // None means the SIGNAL is absent — a different thing from an empty sample
+        // set, and `plan` treats them differently: no signal holds every autoscaled
+        // app where it is, rather than shrinking it back to the manifest count at
+        // the moment nobody can see what it is carrying.
         let load = match &load_in {
             Some(l) => read_load(l.as_ref()).await,
-            None => Default::default(),
+            None => None,
         };
 
         *known.write().unwrap() = (desired.clone(), observed.clone());
 
-        let outcome = plan(&desired, &observed, &load, &mut hyst, &cfg);
+        let outcome = plan(&desired, &observed, load.as_ref(), &mut hyst, &cfg);
         report(&args, &http, &outcome).await;
 
         if outcome.commands.is_empty() {
@@ -313,7 +317,17 @@ async fn send(bus: &dyn CommandBus, command_timeout: u64, cmd: &Command) -> Resu
 /// Tell the platform what could not be placed. One endpoint, so an app stuck
 /// unschedulable is visible in the UI instead of only in these logs.
 async fn report(args: &Args, http: &reqwest::Client, outcome: &Outcome) {
-    if outcome.unschedulable.is_empty() {
+    // Said out loud even though nothing here can fix it: `max` is the operator's
+    // limit, so a component pinned against it with demand still arriving is a
+    // decision only they can make. Silence would make it indistinguishable from an
+    // app that is correctly sized.
+    for c in &outcome.at_ceiling {
+        eprintln!(
+            "comp-reconciler: {}/{}/{} is at its ceiling of {} replicas and demand asked for {} — raise `scale.max` or accept the shedding",
+            c.tenant, c.app, c.component, c.max, c.wanted
+        );
+    }
+    if outcome.unschedulable.is_empty() && outcome.at_ceiling.is_empty() {
         return;
     }
     for u in &outcome.unschedulable {
@@ -323,7 +337,10 @@ async fn report(args: &Args, http: &reqwest::Client, outcome: &Outcome) {
     let _ = http
         .post(&url)
         .header("x-platform-secret", &args.secret)
-        .json(&json!({ "unschedulable": outcome.unschedulable }))
+        .json(&json!({
+            "unschedulable": outcome.unschedulable,
+            "at_ceiling": outcome.at_ceiling,
+        }))
         .send()
         .await;
 }
@@ -498,9 +515,16 @@ mod tests {
 /// Observed demand per ingress host. Several ingresses may publish; their samples are
 /// SUMMED, because two ingresses each seeing 5 in flight means the app is carrying
 /// 10, not 5.
-async fn read_load(load: &dyn Inventory) -> comp_reconciler::plan::Load {
-    let Ok(entries) = load.read_all().await else { return Default::default() };
-    fold_load(&entries)
+async fn read_load(load: &dyn Inventory) -> Option<comp_reconciler::plan::Load> {
+    match load.read_all().await {
+        Ok(entries) => Some(fold_load(&entries)),
+        // A bucket that cannot be read is the signal being absent, not the fleet
+        // being idle. Returning an empty map here would shrink every autoscaled app.
+        Err(e) => {
+            eprintln!("comp-reconciler: load signal unreadable this pass: {e:#}");
+            None
+        }
+    }
 }
 
 /// Demand is in-flight PLUS refused.
@@ -526,7 +550,17 @@ fn fold_load(entries: &[comp_lattice::Entry]) -> comp_reconciler::plan::Load {
         // Absent on an older ingress, which must read as "no refusals" rather than
         // as a parse failure that drops the whole sample.
         let shed = v["shed"].as_u64().unwrap_or(0);
-        *out.entry(host.to_string()).or_default() += (inflight + shed) as u32;
+        // Absent on an older ingress too. Missing reads as "assume it is serving",
+        // which keeps the previous behaviour for a mixed fleet mid-rollout.
+        let served = v["served"].as_u64().unwrap_or(u64::MAX);
+
+        // Refusals only count as demand when the fleet is ANSWERING. A component
+        // that is wedged — every replica holding connections it never completes —
+        // pins in-flight at the bound and sheds everything behind it, which looks
+        // exactly like honest saturation. Scaling that up manufactures more wedged
+        // instances and makes the outage bigger.
+        let demand = if served == 0 && shed > 0 { inflight } else { inflight + shed };
+        *out.entry(host.to_string()).or_default() += demand as u32;
     }
     out
 }
@@ -603,7 +637,7 @@ async fn activate(
     let outcome = plan(
         &mine,
         &observed,
-        &load,
+        Some(&load),
         &mut Hysteresis::default(),
         &Cfg { settle_passes: cfg.settle_passes, max_commands: cfg.max_commands.max(1) },
     );
@@ -673,4 +707,30 @@ mod load_tests {
         assert_eq!(load.get("b.test"), Some(&2));
         assert_eq!(load.len(), 1);
     }
+
+    #[test]
+    fn a_wedged_component_does_not_ask_for_more_of_itself() {
+        // Every replica holding a connection it never completes: in-flight pinned at
+        // the bound, everything behind it shed, and nothing served. That is
+        // indistinguishable from real saturation by shed count alone — and scaling
+        // it up would manufacture more wedged instances.
+        let load = fold_load(&[entry(r#"{"host":"a.test","inflight":8,"shed":5000,"served":0}"#)]);
+        assert_eq!(load.get("a.test"), Some(&8), "hold at in-flight, do not add refusals");
+    }
+
+    #[test]
+    fn a_genuinely_busy_component_still_counts_its_refusals() {
+        let load = fold_load(&[entry(r#"{"host":"a.test","inflight":8,"shed":5000,"served":9000}"#)]);
+        assert_eq!(load.get("a.test"), Some(&5008));
+    }
+
+    #[test]
+    fn an_ingress_that_does_not_publish_served_keeps_the_old_behaviour() {
+        // Mixed versions during a rollout are normal (ADR-0044). An older ingress
+        // omits `served`, and its refusals must still count rather than being
+        // silently discarded as "wedged".
+        let load = fold_load(&[entry(r#"{"host":"a.test","inflight":2,"shed":30}"#)]);
+        assert_eq!(load.get("a.test"), Some(&32));
+    }
+
 }
