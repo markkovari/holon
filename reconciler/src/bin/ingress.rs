@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use comp_lattice::{nats::NatsLattice, Inventory};
+use comp_lattice::{nats::NatsLattice, CommandBus, Inventory};
 use comp_reconciler::plan::NodeInventory;
 use http_body_util::BodyExt;
 use hyper::server::conn::http1;
@@ -143,6 +143,54 @@ impl Drop for Busy {
 ///
 /// Split out from the walk below so the shedding rule can be tested directly: a
 /// rule that only exists inside an async proxy loop is a rule nobody checks.
+/// One activation per host at a time. Without it a cold app's first burst sends one
+/// activate per request — a stampede at exactly the moment the fleet has nothing
+/// running to absorb it.
+type Activating = Arc<RwLock<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>>;
+
+fn activation_lock(map: &Activating, host: &str) -> Arc<tokio::sync::Mutex<()>> {
+    if let Some(l) = map.read().unwrap().get(host) {
+        return l.clone();
+    }
+    map.write().unwrap().entry(host.to_string()).or_default().clone()
+}
+
+/// Ask the reconciler to place a replica of `host`, and return where it went.
+///
+/// Single-flighted: whoever gets the lock asks, everyone else waits and then re-reads
+/// the route table, which the winner's activation will have populated by way of the
+/// next refresh — or, if it has not yet, takes the same answer from a second ask that
+/// is now cheap because the instance is already running (a start is idempotent).
+async fn activate(
+    commands: &Arc<dyn CommandBus>,
+    activating: &Activating,
+    table: &Arc<RwLock<Table>>,
+    host: &str,
+) -> Option<Backend> {
+    let lock = activation_lock(activating, host);
+    let _held = lock.lock().await;
+
+    // Someone may have activated while we waited for the lock.
+    if let Some(b) = table.read().unwrap().routes.get(host).and_then(|v| v.first()) {
+        return Some(b.clone());
+    }
+
+    let payload = serde_json::json!({ "host": host }).to_string().into_bytes();
+    let reply = commands
+        .send("reconciler", "activate", payload, Duration::from_secs(10))
+        .await
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&reply).ok()?;
+    if let Some(err) = v["error"].as_str() {
+        eprintln!("comp-ingress: activating {host:?} failed: {err}");
+        return None;
+    }
+    let backend =
+        Backend { node: v["node"].as_str()?.to_string(), address: v["address"].as_str()?.to_string() };
+    eprintln!("comp-ingress: activated {host:?} on {}", backend.node);
+    Some(backend)
+}
+
 fn saturated(b: &Backend, inflight: &InFlight, bound: usize) -> bool {
     bound > 0 && counter(inflight, &b.node).load(Ordering::Relaxed) >= bound
 }
@@ -209,7 +257,12 @@ async fn main() -> Result<()> {
     let fabric = Arc::new(
         NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(15)).await?,
     );
-    let inventory: Arc<dyn Inventory> = fabric;
+    let inventory: Arc<dyn Inventory> = fabric.clone();
+    // Used only when a host has NO replica placed: ask the reconciler to start one
+    // and route to the address it replies with. The ingress still holds no platform
+    // credential and no manifest — it asks, it does not decide.
+    let commands: Arc<dyn CommandBus> = fabric;
+    let activating: Activating = Arc::new(RwLock::new(BTreeMap::new()));
     // Best effort: an ingress that cannot open the load bucket still routes. Load is
     // an input to autoscaling, not to serving, and conflating them would make a
     // control-plane hiccup an outage.
@@ -323,6 +376,7 @@ async fn main() -> Result<()> {
             args.balance,
             args.max_inflight,
         );
+        let (commands, activating) = (commands.clone(), activating.clone());
         tokio::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
                 let (table, client, next, inflight, per_host) = (
@@ -332,9 +386,11 @@ async fn main() -> Result<()> {
                     inflight.clone(),
                     per_host.clone(),
                 );
+                let (commands, activating) = (commands.clone(), activating.clone());
                 async move {
                     forward(
-                        table, client, next, inflight, per_host, mode, max_inflight, timeout, req,
+                        table, client, next, inflight, per_host, commands, activating, mode,
+                        max_inflight, timeout, req,
                     )
                     .await
                 }
@@ -367,6 +423,8 @@ async fn forward(
     // above cannot answer it: several apps share a node, so its value says how busy
     // the node is, not how busy this app is.
     per_host: InFlight,
+    commands: Arc<dyn CommandBus>,
+    activating: Activating,
     mode: Balance,
     max_inflight: usize,
     timeout: u64,
@@ -386,11 +444,19 @@ async fn forward(
     // still a request the app owes an answer to.
     let _busy_host = Busy::on(counter(&per_host, &host));
 
-    let backends = table.read().unwrap().routes.get(&host).cloned().unwrap_or_default();
+    let mut backends = table.read().unwrap().routes.get(&host).cloned().unwrap_or_default();
     if backends.is_empty() {
-        // 503, not 404: the app may exist and simply have no replica up. A 404
-        // would tell a caller to stop retrying, which is the wrong advice.
-        return Ok(status(503, &format!("no replica of {host:?} is currently placed\n")));
+        // Nothing placed. Rather than refuse, ask the reconciler to start one and
+        // hold this request while it does — a scaled-to-zero app is meant to come
+        // back on demand, and ADR-0040 made that cost 0.43 ms of actual work.
+        match activate(&commands, &activating, &table, &host).await {
+            Some(b) => backends = vec![b],
+            // 503, not 404: the app may exist and simply have no replica up. A 404
+            // would tell a caller to stop retrying, which is the wrong advice.
+            None => {
+                return Ok(status(503, &format!("no replica of {host:?} is currently placed\n")))
+            }
+        }
     }
 
     let ranked = order(&backends, mode, &next, &inflight);

@@ -59,6 +59,7 @@ single-component app should be a container, not a wasm workload.
 | [0039](0039-comp-versus-wasmcloud.md) | comp vs wasmCloud 2.x, same component, both machines | accepted |
 | [0040](0040-compiled-artifacts-are-cached.md) | Compiled artifacts are cached (81x faster starts) | accepted |
 | [0041](0041-the-ingress-sheds-load.md) | The ingress sheds load instead of queueing without bound | accepted |
+| [0042](0042-scale-to-zero-and-back.md) | Scale to zero, and back — a request activates a parked app | accepted |
 
 ## The shape these add up to
 

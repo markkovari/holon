@@ -122,6 +122,16 @@ async fn main() -> Result<()> {
 
     let http = reqwest::Client::new();
     let cfg = Cfg { settle_passes: args.settle_passes, max_commands: args.max_commands };
+
+    // What the last pass knew, shared with the activation server below. Activation
+    // must not re-poll the control plane: it sits in front of a user waiting on a
+    // request, and an HTTP round trip to the platform would cost more than the start
+    // it is trying to perform (ADR-0040 put a warm start at 0.43 ms).
+    let known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>> =
+        std::sync::Arc::new(std::sync::RwLock::new((Vec::new(), Vec::new())));
+    if !args.dry_run {
+        serve_activations(commands.clone(), known.clone(), args.clone()).await;
+    }
     let mut hyst = Hysteresis::default();
     let period = Duration::from_secs(args.interval.max(1));
 
@@ -163,6 +173,8 @@ async fn main() -> Result<()> {
             Some(l) => read_load(l.as_ref()).await,
             None => Default::default(),
         };
+
+        *known.write().unwrap() = (desired.clone(), observed.clone());
 
         let outcome = plan(&desired, &observed, &load, &mut hyst, &cfg);
         report(&args, &http, &outcome).await;
@@ -474,4 +486,98 @@ async fn read_load(load: &dyn Inventory) -> comp_reconciler::plan::Load {
         *out.entry(host.to_string()).or_default() += n as u32;
     }
     out
+}
+
+/// Answer "someone is asking for an app that has no replica placed".
+///
+/// The ingress cannot do this itself: it holds no platform credential and no
+/// manifest, by design (ADR-0026). So it asks here, and this replies with an address
+/// it can use immediately — waiting for the next inventory refresh instead would put
+/// a heartbeat interval in front of a request, which is the whole thing ADR-0037's
+/// 0.43 ms start makes worth avoiding.
+///
+/// Modelled as a command to a pseudo-node called `reconciler`, so it reuses the
+/// existing command bus, subject naming and reply plumbing without a fourth trait.
+///
+/// ponytail: `serve` is a plain subscription, so two reconcilers would both act on
+/// one activation. Harmless (a start is idempotent — absolute counts, ADR-0022) but
+/// wasteful; make it a queue group when a second reconciler is real.
+async fn serve_activations(
+    bus: std::sync::Arc<dyn CommandBus>,
+    known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>>,
+    args: Args,
+) {
+    let mut rx = match bus.serve("reconciler").await {
+        Ok(rx) => rx,
+        Err(e) => {
+            eprintln!("comp-reconciler: not serving activations: {e:#}");
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        while let Some(cmd) = rx.recv().await {
+            if cmd.verb != "activate" {
+                let _ = cmd.reply.send(br#"{"error":"unknown verb"}"#.to_vec());
+                continue;
+            }
+            let host = serde_json::from_slice::<serde_json::Value>(&cmd.payload)
+                .ok()
+                .and_then(|v| v["host"].as_str().map(str::to_string))
+                .unwrap_or_default();
+            let body = match activate(bus.as_ref(), &known, &args, &host).await {
+                Ok(v) => v,
+                Err(e) => serde_json::json!({ "error": format!("{e:#}") }),
+            };
+            let _ = cmd.reply.send(body.to_string().into_bytes());
+        }
+    });
+}
+
+async fn activate(
+    bus: &dyn CommandBus,
+    known: &std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>,
+    args: &Args,
+    host: &str,
+) -> Result<serde_json::Value> {
+    let (desired, observed) = known.read().unwrap().clone();
+    // Only the app that owns this hostname, so an activation can never start
+    // something the caller did not ask for.
+    let mine: Vec<Manifest> = desired
+        .iter()
+        .filter(|m| m.ingress.as_ref().is_some_and(|i| i.host == host))
+        .cloned()
+        .collect();
+    if mine.is_empty() {
+        anyhow::bail!("no app answers to {host:?}");
+    }
+
+    // One in flight is exactly the signal that would have made the next pass place a
+    // replica, so `plan` decides — placement rules, stateful-spread refusal and all —
+    // rather than a second scheduler living here.
+    let load = comp_reconciler::plan::Load::from([(host.to_string(), 1u32)]);
+    let outcome = plan(
+        &mine,
+        &observed,
+        &load,
+        &mut Hysteresis::default(),
+        &Cfg { settle_passes: args.settle_passes, max_commands: args.max_commands },
+    );
+    if let Some(u) = outcome.unschedulable.first() {
+        anyhow::bail!("{}", u.reason);
+    }
+    let start = outcome
+        .commands
+        .iter()
+        .find(|c| matches!(c, Command::Start { .. }))
+        .context("already placed, or nothing to start")?;
+    send(bus, args, start).await?;
+
+    let node = start.node().to_string();
+    let address = observed
+        .iter()
+        .find(|n| n.node == node)
+        .map(|n| n.address.clone())
+        .context("started on a node with no advertised address")?;
+    eprintln!("comp-reconciler: activated {host} on {node}");
+    Ok(serde_json::json!({ "node": node, "address": address }))
 }
