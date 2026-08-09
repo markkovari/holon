@@ -18,6 +18,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use comp_lattice::{nats::NatsLattice, Artifacts, CommandBus, Inventory};
 use comp_reconciler::oci;
+use comp_reconciler::settings;
 use comp_reconciler::plan::{plan, Cfg, Command, Hysteresis, Manifest, NodeInventory, Outcome};
 use serde_json::json;
 
@@ -40,28 +41,32 @@ struct Args {
     #[arg(long, default_value = "default")]
     lattice: String,
 
+    /// Config file. Defaults to $COMP_CONFIG, then ./comp.toml if it exists.
+    #[arg(long)]
+    config: Option<std::path::PathBuf>,
+
     /// Seconds between passes.
-    #[arg(long, default_value = "10")]
-    interval: u64,
+    #[arg(long, env = "COMP_INTERVAL")]
+    interval: Option<u64>,
 
     /// Consecutive passes a surplus must persist before anything is stopped.
     /// A flag, not a constant: it is a guess until there is real churn to
     /// calibrate it against.
-    #[arg(long, default_value = "2")]
-    settle_passes: u32,
+    #[arg(long, env = "COMP_SETTLE_PASSES")]
+    settle_passes: Option<u32>,
 
     /// Commands per pass, so a mass event drains instead of stampeding.
-    #[arg(long, default_value = "20")]
-    max_commands: usize,
+    #[arg(long, env = "COMP_MAX_COMMANDS")]
+    max_commands: Option<usize>,
 
     /// Seconds to wait for a host to acknowledge a command.
-    #[arg(long, default_value = "10")]
-    command_timeout: u64,
+    #[arg(long, env = "COMP_COMMAND_TIMEOUT")]
+    command_timeout: Option<u64>,
 
     /// How long a host's inventory survives without a refresh. The reason a
     /// vanished node needs no reaping code: its key simply expires.
-    #[arg(long, default_value = "15")]
-    inventory_ttl: u64,
+    #[arg(long, env = "COMP_INVENTORY_TTL")]
+    inventory_ttl: Option<u64>,
 
     /// Compute and report, but send no commands and push nothing.
     #[arg(long)]
@@ -91,8 +96,16 @@ async fn main() -> Result<()> {
     }
 
     // One implementation today; the loop below only ever sees the traits.
+    // Resolve every tunable once: flag, then environment, then file, then default.
+    let file = comp_reconciler::settings::File::load(args.config.as_deref())?.reconciler;
+    let interval = settings::pick(args.interval, file.interval, 10);
+    let settle_passes = settings::pick(args.settle_passes, file.settle_passes, 2);
+    let max_commands = settings::pick(args.max_commands, file.max_commands, 20);
+    let command_timeout = settings::pick(args.command_timeout, file.command_timeout, 10);
+    let inventory_ttl = settings::pick(args.inventory_ttl, file.inventory_ttl, 15);
+
     let fabric = std::sync::Arc::new(
-        NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(args.inventory_ttl))
+        NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(inventory_ttl))
             .await?,
     );
     let inventory: std::sync::Arc<dyn Inventory> = fabric.clone();
@@ -116,12 +129,12 @@ async fn main() -> Result<()> {
         args.lattice,
         args.nats_url,
         args.platform_url,
-        args.interval,
+        interval,
         if args.dry_run { " | DRY RUN, no commands will be sent" } else { "" }
     );
 
     let http = reqwest::Client::new();
-    let cfg = Cfg { settle_passes: args.settle_passes, max_commands: args.max_commands };
+    let cfg = Cfg { settle_passes, max_commands };
 
     // What the last pass knew, shared with the activation server below. Activation
     // must not re-poll the control plane: it sits in front of a user waiting on a
@@ -130,10 +143,10 @@ async fn main() -> Result<()> {
     let known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>> =
         std::sync::Arc::new(std::sync::RwLock::new((Vec::new(), Vec::new())));
     if !args.dry_run {
-        serve_activations(commands.clone(), known.clone(), args.clone()).await;
+        serve_activations(commands.clone(), known.clone(), cfg.clone(), command_timeout).await;
     }
     let mut hyst = Hysteresis::default();
-    let period = Duration::from_secs(args.interval.max(1));
+    let period = Duration::from_secs(interval.max(1));
 
     loop {
         tokio::time::sleep(period).await;
@@ -196,7 +209,7 @@ async fn main() -> Result<()> {
             continue;
         }
         for c in &outcome.commands {
-            if let Err(e) = send(commands.as_ref(), &args, c).await {
+            if let Err(e) = send(commands.as_ref(), command_timeout, c).await {
                 // Logged and dropped on purpose. The next pass re-derives from
                 // scratch, so a failed command costs one interval — cheaper and far
                 // more predictable than a per-command retry state machine.
@@ -266,7 +279,7 @@ async fn fetch_inventory(inventory: &dyn Inventory) -> Result<Vec<NodeInventory>
     Ok(out)
 }
 
-async fn send(bus: &dyn CommandBus, args: &Args, cmd: &Command) -> Result<()> {
+async fn send(bus: &dyn CommandBus, command_timeout: u64, cmd: &Command) -> Result<()> {
     let verb = match cmd {
         Command::Start { .. } => "start",
         Command::Stop { .. } => "stop",
@@ -278,7 +291,7 @@ async fn send(bus: &dyn CommandBus, args: &Args, cmd: &Command) -> Result<()> {
             cmd.node(),
             verb,
             serde_json::to_vec(cmd)?,
-            Duration::from_secs(args.command_timeout),
+            Duration::from_secs(command_timeout),
         )
         .await?;
 
@@ -505,7 +518,8 @@ async fn read_load(load: &dyn Inventory) -> comp_reconciler::plan::Load {
 async fn serve_activations(
     bus: std::sync::Arc<dyn CommandBus>,
     known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>>,
-    args: Args,
+    cfg: Cfg,
+    command_timeout: u64,
 ) {
     let mut rx = match bus.serve("reconciler").await {
         Ok(rx) => rx,
@@ -524,7 +538,7 @@ async fn serve_activations(
                 .ok()
                 .and_then(|v| v["host"].as_str().map(str::to_string))
                 .unwrap_or_default();
-            let body = match activate(bus.as_ref(), &known, &args, &host).await {
+            let body = match activate(bus.as_ref(), &known, &cfg, command_timeout, &host).await {
                 Ok(v) => v,
                 Err(e) => serde_json::json!({ "error": format!("{e:#}") }),
             };
@@ -536,7 +550,8 @@ async fn serve_activations(
 async fn activate(
     bus: &dyn CommandBus,
     known: &std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>,
-    args: &Args,
+    cfg: &Cfg,
+    command_timeout: u64,
     host: &str,
 ) -> Result<serde_json::Value> {
     let (desired, observed) = known.read().unwrap().clone();
@@ -560,7 +575,7 @@ async fn activate(
         &observed,
         &load,
         &mut Hysteresis::default(),
-        &Cfg { settle_passes: args.settle_passes, max_commands: args.max_commands },
+        &Cfg { settle_passes: cfg.settle_passes, max_commands: cfg.max_commands.max(1) },
     );
     if let Some(u) = outcome.unschedulable.first() {
         anyhow::bail!("{}", u.reason);
@@ -570,7 +585,7 @@ async fn activate(
         .iter()
         .find(|c| matches!(c, Command::Start { .. }))
         .context("already placed, or nothing to start")?;
-    send(bus, args, start).await?;
+    send(bus, command_timeout, start).await?;
 
     let node = start.node().to_string();
     let address = observed
