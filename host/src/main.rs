@@ -24,6 +24,7 @@
 
 mod agent;
 mod kv;
+mod secrets;
 mod rpc;
 mod tenant;
 use kv::KvBackend;
@@ -60,6 +61,8 @@ mod bindings {
         with: {
             // wasmtime >=34 keys a resource as `interface.resource`, not `interface/resource`.
             "wasi:keyvalue/store.bucket": super::HostBucket,
+            // The guest holds this and cannot read it (ADR-0051).
+            "comp:secrets/reader.secret": super::secrets::SecretHandle,
         },
     });
 }
@@ -148,6 +151,12 @@ struct Host {
     /// Who this instance is and what it may touch. Built by the host at start time
     /// from a control-plane record; never from guest input, never from `std::env`.
     scope: SharedScope,
+    /// Secrets this instance has already fetched. Dropped — and overwritten — with
+    /// the Store, which is per request (ADR-0037).
+    secret_cache: secrets::SecretCache,
+    /// Where to fetch a granted secret, and the client to do it with.
+    platform_url: String,
+    fetch_http: reqwest::Client,
     /// Per-store resource ceiling. Set from the scope in `handle_request`.
     limits: wasmtime::StoreLimits,
     /// How this store reaches components on other nodes. `Solo` off a lattice, so
@@ -449,6 +458,11 @@ struct Args {
     /// Address to listen on.
     #[arg(long, default_value = "127.0.0.1:3007")]
     addr: String,
+    /// Where to fetch granted secrets from (ADR-0051). Empty means a component that
+    /// asks for one is told its secret is unavailable — which is the right answer
+    /// for a node with no platform, and better than a node that silently has none.
+    #[arg(long, default_value = "")]
+    platform_url: String,
     /// Optional directory of static files (a built SPA) to serve for GET
     /// requests that aren't API routes. Omit for API-only.
     #[arg(long)]
@@ -709,6 +723,11 @@ async fn main() -> Result<()> {
                     count: 1,
                     config: cfg,
                     links: Default::default(),
+                    // Solo mode has no platform to fetch from, so a component run
+                    // this way is granted nothing rather than being handed a token
+                    // that cannot work.
+                    secrets: Default::default(),
+                    fetch_token: String::new(),
                     host_needs: Vec::new(),
                     egress: args.egress.clone(),
                     ingress_host: None,
@@ -749,6 +768,7 @@ async fn main() -> Result<()> {
                     .with_context(|| format!("connecting to NATS at {nats_url_for_lattice}"))?,
             );
             let ag = Arc::new(agent::Agent {
+                platform_url: args.platform_url.clone(),
                 nats: Some(raw_nats),
                 node,
                 labels: args.labels.iter().cloned().collect(),
@@ -813,6 +833,9 @@ async fn main() -> Result<()> {
         println!("comp-host: serving static SPA from {}", d.display());
     }
 
+    // Captured once for the serve loop; every store this host builds fetches from
+    // the same platform.
+    let platform_url = args.platform_url.clone();
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     loop {
@@ -824,6 +847,7 @@ async fn main() -> Result<()> {
         let instances = instances.clone();
         let routes = routes.clone();
         let static_dir = static_dir.clone();
+        let platform_url = platform_url.clone();
 
         tokio::task::spawn(async move {
             let service = hyper::service::service_fn(move |req| {
@@ -833,6 +857,7 @@ async fn main() -> Result<()> {
                 let instances = instances.clone();
                 let routes = routes.clone();
                 let static_dir = static_dir.clone();
+                let platform_url = platform_url.clone();
                 async move {
                     // static SPA first (GET, non-API). Falls through to the
                     // component for API routes + all non-GET.
@@ -844,7 +869,7 @@ async fn main() -> Result<()> {
                     let Some(instance) = resolve(&routes, &instances, &req) else {
                         return Ok(not_found());
                     };
-                    handle_request(engine, instance, kv_backend, cache_backing, req).await
+                    handle_request(engine, instance, kv_backend, cache_backing, platform_url, req).await
                 }
             });
             if let Err(e) = http1::Builder::new()
@@ -1001,6 +1026,9 @@ pub fn store_for(
     kv: Kv,
     cache_backing: CacheBacking,
     remotes: std::collections::BTreeMap<String, wrpc_transport_nats::Client>,
+    // Where a granted secret is fetched from. Empty in solo mode, where there is no
+    // platform and a component is granted nothing anyway.
+    platform_url: String,
 ) -> Store<Host> {
     let (mem_cap, slice_ms) = (scope.mem_cap, scope.slice_ms);
     let host = Host {
@@ -1011,6 +1039,11 @@ pub fn store_for(
         kv,
         cache_backing,
         scope,
+        secret_cache: Default::default(),
+        platform_url,
+        // One client per store is wasteful; reqwest pools internally and a store is
+        // per request. ponytail: hoist to a shared client if a profile ever shows it.
+        fetch_http: reqwest::Client::new(),
         limits: wasmtime::StoreLimits::default(),
         rpc: rpc::RpcCtx::new(
             if remotes.is_empty() { rpc::Transport::Solo } else { rpc::Transport::Lattice(remotes) },
@@ -1032,6 +1065,7 @@ async fn handle_request(
     instance: Arc<Instance>,
     kv: Kv,
     cache_backing: CacheBacking,
+    platform_url: String,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
     let mut store = store_for(
@@ -1040,6 +1074,7 @@ async fn handle_request(
         kv,
         cache_backing,
         instance.remotes.clone(),
+        platform_url,
     );
 
     let (sender, receiver) = tokio::sync::oneshot::channel();

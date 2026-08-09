@@ -20,6 +20,7 @@
 #[allow(warnings)]
 mod bindings;
 mod manifest;
+mod req;
 mod orgs;
 
 use serde_json::{json, Map, Value};
@@ -33,6 +34,7 @@ use bindings::quota::meter::meter as quota;
 use bindings::records::store::store as records;
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::config::store as config;
+use bindings::secrets::vault::vault;
 use bindings::wit::reflect::composer;
 use bindings::wit::reflect::inspector;
 
@@ -82,6 +84,15 @@ impl Guest for Component {
             (Method::Post, ["api", "components"]) => component_add(&request, &query),
             (Method::Get, ["api", "components"]) => components_list(&request),
             (Method::Post, ["api", "components", "publish"]) => component_publish(&request),
+            (Method::Post, ["api", "components", "satisfies"]) => components_satisfies(&request),
+            (Method::Get, ["api", "market"]) => market_search(&request, &query),
+
+            (Method::Post, ["api", "internal", "fetch-token"]) => fetch_token_mint(&request),
+            (Method::Get, ["api", "internal", "secret"]) => secret_fetch(&request, &query),
+
+            (Method::Post, ["api", "secrets"]) => secret_put(&request, &query),
+            (Method::Get, ["api", "secrets"]) => secrets_list(&request, &query),
+            (Method::Delete, ["api", "secrets", name]) => secret_delete(&request, name, &query),
 
             (Method::Post, ["api", "deployments"]) => deployment_create(&request, &query),
             (Method::Get, ["api", "deployments"]) => deployments_list(&request),
@@ -131,7 +142,7 @@ fn usage() -> Outcome {
             "service": "platform",
             "about": "multi-tenant wasm deployment platform — sign in, build a component graph, pick a strategy, save, and it deploys (docs/adr/)",
             "auth": "POST /api/register {email,password,tenant?}, POST /api/login, GET /api/me",
-            "catalog": "POST /api/components?id=NAME (raw .wasm), GET /api/components, POST /api/components/publish {id,visibility}",
+            "catalog": "POST /api/components?id=NAME&config=key!,key2 (raw .wasm), GET /api/components, POST /api/components/publish {id,visibility}, POST /api/components/satisfies {socket,plug}",
             "deployments": "POST /api/deployments {name,nodes,edges,strategy}, POST /api/deployments/{id}/save, GET /api/deployments/{id}/manifests",
             "strategies": ["fused", "linked"],
             "adr": "docs/adr/"
@@ -281,13 +292,37 @@ fn may_use(p: &auth_types::Principal, row: &Value) -> bool {
             .map(|(k, v)| policy::Attr { key: (*k).to_string(), value: (*v).to_string() })
             .collect()
     };
-    let principal = attrs(&[("tenant", &p.tenant), ("subject", &p.subject)]);
+    // A row uploaded before orgs existed has none; it belongs to its uploader's
+    // personal org, which is named after the tenant. Guessing anything else would
+    // silently widen who can see old rows.
+    let row_org = row["org"].as_str().unwrap_or_else(|| row["tenant"].as_str().unwrap_or_default());
     let resource = attrs(&[
         ("tenant", row["tenant"].as_str().unwrap_or_default()),
+        ("org", row_org),
         ("visibility", visibility_of(row)),
     ]);
-    // Default is deny; the rule set is seeded at first use.
-    policy::enforce("catalog", "use", &principal, &resource)
+    let decide = |org: &str| {
+        let principal = attrs(&[("tenant", &p.tenant), ("subject", &p.subject), ("org", org)]);
+        // Default is deny; the rule set is seeded at first use.
+        policy::enforce("catalog", "use", &principal, &resource)
+    };
+
+    // Own and public need no org, so they are decided once and cheaply.
+    if decide("") {
+        return true;
+    }
+    if visibility_of(row) != "org" {
+        return false;
+    }
+    // A person can belong to several organisations (ADR-0031), and `policy:guard`
+    // compares single values — so the decision is asked once per membership rather
+    // than reshaping the rule engine around a list. Nobody is in enough orgs for
+    // this to matter, and the alternative is a hand-rolled conditional next to a
+    // policy engine that exists to avoid exactly that.
+    orgs::memberships(&p.subject)
+        .iter()
+        .filter_map(|m| m["id"].as_str().map(String::from))
+        .any(|org| org == row_org && decide(&org))
 }
 
 /// The rules that implement ADR-0007's visibility table. Registered idempotently.
@@ -306,6 +341,24 @@ fn seed_policy() {
             priority: 10,
             conditions: vec![cond("principal.tenant", policy::Op::Eq, "resource.tenant")],
         },
+        // anyone in the same ORGANISATION may use an org-visible row.
+        //
+        // ADR-0007's middle row, specified and never built — so `visibility: "org"`
+        // was accepted by publish and then did nothing, which is worse than
+        // rejecting it: the uploader believes they shared something.
+        //
+        // Between own (10) and public (5): more specific than "anyone", less than
+        // "mine", which is the order the table describes.
+        policy::Rule {
+            id: "catalog-org".into(),
+            action: "use".into(),
+            effect: policy::Effect::Allow,
+            priority: 7,
+            conditions: vec![
+                cond("resource.visibility", policy::Op::Eq, "org"),
+                cond("principal.org", policy::Op::Eq, "resource.org"),
+            ],
+        },
         // anyone may use a public row
         policy::Rule {
             id: "catalog-public".into(),
@@ -316,6 +369,161 @@ fn seed_policy() {
         },
     ];
     let _ = policy::set_rules("catalog", &rules);
+}
+
+/// `grace-period-secs!,retries` -> `[{key, required}]`.
+fn declared_config(query: &Map<String, Value>) -> Vec<Value> {
+    query
+        .get("config")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| match s.strip_suffix('!') {
+            Some(k) => json!({ "key": k, "required": true }),
+            None => json!({ "key": s, "required": false }),
+        })
+        .collect()
+}
+
+/// Check one component's config against the keys its uploader declared.
+///
+/// Two errors, and both name what to do about it. An unknown key is almost always a
+/// typo, so the message lists the legal ones — the difference between "rejected" and
+/// "you wrote `grace-period-sec`, it is `grace-period-secs`". A missing required key
+/// is named outright, because the alternative is a component that starts and then
+/// fails on its first request in front of a user.
+///
+/// A component that declared nothing accepts nothing: silence means "reads no
+/// config", not "reads anything". Deny by omission, as everywhere else here.
+fn check_config(id: &str, row: &Value, given: &Map<String, Value>) -> Result<(), String> {
+    let declared: Vec<(&str, bool)> = row["config_keys"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|d| {
+                    Some((d["key"].as_str()?, d["required"].as_bool().unwrap_or(false)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let legal: Vec<&str> = declared.iter().map(|(k, _)| *k).collect();
+    for key in given.keys() {
+        if !legal.contains(&key.as_str()) {
+            return Err(if legal.is_empty() {
+                format!("`{id}` declares no config keys, so it cannot take `{key}`")
+            } else {
+                format!("`{id}` has no config key `{key}` — it takes {legal:?}")
+            });
+        }
+    }
+    for (key, required) in &declared {
+        if *required && !given.contains_key(*key) {
+            return Err(format!("`{id}` requires config `{key}`, which is not set"));
+        }
+    }
+    Ok(())
+}
+
+/// Would plugging `plug` into `socket` actually work?
+///
+/// This is `wac`'s own subtype check on the real bytes, not a name comparison. Two
+/// components can both talk about `records:store/store@0.1.0` and still not fit: the
+/// version, the record fields, a resource's methods all have to line up. Name
+/// matching is what `plan` does at save time, and it is the weaker test — this is the
+/// one that decides whether `wac plug` will succeed.
+///
+/// It belongs at edge-draw time, which is why it is a separate endpoint: the answer
+/// is wanted while someone is dragging a line between two boxes, not after they hit
+/// deploy. A UI that can only find out at save is a UI that lets you build something
+/// invalid and then explains why.
+///
+/// The reply also carries every interface the plug would satisfy, not just the one
+/// asked about — `wac plug` matches EVERY common interface between a plug's exports
+/// and the socket's imports and cannot be told to satisfy just one. A UI that draws
+/// one edge while three were wired is a UI that lies.
+fn components_satisfies(request: &IncomingRequest) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    seed_policy();
+    let b: req::Satisfies = match read_body(request)
+        .map_err(|_| Outcome::Err(400, "could not read body".into()))
+        .and_then(|raw| req::parse(&raw))
+    {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    let (socket_id, plug_id) = (b.socket.trim().to_string(), b.plug.trim().to_string());
+    if socket_id.is_empty() || plug_id.is_empty() {
+        return Outcome::Err(422, "socket and plug are both required".into());
+    }
+    if socket_id == plug_id {
+        return Outcome::Err(422, "a component cannot plug into itself".into());
+    }
+
+    // Same visibility rule as a deploy: own row first, then anything this principal
+    // may use. Asking whether two components fit must not become a way to learn that
+    // a private component exists.
+    let find = |id: &str| -> Option<Value> {
+        find_one(CATALOG, "key", &format!("{}/{}", p.tenant, id))
+            .map(|(_, _, v)| v)
+            .or_else(|| {
+                records::list_records(CATALOG, 500, "")
+                    .map(|page| page.entries)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+                    .find(|r| r["id"] == json!(id) && may_use(&p, r))
+            })
+    };
+    let bytes_of = |id: &str| -> Result<Vec<u8>, Outcome> {
+        let Some(row) = find(id) else {
+            return Err(Outcome::Err(422, format!("component `{id}` is unknown or not visible to you")));
+        };
+        let key = format!("{}/{}", row["tenant"].as_str().unwrap_or_default(), id);
+        blob::get(BIN, &key)
+            .map_err(|_| Outcome::Err(409, format!("component `{id}` has no staged bytes — re-upload it")))
+    };
+
+    let socket = match bytes_of(&socket_id) {
+        Ok(b) => b,
+        Err(o) => return o,
+    };
+    let plug = match bytes_of(&plug_id) {
+        Ok(b) => b,
+        Err(o) => return o,
+    };
+
+    match composer::satisfies(&socket, &plug) {
+        Ok(ifaces) => Outcome::Json(
+            200,
+            json!({
+                "socket": socket_id,
+                "plug": plug_id,
+                "fits": !ifaces.is_empty(),
+                "satisfies": ifaces,
+                // Said out loud because an empty list is the surprising answer, and
+                // "the names matched" is exactly what the person drawing the line
+                // just checked by eye.
+                "detail": if ifaces.is_empty() {
+                    format!("`{plug_id}` exports nothing that `{socket_id}` imports — matching interface NAMES is not enough, the types have to fit too")
+                } else {
+                    format!("`{plug_id}` would satisfy {} import(s) of `{socket_id}`", ifaces.len())
+                },
+            })
+            .to_string(),
+        ),
+        Err(e) => Outcome::Err(
+            422,
+            match e {
+                inspector::ReflectError::NotAComponent(m) => format!("not a component: {m}"),
+                inspector::ReflectError::BadWasm(m) => format!("bad wasm: {m}"),
+            },
+        ),
+    }
 }
 
 fn component_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
@@ -353,9 +561,24 @@ fn component_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outco
     if blob::put(BIN, &key, &bytes, "application/wasm").is_err() {
         return Outcome::Err(500, "could not stage the component bytes".into());
     }
+    // What config this component reads, declared by whoever uploaded it:
+    // `?config=grace-period-secs!,retries` — a trailing `!` marks it required.
+    //
+    // The uploader is the right person to ask: they own the component and can see
+    // what it calls `wasi:config` for. Nobody else can know, and a platform that
+    // guesses would either reject valid config or accept typos.
+    let config_keys = declared_config(query);
+    // Which organisation owns this component. `?org=` or the uploader's personal
+    // one, and membership is checked here rather than after the row exists.
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
     let doc = json!({
         "key": key, "id": id, "tenant": p.tenant, "uploader": p.subject,
+        "org": org,
         "visibility": "private", "uploaded": now(),
+        "config_keys": config_keys,
         // The OCI reference. Empty until the push step records a digest — and a
         // deployment cannot render without one (ADR-0006).
         "oci_ref": "",
@@ -390,14 +613,325 @@ fn components_list(request: &IncomingRequest) -> Outcome {
         .filter(|row| may_use(&p, row))
         .map(|row| {
             json!({
-                "id": row["id"], "tenant": row["tenant"], "visibility": row["visibility"],
+                "id": row["id"], "tenant": row["tenant"], "org": row["org"],
+                "visibility": row["visibility"],
                 "uploaded": row["uploaded"], "digest": row["digest"],
                 "deployable": row["digest"].as_str().unwrap_or("").starts_with("sha256:"),
                 "surface": row["surface"],
+                // What config this component reads, so a caller can render a form
+                // and fill it in before deploying instead of discovering the keys
+                // from a 422. Null on rows uploaded before declarations existed,
+                // which reads correctly as "declared nothing".
+                "config_keys": row["config_keys"],
             })
         })
         .collect();
     Outcome::Json(200, json!({ "components": rows }).to_string())
+}
+
+/// Everything this caller may use, filtered.
+///
+/// `?q=` matches the id or description; `?iface=` matches an EXPORT, because that is
+/// the question someone actually has — "who can fill this gap in my graph" — and it
+/// is the same match the 422 uses to suggest candidates. `?org=` narrows to one
+/// organisation.
+///
+/// Substring and set matching over rows the catalogue listing already loads. No
+/// search engine, no index: a catalogue of this size does not need one, and adding
+/// one would be inventing an answer to a question nobody has asked yet.
+/// ponytail: linear scan; add an index when the catalogue outgrows a page.
+/// Secrets are named per ORGANISATION, never globally.
+///
+/// One vault backs the whole platform, so the org has to be part of the name or two
+/// tenants would share a namespace — the same mistake ADR-0012 measured with storage
+/// buckets, in a place where the consequence is worse.
+fn vault_name(org: &str, name: &str) -> String {
+    format!("{org}/{name}")
+}
+
+/// `vault://<org>/<name>` — the only form a manifest may contain (ADR-0010).
+fn parse_ref(r: &str) -> Option<(String, String)> {
+    let rest = r.strip_prefix("vault://")?;
+    let (org, name) = rest.split_once('/')?;
+    if org.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some((org.to_string(), name.to_string()))
+}
+
+/// Store a secret for an org. The value is written straight through to the vault,
+/// which seals it before it touches storage — nothing here keeps it, logs it, or puts
+/// it in a response.
+/// Where fetch tokens live. One row per instance that was granted a secret.
+const FETCH_TOKENS: &str = "fetch_tokens";
+
+/// Mint a capability for one instance: exactly these references, for a bounded time.
+///
+/// Issued BY the platform rather than signed by the reconciler, which is the simpler
+/// and stronger arrangement — no shared signing key, and revocation is deleting a
+/// row rather than waiting out a signature. The reconciler authenticates with the
+/// platform secret it already holds (ADR-0003).
+///
+/// The token is a capability, not a secret value: it is worth exactly what this
+/// manifest was worth, which is why the host may keep it in a ledger on disk
+/// (ADR-0022).
+fn fetch_token_mint(request: &IncomingRequest) -> Outcome {
+    if !internal_ok(request) {
+        return Outcome::Err(401, "bad platform secret".into());
+    }
+    let b = match body(request) {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    let instance = str_of(&b, "instance");
+    let refs: Vec<String> = b["refs"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    if instance.is_empty() || refs.is_empty() {
+        return Outcome::Err(422, "instance and refs are required".into());
+    }
+    // Long enough to outlive an instance's useful life, short enough that a leaked
+    // token is not a standing grant. A restart mints a new one, and a start costs
+    // 0.43ms (ADR-0040), so a short life is cheap here in a way it usually is not.
+    let ttl = b["ttl"].as_u64().unwrap_or(3600);
+    // The record id is the token: unguessable, unique, and already stored — the same
+    // trick the invite codes use (ADR-0031).
+    let doc = json!({
+        "instance": instance, "refs": refs, "expires": now() + ttl, "issued": now(),
+    });
+    match records::create(FETCH_TOKENS, &doc.to_string(), &["instance".to_string()]) {
+        Ok(rec) => Outcome::Json(201, json!({ "token": rec.id, "expires": now() + ttl }).to_string()),
+        Err(_) => Outcome::Err(500, "could not mint a fetch token".into()),
+    }
+}
+
+/// Resolve one reference for a host holding a valid token.
+///
+/// The plaintext leaves the platform here and nowhere else. Three checks, in this
+/// order, because each is cheaper than the next: does the token exist, has it
+/// expired, and does it authorise THIS reference.
+fn secret_fetch(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let token = request
+        .headers()
+        .get(&"x-fetch-token".to_string())
+        .into_iter()
+        .next()
+        .and_then(|v| String::from_utf8(v).ok())
+        .unwrap_or_default();
+    if token.is_empty() {
+        return Outcome::Err(401, "no fetch token".into());
+    }
+    let reference = query.get("ref").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let Ok(entry) = records::get(FETCH_TOKENS, &token) else {
+        return Outcome::Err(401, "unknown fetch token".into());
+    };
+    let Ok(doc) = serde_json::from_str::<Value>(&entry.data) else {
+        return Outcome::Err(401, "unreadable fetch token".into());
+    };
+    if doc["expires"].as_u64().unwrap_or(0) < now() {
+        // 401 so the host can tell "restart me" from "your manifest is wrong".
+        let _ = records::delete(FETCH_TOKENS, &token);
+        return Outcome::Err(401, "fetch token expired".into());
+    }
+    let granted = doc["refs"]
+        .as_array()
+        .map(|a| a.iter().any(|r| r.as_str() == Some(reference.as_str())))
+        .unwrap_or(false);
+    if !granted {
+        // 403, not 404: this token is real and this reference is not on it. Saying
+        // so does not leak whether the secret exists, only that this instance was
+        // not granted it — which the instance's own manifest already told it.
+        return Outcome::Err(403, "this instance was not granted that reference".into());
+    }
+    let Some((org, name)) = parse_ref(&reference) else {
+        return Outcome::Err(422, "not a secret reference".into());
+    };
+    match vault::get(&vault_name(&org, &name)) {
+        // Bytes, not JSON: a plaintext should not pass through a serialiser that
+        // might log or escape it.
+        Ok(v) => Outcome::Bytes(200, "application/octet-stream".into(), v),
+        Err(vault::VaultError::NotFound) => Outcome::Err(404, "no such secret".into()),
+        Err(e) => Outcome::Err(500, vault_detail(&e)),
+    }
+}
+
+fn secret_put(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    // Writing a secret is not a viewer's job.
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    let b: req::PutSecret = match read_body(request)
+        .map_err(|_| Outcome::Err(400, "could not read body".into()))
+        .and_then(|raw| req::parse(&raw))
+    {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    let name = b.name.trim();
+    if name.is_empty() || b.value.is_empty() {
+        return Outcome::Err(422, "name and value are both required".into());
+    }
+    match vault::put(&vault_name(&org, name), b.value.as_bytes()) {
+        // The reply is metadata, deliberately: a caller that just wrote a secret has
+        // the value already, and echoing it back puts it in one more place.
+        Ok(meta) => Outcome::Json(
+            201,
+            json!({
+                "ref": format!("vault://{org}/{name}"),
+                "name": name, "org": org,
+                "version": meta.version, "updated": meta.updated,
+            })
+            .to_string(),
+        ),
+        Err(e) => Outcome::Err(500, format!("vault refused the write: {}", vault_detail(&e))),
+    }
+}
+
+/// Names only. There is no endpoint that returns a value: the platform stores
+/// secrets so that workloads can use them, not so that a browser can display them.
+fn secrets_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    let prefix = format!("{org}/");
+    match vault::list_names(500) {
+        Ok(names) => {
+            let mine: Vec<Value> = names
+                .iter()
+                .filter_map(|n| n.strip_prefix(&prefix))
+                .map(|n| json!({ "name": n, "ref": format!("vault://{org}/{n}") }))
+                .collect();
+            Outcome::Json(200, json!({ "secrets": mine, "count": mine.len() }).to_string())
+        }
+        Err(e) => Outcome::Err(500, format!("vault unreadable: {}", vault_detail(&e))),
+    }
+}
+
+fn secret_delete(request: &IncomingRequest, name: &str, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    match vault::delete(&vault_name(&org, name)) {
+        Ok(()) => Outcome::Json(200, json!({ "deleted": name, "org": org }).to_string()),
+        Err(e) => Outcome::Err(500, format!("vault refused the delete: {}", vault_detail(&e))),
+    }
+}
+
+fn vault_detail(e: &vault::VaultError) -> String {
+    match e {
+        vault::VaultError::NotFound => "no such secret".into(),
+        vault::VaultError::Crypto(m) => format!("crypto: {m}"),
+        vault::VaultError::BackendUnavailable(m) => format!("backend unavailable: {m}"),
+    }
+}
+
+/// Every secret a component asks for must resolve, and must belong to the org
+/// deploying it.
+///
+/// `describe` is the whole reason this is safe: it answers "is there a secret by this
+/// name" WITHOUT decrypting, so a save can be validated without the platform ever
+/// holding a plaintext it has no use for (ADR-0010).
+fn check_secrets(id: &str, org: &str, secrets: &[Value]) -> Result<Vec<Value>, String> {
+    let mut out = Vec::new();
+    for s in secrets {
+        let key = s["key"].as_str().unwrap_or_default().trim();
+        let reference = s["ref"].as_str().unwrap_or_default().trim();
+        if key.is_empty() || reference.is_empty() {
+            return Err(format!("`{id}`: every secret needs a key and a ref"));
+        }
+        let Some((ref_org, name)) = parse_ref(reference) else {
+            return Err(format!(
+                "`{id}`: `{reference}` is not a secret reference — it must look like `vault://{org}/<name>`"
+            ));
+        };
+        // Refusing another org's reference is the whole boundary. Without it a
+        // manifest could name any secret on the platform and the vault would happily
+        // resolve it.
+        if ref_org != org {
+            return Err(format!(
+                "`{id}`: `{reference}` belongs to `{ref_org}`, and this deployment is for `{org}`"
+            ));
+        }
+        if vault::describe(&vault_name(&ref_org, &name)).is_err() {
+            return Err(format!(
+                "`{id}`: `{reference}` does not resolve — store it first with POST /api/secrets"
+            ));
+        }
+        // BY REFERENCE ONLY. The value is never read here, so it cannot reach a
+        // manifest, a revision, or a log line.
+        out.push(json!({ "key": key, "ref": reference }));
+    }
+    Ok(out)
+}
+
+fn market_search(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    seed_policy();
+    let want = |k: &str| {
+        query.get(k).and_then(|v| v.as_str()).unwrap_or_default().trim().to_lowercase()
+    };
+    let (q, iface, org) = (want("q"), want("iface"), want("org"));
+
+    let rows: Vec<Value> = records::list_records(CATALOG, 500, "")
+        .map(|page| page.entries)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        // Visibility first, always. A search that filtered afterwards would let a
+        // caller learn a private component exists by how many results came back.
+        .filter(|r| may_use(&p, r))
+        .filter(|r| {
+            if q.is_empty() {
+                return true;
+            }
+            let id = r["id"].as_str().unwrap_or_default().to_lowercase();
+            let desc = r["description"].as_str().unwrap_or_default().to_lowercase();
+            id.contains(&q) || desc.contains(&q)
+        })
+        .filter(|r| {
+            if iface.is_empty() {
+                return true;
+            }
+            r["surface"]["exports"]
+                .as_array()
+                .map(|a| {
+                    a.iter().any(|x| {
+                        x["raw"].as_str().unwrap_or_default().to_lowercase().contains(&iface)
+                    })
+                })
+                .unwrap_or(false)
+        })
+        .filter(|r| org.is_empty() || r["org"].as_str().unwrap_or_default().to_lowercase() == org)
+        .map(|r| {
+            json!({
+                "id": r["id"], "tenant": r["tenant"], "org": r["org"],
+                "visibility": r["visibility"], "description": r["description"],
+                "deprecated": r["deprecated"].as_bool().unwrap_or(false),
+                "uploaded": r["uploaded"], "digest": r["digest"],
+                "deployable": r["digest"].as_str().unwrap_or("").starts_with("sha256:"),
+                "config_keys": r["config_keys"],
+                // The surface is the point of a marketplace listing: what it exports
+                // is what someone is shopping for.
+                "surface": r["surface"],
+            })
+        })
+        .collect();
+    Outcome::Json(200, json!({ "components": rows, "count": rows.len() }).to_string())
 }
 
 fn component_publish(request: &IncomingRequest) -> Outcome {
@@ -424,6 +958,17 @@ fn component_publish(request: &IncomingRequest) -> Outcome {
     match find_one(CATALOG, "key", &key) {
         Some((rec, rev, mut row)) if row["tenant"] == json!(p.tenant) => {
             row["visibility"] = json!(visibility);
+            // Optional, and only overwritten when given: a publish that changes
+            // visibility should not silently erase a description.
+            if let Some(d) = b["description"].as_str() {
+                row["description"] = json!(d);
+            }
+            // ADR-0007: deprecation, never deletion. A component someone deployed
+            // must keep resolving, so the strongest thing an author can do is say
+            // "do not start anything new with this".
+            if let Some(d) = b["deprecated"].as_bool() {
+                row["deprecated"] = json!(d);
+            }
             match records::update(CATALOG, &rec, &row.to_string(), rev) {
                 Ok(_) => Outcome::Json(200, row.to_string()),
                 Err(_) => Outcome::Err(409, "revision conflict — retry".into()),
@@ -636,12 +1181,17 @@ fn deployment_create(request: &IncomingRequest, query: &Map<String, Value>) -> O
         Ok((org, _)) => org,
         Err((code, msg)) => return Outcome::Err(code, msg),
     };
-    let b = match body(request) {
+    // Typed, so a misspelled field is refused with the legal ones rather than
+    // quietly creating a deployment that is not what was asked for.
+    let b: req::CreateDeployment = match read_body(request)
+        .map_err(|_| Outcome::Err(400, "could not read body".into()))
+        .and_then(|raw| req::parse(&raw))
+    {
         Ok(v) => v,
         Err(o) => return o,
     };
-    let name = str_of(&b, "name");
-    let strategy = match Strategy::parse(b["strategy"].as_str().unwrap_or("fused")) {
+    let name = b.name.trim().to_string();
+    let strategy = match Strategy::parse(b.strategy.as_deref().unwrap_or("fused")) {
         Some(s) => s,
         None => return Outcome::Err(422, "strategy must be fused|linked".into()),
     };
@@ -664,7 +1214,7 @@ fn deployment_create(request: &IncomingRequest, query: &Map<String, Value>) -> O
     let doc = json!({
         "org": org, "tenant": p.tenant, "name": name, "owner": p.subject,
         "strategy": strategy.as_str(),
-        "nodes": b["nodes"].clone(), "edges": b["edges"].clone(),
+        "nodes": b.nodes, "edges": b.edges,
         "created": now(), "revision": 0, "status": "draft",
     });
     match records::create(DEPLOYMENTS, &doc.to_string(), &["org".to_string(), "tenant".to_string()]) {
@@ -782,6 +1332,10 @@ fn resolve_parts(
     doc: &Value,
     strategy: Strategy,
 ) -> Result<Vec<Part>, Outcome> {
+    // The org this deployment belongs to, which is what a secret reference is checked
+    // against. Stored on the record at creation, so it cannot be changed by the body
+    // of a save.
+    let deploy_org = doc["org"].as_str().unwrap_or_else(|| doc["tenant"].as_str().unwrap_or_default()).to_string();
     seed_policy();
     let node_ids: Vec<String> = doc["nodes"]
         .as_array()
@@ -888,20 +1442,76 @@ fn resolve_parts(
         ));
     }
 
+    // `{"id": "gate", "config": {"grace-period-secs": "5"}}` on the graph node.
+    // Read once here so both strategies get the same treatment.
+    let given_config = |id: &str| -> Map<String, Value> {
+        doc["nodes"]
+            .as_array()
+            .and_then(|a| {
+                a.iter().find(|n| n["id"].as_str() == Some(id)).and_then(|n| n["config"].as_object())
+            })
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    // `{"id": "gate", "secrets": [{"key": "stripe", "ref": "vault://acme/stripe"}]}`
+    let given_secrets = |id: &str| -> Vec<Value> {
+        doc["nodes"]
+            .as_array()
+            .and_then(|a| {
+                a.iter().find(|n| n["id"].as_str() == Some(id)).and_then(|n| n["secrets"].as_array())
+            })
+            .cloned()
+            .unwrap_or_default()
+    };
+
     let part_of = |row: &Value| -> Result<Part, Outcome> {
         let surface = surface_from(&row["surface"]);
+        // Refused HERE, before anything is built or composed: a config error is the
+        // author's to fix and costs nothing to find, while the same mistake reaching
+        // a node becomes a component that starts and then fails in front of a user.
+        let id = row["id"].as_str().unwrap_or_default().to_string();
+        let given = given_config(&id);
+        if let Err(why) = check_config(&id, row, &given) {
+            return Err(Outcome::Err(422, why));
+        }
+        let asked = given_secrets(&id);
+        let secrets = match check_secrets(&id, &deploy_org, &asked) {
+            Ok(v) => v,
+            Err(why) => return Err(Outcome::Err(422, why)),
+        };
+
+        // Checked LAST of the three, on purpose. A missing digest is a transient
+        // pipeline state — "save again in a moment" — while a bad config key or an
+        // unresolvable secret is a permanent authoring error. Reporting the transient
+        // one first makes an author wait for distribution only to be told they had a
+        // typo all along.
         let digest = row["digest"].as_str().unwrap_or_default().to_string();
         if !digest.starts_with("sha256:") {
             return Err(Outcome::Err(
                 409,
                 format!(
-                    "component `{}` has not been distributed yet — it has no content address, and a deployment can only name bytes by digest (ADR-0006)",
-                    row["id"].as_str().unwrap_or_default()
+                    "component `{id}` has not been distributed yet — it has no content address, and a deployment can only name bytes by digest (ADR-0006)"
                 ),
             ));
         }
         Ok(Part {
-            name: row["id"].as_str().unwrap_or_default().to_string(),
+            name: id,
+            secrets: secrets
+                .iter()
+                .filter_map(|s| {
+                    Some((s["key"].as_str()?.to_string(), s["ref"].as_str()?.to_string()))
+                })
+                .collect(),
+            config: given
+                .iter()
+                .map(|(k, v)| {
+                    // Values are strings on the wire: `wasi:config/store` hands the
+                    // guest a string, so a number here would be a lie about what the
+                    // component will actually read.
+                    (k.clone(), v.as_str().map(String::from).unwrap_or_else(|| v.to_string()))
+                })
+                .collect(),
             digest,
             host_imports: surface
                 .host_imports
@@ -963,8 +1573,67 @@ fn resolve_parts(
                 return Err(Outcome::Err(500, "could not stage the composed artifact".into()));
             }
 
+            // A fused artifact is ONE component with one `wasi:config/store`, so the
+            // graph's configs merge into a single namespace. That makes a key used by
+            // two components with different values genuinely ambiguous — there is no
+            // "whose" about it once wac has composed them — so it is refused rather
+            // than resolved by whichever iterated last.
+            let mut merged: std::collections::BTreeMap<String, (String, String)> =
+                std::collections::BTreeMap::new();
+            for row in &rows {
+                let id = row["id"].as_str().unwrap_or_default().to_string();
+                let given = given_config(&id);
+                if let Err(why) = check_config(&id, row, &given) {
+                    return Err(Outcome::Err(422, why));
+                }
+                for (k, v) in &given {
+                    let val = v.as_str().map(String::from).unwrap_or_else(|| v.to_string());
+                    if let Some((other, prev)) = merged.get(k) {
+                        if *prev != val {
+                            return Err(Outcome::Err(
+                                422,
+                                format!(
+                                    "fused: `{other}` and `{id}` both set config `{k}`, to different values — a fused artifact has ONE config namespace, so deploy linked or make them agree"
+                                ),
+                            ));
+                        }
+                    }
+                    merged.insert(k.clone(), (id.clone(), val));
+                }
+            }
+
+            // Secrets merge like config does, and for the same reason: one artifact
+            // asks with one identity. Two components wanting the same KEY from
+            // different refs is the ambiguous case.
+            let mut fused_secrets: std::collections::BTreeMap<String, (String, String)> =
+                std::collections::BTreeMap::new();
+            for row in &rows {
+                let id = row["id"].as_str().unwrap_or_default().to_string();
+                let checked = match check_secrets(&id, &deploy_org, &given_secrets(&id)) {
+                    Ok(v) => v,
+                    Err(why) => return Err(Outcome::Err(422, why)),
+                };
+                for sec in checked {
+                    let (k, r) = (
+                        sec["key"].as_str().unwrap_or_default().to_string(),
+                        sec["ref"].as_str().unwrap_or_default().to_string(),
+                    );
+                    if let Some((other, prev)) = fused_secrets.get(&k) {
+                        if *prev != r {
+                            return Err(Outcome::Err(
+                                422,
+                                format!("fused: `{other}` and `{id}` both want secret `{k}`, from different refs — a fused artifact asks with one identity, so deploy linked or make them agree"),
+                            ));
+                        }
+                    }
+                    fused_secrets.insert(k, (id.clone(), r));
+                }
+            }
+
             let mut part = Part {
                 name: fused_id.clone(),
+                secrets: fused_secrets.into_iter().map(|(k, (_, r))| (k, r)).collect(),
+                config: merged.into_iter().map(|(k, (_, v))| (k, v)).collect(),
                 digest: String::new(),
                 host_imports: Vec::new(),
                 nested_instances: 0,
@@ -1077,13 +1746,24 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
     let Some((rec, rev, mut doc)) = owned_deployment(&p, id, orgs::Role::Member) else {
         return Outcome::Err(404, "not_found".into());
     };
-    // A save may also update the graph in the same request.
-    if let Ok(b) = body(request) {
-        for key in ["nodes", "edges", "strategy"] {
-            if !b[key].is_null() {
-                doc[key] = b[key].clone();
-            }
-        }
+    // A save may also update the graph in the same request. An unknown field here
+    // used to be ignored, so `{"noodes": [...]}` saved the OLD graph and reported
+    // success — the most expensive shape of this bug, because it looks like it worked.
+    let update: req::SaveDeployment = match read_body(request)
+        .map_err(|_| Outcome::Err(400, "could not read body".into()))
+        .and_then(|raw| req::parse(&raw))
+    {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    if let Some(nodes) = update.nodes {
+        doc["nodes"] = json!(nodes);
+    }
+    if let Some(edges) = update.edges {
+        doc["edges"] = json!(edges);
+    }
+    if let Some(strategy) = update.strategy {
+        doc["strategy"] = json!(strategy);
     }
     let strategy = match Strategy::parse(doc["strategy"].as_str().unwrap_or("fused")) {
         Some(s) => s,
@@ -1340,11 +2020,53 @@ fn split_query(path: &str) -> (String, Map<String, Value>) {
     if let Some(raw) = parts.next() {
         for pair in raw.split('&') {
             if let Some((k, v)) = pair.split_once('=') {
-                q.insert(k.to_string(), json!(v));
+                q.insert(percent_decode(k), json!(percent_decode(v)));
             }
         }
     }
     (route, q)
+}
+
+/// Undo percent-encoding, and `+` for spaces.
+///
+/// Values used to be stored raw, so anything a caller escaped stayed escaped: a
+/// secret reference arrived as `vault%3A%2F%2Facme%2Fstripe` and compared unequal to
+/// the reference it named, which read as "this instance was not granted that
+/// reference" for a reference it plainly was. Any query value containing a space,
+/// a slash or a colon had the same problem — the market search just never happened
+/// to be given one.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' if i + 2 < b.len() => {
+                let hex = std::str::from_utf8(&b[i + 1..i + 3]).ok();
+                match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                    Some(byte) => {
+                        out.push(byte);
+                        i += 3;
+                    }
+                    // Not a valid escape: keep it verbatim rather than dropping it,
+                    // so a stray `%` in a search term is a search term.
+                    None => {
+                        out.push(b'%');
+                        i += 1;
+                    }
+                }
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
@@ -1398,3 +2120,104 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    fn row(keys: &[(&str, bool)]) -> Value {
+        json!({
+            "id": "gate",
+            "config_keys": keys
+                .iter()
+                .map(|(k, r)| json!({ "key": k, "required": r }))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    fn given(pairs: &[(&str, &str)]) -> Map<String, Value> {
+        pairs.iter().map(|(k, v)| (k.to_string(), json!(v))).collect()
+    }
+
+    #[test]
+    fn a_declaration_marks_required_keys_with_a_bang() {
+        let q: Map<String, Value> =
+            [("config".to_string(), json!("grace-period-secs!, retries"))].into_iter().collect();
+        let got = declared_config(&q);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0], json!({ "key": "grace-period-secs", "required": true }));
+        assert_eq!(got[1], json!({ "key": "retries", "required": false }), "no bang, not required");
+        // An absent `?config=` is not an error; it declares nothing.
+        assert!(declared_config(&Map::new()).is_empty());
+    }
+
+    #[test]
+    fn a_typo_is_refused_and_the_message_lists_the_legal_keys() {
+        // THE error ADR-0010 promised. "Rejected" is useless; "you wrote
+        // grace-period-sec, it takes grace-period-secs" is the whole value.
+        let err = check_config("gate", &row(&[("grace-period-secs", false)]),
+                               &given(&[("grace-period-sec", "5")]))
+            .unwrap_err();
+        assert!(err.contains("grace-period-sec"), "{err}");
+        assert!(err.contains("grace-period-secs"), "the legal key must be offered: {err}");
+    }
+
+    #[test]
+    fn a_missing_required_key_is_named() {
+        let err = check_config("gate", &row(&[("token", true)]), &given(&[])).unwrap_err();
+        assert!(err.contains("token"), "{err}");
+        // Optional keys may be omitted, or the declaration would be pointless.
+        check_config("gate", &row(&[("token", false)]), &given(&[])).unwrap();
+    }
+
+    #[test]
+    fn a_component_that_declares_nothing_accepts_nothing() {
+        // Silence means "reads no config", not "reads anything" — deny by omission,
+        // as everywhere else here. The message has to say so, because an empty list
+        // of legal keys reads as a bug otherwise.
+        let err = check_config("gate", &json!({ "id": "gate" }), &given(&[("anything", "1")]))
+            .unwrap_err();
+        assert!(err.contains("declares no config keys"), "{err}");
+        // ...and giving it nothing is still fine.
+        check_config("gate", &json!({ "id": "gate" }), &given(&[])).unwrap();
+    }
+
+    #[test]
+    fn a_full_and_correct_config_passes() {
+        check_config(
+            "gate",
+            &row(&[("token", true), ("retries", false)]),
+            &given(&[("token", "abc"), ("retries", "3")]),
+        )
+        .unwrap();
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::*;
+
+    #[test]
+    fn a_reference_survives_being_a_query_value() {
+        // The bug: an escaped ref compared unequal to the ref it named, so a token
+        // was told it had not been granted a reference it plainly had.
+        let (route, q) = split_query("/api/internal/secret?ref=vault%3A%2F%2Facme%2Fstripe");
+        assert_eq!(route, "/api/internal/secret");
+        assert_eq!(q["ref"], json!("vault://acme/stripe"));
+    }
+
+    #[test]
+    fn a_search_term_with_a_space_arrives_as_a_space() {
+        let (_, q) = split_query("/api/market?q=key%20value&org=acme");
+        assert_eq!(q["q"], json!("key value"));
+        assert_eq!(q["org"], json!("acme"));
+        let (_, plus) = split_query("/api/market?q=key+value");
+        assert_eq!(plus["q"], json!("key value"), "+ is a space in a query string");
+    }
+
+    #[test]
+    fn a_stray_percent_is_kept_rather_than_swallowed() {
+        let (_, q) = split_query("/api/market?q=100%");
+        assert_eq!(q["q"], json!("100%"));
+    }
+}

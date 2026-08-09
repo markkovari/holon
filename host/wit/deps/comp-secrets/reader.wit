@@ -1,0 +1,43 @@
+// comp:secrets/reader — how a component reads a secret it was granted.
+//
+// The shape is the point (ADR-0051):
+//
+//   * a component names a KEY, never a reference. The manifest maps keys to
+//     `vault://<org>/<name>`; the host holds that map. A guest string is a lookup
+//     into host-side state and can never select a secret nobody granted it —
+//     the same rule as `wasi:keyvalue`'s buckets (ADR-0012) and links (ADR-0013).
+//
+//   * `get` hands back an opaque handle. Holding one is not reading one.
+//
+//   * `reveal` is the only path to a plaintext, and therefore the one place worth
+//     auditing. With a plain `get -> string` there is a single event and nothing to
+//     tell "took a handle at startup" apart from "read the value on every request".
+package comp:secrets@0.1.0;
+
+interface reader {
+    variant secret-error {
+        /// The platform refused, or could not be reached. Deliberately vague to the
+        /// guest: a component learns that its secret is unavailable, not why.
+        unavailable(string),
+        /// The instance's fetch token has expired. A restart gets a fresh one.
+        expired,
+    }
+
+    /// An opaque handle to a secret this component was granted.
+    resource secret {
+        /// The key this handle was opened under — the manifest's name, never the
+        /// value. Safe to log, and the only thing about a secret that is.
+        key: func() -> string;
+    }
+
+    /// `none` means this component was not granted that key. Not an error: an
+    /// optional secret being absent is a normal way to run.
+    get: func(key: string) -> result<option<secret>, secret-error>;
+
+    /// Read the plaintext. Audited.
+    reveal: func(s: borrow<secret>) -> result<string, secret-error>;
+}
+
+world secrets-reader {
+    import reader;
+}

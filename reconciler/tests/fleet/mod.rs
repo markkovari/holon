@@ -64,11 +64,23 @@ fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
     )
 }
 
-/// Ports derived from the lattice name, so two tests running at once do not collide.
-/// nextest gives each test its own process but not its own network.
-fn ports(lattice: &str) -> (u16, u16, u16) {
-    let h: u16 = lattice.bytes().map(|b| b as u16).sum::<u16>() % 40;
-    (14000 + h * 10, 14001 + h * 10, 14002 + h * 10)
+/// A port nothing is listening on, found by asking the OS.
+///
+/// This replaced ports derived from a hash of the lattice name, which collided:
+/// `ha` with `autoscale` and `sharedstate` with `coldstart` both landed on the same
+/// block, so those tests passed alone and failed whenever the suite ran in parallel —
+/// which is how it is normally run. A name-derived port is a guess about a namespace
+/// the OS already owns.
+///
+/// There is a race between closing this listener and the child binding it. It is
+/// small, and the alternative — children reporting a port they chose — needs a
+/// channel out of every process here, including `nats-server`.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("no free port")
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
 impl Fleet {
@@ -94,7 +106,7 @@ impl Fleet {
             .unwrap_or_else(|_| root.join("host/target/release/comp-host"));
         assert!(host_bin.exists(), "missing {} — cargo build --release in host/", host_bin.display());
 
-        let (nats_port, platform_port, ingress_port) = ports(lattice);
+        let (nats_port, platform_port, ingress_port) = (free_port(), free_port(), free_port());
         let dir = tempfile::tempdir().unwrap();
         let sp = dir.path().to_path_buf();
         let mut children = Vec::new();
@@ -119,11 +131,12 @@ impl Fleet {
 
         let nats_url = format!("nats://127.0.0.1:{nats_port}");
         for n in 1..=nodes {
+            let host_port = free_port();
             let mut c = Command::new(&host_bin);
             c.current_dir(&root)
                 .args(["--lattice-nats", &nats_url, "--node", &format!("n{n}"), "--lattice", lattice])
-                .args(["--addr", &format!("127.0.0.1:{}", 15000 + nats_port % 100 + n)])
-                .args(["--advertise-addr", &format!("127.0.0.1:{}", 15000 + nats_port % 100 + n)])
+                .args(["--addr", &format!("127.0.0.1:{host_port}")])
+                .args(["--advertise-addr", &format!("127.0.0.1:{host_port}")])
                 .arg("--state-dir")
                 .arg(sp.join(format!("n{n}")));
             if let Some(kv) = kv {
@@ -163,7 +176,7 @@ impl Fleet {
     /// It holds no state beyond a cache of inventory, so several should be able to
     /// run — "should" being the word the test using this exists to remove.
     pub fn second_ingress(&mut self) -> u16 {
-        let port = self.ingress_port + 1;
+        let port = free_port();
         let mut ing = Command::new(env!("CARGO_BIN_EXE_comp-ingress"));
         ing.current_dir(repo_root())
             .args(["--addr", &format!("127.0.0.1:{port}")])
