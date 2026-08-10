@@ -201,3 +201,56 @@ mod tests {
         assert!(s.starts_with(w.trim_end_matches('>')));
     }
 }
+
+/// A node's inventory snapshot, on the wire.
+///
+/// Snapshots are the largest and most frequent message the platform sends: every
+/// node, every heartbeat, the whole truth about what it runs. At two thousand
+/// instances that is 360 KiB of JSON per node per beat — a thousand nodes on a
+/// five-second heartbeat is 72 MB/s of bus traffic, and NATS refuses a single
+/// message over 1 MiB, which caps a node at roughly 5 500 instances (ADR-0058).
+///
+/// It is JSON with the same six field names repeated per instance and a 71-byte
+/// digest string that is usually one of a handful, so it compresses about ten to
+/// one and the ceiling moves with it. Compressing the payload was preferred over
+/// designing a delta protocol because it is transparent: no sequence numbers, no
+/// resync, no way for the two sides to disagree about what they have seen.
+pub mod snapshot {
+    /// zstd's frame magic. JSON always starts `{`, so the two can never be
+    /// confused — which is what lets a fleet run mixed versions during a rollout
+    /// instead of needing every node upgraded at once (the lesson of ADR-0044).
+    const MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
+    pub fn compress(json: Vec<u8>) -> Vec<u8> {
+        // Level 1: this runs on every node every heartbeat, and the difference
+        // between level 1 and level 9 here is a few percent of size for several
+        // times the CPU.
+        zstd::encode_all(json.as_slice(), 1).unwrap_or(json)
+    }
+
+    /// Decompress if it is a frame, pass it through if it is not.
+    pub fn expand(raw: Vec<u8>) -> Vec<u8> {
+        if raw.len() >= 4 && raw[..4] == MAGIC {
+            // A snapshot we cannot read is skipped by the caller's parse, which is
+            // the same path an expired or corrupt entry already takes.
+            zstd::decode_all(raw.as_slice()).unwrap_or_default()
+        } else {
+            raw
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_snapshot_round_trips_and_plain_json_still_reads() {
+            let json = br#"[{"tenant":"acme","app":"shop","digest":"sha256:aaaa"}]"#.repeat(50);
+            let small = compress(json.clone());
+            assert!(small.len() * 4 < json.len(), "{} -> {}", json.len(), small.len());
+            assert_eq!(expand(small), json);
+            // A node that has not been upgraded yet publishes plain JSON.
+            assert_eq!(expand(json.clone()), json);
+        }
+    }
+}

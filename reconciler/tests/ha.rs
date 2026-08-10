@@ -5,11 +5,10 @@
 //! remove — it was `bench/adversarial/ha-check.py`, whose caller was deleted in the
 //! refactor, which is how a check quietly stops being run.
 
-mod fleet;
 
 use std::time::Duration;
 
-use fleet::Fleet;
+use comp_reconciler::fleet::Fleet;
 
 #[test]
 fn a_second_ingress_serves_the_same_fleet_and_outlives_the_first() {

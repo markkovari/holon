@@ -2,6 +2,12 @@
 //! runs. That is the whole reason this crate is `[lib]` + `[[bin]]`: a dry run that
 //! is only *nearly* the real logic is worse than no dry run at all.
 
+/// Starting a fleet, driving it, reading it.
+///
+/// A library module rather than test-only code because the benchmark matrix needs
+/// exactly what the tests need — and two harnesses that start fleets slightly
+/// differently would produce numbers that cannot be compared with the assertions.
+pub mod fleet;
 pub mod oci;
 pub mod plan;
 pub mod settings;

@@ -1,6 +1,17 @@
 # Platform plan — a wasm-first multi-tenant PaaS (with a docker lane)
 
-> **Read [`docs/WHY.md`](docs/WHY.md) first. This plan's central bet is falsified.**
+> **Correction (2026-08): the bet below was falsified on wasmCloud and has since
+> been won.** Owning the host moved isolation into the linker
+> ([ADR-0023](docs/adr/0023-isolation-is-a-linker-boundary.md)), so a guest string is
+> a key into host-side state rather than a bucket selector — the exact failure
+> ADR-0012 measured. Multi-tenant density is back and measured
+> ([ADR-0033](docs/adr/0033-two-orgs-under-load.md),
+> [ADR-0034](docs/adr/0034-two-machines-one-fleet.md)). The retreat described below —
+> one host per application — is no longer what runs. Read
+> [`docs/CURRENT.md`](docs/CURRENT.md) for the platform as it stands; this document
+> is kept for the reasoning, not the conclusions.
+>
+> **Read [`docs/WHY.md`](docs/WHY.md) for the argument.**
 >
 > The isolation model below rests on shared hostgroups with per-tenant keyvalue
 > buckets — "the density economics". That does not work: the bucket is chosen by the

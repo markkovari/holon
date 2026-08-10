@@ -9,14 +9,13 @@
 //! number tells you it passed but not what it cost — so this prints ADR-0040's table
 //! and fails if the cache stops paying for itself.
 
-mod fleet;
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use comp_lattice::nats::NatsLattice;
 use comp_lattice::CommandBus;
-use fleet::Fleet;
+use comp_reconciler::fleet::Fleet;
 use serde_json::Value;
 
 /// The start command the node last accepted, read from its own ledger — the same

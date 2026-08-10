@@ -3,8 +3,12 @@
 Numbered, dated, one decision each, superseded rather than edited. Format and rules
 in [ADR-0001](0001-use-adrs.md).
 
-`PLATFORM.md` remains the narrative plan and the phase order; these own the forks
-inside it. Where they disagree, the ADR wins.
+For the platform **as it stands** — what runs, what is measured, what is missing —
+read [`../CURRENT.md`](../CURRENT.md). These are how it got there.
+
+`PLATFORM.md` is the original narrative plan, kept for its reasoning: its central bet
+was falsified on wasmCloud and then won by owning the host (ADR-0023), so its
+conclusions no longer describe what runs. Where anything disagrees, the ADR wins.
 
 **[`../WHY.md`](../WHY.md) is the value proposition, with the measurements behind it.**
 **Read [ADR-0019](0019-the-density-number.md) for the numbers themselves.** The
@@ -69,6 +73,8 @@ single-component app should be a container, not a wasm workload.
 | [0049](0049-the-org-can-see-it.md) | The org can see it — ADR-0007's middle row, and a market endpoint | accepted |
 | [0050](0050-secrets-by-reference.md) | Secrets, by reference — stored, validated, not yet readable at runtime | accepted |
 | [0051](0051-the-secret-reader.md) | The secret reader — a key, a handle, and one explicit reveal | accepted |
+| [0052](0052-one-copy-per-digest.md) | One copy of the machine code per digest | accepted |
+| [0053](0053-the-matrix.md) | The matrix, and the number it corrected | accepted |
 
 ## The shape these add up to
 

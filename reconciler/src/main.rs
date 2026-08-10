@@ -55,6 +55,15 @@ struct Args {
     #[arg(long, env = "COMP_SETTLE_PASSES")]
     settle_passes: Option<u32>,
 
+    /// Re-rank the whole fleet for every app, every pass.
+    ///
+    /// The escape hatch for the converged fast path (ADR-0056). A differential
+    /// test asserts the two agree, so this is for the day something disagrees in
+    /// the field and you need the slow, obviously-correct behaviour NOW rather
+    /// than after a diagnosis.
+    #[arg(long, env = "COMP_NO_FAST_PATH")]
+    no_fast_path: bool,
+
     /// Commands per pass, so a mass event drains instead of stampeding.
     #[arg(long, env = "COMP_MAX_COMMANDS")]
     max_commands: Option<usize>,
@@ -142,7 +151,7 @@ async fn main() -> Result<()> {
     );
 
     let http = reqwest::Client::new();
-    let cfg = Cfg { settle_passes, max_commands };
+    let cfg = Cfg { settle_passes, max_commands, fast_path: !args.no_fast_path };
 
     // What the last pass knew, shared with the activation server below. Activation
     // must not re-poll the control plane: it sits in front of a user waiting on a
@@ -155,6 +164,7 @@ async fn main() -> Result<()> {
             .await;
     }
     let mut hyst = Hysteresis::default();
+    let mut world = World::default();
     let period = Duration::from_secs(interval.max(1));
 
     loop {
@@ -178,7 +188,7 @@ async fn main() -> Result<()> {
         // running instance on the fleet.
         let Some(desired) = fetch_manifests(&args, &http).await else { continue };
 
-        let observed = match fetch_inventory(inventory.as_ref()).await {
+        let observed = match world.refresh(inventory.as_ref()).await {
             Ok(o) => o,
             Err(e) => {
                 // Same rule, other half. An unreadable inventory is not an empty
@@ -200,7 +210,7 @@ async fn main() -> Result<()> {
             None => None,
         };
 
-        *known.write().unwrap() = (desired.clone(), observed.clone());
+        *known.write().unwrap() = (desired.clone(), observed.to_vec());
 
         let outcome = plan(&desired, &observed, load.as_ref(), &mut hyst, &cfg);
         report(&args, &http, &outcome).await;
@@ -279,17 +289,69 @@ async fn fetch_manifests(args: &Args, http: &reqwest::Client) -> Option<Vec<Mani
     Some(out)
 }
 
-async fn fetch_inventory(inventory: &dyn Inventory) -> Result<Vec<NodeInventory>> {
-    let mut out = Vec::new();
-    for entry in inventory.read_all().await? {
-        match serde_json::from_slice::<NodeInventory>(&entry.value) {
-            Ok(inv) => out.push(inv),
-            Err(e) => {
-                eprintln!("comp-reconciler: node {} wrote unreadable inventory: {e}", entry.key)
+/// The parsed world, reused across passes.
+///
+/// A node's snapshot is byte-identical between passes unless that node actually
+/// did something, and re-parsing 20 000 instances of JSON to learn that costs
+/// 4.4 ms of a 45 ms pass. Hashing the bytes answers the same question in 0.6 ms
+/// (ADR-0058).
+///
+/// Deliberately NOT a watch subscription, which was the obvious alternative:
+/// `read_all` returns what has not expired, so a node's absence IS its death and
+/// no liveness logic exists anywhere. A watched mirror would have to re-derive
+/// expiry locally and resync periodically in case it missed an event — new
+/// machinery, a new way to be wrong about which machines are alive, to save the
+/// same 4 ms this saves with a hash.
+#[derive(Default)]
+struct World {
+    /// Sorted by node, so `plan`'s output stays deterministic.
+    nodes: Vec<NodeInventory>,
+    /// node key -> hash of the bytes it last published.
+    seen: std::collections::HashMap<String, u64>,
+}
+
+fn hash_of(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    h.finish()
+}
+
+impl World {
+    async fn refresh(&mut self, inventory: &dyn Inventory) -> Result<&[NodeInventory]> {
+        let entries = inventory.read_all().await?;
+        let mut live = std::collections::HashSet::with_capacity(entries.len());
+
+        for entry in &entries {
+            live.insert(entry.key.clone());
+            let h = hash_of(&entry.value);
+            if self.seen.get(&entry.key) == Some(&h) {
+                continue;
+            }
+            match serde_json::from_slice::<NodeInventory>(&entry.value) {
+                Ok(inv) => {
+                    self.seen.insert(entry.key.clone(), h);
+                    match self.nodes.iter_mut().find(|n| n.node == inv.node) {
+                        Some(slot) => *slot = inv,
+                        None => self.nodes.push(inv),
+                    }
+                }
+                // Unreadable is not empty: the previous good snapshot stays, which
+                // is the same instinct as refusing a pass on an unreadable
+                // manifest rather than reading it as a deletion.
+                Err(e) => {
+                    eprintln!("comp-reconciler: node {} wrote unreadable inventory: {e}", entry.key)
+                }
             }
         }
+
+        // Gone from the bucket means expired means dead. This is the ONLY liveness
+        // signal in the system and it must not be cached.
+        self.seen.retain(|k, _| live.contains(k));
+        self.nodes.retain(|n| live.contains(&n.node));
+        self.nodes.sort_by(|a, b| a.node.cmp(&b.node));
+        Ok(&self.nodes)
     }
-    Ok(out)
 }
 
 /// Turn a planned command into the bytes a host receives.
@@ -706,7 +768,7 @@ async fn activate(
         &observed,
         Some(&load),
         &mut Hysteresis::default(),
-        &Cfg { settle_passes: cfg.settle_passes, max_commands: cfg.max_commands.max(1) },
+        &Cfg { max_commands: cfg.max_commands.max(1), ..cfg.clone() },
     );
     if let Some(u) = outcome.unschedulable.first() {
         anyhow::bail!("{}", u.reason);

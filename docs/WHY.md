@@ -1,9 +1,21 @@
 # Why this platform
 
+> **Correction (2026-08).** The falsification below was of the *wasmCloud-hosted*
+> design, and it has been reversed. The leak was a capability provider choosing a
+> bucket from a guest-supplied string; owning the host means the linker names the
+> bucket instead, and a guest string became a key into host-side state
+> ([ADR-0023](adr/0023-isolation-is-a-linker-boundary.md)). Multi-tenant density is
+> back and measured: two organisations on one fleet with cross-org reads refused
+> ([ADR-0033](adr/0033-two-orgs-under-load.md)), every node holding more than one org
+> ([ADR-0034](adr/0034-two-machines-one-fleet.md)), nodes idling at 12 MiB. See
+> [`CURRENT.md`](CURRENT.md) for what the platform actually is today.
+
 > Every number here is measured on a real cluster and traceable to an ADR. Where a
 > claim is unproven it says so. The original pitch — cheaper multi-tenancy through
-> shared hosts — was **falsified** during the build ([ADR-0012](adr/0012-keyvalue-isolation-needs-a-cooperative-component.md),
-> [ADR-0014](adr/0014-an-application-owns-a-host.md)); this document is what replaced it.
+> shared hosts — was falsified *on wasmCloud* during the build
+> ([ADR-0012](adr/0012-keyvalue-isolation-needs-a-cooperative-component.md),
+> [ADR-0014](adr/0014-an-application-owns-a-host.md)) and later recovered by owning
+> the host; this document is the argument that survived either way.
 
 ## The claim, in one sentence
 

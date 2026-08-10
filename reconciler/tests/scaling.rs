@@ -7,11 +7,10 @@
 //! interesting half, because that is where the signal has to come from somewhere
 //! other than in-flight requests (ADR-0045).
 
-mod fleet;
 
 use std::time::{Duration, Instant};
 
-use fleet::Fleet;
+use comp_reconciler::fleet::Fleet;
 
 /// Replica count over time, sampled from the lattice rather than from a log.
 fn wait_for(fleet: &Fleet, want: impl Fn(u32) -> bool, within: Duration) -> (u32, Option<Duration>) {
