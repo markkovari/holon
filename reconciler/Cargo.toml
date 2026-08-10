@@ -32,6 +32,7 @@ futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 serde_norway = "0.9"
+tempfile = "3"
 # comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
 axum = "0.8"
 serde_json = "1"
@@ -50,8 +51,9 @@ hyper-util = { version = "0.1", features = ["tokio", "client-legacy", "http1"] }
 http-body-util = "0.1"
 bytes = "1"
 
+async-trait = "0.1"
+
 [dev-dependencies]
-tempfile = "3"
 
 [[bin]]
 name = "comp-stub"
@@ -60,3 +62,11 @@ path = "src/bin/stub.rs"
 [[bin]]
 name = "comp-bench"
 path = "src/bin/bench.rs"
+
+[[bin]]
+name = "comp-matrix"
+path = "src/bin/matrix.rs"
+
+[[bin]]
+name = "comp-planscale"
+path = "src/bin/planscale.rs"

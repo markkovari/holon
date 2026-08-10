@@ -490,11 +490,11 @@ struct Args {
     /// cluster from its control bus is a thing to do on purpose, not by default.
     #[arg(long)]
     nats_url: Option<String>,
-    /// Use wasmtime's POOLING allocator (pre-reserved instance/memory slots,
-    /// reused across requests) instead of the default on-demand allocator. This
-    /// is what wasmCloud does — it makes per-request component instantiation of
-    /// the 19-component graph far cheaper. Off by default (the naive baseline).
-    #[arg(long)]
+    /// Fall back to wasmtime's on-demand allocator. The POOLING allocator
+    /// (pre-reserved instance/memory slots, reused across requests) is the
+    /// default because ADR-0054 measured it 21–46% faster at identical idle
+    /// memory; this flag exists to reproduce the on-demand baseline.
+    #[arg(long = "no-pool", action = clap::ArgAction::SetFalse)]
     pool: bool,
 
     // ---- who this instance is -------------------------------------------
@@ -769,6 +769,7 @@ async fn main() -> Result<()> {
             );
             let ag = Arc::new(agent::Agent {
                 platform_url: args.platform_url.clone(),
+                compiled: Default::default(),
                 nats: Some(raw_nats),
                 node,
                 labels: args.labels.iter().cloned().collect(),

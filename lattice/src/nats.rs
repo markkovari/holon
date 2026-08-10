@@ -72,6 +72,7 @@ impl NatsLattice {
 impl Inventory for NatsLattice {
     async fn publish(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> Result<()> {
         // See `connect`: the TTL is the bucket's.
+        let value = crate::snapshot::compress(value);
         self.kv.put(key, value.into()).await.context("publishing inventory")?;
         Ok(())
     }
@@ -84,7 +85,7 @@ impl Inventory for NatsLattice {
             // Absent here means it expired between the list and the read. That is
             // the mechanism working, so it is skipped rather than reported.
             if let Some(raw) = self.kv.get(&key).await.context("reading an inventory entry")? {
-                out.push(Entry { key, value: raw.to_vec() });
+                out.push(Entry { key, value: crate::snapshot::expand(raw.to_vec()) });
             }
         }
         Ok(out)

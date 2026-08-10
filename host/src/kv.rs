@@ -193,7 +193,12 @@ use async_nats::jetstream::kv::Store as JsStore;
 pub struct NatsKv {
     handle: tokio::runtime::Handle,
     js: async_nats::jetstream::Context,
-    stores: Mutex<HashMap<String, JsStore>>,
+    /// Keyed by the bucket id the caller passes, NOT by the derived JetStream
+    /// bucket name — so the hot path is a borrowed lookup with no allocation.
+    /// `RwLock` because after the first request per bucket this is read-only, and
+    /// a `Mutex` here serialised every keyvalue operation on the node: it was a
+    /// third of guest-call time under load (ADR-0057).
+    stores: std::sync::RwLock<HashMap<String, JsStore>>,
 }
 
 impl NatsKv {
@@ -204,7 +209,7 @@ impl NatsKv {
         Ok(Self {
             handle: tokio::runtime::Handle::current(),
             js: async_nats::jetstream::new(client),
-            stores: Mutex::new(HashMap::new()),
+            stores: std::sync::RwLock::new(HashMap::new()),
         })
     }
 
@@ -236,10 +241,10 @@ impl NatsKv {
     }
 
     fn store_for(&self, bucket: &str) -> Result<JsStore> {
-        let name = Self::bucket_name(bucket);
-        if let Some(s) = self.stores.lock().unwrap().get(&name) {
+        if let Some(s) = self.stores.read().unwrap().get(bucket) {
             return Ok(s.clone());
         }
+        let name = Self::bucket_name(bucket);
         let store = self.block(async {
             match self.js.get_key_value(&name).await {
                 Ok(s) => Ok(s),
@@ -254,7 +259,7 @@ impl NatsKv {
                     .map_err(anyhow::Error::from),
             }
         })?;
-        self.stores.lock().unwrap().insert(name, store.clone());
+        self.stores.write().unwrap().insert(bucket.to_string(), store.clone());
         Ok(store)
     }
 

@@ -86,11 +86,14 @@ struct Args {
     /// A caller cannot retry a queue it cannot see, and 46s of holding a connection
     /// is worse for it than a 503 it could take elsewhere in milliseconds.
     ///
-    /// The default is a starting point, not a calibrated number — it is high enough
-    /// not to trip on a healthy fleet and low enough that the queue stays bounded.
-    /// ponytail: one global bound; per-node capacity would need nodes to advertise
-    /// what they can take, which is the same missing input as capacity-weighted
-    /// placement.
+    /// PER CORE, multiplied by what the node advertises. The default is a
+    /// starting point, not a calibrated number — high enough not to trip on a
+    /// healthy fleet, low enough that the queue stays bounded.
+    ///
+    /// It used to be one global bound, with a note saying per-node capacity
+    /// needed nodes to advertise what they can take. They have advertised it
+    /// since ADR-0055, and the placement ranking has divided by it ever since;
+    /// this is the door catching up with the scheduler.
     #[arg(long, env = "COMP_MAX_INFLIGHT")]
     max_inflight: Option<usize>,
 
@@ -120,6 +123,14 @@ struct Table {
 struct Backend {
     node: String,
     address: String,
+    /// Cores this node advertised. The shedding bound is PER CORE, because a
+    /// four-core Pi and a ten-core laptop are not interchangeable — the placement
+    /// ranking has divided by this since ADR-0055 and the door had not caught up.
+    ///
+    /// Measured: at a bound that let a Mac shed nothing, the same load through
+    /// the same ingress shed 3 412 requests on a Pi. The Pi was not overloaded;
+    /// the number was written for a bigger machine.
+    cpus: usize,
 }
 
 /// Requests currently in flight per node.
@@ -203,14 +214,42 @@ async fn activate(
         eprintln!("comp-ingress: activating {host:?} failed: {err}");
         return None;
     }
-    let backend =
-        Backend { node: v["node"].as_str()?.to_string(), address: v["address"].as_str()?.to_string() };
+    let backend = Backend {
+        node: v["node"].as_str()?.to_string(),
+        address: v["address"].as_str()?.to_string(),
+        // An activation reply carries no capacity. One core is the pessimistic
+        // reading and it only holds until the next inventory refresh replaces
+        // this entry with the node's real advertisement.
+        cpus: v["cpus"].as_u64().unwrap_or(1) as usize,
+    };
+    // Publish it. Without this the check above — "someone may have activated
+    // while we waited" — could never succeed, because nothing ever wrote what it
+    // was looking for: the table only changed on the refresh timer. So every
+    // request to a host missing from the table took the lock in turn and paid its
+    // own round trip to the reconciler, for up to a full refresh interval.
+    //
+    // Measured: 13 000 spurious 503s in a 0.9-second window at the start of a
+    // run, on an app that was placed and healthy the whole time, in two runs out
+    // of four. It read as the ingress shedding load. It was the ingress
+    // forgetting what it had just been told.
+    //
+    // The next refresh replaces this entry with the node's full advertisement,
+    // including its real core count.
+    table
+        .write()
+        .unwrap()
+        .routes
+        .entry(host.to_string())
+        .or_default()
+        .push(backend.clone());
     eprintln!("comp-ingress: activated {host:?} on {}", backend.node);
     Some(backend)
 }
 
+/// `bound` is per CORE. A node advertising eight cores absorbs eight times what
+/// a single-core one does before the ingress starts refusing on its behalf.
 fn saturated(b: &Backend, inflight: &InFlight, bound: usize) -> bool {
-    bound > 0 && counter(inflight, &b.node).load(Ordering::Relaxed) >= bound
+    bound > 0 && counter(inflight, &b.node).load(Ordering::Relaxed) >= bound * b.cpus
 }
 
 fn order<'a>(
@@ -255,7 +294,11 @@ fn table_of(inventory: &[NodeInventory]) -> Table {
             // still one place to send a request, and counting it twice would skew
             // the round robin toward whichever node happens to be busiest.
             if !backends.iter().any(|b| b.node == node.node) {
-                backends.push(Backend { node: node.node.clone(), address: node.address.clone() });
+                backends.push(Backend {
+                    node: node.node.clone(),
+                    address: node.address.clone(),
+                    cpus: node.capacity.cpus.max(1),
+                });
             }
         }
     }
@@ -609,6 +652,60 @@ mod tests {
     use super::*;
     use comp_reconciler::plan::RunningInstance;
 
+    /// A control plane that will answer an activation exactly once.
+    ///
+    /// The second ask fails, which is what makes this a test rather than a
+    /// demonstration: the only way both calls succeed is if the first one left
+    /// its answer somewhere the second could find it.
+    struct AnswersOnce(AtomicUsize);
+
+    #[async_trait::async_trait]
+    impl CommandBus for AnswersOnce {
+        async fn serve(&self, _node: &str) -> Result<tokio::sync::mpsc::Receiver<comp_lattice::Command>> {
+            anyhow::bail!("not used")
+        }
+        async fn send(
+            &self,
+            _node: &str,
+            _verb: &str,
+            _payload: Vec<u8>,
+            _timeout: Duration,
+        ) -> Result<Vec<u8>> {
+            if self.0.fetch_add(1, Ordering::Relaxed) > 0 {
+                anyhow::bail!("the control plane will not answer twice");
+            }
+            Ok(br#"{"node":"n1","address":"127.0.0.1:9","cpus":4}"#.to_vec())
+        }
+    }
+
+    /// An activation is published, so concurrent requests do not each pay for one.
+    ///
+    /// `activate` checks the table for a backend someone else already brought up.
+    /// That check could never succeed, because nothing wrote what it was looking
+    /// for — the table only changed on the refresh timer. Every request to a host
+    /// missing from it took the lock in turn and made its own round trip, and
+    /// under load 13 000 of them were refused inside a 0.9-second window for an
+    /// app that was placed and healthy throughout.
+    #[tokio::test]
+    async fn an_activation_is_published_so_the_next_request_finds_it() {
+        let bus: Arc<dyn CommandBus> = Arc::new(AnswersOnce(AtomicUsize::new(0)));
+        let activating: Activating = Default::default();
+        let table = Arc::new(RwLock::new(Table::default()));
+
+        let first = activate(&bus, &activating, &table, "shop.example.com", 5).await;
+        assert!(first.is_some(), "the first activation should succeed");
+
+        // The control plane refuses to answer again, so this can only be served
+        // from what the first one published.
+        let second = activate(&bus, &activating, &table, "shop.example.com", 5).await;
+        assert_eq!(second, first, "the second request must reuse the published backend");
+        assert_eq!(
+            table.read().unwrap().routes.get("shop.example.com").map(Vec::len),
+            Some(1),
+            "exactly one backend, not one per request that raced"
+        );
+    }
+
     fn node(name: &str, addr: &str, hosts: &[&str]) -> NodeInventory {
         NodeInventory {
             node: name.into(),
@@ -778,7 +875,7 @@ mod tests {
     #[test]
     fn a_node_at_the_bound_is_saturated_and_zero_disables_the_rule() {
         let inflight = inflight_of(&[("n1", 63), ("n2", 64), ("n3", 999)]);
-        let b = |n: &str| Backend { node: n.into(), address: "127.0.0.1:1".into() };
+        let b = |n: &str| Backend { node: n.into(), address: "127.0.0.1:1".into(), cpus: 1 };
         assert!(!saturated(&b("n1"), &inflight, 64), "63 of 64 still has room");
         assert!(saturated(&b("n2"), &inflight, 64), "at the bound is saturated");
         assert!(saturated(&b("n3"), &inflight, 64));
@@ -793,8 +890,8 @@ mod tests {
         // 503 while its siblings are idle. Only an entirely saturated set sheds.
         let inflight = inflight_of(&[("hot", 64), ("cool", 0)]);
         let backends = vec![
-            Backend { node: "hot".into(), address: "127.0.0.1:1".into() },
-            Backend { node: "cool".into(), address: "127.0.0.1:2".into() },
+            Backend { node: "hot".into(), address: "127.0.0.1:1".into(), cpus: 1 },
+            Backend { node: "cool".into(), address: "127.0.0.1:2".into(), cpus: 1 },
         ];
         let all_full = backends.iter().all(|b| saturated(b, &inflight, 64));
         assert!(!all_full, "one hot node must not shed the whole app");
@@ -811,8 +908,8 @@ mod tests {
         // produced it, and it must now be a refusal instead.
         let inflight = inflight_of(&[("n1", 64), ("n2", 70)]);
         let backends = vec![
-            Backend { node: "n1".into(), address: "127.0.0.1:1".into() },
-            Backend { node: "n2".into(), address: "127.0.0.1:2".into() },
+            Backend { node: "n1".into(), address: "127.0.0.1:1".into(), cpus: 1 },
+            Backend { node: "n2".into(), address: "127.0.0.1:2".into(), cpus: 1 },
         ];
         assert!(backends.iter().all(|b| saturated(b, &inflight, 64)));
     }

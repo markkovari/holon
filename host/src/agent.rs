@@ -91,6 +91,15 @@ pub struct Agent {
     /// the wRPC-served path and the HTTP path build identical stores.
     pub platform_url: String,
     pub instances: Instances,
+    /// Compiled artifacts, by digest.
+    ///
+    /// A `Component` is immutable machine code and is internally reference-counted,
+    /// so every app running the same digest can share ONE copy — per-instance state
+    /// lives in the Store, not here. Without this the host loaded the module once
+    /// per instance: 16 apps sharing one component cost 16 copies and 3.17 MiB each,
+    /// which is the marketplace case (many tenants, one popular component) paying
+    /// for itself N times.
+    pub compiled: Arc<std::sync::RwLock<std::collections::HashMap<String, wasmtime::component::Component>>>,
     pub routes: Routes,
     pub limits: Limits,
     /// The node's NATS connection, for building wRPC clients. `None` off a lattice.
@@ -296,8 +305,22 @@ async fn handle(
             // with a lower absolute count, so there is only one code path that
             // changes a replica count and only one that removes an instance.
             let removed = agent.instances.write().unwrap().remove(&id);
-            if removed.is_some() {
+            if let Some(gone) = &removed {
                 agent.routes.write().unwrap().retain(|_, v| *v != id);
+                // Drop the shared module when the LAST instance on that digest goes.
+                // Holding machine code for something nothing runs is exactly the idle
+                // cost this cache exists to reduce, and the .cwasm stays on disk, so
+                // coming back costs the 0.3ms load rather than a recompile.
+                let digest = gone.scope.digest.clone();
+                let still_used = agent
+                    .instances
+                    .read()
+                    .unwrap()
+                    .values()
+                    .any(|i| i.scope.digest == digest);
+                if !still_used {
+                    agent.compiled.write().unwrap().remove(&digest);
+                }
             }
             let saved = {
                 let mut l = ledger.lock().unwrap();
@@ -403,7 +426,15 @@ async fn start(
     let _ = std::fs::create_dir_all(&cache);
     let cwasm = cache.join(format!("{}.cwasm", scope.digest.trim_start_matches("sha256:")));
     let engine = agent.engine.clone();
-    let (component, from_cache) = tokio::task::spawn_blocking(move || {
+    // Already compiled on this node? Then share it. A `Component` is immutable
+    // machine code and internally reference-counted, so N apps on one digest hold one
+    // copy — per-instance state lives in the Store. Everything below still runs per
+    // instance: the linker, the remotes and the route are what make it an instance.
+    let in_memory = agent.compiled.read().unwrap().get(&scope.digest).cloned();
+    let shared = in_memory.is_some();
+    let (component, from_cache) = match in_memory {
+        Some(hit) => (hit, true),
+        None => tokio::task::spawn_blocking(move || {
         // SAFETY: `deserialize_file` trusts its input completely — it maps machine
         // code straight in. The only thing that makes that acceptable is where the
         // file comes from: written by this process, into a host-private directory,
@@ -431,11 +462,12 @@ async fn start(
                 let _ = std::fs::rename(&tmp, &cwasm);
             }
         }
-        Ok::<_, anyhow::Error>((c, false))
-    })
-    .await
-    .context("compile task")?
-    .map_err(|e| anyhow::anyhow!("compiling the artifact for {id}: {e}"))?;
+            Ok::<_, anyhow::Error>((c, false))
+        })
+        .await
+        .context("compile task")?
+        .map_err(|e| anyhow::anyhow!("compiling the artifact for {id}: {e}"))?,
+    };
     let t_compile = t0.elapsed() - t_fetch;
 
     // EVERY link becomes a wRPC client, including one whose target is running in
@@ -462,6 +494,13 @@ async fn start(
     };
     if !remotes.is_empty() {
         eprintln!("comp-host: {id} links {} interface(s) over wrpc", remotes.len());
+    }
+
+    // Remembered by digest, so the next app on this component shares this copy.
+    // Inserted before the linker because everything below is per-instance and this
+    // is the only part that is not.
+    if !shared {
+        agent.compiled.write().unwrap().insert(scope.digest.clone(), component.clone());
     }
 
     let mut linker = crate::build_linker(&agent.engine)?;
@@ -525,7 +564,7 @@ async fn start(
         scope.digest,
         t0.elapsed().as_micros(),
         t_fetch.as_micros(),
-        if from_cache { "cache-load" } else { "compile" },
+        if shared { "shared" } else if from_cache { "cache-load" } else { "compile" },
         t_compile.as_micros(),
         t_link.as_micros(),
     );
