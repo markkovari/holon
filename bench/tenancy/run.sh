@@ -21,6 +21,10 @@ PI=${PI:-}
 PI_NODES=${PI_NODES:-2}
 APPS=${APPS:-3}
 KEY="$HOME/.ssh/markkovari_picur_ssh"
+# Local by default; only checked when a second machine was actually asked for.
+. bench/preflight.sh
+need_cmd nats-server
+[ -z "$PI" ] || need_remote "markkovari@$PI" "$KEY" "the Pi ($PI)"
 DURATION=${DURATION:-20s}
 CONNS=${CONNS:-40}
 PIDS=(); trap 'for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; sleep 1' EXIT

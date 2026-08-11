@@ -75,6 +75,16 @@ single-component app should be a container, not a wasm workload.
 | [0051](0051-the-secret-reader.md) | The secret reader — a key, a handle, and one explicit reveal | accepted |
 | [0052](0052-one-copy-per-digest.md) | One copy of the machine code per digest | accepted |
 | [0053](0053-the-matrix.md) | The matrix, and the number it corrected | accepted |
+| [0054](0054-pooling-on-and-the-leak-that-was-not.md) | Pooling is on by default, and the leak was not a leak | accepted; closes what [0053](0053-the-matrix.md) left open |
+| [0055](0055-how-the-control-loop-scales.md) | How the control loop scales, and the tenancy bug that found | accepted |
+| [0056](0056-a-converged-app-keeps-its-placement.md) | A converged app keeps its placement | accepted; extends [0055](0055-how-the-control-loop-scales.md) |
+| [0057](0057-the-latency-column-was-arithmetic.md) | The latency column was arithmetic, and the rps column was NATS | accepted; **corrects the latency figures in earlier runs** |
+| [0058](0058-snapshots-compress-and-parses-are-reused.md) | Snapshots compress, parses are reused, and the watch was not built | accepted |
+| [0059](0059-the-read-mirror-lost.md) | The read mirror lost, 2.3× | **rejected** — the code is not in the tree |
+| [0060](0060-the-ingress-forgot-what-it-was-told.md) | The ingress forgot what it had just been told | accepted |
+| [0061](0061-the-secret-reader-was-never-linked.md) | The secret reader was never linked | accepted; **corrects [0051](0051-the-secret-reader.md)**, which said built and was half-built |
+| [0062](0062-what-a-real-application-asks-the-store-for.md) | What a real application asks the store for: 264 reads per write | accepted as a measurement; **shows [0059](0059-the-read-mirror-lost.md)'s rejection was workload-specific** |
+| [0063](0063-a-ttl-is-cheaper-than-coherence.md) | A TTL is cheaper than coherence — durable reads at in-memory speed | accepted, built, **off by default**; answers [0059](0059-the-read-mirror-lost.md) |
 
 ## The shape these add up to
 

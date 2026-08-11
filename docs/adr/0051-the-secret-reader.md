@@ -1,8 +1,14 @@
 
 # 0051 — The secret reader
 
-Status: accepted, and built. Completes ADR-0050, which stored and validated
-references and said plainly that a running component still could not read one.
+Status: accepted. The design stands; **the "and built" this line used to claim was
+half true** — the platform half was, the host half was not, and
+[ADR-0061](0061-the-secret-reader-was-never-linked.md) is the correction and the
+wiring. Read the "Measured" table below with that in mind: every row in it is a fact
+about the platform, and not one is about a guest.
+
+Completes ADR-0050, which stored and validated references and said plainly that a
+running component still could not read one.
 
 ## What wasmCloud does, since it is the obvious thing to copy
 
@@ -88,7 +94,9 @@ return there is one event and nothing to distinguish.
 **Existence is checked at start, the value is fetched on first reveal.** ADR-0013 says
 omission fails closed at start, and a missing secret discovered at 3am on the first
 request is the failure that rule exists to prevent — so the host `describe`s every ref
-while building the instance and refuses to start if one does not resolve. It does not
+while building the instance and refuses to start if one does not resolve. (Written in
+the present tense here and not implemented until
+[ADR-0061](0061-the-secret-reader-was-never-linked.md).) It does not
 fetch plaintexts it may never need: a secret used on one code path should not sit in
 host memory for instances that never take it.
 

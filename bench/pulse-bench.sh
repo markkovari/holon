@@ -8,7 +8,7 @@ set -euo pipefail
 KV="${1:-memory}"
 DIR="$(cd "$(dirname "$0")" && pwd)"; ROOT="$(cd "$DIR/.." && pwd)"
 ADDR=127.0.0.1:3016; B="http://$ADDR"
-BIN="$ROOT/host/target/release/vet-host"; COMP="$ROOT/components/target/pulse_domain.composed.wasm"
+BIN="$ROOT/host/target/release/comp-host"; COMP="$ROOT/components/target/pulse_domain.composed.wasm"
 jget() { node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const o=JSON.parse(d);console.log(eval("o"+process.argv[1]))})' "$1"; }
 
 args=(--component "$COMP" --addr "$ADDR" --kv "$KV")

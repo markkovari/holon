@@ -215,6 +215,42 @@ fn an_org_keeps_its_secrets_from_another_org() {
     assert_eq!(stolen.status().as_u16(), 403, "a token may only fetch what it was granted");
     let body = stolen.text().unwrap_or_default();
     assert!(!body.contains("sk_v"), "a refusal must not leak the value: {body}");
+
+    // 6. `?probe=1` — the start-time existence check (ADR-0051). Same authorisation,
+    //    answered from `describe`, so a host can fail closed on a broken reference at
+    //    START without pulling a plaintext it may never need.
+    let probe = |token: &str, reference: &str| {
+        let r = p
+            .http
+            .get(p.url(&format!("/api/internal/secret?probe=1&ref={reference}")))
+            .header("x-fetch-token", token)
+            .send()
+            .unwrap();
+        (r.status().as_u16(), r.text().unwrap_or_default())
+    };
+    let mint = p
+        .http
+        .post(p.url("/api/internal/fetch-token"))
+        .header("x-platform-secret", "s3cret")
+        .json(&json!({
+            "instance": "ada/app/gate@n1",
+            "refs": ["vault://acme/stripe", "vault://acme/gone"],
+        }))
+        .send()
+        .unwrap();
+    let mine = mint.json::<Value>().unwrap()["token"].as_str().unwrap().to_string();
+
+    let (code, body) = probe(&mine, "vault%3A%2F%2Facme%2Fstripe");
+    assert_eq!(code, 200, "a granted reference that exists must resolve: {body}");
+    assert!(!body.contains("sk_v"), "A PROBE RETURNED THE VALUE: {body}");
+
+    // The case the whole check exists for: granted, well-formed, and not there.
+    let (code, body) = probe(&mine, "vault%3A%2F%2Facme%2Fgone");
+    assert_eq!(code, 404, "a reference to nothing must not resolve: {body}");
+
+    // And a probe is not a way around the token — same 403 as a fetch.
+    let (code, _) = probe(&token, "vault%3A%2F%2Facme%2Fstripe");
+    assert_eq!(code, 403, "a probe must be scoped by the same token as a fetch");
 }
 
 #[test]

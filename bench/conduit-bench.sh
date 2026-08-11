@@ -11,11 +11,20 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/.." && pwd)"
 ADDR=127.0.0.1:3011
 BASE="http://$ADDR"
-BIN="$ROOT/host/target/release/vet-host"
+BIN="$ROOT/host/target/release/comp-host"
 COMPONENT="$ROOT/components/target/conduit_domain.composed.wasm"
 
 args=(--component "$COMPONENT" --addr "$ADDR" --kv "$KV")
-[ "$KV" = "nats" ] && args+=(--nats-url "nats://127.0.0.1:4222")
+# NATS_URL so a run can point at a server of its own rather than whatever is on
+# the default port — which on a developer's machine is usually theirs.
+[ "$KV" = "nats" ] && args+=(--nats-url "${NATS_URL:-nats://127.0.0.1:4222}")
+# PROFILE=1 counts what the app asks the store for and reports on shutdown. Off by
+# default because it takes a lock per operation, which is not what a bench should
+# be measuring.
+[ "${PROFILE:-}" = 1 ] && args+=(--kv-profile)
+# CACHE_MS=<n> turns on the per-node read cache (ADR-0063). Compare a run with and
+# without: the guest-side op counts are identical, only what reaches the store moves.
+[ -n "${CACHE_MS:-}" ] && args+=(--kv-cache-ms "$CACHE_MS")
 VET_TENANT=conduit "$BIN" "${args[@]}" >/tmp/conduit-bench-host.log 2>&1 &
 HPID=$!
 trap 'kill $HPID 2>/dev/null || true' EXIT

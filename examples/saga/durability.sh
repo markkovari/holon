@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 ADDR=127.0.0.1:3013; B="http://$ADDR"
-BIN=host/target/release/vet-host
+BIN=host/target/release/comp-host
 COMP=components/target/saga_domain.composed.wasm
 jget() { node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{console.log(eval("(JSON.parse(d))"+process.argv[1]))}catch(e){console.log("")}})' "$1"; }
 

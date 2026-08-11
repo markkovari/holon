@@ -20,6 +20,13 @@ HERE=bench/adversarial
 MAC=${MAC:-192.168.100.8}
 PI=${PI:-192.168.100.14}
 KEY="$HOME/.ssh/markkovari_picur_ssh"
+# Direction B is "kill the whole Pi and the replicas must come home". With no Pi
+# there is no direction B, and direction A's replacement has nowhere else to land —
+# so the run would report a clean failover of a fleet that never spanned machines.
+. bench/preflight.sh
+need_cmd nats-server ssh nats
+need_local_addr "$MAC"
+need_remote "markkovari@$PI" "$KEY" "the Pi ($PI)"
 rsh() { ssh -n -i "$KEY" -o IdentitiesOnly=yes -o ConnectTimeout=10 "markkovari@$PI" "bash -lc '$1'"; }
 PIDS=()
 cleanup() {

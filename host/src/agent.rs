@@ -48,6 +48,7 @@ pub const HOST_IFACES: &[&str] = &[
     "wasi:keyvalue/atomics",
     "wasi:keyvalue/batch",
     "wasi:config/store",
+    "comp:secrets/reader",
 ];
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -414,6 +415,38 @@ async fn start(
     let t_fetch = t0.elapsed();
     let count = cmd.count.max(1);
     let scope = Arc::new(cmd.into_scope(&agent.limits));
+
+    // Every granted reference must resolve before this instance serves anything.
+    //
+    // ADR-0013's rule is that omission fails closed AT START, and ADR-0051 said the
+    // same for secrets and then did not do it — so a reference to a secret that had
+    // been deleted, or renamed, or never created, surfaced on the first request that
+    // happened to take that code path, in front of a user, rather than on the deploy
+    // that introduced it. This is a `describe`, not a fetch: existence is checked,
+    // the plaintext stays where it is until something reveals it.
+    //
+    // Skipped on a ledger restore (`artifacts` is `None`), which is the one path
+    // required to work with no network at all — those references were checked when
+    // the instance first started, and refusing here would turn a reboot into an
+    // outage.
+    if artifacts.is_some() && scope.secret_refs().next().is_some() {
+        if agent.platform_url.is_empty() {
+            bail!("{id} was granted secrets, and this host has no platform to resolve them");
+        }
+        // ponytail: a client per start. Start commands are rare enough that a
+        // connection pool per start is not worth a field on `Agent`.
+        let http = reqwest::Client::new();
+        for (key, reference) in scope.secret_refs() {
+            crate::secrets::probe(&http, &agent.platform_url, &scope.fetch_token, reference)
+                .await
+                .map_err(|e| {
+                    // The reference is a name, not a value, and naming it is the
+                    // difference between an operator fixing the manifest and
+                    // guessing which of five keys is the broken one.
+                    anyhow::anyhow!("{id} cannot start: secret {key:?} -> {}: {e}", reference.as_str())
+                })?;
+        }
+    }
 
     // Compilation is slow and blocking; a start command must not stall the
     // heartbeat behind it.

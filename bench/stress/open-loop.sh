@@ -24,6 +24,14 @@ MAC=${MAC:-192.168.100.8}
 PI=${PI:-192.168.100.14}
 LOAD_HOST=${LOAD_HOST:-bobocat}
 KEY="$HOME/.ssh/markkovari_picur_ssh"
+# Three machines here — the fleet spans this box and the Pi, and the load comes off
+# a third. Any of them absent changes what is being measured, so check first.
+. bench/preflight.sh
+need_cmd nats-server ssh
+need_local_addr "$MAC"
+need_remote "markkovari@$PI" "$KEY" "the Pi ($PI)"
+# `LOAD_HOST=local` is a supported mode: the generator runs here instead.
+[ "$LOAD_HOST" = local ] || need_remote "$LOAD_HOST" "" "the load box ($LOAD_HOST)"
 PIDS=()
 cleanup() {
   ssh -n -i "$KEY" -o IdentitiesOnly=yes -o ConnectTimeout=10 "markkovari@$PI" \

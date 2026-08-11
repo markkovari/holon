@@ -1788,26 +1788,18 @@ adversarial: compose-gate build-reconciler
     cd host && cargo build --release --bin comp-host
     bash bench/adversarial/run.sh
 
-# The test that would have caught the split-brain bug: one app, two replicas, two
-# nodes — does the second replica CONTINUE the first one's count, or start its own?
+# `shared-state`, `five-nodes` and `split-graph` were recipes here. Their scripts
+# were deleted when the scenarios became Rust tests, and the recipes were not — so
+# for three commits `just shared-state` failed with "No such file or directory"
+# rather than telling anyone where the coverage went. Where it went:
 #
-#   just shared-state              # --kv nats: it continues
-#   KV=sqlite just shared-state    # node-local: the reconciler REFUSES to place it
-#
-# Needs nats-server. See docs/adr/0027.
-shared-state: compose-gate build-reconciler
-    cd host && cargo build --release --bin comp-host
-    bash bench/adversarial/shared-state.sh
-
-# Routing across replicas, on five nodes and two machines: 3 here, 2 on the Pi,
-# one comp-ingress in front, one deployment with replicas: 5. Every response says
-# which node answered, so the balance is visible from outside. Then both Pi nodes
-# are killed and traffic must keep flowing.
-#
-# Needs nats-server, and ssh to the Pi (override MAC= and PI=). See docs/adr/0029.
-five-nodes: compose-gate build-reconciler
-    cd host && cargo build --release --bin comp-host
-    bash bench/adversarial/five-nodes.sh
+#   shared-state  -> reconciler/tests/state.rs   (both halves: nats continues,
+#                    node-local is refused; `cargo nextest run -E 'test(state)'`)
+#   five-nodes    -> reconciler/tests/ha.rs for the replica/ingress half, and
+#                    bench/failover/cross-machine.sh for the two-machine half
+#   split-graph   -> nothing. Cross-node invocation (ADR-0032) has no test and no
+#                    script; `fixtures/split-graph.yaml` is the input one would
+#                    take. Named here rather than quietly dropped.
 
 # Round robin's weak case, on a real heterogeneous fleet: 2 Mac nodes + 2 Pi nodes,
 # same load, both algorithms. See docs/adr/0030 — the difference was 10x.
@@ -1820,12 +1812,6 @@ slow-backend: compose-gate build-reconciler
 orgs: compose-platform build-reconciler
     cd host && cargo build --release --bin comp-host
     bash bench/adversarial/orgs.sh
-
-# Cross-node invocation: ONE app whose graph is split over two nodes, so one link
-# is an in-process call and the other must cross the wire. See docs/adr/0032.
-split-graph: compose build-reconciler
-    cd host && cargo build --release --bin comp-host
-    bash bench/adversarial/split-graph.sh
 
 # Multi-tenant benchmark: 2 organisations, 5 members each, both deploying and both
 # under load at once — control plane cost, data plane throughput, and whether

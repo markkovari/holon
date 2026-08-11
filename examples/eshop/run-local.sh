@@ -7,9 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 nc -z 127.0.0.1 4222 || { echo "NATS not reachable on :4222"; exit 1; }
-cargo build --release --bin vet-host --manifest-path host/Cargo.toml
+cargo build --release --bin comp-host --manifest-path host/Cargo.toml
 
-H=host/target/release/vet-host
+H=host/target/release/comp-host
 C=components/target
 PIDS=()
 run() { "$@" & PIDS+=($!); }

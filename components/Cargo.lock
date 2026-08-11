@@ -1292,6 +1292,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "secret-probe"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "secrets-vault"
 version = "0.1.0"
 dependencies = [
