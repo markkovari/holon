@@ -17,6 +17,11 @@ KEY="$HOME/.ssh/id_ed25519"
 MAC=192.168.1.10
 DURATION=${DURATION:-20s}
 CONNS=${CONNS:-30}
+# Both runtimes run ON the Pi; without it there is nothing to compare.
+. bench/preflight.sh
+need_cmd nats-server ssh oha
+need_local_addr "$MAC"
+need_remote "markkovari@$PI" "$KEY" "malna, the Pi ($PI)"
 BODY='{"key":"k","capacity":100000000,"refill":100000000}'
 PIDS=()
 cleanup() {

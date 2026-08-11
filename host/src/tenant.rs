@@ -308,6 +308,23 @@ impl Scope {
     pub fn bucket_names(&self) -> Vec<&str> {
         self.buckets.keys().map(|s| s.as_str()).collect()
     }
+
+    /// The whole of `reader::get`'s policy, and the twin of `bucket` above.
+    ///
+    /// `None` is "you were not granted that key", which the WIT models as `none`
+    /// rather than an error — an optional secret being absent is a normal way to
+    /// run. What it is NOT is a lookup a guest can widen: the key indexes host-side
+    /// state, so a guest naming another tenant's reference gets nothing, because it
+    /// cannot name a reference at all.
+    pub fn secret(&self, guest_key: &str) -> Option<&SecretRef> {
+        self.secrets.get(guest_key)
+    }
+
+    /// Every reference this instance was granted, for the start-time existence
+    /// check. Refs only — the values are not fetched here and may never be.
+    pub fn secret_refs(&self) -> impl Iterator<Item = (&str, &SecretRef)> {
+        self.secrets.iter().map(|(k, r)| (k.as_str(), r))
+    }
 }
 
 /// A start command, as the reconciler emits it.

@@ -45,6 +45,14 @@ struct Args {
     /// Overrides `tenant:` in every spec, for benchmarks that vary it.
     #[arg(long)]
     tenant: Option<String>,
+
+    /// `vault://<org>/<name>=value`, repeated. The stub's whole vault.
+    ///
+    /// A reference a manifest grants but this flag never sets is the interesting
+    /// case, not a setup error: it is what a deleted or mistyped secret looks like,
+    /// and the host must refuse to start rather than discover it on a request.
+    #[arg(long = "secret")]
+    secrets: Vec<String>,
 }
 
 #[derive(Default)]
@@ -52,6 +60,10 @@ struct State {
     manifests: Vec<Value>,
     artifacts: HashMap<String, Vec<u8>>,
     pushed: HashMap<String, String>,
+    /// `vault://<org>/<name> -> value`.
+    vault: HashMap<String, String>,
+    /// Minted fetch tokens: `token -> the refs it authorises`, and nothing else.
+    tokens: HashMap<String, Vec<String>>,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -90,6 +102,11 @@ async fn main() -> Result<()> {
         let (id, path) = a.split_once('=').context("--artifact wants id=path")?;
         artifacts.insert(id.to_string(), std::fs::read(path).with_context(|| path.to_string())?);
     }
+    let mut vault = HashMap::new();
+    for s in &args.secrets {
+        let (reference, value) = s.split_once('=').context("--secret wants vault://org/name=value")?;
+        vault.insert(reference.to_string(), value.to_string());
+    }
     let manifests = load(&args.specs, args.tenant.as_deref())?;
     eprintln!(
         "comp-stub: {} app(s) on :{} — {}",
@@ -97,13 +114,16 @@ async fn main() -> Result<()> {
         args.port,
         manifests.iter().filter_map(|m| m["app"].as_str()).collect::<Vec<_>>().join(", ")
     );
-    let state: Shared = Arc::new(Mutex::new(State { manifests, artifacts, ..Default::default() }));
+    let state: Shared =
+        Arc::new(Mutex::new(State { manifests, artifacts, vault, ..Default::default() }));
 
     let app = Router::new()
         .route("/api/internal/revisions", get(revisions))
         .route("/api/internal/pending-pushes", get(pending))
         .route("/api/internal/artifact", get(artifact))
         .route("/api/internal/pushed", post(pushed))
+        .route("/api/internal/fetch-token", post(fetch_token))
+        .route("/api/internal/secret", get(secret))
         // Accepted and dropped: the reconciler posts what it could not schedule, and
         // a benchmark reads that from its log rather than from here.
         .route("/api/internal/status", post(|| async { StatusCode::OK }))
@@ -165,4 +185,50 @@ async fn pushed(
         s.lock().unwrap().pushed.insert(k.to_string(), d.to_string());
     }
     StatusCode::OK
+}
+
+/// A capability authorising exactly the refs in one instance's manifest (ADR-0051).
+///
+/// No expiry here, unlike the real platform: a token that ages out mid-benchmark
+/// would measure the clock. What this stub does keep is the SCOPE, because that is
+/// the property the host's start-time check and the 403 path both depend on.
+async fn fetch_token(
+    axum::extract::State(s): axum::extract::State<Shared>,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    let refs: Vec<String> = body["refs"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|r| r.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let instance = body["instance"].as_str().unwrap_or("anon").to_string();
+    let mut s = s.lock().unwrap();
+    // Deterministic rather than random: `Math.random` in a control plane makes a
+    // failing run unrepeatable, and the token only has to be unique per instance.
+    let token = format!("stub-{}-{}", s.tokens.len(), instance.replace('/', "-"));
+    s.tokens.insert(token.clone(), refs);
+    Json(json!({ "token": token }))
+}
+
+/// The value, or `?probe=1` for "does it resolve" — the same authorisation, without
+/// a plaintext on the wire. The status codes are the contract the host reads:
+/// 401 is the token (restart me), 403 is the reference (fix the manifest).
+async fn secret(
+    axum::extract::State(s): axum::extract::State<Shared>,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> (StatusCode, Vec<u8>) {
+    let token = headers.get("x-fetch-token").and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let reference = q.get("ref").cloned().unwrap_or_default();
+    let s = s.lock().unwrap();
+    let Some(granted) = s.tokens.get(token) else {
+        return (StatusCode::UNAUTHORIZED, b"unknown fetch token".to_vec());
+    };
+    if !granted.iter().any(|r| r == &reference) {
+        return (StatusCode::FORBIDDEN, b"not granted that reference".to_vec());
+    }
+    match s.vault.get(&reference) {
+        Some(_) if q.contains_key("probe") => (StatusCode::OK, b"{\"resolves\":true}".to_vec()),
+        Some(v) => (StatusCode::OK, v.clone().into_bytes()),
+        None => (StatusCode::NOT_FOUND, b"no such secret".to_vec()),
+    }
 }

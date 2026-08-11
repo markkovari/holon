@@ -77,13 +77,40 @@ pub async fn fetch(
     token: &str,
     reference: &SecretRef,
 ) -> Result<String, String> {
+    get(http, platform_url, token, reference, false).await
+}
+
+/// Does this reference resolve, and is this instance granted it?
+///
+/// The same request with `&probe=1`, which the platform answers from the vault's
+/// `describe` — so it is the identical authorisation path with no plaintext on the
+/// wire. This runs at START (ADR-0013's rule: omission fails closed), which is the
+/// difference between a bad reference surfacing on a deploy and surfacing at 3am on
+/// the first request that happened to take that code path.
+pub async fn probe(
+    http: &reqwest::Client,
+    platform_url: &str,
+    token: &str,
+    reference: &SecretRef,
+) -> Result<(), String> {
+    get(http, platform_url, token, reference, true).await.map(|_| ())
+}
+
+async fn get(
+    http: &reqwest::Client,
+    platform_url: &str,
+    token: &str,
+    reference: &SecretRef,
+    probe: bool,
+) -> Result<String, String> {
     if platform_url.is_empty() {
         return Err("this host has no platform to fetch secrets from".into());
     }
     let url = format!(
-        "{}/api/internal/secret?ref={}",
+        "{}/api/internal/secret?ref={}{}",
         platform_url.trim_end_matches('/'),
-        urlencoding(reference.as_str())
+        urlencoding(reference.as_str()),
+        if probe { "&probe=1" } else { "" }
     );
     let res = tokio::time::timeout(
         Duration::from_secs(10),

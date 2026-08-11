@@ -223,7 +223,20 @@ impl Fleet {
         kv: Option<&str>,
     ) -> Self {
         // Tests run what production runs: pooling on (ADR-0054).
-        Self::start_full(lattice, specs, &[], nodes, max_inflight, kv, true)
+        Self::start_full(lattice, specs, &[], &[], nodes, max_inflight, kv, true)
+    }
+
+    /// A fleet whose control plane holds a vault: `vault://<org>/<name>=value`.
+    ///
+    /// A reference a spec grants and this list omits is the case worth having a
+    /// harness for — that instance must never start (ADR-0051).
+    pub fn start_with_secrets(
+        lattice: &str,
+        specs: &[&str],
+        artifacts: &[String],
+        secrets: &[String],
+    ) -> Self {
+        Self::start_full(lattice, specs, artifacts, secrets, 1, None, None, true)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -231,6 +244,7 @@ impl Fleet {
         lattice: &str,
         specs: &[&str],
         artifacts: &[String],
+        secrets: &[String],
         nodes: u16,
         max_inflight: Option<u32>,
         kv: Option<&str>,
@@ -266,6 +280,9 @@ impl Fleet {
                 stub.args(["--artifact", a]);
             }
         }
+        for s in secrets {
+            stub.args(["--secret", s]);
+        }
         children.push(spawn_logged("comp-stub", &mut stub, &sp.join("stub.log")));
 
         let nats_url = format!("nats://127.0.0.1:{nats_port}");
@@ -279,6 +296,10 @@ impl Fleet {
                 .args(["--lattice-nats", &nats_url, "--node", &format!("n{n}"), "--lattice", lattice])
                 .args(["--addr", &format!("127.0.0.1:{host_port}")])
                 .args(["--advertise-addr", &format!("127.0.0.1:{host_port}")])
+                // Where a granted secret is fetched from (ADR-0051). Every node in a
+                // real lattice has one; a harness that omitted it meant no test could
+                // ever exercise the reader, which is how it went unwired.
+                .args(["--platform-url", &format!("http://127.0.0.1:{platform_port}")])
                 .arg("--state-dir")
                 .arg(sp.join(format!("n{n}")));
             if let Some(kv) = kv {
@@ -389,7 +410,7 @@ impl Fleet {
         // request pays two JetStream round trips and the number measures the bus.
         kv: Option<&str>,
     ) -> Self {
-        Self::start_full(lattice, &[spec_dir], artifacts, nodes, None, kv, pool)
+        Self::start_full(lattice, &[spec_dir], artifacts, &[], nodes, None, kv, pool)
     }
 
     /// The host process for node `n`, so a caller can read its RSS.

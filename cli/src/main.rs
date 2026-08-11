@@ -50,8 +50,9 @@ pub struct Spec {
     /// Optional built SPA directory to serve for non-API GETs.
     #[serde(default)]
     pub static_dir: Option<String>,
-    /// Pre-reserve instance slots (`comp-host --pool`). Worth it for anything serving
-    /// real traffic — measured to matter for per-request instantiation.
+    /// Pre-reserve instance slots. On by default, as on the host itself — `false`
+    /// emits `comp-host --no-pool`. Measured at 3.1× with storage out of the way
+    /// (ADR-0057), so turning it off wants a reason.
     #[serde(default = "default_true")]
     pub pooling: bool,
 
@@ -218,8 +219,12 @@ pub fn render_unit(spec: &Spec, layout: &Layout) -> String {
     if spec.static_dir.is_some() {
         args.push_str(&format!(" --static-dir {}/{}/static", layout.app_dir.display(), app));
     }
-    if spec.pooling {
-        args.push_str(" --pool");
+    // The polarity flipped under this: pooling became the default and the flag
+    // became `--no-pool` (ADR-0057), so emitting `--pool` wrote a unit `comp-host`
+    // exits on. The test below catches exactly this, and only on a box that has the
+    // host built — which is why it went unnoticed.
+    if !spec.pooling {
+        args.push_str(" --no-pool");
     }
 
     let mut s = String::new();
@@ -811,7 +816,10 @@ routes = "upstream=http://127.0.0.1:9000"
     ///
     /// No pure test can know this, and getting it wrong produces a unit that fails
     /// only on the box: the first draft emitted `--static` and `--pooling`, where
-    /// `comp-host` wants `--static-dir` and `--pool`. So ask the binary.
+    /// `comp-host` wants `--static-dir` and `--no-pool`. So ask the binary.
+    ///
+    /// It caught the same class a second time when pooling became the default and
+    /// `--pool` stopped existing — a unit that systemd would have refused to start.
     ///
     /// Skipped when the host has not been built, because a renderer test should not
     /// require a 30 MB compile — but it runs on any machine that has one.
@@ -843,13 +851,27 @@ static_dir = "ui/dist"
         for flag in exec.split_whitespace().filter(|w| w.starts_with("--")) {
             assert!(help.contains(flag), "comp-host has no {flag}\n--- help ---\n{help}");
         }
-        // And the nats variant, which the redis spec above does not exercise.
+        // And the nats variant, which the redis spec above does not exercise. It
+        // also turns pooling OFF, because that is the only branch that emits a flag
+        // now — with pooling on, the unit says nothing, so the default path cannot
+        // catch a rename here a second time.
         let s2 = spec(
             "name = \"g\"\ndomain = \"g.example.com\"\nartifact = \"a.wasm\"\n\
-             kv = \"nats\"\nkv_url = \"127.0.0.1:4222\"\n",
+             kv = \"nats\"\nkv_url = \"127.0.0.1:4222\"\npooling = false\n",
         );
         assert!(help.contains("--nats-url"), "{help}");
-        assert!(render_unit(&s2, &Layout::default()).contains("--nats-url 127.0.0.1:4222"));
+        let unit2 = render_unit(&s2, &Layout::default());
+        assert!(unit2.contains("--nats-url 127.0.0.1:4222"));
+        assert!(unit2.contains("--no-pool"), "pooling = false must reach the host: {unit2}");
+        for flag in unit2
+            .lines()
+            .find(|l| l.starts_with("ExecStart="))
+            .expect("an ExecStart line")
+            .split_whitespace()
+            .filter(|w| w.starts_with("--"))
+        {
+            assert!(help.contains(flag), "comp-host has no {flag}\n--- help ---\n{help}");
+        }
     }
 
     #[test]

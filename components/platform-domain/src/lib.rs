@@ -747,6 +747,17 @@ fn secret_fetch(request: &IncomingRequest, query: &Map<String, Value>) -> Outcom
     let Some((org, name)) = parse_ref(&reference) else {
         return Outcome::Err(422, "not a secret reference".into());
     };
+    // `?probe=1` is a host asking "does this resolve", which it does at START for
+    // every reference in a manifest (ADR-0051). Identical authorisation — the token
+    // checks above are the same ones — answered from `describe`, so no plaintext is
+    // read, logged, or put on the wire for a secret nothing has revealed yet.
+    if query.get("probe").is_some() {
+        return match vault::describe(&vault_name(&org, &name)) {
+            Ok(_) => Outcome::Json(200, json!({ "resolves": true }).to_string()),
+            Err(vault::VaultError::NotFound) => Outcome::Err(404, "no such secret".into()),
+            Err(e) => Outcome::Err(500, vault_detail(&e)),
+        };
+    }
     match vault::get(&vault_name(&org, &name)) {
         // Bytes, not JSON: a plaintext should not pass through a serialiser that
         // might log or escape it.

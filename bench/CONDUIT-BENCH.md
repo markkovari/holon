@@ -1,5 +1,12 @@
 # Conduit bench (round 13) — RealWorld app path on the native host, NATS vs memory KV
 
+> **Stale by roughly 6×.** Re-run on the same machine for ADR-0062: `GET
+> /api/articles` is **17 522 rps** on memory where the table below says 2 675, and
+> 6 040 on NATS where it says 88. Pooling by default (ADR-0054) and the ADR-0057
+> work happened in between. The *shape* below still holds — cost tracks KV
+> round-trip count, and the wasm path is not the bottleneck — but do not quote the
+> figures.
+
 The whole *app* request path for the RealWorld showcase (CONDUIT.md). Every
 request below goes browser → hyper → wasmtime → `conduit_domain.composed.wasm`
 (conduit-domain + auth-guard + record-store + slug) → `wasi:keyvalue` backend.

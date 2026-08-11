@@ -1,0 +1,18 @@
+// comp:secretprobe — an instrument, not a feature.
+//
+// It answers the two questions ADR-0051's design rests on, and neither can be asked
+// with a catalogue component because none of them import the reader:
+//
+//   1. Does a guest naming a KEY get the secret the manifest granted, and nothing
+//      when it names one it was not granted?
+//   2. Does `reveal` actually reach the platform and come back with the value?
+//
+// It publishes what it reads, on purpose. That is the point of an instrument and it
+// is why this belongs in no catalogue: ADR-0051 says plainly that a component granted
+// a secret can reveal it, and this is what that sentence looks like.
+package comp:secretprobe@0.1.0;
+
+world secret-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import comp:secrets/reader@0.1.0;
+}
