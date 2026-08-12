@@ -73,5 +73,9 @@ name = "comp-matrix"
 path = "src/bin/matrix.rs"
 
 [[bin]]
+name = "comp-hopcost"
+path = "src/bin/hopcost.rs"
+
+[[bin]]
 name = "comp-planscale"
 path = "src/bin/planscale.rs"

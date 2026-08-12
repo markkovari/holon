@@ -1,0 +1,43 @@
+# The SAME graph as split-graph.yaml, pinned to one node.
+#
+# The baseline for measuring what a cross-node call costs (ADR-0032, re-measured
+# in ADR-0074). Identical components, identical links, identical request path —
+# the only difference is that `gate`'s imports resolve to instances in its own
+# process instead of over the bus, so the delta between the two IS the hop.
+#
+# All three carry the same constraint rather than none: an unconstrained app is
+# free to spread, and a baseline that sometimes split would measure nothing.
+
+version: comp/v1
+app: split
+tenant: alice
+strategy: linked
+
+components:
+  - id: gate
+    placement:
+      mode: spread
+      constraints:
+        role: web
+  - id: shaper
+    placement:
+      mode: spread
+      constraints:
+        role: web
+  - id: record-store
+    placement:
+      mode: spread
+      constraints:
+        role: web
+
+links:
+  - from: gate
+    import: records:store/store@0.1.0
+    to: record-store
+  - from: gate
+    import: shaper:limit/limiter@0.1.0
+    to: shaper
+
+ingress:
+  host: split.alice.test
+  component: gate

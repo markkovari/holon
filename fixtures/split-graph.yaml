@@ -12,7 +12,16 @@ components:
       mode: spread
       constraints:
         role: web
+  # Pinned to the data node, not left to the planner. The comment at the top of
+  # this file has always claimed every call crosses the bus, and an unconstrained
+  # shaper can land beside `gate` — which is exactly what happened the first time
+  # `comp-hopcost` used this fixture, producing a "split" arm with no hop in it
+  # and a cost of -0.1% (ADR-0074).
   - id: shaper
+    placement:
+      mode: spread
+      constraints:
+        role: data
   - id: record-store
     placement:
       mode: spread

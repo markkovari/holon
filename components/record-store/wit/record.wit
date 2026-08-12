@@ -127,6 +127,18 @@ interface store {
     /// Safe to run against a live collection and safe to run twice — it converges
     /// on what the records say, so a second run reports zero and changes nothing.
     repair: func(collection: string) -> result<repair-report, store-error>;
+
+    /// The same comparison, changing nothing.
+    ///
+    /// `repair` is the fix and this is the alarm. A disagreement between the
+    /// records and their indexes is otherwise silent until someone happens to
+    /// notice a listing is short — and the direction that hides a record cannot
+    /// be seen from a read at all, because a read cannot miss what the index
+    /// never mentions. Only a scan finds that one, so a scan has to be something
+    /// an operator can run on a schedule and act on.
+    ///
+    /// `readded` and `pruned` here are what repair WOULD do, not what it did.
+    verify: func(collection: string) -> result<repair-report, store-error>;
 }
 
 /// `record-store` provides typed JSON records; key-value for storage, clock +
