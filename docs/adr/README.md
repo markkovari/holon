@@ -94,6 +94,7 @@ single-component app should be a container, not a wasm workload.
 | [0070](0070-a-rate-limit-is-not-a-record.md) | A rate limit is not a record — 85 store operations per request, then 2 | accepted, and built |
 | [0071](0071-a-captured-fetch-is-spent.md) | A captured fetch is spent — replay protection, and `repair` finished | accepted, and built |
 | [0072](0072-one-loop-at-a-time.md) | One loop at a time — leader election, and why not sharding | accepted, and built |
+| [0073](0073-public-costs-a-signature.md) | Public costs a signature — ADR-0007 rule 3, eleven ADRs later | accepted, and built |
 
 ## The shape these add up to
 

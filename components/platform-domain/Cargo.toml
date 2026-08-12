@@ -14,6 +14,11 @@ wit-bindgen-rt = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 base64 = { workspace = true }
+# ECDSA P-256 for publisher signatures (ADR-0073). The same curve `auth-guard`
+# already verifies ES256 JWTs with, so the platform gains no new primitive — and
+# it is pure Rust, which is what makes it build for wasm32-wasip2 at all.
+p256 = { workspace = true }
+sha2 = { workspace = true }
 
 [package.metadata.component]
 package = "platform:component"

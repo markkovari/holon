@@ -45,12 +45,17 @@ use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
 
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine as _;
+
 use manifest::{HostIface, ManifestInput, Part, Plan, Strategy};
 
 struct Component;
 
 const ACCOUNTS: &str = "tenants";
 const CATALOG: &str = "catalog";
+/// Publisher verifying keys, one row per key, indexed by org (ADR-0073).
+const ORGKEYS: &str = "orgkeys";
 const DEPLOYMENTS: &str = "deployments";
 const REVISIONS: &str = "revisions";
 const BIN: &str = "wasm";
@@ -112,6 +117,8 @@ impl Guest for Component {
             // The seam the push step calls once an artifact is in the registry.
             (Method::Post, ["api", "internal", "pushed"]) => internal_pushed(&request),
             (Method::Post, ["api", "internal", "repair"]) => internal_repair(&request, &query),
+            (Method::Post, ["api", "keys"]) => key_add(&request, &query),
+            (Method::Get, ["api", "keys"]) => key_list(&request, &query),
             _ => Outcome::Err(404, "not_found".into()),
         };
         emit(response_out, outcome);
@@ -942,6 +949,10 @@ fn market_search(request: &IncomingRequest, query: &Map<String, Value>) -> Outco
                 "visibility": r["visibility"], "description": r["description"],
                 "deprecated": r["deprecated"].as_bool().unwrap_or(false),
                 "uploaded": r["uploaded"], "digest": r["digest"],
+                // ADR-0007 rule 5: public means the provenance is public too —
+                // which key vouched for these bytes, and when. Absent on private
+                // and org rows, which need no signature.
+                "signed_by": r["signed_by"], "signed_at": r["signed_at"],
                 "deployable": r["digest"].as_str().unwrap_or("").starts_with("sha256:"),
                 "config_keys": r["config_keys"],
                 // The surface is the point of a marketplace listing: what it exports
@@ -965,17 +976,49 @@ fn component_publish(request: &IncomingRequest) -> Outcome {
     if !matches!(visibility.as_str(), "private" | "org" | "public") {
         return Outcome::Err(422, "visibility must be private|org|public".into());
     }
-    // ADR-0007: public requires a signature, and signing does not exist yet. An
-    // honest refusal beats an unsigned public catalog.
-    if visibility == "public" {
-        return Outcome::Err(
-            501,
-            "public requires a signed digest — signing is not implemented (ADR-0007); private and org work".into(),
-        );
-    }
     let key = format!("{}/{}", p.tenant, str_of(&b, "id"));
     match find_one(CATALOG, "key", &key) {
         Some((rec, rev, mut row)) if row["tenant"] == json!(p.tenant) => {
+            // ADR-0007 rule 3, built in ADR-0073: public requires a signature over
+            // the digest, by a key the owning organisation registered.
+            if visibility == "public" {
+                let digest = str_of(&row, "digest");
+                if !digest.starts_with("sha256:") {
+                    return Outcome::Err(
+                        409,
+                        "nothing to sign yet — this component has no digest until its bytes are pushed".into(),
+                    );
+                }
+                let org = str_of(&row, "org");
+                let sig = str_of(&b, "signature");
+                if sig.is_empty() {
+                    return Outcome::Err(
+                        422,
+                        format!("public requires `signature`: an ECDSA P-256 signature over {digest}"),
+                    );
+                }
+                match verify_publish(&org, &digest, &sig) {
+                    Some(name) => {
+                        // Bound to the digest it covers. A later push replaces the
+                        // digest, and `internal_pushed` demotes the row rather than
+                        // letting new bytes inherit somebody's signature on old ones
+                        // — which is ADR-0007 rule 1 ("visibility only ever widens by
+                        // an explicit act") held by the data instead of by a version
+                        // in the key, which this catalogue does not have.
+                        row["signed_digest"] = json!(digest);
+                        row["signed_by"] = json!(name);
+                        row["signed_at"] = json!(now());
+                    }
+                    None => {
+                        return Outcome::Err(
+                            403,
+                            format!(
+                                "no key registered to `{org}` verifies that signature over {digest}"
+                            ),
+                        )
+                    }
+                }
+            }
             row["visibility"] = json!(visibility);
             // Optional, and only overwritten when given: a publish that changes
             // visibility should not silently erase a description.
@@ -1073,6 +1116,16 @@ fn internal_pushed(request: &IncomingRequest) -> Outcome {
             // (ADR-0024). A node fetches by digest from the object store, so a
             // reference that named a registry would name something no node can
             // reach — and would make the same bytes have two identities.
+            // New bytes, so any signature on the old ones no longer says anything
+            // about this row. Demoted rather than refused: the upload is legitimate,
+            // it is the PUBLIC claim that is not, and re-publishing with a fresh
+            // signature is one call away (ADR-0073).
+            if row["visibility"] == json!("public")
+                && str_of(&row, "signed_digest") != digest
+            {
+                row["visibility"] = json!("private");
+                row["unpublished_reason"] = json!("new bytes pushed; re-sign to publish again");
+            }
             row["digest"] = json!(digest);
             let _ = records::update(CATALOG, &rec, &row.to_string(), rev);
             Outcome::Json(200, json!({ "key": key, "digest": row["digest"] }).to_string())
@@ -1117,6 +1170,99 @@ fn internal_repair(request: &IncomingRequest, query: &Map<String, Value>) -> Out
         ),
         Err(e) => Outcome::Err(500, format!("repair {collection}: {e:?}")),
     }
+}
+
+/// Register a verifying key for an organisation (ADR-0073).
+///
+/// The PUBLIC half only — the platform never sees a private key, and a publisher
+/// who loses theirs registers another rather than asking anyone to recover one.
+/// Member, not viewer: adding a key is the act that decides whose bytes the whole
+/// platform will later trust as public.
+fn key_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    let b = match body(request) {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    let (name, key_b64) = (str_of(&b, "name"), str_of(&b, "public_key"));
+    if name.is_empty() || key_b64.is_empty() {
+        return Outcome::Err(422, "name and public_key required".into());
+    }
+    // Parsed here rather than at first use: a key that cannot verify anything
+    // should be refused by the call that adds it, not by a publish six weeks later.
+    let raw = match B64.decode(key_b64.trim()) {
+        Ok(r) => r,
+        Err(_) => return Outcome::Err(422, "public_key must be base64".into()),
+    };
+    if p256::ecdsa::VerifyingKey::from_sec1_bytes(&raw).is_err() {
+        return Outcome::Err(422, "public_key must be a SEC1 P-256 point (33 or 65 bytes)".into());
+    }
+    let doc = json!({
+        "org": org, "name": name, "public_key": key_b64.trim(),
+        "added_by": p.subject, "added": now(),
+    });
+    match records::create(ORGKEYS, &doc.to_string(), &["org".to_string()]) {
+        Ok(rec) => Outcome::Json(201, json!({ "id": rec.id, "org": org, "name": name }).to_string()),
+        Err(e) => Outcome::Err(500, format!("storing the key: {e:?}")),
+    }
+}
+
+/// The keys an organisation publishes under. Public information by construction —
+/// a verifying key is what lets anyone else check the signature.
+fn key_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    let keys: Vec<Value> = org_keys(&org)
+        .into_iter()
+        .map(|(name, key)| json!({ "name": name, "public_key": key }))
+        .collect();
+    Outcome::Json(200, json!({ "org": org, "count": keys.len(), "keys": keys }).to_string())
+}
+
+fn org_keys(org: &str) -> Vec<(String, String)> {
+    records::find_by(ORGKEYS, "org", &json!(org).to_string())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .map(|v| (str_of(&v, "name"), str_of(&v, "public_key")))
+        .collect()
+}
+
+/// Does `signature` cover `digest` under any key this org registered?
+///
+/// The message signed is the digest STRING, exactly as the catalogue stores it —
+/// `sha256:…`. Signing the content address rather than a manifest is what makes
+/// the promise checkable by anyone later: the bytes are the digest.
+///
+/// Returns the name of the key that verified, for provenance (ADR-0007 rule 5).
+fn verify_publish(org: &str, digest: &str, signature_b64: &str) -> Option<String> {
+    use p256::ecdsa::signature::Verifier;
+    let sig_raw = B64.decode(signature_b64.trim()).ok()?;
+    // Both encodings, because a signer using the p256 crate emits fixed-width and
+    // one using OpenSSL emits DER, and refusing either would be a papercut with a
+    // very confusing error message.
+    let sig = p256::ecdsa::Signature::from_slice(&sig_raw)
+        .ok()
+        .or_else(|| p256::ecdsa::Signature::from_der(&sig_raw).ok())?;
+    for (name, key_b64) in org_keys(org) {
+        let Ok(raw) = B64.decode(key_b64.trim()) else { continue };
+        let Ok(vk) = p256::ecdsa::VerifyingKey::from_sec1_bytes(&raw) else { continue };
+        if vk.verify(digest.as_bytes(), &sig).is_ok() {
+            return Some(name);
+        }
+    }
+    None
 }
 
 /// How far apart the host's clock and ours may be, in seconds. Narrow on purpose:
