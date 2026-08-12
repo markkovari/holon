@@ -167,6 +167,25 @@ fn open() -> Result<kv::Bucket, StoreError> {
     kv::open(BUCKET).map_err(|e| StoreError::BackendUnavailable(format!("open: {e:?}")))
 }
 
+/// Say that the index disagreed with the records, in the shape `audit-log` uses
+/// so an existing scrape picks it up without new plumbing.
+///
+/// A component instance is per-request (ADR-0037), so there is nowhere to keep a
+/// counter — one line per occurrence is the only honest option, and a quiet
+/// system prints nothing at all.
+fn drift(collection: &str, op: &str, missing: usize) {
+    if missing == 0 {
+        return;
+    }
+    eprintln!(
+        "{{\"drift\":true,\"collection\":\"{}\",\"op\":\"{}\",\"unresolved\":{},\
+         \"fix\":\"records:store repair\"}}",
+        sanitize(collection),
+        op,
+        missing
+    );
+}
+
 /// How many times a guarded update re-reads and retries before giving up. The
 /// same bound `gate-domain` uses for its own CAS loop; a caller that loses forty
 /// races in a row is contending with something pathological, not unlucky.
@@ -839,6 +858,14 @@ impl Guest for Component {
             .into_iter()
             .map(|(id, stored)| entry_from(&id, stored))
             .collect();
+        // The index named ids this page could not resolve. That was silent: the
+        // page just came back short, and nothing anywhere said why (ADR-0075).
+        //
+        // Free to notice, because the work already happened — and this is the
+        // ONLY drift a read can see. The opposite direction, a record the index
+        // never mentions, is invisible from here by definition: a read cannot
+        // miss what it was never told to look for. That one needs `verify`.
+        drift(&collection, "list", window.len().saturating_sub(entries.len()));
 
         let next = if more {
             window.last().map(|s| s.to_string()).unwrap_or_default()
@@ -950,6 +977,20 @@ impl Guest for Component {
     /// not be on a request path, which is why it is a separate call rather than
     /// something `list` does when it smells trouble.
     fn repair(collection: String) -> Result<RepairReport, StoreError> {
+        repair_inner(&collection, true)
+    }
+
+    /// Report the same disagreement without touching anything (ADR-0075).
+    fn verify(collection: String) -> Result<RepairReport, StoreError> {
+        repair_inner(&collection, false)
+    }
+}
+
+/// The scan behind both `repair` and `verify`. `write` is the only difference:
+/// one of them fixes what it finds and the other only says so.
+fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreError> {
+    {
+        let collection = collection.to_string();
         let bucket = open()?;
         let prefix = format!("rec_{}_", sanitize(&collection));
 
@@ -996,7 +1037,7 @@ impl Guest for Component {
         // Rewrite the whole list rather than patching it id by id: the answer is
         // already computed, and one rewrite cannot half-succeed the way a hundred
         // guarded inserts can.
-        if readded > 0 || pruned > 0 {
+        if write && (readded > 0 || pruned > 0) {
             ids_write_chunked(&bucket, &idx_key(&collection), &real)?;
         }
 
@@ -1021,8 +1062,10 @@ impl Guest for Component {
             ids.sort();
             ids.dedup();
         }
-        for (key, ids) in &wanted {
-            ids_write_chunked(&bucket, key, ids)?;
+        if write {
+            for (key, ids) in &wanted {
+                ids_write_chunked(&bucket, key, ids)?;
+            }
         }
 
         // An index key nothing points at any more. Left behind by a delete that
@@ -1036,7 +1079,9 @@ impl Guest for Component {
             if !k.starts_with(&ix_prefix) || k.contains("_c0") || wanted.contains_key(k) {
                 continue;
             }
-            ids_write_chunked(&bucket, k, &[])?;
+            if write {
+                ids_write_chunked(&bucket, k, &[])?;
+            }
             dropped += 1;
         }
 

@@ -1,9 +1,9 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [73 ADRs](adr/); this page is the map.
+in [77 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0073.
+Last revised after ADR-0077.
 
 ## Shape
 
@@ -72,6 +72,7 @@ Every number below is from a run recorded in an ADR, not an estimate.
 | inventory snapshot ceiling | ~50 000 instances per node, zstd'd ([0058](adr/0058-snapshots-compress-and-parses-are-reused.md)) |
 | scale to zero and back | parked at 0, served in 49 ms, parked again in 5 s ([0042](adr/0042-scale-to-zero-and-back.md)) |
 | vs wasmCloud 2.5.2, same component | 3.6× on the Mac, 2.3× on a Pi ([0039](adr/0039-comp-versus-wasmcloud.md)) |
+| one cross-node call | **57 µs** (5.4% of a do-nothing request) ([0074](adr/0074-the-split-graph-still-works.md)) |
 | losing the STORE server at `--kv-replicas 3` | 0 errors, state intact, leader re-elected ([0067](adr/0067-one-copy-is-not-a-backup.md)) |
 | losing a whole MACHINE's store, 3 real machines | 0 errors, counter unbroken; the host failed over ([FLEET-BENCH](../bench/FLEET-BENCH.md)) |
 | the tailnet's own cost, request touching no storage | 41 707 rps loopback vs 1 230 over Tailscale ([FLEET-BENCH](../bench/FLEET-BENCH.md)) |
@@ -121,7 +122,7 @@ fast a dead machine is noticed), `max_inflight` (where the ingress starts sheddi
 
 ## Tests
 
-171 across four crates, `cargo nextest`. No Python anywhere in `bench/` or `e2e/`.
+173 across four crates, `cargo nextest`. No Python anywhere in `bench/` or `e2e/`.
 
 ```
 cargo build --release --manifest-path host/Cargo.toml   # tests spawn this
@@ -140,16 +141,17 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml
 | `reconciler/tests/ha.rs` | two ingresses, then one dies |
 | `reconciler/tests/leader.rs` | two reconcilers: one acts, and the standby takes over |
 | `reconciler/tests/publish.rs` | public needs a real signature over the real digest |
+| `reconciler/tests/crossnode.rs` | one graph over two nodes, both links over wrpc |
 | `bench/` | only what drives *other machines* — malna, bobocat, a k8s wasmCloud |
 
 ## Honestly missing
 
-- **No `@version` in a catalogue key**, so visibility is per component rather than
-  per version, which ADR-0007 says it should be. `public` is now bound to the
-  digest it was signed for and a new push demotes the row (ADR-0073), which holds
-  the rule in the data — but per-version keys are still the better answer.
-- **No key revocation.** Removing a publisher's key does not un-publish what it
-  signed, and "distrust everything this key signed" has no answer (ADR-0073).
+- **No `@version` in a catalogue key — and this is now a FEATURE request, not a
+  gap** (ADR-0076). ADR-0007 rule 1 is held by binding `public` to the signed
+  digest, and revocation turned out to need provenance rather than versions. What
+  is missing is several live versions of one component (rollback, a beta beside a
+  stable), and the key is also the blob key, the push-queue key and the deployment
+  handle, so it is a migration through the deployment path.
 - **No in-transit wrapping** on the secret fetch — TLS only. Replay is closed
   (ADR-0071: a nonce claimed exactly once, inside a 60s window), but an attacker
   who can read the transport still reads the plaintext. Nothing sweeps spent
@@ -169,20 +171,24 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml
   (`comp:store/cas`, JetStream's own revision on NATS). What remains is the
   documented trade from ADR-0064: a plain read can be up to the TTL stale, so
   read-your-own-writes does not hold across nodes. That is a semantic to opt into.
-- **A record and its indexes are still separate writes.** Both are guarded
-  individually now (ADR-0068), so nothing is lost to a race, but a crash between
-  them leaves them disagreeing until someone runs `repair` — and nothing detects
-  that automatically. `repair` rebuilds both the id index and the secondary ones
-  (ADR-0071).
+- **Nothing SCHEDULES the index check.** A record and its indexes are separate
+  writes, so a crash between them leaves them disagreeing. A read now reports the
+  half it can see (`{"drift":true,…}` from `list`), and `verify` reports both
+  halves without fixing anything (ADR-0075) — but it is a question nobody is
+  asking on a timer. A cron or a pass folded into the reconciler closes it.
+- **Drift lines land in the tenant's host log**, since `record-store` runs in the
+  tenant's graph, and nothing aggregates those yet (ADR-0075).
 - **`list-keys` returns keys as STORED on the NATS backend**, not as the guest
   wrote them. For every component here that is identical, because they sanitize
   their own key segments; a key containing bytes that needed escaping comes back
   escaped. Making it reversible renames every key already written (ADR-0068).
   wasmCloud's provider does no encoding at all and lets NATS reject what it will
   not take — a different trade, checked rather than assumed (ADR-0069).
-- **Conduit's `feed` is an application-level N+1** — per-article author and
-  favorite enrichment, 3 940 rps against `tags`'s 14 342 before caching. Removing
-  a round trip beats caching one, and this one has not been removed.
+- **Conduit's `feed` still does one favorites lookup per article.** The author and
+  follow lookups are gone (ADR-0077: 12 fewer store reads per request, 35% fewer
+  over a run), but favorites genuinely differ per article, so removing them needs
+  either a `find-by` over many values or a denormalised counter — a second source
+  of truth, which is the class of bug this repo keeps removing.
 - **Cross-machine benchmarks now have one real run** (`bench/FLEET-BENCH.md`:
   three Macs, R3, a machine killed under load). What is still unproven is the
   malna/bobocat *scripts* — they target a Linux aarch64 Pi build and were not
@@ -195,6 +201,7 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml
   gone. The remote scripts now **fail immediately** when a machine is missing
   (`bench/preflight.sh`): before, `ssh -f -n` failed silently and the run printed a
   number for a fleet that never spanned two machines.
-- **Cross-node invocation (ADR-0032) has no test and no script.** `split-graph.sh`
-  was deleted with the others and nothing replaced it; `fixtures/split-graph.yaml`
-  is the input a test would take.
+- **The hop's PERCENTAGE is not a platform property.** ADR-0074 re-measured a
+  cross-node call at **57 µs** — 5.4% of a request that deliberately does almost
+  nothing, and a far smaller share of one that touches JetStream. Quote the
+  microseconds, not the percentage.

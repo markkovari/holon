@@ -165,3 +165,78 @@ fn new_bytes_do_not_inherit_a_signature() {
         "NEW BYTES INHERITED A PUBLIC LISTING — nobody signed these: {row}"
     );
 }
+
+#[test]
+fn revoking_a_key_unpublishes_what_it_signed() {
+    // ADR-0073 left this open in as many words: "removing a key does not
+    // un-publish what it signed, and 'distrust everything this key signed' has no
+    // answer". This is the answer, and it is only possible because a public row
+    // records WHICH key vouched for it.
+    let p = Platform::start(8463);
+    let ada = p.user("ada");
+    let old = Publisher::new();
+    let new = Publisher::new();
+    p.post(&ada, "/api/keys", json!({ "name": "old", "public_key": old.public_b64() }));
+    p.post(&ada, "/api/keys", json!({ "name": "new", "public_key": new.public_b64() }));
+
+    // Two components: one signed by the key that will be revoked, one by the key
+    // that survives. Only the first may be affected.
+    let (_k1, d1) = component_with_digest(&p, &ada, "doomed");
+    let (_k2, d2) = component_with_digest(&p, &ada, "innocent");
+    assert_eq!(
+        p.post(&ada, "/api/components/publish",
+            json!({ "id": "doomed", "visibility": "public", "signature": old.sign(&d1) })).0,
+        200
+    );
+    assert_eq!(
+        p.post(&ada, "/api/components/publish",
+            json!({ "id": "innocent", "visibility": "public", "signature": new.sign(&d2) })).0,
+        200
+    );
+
+    let (code, body) = p.post(&ada, "/api/keys/revoke", json!({ "name": "old" }));
+    assert_eq!(code, 200, "revoking failed: {body}");
+    assert_eq!(body["count"], json!(1), "wrong number of rows unpublished: {body}");
+
+    let (_, listed) = p.get(&ada, "/api/components");
+    let vis = |id: &str| -> Value {
+        listed["components"]
+            .as_array()
+            .and_then(|a| a.iter().find(|r| r["id"] == json!(id)))
+            .map(|r| r["visibility"].clone())
+            .unwrap_or(Value::Null)
+    };
+    assert_eq!(vis("doomed"), json!("private"), "a revoked key's component is still public");
+    assert_eq!(
+        vis("innocent"),
+        json!("public"),
+        "revoking one key unpublished something ANOTHER key signed"
+    );
+
+    // And the revoked key cannot publish again, even with a correct signature.
+    let (code, body) = p.post(
+        &ada,
+        "/api/components/publish",
+        json!({ "id": "doomed", "visibility": "public", "signature": old.sign(&d1) }),
+    );
+    assert_eq!(code, 403, "a revoked key still verifies: {body}");
+
+    // The surviving key can re-publish the same component — revocation distrusts
+    // a signer, it does not blacklist bytes.
+    let (code, body) = p.post(
+        &ada,
+        "/api/components/publish",
+        json!({ "id": "doomed", "visibility": "public", "signature": new.sign(&d1) }),
+    );
+    assert_eq!(code, 200, "a live key could not re-vouch for the same bytes: {body}");
+
+    // The revoked key is still LISTED, marked — an auditor looking at an old
+    // signature has to be able to find out what happened to the key.
+    let (_, keys) = p.get(&ada, "/api/keys");
+    let old_row = keys["keys"]
+        .as_array()
+        .and_then(|a| a.iter().find(|k| k["name"] == json!("old")))
+        .cloned()
+        .unwrap_or(Value::Null);
+    assert_eq!(old_row["revoked"], json!(true), "the revoked key vanished from the listing");
+}

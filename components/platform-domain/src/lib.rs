@@ -117,8 +117,10 @@ impl Guest for Component {
             // The seam the push step calls once an artifact is in the registry.
             (Method::Post, ["api", "internal", "pushed"]) => internal_pushed(&request),
             (Method::Post, ["api", "internal", "repair"]) => internal_repair(&request, &query),
+            (Method::Get, ["api", "internal", "verify"]) => internal_verify(&request, &query),
             (Method::Post, ["api", "keys"]) => key_add(&request, &query),
             (Method::Get, ["api", "keys"]) => key_list(&request, &query),
+            (Method::Post, ["api", "keys", "revoke"]) => key_revoke(&request, &query),
             _ => Outcome::Err(404, "not_found".into()),
         };
         emit(response_out, outcome);
@@ -1223,20 +1225,111 @@ fn key_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
         Ok((org, _)) => org,
         Err((code, msg)) => return Outcome::Err(code, msg),
     };
-    let keys: Vec<Value> = org_keys(&org)
+    // Revoked keys are listed too, marked. A key that vanished from the listing
+    // would leave anyone auditing an old signature unable to find out what
+    // happened to the key that made it.
+    let keys: Vec<Value> = records::find_by(ORGKEYS, "org", &json!(org).to_string())
+        .unwrap_or_default()
         .into_iter()
-        .map(|(name, key)| json!({ "name": name, "public_key": key }))
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .map(|v| {
+            json!({
+                "name": str_of(&v, "name"),
+                "public_key": str_of(&v, "public_key"),
+                "revoked": v["revoked"].as_bool().unwrap_or(false),
+                "revoked_at": v["revoked_at"],
+            })
+        })
         .collect();
     Outcome::Json(200, json!({ "org": org, "count": keys.len(), "keys": keys }).to_string())
 }
 
+/// The keys an org can publish under RIGHT NOW. A revoked key is skipped, so it
+/// stops verifying new publishes the moment it is revoked — the easy half.
 fn org_keys(org: &str) -> Vec<(String, String)> {
     records::find_by(ORGKEYS, "org", &json!(org).to_string())
         .unwrap_or_default()
         .into_iter()
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .filter(|v| !v["revoked"].as_bool().unwrap_or(false))
         .map(|v| (str_of(&v, "name"), str_of(&v, "public_key")))
         .collect()
+}
+
+/// Revoke a key and unpublish everything it vouched for (ADR-0076).
+///
+/// ADR-0073 built signing and left this open: "removing a key does not un-publish
+/// what it signed, and 'distrust everything this key signed' has no answer". It
+/// does now, and the answer is only possible because a public row records WHICH
+/// key vouched for it — provenance is what makes revocation actionable rather
+/// than a gesture.
+///
+/// Demoted to private, not deleted. ADR-0007 rule 4 says a digest anything
+/// references must stay resolvable; revocation says "stop offering this to
+/// strangers", not "break whoever already deployed it". A consumer who pinned the
+/// digest keeps running, which is the whole point of pinning — what they lose is
+/// the platform's word that it is still trusted.
+fn key_revoke(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    // Owner, not member. Adding a key widens what the org can publish; revoking
+    // one retracts published bytes, which is the louder act of the two.
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Owner) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    let b = match body(request) {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    let name = str_of(&b, "name");
+    if name.is_empty() {
+        return Outcome::Err(422, "name required".into());
+    }
+
+    let mut found = false;
+    for e in records::find_by(ORGKEYS, "org", &json!(org).to_string()).unwrap_or_default() {
+        let Ok(mut row) = serde_json::from_str::<Value>(&e.data) else { continue };
+        if str_of(&row, "name") != name {
+            continue;
+        }
+        found = true;
+        row["revoked"] = json!(true);
+        row["revoked_at"] = json!(now());
+        row["revoked_by"] = json!(p.subject);
+        let _ = records::update(ORGKEYS, &e.id, &row.to_string(), e.revision);
+    }
+    if !found {
+        return Outcome::Err(404, format!("`{org}` has no key called `{name}`"));
+    }
+
+    // Everything that key vouched for. Walked rather than indexed: revocation is
+    // rare and a catalogue scan is cheap next to being wrong about which rows a
+    // compromised key touched.
+    let mut unpublished = Vec::new();
+    for e in records::list_records(CATALOG, 1000, "").map(|p| p.entries).unwrap_or_default() {
+        let Ok(mut row) = serde_json::from_str::<Value>(&e.data) else { continue };
+        if str_of(&row, "org") != org
+            || row["visibility"] != json!("public")
+            || str_of(&row, "signed_by") != name
+        {
+            continue;
+        }
+        row["visibility"] = json!("private");
+        row["unpublished_reason"] = json!(format!("the key `{name}` that signed it was revoked"));
+        if records::update(CATALOG, &e.id, &row.to_string(), e.revision).is_ok() {
+            unpublished.push(str_of(&row, "id"));
+        }
+    }
+    Outcome::Json(
+        200,
+        json!({
+            "org": org, "key": name, "revoked": true,
+            "unpublished": unpublished, "count": unpublished.len(),
+        })
+        .to_string(),
+    )
 }
 
 /// Does `signature` cover `digest` under any key this org registered?
@@ -1325,6 +1418,40 @@ fn sanitize_key(s: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
         .take(80)
         .collect()
+}
+
+/// What `repair` WOULD do, changing nothing (ADR-0075).
+///
+/// A GET, because it is a question. Something has to run it on a schedule for a
+/// disagreement to be noticed rather than stumbled over — that scheduler is not
+/// here, and pretending otherwise would be worse than saying so.
+fn internal_verify(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    if !internal_ok(request) {
+        return Outcome::Err(401, "internal endpoint".into());
+    }
+    let collection = query.get("collection").and_then(|v| v.as_str()).unwrap_or_default();
+    if collection.is_empty() {
+        return Outcome::Err(422, "?collection=<name> required".into());
+    }
+    match records::verify(collection) {
+        Ok(r) => {
+            let clean = r.readded == 0 && r.pruned == 0 && r.indexes_dropped == 0;
+            Outcome::Json(
+                200,
+                json!({
+                    "collection": collection,
+                    "clean": clean,
+                    // Named for what they WOULD be, since nothing was written.
+                    "records_unindexed": r.readded,
+                    "index_entries_dangling": r.pruned,
+                    "stale_index_keys": r.indexes_dropped,
+                    "total": r.total,
+                })
+                .to_string(),
+            )
+        }
+        Err(e) => Outcome::Err(500, format!("verify {collection}: {e:?}")),
+    }
 }
 
 fn internal_ok(request: &IncomingRequest) -> bool {

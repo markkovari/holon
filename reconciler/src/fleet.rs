@@ -233,7 +233,7 @@ impl Fleet {
         // Tests run what production runs: pooling on (ADR-0054), read cache off
         // (ADR-0063 — it trades cross-node freshness, so a test asserting shared
         // state must not get it by accident).
-        Self::start_full(lattice, specs, &[], &[], nodes, max_inflight, kv, true, 0)
+        Self::start_full(lattice, specs, &[], &[], nodes, max_inflight, kv, true, 0, &[])
     }
 
     /// A fleet whose control plane holds a vault: `vault://<org>/<name>=value`.
@@ -246,14 +246,54 @@ impl Fleet {
         artifacts: &[String],
         secrets: &[String],
     ) -> Self {
-        Self::start_full(lattice, specs, artifacts, secrets, 1, None, None, true, 0)
+        Self::start_full(lattice, specs, artifacts, secrets, 1, None, None, true, 0, &[])
+    }
+
+    /// A fleet whose nodes carry LABELS, so placement constraints have something
+    /// to match. `labels[i]` is applied to node `i+1`; a node past the end gets
+    /// none.
+    ///
+    /// Without this a constrained app is simply unschedulable, and a test that
+    /// wanted two components on two different nodes would quietly get them on one
+    /// — proving nothing while passing.
+    pub fn start_with_labels(
+        lattice: &str,
+        specs: &[&str],
+        artifacts: &[String],
+        labels: &[&str],
+    ) -> Self {
+        Self::start_labelled_kv(lattice, specs, artifacts, labels, None)
+    }
+
+    /// The same, choosing the store. `memory` is what a hop measurement wants:
+    /// ADR-0057's lesson is that JetStream round trips dominate everything else,
+    /// and a cross-node call hidden under them cannot be seen at all.
+    pub fn start_labelled_kv(
+        lattice: &str,
+        specs: &[&str],
+        artifacts: &[String],
+        labels: &[&str],
+        kv: Option<&str>,
+    ) -> Self {
+        Self::start_full(
+            lattice,
+            specs,
+            artifacts,
+            &[],
+            labels.len().max(1) as u16,
+            None,
+            kv,
+            true,
+            0,
+            labels,
+        )
     }
 
     /// Every node caches reads for `cache_ms` (ADR-0063). The interesting fleet is
     /// two or more: on one node the cache invalidates its own writes and cannot be
     /// caught being stale.
     pub fn start_with_cache(lattice: &str, specs: &[&str], nodes: u16, cache_ms: u64) -> Self {
-        Self::start_full(lattice, specs, &[], &[], nodes, None, None, true, cache_ms)
+        Self::start_full(lattice, specs, &[], &[], nodes, None, None, true, cache_ms, &[])
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -268,6 +308,9 @@ impl Fleet {
         pool: bool,
         // 0 leaves the read cache off, which is what every other entry point wants.
         cache_ms: u64,
+        // `labels[i]` goes to node i+1, as `--label k=v`. Empty means unlabelled,
+        // which is what every entry point but `start_with_labels` wants.
+        labels: &[&str],
     ) -> Self {
         let root = repo_root();
         let host_bin = std::env::var("COMP_HOST_BIN")
@@ -329,6 +372,9 @@ impl Fleet {
             }
             if cache_ms > 0 {
                 c.args(["--kv-cache-ms", &cache_ms.to_string()]);
+            }
+            if let Some(l) = labels.get((n - 1) as usize) {
+                c.args(["--label", l]);
             }
             let child = spawn_logged("comp-host", &mut c, &sp.join(format!("n{n}.log")));
             host_pids.push(child.0.id());
@@ -475,7 +521,7 @@ impl Fleet {
         // request pays two JetStream round trips and the number measures the bus.
         kv: Option<&str>,
     ) -> Self {
-        Self::start_full(lattice, &[spec_dir], artifacts, &[], nodes, None, kv, pool, 0)
+        Self::start_full(lattice, &[spec_dir], artifacts, &[], nodes, None, kv, pool, 0, &[])
     }
 
     /// The host process for node `n`, so a caller can read its RSS.

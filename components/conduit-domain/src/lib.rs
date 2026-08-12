@@ -564,7 +564,11 @@ fn list_comments(request: &IncomingRequest, slug: &str) -> Outcome {
         Err(e) => return store_err(e),
     };
     comments.sort_by(|a, b| a.created.cmp(&b.created).then(a.id.cmp(&b.id)));
-    let list: Vec<Value> = comments.iter().map(|e| comment_json(e, viewer.as_ref())).collect();
+    // Comments are a list too, and every one of them asked who the viewer
+    // follows. Same memo, same reason.
+    let mut view = View::default();
+    let list: Vec<Value> =
+        comments.iter().map(|e| comment_json(e, viewer.as_ref(), &mut view)).collect();
     Outcome::Json(200, json!({ "comments": list }).to_string())
 }
 
@@ -697,6 +701,54 @@ fn all_articles() -> Vec<(records::Entry, Value)> {
 
 /// Newest-first, offset/limit slice, `{articles, articlesCount}` envelope.
 /// `articlesCount` is the full match count (pre-pagination), per spec. The
+/// Per-request memo for the lookups a page repeats (ADR-0077).
+///
+/// Rendering a page of articles asked the store the same questions once per
+/// article: who the author is, and who the viewer follows. The follow query is
+/// the worst of them — `find_by(FOLLOWS, "follower", viewer)` is byte-identical
+/// for every row on the page, so a twenty-article page ran it twenty times for
+/// one answer.
+///
+/// A memo is safe here in a way it would not be anywhere else: a component
+/// instance is per-request (ADR-0037), so this cannot outlive the response it
+/// was built for and cannot go stale. It is not a cache; it is not asking twice.
+#[derive(Default)]
+struct View {
+    authors: std::collections::HashMap<String, Option<Value>>,
+    /// The viewer's followees, fetched at most once.
+    follows: Option<Vec<String>>,
+}
+
+impl View {
+    fn author(&mut self, subject: &str) -> Option<Value> {
+        if let Some(hit) = self.authors.get(subject) {
+            return hit.clone();
+        }
+        let found = find_user("subject", subject).map(|(_, u)| u);
+        self.authors.insert(subject.to_string(), found.clone());
+        found
+    }
+
+    /// Whether `viewer` follows `subject`, reading the viewer's follow list once.
+    fn following(&mut self, viewer: Option<&Principal>, subject: &str) -> bool {
+        let Some(v) = viewer else { return false };
+        if self.follows.is_none() {
+            self.follows = Some(
+                records::find_by(FOLLOWS, "follower", &json!(v.subject).to_string())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|e| {
+                        serde_json::from_str::<Value>(&e.data)
+                            .ok()
+                            .and_then(|d| d["followee"].as_str().map(String::from))
+                    })
+                    .collect(),
+            );
+        }
+        self.follows.as_ref().is_some_and(|f| f.iter().any(|x| x == subject))
+    }
+}
+
 /// list shape omits `body` (RealWorld's "multiple articles" response).
 fn articles_page(mut arts: Vec<(records::Entry, Value)>, path: &str, viewer: Option<&Principal>) -> String {
     arts.sort_by(|a, b| {
@@ -706,17 +758,28 @@ fn articles_page(mut arts: Vec<(records::Entry, Value)>, path: &str, viewer: Opt
     let count = arts.len();
     let limit = query_param(path, "limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(20);
     let offset = query_param(path, "offset").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
-    let page: Vec<Value> = arts.iter().skip(offset).take(limit).map(|(e, _)| article_json(e, viewer, false)).collect();
+    let mut view = View::default();
+    let page: Vec<Value> = arts
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(e, _)| article_json(e, viewer, false, &mut view))
+        .collect();
     json!({ "articles": page, "articlesCount": count }).to_string()
 }
 
 fn article_envelope(entry: &records::Entry, viewer: Option<&Principal>) -> String {
-    json!({ "article": article_json(entry, viewer, true) }).to_string()
+    json!({ "article": article_json(entry, viewer, true, &mut View::default()) }).to_string()
 }
 
 /// `include_body` false for list/feed (RealWorld omits `body` there), true for
 /// single-article responses.
-fn article_json(entry: &records::Entry, viewer: Option<&Principal>, include_body: bool) -> Value {
+fn article_json(
+    entry: &records::Entry,
+    viewer: Option<&Principal>,
+    include_body: bool,
+    view: &mut View,
+) -> Value {
     let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
     let author_subject = data["author"].as_str().unwrap_or("");
     let (favorited, favorites_count) = favorite_state(&entry.id, viewer);
@@ -729,7 +792,7 @@ fn article_json(entry: &records::Entry, viewer: Option<&Principal>, include_body
         "updatedAt": data["updatedAt"],
         "favorited": favorited,
         "favoritesCount": favorites_count,
-        "author": author_json(author_subject, viewer),
+        "author": author_json(author_subject, viewer, view),
     });
     if include_body {
         out["body"] = data["body"].clone();
@@ -737,10 +800,10 @@ fn article_json(entry: &records::Entry, viewer: Option<&Principal>, include_body
     out
 }
 
-fn author_json(subject: &str, viewer: Option<&Principal>) -> Value {
-    match find_user("subject", subject) {
-        Some((_, u)) => {
-            let following = viewer.map(|v| is_following(&v.subject, subject)).unwrap_or(false);
+fn author_json(subject: &str, viewer: Option<&Principal>, view: &mut View) -> Value {
+    match view.author(subject) {
+        Some(u) => {
+            let following = view.following(viewer, subject);
             json!({"username": u["username"], "bio": u["bio"], "image": u["image"], "following": following})
         }
         None => json!({"username": "", "bio": null, "image": null, "following": false}),
@@ -769,17 +832,17 @@ fn favorite_user(entry: &records::Entry) -> String {
 }
 
 fn comment_envelope(entry: &records::Entry, viewer: Option<&Principal>) -> String {
-    json!({ "comment": comment_json(entry, viewer) }).to_string()
+    json!({ "comment": comment_json(entry, viewer, &mut View::default()) }).to_string()
 }
 
-fn comment_json(entry: &records::Entry, viewer: Option<&Principal>) -> Value {
+fn comment_json(entry: &records::Entry, viewer: Option<&Principal>, view: &mut View) -> Value {
     let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
     json!({
         "id": comment_id(&entry.id),
         "createdAt": data["createdAt"],
         "updatedAt": data["updatedAt"],
         "body": data["body"],
-        "author": author_json(data["author"].as_str().unwrap_or(""), viewer),
+        "author": author_json(data["author"].as_str().unwrap_or(""), viewer, view),
     })
 }
 
