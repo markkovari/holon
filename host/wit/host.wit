@@ -21,4 +21,8 @@ world host-imports {
     // reference it holds and fetches the value; the guest never sees a reference
     // (ADR-0051).
     import comp:secrets/reader@0.1.0;
+    // The compare-and-set `wasi:keyvalue` does not have. Without it a component
+    // enforcing a revision guard has to read, compare and write across three
+    // calls, which is not a guard at all (ADR-0065).
+    import comp:store/cas@0.1.0;
 }

@@ -23,6 +23,7 @@ world = "catalog-service"
 
 [package.metadata.component.target.dependencies]
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "event:bus" = { path = "../event-bus/wit" }
 "idempotency:guard" = { path = "../idempotency-guard/wit" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

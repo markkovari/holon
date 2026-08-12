@@ -26,6 +26,7 @@ world = "upload-drop"
 "blob:store" = { path = "../blob-store/wit" }
 "webhook:sign" = { path = "../webhook-sign/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
 "wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }

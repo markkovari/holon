@@ -1,0 +1,57 @@
+// comp:store/cas — the compare-and-set `wasi:keyvalue` does not have.
+//
+// ADR-0065 measured why this exists. `record-store` enforced its revision guard by
+// reading a record, comparing the revision, and writing it back — three separate
+// `wasi:keyvalue` calls. That is not a guard: anything that changes the value in
+// between (another node, or a read cache) makes the comparison agree with itself
+// about state that no longer exists, and the write silently overwrites whatever it
+// did not see. Three appends went in, two survived.
+//
+// The comparison has to happen where the data is. This is the smallest primitive
+// that puts it there, and every backend implements it natively — JetStream's own
+// revision on NATS, one transaction on SQLite, one script on Redis, one lock in
+// memory.
+//
+// It is deliberately NOT part of `wasi:keyvalue`: that is somebody else's contract
+// and this is a `comp:` extension until the upstream one grows a CAS.
+package comp:store@0.1.0;
+
+interface cas {
+    use wasi:keyvalue/store@0.2.0-draft.{bucket, error};
+
+    /// A value and the revision it is at. Revisions are opaque and only ever
+    /// compared for equality — they are a JetStream sequence on one backend and a
+    /// counter on another, and nothing may assume they increment by one.
+    record versioned {
+        revision: u64,
+        value: list<u8>,
+    }
+
+    /// What a guarded write did.
+    variant outcome {
+        /// It landed, at this revision.
+        committed(u64),
+        /// It did not: the key has moved to this revision (0 when absent). Re-read
+        /// and retry — the caller is holding something out of date.
+        conflict(u64),
+    }
+
+    /// The value together with its revision. `none` when the key is absent.
+    ///
+    /// This is the read that must precede a guarded write, and a host may never
+    /// serve it from a cache.
+    get: func(b: borrow<bucket>, key: string) -> result<option<versioned>, error>;
+
+    /// Write only if the key is still at `expected`. `expected` of 0 means "must
+    /// not exist yet", so a create and an update are the same call.
+    set: func(
+        b: borrow<bucket>,
+        key: string,
+        value: list<u8>,
+        expected: u64,
+    ) -> result<outcome, error>;
+}
+
+world store-cas {
+    import cas;
+}

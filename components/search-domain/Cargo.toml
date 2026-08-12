@@ -24,6 +24,7 @@ world = "search-domain"
 [package.metadata.component.target.dependencies]
 "search:index" = { path = "../search-index/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "cache:store" = { path = "../cache/wit" }
 "metrics:collect" = { path = "../metrics-collect/wit" }
 "paginate:cursor" = { path = "../pagination/wit" }

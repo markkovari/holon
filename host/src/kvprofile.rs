@@ -33,7 +33,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use crate::kv::KvBackend;
+use crate::kv::{Cas, KvBackend};
 use crate::tenant::BucketId;
 
 #[derive(Default, Clone, Copy)]
@@ -65,6 +65,8 @@ struct Stats {
     exists: Op,
     list_keys: Op,
     increment: Op,
+    get_revision: Op,
+    set_if_revision: Op,
     /// Reads of a key that was already warm — what a perfect cache would serve.
     warm_reads: u64,
     /// Distinct keys currently warm, for a sense of the working set a cache would
@@ -118,8 +120,8 @@ impl ProfileKv {
     /// summary of the whole run either way.
     pub fn report(&self) -> String {
         let s = self.stats.lock().unwrap();
-        let reads = s.get.calls + s.exists.calls + s.list_keys.calls;
-        let writes = s.set.calls + s.delete.calls + s.increment.calls;
+        let reads = s.get.calls + s.exists.calls + s.list_keys.calls + s.get_revision.calls;
+        let writes = s.set.calls + s.delete.calls + s.increment.calls + s.set_if_revision.calls;
         let total = reads + writes;
         let mut out = String::from("\ncomp-host --kv-profile: what the app asked the store for\n\n");
         out.push_str("  op            calls        mean us      share\n");
@@ -130,6 +132,8 @@ impl ProfileKv {
             ("exists", s.exists),
             ("list_keys", s.list_keys),
             ("increment", s.increment),
+            ("get_rev", s.get_revision),
+            ("cas_set", s.set_if_revision),
         ] {
             if op.calls == 0 {
                 continue;
@@ -268,6 +272,34 @@ impl KvBackend for ProfileKv {
         s.increment.add(d);
         // A read-modify-write, and the reason ADR-0059's mirror excluded it: a
         // cached read here is a LOST UPDATE, not a stale one.
+        s.invalidate(&id(bucket, key));
+        r
+    }
+
+    /// Counted as a read, and deliberately NOT as a cacheable one: it is the read
+    /// half of a compare-and-set, which no cache may serve (ADR-0065). Counting it
+    /// toward the hit rate would inflate a number whose whole purpose is to decide
+    /// whether caching is worth it.
+    fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<(u64, Vec<u8>)>> {
+        let t = Instant::now();
+        let r = self.inner.get_revision(bucket, key);
+        let d = t.elapsed();
+        self.stats.lock().unwrap().get_revision.add(d);
+        r
+    }
+
+    fn set_if_revision(
+        &self,
+        bucket: &BucketId,
+        key: &str,
+        value: &[u8],
+        expected: u64,
+    ) -> Result<Cas> {
+        let t = Instant::now();
+        let r = self.inner.set_if_revision(bucket, key, value, expected);
+        let d = t.elapsed();
+        let mut s = self.stats.lock().unwrap();
+        s.set_if_revision.add(d);
         s.invalidate(&id(bucket, key));
         r
     }

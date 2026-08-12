@@ -95,6 +95,38 @@ interface store {
 
     /// Number of records in a collection.
     count: func(collection: string) -> result<u64, store-error>;
+
+    /// What `repair` found and fixed.
+    record repair-report {
+        /// Records that exist but were missing from the collection's id index —
+        /// present in the store and invisible to `list`, `count` and `query`.
+        /// This is the number that matters: each one looked like data loss.
+        readded: u64,
+        /// Ids the index named that have no record behind them. Harmless to a
+        /// reader (`list` skips them) but they inflate `count`.
+        pruned: u64,
+        /// Records the index now agrees with, after the two above.
+        total: u64,
+        /// Secondary-index keys rewritten from the records — the `field = value`
+        /// lookups `find-by` and `query` use. Rebuilt wholesale rather than
+        /// diffed: they are derived from the records, so recomputing is both the
+        /// check and the fix.
+        indexes: u64,
+        /// Secondary-index keys that named a field/value combination no record
+        /// has any more, and were emptied.
+        indexes-dropped: u64,
+    }
+
+    /// Rebuild a collection's id index from the records themselves.
+    ///
+    /// The records are authoritative; the index is an acceleration layer over
+    /// them. So an index that disagrees can always be recomputed, and this is the
+    /// only operation in the contract that can bring a record that had gone
+    /// missing from `list` back into it.
+    ///
+    /// Safe to run against a live collection and safe to run twice — it converges
+    /// on what the records say, so a second run reports zero and changes nothing.
+    repair: func(collection: string) -> result<repair-report, store-error>;
 }
 
 /// `record-store` provides typed JSON records; key-value for storage, clock +
@@ -105,4 +137,8 @@ world record-store {
     import wasi:keyvalue/batch@0.2.0-draft;
     import wasi:clocks/wall-clock@0.2.0;
     import wasi:random/random@0.2.0;
+    // The revision guard, enforced where the data is. `update` used to read,
+    // compare and write over three separate keyvalue calls, which is not a guard
+    // once anything changes the value in between (ADR-0065).
+    import comp:store/cas@0.1.0;
 }

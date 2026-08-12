@@ -27,6 +27,7 @@ world = "booked-domain"
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "lock:mutex" = { path = "../lock-mutex/wit" }
 "email:template" = { path = "../email-render/wit" }
 "ical:codec" = { path = "../ical/wit" }

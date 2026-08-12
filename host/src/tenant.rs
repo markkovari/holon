@@ -104,29 +104,8 @@ pub fn env_for(tenant: &str, app: &str) -> String {
     e.chars().take(53).collect::<String>().trim_matches('-').to_string()
 }
 
-/// `poolSize × modules-per-instance` has to stay under the engine's concurrent
-/// core-instance cap. The vet-clinic proved the failure: pool 48 over a ~28-module
-/// graph starved a 1000-instance host (ADR-0008). Clamp rather than trust.
-///
-/// It now bounds a whole NODE rather than one app, so the budget is a share: with
-/// every tenant drawing on one pool, an app that takes it all is a denial of
-/// service against its neighbours rather than only against itself.
-pub fn safe_pool_size(requested: u32, total_modules: u32, budget: u32) -> u32 {
-    let modules = total_modules.max(1);
-    let ceiling = (budget / modules).max(1);
-    requested.clamp(1, ceiling)
-}
-
 // ---- egress ----------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Verdict {
-    Allow,
-    /// The authority is not on the app's allow-list.
-    NotAllowed,
-    /// The authority resolved to an address no tenant may reach.
-    Prohibited(IpAddr),
-}
 
 /// What one app may dial.
 ///
@@ -287,7 +266,6 @@ pub struct Scope {
     pub links: BTreeMap<String, InstanceId>,
     pub mem_cap: usize,
     pub slice_ms: u64,
-    pub pool_size: u32,
 }
 
 impl Scope {
@@ -367,7 +345,6 @@ fn one() -> u32 {
 pub struct Limits {
     pub mem_cap: usize,
     pub slice_ms: u64,
-    pub pool_size: u32,
     pub allow_private_egress: bool,
     pub denied_addrs: Vec<IpAddr>,
 }
@@ -396,7 +373,6 @@ impl StartCommand {
             links: self.links,
             mem_cap: limits.mem_cap,
             slice_ms: limits.slice_ms,
-            pool_size: limits.pool_size,
             tenant: self.tenant,
             app: self.app,
             component: self.component,
@@ -433,7 +409,6 @@ mod tests {
         Limits {
             mem_cap: 64 << 20,
             slice_ms: 50,
-            pool_size: 8,
             allow_private_egress: false,
             denied_addrs: vec![],
         }
@@ -576,16 +551,6 @@ mod tests {
         assert!(p.permits_addr("10.1.2.4".parse().unwrap()), "allow_private otherwise applies");
     }
 
-    #[test]
-    fn pool_size_is_clamped_against_the_nodes_budget_not_the_apps() {
-        // ADR-0008's starvation, at node scale: 48 × 28 = 1344 core instances.
-        assert_eq!(safe_pool_size(48, 28, 800), 28);
-        assert_eq!(safe_pool_size(4, 28, 800), 4, "a modest request passes through");
-        assert_eq!(safe_pool_size(0, 1, 800), 1, "never zero");
-        // A node that has given most of its budget away clamps hard rather than
-        // letting one app take the rest.
-        assert_eq!(safe_pool_size(100, 28, 56), 2);
-    }
 
     #[test]
     fn an_app_name_is_derived_and_length_capped() {

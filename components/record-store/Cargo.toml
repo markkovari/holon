@@ -26,3 +26,5 @@ world = "record-store"
 "wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
 "wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+# The compare-and-set wasi:keyvalue lacks. The host's copy IS the contract.
+"comp:store" = { path = "../../host/wit/deps/comp-store" }

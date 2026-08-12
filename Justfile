@@ -1823,3 +1823,71 @@ tenancy-bench: compose-platform compose-gate build-reconciler
     cd host && cargo build --release --bin comp-host
     cd cli && cargo build --release
     bash bench/tenancy/run.sh
+
+# ---- durability -----------------------------------------------------------
+#
+# Everything a tenant owns lives in JetStream KV, and until now nothing copied it
+# anywhere. `history: 1` means there is not even a previous version to go back to,
+# so a bad migration, a bad write or an `rm -rf` on the JetStream directory was
+# final. These two recipes are the floor: not a backup STRATEGY, but the thing
+# that makes one possible.
+#
+#   just backup                                  # every KV bucket -> backups/<utc>/
+#   DIR=backups/2026-08-11T18-00-00Z just restore
+#   DIR=... REPLICAS=3 just restore              # and re-replicate on the way in
+#
+# `nats stream backup` is the vendor's own snapshot protocol — it streams the
+# stream's messages and its configuration, and `restore` recreates both. Writing
+# our own would be re-implementing a wire format to no benefit.
+backup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    URL="${NATS_URL:-nats://127.0.0.1:4222}"
+    DIR="${DIR:-backups/$(date -u +%Y-%m-%dT%H-%M-%SZ)}"
+    mkdir -p "$DIR"
+    # KV buckets are streams named `KV_<bucket>`. Backing up by that prefix takes
+    # every tenant's store and nothing else — the inventory bucket included, which
+    # is derived state but costs nothing to carry.
+    streams=$(nats --server "$URL" stream ls -n 2>/dev/null | grep '^KV_' || true)
+    if [ -z "$streams" ]; then
+      echo "no KV buckets on $URL — nothing to back up"; exit 0
+    fi
+    n=0
+    for s in $streams; do
+      nats --server "$URL" stream backup "$s" "$DIR/$s" >/dev/null
+      n=$((n+1))
+      echo "  $s"
+    done
+    # A manifest, so a restore does not depend on guessing what was in here.
+    printf '{"taken":"%s","url":"%s","streams":%s}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$URL" \
+      "$(printf '%s\n' $streams | awk 'BEGIN{printf "["} {printf "%s\"%s\"", (NR>1?",":""), $0} END{print "]"}')" \
+      > "$DIR/manifest.json"
+    echo "backed up $n bucket(s) to $DIR"
+
+# Restore what `just backup` wrote. Refuses to clobber a bucket that already
+# exists — restoring over live data is how a backup turns into an outage, and the
+# operator who wants that can delete the stream first and say so.
+restore:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    URL="${NATS_URL:-nats://127.0.0.1:4222}"
+    DIR="${DIR:?set DIR=backups/<stamp>}"
+    [ -f "$DIR/manifest.json" ] || { echo "no manifest.json in $DIR"; exit 1; }
+    existing=$(nats --server "$URL" stream ls -n 2>/dev/null | grep '^KV_' || true)
+    n=0
+    for path in "$DIR"/KV_*; do
+      [ -d "$path" ] || continue
+      s=$(basename "$path")
+      if printf '%s\n' $existing | grep -qx "$s"; then
+        echo "  SKIP $s — it already exists. Delete it first if you mean to replace it."
+        continue
+      fi
+      # The stream name comes from the backup itself; `restore` takes only the
+      # directory. `REPLICAS=` overrides how many copies to recreate, which makes
+      # a restore the way to change replication on an existing bucket too.
+      nats --server "$URL" stream restore "$path" ${REPLICAS:+--replicas "$REPLICAS"} >/dev/null
+      n=$((n+1))
+      echo "  $s"
+    done
+    echo "restored $n bucket(s) from $DIR to $URL"

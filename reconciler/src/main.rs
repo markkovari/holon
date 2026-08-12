@@ -49,6 +49,20 @@ struct Args {
     #[arg(long, env = "COMP_INTERVAL")]
     interval: Option<u64>,
 
+    /// Seconds a leader survives without renewing its lease.
+    ///
+    /// Failover takes up to this plus one interval, so it trades how long the
+    /// fleet goes unreconciled against how long a network hiccup can hand
+    /// leadership to a standby that did not need it. Must be comfortably longer
+    /// than `--interval`, since the lease is renewed once per pass.
+    #[arg(long, env = "COMP_LEASE_TTL", default_value = "30")]
+    lease_ttl: u64,
+
+    /// Reconcile without taking the lease. For a single-reconciler deployment
+    /// that does not want a lease bucket, and for tests that assert on one loop.
+    #[arg(long, env = "COMP_NO_LEASE")]
+    no_lease: bool,
+
     /// Consecutive passes a surplus must persist before anything is stopped.
     /// A flag, not a constant: it is a guess until there is real churn to
     /// calibrate it against.
@@ -167,8 +181,67 @@ async fn main() -> Result<()> {
     let mut world = World::default();
     let period = Duration::from_secs(interval.max(1));
 
+    // Exactly one reconciler acts at a time (ADR-0072). Not for throughput — a
+    // steady pass is 46 ms at 1000 nodes — but because this was the only control
+    // component with no standby, and because two loops disagree about scale-down:
+    // the cooldown counter lives in each process's `Hysteresis`.
+    let mut lease = if args.no_lease {
+        None
+    } else {
+        let id = format!(
+            "{}-{}",
+            hostname().unwrap_or_else(|| "reconciler".into()),
+            std::process::id()
+        );
+        match comp_lattice::lease::Lease::connect(
+            &args.nats_url,
+            &args.lattice,
+            Duration::from_secs(args.lease_ttl.max(interval * 2)),
+            &id,
+        )
+        .await
+        {
+            Ok(l) => Some(l),
+            // Refusing to start would make the lease a new way to lose the whole
+            // control plane. Carrying on alone is what a single reconciler did
+            // before this existed, and it is said out loud rather than assumed.
+            Err(e) => {
+                eprintln!(
+                    "comp-reconciler: no lease bucket ({e:#}) — running WITHOUT \
+                     leader election. A second reconciler would fight this one."
+                );
+                None
+            }
+        }
+    };
+    // `None` until the first pass, so a process that STARTS as a standby says so.
+    // With a plain `false` the first pass compares equal to the initial value and
+    // logs nothing: an operator starting a second reconciler would see a banner
+    // and then silence, indistinguishable from a hung process.
+    let mut was_leader: Option<bool> = None;
+
     loop {
         tokio::time::sleep(period).await;
+
+        // A standby does nothing at all: no distribution, no diff, no commands.
+        // It holds no inventory cache and no hysteresis, so when it does take
+        // over it starts a scale-down cooldown from zero — the safe direction,
+        // since under-replication fires on the first pass that sees it.
+        if let Some(l) = lease.as_mut() {
+            let leader = l.hold().await;
+            if was_leader != Some(leader) {
+                if leader {
+                    eprintln!("comp-reconciler: this process is now the leader ({})", l.id());
+                } else {
+                    let who = l.holder().await.unwrap_or_else(|| "someone else".into());
+                    eprintln!("comp-reconciler: standing by — {who} holds the lease");
+                }
+                was_leader = Some(leader);
+            }
+            if !leader {
+                continue;
+            }
+        }
 
         // Distribute before reconciling, in the same pass. A manifest references an
         // artifact by digest, so a component whose bytes are not in the store yet
@@ -862,4 +935,15 @@ mod load_tests {
         assert_eq!(load.get("a.test"), Some(&32));
     }
 
+}
+
+/// Who this process is, for the lease. Hostname plus pid, because two
+/// reconcilers on one box during a rolling restart are the case that matters.
+fn hostname() -> Option<String> {
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }

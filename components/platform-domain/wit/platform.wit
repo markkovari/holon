@@ -62,4 +62,11 @@ world platform-domain {
     import wasi:clocks/wall-clock@0.2.0;
     // applier URL + shared secret, registry prefix, platform tenant.
     import wasi:config/store@0.2.0-rc.1;
+
+    // Claiming a fetch nonce exactly once, so a captured secret request cannot be
+    // replayed (ADR-0071). A `record` would need a secondary index to look the
+    // nonce up and would cost ~85 store operations to do it (ADR-0070); this is
+    // one guarded write whose failure IS the answer.
+    import comp:store/cas@0.1.0;
+    import wasi:keyvalue/store@0.2.0-draft;
 }

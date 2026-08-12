@@ -27,6 +27,7 @@ world = "books-domain"
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "ledger:doubleentry" = { path = "../ledger/wit" }
 "pdf:codec" = { path = "../pdf/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }

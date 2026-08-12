@@ -112,9 +112,38 @@ async fn get(
         urlencoding(reference.as_str()),
         if probe { "&probe=1" } else { "" }
     );
+    // A nonce and a timestamp, so a captured request cannot be replayed against
+    // the platform for the rest of the token's life (ADR-0071). The nonce is
+    // random per request; the platform claims it exactly once and refuses a
+    // second claim, and refuses anything outside a narrow clock window so the
+    // set it has to remember stays small.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Unique, not unpredictable — and that is the whole requirement. The attacker
+    // here holds a request they captured; guessing a future nonce gains them
+    // nothing, because the platform refuses a nonce it has already seen. Process
+    // id, nanoseconds and a counter are unique across everything that can race:
+    // two hosts, two threads, or the same thread twice in one nanosecond. No
+    // dependency needed for that.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nonce = format!(
+        "{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
     let res = tokio::time::timeout(
         Duration::from_secs(10),
-        http.get(&url).header("x-fetch-token", token).send(),
+        http.get(&url)
+            .header("x-fetch-token", token)
+            .header("x-fetch-ts", now.to_string())
+            .header("x-fetch-nonce", nonce)
+            .send(),
     )
     .await
     .map_err(|_| "the platform did not answer in time".to_string())?
@@ -126,6 +155,10 @@ async fn get(
         // refused reference is a manifest problem, and telling them apart is the
         // difference between waiting and editing.
         401 => Err("expired".into()),
+        // The platform saw this exact request before, or the clocks disagree.
+        // Neither is retryable at this layer: a fresh attempt mints a fresh nonce
+        // and this one is spent.
+        409 => Err("replayed or stale — the platform refused this request".into()),
         403 => Err("this instance is not authorised for that reference".into()),
         404 => Err("no such secret".into()),
         code => Err(format!("the platform answered {code}")),

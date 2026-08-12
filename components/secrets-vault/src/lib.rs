@@ -90,7 +90,14 @@ fn cipher() -> Result<ChaCha20Poly1305, VaultError> {
             master.len()
         )));
     }
-    Ok(ChaCha20Poly1305::new(Key::from_slice(&master)))
+    // `Key::from_slice` is deprecated and panics on the wrong length; the length
+    // is already checked above, so this converts explicitly and keeps the failure
+    // a `VaultError` rather than a trap inside a component.
+    let key: [u8; 32] = master
+        .as_slice()
+        .try_into()
+        .map_err(|_| VaultError::Crypto("master key must be 32 bytes".into()))?;
+    Ok(ChaCha20Poly1305::new(&Key::from(key)))
 }
 
 /// Seal a plaintext value: fresh 96-bit nonce, encrypt, return
@@ -98,9 +105,13 @@ fn cipher() -> Result<ChaCha20Poly1305, VaultError> {
 fn seal(plaintext: &[u8]) -> Result<String, VaultError> {
     let cipher = cipher()?;
     let nonce_bytes = get_random_bytes(NONCE_LEN as u64);
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let n: [u8; NONCE_LEN] = nonce_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| VaultError::Crypto("short nonce from the host".into()))?;
+    let nonce = Nonce::from(n);
     let ct = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(&nonce, plaintext)
         .map_err(|_| VaultError::Crypto("encrypt failed".into()))?;
     let mut blob = Vec::with_capacity(NONCE_LEN + ct.len());
     blob.extend_from_slice(&nonce_bytes);
@@ -118,9 +129,12 @@ fn unseal(blob: &str) -> Result<Vec<u8>, VaultError> {
         return Err(VaultError::Crypto("stored value truncated".into()));
     }
     let (nonce_bytes, ct) = raw.split_at(NONCE_LEN);
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let n: [u8; NONCE_LEN] = nonce_bytes
+        .try_into()
+        .map_err(|_| VaultError::Crypto("stored value truncated".into()))?;
+    let nonce = Nonce::from(n);
     cipher
-        .decrypt(nonce, ct)
+        .decrypt(&nonce, ct)
         .map_err(|_| VaultError::Crypto("decrypt/authenticate failed".into()))
 }
 

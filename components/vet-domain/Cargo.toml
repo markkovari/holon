@@ -24,6 +24,7 @@ world = "vet-domain"
 [package.metadata.component.target.dependencies]
 "auth:identity" = { path = "../../wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "validate:schema" = { path = "../validate/wit" }
 "search:index" = { path = "../search-index/wit" }
 # auth.wit's own world imports these; needed to merge the auth:identity package.

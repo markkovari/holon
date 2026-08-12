@@ -49,6 +49,7 @@ pub const HOST_IFACES: &[&str] = &[
     "wasi:keyvalue/batch",
     "wasi:config/store",
     "comp:secrets/reader",
+    "comp:store/cas",
 ];
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -448,9 +449,6 @@ async fn start(
         }
     }
 
-    // Compilation is slow and blocking; a start command must not stall the
-    // heartbeat behind it.
-    let engine = agent.engine.clone();
     // Compile once per artifact per node, not once per start. ADR-0037 measured a
     // 33ms cold start of which 31ms was `Component::from_file` recompiling bytes
     // this node had already compiled — on every start, every re-placement after a
@@ -458,6 +456,8 @@ async fn start(
     let cache = agent.cache_dir();
     let _ = std::fs::create_dir_all(&cache);
     let cwasm = cache.join(format!("{}.cwasm", scope.digest.trim_start_matches("sha256:")));
+    // Cloned for the blocking task below: compilation must not stall the
+    // heartbeat behind it.
     let engine = agent.engine.clone();
     // Already compiled on this node? Then share it. A `Component` is immutable
     // machine code and internally reference-counted, so N apps on one digest hold one

@@ -23,6 +23,7 @@ world = "pulse-domain"
 
 [package.metadata.component.target.dependencies]
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "event:bus" = { path = "../event-bus/wit" }
 "id:generate" = { path = "../id-generate/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }

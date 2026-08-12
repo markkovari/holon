@@ -15,7 +15,7 @@
 //! 'edges'`, which is exactly the shape ADR-0010 asked for and ADR-0047 built by hand.
 
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::Outcome;
 
@@ -64,21 +64,6 @@ pub struct SaveDeployment {
     pub strategy: Option<String>,
 }
 
-/// `POST /api/components/publish`
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Publish {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub visibility: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    /// ADR-0007: deprecation, never deletion.
-    #[serde(default)]
-    pub deprecated: Option<bool>,
-}
-
 /// `POST /api/secrets`
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,26 +79,6 @@ pub struct PutSecret {
 pub struct Satisfies {
     pub socket: String,
     pub plug: String,
-}
-
-/// A node on the canvas. Kept as `Value` in the requests above because the graph is
-/// stored verbatim, but parsed here where config has to be read.
-pub fn node_secrets(nodes: &[Value], id: &str) -> Vec<Value> {
-    nodes
-        .iter()
-        .find(|n| n["id"].as_str() == Some(id))
-        .and_then(|n| n["secrets"].as_array())
-        .cloned()
-        .unwrap_or_default()
-}
-
-pub fn node_config(nodes: &[Value], id: &str) -> Map<String, Value> {
-    nodes
-        .iter()
-        .find(|n| n["id"].as_str() == Some(id))
-        .and_then(|n| n["config"].as_object())
-        .cloned()
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

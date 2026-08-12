@@ -34,7 +34,9 @@ use bindings::quota::meter::meter as quota;
 use bindings::records::store::store as records;
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::config::store as config;
+use bindings::comp::store::cas;
 use bindings::secrets::vault::vault;
+use bindings::wasi::keyvalue::store as kv;
 use bindings::wit::reflect::composer;
 use bindings::wit::reflect::inspector;
 
@@ -109,6 +111,7 @@ impl Guest for Component {
             (Method::Get, ["api", "internal", "artifact"]) => internal_artifact(&request, &query),
             // The seam the push step calls once an artifact is in the registry.
             (Method::Post, ["api", "internal", "pushed"]) => internal_pushed(&request),
+            (Method::Post, ["api", "internal", "repair"]) => internal_repair(&request, &query),
             _ => Outcome::Err(404, "not_found".into()),
         };
         emit(response_out, outcome);
@@ -117,7 +120,6 @@ impl Guest for Component {
 
 enum Outcome {
     Json(u16, String),
-    Text(u16, String, String),
     /// A body that is not text — the staged `.wasm` the pusher fetches.
     Bytes(u16, String, Vec<u8>),
     Err(u16, String),
@@ -722,6 +724,12 @@ fn secret_fetch(request: &IncomingRequest, query: &Map<String, Value>) -> Outcom
     if token.is_empty() {
         return Outcome::Err(401, "no fetch token".into());
     }
+    // Replay protection (ADR-0071). Without it a captured fetch could be replayed
+    // against the platform for the rest of the token's life — the gap ADR-0051
+    // named and did not close.
+    if let Err(o) = claim_fetch_nonce(request) {
+        return o;
+    }
     let reference = query.get("ref").and_then(|v| v.as_str()).unwrap_or_default().to_string();
     let Ok(entry) = records::get(FETCH_TOKENS, &token) else {
         return Outcome::Err(401, "unknown fetch token".into());
@@ -1071,6 +1079,106 @@ fn internal_pushed(request: &IncomingRequest) -> Outcome {
         }
         None => Outcome::Err(404, "not_found".into()),
     }
+}
+
+/// Rebuild a collection's id index from the records themselves (ADR-0068).
+///
+/// The platform's own collections are the ones whose loss hurts most — the
+/// catalogue, deployments, orgs — and until this route existed an index that had
+/// dropped an id was permanent: the record was still in the store and no longer
+/// in any listing, with nothing able to put it back.
+///
+/// Internal, not a user route. It scans the whole bucket, and "rebuild the index"
+/// is an operator action even when it is safe — which it is: it converges on what
+/// the records say, so running it twice reports zero the second time.
+///
+/// A tenant's app has its own records in its own bucket and must expose its own;
+/// this one can only reach the platform's.
+fn internal_repair(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    if !internal_ok(request) {
+        return Outcome::Err(401, "internal endpoint".into());
+    }
+    let collection = query.get("collection").and_then(|v| v.as_str()).unwrap_or_default();
+    if collection.is_empty() {
+        return Outcome::Err(422, "?collection=<name> required".into());
+    }
+    match records::repair(collection) {
+        Ok(r) => Outcome::Json(
+            200,
+            json!({
+                "collection": collection,
+                "readded": r.readded,
+                "pruned": r.pruned,
+                "total": r.total,
+                "indexes": r.indexes,
+                "indexes_dropped": r.indexes_dropped,
+            })
+            .to_string(),
+        ),
+        Err(e) => Outcome::Err(500, format!("repair {collection}: {e:?}")),
+    }
+}
+
+/// How far apart the host's clock and ours may be, in seconds. Narrow on purpose:
+/// it is the only thing bounding how many nonces have to be remembered, and two
+/// machines on one tailnet have no excuse for more.
+const FETCH_SKEW_SECS: u64 = 60;
+
+/// Claim this request's nonce, exactly once.
+///
+/// The check is one guarded write whose FAILURE is the answer: `cas::set` with an
+/// expected revision of 0 means "must not exist yet", so the first claim commits
+/// and every replay conflicts. No lookup, no index, no read-then-check race — the
+/// store decides, which is the whole point of ADR-0066.
+///
+/// A missing header is refused rather than waved through: an old host that does
+/// not send one is a host whose requests can be replayed, and silently accepting
+/// it would make this decoration.
+fn claim_fetch_nonce(request: &IncomingRequest) -> Result<(), Outcome> {
+    let header = |name: &str| -> String {
+        request
+            .headers()
+            .get(&name.to_string())
+            .into_iter()
+            .next()
+            .and_then(|v| String::from_utf8(v).ok())
+            .unwrap_or_default()
+    };
+    let (nonce, ts) = (header("x-fetch-nonce"), header("x-fetch-ts"));
+    if nonce.is_empty() || ts.is_empty() {
+        return Err(Outcome::Err(409, "this request carries no nonce".into()));
+    }
+    let Ok(ts) = ts.parse::<u64>() else {
+        return Err(Outcome::Err(409, "unreadable timestamp".into()));
+    };
+    let now = now();
+    if now.abs_diff(ts) > FETCH_SKEW_SECS {
+        // Outside the window the nonce set no longer proves anything, so the
+        // request is refused whether or not it is a replay.
+        return Err(Outcome::Err(409, "stale request".into()));
+    }
+    let Ok(bucket) = kv::open("default") else {
+        return Err(Outcome::Err(503, "store unavailable".into()));
+    };
+    // The timestamp is part of the key so a sweeper can drop a whole window by
+    // prefix later, and so two windows cannot collide on one nonce.
+    let key = format!("fn_{}_{}", ts / FETCH_SKEW_SECS, sanitize_key(&nonce));
+    match cas::set(&bucket, &key, b"1", 0) {
+        Ok(cas::Outcome::Committed(_)) => Ok(()),
+        Ok(cas::Outcome::Conflict(_)) => {
+            Err(Outcome::Err(409, "this request has already been used".into()))
+        }
+        Err(_) => Err(Outcome::Err(503, "store unavailable".into())),
+    }
+}
+
+/// Nonces are host-generated and already tame, but a key goes into the store and
+/// nothing that reaches a store should be trusted to be well-formed.
+fn sanitize_key(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+        .take(80)
+        .collect()
 }
 
 fn internal_ok(request: &IncomingRequest) -> bool {
@@ -2106,7 +2214,6 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, ctype, body) = match result {
         Outcome::Json(c, b) => (c, "application/json".to_string(), b.into_bytes()),
-        Outcome::Text(c, ct, b) => (c, ct, b.into_bytes()),
         Outcome::Bytes(c, ct, b) => (c, ct, b),
         Outcome::Err(c, m) => (
             c,
