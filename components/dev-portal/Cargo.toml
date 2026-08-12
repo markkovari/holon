@@ -28,6 +28,7 @@ world = "dev-portal"
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "id:generate" = { path = "../id-generate/wit" }
 "quota:meter" = { path = "../quota/wit" }
 "policy:guard" = { path = "../policy-guard/wit" }

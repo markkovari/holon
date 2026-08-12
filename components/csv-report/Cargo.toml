@@ -25,6 +25,7 @@ world = "csv-report"
 "csv:codec" = { path = "../csv/wit" }
 "validate:schema" = { path = "../validate/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "paginate:cursor" = { path = "../pagination/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

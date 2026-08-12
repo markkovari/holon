@@ -92,9 +92,6 @@ struct Cell {
     drift_mib: f64,
     per_app_mib: f64,
     rps: f64,
-    /// Offered rate, when the run was open-loop. `None` means closed-loop, and
-    /// then the latency columns are Little's law and nothing else.
-    offered: Option<u32>,
     p50_ms: f64,
     p99_ms: f64,
     p999_ms: f64,
@@ -351,7 +348,6 @@ fn run_cell(
         drift_mib: loaded_mib - settled,
         per_app_mib: (idle_mib - 12.0) / apps as f64,
         rps: report.rps(elapsed),
-        offered: args.rate,
         p50_ms: report.pct(50.0),
         p99_ms: report.pct(99.0),
         p999_ms: report.pct(99.9),

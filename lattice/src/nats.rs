@@ -21,6 +21,17 @@ pub struct NatsLattice {
     lattice: String,
 }
 
+/// Split a comma-separated server list, so one flag can name a whole cluster.
+///
+/// A client given a single address does learn the rest of the cluster from the
+/// INFO the server sends, and fails over to them — but only once it has connected
+/// to something. A process starting while its one listed server is the one that
+/// is down cannot bootstrap at all, which is exactly when it matters (ADR-0067).
+/// Everything that dials NATS in this workspace goes through here.
+pub fn servers(url: &str) -> Vec<String> {
+    url.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
 impl NatsLattice {
     /// `inventory_ttl` becomes the bucket's `max_age`.
     ///
@@ -42,9 +53,10 @@ impl NatsLattice {
         inventory_ttl: Duration,
         bucket: &str,
     ) -> Result<Self> {
-        let client = async_nats::connect(url)
+        let urls = servers(url);
+        let client = async_nats::connect(urls.clone())
             .await
-            .with_context(|| format!("connecting to NATS at {url}"))?;
+            .with_context(|| format!("connecting to NATS at {}", urls.join(", ")))?;
         let js = async_nats::jetstream::new(client.clone());
 
         // Created rather than assumed, so a fresh lattice needs no setup step.

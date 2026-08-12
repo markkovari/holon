@@ -40,7 +40,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
-use crate::kv::KvBackend;
+use crate::kv::{Cas, KvBackend};
 use crate::tenant::BucketId;
 
 /// A cached read. `None` is a cached MISS — "this key does not exist" is an answer
@@ -151,6 +151,45 @@ impl KvBackend for CacheKv {
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
         self.drop_key(&id(bucket, key));
         self.inner.increment(bucket, key, delta)
+    }
+
+    /// **Never served from cache**, and this is the line that makes the cache safe
+    /// to turn on at all.
+    ///
+    /// This is the read half of a compare-and-set: its whole job is to report the
+    /// revision the store is actually at. Answering it from a copy would hand back a
+    /// revision that was true once, the guarded write would then be built on it, and
+    /// the guard would agree with itself about state that no longer exists — which
+    /// is precisely the lost update ADR-0065 measured.
+    ///
+    /// A cached plain `get` can still be stale, and that is the documented,
+    /// TTL-bounded trade (ADR-0064). It can no longer cost a write.
+    /// It also REFRESHES the cache, which is what makes a losing writer able to
+    /// make progress.
+    ///
+    /// Without it, a component that re-reads through the cache to build its retry
+    /// keeps offering the same stale revision, is refused again, and cannot
+    /// converge until the entry expires — the lost update becomes a failed request
+    /// for up to the TTL, which is better and still wrong. This read is
+    /// authoritative and already in hand, so putting it in the cache costs nothing
+    /// and replaces exactly the entry that was causing the refusals.
+    fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<(u64, Vec<u8>)>> {
+        let got = self.inner.get_revision(bucket, key)?;
+        self.store(id(bucket, key), got.as_ref().map(|(_, v)| v.clone()));
+        Ok(got)
+    }
+
+    fn set_if_revision(
+        &self,
+        bucket: &BucketId,
+        key: &str,
+        value: &[u8],
+        expected: u64,
+    ) -> Result<Cas> {
+        // Dropped whatever the outcome: a refused write means someone else moved
+        // the key, so this node's copy is wrong either way.
+        self.drop_key(&id(bucket, key));
+        self.inner.set_if_revision(bucket, key, value, expected)
     }
 }
 

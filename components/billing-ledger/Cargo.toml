@@ -24,6 +24,7 @@ world = "ledger-app"
 [package.metadata.component.target.dependencies]
 "money:amount" = { path = "../money/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "idempotency:guard" = { path = "../idempotency-guard/wit" }
 "quota:meter" = { path = "../quota/wit" }
 "csv:codec" = { path = "../csv/wit" }

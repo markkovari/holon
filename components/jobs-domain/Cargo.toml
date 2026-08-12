@@ -27,6 +27,7 @@ world = "jobs-domain"
 "cron:expr" = { path = "../cron/wit" }
 "idempotency:guard" = { path = "../idempotency-guard/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
 "wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }

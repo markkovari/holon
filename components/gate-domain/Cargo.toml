@@ -23,6 +23,7 @@ world = "gate-domain"
 
 [package.metadata.component.target.dependencies]
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "shaper:limit" = { path = "../shaper/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

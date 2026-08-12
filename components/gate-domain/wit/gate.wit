@@ -36,4 +36,12 @@ world gate-domain {
     import shaper:limit/limiter@0.1.0;
     // request + refill timestamps (unix millis).
     import wasi:clocks/wall-clock@0.2.0;
+    // The rate-limit bucket is ONE keyed value that every request reads and
+    // writes. It was a `record` — which meant a secondary-index lookup to find
+    // it and index maintenance to write it, ~8 store round trips for a value
+    // that has no identity beyond its key and is never listed. Straight
+    // compare-and-set on one key is two (bench/FLEET-BENCH.md).
+    import comp:store/cas@0.1.0;
+    // …which needs a bucket to operate on.
+    import wasi:keyvalue/store@0.2.0-draft;
 }

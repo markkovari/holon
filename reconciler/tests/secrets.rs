@@ -210,6 +210,8 @@ fn an_org_keeps_its_secrets_from_another_org() {
         .http
         .get(p.url("/api/internal/secret?ref=vault%3A%2F%2Facme%2Fstripe"))
         .header("x-fetch-token", &token)
+        .header("x-fetch-ts", now_secs().to_string())
+        .header("x-fetch-nonce", "stolen-attempt-1")
         .send()
         .unwrap();
     assert_eq!(stolen.status().as_u16(), 403, "a token may only fetch what it was granted");
@@ -219,11 +221,18 @@ fn an_org_keeps_its_secrets_from_another_org() {
     // 6. `?probe=1` — the start-time existence check (ADR-0051). Same authorisation,
     //    answered from `describe`, so a host can fail closed on a broken reference at
     //    START without pulling a plaintext it may never need.
+    // Every fetch carries a fresh nonce and a timestamp, exactly as a host does
+    // (ADR-0071) — the platform refuses a request without them, and refuses the
+    // same one twice.
+    let nonce = std::cell::Cell::new(0u32);
     let probe = |token: &str, reference: &str| {
+        nonce.set(nonce.get() + 1);
         let r = p
             .http
             .get(p.url(&format!("/api/internal/secret?probe=1&ref={reference}")))
             .header("x-fetch-token", token)
+            .header("x-fetch-ts", now_secs().to_string())
+            .header("x-fetch-nonce", format!("probe-{}", nonce.get()))
             .send()
             .unwrap();
         (r.status().as_u16(), r.text().unwrap_or_default())
@@ -251,6 +260,53 @@ fn an_org_keeps_its_secrets_from_another_org() {
     // And a probe is not a way around the token — same 403 as a fetch.
     let (code, _) = probe(&token, "vault%3A%2F%2Facme%2Fstripe");
     assert_eq!(code, 403, "a probe must be scoped by the same token as a fetch");
+
+    // 7. the same request twice is refused the second time (ADR-0071). Until this
+    //    existed, anyone who captured one fetch could repeat it for the rest of
+    //    the token's life.
+    let replay = |nonce: &str| {
+        p.http
+            .get(p.url("/api/internal/secret?ref=vault%3A%2F%2Facme%2Fstripe"))
+            .header("x-fetch-token", &mine)
+            .header("x-fetch-ts", now_secs().to_string())
+            .header("x-fetch-nonce", nonce)
+            .send()
+            .unwrap()
+            .status()
+            .as_u16()
+    };
+    assert_eq!(replay("once-only"), 200, "the first use of a nonce must work");
+    assert_eq!(replay("once-only"), 409, "THE SAME REQUEST WAS ACCEPTED TWICE");
+    assert_eq!(replay("fresh-one"), 200, "a fresh nonce must still work");
+
+    // 8. and a request with no nonce at all is refused rather than waved through:
+    //    an old host is one whose requests can be replayed.
+    let bare = p
+        .http
+        .get(p.url("/api/internal/secret?ref=vault%3A%2F%2Facme%2Fstripe"))
+        .header("x-fetch-token", &mine)
+        .send()
+        .unwrap();
+    assert_eq!(bare.status().as_u16(), 409, "a fetch with no nonce must be refused");
+
+    // 9. a timestamp far outside the window is refused, which is what keeps the
+    //    remembered-nonce set small.
+    let stale = p
+        .http
+        .get(p.url("/api/internal/secret?ref=vault%3A%2F%2Facme%2Fstripe"))
+        .header("x-fetch-token", &mine)
+        .header("x-fetch-ts", (now_secs() - 3600).to_string())
+        .header("x-fetch-nonce", "an-hour-late")
+        .send()
+        .unwrap();
+    assert_eq!(stale.status().as_u16(), 409, "an hour-old request must be refused");
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[test]

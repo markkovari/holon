@@ -85,6 +85,15 @@ single-component app should be a container, not a wasm workload.
 | [0061](0061-the-secret-reader-was-never-linked.md) | The secret reader was never linked | accepted; **corrects [0051](0051-the-secret-reader.md)**, which said built and was half-built |
 | [0062](0062-what-a-real-application-asks-the-store-for.md) | What a real application asks the store for: 264 reads per write | accepted as a measurement; **shows [0059](0059-the-read-mirror-lost.md)'s rejection was workload-specific** |
 | [0063](0063-a-ttl-is-cheaper-than-coherence.md) | A TTL is cheaper than coherence — durable reads at in-memory speed | accepted, built, **off by default**; answers [0059](0059-the-read-mirror-lost.md) |
+| [0064](0064-the-cross-node-cost-of-the-read-cache.md) | The cross-node cost of the read cache, measured | accepted as a measurement; **discharges the gap [0063](0063-a-ttl-is-cheaper-than-coherence.md) named** |
+| [0065](0065-the-cache-defeats-the-revision-guard.md) | The cache defeats the revision guard — a measured lost update | accepted as a finding; **why [0063](0063-a-ttl-is-cheaper-than-coherence.md) stays off by default** |
+| [0066](0066-the-guard-moves-into-the-store.md) | The guard moves into the store — `comp:store/cas` | accepted, and built; **fixes [0065](0065-the-cache-defeats-the-revision-guard.md)** |
+| [0067](0067-one-copy-is-not-a-backup.md) | One copy is not a backup — replication and a restore that works | accepted, and built; first measurement of surviving the loss of the STORE |
+| [0068](0068-the-index-was-the-lossy-part.md) | The index was the lossy part — a guarded id list, `repair`, and a corrupted `list-keys` | accepted, and built |
+| [0069](0069-what-wasmcloud-does-with-keys.md) | What wasmCloud does with keys: nothing — and what was worth taking | accepted; confirms [0068](0068-the-index-was-the-lossy-part.md), adopts their CAS backoff |
+| [0070](0070-a-rate-limit-is-not-a-record.md) | A rate limit is not a record — 85 store operations per request, then 2 | accepted, and built |
+| [0071](0071-a-captured-fetch-is-spent.md) | A captured fetch is spent — replay protection, and `repair` finished | accepted, and built |
+| [0072](0072-one-loop-at-a-time.md) | One loop at a time — leader election, and why not sharding | accepted, and built |
 
 ## The shape these add up to
 

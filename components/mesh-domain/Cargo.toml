@@ -23,6 +23,7 @@ world = "mesh-domain"
 
 [package.metadata.component.target.dependencies]
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "resilience:breaker" = { path = "../resilience/wit" }
 "proxy:route" = { path = "../proxy-route/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }

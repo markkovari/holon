@@ -25,6 +25,7 @@
 //! implementation that cannot expire entries has to emulate it, and should say so
 //! rather than quietly keep the dead.
 
+pub mod lease;
 pub mod memory;
 pub mod nats;
 

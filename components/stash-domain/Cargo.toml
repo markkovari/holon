@@ -27,6 +27,7 @@ world = "stash-domain"
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "zip:archive" = { path = "../zip/wit" }
 "csv:codec" = { path = "../csv/wit" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }

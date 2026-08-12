@@ -34,7 +34,10 @@ const NATS_PORT: u16 = 4332;
 const INGRESS_PORT: u16 = 8394;
 
 /// Kills the child on drop, so a failed assertion cannot leave a fleet running.
-struct Kill(Child, &'static str);
+///
+/// The process name is not carried: it is only ever used in the panic message at
+/// spawn time, and a field nobody reads is a field that goes stale.
+struct Kill(Child);
 
 impl Drop for Kill {
     fn drop(&mut self) {
@@ -60,7 +63,7 @@ fn spawn(name: &'static str, mut cmd: Command) -> Kill {
         .stderr(Stdio::null())
         .spawn()
         .unwrap_or_else(|e| panic!("spawning {name}: {e}"));
-    Kill(child, name)
+    Kill(child)
 }
 
 /// The state the stub control plane keeps: the manifests it serves, and the digest

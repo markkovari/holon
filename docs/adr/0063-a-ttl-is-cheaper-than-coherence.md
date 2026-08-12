@@ -82,8 +82,12 @@ read them back — passes 13/13 at both 100 ms and 1000 ms.
 
 That proves the **local** invalidation is right. It cannot prove anything about
 coherence, because it is one node, and on one node this design is defined to
-preserve read-your-own-writes. **The cross-node staleness cost remains unmeasured.**
-The honest next measurement is two nodes serving one app with a writer on each.
+preserve read-your-own-writes.
+
+The cross-node cost was measured afterwards in
+[ADR-0064](0064-the-cross-node-cost-of-the-read-cache.md): a key written by one
+node and read by another is stale for up to the TTL, and a key a node writes as
+well as reads cannot go stale at all. Two concurrent *writers* remain unmeasured.
 
 ## Why not fix the N+1 instead
 

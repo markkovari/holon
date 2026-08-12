@@ -23,6 +23,7 @@ world = "saga-domain"
 
 [package.metadata.component.target.dependencies]
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "fsm:workflow" = { path = "../fsm-workflow/wit" }
 "idempotency:guard" = { path = "../idempotency-guard/wit" }
 "event:bus" = { path = "../event-bus/wit" }

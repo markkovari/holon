@@ -27,6 +27,7 @@ world = "track-domain"
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "fsm:workflow" = { path = "../fsm-workflow/wit" }
 "search:index" = { path = "../search-index/wit" }
 "event:bus" = { path = "../event-bus/wit" }

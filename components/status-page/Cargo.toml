@@ -24,6 +24,7 @@ world = "status-app"
 [package.metadata.component.target.dependencies]
 "sched:timer" = { path = "../scheduler-timer/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "fsm:workflow" = { path = "../fsm-workflow/wit" }
 "event:bus" = { path = "../event-bus/wit" }
 "notify:dispatch" = { path = "../notify-dispatch/wit" }

@@ -11,7 +11,9 @@ mod bindings;
 
 use serde_json::{json, Map, Value};
 
+use bindings::comp::store::cas;
 use bindings::records::store::store as records;
+use bindings::wasi::keyvalue::store as kv;
 use bindings::shaper::limit::limiter as shaper;
 use bindings::wasi::clocks::wall_clock;
 
@@ -22,10 +24,22 @@ use bindings::wasi::http::types::{
 
 struct Component;
 
-const BUCKETS: &str = "buckets";
 const GCRA: &str = "gcra";
 const BATCHES: &str = "batches";
-const CAS_TRIES: u32 = 40;
+/// How many times a contended compare-and-set is retried before giving up.
+///
+/// 200, not the 40 it was, and the number is arithmetic rather than taste. With
+/// N concurrent writers on one key exactly one wins each round, so a request
+/// fails after K rounds with probability ((N-1)/N)^K. At 20 writers and 40
+/// rounds that is 12.9% — and a measured 9.7% of hot-key requests came back 503
+/// when the rate limiter stopped going through `record-store`.
+///
+/// It was hidden before: `record-store::update` ran its OWN 40-try loop inside
+/// each of these, so the effective budget was 1600. Doing two store operations
+/// per attempt instead of eight silently cut the budget by 40×. At 200 the same
+/// arithmetic gives 0.0035%, and each attempt is now cheap enough that the worst
+/// case is still less work than one old attempt.
+const CAS_TRIES: u32 = 200;
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
@@ -86,6 +100,27 @@ fn state_of(coll: &str, key: &str) -> Option<(String, u64, Value)> {
 
 // ---- rate limit (token bucket) ----------------------------------------------
 
+/// Where one key's bucket lives. Not a record: a bucket has no identity beyond
+/// its key, is never listed, and is rewritten on every single request — so the
+/// id index and secondary index a `record` carries are pure overhead on the
+/// hottest path in this component (bench/FLEET-BENCH.md measured ~8 store round
+/// trips per request, of which two were the actual read and write).
+fn bucket_key(key: &str) -> String {
+    let mut out = String::from("rl_");
+    for b in key.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'=' => out.push(b as char),
+            _ => out.push_str(&format!("_{b:02X}")),
+        }
+    }
+    out
+}
+
+fn open_bucket() -> Result<kv::Bucket, Outcome> {
+    kv::open("default").map_err(|e| Outcome::Err(503, format!("store unavailable: {e:?}")))
+}
+
+
 fn ratelimit(request: &IncomingRequest) -> Outcome {
     let b = match body(request) {
         Ok(v) => v,
@@ -100,25 +135,44 @@ fn ratelimit(request: &IncomingRequest) -> Outcome {
     let cost = b["cost"].as_f64().unwrap_or(1.0).max(0.0);
     let now = now_ms();
 
+    let bucket = match open_bucket() {
+        Ok(b) => b,
+        Err(o) => return o,
+    };
+    let bkey = bucket_key(&key);
+
+    // Two store operations per request: the guarded read, and the guarded write.
+    // The revision comes from the store rather than from a record's own counter,
+    // so this is the same optimistic-concurrency loop it always was — it just no
+    // longer pays for an index it never queries.
     for _ in 0..CAS_TRIES {
-        let (state, existing) = match state_of(BUCKETS, &key) {
-            Some((id, rev, v)) => (
-                shaper::Bucket { tokens: v["tokens"].as_f64().unwrap_or(0.0), updated_ms: v["updated_ms"].as_u64().unwrap_or(0) },
-                Some((id, rev)),
-            ),
-            // uninitialized -> starts full (updated_ms 0).
-            None => (shaper::Bucket { tokens: 0.0, updated_ms: 0 }, None),
+        let (rev, state) = match cas::get(&bucket, &bkey) {
+            Ok(Some(v)) => {
+                let parsed: Value = serde_json::from_slice(&v.value).unwrap_or(Value::Null);
+                (
+                    v.revision,
+                    shaper::Bucket {
+                        tokens: parsed["tokens"].as_f64().unwrap_or(0.0),
+                        updated_ms: parsed["updated_ms"].as_u64().unwrap_or(0),
+                    },
+                )
+            }
+            // uninitialized -> starts full (updated_ms 0). Revision 0 is "must
+            // not exist yet", so two racing first-requests cannot both create it.
+            Ok(None) => (0, shaper::Bucket { tokens: 0.0, updated_ms: 0 }),
+            Err(e) => return Outcome::Err(503, format!("store unavailable: {e:?}")),
         };
         let (dec, next) = shaper::token_bucket(state, now, capacity, refill, cost);
         let nv = json!({ "key": key, "tokens": next.tokens, "updated_ms": next.updated_ms });
-        let committed = match &existing {
-            Some((id, rev)) => matches!(records::update(BUCKETS, id, &nv.to_string(), *rev), Ok(_)),
-            None => records::create(BUCKETS, &nv.to_string(), &["key".to_string()]).is_ok(),
-        };
-        if committed {
-            return decide_response(&dec, "token-bucket", &key);
+        match cas::set(&bucket, &bkey, nv.to_string().as_bytes(), rev) {
+            Ok(cas::Outcome::Committed(_)) => {
+                return decide_response(&dec, "token-bucket", &key)
+            }
+            // Someone else moved it between the read and the write: re-read and
+            // decide again on what they left behind.
+            Ok(cas::Outcome::Conflict(_)) => continue,
+            Err(e) => return Outcome::Err(503, format!("store unavailable: {e:?}")),
         }
-        // revision conflict (or lost create) -> re-read and retry.
     }
     Outcome::Err(503, "contended, retry".into())
 }
@@ -265,7 +319,13 @@ fn reset(request: &IncomingRequest) -> Outcome {
         Some(k) => k.to_string(),
         None => return Outcome::Err(422, "key required".into()),
     };
-    for coll in [BUCKETS, GCRA, BATCHES] {
+    // The bucket is no longer a record, so it is no longer reachable by the loop
+    // below — and a reset that silently stopped resetting the rate limit would be
+    // the worst kind of quiet.
+    if let Ok(bucket) = kv::open("default") {
+        let _ = bucket.delete(&bucket_key(&key));
+    }
+    for coll in [GCRA, BATCHES] {
         for e in records::find_by(coll, "key", &json!(key).to_string()).unwrap_or_default() {
             let _ = records::delete(coll, &e.id);
         }

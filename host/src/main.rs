@@ -82,6 +82,7 @@ mod bindings {
 use bindings::cache::store::sink as cache_sink;
 use bindings::cache::store::source as cache_source;
 use bindings::comp::secrets::reader;
+use bindings::comp::store::cas;
 use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::atomics;
 use bindings::wasi::keyvalue::batch;
@@ -112,7 +113,7 @@ pub struct Instance {
     /// requests arrive at. Before cross-node serving existed a plug could not start
     /// at all; now it starts, serves its exports over the bus, and simply never
     /// appears in the route table.
-    pub pre: Option<ProxyPre<Host>>,
+    pub(crate) pre: Option<ProxyPre<Host>>,
     /// Clients for this instance's REMOTE imports, keyed by interface. Built once
     /// at start, because resolving a target per request would put a lookup on the
     /// hot path for something that only changes when placement does.
@@ -377,6 +378,45 @@ impl config::Host for Host {
     }
 }
 
+// ---- comp:store/cas host impl --------------------------------------------
+//
+// The guard, enforced where the data is (ADR-0065). Both calls take the same
+// `HostBucket` resource `wasi:keyvalue` hands out, so the guest still cannot name
+// a store it was not given — the ADR-0012 boundary is untouched by this.
+
+impl cas::Host for Host {
+    fn get(
+        &mut self,
+        b: Resource<HostBucket>,
+        key: String,
+    ) -> wasmtime::Result<Result<Option<cas::Versioned>, store::Error>> {
+        let id = self.table.get(&b)?.id.clone();
+        Ok(self
+            .kv
+            .get_revision(&id, &key)
+            .map(|o| o.map(|(revision, value)| cas::Versioned { revision, value }))
+            .map_err(kv_err))
+    }
+
+    fn set(
+        &mut self,
+        b: Resource<HostBucket>,
+        key: String,
+        value: Vec<u8>,
+        expected: u64,
+    ) -> wasmtime::Result<Result<cas::Outcome, store::Error>> {
+        let id = self.table.get(&b)?.id.clone();
+        Ok(self
+            .kv
+            .set_if_revision(&id, &key, &value, expected)
+            .map(|c| match c {
+                kv::Cas::Committed(r) => cas::Outcome::Committed(r),
+                kv::Cas::Conflict(r) => cas::Outcome::Conflict(r),
+            })
+            .map_err(kv_err))
+    }
+}
+
 // ---- comp:secrets/reader host impl ---------------------------------------
 //
 // The guest names a KEY; `Scope::secret` is the only way from that string to a
@@ -587,9 +627,16 @@ struct Args {
     /// `DynamicUser=yes`. Falls back to ./comp-kv.db when run by hand.
     #[arg(long)]
     sqlite_path: Option<String>,
-    /// NATS URL for `--kv nats`. Defaults to the lattice's own NATS when
-    /// `--lattice-nats` is given, because running a node's store on a different
-    /// cluster from its control bus is a thing to do on purpose, not by default.
+    /// NATS URL for `--kv nats`, or a comma-separated list of them.
+    ///
+    /// List every server in the cluster. A client given one address does learn the
+    /// others from the INFO the server sends, and fails over to them — but only
+    /// after it has connected to something, so a host starting while its one
+    /// listed server is the one that is down cannot bootstrap (ADR-0067).
+    ///
+    /// Defaults to the lattice's own NATS when `--lattice-nats` is given, because
+    /// running a node's store on a different cluster from its control bus is a
+    /// thing to do on purpose, not by default.
     #[arg(long)]
     nats_url: Option<String>,
     /// Fall back to wasmtime's on-demand allocator. The POOLING allocator
@@ -615,6 +662,21 @@ struct Args {
     /// otherwise, and nothing about the number changes which one an app is.
     #[arg(long, default_value = "0")]
     kv_cache_ms: u64,
+    /// How many copies of each `--kv nats` bucket JetStream keeps.
+    ///
+    /// **0 (the default) means as many as this NATS can hold, up to 3** — it asks
+    /// for 3, and falls back to 1 with a warning if the server is not clustered.
+    /// So a single-node deployment still works and a clustered one is replicated
+    /// without anyone remembering to ask, which is the right way round: one copy
+    /// is a total, silent loss the day that disk dies (ADR-0067).
+    ///
+    /// An explicit number is taken literally and does NOT fall back — asking for
+    /// 3 and quietly getting 1 is how you think you are safe when you are not.
+    ///
+    /// Applies to buckets created from now on. An existing one keeps what it was
+    /// made with; `nats stream update` or `DIR=… REPLICAS=3 just restore` moves it.
+    #[arg(long, default_value = "0")]
+    kv_replicas: usize,
 
     // ---- who this instance is -------------------------------------------
     /// Tenant this component belongs to. With `--app` it decides the store the
@@ -719,7 +781,7 @@ fn parse_config_file(text: &str) -> std::result::Result<Vec<(String, String)>, S
 /// an import with no entry here and no link-table entry means the instance refuses
 /// to start. `agent::HOST_IFACES` is the advertised form of the same list; the two
 /// must agree, and a test asserts the shape of it.
-pub fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
+pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
     let mut linker: Linker<Host> = Linker::new(engine);
     wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
     wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
@@ -730,6 +792,7 @@ pub fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
     cache_source::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
     cache_sink::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
     reader::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
+    cas::add_to_linker::<_, HasSelf<Host>>(&mut linker, |h| h)?;
     Ok(linker)
 }
 
@@ -772,7 +835,18 @@ async fn main() -> Result<()> {
         .clone()
         .or_else(|| args.lattice_nats.clone())
         .unwrap_or_else(|| "127.0.0.1:4222".into());
-    let kv_backend: Kv = kv::build(&kv_kind, &args.redis_url, &nats_url, &sqlite_path).await?;
+    let kv_backend: Kv =
+        kv::build(&kv_kind, &args.redis_url, &nats_url, &sqlite_path, args.kv_replicas).await?;
+    // An explicit 1 is a choice, and it is still worth saying out loud once. The
+    // automatic path warns from inside `store_for`, where it knows whether the
+    // fallback actually happened rather than guessing here.
+    if kv_kind == "nats" && args.kv_replicas == 1 {
+        eprintln!(
+            "comp-host: WARNING --kv-replicas 1 was asked for explicitly. Every bucket \
+             this node creates has ONE copy, so losing the server that holds it loses \
+             the data. Drop the flag to take as many copies as this NATS can hold."
+        );
+    }
     // The profiler ends up OUTSIDE the cache, so it keeps counting what the guest
     // asked for rather than what survived the cache. That is what makes a cached
     // run comparable to an uncached one — the demand is the same number in both —
@@ -849,7 +923,6 @@ async fn main() -> Result<()> {
     let limits = Limits {
         mem_cap: args.mem_cap_mb << 20,
         slice_ms: args.slice_ms,
-        pool_size: 1,
         allow_private_egress: args.allow_private_egress,
         // This host's own listener is never a legitimate egress target: reaching it
         // would let a component call back in as though it were a client.
@@ -934,10 +1007,15 @@ async fn main() -> Result<()> {
             });
             // The node's own NATS connection, shared with the agent so wRPC clients
             // ride the same link rather than opening a second one per instance.
+            // Every server in the list, for the same reason the store takes a list:
+            // failover only helps a process that managed to connect once.
+            let lattice_servers = comp_lattice::nats::servers(nats_url_for_lattice);
             let raw_nats = Arc::new(
-                async_nats::connect(nats_url_for_lattice)
+                async_nats::connect(lattice_servers.clone())
                     .await
-                    .with_context(|| format!("connecting to NATS at {nats_url_for_lattice}"))?,
+                    .with_context(|| {
+                        format!("connecting to NATS at {}", lattice_servers.join(", "))
+                    })?,
             );
             let ag = Arc::new(agent::Agent {
                 platform_url: args.platform_url.clone(),
@@ -1193,7 +1271,7 @@ fn content_type(p: &std::path::Path) -> &'static str {
 /// HTTP request gets — same tenant boundary, same memory cap, same CPU slice, same
 /// allow-list. A second construction path would be a second place for one of those
 /// to be forgotten, and they are the ones ADR-0023 is about.
-pub fn store_for(
+pub(crate) fn store_for(
     engine: &Engine,
     scope: SharedScope,
     kv: Kv,

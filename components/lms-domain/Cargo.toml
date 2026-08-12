@@ -27,6 +27,7 @@ world = "lms-domain"
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "quiz:grade" = { path = "../quiz-grade/wit" }
 "pdf:codec" = { path = "../pdf/wit" }
 "svg:chart" = { path = "../svg-chart/wit" }

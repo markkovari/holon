@@ -24,6 +24,7 @@ world = "passkey-domain"
 
 [package.metadata.component.target.dependencies]
 "records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "cache:store" = { path = "../cache/wit" }
 "session:store" = { path = "../session-store/wit" }
 "webauthn:verify" = { path = "../webauthn/wit" }
