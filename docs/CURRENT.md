@@ -1,9 +1,9 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [72 ADRs](adr/); this page is the map.
+in [73 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0072.
+Last revised after ADR-0073.
 
 ## Shape
 
@@ -121,7 +121,7 @@ fast a dead machine is noticed), `max_inflight` (where the ingress starts sheddi
 
 ## Tests
 
-169 across four crates, `cargo nextest`. No Python anywhere in `bench/` or `e2e/`.
+171 across four crates, `cargo nextest`. No Python anywhere in `bench/` or `e2e/`.
 
 ```
 cargo build --release --manifest-path host/Cargo.toml   # tests spawn this
@@ -139,14 +139,17 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml
 | `reconciler/tests/staleness.rs` | cross-node staleness, and the lost update it causes |
 | `reconciler/tests/ha.rs` | two ingresses, then one dies |
 | `reconciler/tests/leader.rs` | two reconcilers: one acts, and the standby takes over |
+| `reconciler/tests/publish.rs` | public needs a real signature over the real digest |
 | `bench/` | only what drives *other machines* — malna, bobocat, a k8s wasmCloud |
 
 ## Honestly missing
 
-- **`public` catalogue visibility is 501.** It needs signing (ADR-0025); an unsigned
-  public catalogue is worse than none. Private and org work.
-- **No `@version` in a catalogue key**, so visibility is per component rather than per
-  version, which ADR-0007 says it should be.
+- **No `@version` in a catalogue key**, so visibility is per component rather than
+  per version, which ADR-0007 says it should be. `public` is now bound to the
+  digest it was signed for and a new push demotes the row (ADR-0073), which holds
+  the rule in the data — but per-version keys are still the better answer.
+- **No key revocation.** Removing a publisher's key does not un-publish what it
+  signed, and "distrust everything this key signed" has no answer (ADR-0073).
 - **No in-transit wrapping** on the secret fetch — TLS only. Replay is closed
   (ADR-0071: a nonce claimed exactly once, inside a 60s window), but an attacker
   who can read the transport still reads the plaintext. Nothing sweeps spent

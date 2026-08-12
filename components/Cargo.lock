@@ -1035,8 +1035,10 @@ name = "platform-domain"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "p256",
  "serde",
  "serde_json",
+ "sha2",
  "wit-bindgen-rt",
 ]
 
