@@ -141,6 +141,44 @@ wit-check:
 #    artifact is anonymous: `wasm-tools metadata show` reports `unknown(0)` and
 #    `wit:reflect` cannot read a component's own name. ~35 bytes per artifact, and
 #    idempotent — re-running `build` doesn't accumulate sections.
+# Every test in the repo, in every workspace.
+#
+# This exists because there was no such recipe, and that is exactly how
+# `platform-domain` came to have a test target that HAD NEVER COMPILED — a test
+# referenced a function nobody wrote, so all 34 unit tests in the component with
+# the most logic in it were silently unrun, and anything added to them since
+# would have been too. Nothing ran them, so nothing complained.
+#
+# `--no-run` first, deliberately: a target that fails to COMPILE is the failure
+# mode that hides, because a suite reporting "ok" for the crates it managed to
+# build looks identical to a suite where everything ran. Compiling everything up
+# front turns that into a hard stop.
+#
+# The wasm components are native test targets here — the pure logic in them
+# (codecs, key derivation, escaping, parsers) is testable without a runtime, and
+# that is where most of it lives.
+test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for ws in components host lattice cli reconciler; do
+      echo "=== $ws: compiling test targets"
+      (cd "$ws" && cargo test --release --workspace --no-run)
+    done
+    for ws in components host lattice cli reconciler; do
+      echo "=== $ws"
+      (cd "$ws" && cargo test --release --workspace)
+    done
+
+# The same, without the slow integration suites — for a quick check while editing.
+test-fast:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for ws in components host lattice cli; do
+      echo "=== $ws"
+      (cd "$ws" && cargo test --release --workspace)
+    done
+    (cd reconciler && cargo test --release --lib --bins)
+
 build:
     #!/usr/bin/env bash
     set -euo pipefail

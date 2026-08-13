@@ -176,10 +176,15 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml
   bytes nothing can move, and a digest beats a tag in the same reference. Parsed
   and tested; NOT yet resolved anywhere — a deployment still names a bare id, so
   pinning is a shape the code understands and does not act on.
-- **`platform-domain` had a native test target that never compiled.** A test
-  referenced `node_config`, a function nobody ever wrote, so every unit test in
-  that component — 34 of them — had been silently unrun. The helper exists now
-  and they all run.
+- **Nothing ran all the tests, which is how 34 of them went missing.**
+  `platform-domain`'s native test target had never compiled — a test referenced
+  `node_config`, a function nobody wrote — and no recipe or CI ran that
+  workspace, so nothing complained. `just test` now compiles every test target in
+  every workspace FIRST and then runs them: 356 tests, a number nobody could
+  state before. The compile pass is separate on purpose, because a target that
+  fails to build is the failure that hides — a suite reporting "ok" for the
+  crates it managed to build looks exactly like one where everything ran. The
+  guard was checked by re-breaking `node_config` and watching it exit non-zero.
 - **Component bytes are staged by CONTENT; the catalogue row is a pointer.**
   `tenant/id` used to hold the bytes, which made an upload destructive — a second
   build overwrote the first, so two workers pushing different builds of one
