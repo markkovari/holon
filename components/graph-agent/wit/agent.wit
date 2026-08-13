@@ -1,0 +1,81 @@
+// graph:agent — turn a goal and a tree into a candidate, and keep trying.
+//
+// The last piece. Everything either side of this is built: a goal comes off a
+// queue, a branch has its own store, `graph:fitness` judges a candidate by
+// running real commands, and `git:forge` opens the pull request. Nothing turned
+// a goal into something worth judging.
+//
+// WHOLE FILES, not patches. `vgit:store` and `git:forge` both already take whole
+// files, for the reason the forge documents: a patch has to apply to something,
+// and an agent that writes one against a tree it only partly read produces a
+// patch that does not apply. Whole files fail loudly instead of subtly.
+//
+// THE REPAIR LOOP IS THE POINT. A single call from a goal to a diff is a
+// template. What makes this an agent is `attempt` being given the LAST VERDICT —
+// which checks failed and what they said — because that is the only feedback in
+// the system that is not a model's opinion of its own work. `graph:fitness`
+// already returns exactly that shape.
+//
+// IT NAMES ITS FILES. Retrieval would choose them, and retrieval needs
+// embeddings, and no embedding provider is wired (`search:index` is the lexical
+// half only). Requiring a goal to name its files is honest about that; guessing
+// at retrieval that does not exist would not be.
+package graph:agent@0.1.0;
+
+interface writer {
+    variant agent-error {
+        /// The model could not be reached, or answered with nothing usable.
+        inference-failed(string),
+        /// The goal does not say enough to act on — no files, no text.
+        under-specified(string),
+        /// The model answered, and the answer was not a candidate: no file
+        /// blocks, or a path that escapes the tree.
+        unusable-answer(string),
+    }
+
+    record file {
+        path: string,
+        content: string,
+    }
+
+    /// What one check said, from the previous attempt. The subset of
+    /// `graph:fitness`'s outcome that a repair actually needs — an attempt does
+    /// not care what a check WEIGHED, only that it failed and why.
+    record failure {
+        id: string,
+        detail: string,
+    }
+
+    record goal {
+        /// What is wanted, in the author's words.
+        text: string,
+        /// The files this goal is about, with their current contents. Named
+        /// rather than retrieved — see the package comment.
+        context: list<file>,
+        /// Which paths the agent may write. A superset of `context` is normal: a
+        /// goal may create a file that does not exist yet.
+        ///
+        /// An allow-list rather than a convention, because the answer comes from
+        /// a model and "it probably will not touch anything else" is not a
+        /// boundary.
+        writable: list<string>,
+    }
+
+    /// One try. `previous` is empty on the first attempt and carries the last
+    /// verdict's failures on every one after it.
+    ///
+    /// `seed` varies the attempt. It is the same knob `llm:inference` already has
+    /// for reproducibility, used here in reverse: N branches of one generation
+    /// ask the same question with N seeds, which is how they differ while
+    /// staying replayable.
+    attempt: func(
+        g: goal,
+        previous: list<failure>,
+        seed: u64,
+    ) -> result<list<file>, agent-error>;
+}
+
+world graph-agent {
+    export writer;
+    import llm:inference/inference@0.1.0;
+}
