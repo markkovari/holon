@@ -1,0 +1,50 @@
+# A probe → agent-writer → mock-provider.
+#
+# The whole agent is deterministic here, which is the point: "does a repair
+# actually use the failure it was given" is a question about the LOOP, and a
+# random oracle cannot answer it at any price (ADR-0081). The scripted provider
+# matches on the failure text, so the repair rule can only fire if the failure
+# reached the model.
+#
+# Note what this deployment does NOT declare: no egress, no secret. The agent
+# could not reach a real provider if it wanted to.
+
+version: comp/v1
+app: agent
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: agent
+    host_needs: []
+
+  - id: llm
+    config:
+      mock-model: mock-agent
+      mock-script: >
+        {"rules":[
+          {"when":"expected 42","text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 42 }\n=== END"},
+          {"when":"not writable here","text":"=== FILE: /etc/passwd\nowned\n=== END"},
+          {"when":"say nothing useful","text":"I would suggest refactoring the module."},
+          {"when":"make it 42","seed":1,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 41 }\n=== END"},
+          {"when":"make it 42","seed":2,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 40 }\n=== END"},
+          {"when":"*","text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 0 }\n=== END"}
+        ]}
+    host_needs:
+      - wasi:config/store
+
+links:
+  - from: gate
+    import: graph:agent/writer@0.1.0
+    to: agent
+  - from: agent
+    import: llm:inference/inference@0.1.0
+    to: llm
+
+ingress:
+  host: agent.acme.test
+  component: gate

@@ -1,0 +1,83 @@
+# The whole loop in one deployment: probe → driver → {writer → model, gate → runner}.
+#
+# This is the first fixture where every piece of a graph run is present at once.
+# The driver is the only new thing; the writer, the scripted model and the checks
+# runner are each already covered by their own test, so what this one is for is
+# the JOIN — that a failure found by a real command comes back through the
+# evaluator, reaches the model, and changes what it writes.
+#
+# The model is scripted and the checks are real. That split is deliberate: the
+# feedback has to be genuine or the loop proves nothing, and the model has to be
+# deterministic or the loop cannot be asserted about at any price (ADR-0081).
+#
+# The `step_one` rule matches on the CONTENT of the previous candidate rather
+# than on a check id, which is how the test proves a repair is shown what the run
+# has built rather than the untouched tree: that text can only be in the prompt if
+# the driver laid the best candidate over the goal's files.
+#
+# The script has NO `*` fallback. A prompt that has drifted out of the script
+# comes back as an error naming that, rather than as a plausible answer that
+# makes a test pass for the wrong reason.
+#
+# `checks-url` carries a placeholder port; the test rewrites it, because the
+# runner it starts binds whatever port was free.
+
+version: comp/v1
+app: driver
+tenant: acme
+strategy: linked
+
+components:
+  - id: probe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: driver
+    host_needs: []
+
+  - id: agent
+    host_needs: []
+
+  - id: llm
+    config:
+      mock-model: mock-agent
+      mock-script: >
+        {"rules":[
+          {"when":"fix-the-answer","text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 42 }\n=== END"},
+          {"when":"step_one","text":"=== FILE: src/lib.rs\npub fn step_one() {}\npub fn step_two() -> u32 { 42 }\n=== END"},
+          {"when":"build on it","seed":20,"text":"=== FILE: src/lib.rs\npub fn step_one() {}\n=== END"},
+          {"when":"make the answer 42","seed":1,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 41 }\n=== END"},
+          {"when":"go in circles","text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 7 }\n=== END"},
+          {"when":"wander","seed":10,"text":"=== FILE: src/lib.rs\npub fn nothing() {}\n=== END"},
+          {"when":"wander","seed":11,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 41 }\n=== END"},
+          {"when":"wander","seed":12,"text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 43 }\n=== END"}
+        ]}
+    host_needs:
+      - wasi:config/store
+
+  - id: gate
+    config:
+      checks-url: http://127.0.0.1:CHECKS_PORT/check
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+    egress:
+      - 127.0.0.1:CHECKS_PORT
+
+links:
+  - from: probe
+    import: graph:run/driver@0.1.0
+    to: driver
+  - from: driver
+    import: graph:agent/writer@0.1.0
+    to: agent
+  - from: driver
+    import: graph:fitness/evaluator@0.1.0
+    to: gate
+  - from: agent
+    import: llm:inference/inference@0.1.0
+    to: llm
+
+ingress:
+  host: driver.acme.test
+  component: probe

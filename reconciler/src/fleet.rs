@@ -544,9 +544,10 @@ impl Fleet {
             if Instant::now() >= deadline {
                 panic!(
                     "{what} never worked within {within:?} — last answer: {last}\n\
-                     --- node n1 ---\n{}\n--- reconciler ---\n{}",
+                     --- node n1 ---\n{}\n--- reconciler ---\n{}\n--- control plane ---\n{}",
                     self.node_log("n1"),
-                    self.reconciler_log()
+                    self.reconciler_log(),
+                    self.platform_log()
                 );
             }
             std::thread::sleep(Duration::from_millis(500));
@@ -763,6 +764,20 @@ impl Fleet {
 
     pub fn reconciler_log(&self) -> String {
         std::fs::read_to_string(self.dir.path().join("rec.log")).unwrap_or_default()
+    }
+
+    /// The control plane's own log, whichever control plane this fleet started.
+    ///
+    /// In `until`'s failure dump because a fleet that never places anything looks
+    /// identical from the node and the reconciler whether the control plane
+    /// refused a manifest or never started at all — and those are opposite bugs.
+    /// Both names are read: `comp-stub` and `platform-domain` are alternatives,
+    /// and reading only one produces an empty section that reads as "nothing
+    /// wrong here".
+    pub fn platform_log(&self) -> String {
+        let stub = std::fs::read_to_string(self.dir.path().join("stub.log")).unwrap_or_default();
+        let real = std::fs::read_to_string(self.dir.path().join("platform.log")).unwrap_or_default();
+        format!("{stub}{real}")
     }
 
     /// Replicas the fleet is running, straight from inventory.

@@ -1,0 +1,12 @@
+// driver:agent — `graph:run` over `graph:agent` and `graph:fitness`.
+//
+// The concrete side of the swap point. All the judgement about WHEN TO STOP
+// lives here; which model writes and which runner judges are deployment
+// decisions this never sees.
+package driver:agent@0.1.0;
+
+world agent-driver {
+    export graph:run/driver@0.1.0;
+    import graph:agent/writer@0.1.0;
+    import graph:fitness/evaluator@0.1.0;
+}

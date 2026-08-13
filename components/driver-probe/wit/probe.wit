@@ -1,0 +1,7 @@
+// comp:driverprobe — an instrument for `graph:run/driver`, not a feature.
+package comp:driverprobe@0.1.0;
+
+world driver-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import graph:run/driver@0.1.0;
+}

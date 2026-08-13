@@ -61,6 +61,25 @@ interface writer {
         writable: list<string>,
     }
 
+    /// What one attempt produced, and what it cost.
+    ///
+    /// The cost is here rather than inferred by the caller because the caller
+    /// cannot see it: the driver never speaks to a provider, and a budget
+    /// measured in ATTEMPTS is not a budget — three cheap tries and three
+    /// expensive ones are the same number.
+    record candidate {
+        files: list<file>,
+        /// As the provider reported it. Zero from a provider that reports
+        /// nothing, which is a reason to distrust a budget rather than to
+        /// invent a number for it.
+        prompt-tokens: u32,
+        completion-tokens: u32,
+        /// Which model actually answered. A tier router makes this vary between
+        /// attempts of a single run, and "what did this cost" is unanswerable
+        /// without it.
+        model: string,
+    }
+
     /// One try. `previous` is empty on the first attempt and carries the last
     /// verdict's failures on every one after it.
     ///
@@ -72,7 +91,7 @@ interface writer {
         g: goal,
         previous: list<failure>,
         seed: u64,
-    ) -> result<list<file>, agent-error>;
+    ) -> result<candidate, agent-error>;
 }
 
 world graph-agent {

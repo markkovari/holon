@@ -3,7 +3,7 @@
 What runs today, what is measured, and what is honestly missing. The reasoning lives
 in [80 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0080.
+Last revised after ADR-0083.
 
 ## Shape
 
@@ -167,13 +167,87 @@ three of them — and both are now enforced by a helper rather than by rememberi
 
 ## Honestly missing
 
+- **One branch runs; nothing compares branches.** `graph:run/driver` now joins the
+  writer to the gate: attempt, judge, repair from what the checks actually said,
+  stop. It stops for a stated reason — `accepted`, `plateau` when an attempt
+  reproduces a candidate already on record, `exhausted` when the attempt budget
+  runs out, `no-progress` when `patience` attempts in a row fail to beat the best
+  score, `over-budget` when the token budget is spent — and keeps the best
+  candidate by score rather than the last, because a repair can be worse than what
+  it repaired. Each repair is shown the best candidate rather than the untouched
+  tree, which is what makes it a repair and not a re-roll with hints attached.
+
+  The budget is in TOKENS, reported by the writer with each candidate, because a
+  budget in tries is not a budget. It under-reports by whatever the unusable
+  answers cost — cost travels with a candidate and an unusable answer produces
+  none — which is why `max-attempts` still exists as the hard bound.
+
+  `graph:select/selector` is the layer above one branch, and the only path from a
+  branch to a pull request. The gate is enforced by the SHAPE of `land`, which
+  takes runs rather than files — so there is no argument by which a caller could
+  land a candidate the checks rejected. Ties break on score, then the smaller
+  change, then the cheaper run, then the earlier branch; the last exists to be
+  deterministic. Every selection reports how many DISTINCT candidates the
+  generation produced, because a herded generation looks exactly like a healthy
+  one and nothing else can see it.
+
+  `generation::fan_out` joins them, and it is native for the reason the rest is
+  not: a component runs one call at a time, and a generation whose branches ran in
+  sequence would be a for-loop wearing the word. Measured at 4 branches, **1948 ms
+  wall against 5849 ms of branch time**.
+
+  `generation::search` runs generations of generations. Each after the first is
+  seeded with the last one's best candidate AND the checks it still failed —
+  seeding the code without the verdict hands branches broken work and does not say
+  why. Proven against a goal NO single generation can reach: `max_attempts` is 1
+  so no branch can repair itself, and the only winning answer is keyed on text
+  that exists solely in a seeded prompt.
+
+  Diversity is authored rather than hoped for. Branches differing only by seed
+  share a prompt, a context and a model; each now gets a LENS, and exactly one
+  branch per generation is shown NOTHING from the previous one. That branch is the
+  only escape from a local optimum once every other branch inherits the last
+  winner, and the test asserts it by what it PRODUCED rather than by the flag set
+  on it. The first branch is always asked exactly what the goal says, so a lens
+  that turns out to hurt stays visible.
+
+  Bounded three ways, none replacing another: rounds when generations are cheap, a
+  token budget ACROSS the search when they are not, and patience for a search that
+  is neither expensive nor going anywhere.
+
+  **A branch can now have its own environment.** ADR-0078 gave an environment its
+  own store by deriving the app name and then gave it no ingress at all, which is
+  right about the hazard — the parent's hostname on two apps routes to whichever
+  the ingress saw last — and leaves an app that cannot be driven from outside. A
+  swarm branch is precisely something that must be driven. ADR-0083 derives the
+  host instead: `branch-0.swarm.ada.test`, a strict suffix of the parent's, so it
+  cannot collide with it and collides with a sibling only if the names do — which
+  spawning already refuses. `generation::Strategy` carries the host, so a branch
+  and its address are one thing.
+
+  Proven by three environments writing THE SAME KEY, each reading back its own,
+  the parent finding nothing. The same key on purpose: different keys per branch
+  pass just as happily against one shared bucket.
+
+  What is left: the loop is not yet DEPLOYED into environments. `envbranch.rs`
+  proves a branch has an addressable store of its own; the driver graph is still
+  put up from a fixture and driven on one host, so wiring the two means deploying
+  that graph through the platform API and spawning an environment per branch.
+  Also open: an environment is a COPY, so no branch can run a different model from
+  its siblings — diversity is prompt-deep. Tokens are not money. And nothing picks
+  a started goal off the queue; `comp goal start` records that one started, and a
+  person is still the wire between that and a search.
+  A branch now spends against a token budget; a PROJECT still does not, and
+  nothing converts tokens to money or refunds a branch that died. Branches differ only by seed — same prompt, same context — so herding is
+  unmitigated and does not announce itself. And the agent NAMES ITS FILES rather
+  than retrieving them, because no embedding provider is wired.
 - **The gate runs checks; nothing calls it yet.** `comp-checks` materialises a
   candidate over a base tree, runs allow-listed commands in it, and reports the
   CHECK VECTOR — every required check passing is the gate, the weighted fraction
   is the score (ADR-0081). It is native because a component cannot spawn a
-  process, and that is the sandbox working rather than a gap. What is missing is
-  a caller: no evaluator component wraps it, and nothing turns a goal into
-  candidates to feed it.
+  process, and that is the sandbox working rather than a gap. `checks-runner`
+  wraps it as `graph:fitness/evaluator` and `graph:run/driver` now feeds it
+  candidates, so this end is joined.
 - **The check runner needs no checkout.** A caller that can read `vgit:store`
   posts the base tree once, keyed by its commit id; the runner caches it under
   that content address and every later candidate on the same base sends only its

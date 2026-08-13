@@ -8,6 +8,7 @@
 /// exactly what the tests need — and two harnesses that start fleets slightly
 /// differently would produce numbers that cannot be compared with the assertions.
 pub mod fleet;
+pub mod generation;
 pub mod oci;
 pub mod plan;
 pub mod settings;
