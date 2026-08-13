@@ -34,6 +34,13 @@ use bindings::wasi::io::streams::StreamError;
 
 struct Component;
 
+/// Step tracing to stderr, visible in the host log. Temporary, for debugging the
+/// outbound path.
+fn trace(m: &str) {
+    let s = bindings::wasi::cli::stderr::get_stderr();
+    let _ = s.blocking_write_and_flush(format!("[anthropic] {m}\n").as_bytes());
+}
+
 const DEFAULT_BASE: &str = "https://api.anthropic.com";
 // Cheapest current tier, which is the right default for a graph loop that makes
 // many calls; a deployment bumps it to sonnet/opus with one config value.
@@ -145,9 +152,12 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     let _ = opts.set_connect_timeout(Some(30_000_000_000)); // 30s
     let _ = opts.set_first_byte_timeout(Some(180_000_000_000)); // 180s
     let _ = opts.set_between_bytes_timeout(Some(180_000_000_000)); // 180s
+    trace("handing request to host");
     let future = outgoing_handler::handle(req, Some(opts))
         .map_err(|e| InferError::ProviderUnavailable(format!("http handle: {e:?}")))?;
+    trace("blocking on response future");
     future.subscribe().block();
+    trace("response future ready");
     let resp = future
         .get()
         .ok_or_else(|| net("no response"))?
@@ -155,6 +165,7 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
         .map_err(|e| InferError::ProviderUnavailable(format!("http: {e:?}")))?;
 
     let status = resp.status();
+    trace(&format!("got status {status}; reading body"));
     let mut buf = Vec::new();
     if let Ok(incoming) = resp.consume() {
         if let Ok(stream) = incoming.stream() {
@@ -168,6 +179,7 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
             }
         }
     }
+    trace(&format!("read {} body bytes", buf.len()));
     Ok((status, buf))
 }
 

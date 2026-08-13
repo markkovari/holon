@@ -586,11 +586,16 @@ impl WasiHttpHooks for Egress {
             // buffered response has no worker to starve. The cost is holding the
             // response in host memory, which for a model answer is kilobytes.
             let scheme = if config.use_tls { "https" } else { "http" };
+            let t0 = std::time::Instant::now();
             let out = reqwest_send(scheme, &authority, request, &config).await;
             if trace {
+                let ms = t0.elapsed().as_millis();
                 match &out {
-                    Ok(_) => eprintln!("comp-host: [egress] {who} {target} -> response received"),
-                    Err(e) => eprintln!("comp-host: [egress] {who} {target} -> ERROR {e:?}"),
+                    Ok(r) => eprintln!(
+                        "comp-host: [egress] {who} {target} -> {} in {ms}ms",
+                        r.resp.status()
+                    ),
+                    Err(e) => eprintln!("comp-host: [egress] {who} {target} -> ERROR in {ms}ms {e:?}"),
                 }
             }
             Ok(out)
