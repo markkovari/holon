@@ -47,9 +47,7 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::bindings::ProxyPre;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
-use wasmtime_wasi_http::p2::{
-    default_send_request_handler, HttpResult, WasiHttpCtxView, WasiHttpHooks, WasiHttpView,
-};
+use wasmtime_wasi_http::p2::{HttpResult, WasiHttpCtxView, WasiHttpHooks, WasiHttpView};
 use wasmtime_wasi_http::WasiHttpCtx;
 
 // Generate host traits for the non-standard imports from host/wit/host.wit.
@@ -579,7 +577,16 @@ impl WasiHttpHooks for Egress {
             // between this check and the dial. The real fix is a connector pinned
             // to the address we checked; do it if egress ever guards something an
             // attacker would spend a rebind on.
-            let out = default_send_request_handler(request, config).await;
+            //
+            // The outbound goes through reqwest and the WHOLE response body is
+            // buffered here, rather than through wasmtime's streaming handler.
+            // That handler hands the guest a body backed by a live connection a
+            // background worker must keep pumping; against a real TLS remote that
+            // stalled — the response headers arrived and the body never did. A
+            // buffered response has no worker to starve. The cost is holding the
+            // response in host memory, which for a model answer is kilobytes.
+            let scheme = if config.use_tls { "https" } else { "http" };
+            let out = reqwest_send(scheme, &authority, request, &config).await;
             if trace {
                 match &out {
                     Ok(_) => eprintln!("comp-host: [egress] {who} {target} -> response received"),
@@ -590,6 +597,89 @@ impl WasiHttpHooks for Egress {
         });
         Ok(HostFutureIncomingResponse::pending(handle))
     }
+}
+
+/// Make one outbound request through reqwest and buffer the whole response into a
+/// wasi:http `IncomingResponse`.
+///
+/// This is the reliable half of the egress path: reqwest owns the connection, the
+/// TLS, and the body read to completion, then hands back bytes. The guest sees a
+/// finished in-memory body with no background worker to stall — which is exactly
+/// the failure the streaming handler hit against a real TLS remote.
+async fn reqwest_send(
+    scheme: &str,
+    authority: &str,
+    request: hyper::Request<HyperOutgoingBody>,
+    config: &OutgoingRequestConfig,
+) -> Result<wasmtime_wasi_http::p2::types::IncomingResponse, ErrorCode> {
+    use http_body_util::{BodyExt, Full};
+
+    let (parts, body) = request.into_parts();
+    let path =
+        parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".to_string());
+    let url = format!("{scheme}://{authority}{path}");
+
+    // Collect the request body the guest wrote.
+    let body_bytes =
+        body.collect().await.map(|c| c.to_bytes()).map_err(|_| ErrorCode::HttpRequestBodySize(None))?;
+
+    // Copy the guest's headers, minus the ones a client library owns: host and
+    // content-length are set by reqwest from the URL and the body, and the
+    // hop-by-hop headers describe a connection reqwest manages itself.
+    let mut headers = reqwest::header::HeaderMap::new();
+    for (k, v) in parts.headers.iter() {
+        let name = k.as_str().to_ascii_lowercase();
+        if matches!(
+            name.as_str(),
+            "host" | "content-length" | "connection" | "transfer-encoding" | "keep-alive" | "upgrade"
+        ) {
+            continue;
+        }
+        headers.insert(k.clone(), v.clone());
+    }
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(config.connect_timeout)
+        .timeout(config.first_byte_timeout)
+        .build()
+        .map_err(|_| ErrorCode::InternalError(Some("http client".into())))?;
+
+    let resp = client
+        .request(parts.method, &url)
+        .headers(headers)
+        .body(body_bytes)
+        .send()
+        .await
+        .map_err(|e| ErrorCode::InternalError(Some(format!("reqwest: {e}"))))?;
+
+    let status = resp.status();
+    let resp_headers = resp.headers().clone();
+    // The whole body, read to completion here.
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| ErrorCode::InternalError(Some(format!("reqwest body: {e}"))))?;
+
+    let mut builder = hyper::Response::builder().status(status);
+    for (k, v) in resp_headers.iter() {
+        // content-length/transfer-encoding described reqwest's framing; the guest
+        // gets a fixed in-memory body, so let hyper compute its own.
+        let name = k.as_str().to_ascii_lowercase();
+        if matches!(name.as_str(), "content-length" | "transfer-encoding" | "connection") {
+            continue;
+        }
+        builder = builder.header(k, v);
+    }
+    let hyper_body = Full::new(bytes).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync();
+    let resp = builder
+        .body(hyper_body)
+        .map_err(|_| ErrorCode::InternalError(Some("response build".into())))?;
+
+    Ok(wasmtime_wasi_http::p2::types::IncomingResponse {
+        resp,
+        worker: None,
+        between_bytes_timeout: config.between_bytes_timeout,
+    })
 }
 
 // ---- config ---------------------------------------------------------------
