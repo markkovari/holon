@@ -128,9 +128,13 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
         OutgoingBody::finish(out, None).map_err(|_| net("finish body"))?;
     }
 
-    // Generous, because a model generating a whole file takes seconds.
+    // Generous, because a model generating a whole file takes seconds. All three
+    // are set explicitly: an unset default that is short is exactly how a call
+    // that should take three seconds dies as "data receipt timed out".
     let opts = RequestOptions::new();
-    let _ = opts.set_first_byte_timeout(Some(120_000_000_000));
+    let _ = opts.set_connect_timeout(Some(30_000_000_000)); // 30s
+    let _ = opts.set_first_byte_timeout(Some(180_000_000_000)); // 180s
+    let _ = opts.set_between_bytes_timeout(Some(180_000_000_000)); // 180s
     let future = outgoing_handler::handle(req, Some(opts))
         .map_err(|e| InferError::ProviderUnavailable(format!("http handle: {e:?}")))?;
     future.subscribe().block();
