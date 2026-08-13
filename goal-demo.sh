@@ -14,6 +14,13 @@ export REPO="markkovari/agentic-graph-loop-prompt-engineering-playground-generat
 export ANTHROPIC_KEY="$HOME/.comp-secrets/anthropic"
 export GITHUB_TOKEN="$HOME/.comp-secrets/ghpat"
 
+# Tuning knobs pass through from the environment, so you can isolate problems:
+#   env BRANCHES=1 ATTEMPTS=1 bash goal-demo.sh real   # one branch, one attempt
+export BRANCHES="${BRANCHES:-4}"
+export ROUNDS="${ROUNDS:-1}"
+export ATTEMPTS="${ATTEMPTS:-2}"
+export MODEL="${MODEL:-claude-haiku-4-5-20251001}"
+
 # Smoke by default; `real` as the first argument does the real run.
 if [ "${1:-smoke}" = "real" ]; then
   export SMOKE=0

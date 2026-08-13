@@ -420,6 +420,18 @@ fn main() -> Result<()> {
         entries.len()
     );
 
+    // When a branch never ran (a transport note rather than a verdict), the
+    // reason is in the host and ingress logs, which the fleet's tempdir throws
+    // away on exit. Surface the tail of each so one failed run is diagnosable.
+    if entries.iter().any(|e| !e.note.is_empty()) {
+        let tail = |s: &str, n: usize| {
+            let lines: Vec<&str> = s.lines().collect();
+            lines[lines.len().saturating_sub(n)..].join("\n")
+        };
+        eprintln!("\n===== host n1 (last 40 lines) =====\n{}", tail(&fleet.node_log("n1"), 40));
+        eprintln!("\n===== ingress (last 25 lines) =====\n{}", tail(&fleet.ingress_log(""), 25));
+    }
+
     if !found.accepted {
         let best = found.best.as_ref().map(|e| e.score).unwrap_or(0);
         println!("\nNothing passed the gate (best score {best}). No PR opened.");
