@@ -105,7 +105,19 @@ async fn main() -> Result<()> {
     let mut vault = HashMap::new();
     for s in &args.secrets {
         let (reference, value) = s.split_once('=').context("--secret wants vault://org/name=value")?;
-        vault.insert(reference.to_string(), value.to_string());
+        // `@path` reads the value from a FILE, so a real credential never appears
+        // in argv (and hence never in `ps`, a shell history, or a crash dump). The
+        // curl convention; the path is not the secret. A trailing newline is
+        // trimmed because an editor adds one and a key with a stray `\n` fails auth
+        // in a way that is maddening to diagnose.
+        let value = match value.strip_prefix('@') {
+            Some(path) => std::fs::read_to_string(path)
+                .with_context(|| format!("reading secret from {path}"))?
+                .trim_end_matches(['\n', '\r'])
+                .to_string(),
+            None => value.to_string(),
+        };
+        vault.insert(reference.to_string(), value);
     }
     let manifests = load(&args.specs, args.tenant.as_deref())?;
     eprintln!(

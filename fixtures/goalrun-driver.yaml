@@ -1,0 +1,69 @@
+# The real driver graph for a live run: probe → driver → writer → anthropic,
+# and driver → gate (checks-runner → comp-checks).
+#
+# The model is REAL (anthropic-provider, egress to api.anthropic.com, key from
+# the vault) and the gate is REAL (checks-runner dials comp-checks over loopback,
+# which runs `uv run pytest`). This is the whole agent, unmocked.
+#
+# Egress is declared per component here because a fixture writes it directly —
+# api.anthropic.com for the writer's provider, the loopback checks port for the
+# gate. The key is a secret by reference, never config (ADR-0051).
+#
+# ANTHROPIC_MODEL and CHECKS_PORT are rewritten by the runner before start.
+
+version: comp/v1
+app: goalrun
+tenant: acme
+strategy: linked
+
+components:
+  - id: probe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: driver
+    host_needs: []
+
+  - id: writer
+    host_needs: []
+
+  - id: llm
+    config:
+      anthropic:model: ANTHROPIC_MODEL
+      anthropic:max-tokens: "4096"
+    secrets:
+      - key: anthropic-api-key
+        ref: vault://acme/anthropic
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - api.anthropic.com
+
+  - id: gate
+    config:
+      checks-url: http://127.0.0.1:CHECKS_PORT/check
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+    egress:
+      - 127.0.0.1:CHECKS_PORT
+
+links:
+  - from: probe
+    import: graph:run/driver@0.1.0
+    to: driver
+  - from: driver
+    import: graph:agent/writer@0.1.0
+    to: writer
+  - from: driver
+    import: graph:fitness/evaluator@0.1.0
+    to: gate
+  - from: writer
+    import: llm:inference/inference@0.1.0
+    to: llm
+
+ingress:
+  host: goalrun.acme.test
+  component: probe

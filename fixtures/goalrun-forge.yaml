@@ -1,0 +1,51 @@
+# The landing graph for a live run: select-probe → graph-selector → github-forge.
+#
+# The selector picks the winner among the branches and hands ONLY the winner to
+# the forge, which opens a real pull request on GitHub. The gate is enforced by
+# the shape of `land` (it takes runs, not files), so nothing that failed its
+# checks can reach the repository.
+#
+# The PAT is a secret by reference; the repository and API host are config. Egress
+# is api.github.com.
+#
+# FORGE_REPO is rewritten by the runner (owner/name).
+
+version: comp/v1
+app: goalland
+tenant: acme
+strategy: linked
+
+components:
+  - id: sprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: selector
+    host_needs: []
+
+  - id: forge
+    config:
+      forge-repo: FORGE_REPO
+      forge-base: main
+      forge-api: https://api.github.com
+    secrets:
+      - key: forge-token
+        ref: vault://acme/forge
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - api.github.com
+
+links:
+  - from: sprobe
+    import: graph:select/selector@0.1.0
+    to: selector
+  - from: selector
+    import: git:forge/repo@0.1.0
+    to: forge
+
+ingress:
+  host: goalland.acme.test
+  component: sprobe

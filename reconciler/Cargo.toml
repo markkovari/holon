@@ -64,6 +64,10 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 name = "comp-stub"
 path = "src/bin/stub.rs"
 
+[[bin]]
+name = "comp-goalrun"
+path = "src/bin/goalrun.rs"
+
 # The one part of the loop that genuinely needs an operating system: a gate has
 # to run the project's own tests, and a component cannot spawn a process.
 [[bin]]

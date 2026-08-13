@@ -1929,3 +1929,42 @@ restore:
       echo "  $s"
     done
     echo "restored $n bucket(s) from $DIR to $URL"
+
+# ---- graph-engineering: run a goal to a pull request -----------------------
+#
+# The one command behind the showcase. Builds the components and the native
+# binaries, then drives a real search (real model, real gate, real forge) over a
+# checked-out repo and opens a PR for the winner.
+#
+#   just goal-run \
+#     checkout=/path/to/repo repo=owner/name \
+#     anthropic_key=~/.secrets/anthropic github_token=~/.secrets/ghpat
+#
+# Inputs come from the ENVIRONMENT, not just variables — immune to just's
+# override rules, argument ordering, and any stale justfile a nearby repo might
+# shadow this with. Secrets are FILE PATHS, never values: nothing sensitive
+# reaches argv.
+#
+#   CHECKOUT=/path/to/repo REPO=owner/name \
+#   ANTHROPIC_KEY=~/.comp-secrets/anthropic GITHUB_TOKEN=~/.comp-secrets/ghpat \
+#   SMOKE=1 just goal-run
+#
+# Optional: BRANCHES, ROUNDS, MODEL, ATTEMPTS, DRY_RUN=1, SMOKE=1.
+goal-run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${CHECKOUT:?set CHECKOUT=/path/to/repo}"
+    : "${REPO:?set REPO=owner/name}"
+    : "${ANTHROPIC_KEY:?set ANTHROPIC_KEY=/path/to/keyfile}"
+    : "${GITHUB_TOKEN:?set GITHUB_TOKEN=/path/to/tokenfile}"
+    just build
+    cd host && cargo build --release --bin comp-host && cd ..
+    cd reconciler && cargo build --release --bins && cd ..
+    # Expand a leading ~ that a quoted env value keeps literal.
+    ck="${CHECKOUT/#\~/$HOME}"; ak="${ANTHROPIC_KEY/#\~/$HOME}"; gt="${GITHUB_TOKEN/#\~/$HOME}"
+    args=(--checkout "$ck" --repo "$REPO" --anthropic-key "$ak" --github-token "$gt" \
+          --branches "${BRANCHES:-4}" --rounds "${ROUNDS:-1}" \
+          --model "${MODEL:-claude-haiku-4-5-20251001}" --attempts "${ATTEMPTS:-2}")
+    [ "${DRY_RUN:-0}" = "1" ] && args+=(--dry-run)
+    [ "${SMOKE:-0}" = "1" ] && args+=(--smoke)
+    ./reconciler/target/release/comp-goalrun "${args[@]}"
