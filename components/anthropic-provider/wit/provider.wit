@@ -1,0 +1,36 @@
+// anthropic:provider — a concrete LLM provider implementing `llm:inference`.
+//
+// The other side of the swap point, for Anthropic's Messages API. `llm:inference`
+// defines the vendor-agnostic shape of a chat call; this implements it by POSTing
+// to `/v1/messages`. Which provider a deployment links is a wasi:config choice;
+// nothing upstream (the agent, the driver) knows Anthropic was chosen.
+//
+// Why a SEPARATE component from openai-provider rather than a config flag on it:
+// the wire contracts genuinely differ. Anthropic authenticates with `x-api-key`
+// and an `anthropic-version` header, not a bearer token; it carries the system
+// prompt as a top-level field rather than a message; its response is a list of
+// content blocks, not choices; it has no `seed`; and `max_tokens` is required,
+// not optional. A single component straddling both would be a runtime switch
+// over two codecs, which is two components wearing one name.
+//
+// Config (wasi:config/store):
+//   anthropic:base-url    API base, default "https://api.anthropic.com"
+//   anthropic:model       default model, e.g. "claude-haiku-4-5-20251001"
+//   anthropic:version     API version header, default "2023-06-01"
+//   anthropic:max-tokens  cap when the caller sets none, default "4096"
+//
+// The KEY is a secret, granted by reference and read through comp:secrets/reader
+// under `anthropic-api-key` (ADR-0010, ADR-0051) — never config.
+//
+// NO EMBEDDINGS. Anthropic has no embeddings endpoint (they point at a separate
+// vendor), so `embed` returns invalid-request rather than pretending. A
+// deployment that needs retrieval links a dedicated embedding provider for that
+// one interface.
+package anthropic:provider@0.1.0;
+
+world anthropic-provider {
+    export llm:inference/inference@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
+}

@@ -505,6 +505,40 @@ enum GoalCmd {
     },
     /// Start one. The only transition a person MUST make for work to happen.
     Start { id: String },
+    /// Run a goal to a pull request, here and now.
+    ///
+    /// Drives a real search — real model, real gate, real forge — over a local
+    /// checkout and opens a PR for the winner. This is the whole loop; it just
+    /// still takes a person to type it (ADR-0082). Wraps the `comp-goalrun`
+    /// binary, which holds the fleet machinery a thin CLI cannot.
+    Run {
+        /// A local checkout of the target repo, holding `.comp/goal.toml`.
+        #[arg(long)]
+        checkout: PathBuf,
+        /// `owner/name` of the repository the PR opens on.
+        #[arg(long)]
+        repo: String,
+        /// A FILE holding the Anthropic key. Never a value — a path.
+        #[arg(long)]
+        anthropic_key: PathBuf,
+        /// A FILE holding the GitHub token.
+        #[arg(long)]
+        github_token: PathBuf,
+        #[arg(long, default_value_t = 4)]
+        branches: u16,
+        #[arg(long, default_value_t = 1)]
+        rounds: u16,
+        #[arg(long, default_value = "claude-haiku-4-5-20251001")]
+        model: String,
+        #[arg(long, default_value_t = 2)]
+        attempts: u32,
+        /// Search and rank, but open no PR.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Bring the fleet up and check it serves, without any model call.
+        #[arg(long, default_value_t = false)]
+        smoke: bool,
+    },
     /// Send one to the dead-letter queue, with a reason. Terminal: a retry is a
     /// new goal, so what was tried stays visible.
     Fail {
@@ -617,6 +651,47 @@ fn main() -> Result<()> {
         }
         Cmd::Goal(GoalCmd::Ls { project, state }) => platform::goal_ls(&project, state.as_deref())?,
         Cmd::Goal(GoalCmd::Start { id }) => platform::goal_start(&id)?,
+        Cmd::Goal(GoalCmd::Run {
+            checkout,
+            repo,
+            anthropic_key,
+            github_token,
+            branches,
+            rounds,
+            model,
+            attempts,
+            dry_run,
+            smoke,
+        }) => {
+            // Exec the sibling binary that holds the fleet. Found on PATH, or via
+            // COMP_GOALRUN_BIN, or next to this executable — so a `cargo install`
+            // and a `just`-built tree both work.
+            let bin = std::env::var("COMP_GOALRUN_BIN").unwrap_or_else(|_| "comp-goalrun".into());
+            let mut cmd = std::process::Command::new(&bin);
+            cmd.arg("--checkout").arg(&checkout)
+                .args(["--repo", &repo])
+                .arg("--anthropic-key").arg(&anthropic_key)
+                .arg("--github-token").arg(&github_token)
+                .args(["--branches", &branches.to_string()])
+                .args(["--rounds", &rounds.to_string()])
+                .args(["--model", &model])
+                .args(["--attempts", &attempts.to_string()]);
+            if dry_run {
+                cmd.arg("--dry-run");
+            }
+            if smoke {
+                cmd.arg("--smoke");
+            }
+            let status = cmd.status().map_err(|e| {
+                anyhow::anyhow!(
+                    "could not run `{bin}` ({e}). Build it with `just goal-run` (which builds \
+                     and runs in one step), or set COMP_GOALRUN_BIN to its path."
+                )
+            })?;
+            if !status.success() {
+                std::process::exit(status.code().unwrap_or(1));
+            }
+        }
         Cmd::Goal(GoalCmd::Fail { id, reason }) => platform::goal_fail(&id, &reason)?,
         Cmd::Goal(GoalCmd::Rm { id }) => platform::goal_abandon(&id)?,
         Cmd::Secret(SecretCmd::Set { name, from, org }) => {
