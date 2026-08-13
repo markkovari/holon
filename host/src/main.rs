@@ -517,6 +517,17 @@ struct Egress {
 }
 
 impl WasiHttpHooks for Egress {
+    /// How many outgoing-body write calls the host buffers before the guest's
+    /// next write blocks. The default is 1 — a channel of two chunks — and a
+    /// guest that writes its whole request body BEFORE calling `handle` (the
+    /// normal pattern) then deadlocks the moment the body exceeds that: the
+    /// writes block waiting for a consumer that only runs once `handle` is
+    /// called, which never happens. A gate posting a base tree of a real repo
+    /// hit exactly this at ~8 KB. Raised so a many-KB request body flows.
+    fn outgoing_body_buffer_chunks(&mut self) -> usize {
+        8192
+    }
+
     fn send_request(
         &mut self,
         request: hyper::Request<HyperOutgoingBody>,
