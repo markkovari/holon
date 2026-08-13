@@ -163,7 +163,7 @@ impl Drop for Checks {
     }
 }
 impl Checks {
-    fn start(allow: &[&str]) -> Result<Self> {
+    fn start(allow: &[&str], check_env: &[String]) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let port = free_port();
         let mut cmd = Command::new(bin_path("comp-checks"));
@@ -173,6 +173,9 @@ impl Checks {
             .args(["--timeout", "120"]);
         for a in allow {
             cmd.args(["--allow", a]);
+        }
+        for e in check_env {
+            cmd.args(["--check-env", e]);
         }
         let child = cmd.stdout(Stdio::null()).stderr(Stdio::inherit()).spawn()?;
         let me = Self { child, port, _dir: dir };
@@ -284,10 +287,42 @@ fn main() -> Result<()> {
     );
     println!("gate allows: {allow:?}");
 
+    // A warm, SHARED tool cache for the gate. Without it comp-checks gives each
+    // candidate a fresh HOME, so `uv` re-downloads its toolchain from a cold
+    // cache every time and the run times out. These dirs persist between runs, so
+    // the cost is paid once, ever.
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let uv_cache = format!("{home}/.cache/comp-goalrun/uv");
+    let uv_python = format!("{home}/.cache/comp-goalrun/uv-python");
+    std::fs::create_dir_all(&uv_cache).ok();
+    std::fs::create_dir_all(&uv_python).ok();
+    let check_env =
+        vec![format!("UV_CACHE_DIR={uv_cache}"), format!("UV_PYTHON_INSTALL_DIR={uv_python}")];
+
+    // Pre-warm: run each uv check once IN THE CHECKOUT, populating that cache
+    // before any candidate is judged. The result does not matter (the stub fails
+    // its own tests); the download does.
+    for c in &goal.checks {
+        if c.command.first().map(String::as_str) == Some("uv") {
+            println!("warming the gate cache ({}) …", c.command.join(" "));
+            let _ = Command::new(&c.command[0])
+                .args(&c.command[1..])
+                .current_dir(&args.checkout)
+                .env("UV_CACHE_DIR", &uv_cache)
+                .env("UV_PYTHON_INSTALL_DIR", &uv_python)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+
     // Bring the gate up first, so the driver fixture can point at it.
-    let gate = Checks::start(&allow)?;
+    let gate = Checks::start(&allow, &check_env)?;
 
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
+    // One guest request does a model call plus a test suite; the ingress's 30s
+    // default backend timeout kills that as "n1 timed out". Give it room.
+    std::env::set_var("COMP_FLEET_BACKEND_TIMEOUT", "240");
     let driver_spec = render(
         "goalrun-driver.yaml",
         &[("CHECKS_PORT", &gate.port.to_string()), ("ANTHROPIC_MODEL", &args.model)],

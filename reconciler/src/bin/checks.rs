@@ -82,6 +82,18 @@ struct Args {
     /// Seconds any single check may take before it is killed.
     #[arg(long, default_value = "300")]
     timeout: u64,
+
+    /// Extra `KEY=VALUE` environment for the check command, repeatable.
+    ///
+    /// The check runs with a CLEARED environment (so an agent-authored check
+    /// cannot read the runner's credentials); this is the operator's controlled
+    /// exception. It exists so a warm, shared tool cache can be pointed at —
+    /// `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR` — without which every candidate
+    /// re-downloads its toolchain from a cold cache and the whole run times out.
+    /// Operator input, never the agent's: the agent names the command, not its
+    /// environment.
+    #[arg(long = "check-env")]
+    check_env: Vec<String>,
 }
 
 /// One thing to check about a candidate.
@@ -226,7 +238,13 @@ fn apply(into: &Path, changes: &[FileChange]) -> Result<()> {
     Ok(())
 }
 
-fn run_check(dir: &Path, check: &Check, allow: &[Vec<String>], timeout: u64) -> Result1 {
+fn run_check(
+    dir: &Path,
+    check: &Check,
+    allow: &[Vec<String>],
+    timeout: u64,
+    extra_env: &[(String, String)],
+) -> Result1 {
     let started = Instant::now();
     let refuse = |detail: String| Result1 {
         id: check.id.clone(),
@@ -262,6 +280,11 @@ fn run_check(dir: &Path, check: &Check, allow: &[Vec<String>], timeout: u64) -> 
         .env("CARGO_TERM_COLOR", "never")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    // Operator-provided env, applied last so it can point a tool at a warm shared
+    // cache. Not agent input — the agent named the command, not this.
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -394,8 +417,14 @@ fn evaluate(
     materialise(&base, &work)?;
     apply(&work, &req.changes)?;
 
+    // Parsed once per request; cheap, and keeps `run_check` free of arg-parsing.
+    let extra_env: Vec<(String, String)> = args
+        .check_env
+        .iter()
+        .filter_map(|e| e.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .collect();
     let results: Vec<Result1> =
-        req.checks.iter().map(|c| run_check(&work, c, allow, args.timeout)).collect();
+        req.checks.iter().map(|c| run_check(&work, c, allow, args.timeout, &extra_env)).collect();
 
     // The RUN tree is thrown away; the cached BASE is not. A check that leaves
     // debris must not poison the next candidate, and keeping run trees around is
