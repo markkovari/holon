@@ -140,6 +140,17 @@ const SCHEDULABLE: &[(&str, &str, &[&str])] = &[
     ("wasi", "keyvalue", &["store", "atomics", "batch"]),
     ("wasi", "config", &["store"]),
     ("wasi", "blobstore", &["blobstore", "container"]),
+    // The `comp:` extensions, and they were missing for two ADRs. A component
+    // importing one could not be deployed at all: the platform reported
+    // `unsatisfied_imports` for an interface the host grants on every node.
+    //
+    // `record-store` imports `comp:store/cas` since ADR-0066, so this refused
+    // every app built on records — and nothing noticed, because no test deployed
+    // a record-using component through the real control plane until one did.
+    // `host/src/agent.rs`'s `HOST_IFACES` is the same list from the other side and
+    // says the two must agree; nothing checks that, which is how they drifted.
+    ("comp", "secrets", &["reader"]),
+    ("comp", "store", &["cas"]),
 ];
 
 fn schedulable(h: &HostIface) -> bool {

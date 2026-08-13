@@ -1,0 +1,79 @@
+// git:forge — propose a change to a repository: a branch, a commit, a pull request.
+//
+// The output end of a graph engineering loop. A swarm that explores in parallel
+// has to land the winner somewhere, and the somewhere a team already reads is a
+// pull request — it carries the diff, the discussion, the approval semantics and
+// the audit trail without any of them being built (ADR-0081).
+//
+// Deliberately NOT a git implementation. A forge that speaks a hosting API over
+// HTTP needs no working tree, no local clone, no `git` binary and no host
+// capability beyond the socket comp already grants — the same reasoning that made
+// `knowledge:graph` a component rather than a database driver in the host.
+//
+// The vendor is out of the contract, exactly as it is for `llm:inference`. Which
+// forge answers is a deployment choice.
+package git:forge@0.1.0;
+
+interface repo {
+    variant forge-error {
+        /// The forge refused it. Carries what it said.
+        rejected(string),
+        /// Unreachable, or an answer that could not be understood.
+        unavailable(string),
+        /// No token, or no repository configured.
+        not-configured(string),
+        /// Something is already there — the branch exists, or the base moved
+        /// under us. Distinct from `rejected` because the caller's move is to
+        /// pick another name or re-read the base, not to fix its request.
+        conflict(string),
+    }
+
+    /// One file, after the change. Whole contents, not a diff: a patch has to be
+    /// applied to something, and an agent that produces a patch against a tree it
+    /// only partly read produces a patch that does not apply. Whole files fail
+    /// loudly instead.
+    record file-change {
+        path: string,
+        content: string,
+    }
+
+    /// What to propose.
+    record proposal {
+        /// The branch to create. Must not exist — see `conflict`.
+        branch: string,
+        /// What to branch FROM. Empty means the repository's default.
+        base: string,
+        title: string,
+        body: string,
+        /// The commit message. Separate from the title because they say different
+        /// things: one describes the change, the other sells it.
+        message: string,
+        changes: list<file-change>,
+    }
+
+    /// What came back, so a caller can record where the work went.
+    record opened {
+        number: u32,
+        url: string,
+        /// The commit that was created, for provenance in the knowledge graph.
+        commit: string,
+        branch: string,
+    }
+
+    /// Create the branch, commit the changes onto it, open the pull request.
+    ///
+    /// One call on purpose. The intermediate states — a branch with no commit, a
+    /// commit with no pull request — are not useful to a caller and every one of
+    /// them is a way to leave litter in a repository if the caller dies midway.
+    propose: func(p: proposal) -> result<opened, forge-error>;
+
+    /// What the base branch currently points at.
+    ///
+    /// A swarm needs this BEFORE it starts: every branch must be judged against
+    /// the same base, or the winner is whichever one happened to start later.
+    base-commit: func(base: string) -> result<string, forge-error>;
+}
+
+world git-forge {
+    export repo;
+}

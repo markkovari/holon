@@ -1,0 +1,20 @@
+// comp:vgitprobe — an instrument for `vgit:store`, not a feature.
+//
+// The serialisation is checked against the real `git` binary in virt-git's own
+// tests. What those cannot reach is the half that runs on a fleet: whether
+// objects actually land in `blob:store`, whether a ref survives a guarded write,
+// whether an unchanged subtree is really reused rather than rewritten, and
+// whether a commit made by a component deployed on a node still has the id git
+// would give it.
+//
+// That last one is the point. A component that computes git ids correctly in a
+// unit test and stores them wrongly on a fleet is a component that looks right
+// and is not.
+package comp:vgitprobe@0.1.0;
+
+world vgit-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import vgit:store/objects@0.1.0;
+    import vgit:store/refs@0.1.0;
+    import vgit:store/worktree@0.1.0;
+}

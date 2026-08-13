@@ -1,0 +1,13 @@
+// comp:forgeprobe — an instrument for `git:forge`, not a feature.
+//
+// `git:forge/repo` is six HTTP calls in a fixed order where the order matters:
+// the branch is created last so a mid-sequence failure cannot leave litter. That
+// ordering, the base64 blob encoding, the `base_tree` that keeps untouched files,
+// and the token arriving from the vault are all claims that need a caller to be
+// checked at all. This is that caller.
+package comp:forgeprobe@0.1.0;
+
+world forge-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import git:forge/repo@0.1.0;
+}

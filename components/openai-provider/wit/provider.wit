@@ -14,17 +14,22 @@
 //
 // Config (wasi:config/runtime):
 //   openai:base-url   API base, default "https://api.openai.com/v1"
-//   openai:api-key    bearer token (required for real OpenAI; some local
-//                     servers ignore it)
 //   openai:model      default chat model, e.g. "gpt-4o-mini"
 //   openai:embed-model default embedding model, e.g. "text-embedding-3-small"
+//
+// The KEY is not config. It is a secret, granted by reference in the manifest
+// and read through `comp:secrets/reader` under `openai-api-key` (ADR-0010,
+// ADR-0051): a config map is read by anything that can read the deployment,
+// dumped by every debug endpoint, and a bearer token that spends real money
+// does not belong in one.
 package openai:provider@0.1.0;
 
 /// Exports the vendor-agnostic `llm:inference/inference`, implemented over an
-/// OpenAI-compatible HTTP API. Imports wasi:http (the call) and wasi:config
-/// (base-url / api-key / model).
+/// OpenAI-compatible HTTP API. Imports wasi:http (the call), wasi:config
+/// (base-url / models) and comp:secrets (the key).
 world openai-provider {
     export llm:inference/inference@0.1.0;
     import wasi:http/outgoing-handler@0.2.0;
     import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
 }

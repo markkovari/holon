@@ -1,0 +1,12 @@
+// comp:artifactprobe — an instrument for `artifact:cache`, not a feature.
+//
+// The claim mechanism is the whole reason this component exists, and it is the
+// one thing a unit test cannot check: whether TWENTY branches looking up the same
+// key at the same instant produce exactly ONE producer. That needs concurrent
+// callers, a real store and a real guarded write.
+package comp:artifactprobe@0.1.0;
+
+world artifact-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import artifact:cache/store@0.1.0;
+}

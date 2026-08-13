@@ -1,0 +1,33 @@
+[package]
+name = "artifact-probe"
+description = "Instrument: does artifact:cache give exactly one claim when a swarm all misses at once? (comp:artifactprobe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "comp:artifactprobe"
+
+[package.metadata.component.target]
+path = "wit"
+world = "artifact-probe"
+
+[package.metadata.component.target.dependencies]
+"artifact:cache" = { path = "../artifact-cache/wit" }
+"blob:store" = { path = "../blob-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

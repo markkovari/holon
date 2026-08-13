@@ -81,6 +81,21 @@ pub struct Satisfies {
     pub plug: String,
 }
 
+/// The config a deployment's node carries, by component id.
+///
+/// Pulled out of `deployment_save` because its test was written here and the
+/// function never was — so the test referenced a name that did not exist and the
+/// whole native test target of this component failed to compile. Nothing in it
+/// had run since, including anything added later.
+pub fn node_config(nodes: &[serde_json::Value], id: &str) -> serde_json::Map<String, serde_json::Value> {
+    nodes
+        .iter()
+        .find(|n| n["id"].as_str() == Some(id))
+        .and_then(|n| n["config"].as_object())
+        .cloned()
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,4 +166,53 @@ mod tests {
         assert!(node_config(&nodes, "store").is_empty(), "no config is not an error");
         assert!(node_config(&nodes, "ghost").is_empty());
     }
+}
+
+/// `POST /api/projects`
+///
+/// One repository per project (ADR-0082). Multi-repo is an open goal, and the
+/// shape it would take — a list — is deliberately not built, because every
+/// downstream thing that says "the base" would have to become "the base of each".
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewProject {
+    pub name: String,
+    /// `owner/name` on the forge.
+    pub repo: String,
+    #[serde(default)]
+    pub base: Option<String>,
+    /// A `vault://` reference. Never a token — a manifest and a record are the
+    /// same kind of place as far as ADR-0010 is concerned.
+    #[serde(default)]
+    pub forge_token_ref: Option<String>,
+    #[serde(default)]
+    pub llm_key_ref: Option<String>,
+    /// Units per run. Recorded, and enforced by nothing yet — said out loud in
+    /// ADR-0082 so it cannot be mistaken for working.
+    #[serde(default)]
+    pub budget: Option<u64>,
+}
+
+/// `POST /api/projects/{project}/goals`
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewGoal {
+    pub title: String,
+    /// A path in the repository — `.comp/goals/x.md`. The spec lives in git so it
+    /// is versioned, reviewable, and content-addressed for free (ADR-0081).
+    #[serde(default)]
+    pub spec: Option<String>,
+    /// Lower runs sooner. Only an ordering hint: a human starts every goal, so
+    /// this sorts a worklist rather than driving anything.
+    #[serde(default)]
+    pub priority: Option<i64>,
+}
+
+/// `POST /api/goals/{id}/fail`
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FailGoal {
+    /// Why. A dead-letter entry with no reason is a dead-letter entry nobody can
+    /// act on, which is the only thing a DLQ is for.
+    pub reason: String,
 }

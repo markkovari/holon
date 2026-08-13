@@ -46,7 +46,14 @@ struct Component;
 /// of `wasi:*` as "std" and files `wasi:keyvalue`, `wasi:config` and
 /// `wasi:blobstore` alongside real component contracts, so the catalog cannot say
 /// which imports `wac plug` is able to erase.
-const HOST_NAMESPACES: &[&str] = &["wasi", "wasmcloud"];
+/// `comp` is here for the same reason `wasi` is: `comp:secrets/reader` (ADR-0061)
+/// and `comp:store/cas` (ADR-0066) are implemented by the host on every node, so
+/// they are satisfied by running rather than by wiring. Leaving them out made
+/// every component that imports one undeployable with `unsatisfied_imports` —
+/// including anything using `record-store`, which has imported `comp:store/cas`
+/// since ADR-0066. Nothing caught it because nothing deployed a record-using
+/// component through the real control plane until `tests/environments.rs`.
+const HOST_NAMESPACES: &[&str] = &["wasi", "wasmcloud", "comp"];
 
 /// wasmtime refuses to instantiate a component nesting more than this many
 /// component instances. It is why `vet-domain` cannot be fused in one piece

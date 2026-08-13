@@ -65,19 +65,40 @@ fn size_seen_by(fleet: &Fleet, node: u16, id: &str) -> Option<u64> {
 
 fn read_batch(fleet: &Fleet, node: u16, id: &str) -> (Option<u64>, String) {
     let Some(port) = fleet.host_port(node) else { return (None, "no such node".into()) };
-    let r = match client()
-        .get(format!("http://127.0.0.1:{port}/api/batch/{id}"))
-        .header("host", "shop.eve.test")
-        .send()
-    {
-        Ok(r) => r,
-        Err(e) => return (None, format!("transport: {e}")),
-    };
-    let status = r.status().as_u16();
-    let body = r.text().unwrap_or_default();
-    let v: serde_json::Value = serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-    let n = v["items"].as_array().map(|a| a.len() as u64).or_else(|| v["size"].as_u64());
-    (n, format!("{status} {body}"))
+
+    // A dropped CONNECTION is retried; an ANSWER never is.
+    //
+    // The distinction is the whole point. What this file measures is whether a
+    // node serves a stale value, and a stale value arrives as a perfectly good
+    // 200 — retrying that would be retrying away the phenomenon under test until
+    // the cache happened to be fresh, which would make the file worthless while
+    // green.
+    //
+    // A refused or reset connection is not an answer about the cache at all. It
+    // said nothing, and under a loaded machine one connection in a few hundred
+    // says nothing; a single one used to fail the whole test.
+    let mut last = String::new();
+    for attempt in 0..5 {
+        match client()
+            .get(format!("http://127.0.0.1:{port}/api/batch/{id}"))
+            .header("host", "shop.eve.test")
+            .send()
+        {
+            Ok(r) => {
+                let status = r.status().as_u16();
+                let body = r.text().unwrap_or_default();
+                let v: serde_json::Value =
+                    serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
+                let n = v["items"].as_array().map(|a| a.len() as u64).or_else(|| v["size"].as_u64());
+                return (n, format!("{status} {body}"));
+            }
+            Err(e) => {
+                last = format!("transport (attempt {}/5): {e}", attempt + 1);
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        }
+    }
+    (None, last)
 }
 
 /// Both nodes must actually hold a replica before any of this means anything.

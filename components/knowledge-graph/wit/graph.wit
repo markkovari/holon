@@ -1,0 +1,90 @@
+// knowledge:graph — nodes, edges and traversal, over SurrealDB's HTTP API.
+//
+// A graph engineering loop needs to remember what it learned: which file relates
+// to which symbol, which attempt came from which parent, what an agent concluded
+// and why. `record:store` gives typed records and secondary indexes, which
+// answers "find rows where field = value" and cannot answer "what is two hops
+// from here" — traversal is the whole point of a knowledge graph and the one
+// thing an index over flat records will not do.
+//
+// SurrealDB is reached over `wasi:http/outgoing-handler`, which means this stays
+// a COMPONENT: no host rebuild, no native driver, and the deployment's egress
+// allow-list decides which server it may talk to (ADR-0008). The URL and
+// namespace are `wasi:config`; the password is a SECRET, because a manifest must
+// never carry one (ADR-0010) and this is exactly what `comp:secrets/reader` is
+// for.
+package knowledge:graph@0.1.0;
+
+interface store {
+    /// Why a call failed. Deliberately coarse: a caller can retry, fix its input,
+    /// or give up, and a finer taxonomy would be inventing distinctions the
+    /// database does not make.
+    variant graph-error {
+        /// The database refused the statement. Carries what it said.
+        rejected(string),
+        /// The database could not be reached, or answered with nothing usable.
+        unavailable(string),
+        /// This component has no credentials configured.
+        not-configured(string),
+    }
+
+    /// A node: a thing worth remembering, addressed by kind and id.
+    record node {
+        kind: string,
+        id: string,
+        /// A JSON object. Opaque here — the graph owns the shape of the graph,
+        /// the caller owns the shape of what it stores.
+        properties: string,
+    }
+
+    /// Which way an edge points, from the perspective of the node being asked.
+    enum direction {
+        /// `node -> edge -> other`
+        outgoing,
+        /// `other -> edge -> node`
+        incoming,
+        /// Either.
+        both,
+    }
+
+    /// Create or replace a node. Idempotent: the same kind and id is the same
+    /// node, so a loop that re-learns something does not duplicate it.
+    upsert: func(n: node) -> result<_, graph-error>;
+
+    /// Read one node back. `none` when it is not there — absence is an answer,
+    /// not an error.
+    get: func(kind: string, id: string) -> result<option<node>, graph-error>;
+
+    /// Connect two nodes. `properties` travels on the EDGE, which is where
+    /// "why" and "when" belong when the reason is about the relationship rather
+    /// than about either end of it.
+    relate: func(
+        from-node: node,
+        edge: string,
+        to-node: node,
+        properties: string,
+    ) -> result<_, graph-error>;
+
+    /// One hop. The thing `record:store` cannot do.
+    neighbours: func(
+        kind: string,
+        id: string,
+        edge: string,
+        dir: direction,
+        limit: u32,
+    ) -> result<list<node>, graph-error>;
+
+    /// Raw SurrealQL, for the questions this interface has not learned to ask.
+    ///
+    /// An escape hatch on purpose, and a sharp one: whatever is passed here goes
+    /// to the database as written. A caller that builds this from untrusted input
+    /// has written an injection, and no amount of care in here can fix that.
+    query: func(surql: string) -> result<string, graph-error>;
+}
+
+world knowledge-graph {
+    export store;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
+}

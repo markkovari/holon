@@ -387,6 +387,15 @@ enum Cmd {
     /// Organisations: who owns a deployment, when a person belongs to several.
     #[command(subcommand)]
     Org(OrgCmd),
+    /// Secrets: values a manifest must never carry, stored by reference.
+    #[command(subcommand)]
+    Secret(SecretCmd),
+    /// Projects: a repository, its credentials, and a queue of goals.
+    #[command(subcommand)]
+    Project(ProjectCmd),
+    /// Goals: the worklist. Nothing starts one but you (ADR-0082).
+    #[command(subcommand)]
+    Goal(GoalCmd),
 }
 
 #[derive(Subcommand)]
@@ -454,6 +463,93 @@ enum OrgCmd {
 }
 
 #[derive(Subcommand)]
+enum ProjectCmd {
+    /// Add one. ONE repository per project — multi-repo is an open goal, not a
+    /// missing feature (ADR-0082).
+    Add {
+        name: String,
+        #[arg(long)]
+        repo: String,
+        #[arg(long, default_value = "main")]
+        base: String,
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Every project, with how much work is queued, running and dead-lettered.
+    Ls {
+        #[arg(long)]
+        org: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum GoalCmd {
+    /// Queue one. It sits there until you start it.
+    Add {
+        project: String,
+        title: String,
+        /// A path in the repo — `.comp/goals/x.md`. The spec belongs in git,
+        /// where it is versioned and content-addressed for free.
+        #[arg(long)]
+        spec: Option<String>,
+        /// Lower runs sooner. An ordering hint for a person reading a worklist.
+        #[arg(long)]
+        priority: Option<i64>,
+    },
+    /// The worklist, priority first.
+    Ls {
+        project: String,
+        /// queued | running | awaiting-human | done | failed | abandoned
+        #[arg(long)]
+        state: Option<String>,
+    },
+    /// Start one. The only transition a person MUST make for work to happen.
+    Start { id: String },
+    /// Send one to the dead-letter queue, with a reason. Terminal: a retry is a
+    /// new goal, so what was tried stays visible.
+    Fail {
+        id: String,
+        #[arg(long)]
+        reason: String,
+    },
+    /// Drop one that was never started.
+    Rm { id: String },
+}
+
+#[derive(Subcommand)]
+enum SecretCmd {
+    /// Store one. The VALUE never comes from the command line — an argument
+    /// lands in shell history and in `ps` for every other user on the box, and
+    /// neither can be taken back.
+    ///
+    ///   comp secret set openai            # prompts, hidden, asks twice
+    ///   comp secret set openai --from ./key.txt
+    ///   pbpaste | comp secret set openai  # a pipe stays silent, for scripts
+    Set {
+        /// The name the reference is built from: `vault://<org>/<name>`.
+        name: String,
+        /// Read the value from this file instead of stdin.
+        #[arg(long)]
+        from: Option<PathBuf>,
+        /// Which org owns it. Defaults to your personal one.
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Names and references. There is no command that prints a value, because
+    /// there is no endpoint that returns one.
+    Ls {
+        #[arg(long)]
+        org: Option<String>,
+    },
+    /// Delete one. Anything granted it stops starting on the next reconcile.
+    Rm {
+        name: String,
+        #[arg(long)]
+        org: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum NodeCmd {
     /// Render a TLS front for `comp-ingress`, so the lattice has one HTTPS door.
     ///
@@ -512,6 +608,22 @@ fn main() -> Result<()> {
         Cmd::App(AppCmd::Create { name, strategy, components, links, org }) => {
             platform::app_create(&name, &strategy, &components, &links, org.as_deref())?
         }
+        Cmd::Project(ProjectCmd::Add { name, repo, base, org }) => {
+            platform::project_add(&name, &repo, &base, org.as_deref())?
+        }
+        Cmd::Project(ProjectCmd::Ls { org }) => platform::project_ls(org.as_deref())?,
+        Cmd::Goal(GoalCmd::Add { project, title, spec, priority }) => {
+            platform::goal_add(&project, &title, spec.as_deref(), priority)?
+        }
+        Cmd::Goal(GoalCmd::Ls { project, state }) => platform::goal_ls(&project, state.as_deref())?,
+        Cmd::Goal(GoalCmd::Start { id }) => platform::goal_start(&id)?,
+        Cmd::Goal(GoalCmd::Fail { id, reason }) => platform::goal_fail(&id, &reason)?,
+        Cmd::Goal(GoalCmd::Rm { id }) => platform::goal_abandon(&id)?,
+        Cmd::Secret(SecretCmd::Set { name, from, org }) => {
+            platform::secret_set(&name, from.as_ref(), org.as_deref())?
+        }
+        Cmd::Secret(SecretCmd::Ls { org }) => platform::secret_ls(org.as_deref())?,
+        Cmd::Secret(SecretCmd::Rm { name, org }) => platform::secret_rm(&name, org.as_deref())?,
         Cmd::Org(OrgCmd::Create { name }) => platform::org_create(&name)?,
         Cmd::Org(OrgCmd::Ls) => platform::org_ls()?,
         Cmd::Org(OrgCmd::Invite { org, role }) => platform::org_invite(&org, &role)?,

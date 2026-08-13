@@ -1,0 +1,46 @@
+# The SAME probe as `llm-secret.yaml`, wired to a scripted provider instead of a
+# real one. That is the point being demonstrated: `llm:inference` is the swap
+# point, so the caller is byte-for-byte identical and cannot tell.
+#
+# Note what this component does NOT declare: no `wasi:http/outgoing-handler`, no
+# secret. It could not reach a provider if it wanted to, and it has nothing to
+# authenticate with — so a test using it cannot spend money by accident. That is
+# stronger than remembering to point a base URL somewhere harmless.
+#
+# Three branches ask the same question with three different seeds and get three
+# different candidates, which is how a swarm is simulated without paying for one.
+
+version: comp/v1
+app: llm
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: llm
+    config:
+      mock-model: mock-swarm-1
+      mock-script: >
+        {"rules":[
+          {"when":"add a cache","seed":1,"text":"CANDIDATE ONE: memoise the lookup"},
+          {"when":"add a cache","seed":2,"text":"CANDIDATE TWO: put an LRU in front"},
+          {"when":"add a cache","seed":3,"text":"CANDIDATE THREE: cache at the edge"},
+          {"when":"add a cache","text":"CANDIDATE FALLBACK: do nothing clever"},
+          {"when":"rate limit me","error":"provider-denied","detail":"429 slow down"},
+          {"when":"say nothing","text":""},
+          {"when":"*","text":"I have no rule for that."}
+        ]}
+    host_needs:
+      - wasi:config/store
+
+links:
+  - from: gate
+    import: llm:inference/inference@0.1.0
+    to: llm
+
+ingress:
+  host: llm.acme.test
+  component: gate

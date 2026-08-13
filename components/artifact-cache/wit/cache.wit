@@ -1,0 +1,117 @@
+// artifact:cache — hand derived work between agents instead of redoing it.
+//
+// A swarm exploring twenty branches of one repository does not have twenty
+// different repositories. It has one base tree and twenty small diffs — so the
+// chunking, the embeddings, the dependency resolution and most of the compiling
+// are IDENTICAL across branches. Recomputing them per branch is the largest
+// avoidable cost in the whole design, and it is avoidable because every one of
+// those things is a pure function of inputs that are already content-addressed
+// (ADR-0081, vgit:store).
+//
+// So: an artifact is named by what produced it and what it was produced from,
+// never by where it came from or when.
+//
+//     id = hash(producer, version, inputs, params)
+//
+// The VERSION is in the key and not beside it. A chunker that changed its
+// splitting rule produces artifacts that are not interchangeable with its old
+// ones, and a cache that returns them anyway is worse than no cache — it is a
+// cache that silently serves wrong answers, which is the same failure as an
+// embedding index whose model moved underneath it.
+//
+// Deliberately separate from `vgit:store`, though both are content-addressed. A
+// git object is source and is kept; an artifact is derived, is large, and is
+// evictable precisely BECAUSE it can always be recomputed. Mixing them would put
+// build output in a repository's object store and give the two the same
+// retention, which is right for neither.
+package artifact:cache@0.1.0;
+
+interface store {
+    variant cache-error {
+        /// The backing store was unreachable.
+        unavailable(string),
+        /// The key or the claim does not make sense.
+        invalid(string),
+        /// The claim is not yours, or expired while you held it.
+        not-your-claim(string),
+    }
+
+    /// What an artifact IS, in the only terms that matter for reuse.
+    record artifact-key {
+        /// What made it: "chunker", "cargo-check", "embed".
+        producer: string,
+        /// The producer's own version. In the key on purpose — see above.
+        version: string,
+        /// What it was made FROM: git object ids, other artifact ids. Order is
+        /// significant and the caller's responsibility, because for most
+        /// producers it is.
+        inputs: list<string>,
+        /// Anything else that changes the output. Canonical form is the caller's
+        /// job; two spellings of the same options are two artifacts.
+        params: string,
+    }
+
+    record artifact {
+        id: string,
+        bytes: list<u8>,
+        content-type: string,
+        /// Who produced it, and when — for provenance, never for lookup.
+        producer: string,
+        stored-at: u64,
+    }
+
+    /// What a lookup found, and what the caller should do about it.
+    ///
+    /// The three-way answer IS the design. A plain `option` would have every
+    /// branch miss at the same instant and every branch compute the same
+    /// expensive thing — which is exactly the moment a swarm most needs the
+    /// cache, because generation one is where all the duplication lives.
+    variant outcome {
+        /// Here it is. Nobody recomputes anything.
+        hit(artifact),
+        /// Not here, and YOU have the claim: compute it and `put` with this
+        /// token. Held under a lease, so a producer that dies does not wedge
+        /// the key forever.
+        claimed(string),
+        /// Not here, and someone else is already computing it. Retry after this
+        /// many milliseconds — or go and do something else, which is usually
+        /// better.
+        pending(u64),
+    }
+
+    /// The id a key derives to, without touching the store.
+    ///
+    /// Exposed because a caller often wants to name an artifact — to pass it to
+    /// another agent, or to use it as an input to a further one — before knowing
+    /// whether it exists.
+    derive-id: func(key: artifact-key) -> string;
+
+    /// Look, and claim if it is absent.
+    lookup: func(key: artifact-key) -> result<outcome, cache-error>;
+
+    /// Fetch by id alone. This is how an artifact is HANDED OVER: an agent passes
+    /// a forty-character id, not megabytes, and the receiver pulls it only if it
+    /// actually needs the bytes.
+    get: func(id: string) -> result<option<artifact>, cache-error>;
+
+    /// Store the result against a claim you hold.
+    put: func(claim: string, bytes: list<u8>, content-type: string) -> result<string, cache-error>;
+
+    /// I could not produce it. Release the claim so somebody else may try,
+    /// rather than making every other branch wait out the lease for a result
+    /// that is never coming.
+    abandon: func(claim: string) -> result<_, cache-error>;
+}
+
+world artifact-cache {
+    export store;
+    /// The bytes.
+    import blob:store/blobstore@0.1.0;
+    /// The claims. A claim is a guarded write or it is nothing: two branches
+    /// claiming the same key at the same instant is the normal case here, not
+    /// the rare one (ADR-0065).
+    import comp:store/cas@0.1.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

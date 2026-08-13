@@ -1,0 +1,43 @@
+# A probe wired to `github-forge`, and the forge's token in the vault.
+#
+# The token appears nowhere in this file. It can push code, so it is the last
+# thing that belongs in a manifest (ADR-0010) — `secrets` carries a reference the
+# platform resolves. `config` carries the deployment choices: which repository,
+# which API host, which base branch.
+#
+# `forge-api` holds a placeholder port. The test rewrites it, because the stand-in
+# forge it starts binds whatever port was free.
+
+version: comp/v1
+app: forge
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: forge
+    config:
+      forge-repo: acme/widgets
+      forge-base: main
+      forge-api: http://127.0.0.1:FORGE_PORT
+    secrets:
+      - key: forge-token
+        ref: vault://acme/forge
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - 127.0.0.1:FORGE_PORT
+
+links:
+  - from: gate
+    import: git:forge/repo@0.1.0
+    to: forge
+
+ingress:
+  host: forge.acme.test
+  component: gate

@@ -205,7 +205,7 @@ fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
 /// There is a race between closing this listener and the child binding it. It is
 /// small, and the alternative — children reporting a port they chose — needs a
 /// channel out of every process here, including `nats-server`.
-fn free_port() -> u16 {
+pub fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .expect("no free port")
         .local_addr()
@@ -233,7 +233,7 @@ impl Fleet {
         // Tests run what production runs: pooling on (ADR-0054), read cache off
         // (ADR-0063 — it trades cross-node freshness, so a test asserting shared
         // state must not get it by accident).
-        Self::start_full(lattice, specs, &[], &[], nodes, max_inflight, kv, true, 0, &[])
+        Self::start_full(lattice, specs, &[], &[], nodes, max_inflight, kv, true, 0, &[], false)
     }
 
     /// A fleet whose control plane holds a vault: `vault://<org>/<name>=value`.
@@ -246,7 +246,19 @@ impl Fleet {
         artifacts: &[String],
         secrets: &[String],
     ) -> Self {
-        Self::start_full(lattice, specs, artifacts, secrets, 1, None, None, true, 0, &[])
+        Self::start_full(lattice, specs, artifacts, secrets, 1, None, None, true, 0, &[], false)
+    }
+
+    /// A fleet driven by the REAL control plane, for tests that exercise the
+    /// platform's own API rather than a fixture — deploying, then spawning an
+    /// environment and watching the loop converge on it (ADR-0078).
+    pub fn start_with_platform(lattice: &str, nodes: u16) -> Self {
+        Self::start_full(lattice, &[], &[], &[], nodes, None, None, true, 0, &[], true)
+    }
+
+    /// Where the control plane is listening.
+    pub fn platform_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.platform_port)
     }
 
     /// A fleet whose nodes carry LABELS, so placement constraints have something
@@ -286,6 +298,7 @@ impl Fleet {
             true,
             0,
             labels,
+            false,
         )
     }
 
@@ -293,7 +306,7 @@ impl Fleet {
     /// two or more: on one node the cache invalidates its own writes and cannot be
     /// caught being stale.
     pub fn start_with_cache(lattice: &str, specs: &[&str], nodes: u16, cache_ms: u64) -> Self {
-        Self::start_full(lattice, specs, &[], &[], nodes, None, None, true, cache_ms, &[])
+        Self::start_full(lattice, specs, &[], &[], nodes, None, None, true, cache_ms, &[], false)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -311,6 +324,8 @@ impl Fleet {
         // `labels[i]` goes to node i+1, as `--label k=v`. Empty means unlabelled,
         // which is what every entry point but `start_with_labels` wants.
         labels: &[&str],
+        // Run `platform-domain` as the control plane instead of `comp-stub`.
+        real_platform: bool,
     ) -> Self {
         let root = repo_root();
         let host_bin = std::env::var("COMP_HOST_BIN")
@@ -330,6 +345,45 @@ impl Fleet {
         children.push(spawn_logged("nats-server", &mut nats, &sp.join("nats.log")));
         std::thread::sleep(Duration::from_secs(2));
 
+        // The REAL control plane instead of the stub, when asked. `comp-stub` serves
+        // fixtures and nothing else, which is right for a placement test and
+        // useless for anything that exercises the platform's own API — spawning an
+        // environment, for instance, is a `platform-domain` feature the stub has
+        // never heard of.
+        if real_platform {
+            let component = root.join("components/target/platform_domain.composed.wasm");
+            assert!(component.exists(), "missing {} — just compose-platform", component.display());
+            let mut cp = Command::new(&host_bin);
+            cp.current_dir(&root)
+                .arg("--component")
+                .arg(&component)
+                .args(["--addr", &format!("127.0.0.1:{platform_port}"), "--kv", "sqlite"])
+                .arg("--sqlite-path")
+                .arg(sp.join("platform.db"))
+                .args(["--tenant", "platform", "--app", "control-plane"])
+                .args(["--config", "applier-secret=test-secret"])
+                .args(["--config", "ingress-suffix=test"])
+                // Envelope encryption for the vault (`secrets-vault`). Without
+                // it every write is refused with "master key missing", which
+                // makes the whole secret path untestable — and a fixed test key
+                // is fine precisely because nothing real is ever stored here.
+                .args(["--config", "master-key=Y29tcC10ZXN0LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU="]);
+            // Admission control (ADR-0082). A test that wants to see the refusal
+            // sets it low; everything else needs it high enough not to fire.
+            if let Ok(lag) = std::env::var("COMP_MAX_PLACEMENT_LAG") {
+                cp.args(["--config", &format!("max-placement-lag={lag}")]);
+            }
+            // How old a fleet report may be before admission fails closed. Low
+            // enough to observe, in the one test that wants to see it.
+            if let Ok(per) = std::env::var("COMP_MAX_PLACEMENT_LAG_PER_NODE") {
+                cp.args(["--config", &format!("max-placement-lag-per-node={per}")]);
+            }
+            if let Ok(age) = std::env::var("COMP_STATUS_MAX_AGE") {
+                cp.args(["--config", &format!("status-max-age={age}")]);
+            }
+            children.push(spawn_logged("control-plane", &mut cp, &sp.join("platform.log")));
+            std::thread::sleep(Duration::from_secs(2));
+        }
         let mut stub = Command::new(bin_path("comp-stub"));
         stub.current_dir(&root).args(["--port", &platform_port.to_string()]);
         for s in specs {
@@ -345,7 +399,9 @@ impl Fleet {
         for s in secrets {
             stub.args(["--secret", s]);
         }
-        children.push(spawn_logged("comp-stub", &mut stub, &sp.join("stub.log")));
+        if !real_platform {
+            children.push(spawn_logged("comp-stub", &mut stub, &sp.join("stub.log")));
+        }
 
         let nats_url = format!("nats://127.0.0.1:{nats_port}");
         let mut host_pids = Vec::new();
@@ -375,6 +431,18 @@ impl Fleet {
             }
             if let Some(l) = labels.get((n - 1) as usize) {
                 c.args(["--label", l]);
+            }
+            // A harness runs everything on loopback, and loopback is a PRIVATE
+            // address the host refuses to dial by default (ADR-0008). So a test
+            // whose subject talks to a real backing service — a database, say —
+            // cannot exist without this, and it is opt-in rather than always-on
+            // so that no OTHER test gets the allowance it never asked for.
+            //
+            // It widens the address check only. The per-instance allow-list still
+            // decides which authority an instance may name, which is the half a
+            // fixture is asserting when it writes `egress:` out by hand.
+            if std::env::var_os("COMP_FLEET_ALLOW_PRIVATE_EGRESS").is_some() {
+                c.arg("--allow-private-egress");
             }
             let child = spawn_logged("comp-host", &mut c, &sp.join(format!("n{n}.log")));
             host_pids.push(child.0.id());
@@ -430,6 +498,67 @@ impl Fleet {
         port
     }
 
+    /// Wait until the fleet has actually PLACED the app — until some node
+    /// advertises an instance carrying `host` as its ingress.
+    ///
+    /// This exists because every cheaper check is a lie. A successful request
+    /// proves nothing: an ingress with an empty routing table still answers, by
+    /// asking the reconciler to activate the app and routing to whatever address
+    /// comes back. So both `serves()` and "poll until requests stop failing" go
+    /// green while inventory is still empty and no ingress can route anything —
+    /// which is precisely how a test could pass in isolation, fail under load,
+    /// and be misdiagnosed four times.
+    ///
+    /// Inventory is the only honest answer to "has it converged", because
+    /// inventory is what routing is built from.
+    pub fn wait_for_placement(&self, host: &str, within: Duration) -> bool {
+        let (url, lattice) = (self.nats_url.clone(), self.lattice.clone());
+        let host = host.to_ascii_lowercase();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async move {
+            let Ok(inv) =
+                comp_lattice::nats::NatsLattice::connect(&url, &lattice, Duration::from_secs(15))
+                    .await
+            else {
+                return false;
+            };
+            let deadline = Instant::now() + within;
+            while Instant::now() < deadline {
+                if let Ok(entries) = comp_lattice::Inventory::read_all(&inv).await {
+                    let placed = entries.iter().any(|e| {
+                        serde_json::from_slice::<serde_json::Value>(&comp_lattice::snapshot::expand(
+                            e.value.clone(),
+                        ))
+                        .ok()
+                        .and_then(|v| v["instances"].as_array().cloned())
+                        .is_some_and(|is| {
+                            is.iter().any(|i| {
+                                i["ingress_host"]
+                                    .as_str()
+                                    .is_some_and(|h| h.eq_ignore_ascii_case(&host))
+                            })
+                        })
+                    });
+                    if placed {
+                        return true;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            false
+        })
+    }
+
+    /// What an ingress said. `""` is the first one, any other name is a suffix —
+    /// `"-b"` for the second.
+    ///
+    /// Exists because a test that asserts an ingress served nothing, and then
+    /// prints only the count, has thrown away the one thing that explains it.
+    pub fn ingress_log(&self, which: &str) -> String {
+        std::fs::read_to_string(self.dir.path().join(format!("ingress{which}.log")))
+            .unwrap_or_else(|e| format!("(no ingress{which}.log: {e})"))
+    }
+
     /// A SECOND reconciler against the same lattice and control plane.
     ///
     /// It should stand by rather than reconcile: exactly one holds the lease
@@ -464,6 +593,26 @@ impl Fleet {
         let _ = std::process::Command::new("kill")
             .args(["-9", &self.first_reconciler_pid.to_string()])
             .status();
+    }
+
+    /// Kill node `n` outright — SIGKILL, no chance to tidy up.
+    ///
+    /// The point is that it does NOT get to say goodbye. A host that deregisters
+    /// on its way out exercises the polite path, which is not the one that
+    /// happens when a machine loses power or the OOM killer arrives. What has to
+    /// hold is that the lattice notices by itself: inventory expires, the
+    /// reconciler sees a gap, and the work is placed somewhere else.
+    ///
+    /// Returns the pid, so a caller can say which one it took.
+    pub fn kill_host(&self, n: u16) -> Option<u32> {
+        let pid = *self.host_pids.get((n as usize).saturating_sub(1))?;
+        let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).status();
+        Some(pid)
+    }
+
+    /// How many nodes this fleet started with.
+    pub fn node_count(&self) -> usize {
+        self.host_pids.len()
     }
 
     /// Stop whichever process was started last — used to kill an ingress and watch
@@ -521,7 +670,7 @@ impl Fleet {
         // request pays two JetStream round trips and the number measures the bus.
         kv: Option<&str>,
     ) -> Self {
-        Self::start_full(lattice, &[spec_dir], artifacts, &[], nodes, None, kv, pool, 0, &[])
+        Self::start_full(lattice, &[spec_dir], artifacts, &[], nodes, None, kv, pool, 0, &[], false)
     }
 
     /// The host process for node `n`, so a caller can read its RSS.
