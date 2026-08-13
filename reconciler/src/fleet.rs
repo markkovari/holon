@@ -468,6 +468,12 @@ impl Fleet {
         if let Some(m) = max_inflight {
             ing.args(["--max-inflight", &m.to_string()]);
         }
+        // A real run's request is not a benchmark ping: it does model calls and a
+        // test suite inside one guest invocation, which the 30s default backend
+        // timeout kills as "n1 timed out". A run that needs longer sets this.
+        if let Ok(t) = std::env::var("COMP_FLEET_BACKEND_TIMEOUT") {
+            ing.args(["--backend-timeout", &t]);
+        }
         children.push(spawn_logged("comp-ingress", &mut ing, &sp.join("ingress.log")));
 
         Self {
