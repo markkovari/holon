@@ -1214,7 +1214,23 @@ fn internal_pushed(request: &IncomingRequest) -> Outcome {
     if !digest.starts_with("sha256:") {
         return Outcome::Err(422, "digest must be sha256:...".into());
     }
-    match find_one(CATALOG, "key", &key) {
+    // The distributor reports the STAGED key — `staged_key(row)`, which is the
+    // content key `sha256/<hash>` for anything uploaded raw, and the name key
+    // `tenant/id` only for a composed artifact staged by name. Match the row
+    // whose staged location IS this key, falling back to the name index.
+    //
+    // Matching the name index ALONE is why a linked multi-component graph deployed
+    // through this API never distributed: every part is content-staged, reports
+    // `sha256/<hash>`, and found no row here — a 404 on each, forever. Composed
+    // single-artifact deployments happened to stage by name and slipped through,
+    // which is why it was never caught.
+    let found = find_one(CATALOG, "key", &key).or_else(|| {
+        all_records(CATALOG, 100_000).into_iter().find_map(|e| {
+            let row = serde_json::from_str::<Value>(&e.data).ok()?;
+            (staged_key(&row) == key).then(|| (e.id.clone(), e.revision, row))
+        })
+    });
+    match found {
         Some((rec, rev, mut row)) => {
             // The bare content address, with no registry host in front of it
             // (ADR-0024). A node fetches by digest from the object store, so a

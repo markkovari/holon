@@ -1,0 +1,28 @@
+[package]
+name = "mock-fitness"
+description = "graph:fitness scored by a scripted rule, reaching nothing — for deployment tests (mockgate:fitness)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "mockgate:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "mock-fitness"
+
+[package.metadata.component.target.dependencies]
+"graph:fitness" = { path = "../graph-fitness/wit" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

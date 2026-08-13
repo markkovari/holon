@@ -1,0 +1,18 @@
+// mockgate:fitness — `graph:fitness`, scored by a rule instead of by running commands.
+//
+// The real gate (`checks-runner`) reaches a native runner over `wasi:http`,
+// which needs egress the platform stamps only on a graph's front door (ADR-0008).
+// A gate buried in a deployed graph therefore cannot dial out, and a swarm whose
+// branches each run in their own ENVIRONMENT wants exactly that shape.
+//
+// So this is the gate a deployment test uses to prove the ENVIRONMENTS, not the
+// gate: it decides a candidate the way `mock:provider` decides a completion —
+// from a scripted rule keyed on the candidate's content — and reaches nothing.
+// The real gate is proven where it belongs, in `driver.rs`, against real
+// commands. What this proves is that the loop RUNS, one branch per environment.
+package mockgate:fitness@0.1.0;
+
+world mock-fitness {
+    export graph:fitness/evaluator@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+}
