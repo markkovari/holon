@@ -1,0 +1,116 @@
+// graph:select — which branch won, and the only path from a branch to a pull request.
+//
+// `graph:run/driver` explores ONE line of attempts and deliberately refuses to
+// propose its own result: a driver that opened a pull request would open N of
+// them for N branches and hand the choosing back to the human it was meant to
+// spare. This is where the choosing happens.
+//
+// THE GATE IS NOT NEGOTIABLE HERE EITHER. A branch that did not pass its checks
+// cannot be landed, and that is enforced by the shape of `land` rather than by a
+// rule inside it: `land` takes RUNS, not files, so there is no way to hand it a
+// candidate the gate rejected. A selector that took files would need a rule
+// saying "and check they were accepted", and rules like that get relaxed.
+//
+// WHY IT WON IS PART OF THE ANSWER. `because` names the rule that settled it in
+// words a person can check against the entries. A selection that reports only an
+// index is one nobody can argue with, which sounds like a virtue and is not:
+// picking the wrong branch costs a whole generation, and the failure is silent.
+//
+// HERDING DOES NOT ANNOUNCE ITSELF. Eight branches that converged on one idea
+// produce a healthy-looking generation in which the parallelism bought nothing.
+// Nothing else in the system can see it, so `distinct` is reported on every
+// selection whether or not anyone asked (ADR-0081).
+package graph:select@0.1.0;
+
+interface selector {
+    use graph:agent/writer@0.1.0.{file};
+    use git:forge/repo@0.1.0.{opened};
+
+    /// What one branch came back with.
+    ///
+    /// This is a projection of `graph:run/run-result` plus the branch's name —
+    /// deliberately not the whole thing, because a selector that could see the
+    /// attempt log would be tempted to reward effort, and effort is not quality.
+    record entry {
+        /// Which branch this came from, for the record and for the message.
+        branch: string,
+        /// Whether the gate accepted it. The only field that can make a branch
+        /// eligible.
+        accepted: bool,
+        score: u32,
+        /// SHA-256 of the candidate, as the driver recorded it. Compared ACROSS
+        /// branches here, where equality means the generation explored one idea
+        /// several times.
+        digest: string,
+        spent-tokens: u32,
+        attempts: u32,
+        files: list<file>,
+    }
+
+    record chosen {
+        index: u32,
+        branch: string,
+        /// The rule that settled it, in words. "the only branch that passed the
+        /// gate", or "a smaller change than branch-3 at the same score".
+        because: string,
+    }
+
+    variant decision {
+        winner(chosen),
+        /// Nothing passed the gate. An ordinary outcome — a generation that
+        /// found nothing has not malfunctioned — and the string says how close
+        /// the best one got.
+        nothing-acceptable(string),
+    }
+
+    record outcome {
+        decision: decision,
+        /// How many DISTINCT candidates the generation produced.
+        ///
+        /// 1 means every branch wrote the same thing and the parallelism bought
+        /// nothing. Reported always, because nothing else can see it and a
+        /// herded generation looks exactly like a healthy one.
+        distinct: u32,
+        accepted: u32,
+        /// What the whole generation cost.
+        spent-tokens: u32,
+    }
+
+    variant select-error {
+        /// No entries, or an entry that claims to be accepted with no files.
+        invalid(string),
+    }
+
+    /// Decide, without acting. Pure — the same entries always give the same
+    /// answer, which is what makes a selection arguable after the fact.
+    select: func(entries: list<entry>) -> result<outcome, select-error>;
+
+    /// What to say when the winner is proposed. `changes` is absent on purpose:
+    /// it comes from the branch that won, and a caller that could supply it could
+    /// land something no gate ever saw.
+    record landing {
+        branch: string,
+        base: string,
+        title: string,
+        body: string,
+        message: string,
+    }
+
+    variant land-error {
+        /// Nothing passed the gate, so nothing was proposed. Not a failure of
+        /// the forge, and distinct from one: the caller's move is to run another
+        /// generation, not to retry this call.
+        nothing-acceptable(string),
+        forge(string),
+        invalid(string),
+    }
+
+    /// Select, then propose the winner. One call, because the intermediate state
+    /// — a decision nobody acted on — is a chance to act on a different one.
+    land: func(entries: list<entry>, p: landing) -> result<opened, land-error>;
+}
+
+world graph-select {
+    export selector;
+    import git:forge/repo@0.1.0;
+}

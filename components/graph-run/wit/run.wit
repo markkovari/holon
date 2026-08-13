@@ -1,0 +1,164 @@
+// graph:run — the loop. Attempt, judge, repair, stop.
+//
+// Everything either side of this was built and individually tested, and nothing
+// joined them: `graph:agent/writer` turns a goal into a candidate,
+// `graph:fitness/evaluator` judges one by running real commands, and neither has
+// any opinion about how many times to try or when to give up. That opinion is
+// this package, kept in one component so it can be swapped without touching
+// either end.
+//
+// ONE BRANCH, NOT A GENERATION. A run explores a single line of attempts and
+// returns the best thing it found. It does not open a pull request, because the
+// winner of a generation is chosen by comparing branches — a driver that
+// proposed its own result would open N pull requests for N branches and leave
+// the choosing to a human who now has N of them to read.
+//
+// WHY IT STOPS IS PART OF THE ANSWER. `exhausted` and `plateau` are different
+// facts about a run that produced nothing acceptable: one ran out of budget, the
+// other ran out of ideas, and the second is worth spending the remaining budget
+// elsewhere. Both are ordinary results rather than errors — a run that fails to
+// find an answer has not malfunctioned.
+package graph:run@0.1.0;
+
+interface driver {
+    use graph:agent/writer@0.1.0.{goal, file, failure};
+    use graph:fitness/evaluator@0.1.0.{check};
+
+    variant run-error {
+        /// Inference could not be reached. Distinct from an unusable ANSWER,
+        /// which is retried with another seed: this one is worth waiting for,
+        /// and burning the rest of the attempts against a provider that is down
+        /// spends a budget on nothing.
+        provider-down(string),
+        /// The gate could not be reached, or refused the request. A run without
+        /// a working gate cannot be scored, and scoring is the only thing that
+        /// makes an attempt worth more than the last.
+        gate-unusable(string),
+        /// The plan does not describe a run.
+        invalid(string),
+    }
+
+    enum stop-reason {
+        /// A candidate passed the gate. The only successful ending.
+        accepted,
+        /// `max-attempts` was reached. The budget ran out, not the ideas.
+        exhausted,
+        /// An attempt reproduced a candidate an earlier attempt already
+        /// produced. The ideas ran out, and the next attempt would cost money
+        /// for an answer that is already on record.
+        plateau,
+        /// `patience` attempts in a row failed to beat the best score. Weaker
+        /// than `plateau` and far more common: a model rarely repeats itself
+        /// exactly, and routinely produces a different candidate that is no
+        /// better. Without this, the usual way a run wastes money is exploring
+        /// variations of an idea that does not work.
+        no-progress,
+        /// `max-tokens` was reached.
+        ///
+        /// Enforced AFTER an attempt, because what an attempt costs is not
+        /// knowable until it is made. A run therefore overshoots its budget by
+        /// at most one attempt, which is the honest bound — the alternative is
+        /// guessing a cost in advance and calling the guess a limit.
+        over-budget,
+    }
+
+    /// One try, kept whether or not it produced anything.
+    ///
+    /// This is the record every later decision needs and none of it can be
+    /// reconstructed afterwards: whether attempt five differed from attempt four
+    /// is a question about candidates that no longer exist by then.
+    record attempt {
+        seed: u64,
+        /// SHA-256 over the candidate's files. Two attempts that agree are one
+        /// idea, however differently the model phrased getting there — and that
+        /// is what a plateau IS.
+        ///
+        /// Empty when nothing was produced.
+        digest: string,
+        score: u32,
+        accepted: bool,
+        /// Why nothing was judged. Empty when something was.
+        error: string,
+        /// What this attempt cost, as the provider reported it. Zero on an
+        /// attempt that never reached a provider.
+        prompt-tokens: u32,
+        completion-tokens: u32,
+        /// Which model answered. Varies within one run once a tier router
+        /// exists, which is why it is recorded per attempt and not per run.
+        model: string,
+    }
+
+    record plan {
+        goal: goal,
+        /// What a PREVIOUS generation's best candidate was still failing.
+        ///
+        /// Empty on a first generation. The driver already hands a branch its own
+        /// last verdict; this is the other direction — a search that seeds
+        /// generation two with generation one's best candidate has to send what
+        /// was wrong with it too, or four fresh branches are shown broken code and
+        /// not told why.
+        previous: list<failure>,
+        /// The gate. An empty list is refused rather than passed — an empty gate
+        /// accepts everything.
+        checks: list<check>,
+        base-commit: string,
+        /// Sent with the first candidate, and again if the runner says it has
+        /// forgotten. Empty is legal only if the runner already knows this base.
+        base-tree: list<file>,
+        /// The hard bound, in tries. Not a duration: a wall clock makes a run's
+        /// result depend on how loaded the machine was.
+        ///
+        /// Still needed alongside `max-tokens`, because an unusable answer costs
+        /// tokens this cannot see — cost is reported WITH a candidate, and an
+        /// unusable answer produces no candidate. A run of nothing but unusable
+        /// answers is bounded by THIS and by nothing else.
+        max-attempts: u32,
+        /// The budget, in tokens across the whole run. 0 means unbounded.
+        ///
+        /// A budget in attempts is not a budget: three cheap tries and three
+        /// expensive ones are the same number.
+        max-tokens: u32,
+        /// How many attempts in a row may fail to improve on the best score
+        /// before the run stops. 0 disables it.
+        ///
+        /// The knob that decides whether a search is persistent or stubborn,
+        /// and there is no correct default — a goal whose first useful idea
+        /// arrives on the fourth attempt needs a patience of at least three, and
+        /// paying for that on every goal that was never going to work is the
+        /// price of it.
+        patience: u32,
+        /// The first seed. Attempt N uses `seed + n`, so two branches given
+        /// different starting seeds explore different sequences and either can
+        /// be replayed exactly.
+        seed: u64,
+    }
+
+    record run-result {
+        /// The best candidate by score, which is not necessarily the last one:
+        /// a repair can be worse than what it repaired, and throwing away the
+        /// better answer because it was older is how a search walks backwards.
+        ///
+        /// Empty if no attempt produced anything.
+        files: list<file>,
+        accepted: bool,
+        score: u32,
+        /// What was still failing at the end. The part a human needs to act on
+        /// when a run comes back unaccepted.
+        failures: list<failure>,
+        /// Every attempt, in order.
+        attempts: list<attempt>,
+        /// What the run cost in total. UNDER-REPORTS by whatever the unusable
+        /// answers cost — a hole bounded by `max-attempts`, and named here
+        /// rather than hidden behind a number that looks exact.
+        spent-tokens: u32,
+        stopped: stop-reason,
+    }
+
+    run: func(p: plan) -> result<run-result, run-error>;
+}
+
+world graph-run {
+    export driver;
+    import graph:agent/writer@0.1.0;
+    import graph:fitness/evaluator@0.1.0;
+}

@@ -1,0 +1,93 @@
+# One branch of a SEARCH: probe → driver → {writer → model, gate → runner}.
+#
+# The script here is written so that NO single generation can succeed. The rule
+# that produces an acceptable answer matches on `step_one` — text that can only be
+# in a prompt if the branch was seeded with a previous generation's winner. With
+# `max_attempts` at 1 a branch cannot repair itself either, so an accepted
+# candidate is proof the SEARCH did the work and not one lucky branch.
+#
+# The same shape as `driver.yaml`, with a script written for a GENERATION rather
+# than for one run: each branch's seed selects a different candidate, and one of
+# them is deliberately hopeless. What the generation test needs that a single run
+# cannot show is branches that disagree — including two that arrive at the same
+# answer by different routes, which is what makes `distinct` less than the branch
+# count without anything having gone wrong.
+#
+# This is the first fixture where every piece of a graph run is present at once.
+# The driver is the only new thing; the writer, the scripted model and the checks
+# runner are each already covered by their own test, so what this one is for is
+# the JOIN — that a failure found by a real command comes back through the
+# evaluator, reaches the model, and changes what it writes.
+#
+# The model is scripted and the checks are real. That split is deliberate: the
+# feedback has to be genuine or the loop proves nothing, and the model has to be
+# deterministic or the loop cannot be asserted about at any price (ADR-0081).
+#
+# The `step_one` rule matches on the CONTENT of the previous candidate rather
+# than on a check id, which is how the test proves a repair is shown what the run
+# has built rather than the untouched tree: that text can only be in the prompt if
+# the driver laid the best candidate over the goal's files.
+#
+# The script has NO `*` fallback. A prompt that has drifted out of the script
+# comes back as an error naming that, rather than as a plausible answer that
+# makes a test pass for the wrong reason.
+#
+# `checks-url` carries a placeholder port; the test rewrites it, because the
+# runner it starts binds whatever port was free.
+
+version: comp/v1
+app: searchdrive
+tenant: acme
+strategy: linked
+
+components:
+  - id: sdprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: sdriver
+    host_needs: []
+
+  - id: sagent
+    host_needs: []
+
+  - id: sllm
+    config:
+      mock-model: mock-agent
+      mock-script: >
+        {"rules":[
+          {"when":"step_one","text":"=== FILE: src/lib.rs\npub fn step_one() {}\npub fn step_two() {}\n=== END"},
+          {"when":"grow it","seed":5000,"text":"=== FILE: src/lib.rs\npub fn step_one() {}\n=== END"},
+          {"when":"grow it","seed":5100,"text":"=== FILE: src/lib.rs\npub fn sideways() {}\n=== END"},
+          {"when":"grow it","seed":5400,"text":"=== FILE: src/lib.rs\npub fn sideways() {}\n=== END"},
+          {"when":"go nowhere","text":"=== FILE: src/lib.rs\npub fn sideways() {}\n=== END"}
+        ]}
+    host_needs:
+      - wasi:config/store
+
+  - id: schecks
+    config:
+      checks-url: http://127.0.0.1:CHECKS_PORT/check
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+    egress:
+      - 127.0.0.1:CHECKS_PORT
+
+links:
+  - from: sdprobe
+    import: graph:run/driver@0.1.0
+    to: sdriver
+  - from: sdriver
+    import: graph:agent/writer@0.1.0
+    to: sagent
+  - from: sdriver
+    import: graph:fitness/evaluator@0.1.0
+    to: schecks
+  - from: sagent
+    import: llm:inference/inference@0.1.0
+    to: sllm
+
+ingress:
+  host: searchdrive.acme.test
+  component: sdprobe

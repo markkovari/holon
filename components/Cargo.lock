@@ -40,6 +40,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-driver"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "agent-probe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "agent-writer"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "ai-inference"
 version = "0.1.0"
 dependencies = [
@@ -407,6 +430,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "driver-probe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "ecdsa"
 version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -618,6 +649,13 @@ dependencies = [
 
 [[package]]
 name = "graph-probe"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "graph-selector"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen-rt",
@@ -1389,6 +1427,14 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "chacha20poly1305",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "select-probe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
  "wit-bindgen-rt",
 ]
 

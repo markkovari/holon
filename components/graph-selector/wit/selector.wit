@@ -1,0 +1,11 @@
+// selector:graph — `graph:select` over `git:forge`.
+//
+// The concrete side of the swap point. All the judgement about which branch won
+// lives here; which forge the winner is proposed to is a deployment decision this
+// never sees.
+package selector:graph@0.1.0;
+
+world graph-selector {
+    export graph:select/selector@0.1.0;
+    import git:forge/repo@0.1.0;
+}

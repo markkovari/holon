@@ -1714,10 +1714,23 @@ fn spawn_environment(app: &str, env: &str) -> Outcome {
 
     let mut manifest = latest["manifest"].clone();
     manifest["app"] = json!(derived);
-    // An environment is not a front door. It exists to be explored, and giving it
-    // the parent's hostname would make two apps answer to one name — the ingress
-    // would route to whichever it saw last.
-    manifest["ingress"] = Value::Null;
+    // An environment gets a DERIVED front door, not the parent's and not none
+    // (ADR-0083, amending ADR-0078).
+    //
+    // The original hazard is real and unchanged: the parent's hostname on two
+    // apps makes the ingress route to whichever it saw last. But NO hostname
+    // makes an environment undrivable from outside, and a branch of a swarm is
+    // something that must be driven — handed a plan, asked for a result. An app
+    // with no address cannot be.
+    //
+    // So the environment's name is prefixed onto the parent's host. It cannot
+    // collide with the parent, and two environments collide only if their names
+    // do — which `spawn_environment` already refuses. Nesting composes: an
+    // environment of an environment is `b.a.parent.org.test`.
+    if let Some(host) = manifest["ingress"]["host"].as_str() {
+        let derived = format!("{}.{host}", manifest::dns_label(env));
+        manifest["ingress"]["host"] = json!(derived);
+    }
 
     let revision_doc = json!({
         "deployment": derived, "tenant": str_of(&latest, "tenant"), "revision": 1,

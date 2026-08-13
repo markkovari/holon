@@ -1,0 +1,15 @@
+// writer:agent — `graph:agent` over `llm:inference`.
+//
+// The concrete side of the swap point. All the judgement about what a candidate
+// IS lives here — how the goal is put to the model, how an answer becomes files,
+// what is refused — and the model itself is whatever the deployment linked.
+//
+// Which means the whole agent is testable for free: `mock:provider` scripts
+// answers deterministically, so "does the repair loop actually use the failure it
+// was given" is a question with a reproducible answer rather than a bill.
+package writer:agent@0.1.0;
+
+world agent-writer {
+    export graph:agent/writer@0.1.0;
+    import llm:inference/inference@0.1.0;
+}

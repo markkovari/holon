@@ -1,0 +1,31 @@
+[package]
+name = "agent-driver"
+description = "graph:run over the writer and the gate — attempt, judge, repair, stop (driver:component)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+sha2 = { workspace = true }
+
+[package.metadata.component]
+package = "driver:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "agent-driver"
+
+[package.metadata.component.target.dependencies]
+"graph:run" = { path = "../graph-run/wit" }
+"graph:agent" = { path = "../graph-agent/wit" }
+"graph:fitness" = { path = "../graph-fitness/wit" }
+"llm:inference" = { path = "../llm-inference/wit" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
