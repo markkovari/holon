@@ -144,6 +144,11 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml
 | `reconciler/tests/crossnode.rs` | one graph over two nodes, both links over wrpc |
 | `bench/` | only what drives *other machines* — malna, bobocat, a k8s wasmCloud |
 
+See [SCENARIOS.md](SCENARIOS.md) for what a graph run can and cannot do today, at
+three levels of difficulty, with every claim marked covered / runnable / blocked.
+Its summary in one line: everything that CARRIES work is built and has been
+broken on purpose to prove it; everything that DECIDES is designed and unbuilt.
+
 ## Two rules that removed whole classes of failure
 
 Both were learned the same way — the same bug four times, dismissed as flakiness
