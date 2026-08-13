@@ -471,23 +471,39 @@ fn serve(args: Args) -> Result<()> {
         let Ok(mut stream) = stream else { continue };
         seq += 1;
 
+        // Read the request. A WASM guest STREAMS its body, so it arrives chunked
+        // with no content-length — and a reader that only understands
+        // content-length waits for a close that never comes, because the caller is
+        // waiting for the response. That deadlock reads from the outside as the
+        // runner hanging, which is the least informative failure available.
         let mut buf = Vec::new();
         let mut chunk = [0u8; 8192];
-        // Read until the body is complete, using content-length.
         let mut want: Option<usize> = None;
+        let mut chunked = false;
         loop {
             match stream.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
                     buf.extend_from_slice(&chunk[..n]);
-                    if want.is_none() {
+                    if want.is_none() && !chunked {
                         if let Some(pos) = find_headers_end(&buf) {
-                            want = content_length(&buf[..pos]).map(|len| pos + len);
+                            let head = &buf[..pos];
+                            chunked = is_chunked(head);
+                            if !chunked {
+                                want = content_length(head).map(|len| pos + len);
+                            }
                         }
                     }
                     if let Some(w) = want {
                         if buf.len() >= w {
                             break;
+                        }
+                    }
+                    if chunked {
+                        if let Some(pos) = find_headers_end(&buf) {
+                            if chunk_body_complete(&buf[pos..]) {
+                                break;
+                            }
                         }
                     }
                 }
@@ -499,7 +515,14 @@ fn serve(args: Args) -> Result<()> {
             respond(stream, 400, r#"{"error":"no headers"}"#);
             continue;
         };
-        let body = &buf[pos..];
+        let raw = &buf[pos..];
+        let decoded;
+        let body: &[u8] = if chunked {
+            decoded = dechunk(raw);
+            &decoded
+        } else {
+            raw
+        };
         let req: Request = match serde_json::from_slice(body) {
             Ok(r) => r,
             Err(e) => {
@@ -543,6 +566,55 @@ fn serve(args: Args) -> Result<()> {
 
 fn find_headers_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
+}
+
+fn is_chunked(head: &[u8]) -> bool {
+    String::from_utf8_lossy(head).lines().any(|l| {
+        l.split_once(':').is_some_and(|(k, v)| {
+            k.eq_ignore_ascii_case("transfer-encoding") && v.trim().eq_ignore_ascii_case("chunked")
+        })
+    })
+}
+
+/// Has the terminating zero-length chunk arrived?
+fn chunk_body_complete(body: &[u8]) -> bool {
+    let mut i = 0;
+    while i < body.len() {
+        let Some(nl) = body[i..].windows(2).position(|w| w == b"\r\n") else { return false };
+        let Ok(size) = usize::from_str_radix(
+            String::from_utf8_lossy(&body[i..i + nl]).trim(),
+            16,
+        ) else {
+            return false;
+        };
+        if size == 0 {
+            return true;
+        }
+        i += nl + 2 + size + 2;
+    }
+    false
+}
+
+/// `size\r\n<bytes>\r\n` until a zero-length chunk.
+fn dechunk(body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < body.len() {
+        let Some(nl) = body[i..].windows(2).position(|w| w == b"\r\n") else { break };
+        let Ok(size) =
+            usize::from_str_radix(String::from_utf8_lossy(&body[i..i + nl]).trim(), 16)
+        else {
+            break;
+        };
+        if size == 0 {
+            break;
+        }
+        let start = i + nl + 2;
+        let end = (start + size).min(body.len());
+        out.extend_from_slice(&body[start..end]);
+        i = end + 2;
+    }
+    out
 }
 
 fn content_length(head: &[u8]) -> Option<usize> {

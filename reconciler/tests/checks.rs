@@ -93,8 +93,29 @@ impl Runner {
     /// POST a candidate and read the report. Hand-rolled because the runner is
     /// deliberately a few hundred lines of std and does not deserve a client.
     fn evaluate(&self, body: Value) -> Value {
+        // A dropped CONNECTION is retried; a REPORT never is.
+        //
+        // The same rule as `staleness.rs`: what this file measures is what the
+        // runner said, and a refused or reset connection said nothing at all.
+        // Under a loaded machine one connection in a few hundred is reset, and a
+        // single one used to fail the whole file. Retrying an actual report
+        // would instead retry away the verdict under test.
         let payload = body.to_string();
-        let mut s = TcpStream::connect(("127.0.0.1", self.port)).expect("connecting");
+        let mut last = String::new();
+        for attempt in 0..5 {
+            match Self::once(self.port, &payload) {
+                Ok(v) => return v,
+                Err(e) => {
+                    last = format!("attempt {}/5: {e}", attempt + 1);
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            }
+        }
+        panic!("the runner never answered — {last}");
+    }
+
+    fn once(port: u16, payload: &str) -> std::result::Result<Value, String> {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
         s.write_all(
             format!(
                 "POST /check HTTP/1.1\r\nhost: localhost\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
@@ -102,12 +123,13 @@ impl Runner {
             )
             .as_bytes(),
         )
-        .unwrap();
+        .map_err(|e| e.to_string())?;
         let mut out = String::new();
-        s.read_to_string(&mut out).unwrap();
+        s.read_to_string(&mut out).map_err(|e| e.to_string())?;
         let body = out.split("\r\n\r\n").nth(1).unwrap_or_default();
-        serde_json::from_str(body).unwrap_or_else(|e| panic!("unreadable report ({e}): {out}"))
+        serde_json::from_str(body).map_err(|e| format!("unreadable report ({e}): {out}"))
     }
+
 }
 
 /// `sh -c` is not on any allow-list in this file; these use real binaries.

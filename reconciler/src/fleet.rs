@@ -498,6 +498,61 @@ impl Fleet {
         port
     }
 
+    /// Retry the FIRST REAL OPERATION until it works, and return what it
+    /// returned.
+    ///
+    /// This exists because "is it ready yet" has been answered wrongly four times
+    /// in this repo, in four different tests, each in the same way: a readiness
+    /// probe chosen SEPARATELY from the thing being measured, which then proved
+    /// something adjacent to it.
+    ///
+    ///   * `graph.rs` and `vgit.rs` polled the app's root route — which touches
+    ///     no capability, so it answered before the link, the egress and the
+    ///     database were usable, and the first real request lost the race.
+    ///   * `ha.rs` used `serves()`, which an ingress satisfies through the
+    ///     ACTIVATION path with an empty routing table — so it went green while
+    ///     nothing was placed and nothing was routable.
+    ///   * `fitness.rs` polled a call the evaluator refuses before making any
+    ///     HTTP request, so it proved the component was reachable and said
+    ///     nothing about the runner behind it.
+    ///
+    /// Every one of those passed alone and failed under load, which is the shape
+    /// that gets dismissed as flakiness. Three of them were.
+    ///
+    /// The rule that removes the whole class: **do not have a separate readiness
+    /// signal.** Retry the operation the test actually cares about. A probe
+    /// cannot then prove the wrong thing, because there is no probe — and a
+    /// fleet that is not ready simply makes the first call fail, which is what
+    /// retrying is for.
+    ///
+    /// `f` returns `Err(why)` while it is not ready. The `why` is kept and
+    /// printed on timeout beside the node and reconciler logs, because "never
+    /// became ready" without the last error is the least useful failure there is.
+    pub fn until<T>(
+        &self,
+        what: &str,
+        within: Duration,
+        mut f: impl FnMut() -> std::result::Result<T, String>,
+    ) -> T {
+        let deadline = Instant::now() + within;
+        let mut last = "never attempted".to_string();
+        loop {
+            match f() {
+                Ok(v) => return v,
+                Err(why) => last = why,
+            }
+            if Instant::now() >= deadline {
+                panic!(
+                    "{what} never worked within {within:?} — last answer: {last}\n\
+                     --- node n1 ---\n{}\n--- reconciler ---\n{}",
+                    self.node_log("n1"),
+                    self.reconciler_log()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+
     /// Wait until the fleet has actually PLACED the app — until some node
     /// advertises an instance carrying `host` as its ingress.
     ///

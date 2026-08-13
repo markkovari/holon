@@ -1,0 +1,97 @@
+// graph:fitness — is this candidate acceptable, and how good is it?
+//
+// TWO ANSWERS FROM ONE RUN, and conflating them is the mistake this contract
+// exists to prevent (ADR-0081).
+//
+//   accepted — the GATE. Deterministic, reproducible, and the only thing that may
+//              end a branch successfully. A model may AUTHOR the checks; a model
+//              may never BE the gate, or the loop's stopping condition stops
+//              being reproducible and "why did it stop here" has no answer that
+//              survives a re-run.
+//
+//   score    — the RANKING, meaningful only among candidates that already passed.
+//              It decides where the next unit of work goes. Being wrong costs
+//              efficiency rather than correctness, which is why it is allowed to
+//              be fuzzy and the gate is not.
+//
+// A binary gate gives no gradient in the generation where nothing passes yet,
+// and that is the generation a search most needs to make progress in. So the
+// score is derived from the CHECK VECTOR — 3 of 11 beats 1 of 11 — and no model
+// is consulted for the primary selection signal.
+package graph:fitness@0.1.0;
+
+interface evaluator {
+    variant eval-error {
+        /// The evaluator could not reach whatever runs the checks.
+        unavailable(string),
+        /// The request does not make sense — no checks, a path that escapes the
+        /// tree, a candidate with no base.
+        invalid(string),
+        /// The runner has not seen this base and needs the tree posted with it.
+        /// Not a failure of the candidate, which is why it is its own case: a
+        /// caller answers it by sending more, not by giving up.
+        need-base(string),
+    }
+
+    /// One thing to check, and whether it is negotiable.
+    record check {
+        /// Stable across generations, so a score can be compared with the one
+        /// before it.
+        id: string,
+        /// `true` puts this check in the GATE. Everything else contributes only
+        /// to the score.
+        required: bool,
+        /// Contribution to the score. 0 is treated as 1.
+        weight: u32,
+        /// The command, already split. Not a shell string — a string has to be
+        /// parsed, and every parser of shell strings eventually runs something
+        /// its author did not intend.
+        command: list<string>,
+    }
+
+    /// A file as the candidate would have it. Whole contents, not a diff: a patch
+    /// has to apply to something, and an agent that produces one against a tree
+    /// it only partly read produces a patch that does not apply.
+    record file {
+        path: string,
+        content: string,
+    }
+
+    record candidate {
+        /// What this is, for the record. The evaluator does not resolve it.
+        name: string,
+        /// The commit it is based on. Used as a content-addressed cache key by
+        /// whatever materialises the tree, so a generation sharing one base pays
+        /// for it once.
+        base-commit: string,
+        /// The base tree, when the runner has not seen `base-commit` before.
+        /// Empty otherwise, which is every candidate after the first.
+        base-tree: list<file>,
+        /// What this candidate changed.
+        changes: list<file>,
+    }
+
+    record outcome {
+        id: string,
+        required: bool,
+        weight: u32,
+        passed: bool,
+        took-ms: u64,
+        /// What it said, bounded. Enough to act on.
+        detail: string,
+    }
+
+    record verdict {
+        /// THE GATE: every required check passed.
+        accepted: bool,
+        /// THE SCORE, 0..=1000 milli-units, weighted across ALL checks.
+        score: u32,
+        outcomes: list<outcome>,
+    }
+
+    evaluate: func(c: candidate, checks: list<check>) -> result<verdict, eval-error>;
+}
+
+world graph-fitness {
+    export evaluator;
+}

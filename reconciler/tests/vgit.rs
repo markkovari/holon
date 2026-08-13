@@ -93,39 +93,25 @@ impl Probe {
     }
 }
 
-/// Wait until the app is ready to do WORK, not merely to answer.
+/// The first real read, retried until it works.
 ///
-/// The root route touches no capability at all, so it answers as soon as the
-/// gate is instantiated — before the `vgit -> blobs` link is usable. Polling it
-/// therefore proves the wrong thing, and under a loaded parallel run the very
-/// next request loses that race and comes back 502. This test did exactly that:
-/// green alone, red in the full suite.
-///
-/// So readiness is a real capability call. Reading an absent ref crosses the
-/// link, opens the app's bucket and does a CAS read, so `found: false` means the
-/// whole chain works and the ref simply is not there — the answer we want is
-/// also the proof that the path exists.
+/// NOT a separate readiness probe — see `Fleet::until`. Reading an absent ref
+/// crosses the link, opens the app's bucket and does a CAS read, so `found:
+/// false` is both the answer wanted and the proof the path exists.
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
         http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap(),
     };
-    let deadline = std::time::Instant::now() + Duration::from_secs(120);
-    let mut last = Value::Null;
-    while std::time::Instant::now() < deadline {
+    fleet.until("reading a ref that does not exist", Duration::from_secs(120), || {
         let r = probe.get("/ref?name=probe%2Fready");
         if r["found"] == json!(false) {
-            return probe;
+            Ok(())
+        } else {
+            Err(r.to_string())
         }
-        last = r;
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    panic!(
-        "the vgit app never became able to reach its store - last answer {last}\n\
-         --- node ---\n{}\n--- reconciler ---\n{}",
-        fleet.node_log("n1"),
-        fleet.reconciler_log()
-    );
+    });
+    probe
 }
 
 #[test]
