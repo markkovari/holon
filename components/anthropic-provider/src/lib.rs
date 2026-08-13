@@ -101,6 +101,16 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
 
     let headers = Fields::new();
     let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    // An explicit Content-Length, so the request is sent framed by length rather
+    // than chunked. A chunked POST body is legal but a real API's edge can
+    // mishandle it, and the symptom is a response whose body arrives incomplete
+    // (`hyper::Error(IncompleteMessage)`) — which a local test server never shows
+    // because it does not care how the body was framed.
+    let _ = headers.set(&"content-length".to_string(), &[body.len().to_string().into_bytes()]);
+    // Ask for the connection to close after the response, so the whole body is
+    // delivered and the host is not left reading a keep-alive socket that never
+    // signals end-of-message.
+    let _ = headers.set(&"connection".to_string(), &[b"close".to_vec()]);
     // The version header is required by the API, not optional like the key.
     let _ = headers.set(&"anthropic-version".to_string(), &[api_version().into_bytes()]);
     if let Some(key) = api_key() {
