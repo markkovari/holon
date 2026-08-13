@@ -33,6 +33,4 @@ world anthropic-provider {
     import wasi:http/outgoing-handler@0.2.0;
     import wasi:config/store@0.2.0-rc.1;
     import comp:secrets/reader@0.1.0;
-    // For step tracing while the outbound path is being debugged.
-    import wasi:cli/stderr@0.2.0;
 }
