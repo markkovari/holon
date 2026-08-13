@@ -323,6 +323,10 @@ fn main() -> Result<()> {
     // One guest request does a model call plus a test suite; the ingress's 30s
     // default backend timeout kills that as "n1 timed out". Give it room.
     std::env::set_var("COMP_FLEET_BACKEND_TIMEOUT", "240");
+    // And the wrpc budget between components: the same nested model+gate call
+    // blows the host's 30s default ("data receipt timed out"). Inherited by the
+    // hosts the fleet spawns.
+    std::env::set_var("COMP_RPC_TIMEOUT_SECS", "240");
     let driver_spec = render(
         "goalrun-driver.yaml",
         &[("CHECKS_PORT", &gate.port.to_string()), ("ANTHROPIC_MODEL", &args.model)],

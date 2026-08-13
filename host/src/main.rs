@@ -1301,7 +1301,16 @@ pub(crate) fn store_for(
         limits: wasmtime::StoreLimits::default(),
         rpc: rpc::RpcCtx::new(
             if remotes.is_empty() { rpc::Transport::Solo } else { rpc::Transport::Lattice(remotes) },
-            Some(std::time::Duration::from_secs(30)),
+            // A wrpc call's budget. 30s is right for a store read; it is far too
+            // short for a graph where one guest call fans out to a language model
+            // and a test suite over several nested wrpc hops. Raised via env for
+            // those runs — `data receipt timed out` is this firing.
+            Some(std::time::Duration::from_secs(
+                std::env::var("COMP_RPC_TIMEOUT_SECS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30),
+            )),
         ),
     };
     let mut store = Store::new(engine, host);
