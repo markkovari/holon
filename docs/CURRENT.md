@@ -144,6 +144,22 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml
 | `reconciler/tests/crossnode.rs` | one graph over two nodes, both links over wrpc |
 | `bench/` | only what drives *other machines* — malna, bobocat, a k8s wasmCloud |
 
+## Two rules that removed whole classes of failure
+
+Both were learned the same way — the same bug four times, dismissed as flakiness
+three of them — and both are now enforced by a helper rather than by remembering.
+
+- **Do not have a separate readiness signal.** Retry the operation the test
+  actually cares about (`Fleet::until`). Every readiness probe chosen separately
+  from the thing being measured has eventually proved something adjacent to it: a
+  root route that touches no capability, an ingress `serves()` satisfied through
+  activation with an empty routing table, a call refused before any HTTP happens.
+  Each passed alone and failed under load.
+- **A dropped connection is not an answer.** Retry transport failures, never
+  results. A stale read and a rejected candidate arrive as perfectly good
+  responses, and retrying THOSE retries away the phenomenon under test until it
+  happens to look right — green and worthless.
+
 ## Honestly missing
 
 - **The gate runs checks; nothing calls it yet.** `comp-checks` materialises a

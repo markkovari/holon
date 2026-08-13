@@ -1,0 +1,17 @@
+// checks:runner — `graph:fitness` over `comp-checks`.
+//
+// The concrete side of the swap point. The gate has to run the project's own
+// tests and a component cannot spawn a process, so the work happens in a native
+// runner reached over `wasi:http` — the same shape as the database and the model
+// provider, and bounded the same way: what it may dial is a manifest decision
+// (ADR-0008).
+//
+// Config (wasi:config/store):
+//   checks-url   where comp-checks is listening, e.g. http://127.0.0.1:8099
+package checks:runner@0.1.0;
+
+world checks-runner {
+    export graph:fitness/evaluator@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

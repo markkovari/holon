@@ -1,0 +1,14 @@
+// comp:fitnessprobe — an instrument for `graph:fitness`, not a feature.
+//
+// The evaluator's own tests cover the arithmetic that turns a check vector into a
+// gate and a score. What they cannot cover is the half that decides whether any
+// of it works on a fleet: whether the host lets it dial the runner, whether the
+// composer links a non-`wasi` interface, whether a whole base tree survives a
+// chunked write, and whether `need-base` comes back as its own answer rather than
+// as a rejection.
+package comp:fitnessprobe@0.1.0;
+
+world fitness-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import graph:fitness/evaluator@0.1.0;
+}

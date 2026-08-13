@@ -1,0 +1,30 @@
+[package]
+name = "fitness-probe"
+description = "Instrument: does graph:fitness reach a real check runner and come back with a gate and a score? (comp:fitnessprobe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "comp:fitnessprobe"
+
+[package.metadata.component.target]
+path = "wit"
+world = "fitness-probe"
+
+[package.metadata.component.target.dependencies]
+"graph:fitness" = { path = "../graph-fitness/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

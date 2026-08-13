@@ -1,0 +1,39 @@
+# A probe wired to `checks-runner`, and the runner pointed at `comp-checks`.
+#
+# The split this fixture demonstrates is the whole design of the gate: all of the
+# JUDGEMENT is in a component — what is required, what a score means — and all of
+# the PROCESS SPAWNING is in a native runner, because a component cannot do it and
+# should not pretend to. The component reaches it the way it reaches a database or
+# a model provider: over HTTP, through an egress allow-list it did not write
+# (ADR-0008).
+#
+# `checks-url` carries a placeholder port. The test rewrites it, because the
+# runner it starts binds whatever port was free.
+
+version: comp/v1
+app: fitness
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: fitness
+    config:
+      checks-url: http://127.0.0.1:CHECKS_PORT/check
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+    egress:
+      - 127.0.0.1:CHECKS_PORT
+
+links:
+  - from: gate
+    import: graph:fitness/evaluator@0.1.0
+    to: fitness
+
+ingress:
+  host: fitness.acme.test
+  component: gate
