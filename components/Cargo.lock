@@ -936,6 +936,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mock-fitness"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "mock-provider"
 version = "0.1.0"
 dependencies = [

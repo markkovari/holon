@@ -229,11 +229,23 @@ three of them — and both are now enforced by a helper rather than by rememberi
   the parent finding nothing. The same key on purpose: different keys per branch
   pass just as happily against one shared bucket.
 
-  What is left: the loop is not yet DEPLOYED into environments. `envbranch.rs`
-  proves a branch has an addressable store of its own; the driver graph is still
-  put up from a fixture and driven on one host, so wiring the two means deploying
-  that graph through the platform API and spawning an environment per branch.
-  Also open: an environment is a COPY, so no branch can run a different model from
+  **The loop now deploys into per-branch environments.** `gendeploy.rs` uploads the
+  five-component driver graph, deploys it LINKED through the platform API, spawns
+  an environment per branch, and drives a generation across the environments' own
+  derived hosts: branch 0 writes 42 and is accepted, branch 1 writes 41 and is
+  refused, each in an app and a store of its own. The gate here is `mock-fitness`
+  (scripted, reaches nothing), because the real checks-runner needs egress the
+  platform stamps only on a graph's front door (ADR-0008) — the real gate is
+  proven in `driver.rs`, and giving a buried component egress is its own decision.
+
+  Fixing that test surfaced a real platform bug: `internal_pushed` matched a
+  distributed component only by its NAME key, but every raw upload is
+  content-staged and reports its `sha256/<hash>` key, so a linked multi-component
+  graph deployed through the API never distributed — a 404 on each part, forever.
+  Composed single-artifact deployments stage by name and slipped through, which is
+  why it went unnoticed until a graph was deployed this way.
+
+  Still open: an environment is a COPY, so no branch runs a different MODEL from
   its siblings — diversity is prompt-deep. Tokens are not money. And nothing picks
   a started goal off the queue; `comp goal start` records that one started, and a
   person is still the wire between that and a search.

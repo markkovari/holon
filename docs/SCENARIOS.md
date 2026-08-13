@@ -118,7 +118,7 @@ human in the loop.
 | closing one first-level branch closes 85 descendants | ✅ measured |
 | generations of generations | ✅ `search.rs` — generation 2 reaches a goal no single generation can, because it is seeded with generation 1's best candidate AND the checks it still failed |
 | a search escaping a bad start | ✅ one branch per generation is shown NOTHING from the previous one, asserted by what it produced rather than by the flag set on it |
-| a human starts, the loop runs, a human lands | ✅ every component on the path exists and is tested end to end — `comp goal start`, the driver's loop, the selector, the pull request. What is untested is the whole path in ONE run, because nothing yet fans a goal out into N branches |
+| a human starts, the loop runs, a human lands | ✅ every component on the path exists and is tested end to end, and `gendeploy.rs` runs the deployed driver graph across one environment per branch. What is untested in ONE run is the queue → search → forge chain joined by a driver, because nothing picks a started goal off the queue yet |
 
 ### Failure modes
 
@@ -169,13 +169,10 @@ succeed" today is:
 
 The honest gap list, in the order it bites:
 
-1. **The loop is not yet deployed into environments.** A branch can now have an
-   addressable store of its own (`envbranch.rs`, ADR-0083) and the fan-out can
-   target it, but the driver graph is still put up from a fixture and driven on
-   one host. Joining them means deploying that graph through the platform API and
-   spawning an environment per branch — no new mechanism, just the wiring.
-   Related: an environment is a COPY of its parent, so no branch can run a
-   different MODEL from its siblings; diversity stays prompt-deep.
+1. **An environment is a COPY of its parent**, so no branch can run a different
+   MODEL from its siblings — diversity stays prompt-deep (the lens on the goal),
+   not model-deep. Changing a per-branch component or its config would need the
+   spawn to take an overlay, which it does not.
 2. **Tokens are not money.** Both budgets count tokens; a project's budget is a
    number in a different unit that nothing converts to. And an unusable answer's
    cost is invisible at both levels, because cost travels with a candidate.
