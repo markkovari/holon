@@ -327,6 +327,9 @@ fn main() -> Result<()> {
     // blows the host's 30s default ("data receipt timed out"). Inherited by the
     // hosts the fleet spawns.
     std::env::set_var("COMP_RPC_TIMEOUT_SECS", "240");
+    // Trace outbound dials, so a stalled model call shows whether the host got a
+    // response back at all.
+    std::env::set_var("COMP_TRACE_EGRESS", "1");
     let driver_spec = render(
         "goalrun-driver.yaml",
         &[("CHECKS_PORT", &gate.port.to_string()), ("ANTHROPIC_MODEL", &args.model)],

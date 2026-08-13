@@ -549,6 +549,10 @@ impl WasiHttpHooks for Egress {
 
         let scope = self.scope.clone();
         let port = if config.use_tls { 443 } else { 80 };
+        // Opt-in wire tracing for diagnosing a stalled outbound call. Off unless
+        // COMP_TRACE_EGRESS is set, so it costs nothing in a normal run.
+        let trace = std::env::var_os("COMP_TRACE_EGRESS").is_some();
+        let who = scope.id();
         let handle = wasmtime_wasi::runtime::spawn(async move {
             let target =
                 if authority.contains(':') { authority.clone() } else { format!("{authority}:{port}") };
@@ -567,12 +571,22 @@ impl WasiHttpHooks for Egress {
                 }
                 Err(_) => return Ok(Err(ErrorCode::DestinationUnavailable)),
             }
+            if trace {
+                eprintln!("comp-host: [egress] {who} dialing {target} (tls={})", config.use_tls);
+            }
             // ponytail: the connect re-resolves, so a DNS-rebinding attacker who
             // controls an allow-listed name can still land on a denied address
             // between this check and the dial. The real fix is a connector pinned
             // to the address we checked; do it if egress ever guards something an
             // attacker would spend a rebind on.
-            Ok(default_send_request_handler(request, config).await)
+            let out = default_send_request_handler(request, config).await;
+            if trace {
+                match &out {
+                    Ok(_) => eprintln!("comp-host: [egress] {who} {target} -> response received"),
+                    Err(e) => eprintln!("comp-host: [egress] {who} {target} -> ERROR {e:?}"),
+                }
+            }
+            Ok(out)
         });
         Ok(HostFutureIncomingResponse::pending(handle))
     }
