@@ -1,0 +1,30 @@
+[package]
+name = "virt-git"
+description = "Git's object model over blob storage — real git object ids, no working copy, no disk (vgit:store)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+sha1 = { workspace = true }
+
+[package.metadata.component]
+package = "vgit:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "virt-git"
+
+[package.metadata.component.target.dependencies]
+"blob:store" = { path = "../blob-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

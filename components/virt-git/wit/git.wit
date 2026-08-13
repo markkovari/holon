@@ -1,0 +1,170 @@
+// vgit:store — git's object model, stored in blob storage. No disk anywhere.
+//
+// Git is already a content-addressed object store with a tree structure over it,
+// which is why this is a natural representation rather than an emulation: a blob
+// is bytes, a tree is a listing, a commit points at a tree and its parents, and
+// every one of them is named by the SHA-1 of its own serialisation. `blob:store`
+// is a content-addressed object store. The mapping is the identity function.
+//
+// What that buys, and the reason for building it rather than keeping a clone on
+// each node:
+//
+//   * A component can do git. Agents have no filesystem (ADR-0023), so a working
+//     copy is not something they can ever touch. This they can.
+//   * A branch costs one ref. Forking an environment is a single small write,
+//     not a copy of a repository — and twenty branches share every object they
+//     did not change.
+//   * It lives wherever the lattice does. `blob:store` sits on `wasi:keyvalue`,
+//     replicated on NATS (ADR-0064), so any node can read any candidate. A clone
+//     on node 1's disk pins that work to node 1.
+//
+// THE OBJECT IDS ARE REAL GIT IDS. SHA-1 over `<type> <len>\0<payload>`, byte for
+// byte what `git hash-object` produces — which is checked against the actual git
+// binary in this component's tests, not against our own expectations. That makes
+// provenance verifiable: an id here is the id everywhere, and an import can be
+// integrity-checked against the ids the forge reported.
+//
+// Deliberately NOT implemented: packfiles, delta compression, the smart-HTTP
+// transport, merges. None are needed — `git:forge` submits content over a hosting
+// API, so nothing here ever has to speak git-over-the-wire. Adding them because
+// "a git implementation should have them" would be building a second git.
+package vgit:store@0.1.0;
+
+interface objects {
+    variant git-error {
+        /// No object or ref by that name.
+        not-found(string),
+        /// The bytes are there and are not what they claim to be — a truncated
+        /// object, a bad id, a tree that will not parse.
+        corrupt(string),
+        /// The backing store was unreachable.
+        unavailable(string),
+        /// The caller asked for something inconsistent: a path that escapes the
+        /// tree, a mode git does not have.
+        invalid(string),
+    }
+
+    /// One entry in a tree.
+    ///
+    /// `mode` is git's, as text: 100644 a file, 100755 executable, 40000 a
+    /// subtree, 120000 a symlink. Note 40000 and not 040000 — git writes it
+    /// without the leading zero and hashing it with one gives a different tree id.
+    record tree-entry {
+        mode: string,
+        name: string,
+        id: string,
+    }
+
+    record commit-info {
+        tree: string,
+        parents: list<string>,
+        /// `Name <email>` — the identity, without the timestamp.
+        author: string,
+        /// Unix seconds. Supplied rather than read from a clock, so the same
+        /// inputs produce the same commit id. A commit whose id changes with the
+        /// wall clock cannot be deduplicated or compared.
+        when: u64,
+        message: string,
+    }
+
+    /// Store bytes as a blob. Returns its git id.
+    ///
+    /// Idempotent, and free of races: an object's name IS its content, so two
+    /// writers storing the same bytes write the same bytes to the same key.
+    write-blob: func(content: list<u8>) -> result<string, git-error>;
+    read-blob: func(id: string) -> result<list<u8>, git-error>;
+
+    /// Entries are sorted here, not by the caller. Git's ordering is by name
+    /// with subtree names compared as though they ended in `/`, and a tree
+    /// sorted any other way hashes to a different id — silently, and only
+    /// noticeably when something else refuses to read it.
+    write-tree: func(entries: list<tree-entry>) -> result<string, git-error>;
+    read-tree: func(id: string) -> result<list<tree-entry>, git-error>;
+
+    write-commit: func(info: commit-info) -> result<string, git-error>;
+    read-commit: func(id: string) -> result<commit-info, git-error>;
+
+    /// Is this object here? Cheap: no bytes are transferred.
+    has: func(id: string) -> result<bool, git-error>;
+}
+
+/// Refs are the only mutable thing in git, which is why they are the only thing
+/// here that needs a guarded write.
+interface refs {
+    use objects.{git-error};
+
+    /// What a ref points at, or `none`.
+    read: func(name: string) -> result<option<string>, git-error>;
+
+    /// Move a ref, but only if it still points where the caller last saw it.
+    ///
+    /// `expect` of `none` means "and it must not exist yet" — which is what
+    /// creating a branch means, and is the difference between two branches
+    /// colliding loudly and one silently overwriting the other.
+    ///
+    /// Returns false on a lost race. Not an error: losing is a normal outcome
+    /// that the caller handles by re-reading, and an error would encourage
+    /// treating it as one.
+    update: func(name: string, expect: option<string>, to: string) -> result<bool, git-error>;
+
+    list-refs: func(prefix: string) -> result<list<tuple<string, string>>, git-error>;
+
+    delete: func(name: string) -> result<_, git-error>;
+}
+
+/// The layer a caller actually wants: paths, not trees.
+interface worktree {
+    use objects.{git-error, commit-info};
+
+    /// One file, after a change. `content` empty with `delete` set removes it.
+    record path-change {
+        path: string,
+        content: list<u8>,
+        /// 100644 unless the caller needs otherwise. Empty means 100644.
+        mode: string,
+        remove: bool,
+    }
+
+    record changed {
+        path: string,
+        /// "added" | "modified" | "deleted"
+        kind: string,
+    }
+
+    /// Read one file out of a commit.
+    read-path: func(commit: string, path: string) -> result<option<list<u8>>, git-error>;
+
+    /// Every path under `prefix`, recursively.
+    list-paths: func(commit: string, prefix: string) -> result<list<string>, git-error>;
+
+    /// Lay changes over a commit and return the new commit id.
+    ///
+    /// This is the operation a candidate IS: a base plus the files it touched.
+    /// Trees on the path to each change are rewritten, everything else is
+    /// reused by id — so the cost is the depth of the change, not the size of
+    /// the repository.
+    commit-changes: func(
+        base: string,
+        changes: list<path-change>,
+        author: string,
+        when: u64,
+        message: string,
+    ) -> result<string, git-error>;
+
+    /// What differs between two commits. Compares by tree id, so an untouched
+    /// subtree costs one comparison however large it is.
+    diff: func(before: string, after: string) -> result<list<changed>, git-error>;
+}
+
+world virt-git {
+    export objects;
+    export refs;
+    export worktree;
+
+    /// Objects: immutable and content-addressed, so a plain put is safe.
+    import blob:store/blobstore@0.1.0;
+    /// Refs: mutable, so they need the guarded write (ADR-0065). This is the
+    /// clearest case in the repo for why both exist.
+    import comp:store/cas@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

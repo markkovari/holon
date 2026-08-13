@@ -61,6 +61,17 @@ struct Args {
     #[arg(long, env = "COMP_REFRESH_SECS")]
     refresh_secs: Option<u64>,
 
+    /// How long an inventory entry lives before it expires.
+    ///
+    /// Shared with the hosts and the reconciler, which each declare it on the
+    /// SAME bucket — so this must match them, or whoever creates the bucket first
+    /// silently decides for everyone. Defaults to 15, as they do. When
+    /// `--refresh-secs` is absent the refresh is a third of this, because a table
+    /// re-read no faster than its entries expire is a table that is usually
+    /// empty.
+    #[arg(long, env = "COMP_INVENTORY_TTL")]
+    inventory_ttl: Option<u64>,
+
     /// Seconds to wait on a backend before trying another replica.
     #[arg(long, env = "COMP_BACKEND_TIMEOUT")]
     backend_timeout: Option<u64>,
@@ -111,6 +122,65 @@ struct Args {
 enum Balance {
     RoundRobin,
     LeastOutstanding,
+}
+
+/// How many consecutive route-less reads it takes before an ingress believes the
+/// fleet really has nothing to serve.
+const EMPTY_READS_BEFORE_BELIEVING: u32 = 3;
+
+/// What to do with a freshly-read routing table.
+#[derive(Debug, PartialEq, Eq)]
+enum Verdict {
+    /// Take it. Either it has routes, or there were none to lose.
+    Adopt,
+    /// It is empty and we HAVE routes: keep them and wait. A blink must not
+    /// become an outage.
+    RideOut,
+    /// It has been empty long enough to be true.
+    Believe,
+}
+
+/// The decision that turned a momentary gap into a total outage when it was
+/// implicit.
+///
+/// Pulled out as a function because the bug lived in exactly one branch of it and
+/// was only reproducible by loading the machine until the timing went wrong,
+/// which is a lottery rather than a test. Here every case is one line.
+fn verdict(had_routes: bool, next_is_empty: bool, streak_before: u32) -> Verdict {
+    if !next_is_empty {
+        return Verdict::Adopt;
+    }
+    if !had_routes {
+        // Nothing to protect. An ingress that never had routes and reads none has
+        // learned nothing, and refusing to adopt would only delay the first real
+        // table.
+        return Verdict::Adopt;
+    }
+    if streak_before + 1 < EMPTY_READS_BEFORE_BELIEVING {
+        Verdict::RideOut
+    } else {
+        Verdict::Believe
+    }
+}
+
+/// Read the routing table, surviving a poisoned lock.
+///
+/// `RwLock::read().unwrap()` panics if ANY thread ever panicked while holding the
+/// lock — and in the refresh task that panic is fatal and silent: the task ends,
+/// nothing supervises it, and the table freezes at whatever it last held for the
+/// rest of the process's life. That is how an ingress ended up answering `no app
+/// answers` forever while the fleet was healthy.
+///
+/// A poisoned routing table is not dangerous. It is a cache of what the fleet
+/// last said, rebuilt from scratch every few seconds, so the worst a poisoning
+/// can mean is that one request saw a torn view — and the cure of killing the
+/// refresh loop is far worse than that disease.
+fn read_table(table: &RwLock<Table>) -> std::sync::RwLockReadGuard<'_, Table> {
+    table.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn write_table(table: &RwLock<Table>) -> std::sync::RwLockWriteGuard<'_, Table> {
+    table.write().unwrap_or_else(|e| e.into_inner())
 }
 
 /// `Host` header -> the nodes that answer to it.
@@ -200,7 +270,7 @@ async fn activate(
     let _held = lock.lock().await;
 
     // Someone may have activated while we waited for the lock.
-    if let Some(b) = table.read().unwrap().routes.get(host).and_then(|v| v.first()) {
+    if let Some(b) = read_table(table).routes.get(host).and_then(|v| v.first()) {
         return Some(b.clone());
     }
 
@@ -318,14 +388,41 @@ async fn main() -> Result<()> {
     // Resolve every tunable once, here, so no call site has to know where a value
     // came from.
     let file = comp_reconciler::settings::File::load(args.config.as_deref())?.ingress;
-    let refresh_secs = settings::pick(args.refresh_secs, file.refresh_secs, 3);
     let backend_timeout = settings::pick(args.backend_timeout, file.backend_timeout, 30);
     let max_inflight = settings::pick(args.max_inflight, file.max_inflight, 64);
     let slow_budget = settings::pick(args.slow_budget, file.slow_budget, 2);
     let activation_timeout = settings::pick(args.activation_timeout, file.activation_timeout, 10);
 
+    // The inventory TTL is NOT this process's to choose, and pretending otherwise
+    // is a bug that took a while to find.
+    //
+    // Three processes call `create_key_value` on the SAME bucket with their own
+    // `max_age`: a host asks for `heartbeat_secs * 3`, the reconciler for
+    // `inventory_ttl`, and this used to ask for a hardcoded 15. Whoever creates
+    // the bucket first wins and the others silently get a TTL they did not ask
+    // for. They agree today only because three defaults coincide at 15s — change
+    // `--heartbeat-secs` on a host and they stop agreeing, with nothing said.
+    //
+    // Worse, the refresh interval was unrelated to it. Entries that live `T`
+    // seconds must be re-read well inside `T`, and a 3s poll against a bucket
+    // whose real TTL is short enough is a poll that mostly sees an empty bucket —
+    // which is what `no app answers` looked like from the outside.
+    let inventory_ttl = settings::pick(args.inventory_ttl, file.inventory_ttl, 15).max(1);
+    // A third of the TTL, so two reads may be lost before anything is noticed.
+    // An explicit `--refresh-secs` still wins, because an operator who sets it
+    // means it.
+    let refresh_secs = match args.refresh_secs.or(file.refresh_secs) {
+        Some(v) => v.max(1),
+        None => (inventory_ttl / 3).max(1),
+    };
+    eprintln!(
+        "comp-ingress: inventory ttl {inventory_ttl}s, refreshing every {refresh_secs}s \
+         (the ttl is shared with the hosts and the reconciler — a mismatch there is silent)"
+    );
+
     let fabric = Arc::new(
-        NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(15)).await?,
+        NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(inventory_ttl))
+            .await?,
     );
     let inventory: Arc<dyn Inventory> = fabric.clone();
     // Used only when a host has NO replica placed: ask the reconciler to start one
@@ -355,10 +452,52 @@ async fn main() -> Result<()> {
     // Refreshed on a timer and read from a lock per request. A request that had to
     // ask the bus for its route would put the control plane on the data path, which
     // is the thing this design keeps apart.
+    // ON ITS OWN THREAD, WITH ITS OWN RUNTIME AND ITS OWN CONNECTION.
+    //
+    // Every request depends on this table, so letting the task that maintains it
+    // compete with request handling for scheduler time is a priority inversion —
+    // the ingress is busiest exactly when it most needs to know where to send
+    // things. And it is worse than a slow refresh: async-nats drives its
+    // connection from a task on the runtime it was created on, so a starved
+    // runtime does not merely delay `read_all`, it can leave it awaiting a reply
+    // that nothing is left to deliver. The loop then stops printing and stops
+    // updating, with no panic and no exit — which is exactly what was seen, and
+    // is indistinguishable from a dead task from the outside.
+    //
+    // A dedicated OS thread with a current-thread runtime and a SEPARATE NATS
+    // connection removes the coupling entirely. It costs one thread.
     {
-        let (inventory, table, every) = (inventory.clone(), table.clone(), refresh_secs);
-        tokio::spawn(async move {
+        let (table, every) = (table.clone(), refresh_secs);
+        let (nats_url, lattice_name, ttl) =
+            (args.nats_url.clone(), args.lattice.clone(), inventory_ttl);
+        std::thread::Builder::new()
+            .name("inventory-refresh".into())
+            .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("comp-ingress: could not build the refresh runtime: {e}");
+                    return;
+                }
+            };
+            rt.block_on(async move {
+            let inventory: Arc<dyn Inventory> = loop {
+                match NatsLattice::connect(&nats_url, &lattice_name, Duration::from_secs(ttl)).await
+                {
+                    Ok(l) => break Arc::new(l),
+                    // Retried rather than fatal: an ingress that cannot reach the
+                    // bus at startup still serves what it is told to activate, and
+                    // giving up here would mean it never routes again even once
+                    // the bus comes back.
+                    Err(e) => {
+                        eprintln!("comp-ingress: refresh connection failed ({e:#}), retrying");
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                }
+            };
             let mut tick = tokio::time::interval(Duration::from_secs(every.max(1)));
+            let mut empty_streak: u32 = 0;
+            let mut reads: u64 = 0;
             loop {
                 tick.tick().await;
                 match inventory.read_all().await {
@@ -368,7 +507,67 @@ async fn main() -> Result<()> {
                             .filter_map(|e| serde_json::from_slice(&e.value).ok())
                             .collect();
                         let next = table_of(&nodes);
-                        let mut cur = table.write().unwrap();
+
+                        // A heartbeat on EVERY read, so silence in the log means
+                        // the loop is not running rather than the loop having
+                        // nothing to say. Distinguishing those two took three
+                        // wrong diagnoses.
+                        eprintln!(
+                            "comp-ingress: refresh #{reads}: {} node(s), {} instance(s), {} route(s)",
+                            nodes.len(),
+                            nodes.iter().map(|n| n.instances.len()).sum::<usize>(),
+                            next.routes.len()
+                        );
+                        reads += 1;
+
+                        // The decision lives in `verdict` so it can be tested
+                        // without waiting for a machine to be busy enough to go
+                        // wrong. See its tests for every case.
+                        let had_routes = !read_table(&table).routes.is_empty();
+                        let instances: usize = nodes.iter().map(|n| n.instances.len()).sum();
+                        match verdict(had_routes, next.routes.is_empty(), empty_streak) {
+                            Verdict::Adopt => empty_streak = 0,
+                            Verdict::RideOut => {
+                                empty_streak += 1;
+                                eprintln!(
+                                    "comp-ingress: a read produced 0 routes from {} node(s) and \
+                                     {instances} instance(s) ({empty_streak}/\
+                                     {EMPTY_READS_BEFORE_BELIEVING}) — keeping the table it had",
+                                    nodes.len()
+                                );
+                                continue;
+                            }
+                            Verdict::Believe => {
+                                empty_streak += 1;
+                                eprintln!(
+                                    "comp-ingress: 0 routes for {EMPTY_READS_BEFORE_BELIEVING} \
+                                     reads running — the fleet really has nothing to serve"
+                                );
+                            }
+                        }
+
+                        // Nodes present and routes NEVER built is a different fault
+                        // from losing them, and wants a different fix: instances
+                        // that carry no ingress-host. One "0 routes" cannot tell
+                        // the two apart, so both halves are counted.
+                        if next.routes.is_empty() && !nodes.is_empty() && !had_routes {
+                            let with_host: usize = nodes
+                                .iter()
+                                .flat_map(|n| n.instances.iter())
+                                .filter(|i| {
+                                    i.ingress_host.as_ref().is_some_and(|h| !h.is_empty())
+                                })
+                                .count();
+                            let addressed = nodes.iter().filter(|n| !n.address.is_empty()).count();
+                            eprintln!(
+                                "comp-ingress: still 0 routes from {} node(s) — {addressed} with \
+                                 an address, {instances} instance(s), {with_host} carrying an \
+                                 ingress-host",
+                                nodes.len()
+                            );
+                        }
+
+                        let mut cur = write_table(&table);
                         if *cur != next {
                             eprintln!(
                                 "comp-ingress: {} route(s) over {} node(s)",
@@ -385,7 +584,20 @@ async fn main() -> Result<()> {
                     Err(e) => eprintln!("comp-ingress: inventory read failed: {e:#}"),
                 }
             }
-        });
+            // Unreachable while the loop is `loop {}`, and here because a
+            // background task that stops is the failure that started all this:
+            // the routing table simply freezes and every request is answered from
+            // a snapshot of a fleet that has since moved on, with nothing said.
+            #[allow(unreachable_code)]
+            {
+                eprintln!(
+                    "comp-ingress: THE INVENTORY REFRESH LOOP HAS STOPPED — the routing table \
+                     is frozen and will never update again"
+                );
+            }
+            });
+        })
+        .expect("spawning the inventory refresh thread");
     }
 
     let client: Client = Arc::new(
@@ -543,7 +755,7 @@ async fn forward(
     // still a request the app owes an answer to.
     let _busy_host = Busy::on(counter(&per_host, &host));
 
-    let mut backends = table.read().unwrap().routes.get(&host).cloned().unwrap_or_default();
+    let mut backends = read_table(&table).routes.get(&host).cloned().unwrap_or_default();
     if backends.is_empty() {
         // Nothing placed. Rather than refuse, ask the reconciler to start one and
         // hold this request while it does — a scaled-to-zero app is meant to come
@@ -914,4 +1126,132 @@ mod tests {
         assert!(backends.iter().all(|b| saturated(b, &inflight, 64)));
     }
 
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+
+    /// The failure this function was extracted for.
+    ///
+    /// An ingress that HAS routes and reads none must keep what it has. Losing
+    /// every route while the fleet is plainly still there is a gap to ride out,
+    /// not news to act on — and adopting the empty table is what turned a
+    /// momentary blink into `no app answers` for the rest of the process's life.
+    #[test]
+    fn a_blink_does_not_empty_a_working_table() {
+        assert_eq!(verdict(true, true, 0), Verdict::RideOut);
+        assert_eq!(verdict(true, true, 1), Verdict::RideOut);
+    }
+
+    /// But a fleet that really has stopped must eventually be believed, or the
+    /// ingress routes to backends that are gone forever.
+    #[test]
+    fn an_empty_fleet_is_believed_in_the_end() {
+        assert_eq!(verdict(true, true, EMPTY_READS_BEFORE_BELIEVING - 1), Verdict::Believe);
+        assert_eq!(verdict(true, true, EMPTY_READS_BEFORE_BELIEVING), Verdict::Believe);
+    }
+
+    /// A read with routes is always taken, whatever happened before it. This is
+    /// what makes the ride-out temporary rather than a latch.
+    #[test]
+    fn a_good_read_is_always_adopted_and_clears_the_streak() {
+        assert_eq!(verdict(true, false, 0), Verdict::Adopt);
+        assert_eq!(verdict(true, false, 99), Verdict::Adopt);
+        assert_eq!(verdict(false, false, 2), Verdict::Adopt);
+    }
+
+    /// An ingress that never had routes has nothing to protect, and refusing to
+    /// adopt would only delay its first real table — including at startup, where
+    /// every read is empty until something is placed.
+    #[test]
+    fn nothing_to_lose_means_nothing_to_defend() {
+        assert_eq!(verdict(false, true, 0), Verdict::Adopt);
+        assert_eq!(verdict(false, true, 5), Verdict::Adopt);
+    }
+
+    /// The bug in the FIRST attempt at this guard, kept as a test so it cannot
+    /// come back: the check sat on whether any NODES were present, so three
+    /// healthy nodes advertising zero routes sailed straight past it and wiped
+    /// the table. The decision must depend only on whether routes were lost.
+    #[test]
+    fn the_guard_is_about_routes_not_about_nodes() {
+        // Three nodes, zero routes, and a table that had some: still a ride-out.
+        // A guard keyed on node count would have said "adopt" here.
+        assert_eq!(verdict(true, true, 0), Verdict::RideOut);
+    }
+
+    /// Walking the sequence that actually happened, one read at a time.
+    #[test]
+    fn a_working_ingress_survives_two_bad_reads_and_recovers_on_the_third() {
+        let mut streak = 0;
+        let mut routes = true;
+
+        // Two blinks: the table is kept both times.
+        for _ in 0..2 {
+            match verdict(routes, true, streak) {
+                Verdict::RideOut => streak += 1,
+                other => panic!("a blink should be ridden out, got {other:?}"),
+            }
+            assert!(routes, "the table must still be there");
+        }
+        // The fleet comes back.
+        assert_eq!(verdict(routes, false, streak), Verdict::Adopt);
+        streak = 0;
+        routes = true;
+        assert_eq!(streak, 0);
+        assert!(routes);
+    }
+
+    /// A poisoned lock must not be able to stop the refresh loop.
+    ///
+    /// This is the failure underneath the failure. `read().unwrap()` panics on a
+    /// poisoned lock, and in the refresh task that panic is fatal AND silent: the
+    /// task ends, nothing supervises it, and the routing table freezes at
+    /// whatever it last held. An ingress in that state answers `no app answers`
+    /// forever while every backend is healthy, which is exactly what was seen.
+    #[test]
+    fn a_poisoned_table_does_not_stop_the_world() {
+        let table = Arc::new(RwLock::new(Table::default()));
+
+        // Poison it the way a panicking request handler would.
+        let t = table.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = t.write().unwrap();
+            panic!("a handler died holding the lock");
+        })
+        .join();
+        assert!(table.is_poisoned(), "the lock should be poisoned for this test to mean anything");
+
+        // The plain form is what used to be here, and it would end the task.
+        assert!(table.read().is_err(), "a poisoned lock refuses the ordinary read");
+
+        // These must not.
+        assert!(read_table(&table).routes.is_empty());
+        write_table(&table).routes.insert("shop.test".into(), Vec::new());
+        assert_eq!(
+            read_table(&table).routes.len(),
+            1,
+            "a poisoned routing table is still usable — it is a cache rebuilt every few \
+             seconds, and killing the loop that rebuilds it is far worse than a torn read"
+        );
+    }
+
+    /// And the sequence where the fleet really did stop.
+    #[test]
+    fn three_bad_reads_running_are_believed() {
+        let mut streak = 0;
+        let mut verdicts = Vec::new();
+        for _ in 0..3 {
+            let v = verdict(true, true, streak);
+            streak += 1;
+            verdicts.push(v);
+        }
+        assert_eq!(
+            verdicts,
+            vec![Verdict::RideOut, Verdict::RideOut, Verdict::Believe],
+            "two rides then belief — a fleet that has genuinely gone must not be \
+             routed to forever"
+        );
+    }
 }

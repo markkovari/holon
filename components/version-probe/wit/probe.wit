@@ -1,0 +1,15 @@
+// comp:versionprobe — an instrument for shipping a NEW BUILD of an app.
+//
+// It answers with a string baked in at COMPILE time, so two builds of the same
+// source with a different tag are genuinely different artifacts with different
+// digests — and what a node is running can be read from the outside without
+// trusting a version field that something could have set by hand.
+//
+// Everything else in this repo tests deploying an artifact. This is for testing
+// REPLACING one: recompile, upload, save a revision, and watch the fleet stop
+// serving the old code and start serving the new.
+package comp:versionprobe@0.1.0;
+
+world version-probe {
+    export wasi:http/incoming-handler@0.2.0;
+}

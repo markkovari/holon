@@ -1,0 +1,17 @@
+// comp:graphprobe — an instrument for `knowledge:graph/store`, not a feature.
+//
+// The graph component's unit tests cover the SurrealQL it builds and the JSON it
+// parses. They cannot cover the part in between: whether `wasi:http` actually
+// carries the statement to a database, through the host's egress allow-list, and
+// brings an answer back. That has to be run, and running it needs a caller —
+// nothing in the catalogue imports `knowledge:graph/store`.
+//
+// Composed with `knowledge-graph` by the reconciler as a two-node deployment,
+// which is also, incidentally, a test that the composer links a non-`wasi`
+// component interface (ADR-0079's `HOST_NAMESPACES` bug was exactly this shape).
+package comp:graphprobe@0.1.0;
+
+world graph-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import knowledge:graph/store@0.1.0;
+}

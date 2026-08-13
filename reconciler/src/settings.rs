@@ -56,8 +56,14 @@ pub struct Reconciler {
 #[derive(Debug, Default, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Ingress {
-    /// Seconds between inventory refreshes of the route table.
+    /// Seconds between inventory refreshes of the route table. Absent means a
+    /// third of `inventory_ttl`, which is the only value that is safe by
+    /// construction.
     pub refresh_secs: Option<u64>,
+    /// How long an inventory entry lives. Must match the hosts and the
+    /// reconciler: all three declare it on one shared bucket and the first to
+    /// create it wins, silently.
+    pub inventory_ttl: Option<u64>,
     /// Seconds to wait on a backend before giving up on it.
     pub backend_timeout: Option<u64>,
     /// Requests in flight to one node before shedding; 0 disables shedding.

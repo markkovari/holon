@@ -23,3 +23,8 @@ serde_json = "1"
 # Blocking HTTP with rustls and no async runtime. The whole client is a dozen
 # one-shot calls, so a tokio reactor would be the largest thing in the binary.
 ureq = { version = "2", features = ["json", "tls"] }
+# Reading a credential without echoing it. Not hand-rolled: doing this correctly
+# means talking to /dev/tty rather than stdin, restoring the terminal on Ctrl-C,
+# and not leaving the tty muted if the process dies mid-prompt. Getting any of
+# those wrong is worse than the dependency.
+rpassword = "7"

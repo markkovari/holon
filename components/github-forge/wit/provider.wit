@@ -1,0 +1,27 @@
+// github:forge — `git:forge` over GitHub's REST API.
+//
+// The concrete side of the swap point. Six calls create a pull request without a
+// working tree: read the base ref, write a blob per file, write a tree, write a
+// commit, create the branch, open the PR. All JSON over HTTPS, which is why this
+// is a component and not a host capability.
+//
+// Config (wasi:config/store):
+//   forge-repo   "owner/name" — required
+//   forge-base   default branch to propose against, default "main"
+//   forge-api    API base, default "https://api.github.com" (a GitHub
+//                Enterprise host, or a stand-in in a test, goes here)
+//
+// Secret (comp:secrets/reader):
+//   forge-token  a token with contents:write and pull-requests:write
+//
+// The token is a SECRET and not config for the same reason the OpenAI key is: a
+// config map is readable by anything that can read the deployment (ADR-0010,
+// ADR-0051), and this one can push code.
+package github:forge@0.1.0;
+
+world github-forge {
+    export git:forge/repo@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
+}

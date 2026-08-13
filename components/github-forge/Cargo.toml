@@ -1,0 +1,33 @@
+[package]
+name = "github-forge"
+description = "git:forge over GitHub's REST API — a branch, a commit and a pull request without a working tree (github:forge)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+
+[package.metadata.component]
+package = "github:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "github-forge"
+
+[package.metadata.component.target.dependencies]
+"git:forge" = { path = "../git-forge/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }

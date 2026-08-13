@@ -1,0 +1,46 @@
+# A probe wired to the knowledge graph, and the graph wired to a real SurrealDB.
+#
+# Two things here are stamped by the platform in production and written by hand
+# in a fixture, for the same reason as `secret-reveal.yaml`: `host_needs` is what
+# makes the host check its capability list, and `egress` is what makes it check
+# where the graph may dial. Both are under test, so both are spelled out.
+#
+# `surreal-url` carries a placeholder port. The test rewrites it, because the
+# database it starts binds whatever port was free.
+
+version: comp/v1
+app: graph
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: graph
+    config:
+      surreal-url: http://127.0.0.1:SURREAL_PORT
+      surreal-ns: comp
+      surreal-db: knowledge
+      surreal-user: root
+    secrets:
+      - key: surreal-password
+        ref: vault://acme/surreal
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    # The one address it may reach. Anything else — the NATS bus, this host's own
+    # listener, the platform — stays refused (ADR-0008).
+    egress:
+      - 127.0.0.1:SURREAL_PORT
+
+links:
+  - from: gate
+    import: knowledge:graph/store@0.1.0
+    to: graph
+
+ingress:
+  host: graph.acme.test
+  component: gate

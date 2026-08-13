@@ -24,10 +24,11 @@
 //! private to this module, so `kv.rs` cannot be handed anything a guest said.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 // ---- identity --------------------------------------------------------------
 
@@ -99,9 +100,35 @@ pub fn dns_label(s: &str) -> String {
 /// One application's identity across the fleet. Derived from tenant + app, never
 /// supplied — a tenant able to set this would be a tenant able to name someone
 /// else's storage.
+/// One application's identity across the fleet. Derived from tenant + app, never
+/// supplied — a tenant able to set this would be a tenant able to name someone
+/// else's storage.
+///
+/// The 53-character cap is a real constraint, and plain truncation was a silent
+/// isolation break. Environments nest (`shop-env-a-env-b`, ADR-0078), so names
+/// grow by six characters per level, and past the cap two SIBLINGS differing only
+/// in their last segment truncate to the same string — one store, two
+/// environments, each reading the other's writes. With single-character names it
+/// happens at depth seven, and nothing anywhere would have said so.
+///
+/// So an over-long name keeps a readable prefix and earns a suffix derived from
+/// the WHOLE name. Names that fit are untouched, which keeps the common case
+/// legible and every case distinct.
 pub fn env_for(tenant: &str, app: &str) -> String {
-    let e = format!("app-{}-{}", dns_label(tenant), dns_label(app));
-    e.chars().take(53).collect::<String>().trim_matches('-').to_string()
+    const CAP: usize = 53;
+    /// 8 hex characters plus the separator.
+    const SUFFIX: usize = 9;
+
+    let full = format!("app-{}-{}", dns_label(tenant), dns_label(app));
+    if full.len() <= CAP {
+        return full.trim_matches('-').to_string();
+    }
+    let mut h = Sha256::new();
+    h.update(full.as_bytes());
+    let digest = h.finalize();
+    let tag: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    let head: String = full.chars().take(CAP - SUFFIX).collect();
+    format!("{}-{tag}", head.trim_end_matches('-'))
 }
 
 // ---- egress ----------------------------------------------------------------
@@ -120,13 +147,20 @@ pub struct EgressPolicy {
     /// Dev escape hatch. Off means a tenant cannot reach any private network,
     /// which on a Tailscale node includes every other node in the lattice.
     allow_private: bool,
-    /// Addresses this node knows are dangerous regardless of range — its own
+    /// Sockets this node knows are dangerous regardless of range — its own
     /// listener and the NATS it is joined to, which may be public.
-    denied: BTreeSet<IpAddr>,
+    ///
+    /// A SOCKET, not an address: the danger is the port this host serves on, and
+    /// denying the whole IP would also deny every unrelated service that happens
+    /// to share it. On a lattice node that distinction is invisible, because the
+    /// IP is private and denied by range anyway — it only shows up under
+    /// `--allow-private-egress`, where it made a database on loopback
+    /// unreachable while claiming to protect the listener.
+    denied: BTreeSet<SocketAddr>,
 }
 
 impl EgressPolicy {
-    pub fn new(allow: &[String], allow_private: bool, denied: &[IpAddr]) -> Self {
+    pub fn new(allow: &[String], allow_private: bool, denied: &[SocketAddr]) -> Self {
         Self {
             unrestricted: allow.iter().any(|a| a.trim() == "*"),
             allowed: expand_egress(allow).into_iter().collect(),
@@ -157,14 +191,14 @@ impl EgressPolicy {
     /// knob, and this is the backstop under it. An operator who genuinely needs an
     /// internal target puts a reverse proxy on an allow-listed public name, or runs
     /// the host with `--allow-private-egress` and accepts what that means.
-    pub fn permits_addr(&self, ip: IpAddr) -> bool {
-        if self.denied.contains(&ip) {
+    pub fn permits_addr(&self, addr: SocketAddr) -> bool {
+        if self.denied.contains(&addr) {
             return false;
         }
         if self.allow_private {
             return true;
         }
-        !is_private(ip)
+        !is_private(addr.ip())
     }
 }
 
@@ -346,7 +380,7 @@ pub struct Limits {
     pub mem_cap: usize,
     pub slice_ms: u64,
     pub allow_private_egress: bool,
-    pub denied_addrs: Vec<IpAddr>,
+    pub denied_addrs: Vec<SocketAddr>,
 }
 
 impl StartCommand {
@@ -512,7 +546,7 @@ mod tests {
         assert!(p.permits_authority("anything.at.all:9999"));
         // ...but it does not unlock the address deny-list. Unrestricted names are
         // still not unrestricted networks.
-        assert!(!p.permits_addr("169.254.169.254".parse().unwrap()));
+        assert!(!p.permits_addr("169.254.169.254:80".parse().unwrap()));
     }
 
     /// The lateral-movement list. Every one of these is reachable from a node and
@@ -534,23 +568,65 @@ mod tests {
             "fc00::1",
             "::ffff:169.254.169.254", // v4-mapped, the obvious way around the above
         ] {
-            assert!(!p.permits_addr(bad.parse().unwrap()), "{bad} must be prohibited");
+            assert!(!p.permits_addr(sock(bad)), "{bad} must be prohibited");
         }
         // Ordinary public addresses are fine, including ones adjacent to the ranges.
         for ok in ["93.184.216.34", "100.63.255.255", "100.128.0.1", "2606:2800:220:1::"] {
-            assert!(p.permits_addr(ok.parse().unwrap()), "{ok} must be allowed");
+            assert!(p.permits_addr(sock(ok)), "{ok} must be allowed");
         }
     }
 
-    #[test]
-    fn an_explicitly_denied_address_survives_allow_private() {
-        // The dev escape hatch must not re-open the bus this host is joined to.
-        let nats: IpAddr = "10.1.2.3".parse().unwrap();
-        let p = EgressPolicy::new(&["*".into()], true, &[nats]);
-        assert!(!p.permits_addr(nats));
-        assert!(p.permits_addr("10.1.2.4".parse().unwrap()), "allow_private otherwise applies");
+    /// A bare address, at the port a plain HTTP dial would use.
+    fn sock(ip: &str) -> SocketAddr {
+        SocketAddr::new(ip.parse().unwrap(), 80)
     }
 
+    #[test]
+    fn an_explicitly_denied_socket_survives_allow_private() {
+        // The dev escape hatch must not re-open the bus this host is joined to.
+        let nats: SocketAddr = "10.1.2.3:4222".parse().unwrap();
+        let p = EgressPolicy::new(&["*".into()], true, &[nats]);
+        assert!(!p.permits_addr(nats));
+        assert!(p.permits_addr("10.1.2.4:4222".parse().unwrap()), "allow_private otherwise applies");
+        // The DENY is the socket, not the machine. Under `--allow-private-egress`
+        // a database sharing an address with the bus stays reachable — denying the
+        // whole IP was what made a loopback SurrealDB undialable while the thing
+        // actually being protected was one port.
+        assert!(p.permits_addr("10.1.2.3:8000".parse().unwrap()), "another port on the same host");
+    }
+
+
+    /// The bug this function was written with, and the reason it now hashes.
+    ///
+    /// Environments nest, names grow six characters a level, and plain truncation
+    /// made two siblings share a bucket — silently, with each reading the other's
+    /// writes. This walks the nesting down and asserts that never happens.
+    #[test]
+    fn nested_environments_never_share_a_bucket() {
+        let mut chain = "graph".to_string();
+        let mut seen = std::collections::BTreeSet::new();
+        for depth in 0..12 {
+            let a = env_for("ada", &format!("{chain}-env-a"));
+            let b = env_for("ada", &format!("{chain}-env-b"));
+            assert_ne!(
+                a, b,
+                "at depth {depth} two SIBLING environments share one bucket — each would \
+                 read the other's writes, and nothing would say so"
+            );
+            assert!(a.len() <= 53, "at depth {depth} the name is {} chars: {a}", a.len());
+            assert!(seen.insert(a.clone()), "depth {depth} collided with an ancestor: {a}");
+            assert!(seen.insert(b), "depth {depth} collided with an ancestor");
+            chain = format!("{chain}-env-x");
+        }
+    }
+
+    /// A name that fits is left exactly as it was — the hash is a fallback, not a
+    /// rename, and existing stores must keep their names.
+    #[test]
+    fn a_name_that_fits_is_not_rewritten() {
+        assert_eq!(env_for("ada", "graph"), "app-ada-graph");
+        assert_eq!(env_for("ada", "graph-env-node-7"), "app-ada-graph-env-node-7");
+    }
 
     #[test]
     fn an_app_name_is_derived_and_length_capped() {

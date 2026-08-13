@@ -1,0 +1,49 @@
+# A probe → virt-git → blob-store, three components linked.
+#
+# The interesting wiring: `virt-git` splits its storage by mutability. Objects go
+# to `blob:store` — immutable and named by their own content, so a plain put is
+# safe. Refs go to `comp:store/cas`, because a ref is the one mutable thing in
+# git and two branches moving one without a guarded write is a lost update
+# (ADR-0065), where the thing lost is somebody's work.
+#
+# Both `comp:store/cas` and `wasi:keyvalue/store` are host capabilities, so the
+# bucket is named by the host and no guest can choose it (ADR-0012, ADR-0023).
+
+version: comp/v1
+app: vgit
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: vgit
+    config:
+      git-container: repo
+    host_needs:
+      - comp:store/cas
+      - wasi:config/store
+
+  - id: blobs
+    host_needs:
+      - wasi:keyvalue/store
+
+links:
+  - from: gate
+    import: vgit:store/objects@0.1.0
+    to: vgit
+  - from: gate
+    import: vgit:store/refs@0.1.0
+    to: vgit
+  - from: gate
+    import: vgit:store/worktree@0.1.0
+    to: vgit
+  - from: vgit
+    import: blob:store/blobstore@0.1.0
+    to: blobs
+
+ingress:
+  host: vgit.acme.test
+  component: gate

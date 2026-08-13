@@ -1,0 +1,16 @@
+// comp:llmprobe — an instrument for `llm:inference`, not a feature.
+//
+// `openai-provider` has existed since the catalogue was built and has never
+// been deployed, linked or called. Nothing in the repo imports `llm:inference`
+// over HTTP, so every claim about it — that the host lets it dial out, that the
+// composer links it, that the API key arrives from the vault and reaches the
+// Authorization header — was untested. That is the exact shape of the bug where
+// `comp:secrets/reader` shipped unwired (ADR-0061).
+//
+// This is the caller that makes those claims checkable.
+package comp:llmprobe@0.1.0;
+
+world llm-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import llm:inference/inference@0.1.0;
+}

@@ -1,0 +1,30 @@
+[package]
+name = "artifact-cache"
+description = "Hand derived work between agents instead of redoing it — content-addressed, with single-flight claims (artifact:cache)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+sha2 = { workspace = true }
+
+[package.metadata.component]
+package = "artifact:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "artifact-cache"
+
+[package.metadata.component.target.dependencies]
+"blob:store" = { path = "../blob-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

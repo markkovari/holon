@@ -101,15 +101,29 @@ impl Guest for Component {
             (Method::Get, ["api", "secrets"]) => secrets_list(&request, &query),
             (Method::Delete, ["api", "secrets", name]) => secret_delete(&request, name, &query),
 
+            (Method::Post, ["api", "projects"]) => project_create(&request, &query),
+            (Method::Get, ["api", "projects"]) => projects_list(&request, &query),
+            (Method::Post, ["api", "projects", project, "goals"]) => goal_create(&request, project, &query),
+            (Method::Get, ["api", "projects", project, "goals"]) => goals_list(&request, project, &query),
+            // A human starts every goal; there is no loop that does (ADR-0082).
+            (Method::Post, ["api", "goals", id, "start"]) => goal_transition(&request, id, "running", &query),
+            (Method::Post, ["api", "goals", id, "fail"]) => goal_transition(&request, id, "failed", &query),
+            (Method::Post, ["api", "goals", id, "done"]) => goal_transition(&request, id, "done", &query),
+            (Method::Post, ["api", "goals", id, "review"]) => goal_transition(&request, id, "awaiting-human", &query),
+            (Method::Delete, ["api", "goals", id]) => goal_transition(&request, id, "abandoned", &query),
+
             (Method::Post, ["api", "deployments"]) => deployment_create(&request, &query),
             (Method::Get, ["api", "deployments"]) => deployments_list(&request),
             (Method::Get, ["api", "deployments", id]) => deployment_get(&request, id),
-            (Method::Post, ["api", "deployments", id, "save"]) => deployment_save(&request, id),
+            (Method::Post, ["api", "deployments", id, "save"]) => {
+                deployment_save(&request, id, &query)
+            }
             (Method::Get, ["api", "deployments", id, "manifests"]) => manifests(&request, id),
             (Method::Delete, ["api", "deployments", id]) => deployment_delete(&request, id, &query),
 
             // The applier polls this to re-apply current revisions (ADR-0004).
             (Method::Get, ["api", "internal", "revisions"]) => internal_revisions(&request),
+            (Method::Post, ["api", "internal", "status"]) => internal_status_put(&request),
             // The push path (ADR-0017), reconciled like everything else: the applier
             // asks what needs pushing, fetches the bytes, pushes, then reports back.
             (Method::Get, ["api", "internal", "pending-pushes"]) => internal_pending(&request),
@@ -118,6 +132,12 @@ impl Guest for Component {
             (Method::Post, ["api", "internal", "pushed"]) => internal_pushed(&request),
             (Method::Post, ["api", "internal", "repair"]) => internal_repair(&request, &query),
             (Method::Get, ["api", "internal", "verify"]) => internal_verify(&request, &query),
+            (Method::Post, ["api", "environments"]) => env_spawn(&request, &query),
+            (Method::Post, ["api", "internal", "environments"]) => {
+                internal_env_spawn(&request, &query)
+            }
+            (Method::Get, ["api", "environments"]) => env_list(&request, &query),
+            (Method::Delete, ["api", "environments"]) => env_despawn(&request, &query),
             (Method::Post, ["api", "keys"]) => key_add(&request, &query),
             (Method::Get, ["api", "keys"]) => key_list(&request, &query),
             (Method::Post, ["api", "keys", "revoke"]) => key_revoke(&request, &query),
@@ -494,8 +514,7 @@ fn components_satisfies(request: &IncomingRequest) -> Outcome {
         let Some(row) = find(id) else {
             return Err(Outcome::Err(422, format!("component `{id}` is unknown or not visible to you")));
         };
-        let key = format!("{}/{}", row["tenant"].as_str().unwrap_or_default(), id);
-        blob::get(BIN, &key)
+        blob::get(BIN, &staged_key(&row))
             .map_err(|_| Outcome::Err(409, format!("component `{id}` has no staged bytes — re-upload it")))
     };
 
@@ -569,7 +588,20 @@ fn component_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outco
         .unwrap_or_else(|| format!("component-{}", surface.sha256));
     let key = format!("{}/{}", p.tenant, id);
 
-    if blob::put(BIN, &key, &bytes, "application/wasm").is_err() {
+    // STAGED BY CONTENT, not by name.
+    //
+    // `tenant/id` is a mutable pointer, and staging under it made an upload
+    // destructive: a second build overwrote the first, so two workers pushing
+    // different builds of one component raced and the loser's bytes were simply
+    // gone. Under a content key that cannot happen — identical bytes write
+    // identical bytes to the same place, and different bytes go somewhere else,
+    // so neither writer can lose.
+    //
+    // The row stays keyed by `tenant/id`, because that is the name a person and a
+    // deployment use. It now POINTS at the content rather than being it.
+    let content = surface.sha256.clone();
+    let blob_key = format!("sha256/{content}");
+    if blob::put(BIN, &blob_key, &bytes, "application/wasm").is_err() {
         return Outcome::Err(500, "could not stage the component bytes".into());
     }
     // What config this component reads, declared by whoever uploaded it:
@@ -585,19 +617,78 @@ fn component_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outco
         Ok((org, _)) => org,
         Err((code, msg)) => return Outcome::Err(code, msg),
     };
+    let existing = find_one(CATALOG, "key", &key);
+
+    // Tags accumulate. A row is a set of pointers, and moving one must not drop
+    // the others — an older tag still names bytes that are still staged, so
+    // forgetting it would strand them behind a name nobody can spell.
+    let mut tag_map = existing
+        .as_ref()
+        .and_then(|(_, _, row)| row["tags"].as_object().cloned())
+        .unwrap_or_default();
+    if let Some(t) = query.get("tag").and_then(|v| v.as_str()).filter(|t| !t.is_empty()) {
+        tag_map.insert(t.to_string(), json!(content));
+    }
+    let tags = Value::Object(tag_map);
+
     let doc = json!({
         "key": key, "id": id, "tenant": p.tenant, "uploader": p.subject,
         "org": org,
         "visibility": "private", "uploaded": now(),
         "config_keys": config_keys,
+        // The content address of what was uploaded, and where those bytes are
+        // staged. The row is a pointer; this is what it points at.
+        "content": content,
+        "blob_key": blob_key,
+        // name -> content, so a tag can be resolved later. Merged rather than
+        // replaced: tagging a new build must not forget where the old tags point.
+        "tags": tags,
         // The OCI reference. Empty until the push step records a digest — and a
         // deployment cannot render without one (ADR-0006).
         "oci_ref": "",
         "surface": surface_json(&surface),
     });
-    let existing = find_one(CATALOG, "key", &key);
+    // Re-uploading the SAME BYTES is a no-op, not a new version.
+    //
+    // Without this, an upload always cleared the digest and forced the whole
+    // distribution round again — for bytes the fleet already has, byte for byte.
+    // A retry, a re-run of a build script, or two workers landing on the same
+    // output all did that. Content-addressing makes "is this actually different"
+    // answerable, so it is answered.
+    if let Some((_, _, row)) = &existing {
+        if row["content"].as_str() == Some(content.as_str())
+            && row["digest"].as_str().unwrap_or_default().starts_with("sha256:")
+        {
+            return Outcome::Json(
+                200,
+                json!({
+                    "key": key, "id": id, "content": content,
+                    "digest": row["digest"],
+                    "unchanged": true,
+                })
+                .to_string(),
+            );
+        }
+    }
+
     let ok = match existing {
-        Some((rec, rev, _)) => records::update(CATALOG, &rec, &doc.to_string(), rev).is_ok(),
+        // Guarded on the revision that was read. Two workers moving one name at
+        // the same moment is the case content-addressing does NOT solve — the
+        // bytes are safe either way, the pointer is one value — so the loser is
+        // told rather than silently overwritten.
+        Some((rec, rev, _)) => match records::update(CATALOG, &rec, &doc.to_string(), rev) {
+            Ok(_) => true,
+            Err(records::StoreError::RevisionConflict(_)) => {
+                return Outcome::Err(
+                    409,
+                    format!(
+                        "`{id}` was uploaded by someone else while this upload was in flight — \
+                         the bytes are staged and safe, re-run to move the pointer"
+                    ),
+                )
+            }
+            Err(_) => false,
+        },
         None => records::create(
             CATALOG,
             &doc.to_string(),
@@ -699,8 +790,12 @@ fn fetch_token_mint(request: &IncomingRequest) -> Outcome {
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
         .unwrap_or_default();
-    if instance.is_empty() || refs.is_empty() {
-        return Outcome::Err(422, "instance and refs are required".into());
+    // `refs` may be empty. This started as a SECRETS credential, minted only for
+    // instances that had any — but it is really an instance's proof of who it is,
+    // and ADR-0079 needs that for an instance with no secrets at all. An empty
+    // ref list simply authorises no secret.
+    if instance.is_empty() {
+        return Outcome::Err(422, "instance is required".into());
     }
     // Long enough to outlive an instance's useful life, short enough that a leaked
     // token is not a standing grant. A restart mints a new one, and a start costs
@@ -1070,7 +1165,14 @@ fn internal_pending(request: &IncomingRequest) -> Outcome {
             continue;
         }
         out.push(json!({
-            "key": row["key"],
+            // The CONTENT key when there is one, so the distributor fetches the
+            // bytes this row was created from rather than whatever is staged
+            // under the name now — which a concurrent upload may already have
+            // replaced. Composed artifacts are staged by name and fall back to
+            // it, which is why this goes through `staged_key` instead of reading
+            // the field: reading it directly handed the distributor an empty key
+            // for every fused row.
+            "key": staged_key(&row),
             "repo": row["key"],
             "sha256": row["surface"]["sha256"],
             "size_bytes": row["surface"]["size_bytes"],
@@ -1092,7 +1194,7 @@ fn internal_artifact(request: &IncomingRequest, query: &Map<String, Value>) -> O
     }
     let key = query.get("key").and_then(|v| v.as_str()).unwrap_or_default();
     if key.is_empty() {
-        return Outcome::Err(422, "?key=<tenant>/<id> required".into());
+        return Outcome::Err(422, "?key= required (a content key, `sha256/<hex>`)".into());
     }
     match blob::get(BIN, key) {
         Ok(bytes) => Outcome::Bytes(200, "application/wasm".into(), bytes),
@@ -1420,6 +1522,330 @@ fn sanitize_key(s: &str) -> String {
         .collect()
 }
 
+/// The app name an environment runs under.
+///
+/// An environment IS a derived app, which is the whole trick (ADR-0078): the
+/// store a component opens is `b-app-{tenant}-{app}` (ADR-0023), so deriving the
+/// app name gives each environment its own store with no new isolation
+/// machinery. Placement, scaling, links and reaping all keep working because
+/// nothing below the platform knows this app was born differently.
+fn env_app(app: &str, env: &str) -> String {
+    format!("{app}-env-{env}")
+}
+
+/// Environment names are restricted because the derived name is collapsed to a
+/// DNS label before it becomes a bucket, and two names that collapse together
+/// would share a store.
+fn valid_env_name(env: &str) -> bool {
+    !env.is_empty()
+        && env.len() <= 32
+        && env.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && !env.starts_with('-')
+        && !env.ends_with('-')
+}
+
+/// Spawn on behalf of a RUNNING INSTANCE, authorised by its own token (ADR-0079).
+///
+/// The token says which instance is calling — `{tenant}/{app}/{component}@{node}`,
+/// minted by the reconciler and never seen by the guest — so a component can fork
+/// the app it is part of and nothing else. Scoped by construction rather than by
+/// checking a parameter the caller supplied.
+fn internal_env_spawn(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let token = request
+        .headers()
+        .get(&"x-fetch-token".to_string())
+        .into_iter()
+        .next()
+        .and_then(|v| String::from_utf8(v).ok())
+        .unwrap_or_default();
+    if token.is_empty() {
+        return Outcome::Err(401, "no instance token".into());
+    }
+    let Ok(entry) = records::get(FETCH_TOKENS, &token) else {
+        return Outcome::Err(401, "unknown instance token".into());
+    };
+    let Ok(doc) = serde_json::from_str::<Value>(&entry.data) else {
+        return Outcome::Err(401, "unreadable instance token".into());
+    };
+    if doc["expires"].as_u64().unwrap_or(0) < now() {
+        return Outcome::Err(401, "expired".into());
+    }
+    // `tenant/app/component@node` — the app is the middle segment, and it is the
+    // only thing this call is allowed to fork.
+    let instance = str_of(&doc, "instance");
+    let app = instance.split('/').nth(1).unwrap_or_default().to_string();
+    if app.is_empty() {
+        return Outcome::Err(422, format!("unreadable instance `{instance}`"));
+    }
+    let env = query.get("env").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    if !valid_env_name(&env) {
+        return Outcome::Err(422, "env must be 1-32 chars of [a-z0-9-]".into());
+    }
+    spawn_environment(&app, &env)
+}
+
+/// Spawn a parallel environment: the same graph, its own store (ADR-0078).
+///
+/// Recorded as desired state rather than started directly, and that is not a
+/// preference. `plan()` stops any instance no manifest asks for — "nothing wanted
+/// here at all: take it off this node" — so anything started behind the
+/// reconciler's back is reaped within one pass. Desired state is the only durable
+/// way to ask for an instance.
+fn env_spawn(request: &IncomingRequest, _query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let b = match body(request) {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    // BEFORE the lookup, not after. Admission is about whether the fleet can take
+    // more work at all, so it must not depend on the request being otherwise
+    // valid — and putting it later meant a refusal never fired, because the
+    // parent lookup answered first.
+    if let Err(refusal) = admit_one_more() {
+        return refusal;
+    }
+    let (app, env) = (str_of(&b, "app"), str_of(&b, "env"));
+    if app.is_empty() || !valid_env_name(&env) {
+        return Outcome::Err(
+            422,
+            "app required, and env must be 1-32 chars of [a-z0-9-] not starting or ending with -"
+                .into(),
+        );
+    }
+
+    // The parent's newest revision is what an environment is a copy OF. Spawning
+    // from a deployment that does not exist, or one this principal cannot see, is
+    // the same 404 either way.
+    // Deployments are indexed on `org` and `tenant` only, so neither a name nor an
+    // id is a `find_by` — the first two versions of this line looked up fields
+    // that carry no index and 404'd on a deployment that plainly existed.
+    // Fetching by record id when it looks like one, and otherwise scanning this
+    // principal's own deployments by name, which is what a caller actually types.
+    // Both halves are needed and they are different strings: revisions are keyed
+    // by the deployment's RECORD ID, while a manifest's `app` — and therefore the
+    // store name — is its NAME. Losing the id here is what made the revision
+    // lookup come up empty for a deployment that had just been saved.
+    let parent = records::get(DEPLOYMENTS, &app)
+        .ok()
+        .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| (e.id, d)))
+        .or_else(|| {
+            all_records(DEPLOYMENTS, 100_000)
+                .into_iter()
+                .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| (e.id, d)))
+                .find(|(_, d)| str_of(d, "name") == app)
+        });
+    // A parent may also be an ENVIRONMENT, which is how a search explores from a
+    // promising branch rather than only fanning out from the root. An environment
+    // has no deployment record — it is a revision — so its owner comes from that.
+    // Missing this second case is what capped depth at one.
+    let (app, owner) = match parent {
+        Some((_, doc)) => {
+            // Everything downstream keys on the deployment's NAME, because that
+            // is what the manifest's `app` is and therefore what the store is
+            // named after.
+            (str_of(&doc, "name"), str_of(&doc, "org"))
+        }
+        None => match newest_revision(&app).filter(|r| !r["environment"].is_null()) {
+            Some(rev) => (app.clone(), str_of(&rev, "org")),
+            None => return Outcome::Err(404, format!("no deployment or environment `{app}`")),
+        },
+    };
+    if let Err((code, msg)) =
+        orgs::acting(&p.subject, &personal_org(&p), &Map::from_iter([("org".into(), json!(owner))]), orgs::Role::Member)
+    {
+        return Outcome::Err(code, msg);
+    }
+    // Whether there IS a revision to copy is `spawn_environment`'s business; this
+    // route only has to establish that the caller may act for the owning org.
+    spawn_environment(&app, &env)
+}
+
+/// Everything after "who is asking": copy the app's newest revision under a
+/// derived name. Shared by the user-facing route and the instance one, because a
+/// fork requested by an agent and a fork requested by a person must produce the
+/// same thing.
+/// The newest revision of `app`, whether it is a deployment or an environment,
+/// plus the org that owns it.
+///
+/// Two lookups because revisions are keyed two ways: a real deployment's
+/// revisions carry its RECORD ID in `deployment`, while an environment's carry
+/// its derived NAME. That asymmetry is why environments could not nest — the
+/// parent lookup only ever searched deployments, so the second level came back
+/// `404 no deployment` and a tree search stopped at one.
+fn parent_of(app: &str) -> Option<(Value, String)> {
+    let deployment = all_records(DEPLOYMENTS, 100_000)
+        .into_iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| (e.id, d)))
+        .find(|(_, d)| str_of(d, "name") == app);
+    if let Some((id, doc)) = deployment {
+        return newest_revision(&id).map(|rev| (rev, str_of(&doc, "org")));
+    }
+    // Not a deployment. It may be an environment, which is a legitimate parent:
+    // exploring FROM a promising branch is what makes a search a search rather
+    // than a single fan-out.
+    let rev = newest_revision(app)?;
+    if rev["environment"].is_null() {
+        return None;
+    }
+    let owner = str_of(&rev, "org");
+    Some((rev, owner))
+}
+
+fn spawn_environment(app: &str, env: &str) -> Outcome {
+    let Some((latest, owner)) = parent_of(app) else {
+        return Outcome::Err(404, format!("no deployment or environment `{app}`"));
+    };
+    let derived = env_app(app, env);
+    // A derived name that collides with a real deployment would put two apps in
+    // one store. Refused rather than resolved: `shop` + env `x` and an app called
+    // `shop-env-x` are indistinguishable once the name is a DNS label.
+    let name_taken = all_records(DEPLOYMENTS, 100_000)
+        .into_iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .any(|d| str_of(&d, "name") == derived);
+    if name_taken {
+        return Outcome::Err(409, format!("`{derived}` is already a deployment"));
+    }
+    if newest_revision(&derived).is_some() {
+        return Outcome::Err(409, format!("environment `{env}` of `{app}` already exists"));
+    }
+
+    let mut manifest = latest["manifest"].clone();
+    manifest["app"] = json!(derived);
+    // An environment is not a front door. It exists to be explored, and giving it
+    // the parent's hostname would make two apps answer to one name — the ingress
+    // would route to whichever it saw last.
+    manifest["ingress"] = Value::Null;
+
+    let revision_doc = json!({
+        "deployment": derived, "tenant": str_of(&latest, "tenant"), "revision": 1,
+        "strategy": latest["strategy"], "manifest": manifest,
+        "org": owner, "saved": now(),
+        // What it is and where it came from, so a listing can show the family and
+        // a despawn knows what it is removing.
+        "environment": { "of": app, "name": env, "from_revision": latest["revision"] },
+    });
+    match records::create(
+        REVISIONS,
+        &revision_doc.to_string(),
+        &["deployment".to_string(), "tenant".to_string()],
+    ) {
+        Ok(_) => Outcome::Json(
+            201,
+            json!({
+                "environment": env, "of": app, "app": derived,
+                "from_revision": latest["revision"],
+                "note": "the reconciler converges on the next pass",
+            })
+            .to_string(),
+        ),
+        Err(e) => Outcome::Err(500, format!("recording the environment: {e:?}")),
+    }
+}
+
+/// Every environment of an app, with the revision each was copied from.
+fn env_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(_p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let of = query.get("app").and_then(|v| v.as_str()).unwrap_or_default();
+    let envs: Vec<Value> = all_records(REVISIONS, 100_000)
+        .into_iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .filter(|r| !r["environment"].is_null() && (of.is_empty() || r["environment"]["of"] == json!(of)))
+        .map(|r| {
+            json!({
+                "environment": r["environment"]["name"],
+                "of": r["environment"]["of"],
+                "app": r["deployment"],
+                "from_revision": r["environment"]["from_revision"],
+            })
+        })
+        .collect();
+    Outcome::Json(200, json!({ "count": envs.len(), "environments": envs }).to_string())
+}
+
+/// Remove an environment. The reconciler stops its instances on the next pass,
+/// for the same reason it started them: nothing wants them any more.
+fn env_despawn(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let (app, env) = (
+        query.get("app").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+        query.get("env").and_then(|v| v.as_str()).unwrap_or_default().to_string(),
+    );
+    if app.is_empty() || env.is_empty() {
+        return Outcome::Err(422, "?app=&env= required".into());
+    }
+    let derived = env_app(&app, &env);
+    let _ = p;
+
+    // Environments nest, so closing one has to close what grew out of it. A
+    // descendant left behind is an app still running that nobody can name: its
+    // parent is gone, so nothing lists it and no despawn reaches it. It would
+    // simply consume a node until someone read a ledger by hand.
+    //
+    // The naming makes the subtree findable without a graph walk — every
+    // descendant of `x` is named `x-env-…` (ADR-0078).
+    let prefix = format!("{derived}-env-");
+    let mut doomed: Vec<(String, String)> = Vec::new();
+    // Paged, not capped at 1000. See `all_records`: the flat limit silently hid
+    // every deployment past roughly the five-hundredth, which is how a fleet
+    // asked for 3906 apps sat at 500 forever.
+    for e in all_records(REVISIONS, 100_000) {
+        let Ok(row) = serde_json::from_str::<Value>(&e.data) else { continue };
+        let name = str_of(&row, "deployment");
+        if name != derived && !name.starts_with(&prefix) {
+            continue;
+        }
+        if row["environment"].is_null() {
+            // Not an environment: a real deployment that happens to be named
+            // this. Refusing beats deleting somebody's app because the names
+            // rhyme.
+            return Outcome::Err(409, format!("`{name}` is a deployment, not an environment"));
+        }
+        doomed.push((e.id, name));
+    }
+    if doomed.is_empty() {
+        return Outcome::Err(404, format!("no environment `{env}` of `{app}`"));
+    }
+
+    let mut removed = 0;
+    let mut closed: Vec<String> = Vec::new();
+    for (id, name) in doomed {
+        if records::delete(REVISIONS, &id).is_ok() {
+            removed += 1;
+            if !closed.contains(&name) {
+                closed.push(name);
+            }
+        }
+    }
+    closed.sort();
+    Outcome::Json(
+        200,
+        json!({
+            "environment": env, "of": app, "app": derived,
+            "removed": removed,
+            // Named rather than counted: a caller that spawned a subtree wants to
+            // know exactly what went with it.
+            "closed": closed,
+        })
+        .to_string(),
+    )
+}
+
+/// The newest revision row for a deployment id.
+fn newest_revision(id: &str) -> Option<Value> {
+    records::find_by(REVISIONS, "deployment", &json!(id).to_string())
+        .ok()?
+        .into_iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .max_by_key(|v| v["revision"].as_u64().unwrap_or(0))
+}
+
 /// What `repair` WOULD do, changing nothing (ADR-0075).
 ///
 /// A GET, because it is a question. Something has to run it on a schedule for a
@@ -1742,7 +2168,13 @@ fn resolve_parts(
     }
 
     let mut rows = Vec::new();
-    for id in &node_ids {
+    for raw in &node_ids {
+        // A node may name a bare component, a tag, or a digest (see
+        // `parse_component_ref`). The NAME is what finds the row; the tag or
+        // digest then decides which bytes that row should be read as.
+        let r = parse_component_ref(raw);
+        let id = &r.name;
+
         // Own row first, then any row this principal may use (public/org).
         let row = find_one(CATALOG, "key", &format!("{}/{}", p.tenant, id))
             .map(|(_, _, v)| v)
@@ -1754,9 +2186,48 @@ fn resolve_parts(
                     .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
                     .find(|r| r["id"] == json!(id) && may_use(p, r))
             });
-        let Some(row) = row else {
+        let Some(mut row) = row else {
             return Err(Outcome::Err(422, format!("component `{id}` is unknown or not visible to you")));
         };
+
+        // Resolve a tag to the content it names. A tag that was never recorded is
+        // an error rather than a silent fall-through to `latest` — deploying
+        // something other than what was asked for is worse than refusing.
+        if let Some(tag) = &r.tag {
+            let tagged = row["tags"][tag].as_str().map(str::to_string);
+            match tagged {
+                Some(sha) => {
+                    row["blob_key"] = json!(format!("sha256/{sha}"));
+                    row["content"] = json!(sha);
+                    row["digest"] = json!("");
+                }
+                None => {
+                    return Err(Outcome::Err(
+                        422,
+                        format!("component `{id}` has no tag `{tag}`"),
+                    ))
+                }
+            }
+        }
+
+        // A digest overrides everything, and is checked against what is actually
+        // staged: a reference to bytes nobody has is a typo, and finding that out
+        // at compose time is far better than at start time on a node.
+        if let Some(sha) = &r.digest {
+            let key = format!("sha256/{sha}");
+            if blob::get(BIN, &key).is_err() {
+                return Err(Outcome::Err(
+                    422,
+                    format!("no staged bytes for `{id}@sha256:{sha}` — nothing was ever uploaded with that content"),
+                ));
+            }
+            row["content"] = json!(sha);
+            row["blob_key"] = json!(key);
+            // The digest on the row describes the CURRENT pointer's distributed
+            // artifact, which is not what was asked for. Cleared so the
+            // distribution step re-derives it for these bytes.
+            row["digest"] = json!("");
+        }
         rows.push(row);
     }
 
@@ -1837,13 +2308,7 @@ fn resolve_parts(
     // `{"id": "gate", "config": {"grace-period-secs": "5"}}` on the graph node.
     // Read once here so both strategies get the same treatment.
     let given_config = |id: &str| -> Map<String, Value> {
-        doc["nodes"]
-            .as_array()
-            .and_then(|a| {
-                a.iter().find(|n| n["id"].as_str() == Some(id)).and_then(|n| n["config"].as_object())
-            })
-            .cloned()
-            .unwrap_or_default()
+        req::node_config(doc["nodes"].as_array().map(|a| a.as_slice()).unwrap_or_default(), id)
     };
 
     // `{"id": "gate", "secrets": [{"key": "stripe", "ref": "vault://acme/stripe"}]}`
@@ -1943,8 +2408,7 @@ fn resolve_parts(
             let mut cparts = Vec::new();
             for row in &rows {
                 let id = row["id"].as_str().unwrap_or_default().to_string();
-                let key = format!("{}/{}", row["tenant"].as_str().unwrap_or_default(), id);
-                let Ok(bytes) = blob::get(BIN, &key) else {
+                let Ok(bytes) = blob::get(BIN, &staged_key(row)) else {
                     return Err(Outcome::Err(
                         409,
                         format!("component `{id}` has no staged bytes to compose from — re-upload it"),
@@ -2074,6 +2538,112 @@ fn compose_detail(e: &composer::ComposeError) -> String {
     }
 }
 
+
+
+
+/// A component reference, in the shape everyone already knows from registries.
+///
+///   `shop`                    the moving pointer — whatever was uploaded last
+///   `shop:v2`                 a named pointer, which an author may move
+///   `shop@sha256:<hex>`       exact bytes, which nothing can move
+///
+/// The idiom is worth following rather than inventing, and the field this ends up
+/// in has been called `oci_ref` since long before any of this. A digest reference
+/// is the one that makes a deployment reproducible: it survives somebody else
+/// uploading over the name it came from, which — before content-addressed staging
+/// — was not merely a stale read but a lost artifact.
+pub struct ComponentRef {
+    pub name: String,
+    pub tag: Option<String>,
+    pub digest: Option<String>,
+}
+
+fn parse_component_ref(raw: &str) -> ComponentRef {
+    // `@` binds tighter than `:` — `shop:v2@sha256:x` is a digest reference that
+    // happens to mention where it came from, and the digest wins, because the
+    // whole point of naming one is that nothing else gets a say.
+    if let Some((left, hex)) = raw.split_once("@sha256:") {
+        let (name, tag) = match left.split_once(':') {
+            Some((n, t)) => (n.to_string(), Some(t.to_string())),
+            None => (left.to_string(), None),
+        };
+        return ComponentRef { name, tag, digest: Some(hex.to_string()) };
+    }
+    match raw.split_once(':') {
+        Some((n, t)) => ComponentRef { name: n.to_string(), tag: Some(t.to_string()), digest: None },
+        None => ComponentRef { name: raw.to_string(), tag: None, digest: None },
+    }
+}
+
+/// Where a catalogue row's bytes are staged.
+///
+/// ASK THE ROW; do not rebuild the key. A row is a pointer at content, so
+/// reconstructing `tenant/id` and reading that is assuming the name still holds
+/// the bytes this row describes — which stopped being true the moment staging
+/// became content-addressed, and was never safe under a concurrent upload even
+/// before that.
+///
+/// The fallback covers rows written before content keys existed.
+fn staged_key(row: &Value) -> String {
+    match row["blob_key"].as_str().filter(|s| !s.is_empty()) {
+        Some(k) => k.to_string(),
+        None => format!(
+            "{}/{}",
+            row["tenant"].as_str().unwrap_or_default(),
+            row["id"].as_str().unwrap_or_default()
+        ),
+    }
+}
+
+/// What each component in a graph exports, by name.
+///
+/// Recorded on every revision so the NEXT save has something to compare against.
+/// Without it, "did this upgrade break anything" has no answer: the catalogue row
+/// is overwritten by the upload, so by the time a save runs, what the previous
+/// build exported is already gone.
+fn surfaces_of(tenant: &str, parts: &[manifest::Part]) -> Value {
+    let mut out = serde_json::Map::new();
+    for p in parts {
+        let key = format!("{tenant}/{}", p.name);
+        let exports: Vec<Value> = find_one(CATALOG, "key", &key)
+            .map(|(_, _, row)| row["surface"]["exports"].clone())
+            .and_then(|e| e.as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|e| e["raw"].as_str().map(|s| json!(s)))
+            .collect();
+        out.insert(p.name.clone(), Value::Array(exports));
+    }
+    Value::Object(out)
+}
+
+/// Exports that the previous revision had and this one does not.
+///
+/// This is the ONLY thing the WIT surface is used for, and the distinction is the
+/// one that a version test found the hard way. The surface must never decide
+/// whether an artifact CHANGED — two builds differing in a constant have
+/// identical surfaces and different bytes, and treating them as the same shipped
+/// nothing for the entire life of that bug. What the surface is genuinely good
+/// for is whether a change BREAKS something: an export that vanished is an export
+/// somebody was linking to, or serving on.
+fn lost_exports(before: &Value, after: &Value) -> Vec<String> {
+    let mut gone = Vec::new();
+    let Some(old) = before.as_object() else { return gone };
+    for (component, exports) in old {
+        // A component that is no longer in the graph at all is a deliberate
+        // removal, not a broken upgrade — the author took it out.
+        let Some(now) = after.get(component).and_then(|v| v.as_array()) else { continue };
+        for e in exports.as_array().cloned().unwrap_or_default() {
+            let Some(raw) = e.as_str() else { continue };
+            if !now.iter().any(|n| n.as_str() == Some(raw)) {
+                gone.push(format!("{component} no longer exports {raw}"));
+            }
+        }
+    }
+    gone.sort();
+    gone
+}
+
 /// Record the composed artifact as a catalog row, and return its digest once the
 /// distributor has given it one.
 ///
@@ -2103,13 +2673,27 @@ fn stage_fused(
         "host_imports": host_imports,
         "nested_instances": plan.instance_count,
     });
+    // WHAT THIS WAS COMPOSED FROM, by content.
+    //
+    // The surface alone cannot answer "is this still the right artifact". Two
+    // builds of one component with a changed constant have IDENTICAL exports and
+    // imports and completely different bytes — which is what most changes look
+    // like, and certainly what an agent's changes look like. Comparing surfaces
+    // meant a re-uploaded component was composed once and never again: the
+    // manifest kept the first digest, the fleet kept running the first build, and
+    // every layer reported success.
+    //
+    // The uploaded component's own content hash is what actually identifies the
+    // input, so that is what is recorded and compared.
+    let inputs = json!([root_row["surface"]["sha256"]]);
     match find_one(CATALOG, "key", key) {
         Some((rec, rev, mut row)) => {
             let digest = row["digest"].as_str().unwrap_or_default().to_string();
             // Re-staging the same graph must not orphan a digest that already
             // describes different bytes.
-            if row["surface"] != surface {
+            if row["surface"] != surface || row["inputs"] != inputs {
                 row["surface"] = surface;
+                row["inputs"] = inputs;
                 row["digest"] = json!("");
                 let _ = records::update(CATALOG, &rec, &row.to_string(), rev);
                 return String::new();
@@ -2121,7 +2705,8 @@ fn stage_fused(
                 "key": key, "id": fused_id, "tenant": tenant,
                 "uploader": root_row["uploader"], "visibility": "private",
                 "description": "composed artifact, generated by a fused deployment",
-                "surface": surface, "digest": "", "generated": true, "added": now(),
+                "surface": surface, "inputs": inputs,
+                "digest": "", "generated": true, "added": now(),
             });
             let _ = records::create(CATALOG, &row.to_string(),
                 &["key".to_string(), "id".to_string(), "tenant".to_string()]);
@@ -2130,7 +2715,15 @@ fn stage_fused(
     }
 }
 
-fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
+fn deployment_save(request: &IncomingRequest, id: &str, query: &Map<String, Value>) -> Outcome {
+    // Removing an export is sometimes the point. An author who means it says so.
+    let force = query.get("force").and_then(|v| v.as_str()).is_some_and(|v| v == "true");
+    // A save is what creates desired state — it is the other way to ask the fleet
+    // for work, and admitting only environment spawns would leave the front door
+    // open while watching the side one.
+    if let Err(refusal) = admit_one_more() {
+        return refusal;
+    }
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
@@ -2218,12 +2811,43 @@ fn deployment_save(request: &IncomingRequest, id: &str) -> Outcome {
         Err(e) => return Outcome::Err(422, e.detail()),
     };
 
+    // --- the compatibility gate ---------------------------------------------
+    //
+    // An upgrade that removes an export breaks whatever was linked to it, or the
+    // ingress that was serving on it. Refused here, where the author is standing,
+    // rather than at start time on a node — where it surfaces as a link failure
+    // with no hint that an upload caused it.
+    //
+    // `?force=true` exists because sometimes removing an export IS the change.
+    let surfaces = surfaces_of(&owner_org, &parts);
+    if !force {
+        if let Some(prev) = newest_revision(id) {
+            let gone = lost_exports(&prev["surfaces"], &surfaces);
+            if !gone.is_empty() {
+                return Outcome::Err(
+                    409,
+                    format!(
+                        "this upgrade removes {} export(s) that revision {} had: {}. Anything \
+                         linked to them would fail to start. Re-deploy with `?force=true` if \
+                         that is the intent.",
+                        gone.len(),
+                        prev["revision"].as_u64().unwrap_or(0),
+                        gone.join("; ")
+                    ),
+                );
+            }
+        }
+    }
+
     // A revision is the unit of rollback: the desired state, verbatim (ADR-0004).
     let next = doc["revision"].as_u64().unwrap_or(0) + 1;
     let revision_doc = json!({
         "deployment": id, "tenant": owner_org, "revision": next,
         "strategy": strategy.as_str(), "manifest": doc_manifest,
         "org": owner_org, "saved": now(), "env": manifest::env_for(&owner_org, &name),
+        // What this revision's components export, so the NEXT save can tell an
+        // upgrade from a break.
+        "surfaces": surfaces,
     });
     let _ = records::create(REVISIONS, &revision_doc.to_string(), &["deployment".to_string(), "tenant".to_string()]);
 
@@ -2270,12 +2894,55 @@ fn manifests(request: &IncomingRequest, id: &str) -> Outcome {
 }
 
 /// What the applier re-applies on its interval (ADR-0004's drift correction).
+
+/// Every record in a collection, following the cursor.
+///
+/// `list_records` takes a limit and returns a cursor, and a single call with a
+/// big-looking number is a SILENT truncation: the caller gets a plausible answer
+/// with the tail missing and no indication that anything was dropped.
+///
+/// That is not hypothetical. Desired state was read with a flat limit of 1000,
+/// and a stress run that grew 3906 environments watched the fleet flatline at
+/// exactly 500 running — 1000 revision records, deduplicated to the newest per
+/// deployment, is about 500 apps. Every environment past the cap was created,
+/// reported as created, and never placed, with nothing anywhere saying so.
+///
+/// `cap` is a real backstop rather than a silent one: reaching it is reported.
+fn all_records(collection: &str, cap: usize) -> Vec<records::Entry> {
+    const PAGE: u32 = 500;
+    let mut out = Vec::new();
+    let mut after = String::new();
+    loop {
+        let Ok(page) = records::list_records(collection, PAGE, &after) else { break };
+        let empty = page.entries.is_empty();
+        out.extend(page.entries);
+        if out.len() >= cap {
+            eprintln!(
+                "platform: {collection} has at least {} records and this read stops at {cap} — \
+                 the tail is NOT being served, which for desired state means apps that were \
+                 accepted and will never start",
+                out.len()
+            );
+            out.truncate(cap);
+            break;
+        }
+        if page.next.is_empty() || empty {
+            break;
+        }
+        after = page.next;
+    }
+    out
+}
+
 fn internal_revisions(request: &IncomingRequest) -> Outcome {
     if !internal_ok(request) {
         return Outcome::Err(401, "internal endpoint".into());
     }
     let mut current: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
-    for e in records::list_records(REVISIONS, 1000, "").map(|p| p.entries).unwrap_or_default() {
+    // Paged, not capped at 1000. See `all_records`: the flat limit silently hid
+    // every deployment past roughly the five-hundredth, which is how a fleet
+    // asked for 3906 apps sat at 500 forever.
+    for e in all_records(REVISIONS, 100_000) {
         if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
             let key = v["deployment"].as_str().unwrap_or_default().to_string();
             let better = current
@@ -2332,7 +2999,7 @@ fn deployment_delete(
         doc["org"].as_str().or_else(|| doc["tenant"].as_str()).unwrap_or(&p.tenant).to_string();
     let env = manifest::env_for(&owner_org, &name);
 
-    for e in records::list_records(REVISIONS, 1000, "").map(|pg| pg.entries).unwrap_or_default() {
+    for e in all_records(REVISIONS, 100_000) {
         if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
             if v["deployment"] == json!(id) {
                 let _ = records::delete(REVISIONS, &e.id);
@@ -2610,5 +3277,461 @@ mod query_tests {
     fn a_stray_percent_is_kept_rather_than_swallowed() {
         let (_, q) = split_query("/api/market?q=100%");
         assert_eq!(q["q"], json!("100%"));
+    }
+}
+
+// ---- projects and goals (ADR-0082) -----------------------------------------
+
+const PROJECTS: &str = "projects";
+const GOALS: &str = "goals";
+
+/// The goal lifecycle, as the only legal transitions.
+///
+/// A table rather than scattered `if state == …` checks, because the illegal
+/// moves are the interesting ones: nothing may leave `failed` (a requeue makes a
+/// NEW goal, so what was tried stays visible), and nothing may reach `done`
+/// without having run.
+fn goal_may(from: &str, to: &str) -> bool {
+    matches!(
+        (from, to),
+        ("queued", "running")
+            | ("queued", "abandoned")
+            | ("running", "awaiting-human")
+            | ("running", "failed")
+            | ("running", "abandoned")
+            | ("awaiting-human", "done")
+            | ("awaiting-human", "failed")
+            | ("awaiting-human", "abandoned")
+    )
+}
+
+/// A project name that is safe as part of a store name and a branch name.
+fn valid_project_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 40
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+}
+
+fn project_create(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    let b: req::NewProject = match read_body(request)
+        .map_err(|_| Outcome::Err(400, "could not read body".into()))
+        .and_then(|raw| req::parse(&raw))
+    {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    if !valid_project_name(&b.name) {
+        return Outcome::Err(422, "name must be 1-40 chars of [a-z0-9-], not starting or ending with -".into());
+    }
+    // `owner/name`, checked here rather than at the first forge call, where the
+    // answer is a 404 that reads like "the repository does not exist".
+    if b.repo.split('/').filter(|s| !s.is_empty()).count() != 2 {
+        return Outcome::Err(422, format!("repo must be \"owner/name\", got {:?}", b.repo));
+    }
+    if projects_of(&org).iter().any(|d| str_of(d, "name") == b.name) {
+        return Outcome::Err(409, format!("project `{}` already exists", b.name));
+    }
+
+    let doc = json!({
+        "name": b.name, "org": org, "repo": b.repo,
+        "base": b.base.unwrap_or_else(|| "main".into()),
+        "forge_token_ref": b.forge_token_ref.unwrap_or_default(),
+        "llm_key_ref": b.llm_key_ref.unwrap_or_default(),
+        "budget": b.budget.unwrap_or(0),
+        // One at a time, which is the whole answer to concurrent pull requests
+        // (ADR-0082). Raising it is what makes that a problem worth solving.
+        "max_concurrent_runs": 1,
+        "created": now(),
+    });
+    match records::create(PROJECTS, &doc.to_string(), &["org".to_string()]) {
+        Ok(e) => Outcome::Json(201, json!({ "id": e.id, "name": doc["name"], "repo": doc["repo"], "base": doc["base"] }).to_string()),
+        Err(e) => Outcome::Err(500, format!("recording the project: {e:?}")),
+    }
+}
+
+fn projects_of(org: &str) -> Vec<Value> {
+    records::find_by(PROJECTS, "org", &json!(org).to_string())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .collect()
+}
+
+fn projects_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    let rows: Vec<Value> = projects_of(&org)
+        .into_iter()
+        .map(|d| {
+            let name = str_of(&d, "name");
+            let goals = goals_of(&name);
+            json!({
+                "name": name, "repo": d["repo"], "base": d["base"],
+                "queued": goals.iter().filter(|g| str_of(g, "state") == "queued").count(),
+                "running": goals.iter().filter(|g| str_of(g, "state") == "running").count(),
+                "failed": goals.iter().filter(|g| str_of(g, "state") == "failed").count(),
+            })
+        })
+        .collect();
+    Outcome::Json(200, json!({ "count": rows.len(), "projects": rows }).to_string())
+}
+
+fn goals_of(project: &str) -> Vec<Value> {
+    records::find_by(GOALS, "project", &json!(project).to_string())
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+            v["id"] = json!(e.id);
+            v
+        }))
+        .collect()
+}
+
+fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+        Ok((org, _)) => org,
+        Err((code, msg)) => return Outcome::Err(code, msg),
+    };
+    if !projects_of(&org).iter().any(|d| str_of(d, "name") == project) {
+        return Outcome::Err(404, format!("no project `{project}`"));
+    }
+    let b: req::NewGoal = match read_body(request)
+        .map_err(|_| Outcome::Err(400, "could not read body".into()))
+        .and_then(|raw| req::parse(&raw))
+    {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    if b.title.trim().is_empty() {
+        return Outcome::Err(422, "a goal needs a title".into());
+    }
+    let doc = json!({
+        "project": project, "org": org,
+        "title": b.title.trim(),
+        "spec": b.spec.unwrap_or_default(),
+        "priority": b.priority.unwrap_or(100),
+        // Queued, and it stays there. A human starts every goal (ADR-0082): there
+        // is no loop that drains this, on purpose.
+        "state": "queued",
+        "created": now(),
+    });
+    match records::create(GOALS, &doc.to_string(), &["project".to_string(), "org".to_string()]) {
+        Ok(e) => Outcome::Json(201, json!({ "id": e.id, "project": project, "state": "queued", "title": doc["title"] }).to_string()),
+        Err(e) => Outcome::Err(500, format!("recording the goal: {e:?}")),
+    }
+}
+
+fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer) {
+        return Outcome::Err(code, msg);
+    }
+    let want = query.get("state").and_then(|v| v.as_str()).unwrap_or_default();
+    let mut rows: Vec<Value> = goals_of(project)
+        .into_iter()
+        .filter(|g| want.is_empty() || str_of(g, "state") == want)
+        .collect();
+    // Priority first, then oldest — a worklist someone reads top-down.
+    rows.sort_by(|a, b| {
+        a["priority"]
+            .as_i64()
+            .unwrap_or(100)
+            .cmp(&b["priority"].as_i64().unwrap_or(100))
+            .then(str_of(a, "created").cmp(&str_of(b, "created")))
+    });
+    Outcome::Json(200, json!({ "count": rows.len(), "goals": rows }).to_string())
+}
+
+/// Move a goal, refusing anything the lifecycle does not allow.
+fn goal_transition(
+    request: &IncomingRequest,
+    id: &str,
+    to: &str,
+    query: &Map<String, Value>,
+) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+        return Outcome::Err(code, msg);
+    }
+    let Ok(entry) = records::get(GOALS, id) else {
+        return Outcome::Err(404, format!("no goal `{id}`"));
+    };
+    let Ok(mut doc) = serde_json::from_str::<Value>(&entry.data) else {
+        return Outcome::Err(500, "the goal record is unreadable".into());
+    };
+    let from = str_of(&doc, "state");
+    if !goal_may(&from, to) {
+        // Naming both ends beats "invalid transition": the caller usually has the
+        // wrong idea about where the goal currently IS.
+        return Outcome::Err(409, format!("a goal cannot go from `{from}` to `{to}`"));
+    }
+
+    doc["state"] = json!(to);
+    match to {
+        "running" => {
+            doc["started"] = json!(now());
+            // A goal is FROZEN once it starts (ADR-0081): the spec it was judged
+            // against must not change under a run. Editing a running goal forks
+            // it into a new one instead.
+            doc["frozen_spec"] = doc["spec"].clone();
+        }
+        "failed" => {
+            let reason = read_body(request)
+                .ok()
+                .and_then(|raw| req::parse::<req::FailGoal>(&raw).ok())
+                .map(|b| b.reason)
+                .unwrap_or_else(|| "no reason given".into());
+            doc["reason"] = json!(reason);
+            doc["failed_at"] = json!(now());
+        }
+        "done" => doc["finished"] = json!(now()),
+        _ => {}
+    }
+
+    // Guarded on the revision we READ, so two people starting the same goal at the
+    // same moment cannot both win. Without it the second write silently overwrites
+    // the first and two runs believe they own one goal — which, with one run per
+    // project, is exactly the case this design exists to prevent.
+    match records::update(GOALS, id, &doc.to_string(), entry.revision) {
+        Err(records::StoreError::RevisionConflict(_)) => Outcome::Err(
+            409,
+            format!("`{id}` moved while you were looking at it — read it again"),
+        ),
+        Ok(_) => Outcome::Json(
+            200,
+            json!({ "id": id, "from": from, "state": to, "title": doc["title"] }).to_string(),
+        ),
+        Err(e) => Outcome::Err(500, format!("moving the goal: {e:?}")),
+    }
+}
+
+// ---- fleet status and admission control ------------------------------------
+
+const FLEET: &str = "fleet";
+
+/// Where the reconciler's last report is kept. One row, overwritten.
+const FLEET_ROW: &str = "status";
+
+/// The reconciler POSTs here every pass. Until now nothing received it: the
+/// endpoint did not exist, and the reconciler's `let _ = …send()` swallowed the
+/// 404, so `unschedulable` and `at_ceiling` had been reported into the void.
+fn internal_status_put(request: &IncomingRequest) -> Outcome {
+    if !internal_ok(request) {
+        return Outcome::Err(401, "internal endpoint".into());
+    }
+    let Ok(raw) = read_body(request) else {
+        return Outcome::Err(400, "could not read body".into());
+    };
+    let Ok(mut body) = serde_json::from_slice::<Value>(&raw) else {
+        return Outcome::Err(400, "status must be JSON".into());
+    };
+    body["at"] = json!(now());
+    // A new report accounts for everything admitted before it, so the running
+    // count starts again from zero.
+    body["admitted"] = json!(0);
+
+    // One row, replaced. History would be a metrics system's job, and keeping it
+    // here would grow without bound in the collection the admission check reads
+    // on every spawn.
+    let existing = records::find_by(FLEET, "row", &json!(FLEET_ROW).to_string())
+        .unwrap_or_default()
+        .into_iter()
+        .next();
+    body["row"] = json!(FLEET_ROW);
+    let stored = match existing {
+        Some(e) => records::update(FLEET, &e.id, &body.to_string(), e.revision).map(|_| ()),
+        None => records::create(FLEET, &body.to_string(), &["row".to_string()]).map(|_| ()),
+    };
+    match stored {
+        Ok(()) => Outcome::Json(200, json!({ "recorded": true }).to_string()),
+        Err(e) => Outcome::Err(500, format!("recording fleet status: {e:?}")),
+    }
+}
+
+/// How many spawns have been admitted since the last fleet report.
+///
+/// Without this, admission is only as fresh as the last report — and a burst
+/// faster than the reporting interval sails straight through. A stress run fired
+/// 625 spawns in 0.2 seconds against a limit of 200 and every one was admitted,
+/// because the newest lag the platform had was seconds old and said the fleet was
+/// nearly caught up.
+///
+/// Counting what has been let through since that number arrived turns a stale
+/// figure into a usable estimate: the fleet is at least this far behind, because
+/// this much was added after it last spoke.
+fn admitted_since_report() -> u64 {
+    records::find_by(FLEET, "row", &json!(FLEET_ROW).to_string())
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .and_then(|e| serde_json::from_str::<Value>(&e.data).ok())
+        .and_then(|v| v["admitted"].as_u64())
+        .unwrap_or(0)
+}
+
+/// Record one more admission against the current report.
+fn note_admission() {
+    let Some(e) = records::find_by(FLEET, "row", &json!(FLEET_ROW).to_string())
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+    else {
+        return;
+    };
+    let Ok(mut doc) = serde_json::from_str::<Value>(&e.data) else { return };
+    doc["admitted"] = json!(doc["admitted"].as_u64().unwrap_or(0) + 1);
+    // Guarded on the revision, so a burst of concurrent admissions cannot lose
+    // counts — which is the case this exists for.
+    let _ = records::update(FLEET, &e.id, &doc.to_string(), e.revision);
+}
+
+/// How far behind the fleet is, how old that number is, and how many nodes it
+/// was measured across.
+fn fleet_lag() -> Option<(u64, u64, u64)> {
+    let row = records::find_by(FLEET, "row", &json!(FLEET_ROW).to_string())
+        .ok()?
+        .into_iter()
+        .next()
+        .and_then(|e| serde_json::from_str::<Value>(&e.data).ok())?;
+    let lag = row["lag"].as_u64().unwrap_or(0);
+    let at = row["at"].as_u64().unwrap_or(0);
+    let age = now().saturating_sub(at);
+    // A fleet with no nodes still counts as one, so the limit never collapses to
+    // zero and refuses everything the moment inventory blinks.
+    let nodes = row["nodes"].as_u64().unwrap_or(1).max(1);
+    Some((lag, age, nodes))
+}
+
+fn cfg_u64(key: &str, default: u64) -> u64 {
+    config::get(key).ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+/// May the fleet be asked to run one more thing?
+///
+/// Admission belongs HERE and not in the reconciler: the loop's job is to place
+/// what it is told as fast as it can, and a loop that also decided whether work
+/// should exist would be judging its own backlog.
+///
+/// Refusing beats queueing. A queue that grows while nothing drains it is the
+/// same bug one level up, and a caller told "not now" can back off — which under
+/// ADR-0082 is a person, who can simply try later.
+fn admit_one_more() -> Result<(), Outcome> {
+    // The limit is PER NODE, multiplied by the nodes actually carrying work.
+    //
+    // A flat number is wrong everywhere except where it was measured: 200
+    // outstanding is a reasonable backlog on three nodes and absurd on one, and a
+    // fleet that grows would keep an admission limit sized for the fleet it used
+    // to be. `max-placement-lag` still overrides, for an operator who wants a
+    // hard cap regardless of size.
+    let per_node = cfg_u64("max-placement-lag-per-node", 70);
+    let flat = cfg_u64("max-placement-lag", 0);
+    if flat == 0 && per_node == 0 {
+        return Ok(()); // explicitly disabled
+    }
+    let stale_after = cfg_u64("status-max-age", 90);
+
+    let Some((lag, age, nodes)) = fleet_lag() else {
+        // Nothing has ever reported. Allowed: a platform that refused every
+        // spawn until a reconciler had spoken would be unusable on a fresh
+        // install, and there is no backlog to protect against yet either.
+        return Ok(());
+    };
+
+    // FAIL CLOSED on a stale report. If the loop has stopped, accepting more work
+    // is pointless — nothing will place it — and failing open here would mean
+    // unbounded acceptance at exactly the moment nothing is being done.
+    if age > stale_after {
+        return Err(Outcome::Err(
+            503,
+            format!(
+                "the reconciler has not reported for {age}s (stale after {stale_after}s) — \
+                 nothing is placing work, so nothing new is accepted"
+            ),
+        ));
+    }
+    let limit = if flat > 0 { flat } else { per_node.saturating_mul(nodes) };
+
+    // Everything let through since that number arrived counts against it too.
+    let pending = admitted_since_report();
+    let effective = lag + pending;
+    if effective > limit {
+        return Err(Outcome::Err(
+            429,
+            format!(
+                "the fleet is {lag} instance(s) behind, {pending} more were accepted since it \
+                 last reported, and the limit is {limit} across {nodes} node(s) — this would \
+                 be accepted and never placed. Try again once it has caught up."
+            ),
+        ));
+    }
+    note_admission();
+    Ok(())
+}
+
+#[cfg(test)]
+mod ref_tests {
+    use super::parse_component_ref as parse_ref;
+
+    /// The registry idiom, followed rather than reinvented.
+    #[test]
+    fn a_bare_name_is_the_moving_pointer() {
+        let r = parse_ref("shop");
+        assert_eq!(r.name, "shop");
+        assert!(r.tag.is_none() && r.digest.is_none());
+    }
+
+    #[test]
+    fn a_tag_is_a_pointer_an_author_may_move() {
+        let r = parse_ref("shop:v2");
+        assert_eq!((r.name.as_str(), r.tag.as_deref()), ("shop", Some("v2")));
+        assert!(r.digest.is_none());
+    }
+
+    /// The one that makes a deployment reproducible.
+    #[test]
+    fn a_digest_names_bytes_nothing_can_move() {
+        let r = parse_ref("shop@sha256:abc123");
+        assert_eq!(r.name, "shop");
+        assert_eq!(r.digest.as_deref(), Some("abc123"));
+    }
+
+    /// A digest wins over a tag in the same reference. Naming exact bytes is a
+    /// statement that nothing else gets a say — including the tag beside it,
+    /// which may since have moved somewhere else entirely.
+    #[test]
+    fn a_digest_beats_the_tag_beside_it() {
+        let r = parse_ref("shop:v2@sha256:abc123");
+        assert_eq!(r.name, "shop");
+        assert_eq!(r.tag.as_deref(), Some("v2"), "the tag is kept, for the record");
+        assert_eq!(r.digest.as_deref(), Some("abc123"), "but the digest decides");
+    }
+
+    /// A name with no tag and no digest must not be mangled by a stray colon in
+    /// something that is not a reference at all.
+    #[test]
+    fn a_name_that_looks_like_a_url_is_still_a_name() {
+        let r = parse_ref("shop:8080");
+        assert_eq!((r.name.as_str(), r.tag.as_deref()), ("shop", Some("8080")));
     }
 }

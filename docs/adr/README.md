@@ -99,6 +99,11 @@ single-component app should be a container, not a wasm workload.
 | [0075](0075-silence-is-not-health.md) | Silence is not health — drift on the read path, and a `verify` that only reports | accepted, and built |
 | [0076](0076-revocation-without-versions.md) | Revocation without versions — and why per-version keys stay unbuilt | accepted, and built |
 | [0077](0077-asking-the-same-question-twenty-times.md) | Asking the same question twenty times — the `feed` N+1, removed | accepted, and built |
+| [0078](0078-an-environment-is-a-derived-app.md) | An environment is a derived app — parallel exploration, and why not a host per branch | accepted; desired-state half built |
+| [0079](0079-a-component-forks-its-own-app.md) | A component forks its own app — the instance token as identity | accepted; platform half built |
+| [0080](0080-the-graph-remembers.md) | The graph remembers — a knowledge graph over SurrealDB, as a component | accepted; proven against a live database |
+| [0081](0081-fitness-fuel-and-what-the-swarm-knows.md) | Fitness, fuel, and what the swarm knows — judging a branch, sharing knowledge, and stopping | **proposed**; nothing built |
+| [0082](0082-a-project-owns-a-repo-and-a-queue.md) | A project owns a repo and a queue — one repo, a dead-letter queue, and a human starts every goal | accepted; the queue is built, the runner is not |
 
 ## The shape these add up to
 

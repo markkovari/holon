@@ -76,6 +76,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "artifact-cache"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "artifact-probe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "audit-log"
 version = "0.1.0"
 dependencies = [
@@ -524,6 +540,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-probe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "fsm-workflow"
 version = "0.1.0"
 dependencies = [
@@ -560,7 +584,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "github-forge"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "golem-bridge"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "graph-probe"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen-rt",
@@ -697,6 +738,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "knowledge-graph"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "kv-probe"
 version = "0.1.0"
 dependencies = [
@@ -750,6 +801,13 @@ dependencies = [
 
 [[package]]
 name = "llm-inference"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "llm-probe"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen-rt",
@@ -818,6 +876,15 @@ name = "mfa-authgate"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
+ "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "mock-provider"
+version = "0.1.0"
+dependencies = [
  "serde_json",
  "sha2",
  "wit-bindgen-rt",
@@ -1625,6 +1692,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "version-probe"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1636,6 +1710,22 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "vgit-probe"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "virt-git"
+version = "0.1.0"
+dependencies = [
+ "sha1",
  "wit-bindgen-rt",
 ]
 

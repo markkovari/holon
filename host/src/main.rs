@@ -555,7 +555,7 @@ impl WasiHttpHooks for Egress {
             match tokio::net::lookup_host(&target).await {
                 Ok(addrs) => {
                     for a in addrs {
-                        if !scope.egress.permits_addr(a.ip()) {
+                        if !scope.egress.permits_addr(a) {
                             eprintln!(
                                 "comp-host: {} denied egress to {target} — it resolves to {}",
                                 scope.id(),
@@ -925,8 +925,11 @@ async fn main() -> Result<()> {
         slice_ms: args.slice_ms,
         allow_private_egress: args.allow_private_egress,
         // This host's own listener is never a legitimate egress target: reaching it
-        // would let a component call back in as though it were a client.
-        denied_addrs: vec![addr.ip()],
+        // would let a component call back in as though it were a client. The
+        // SOCKET, not the address — everything else on the same machine is the
+        // range check's business, and denying the whole IP silently took out any
+        // colocated service a component was meant to reach.
+        denied_addrs: vec![addr],
     };
     // File first, flags second, so an explicit `--config` always wins.
     let mut cfg: std::collections::BTreeMap<String, String> = Default::default();

@@ -286,7 +286,21 @@ async fn main() -> Result<()> {
         *known.write().unwrap() = (desired.clone(), observed.to_vec());
 
         let outcome = plan(&desired, &observed, load.as_ref(), &mut hyst, &cfg);
-        report(&args, &http, &outcome).await;
+
+        // How far behind the fleet is: every replica the manifests ask for,
+        // against every instance the nodes say they are running. This is the
+        // number the platform admits new work against, so it is computed on
+        // every pass rather than only when something is stuck.
+        let wanted: u64 = desired
+            .iter()
+            .flat_map(|m| m.components.iter())
+            .map(|c| c.replicas.max(1) as u64)
+            .sum();
+        let running: u64 =
+            observed.iter().map(|n| n.instances.iter().map(|i| i.count.max(1) as u64).sum::<u64>()).sum();
+        let lag = wanted.saturating_sub(running);
+        let nodes = observed.len() as u64;
+        report(&args, &http, &outcome, lag, wanted, running, nodes).await;
 
         if outcome.commands.is_empty() {
             continue;
@@ -453,28 +467,50 @@ async fn wire_command(
         .iter()
         .map(|s| (s.key.clone(), s.reference.clone()))
         .collect::<std::collections::BTreeMap<_, _>>());
-    if secrets.is_empty() {
-        return Ok(body);
-    }
+    // Minted even with no secrets: the token is this instance's proof of identity,
+    // which is what lets a component ask the platform to fork its own app
+    // (ADR-0079) without the host holding a credential that could touch anyone
+    // else's. A token with no refs authorises no secret.
+
     let instance = format!("{tenant}/{app}/{component}@{node}");
     let refs: Vec<&str> = secrets.iter().map(|s| s.reference.as_str()).collect();
     let url = format!("{}/api/internal/fetch-token", args.platform_url.trim_end_matches('/'));
-    let res = http
-        .post(&url)
-        .header("x-platform-secret", &args.secret)
-        .json(&json!({ "instance": instance, "refs": refs }))
-        .send()
-        .await
-        .context("asking for a fetch token")?;
-    if !res.status().is_success() {
-        anyhow::bail!("the platform refused a fetch token: {}", res.status());
+    // Hard for secrets, soft for identity. An instance that was GRANTED secrets and
+    // cannot get a token must not start — it would fail at the first reveal, in
+    // front of a user (ADR-0061). An instance with no secrets wants the token only
+    // to prove who it is when it asks to fork its own app (ADR-0079), and refusing
+    // to start it would make a brand-new optional capability able to take the
+    // whole fleet down. It did, for one commit: every start began minting, and a
+    // control plane without that route served nothing at all.
+    let need = !secrets.is_empty();
+    let minted = async {
+        let res = http
+            .post(&url)
+            .header("x-platform-secret", &args.secret)
+            .json(&json!({ "instance": instance, "refs": refs }))
+            .send()
+            .await
+            .context("asking for an instance token")?;
+        if !res.status().is_success() {
+            anyhow::bail!("the platform refused an instance token: {}", res.status());
+        }
+        let token = res.json::<serde_json::Value>().await.context("reading the token")?;
+        let token = token["token"].as_str().unwrap_or_default().to_string();
+        if token.is_empty() {
+            anyhow::bail!("the platform returned an empty token");
+        }
+        Ok::<_, anyhow::Error>(token)
     }
-    let token = res.json::<serde_json::Value>().await.context("reading the fetch token")?;
-    let token = token["token"].as_str().unwrap_or_default().to_string();
-    if token.is_empty() {
-        anyhow::bail!("the platform returned an empty fetch token");
+    .await;
+    match minted {
+        Ok(token) => body["fetch_token"] = json!(token),
+        Err(e) if need => return Err(e),
+        Err(e) => {
+            // Said once per start rather than swallowed: an instance without a
+            // token cannot spawn, and finding that out from silence is worse.
+            eprintln!("comp-reconciler: {instance} starts without an instance token ({e:#})");
+        }
     }
-    body["fetch_token"] = json!(token);
     Ok(body)
 }
 
@@ -510,7 +546,16 @@ async fn send(
 
 /// Tell the platform what could not be placed. One endpoint, so an app stuck
 /// unschedulable is visible in the UI instead of only in these logs.
-async fn report(args: &Args, http: &reqwest::Client, outcome: &Outcome) {
+#[allow(clippy::too_many_arguments)]
+async fn report(
+    args: &Args,
+    http: &reqwest::Client,
+    outcome: &Outcome,
+    lag: u64,
+    desired: u64,
+    placed: u64,
+    nodes: u64,
+) {
     // Said out loud even though nothing here can fix it: `max` is the operator's
     // limit, so a component pinned against it with demand still arriving is a
     // decision only they can make. Silence would make it indistinguishable from an
@@ -521,9 +566,12 @@ async fn report(args: &Args, http: &reqwest::Client, outcome: &Outcome) {
             c.tenant, c.app, c.component, c.max, c.wanted
         );
     }
-    if outcome.unschedulable.is_empty() && outcome.at_ceiling.is_empty() {
-        return;
-    }
+    // NO early return when nothing is stuck. This function used to bail out here,
+    // which was right when its only job was surfacing problems and wrong the
+    // moment the platform started admitting work against the lag: a fleet with
+    // nothing wrong reported nothing at all, so admission saw a report that never
+    // arrived and, after the grace period, failed closed on a perfectly healthy
+    // fleet. The lag is most useful precisely when it is small.
     for u in &outcome.unschedulable {
         eprintln!("comp-reconciler: {}/{} unschedulable: {}", u.tenant, u.app, u.reason);
     }

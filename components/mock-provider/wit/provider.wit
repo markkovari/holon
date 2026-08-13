@@ -1,0 +1,40 @@
+// mock:provider — `llm:inference`, scripted. Deterministic, free, offline.
+//
+// Correctness in this system cannot be paid for in tokens. A swarm test asks
+// things like "twelve branches explore, branch seven wins, a pull request opens
+// against the right base" — and with a real provider that test costs money every
+// run, takes minutes, and ANSWERS DIFFERENTLY EACH TIME, which means it cannot
+// assert the thing it exists to assert. Selection logic is untestable against a
+// non-deterministic oracle.
+//
+// So this is the swap point being used for what it was designed for. The
+// `llm:inference` world comment already anticipated it: "a deterministic mock
+// provider imports nothing".
+//
+// It imports NO network, on purpose and provably: the world below has no
+// `wasi:http`, so a test using it cannot accidentally reach a real provider and
+// cannot spend anything. That is a stronger guarantee than remembering to set a
+// fake base URL.
+//
+// Config (wasi:config/store):
+//   mock-script  JSON. See src/lib.rs for the shape.
+//   mock-model   what `describe` and the completions report, default "mock-1"
+//
+// What this is NOT: a substitute for running against a real provider. A scripted
+// reply is exactly as realistic as whoever wrote it, and never produces the
+// markdown fence around JSON, the truncated tool call, or the apology that a real
+// model eventually will. Use it for LOGIC, and record a real run for REALISM —
+// `artifact:cache` already keys derived work by its inputs, so a recorded
+// response replays for free and exactly.
+package mock:provider@0.1.0;
+
+world mock-provider {
+    export llm:inference/inference@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+    /// So a rule can WAIT. A mock that answers in microseconds gives a load test
+    /// the wrong shape entirely: real inference takes hundreds of milliseconds to
+    /// seconds, and that latency is what decides how many branches are in flight
+    /// at once, how long an environment is held, and whether anything queues.
+    /// Stress-testing against an instant provider measures the harness.
+    import wasi:clocks/monotonic-clock@0.2.0;
+}

@@ -4,8 +4,8 @@
 //! Implements the vendor-agnostic `llm:inference/inference` by POSTing to
 //! `/v1/chat/completions` and `/v1/embeddings`. Works against OpenAI, Azure
 //! OpenAI, Together, Groq, vLLM, or a local Ollama/llama.cpp server — anything
-//! that speaks the OpenAI JSON contract. The endpoint, key, and models come
-//! from wasi:config; nothing about the vendor is in the WIT.
+//! that speaks the OpenAI JSON contract. The endpoint and models come from
+//! wasi:config; nothing about the vendor is in the WIT.
 //!
 //! HTTP idiom (build OutgoingRequest -> write JSON body -> handle -> block ->
 //! read full response body) mirrors notify-dispatch's `post`, extended to
@@ -13,10 +13,18 @@
 //!
 //! Config (wasi:config/store):
 //!   openai:base-url     default "https://api.openai.com/v1"
-//!   openai:api-key      bearer token (sent as `Authorization: Bearer …`)
 //!   openai:model        default chat model (default "gpt-4o-mini")
 //!   openai:embed-model  default embedding model (default
 //!                       "text-embedding-3-small")
+//!
+//! Secret (comp:secrets/reader):
+//!   openai-api-key      bearer token, granted by reference in the manifest
+//!
+//! The key is a SECRET and not config, which is the one thing about this
+//! component that is not a deployment preference. A config map is readable by
+//! anything that can read the deployment and is dumped by every debug path
+//! there is (ADR-0051); this token spends money on someone else's account. A
+//! local server that ignores auth simply grants nothing and no header is sent.
 
 #[allow(warnings)]
 mod bindings;
@@ -25,6 +33,7 @@ mod codec;
 use bindings::exports::llm::inference::inference::{
     Completion, Guest, InferError, Message, Options, Role, Usage,
 };
+use bindings::comp::secrets::reader as secrets;
 use bindings::wasi::config::store as config;
 use bindings::wasi::http::outgoing_handler;
 use bindings::wasi::http::types::{
@@ -56,6 +65,20 @@ fn default_embed_model() -> String {
     cfg("openai:embed-model").unwrap_or_else(|| DEFAULT_EMBED_MODEL.to_string())
 }
 
+/// The bearer token, from the vault.
+///
+/// `none` is not an error here: a local Ollama or llama.cpp ignores auth
+/// entirely, and refusing to run without a key would make the offline case —
+/// the one a graph loop iterates against — impossible. A real provider answers
+/// 401 and that becomes `provider-denied`, which says what happened far better
+/// than a guess made before the call.
+fn api_key() -> Option<String> {
+    match secrets::get("openai-api-key") {
+        Ok(Some(s)) => secrets::reveal(&s).ok().filter(|v| !v.is_empty()),
+        _ => None,
+    }
+}
+
 // ---- http ---------------------------------------------------------------
 
 fn parse_url(url: &str) -> Result<(Scheme, String, String), InferError> {
@@ -82,7 +105,7 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
 
     let headers = Fields::new();
     let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
-    if let Some(key) = cfg("openai:api-key") {
+    if let Some(key) = api_key() {
         let _ = headers.set(
             &"authorization".to_string(),
             &[format!("Bearer {key}").into_bytes()],

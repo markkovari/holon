@@ -1,0 +1,29 @@
+[package]
+name = "forge-probe"
+description = "Instrument: does git:forge open a real pull request, in the right order, with the token from the vault? (comp:forgeprobe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "comp:forgeprobe"
+
+[package.metadata.component.target]
+path = "wit"
+world = "forge-probe"
+
+[package.metadata.component.target.dependencies]
+"git:forge" = { path = "../git-forge/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }

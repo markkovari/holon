@@ -1,9 +1,9 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [77 ADRs](adr/); this page is the map.
+in [80 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0077.
+Last revised after ADR-0080.
 
 ## Shape
 
@@ -146,6 +146,83 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml
 
 ## Honestly missing
 
+- **The inventory TTL is declared by three processes on one shared bucket.** A
+  host asks for `heartbeat_secs * 3`, the reconciler for `inventory_ttl`, the
+  ingress for its own — and whoever calls `create_key_value` first wins, silently.
+  They agree today only because three defaults coincide at 15s. The ingress now
+  takes `--inventory-ttl` explicitly and refreshes at a third of it (it used to
+  refresh on an interval unrelated to the TTL it was reading against, which is
+  a real hazard). What remains missing is anything that NOTICES the mismatch: the
+  bucket's real `max_age` is never compared with the one asked for.
+- **A successful request does not mean the fleet has converged.** An ingress with
+  an empty routing table still answers: it asks the reconciler to activate the app
+  and routes to whatever address comes back. So `serves()` — and "poll until
+  requests stop failing" — go green while inventory is empty and nothing is
+  routable. `Fleet::wait_for_placement` reads inventory instead, which is what
+  routing is actually built from. This cost four wrong diagnoses of `ha.rs`.
+- **Placement can lag past ten seconds under load**, which is what exposed the
+  above. Nothing has measured how long convergence takes as a function of load,
+  and the reconcile interval is the obvious suspect.
+- **Desired state was silently truncated at 1000 records** — fixed, and worth
+  recording because of how it presented. `internal_revisions` read revisions with
+  a flat limit; deduplicated to the newest per deployment that is roughly 500
+  apps, and a stress run that grew 3906 environments watched the fleet flatline
+  at exactly 500 running. Every environment past the cap was accepted, reported
+  as created, and never placed, with nothing anywhere saying so. Whole-collection
+  reads now page, and the backstop reports when it is reached instead of
+  quietly dropping the tail. 781/781 converges where 500 was the ceiling.
+- **Component references follow the registry idiom** — `shop` is the moving
+  pointer, `shop:v2` a named one an author may move, `shop@sha256:<hex>` exact
+  bytes nothing can move, and a digest beats a tag in the same reference. Parsed
+  and tested; NOT yet resolved anywhere — a deployment still names a bare id, so
+  pinning is a shape the code understands and does not act on.
+- **`platform-domain` had a native test target that never compiled.** A test
+  referenced `node_config`, a function nobody ever wrote, so every unit test in
+  that component — 34 of them — had been silently unrun. The helper exists now
+  and they all run.
+- **Component bytes are staged by CONTENT; the catalogue row is a pointer.**
+  `tenant/id` used to hold the bytes, which made an upload destructive — a second
+  build overwrote the first, so two workers pushing different builds of one
+  component raced and the loser's bytes were gone. Staged under `sha256/<hex>`
+  neither writer can lose: identical bytes land in the same place, different bytes
+  land elsewhere, and no lock is needed for either. Re-uploading identical bytes
+  is now a no-op rather than a full redistribution.
+- **The WIT surface is a compatibility gate, never an identity check.** A save
+  refuses when it would remove an export the previous revision had, naming each
+  one, with `?force=true` for when that is the intent. The distinction was
+  learned expensively: the composed artifact used to be invalidated by its
+  SURFACE, so two builds differing in a constant were treated as the same
+  artifact and a recompiled component never reached the fleet while every layer
+  reported success. Surfaces decide whether a change BREAKS something; only
+  content decides whether it IS something.
+- **Admission control exists now and is enforced.** The reconciler reports its
+  lag every pass to `POST /api/internal/status`; the platform refuses a spawn
+  with 429 above `max-placement-lag`, and with 503 when that report goes stale —
+  fail CLOSED, because a dead loop is exactly when accepting more is pointless.
+  Tested against a number rather than against the weather, plus an assertion that
+  the real reconciler's own report lands. Admission counts what it has let through
+  since the last report, so a burst faster than the reporting interval cannot
+  outrun it — without that, 625 spawns in 0.2s all sailed past a limit of 200.
+  Covers environment spawns and deployment saves. Measured: a 625-spawn burst is
+  cut to 435, and all 591 resulting apps converge.
+  Still uncovered: nothing admits against component pushes, and the limit is a
+  flat number rather than anything derived from fleet size.
+- **Breadth is fine and unmeasured beyond 8.** Eight branches spawned
+  concurrently converge in ~3s on one node. Nobody has looked for the width at
+  which the reconcile pass, the ports, or the memory give out. Depth is now
+  unbounded in principle and measured to 4.
+- **No automated cover for the interactive secret prompt.** `comp secret set`
+  reads a value with the echo off and asks twice; the pipe and `--from` paths are
+  tested, the terminal path was verified under a pty by hand. A test for it needs
+  a pty in the harness.
+- **The graph loop has memory and no shape for it.** `knowledge-graph` stores
+  nodes, edges and traversal against a real SurrealDB (ADR-0080), and nothing
+  decides what an environment should remember: whether a fork inherits its
+  parent's graph or starts blank, what prunes it, and which node kinds an agent
+  is supposed to write. The store is proven; the schema is a question.
+- **The database is not part of the platform.** SurrealDB is an external service
+  on an egress allow-list. Nothing deploys it, backs it up, replicates it, or
+  notices when it is gone — every one of which the KV path already does.
 - **No `@version` in a catalogue key — and this is now a FEATURE request, not a
   gap** (ADR-0076). ADR-0007 rule 1 is held by binding `public` to the signed
   digest, and revocation turned out to need provenance rather than versions. What

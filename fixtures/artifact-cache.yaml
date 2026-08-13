@@ -1,0 +1,49 @@
+# A probe → artifact-cache → blob-store.
+#
+# Same storage split as virt-git, for the same reason: the BYTES are immutable
+# and content-addressed, so they go to `blob:store` where a plain put is safe;
+# the CLAIMS are mutable and contended, so they go through `comp:store/cas`
+# (ADR-0065). A claim written without a guard is a claim two branches can both
+# believe they hold, which defeats the only thing this component is for.
+#
+# `artifact-claim-secs` is short here so the test can watch an expired claim be
+# taken over without waiting two minutes.
+#
+# `wasi:clocks` is deliberately NOT in `host_needs`: the ambient WASI interfaces
+# (cli, io, clocks) are granted to everything, and naming one explicitly makes the
+# host refuse it as a capability it does not hand out by request.
+
+version: comp/v1
+app: artifacts
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: cache
+    config:
+      artifact-container: derived
+      artifact-claim-secs: "3"
+    host_needs:
+      - comp:store/cas
+      - wasi:keyvalue/store
+      - wasi:config/store
+
+  - id: blobs
+    host_needs:
+      - wasi:keyvalue/store
+
+links:
+  - from: gate
+    import: artifact:cache/store@0.1.0
+    to: cache
+  - from: cache
+    import: blob:store/blobstore@0.1.0
+    to: blobs
+
+ingress:
+  host: artifacts.acme.test
+  component: gate
