@@ -91,8 +91,59 @@ struct GoalSpec {
     writable: Vec<String>,
     #[serde(default)]
     title: Option<String>,
+    /// Ship only tracked files under these path prefixes as the base tree. Empty
+    /// means the whole repo, which is right for a small project and impossible
+    /// for a large one: the base tree travels over wrpc, and NATS caps a message
+    /// near 1 MB, so a 60 MB monorepo cannot ship whole. Scope a goal to the
+    /// crate it touches and its path-dependencies, and the subtree fits.
+    #[serde(default)]
+    base_paths: Vec<String>,
+    /// A workspace manifest in the base tree whose `members` list should be
+    /// trimmed to `keep_members` before the gate sees it. This is how a single
+    /// crate of a shared workspace (one of 130 components) builds standalone: the
+    /// gate gets the workspace root with only the target member, so cargo has one
+    /// package to build and its `.workspace = true` inheritance still resolves.
+    #[serde(default)]
+    workspace_manifest: Option<String>,
+    #[serde(default)]
+    keep_members: Vec<String>,
+    /// Name a component crate and the build-scope is DERIVED from the layout —
+    /// `base_paths`, `workspace_manifest` and `keep_members` all follow from
+    /// `components/<name>/`, so a goal need not hand-list the paths the gate
+    /// needs (and get them subtly wrong). An explicitly-set field always wins.
+    #[serde(default)]
+    component: Option<String>,
     #[serde(rename = "check")]
     checks: Vec<CheckSpec>,
+}
+
+/// The build-scope for a single component crate: the whole crate (src + wit +
+/// Cargo.toml) plus the shared workspace root, whose members are trimmed to just
+/// this crate. This is the "add the correct path" answer — name the component,
+/// and the paths the gate needs come from the layout, not a hand-typed list.
+fn component_scope(name: &str) -> (Vec<String>, String, Vec<String>) {
+    (
+        vec![format!("components/{name}/"), "components/Cargo.toml".to_string()],
+        "components/Cargo.toml".to_string(),
+        vec![name.to_string()],
+    )
+}
+
+/// Rewrite a Cargo manifest's `members = [ … ]` to exactly `keep`.
+///
+/// A flat string edit rather than a toml round-trip, so the rest of the manifest
+/// — `[workspace.package]`, `[workspace.dependencies]`, `[profile]`, every comment
+/// — survives untouched; only the one array the gate needs narrowed is changed.
+fn trim_members(manifest: &str, keep: &[String]) -> String {
+    let Some(start) = manifest.find("members") else { return manifest.to_string() };
+    let Some(open) = manifest[start..].find('[').map(|i| start + i) else {
+        return manifest.to_string();
+    };
+    let Some(close) = manifest[open..].find(']').map(|i| open + i) else {
+        return manifest.to_string();
+    };
+    let list = keep.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", ");
+    format!("{}[{list}]{}", &manifest[..open], &manifest[close + 1..])
 }
 
 #[derive(Deserialize)]
@@ -111,10 +162,11 @@ fn one() -> u32 {
     1
 }
 
-/// Every tracked file in the checkout, as base-tree entries. This is what the
-/// gate materialises and runs the checks over, so it must carry everything the
-/// checks need — the source, the tests, `pyproject.toml`, `uv.lock`.
-fn base_tree(checkout: &Path) -> Result<Vec<Value>> {
+/// The tracked files the gate materialises and runs its checks over — the
+/// source, the tests, and whatever the build needs (`pyproject.toml`, `uv.lock`,
+/// `Cargo.toml`). Scoped to `base_paths` when given, so a goal against one crate
+/// of a large repo ships that crate and its path-deps, not the whole tree.
+fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Value>> {
     let out = Command::new("git")
         .arg("-C")
         .arg(checkout)
@@ -125,14 +177,34 @@ fn base_tree(checkout: &Path) -> Result<Vec<Value>> {
         bail!("git ls-files failed in {}", checkout.display());
     }
     let mut tree = Vec::new();
+    let mut bytes = 0usize;
     for path in String::from_utf8_lossy(&out.stdout).lines() {
+        if !base_paths.is_empty() && !base_paths.iter().any(|p| path.starts_with(p.as_str())) {
+            continue;
+        }
         let full = checkout.join(path);
-        let content = std::fs::read_to_string(&full)
-            .with_context(|| format!("reading {}", full.display()))?;
+        // Skip anything that is not valid UTF-8 (a stray binary) rather than fail
+        // the whole run; a source tree is text and a binary in it is not a gate
+        // input.
+        let Ok(content) = std::fs::read_to_string(&full) else { continue };
+        bytes += content.len();
         tree.push(json!({ "path": path, "content": content }));
     }
     if tree.is_empty() {
-        bail!("no tracked files in {} — is it a git repo with a commit?", checkout.display());
+        bail!(
+            "no tracked files under {:?} in {} — check base_paths",
+            base_paths,
+            checkout.display()
+        );
+    }
+    // The whole tree travels over wrpc as one message. NATS refuses one past ~1
+    // MB, and the failure is opaque, so catch it here with an actionable message.
+    if bytes > 900_000 {
+        bail!(
+            "the base tree is {:.1} MB, over the ~1 MB a run can ship — scope the goal with \
+             base_paths to the crate it touches (a monorepo cannot ship whole)",
+            bytes as f64 / 1_048_576.0
+        );
     }
     Ok(tree)
 }
@@ -245,7 +317,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     let goal_path = args.checkout.join(".comp/goal.toml");
-    let goal: GoalSpec = toml::from_str(
+    let mut goal: GoalSpec = toml::from_str(
         &std::fs::read_to_string(&goal_path)
             .with_context(|| format!("reading {}", goal_path.display()))?,
     )
@@ -253,9 +325,34 @@ fn main() -> Result<()> {
     if goal.checks.is_empty() {
         bail!("the goal has no checks — an empty gate accepts everything");
     }
+    // A named component derives the build-scope from the layout. An explicitly
+    // set field always wins, so a goal can name the component and still override
+    // one path if its crate is unusual.
+    if let Some(name) = goal.component.clone() {
+        let (bp, wm, km) = component_scope(&name);
+        if goal.base_paths.is_empty() {
+            goal.base_paths = bp;
+        }
+        if goal.workspace_manifest.is_none() {
+            goal.workspace_manifest = Some(wm);
+        }
+        if goal.keep_members.is_empty() {
+            goal.keep_members = km;
+        }
+    }
 
     // The base tree and the files the agent starts from.
-    let tree = base_tree(&args.checkout)?;
+    let mut tree = base_tree(&args.checkout, &goal.base_paths)?;
+    // Trim a shared workspace manifest to the goal's target member, so one crate
+    // of a big workspace builds standalone in the gate.
+    if let (Some(manifest), false) = (&goal.workspace_manifest, goal.keep_members.is_empty()) {
+        for e in tree.iter_mut() {
+            if e["path"] == serde_json::json!(manifest) {
+                let trimmed = trim_members(e["content"].as_str().unwrap_or_default(), &goal.keep_members);
+                e["content"] = serde_json::json!(trimmed);
+            }
+        }
+    }
     let base_commit = head_commit(&args.checkout)?;
     let context: Vec<Value> = goal
         .writable
@@ -294,22 +391,55 @@ fn main() -> Result<()> {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let uv_cache = format!("{home}/.cache/comp-goalrun/uv");
     let uv_python = format!("{home}/.cache/comp-goalrun/uv-python");
-    std::fs::create_dir_all(&uv_cache).ok();
-    std::fs::create_dir_all(&uv_python).ok();
-    let check_env =
-        vec![format!("UV_CACHE_DIR={uv_cache}"), format!("UV_PYTHON_INSTALL_DIR={uv_python}")];
+    // A shared, persistent cargo cache. The registry (CARGO_HOME) is downloaded
+    // once ever; the target dir keeps compiled dependencies so a candidate only
+    // recompiles the crate it changed — seconds, not the cold minutes a fresh
+    // HOME would force. This is what makes a cargo gate viable at all.
+    let cargo_home = format!("{home}/.cache/comp-goalrun/cargo-home");
+    let cargo_target = format!("{home}/.cache/comp-goalrun/cargo-target");
+    for d in [&uv_cache, &uv_python, &cargo_home, &cargo_target] {
+        std::fs::create_dir_all(d).ok();
+    }
+    let mut check_env = vec![
+        format!("UV_CACHE_DIR={uv_cache}"),
+        format!("UV_PYTHON_INSTALL_DIR={uv_python}"),
+        format!("CARGO_HOME={cargo_home}"),
+        format!("CARGO_TARGET_DIR={cargo_target}"),
+        // cargo wants a real registry index and network on a cold cache.
+        "CARGO_NET_OFFLINE=false".into(),
+    ];
+    // `cargo` is usually a rustup shim, and under the gate's cleared environment
+    // it cannot choose a toolchain — no RUSTUP_HOME, no default. Pass both, so the
+    // shim resolves the same toolchain the pre-warm used. Read from the ambient
+    // environment (the operator's), never the agent's.
+    let rustup_home =
+        std::env::var("RUSTUP_HOME").unwrap_or_else(|_| format!("{home}/.rustup"));
+    let toolchain = Command::new("rustup")
+        .args(["show", "active-toolchain"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.split_whitespace().next().map(String::from))
+        .unwrap_or_else(|| "stable".into());
+    check_env.push(format!("RUSTUP_HOME={rustup_home}"));
+    check_env.push(format!("RUSTUP_TOOLCHAIN={toolchain}"));
 
-    // Pre-warm: run each uv check once IN THE CHECKOUT, populating that cache
-    // before any candidate is judged. The result does not matter (the stub fails
-    // its own tests); the download does.
+    // Pre-warm: run each check once IN THE CHECKOUT with the same caches, so the
+    // toolchain download and the dependency compile happen once, outside any
+    // request deadline, before a candidate is ever judged. The result does not
+    // matter here — only the cache it leaves behind.
     for c in &goal.checks {
-        if c.command.first().map(String::as_str) == Some("uv") {
+        let tool = c.command.first().map(String::as_str);
+        if matches!(tool, Some("uv") | Some("cargo")) {
             println!("warming the gate cache ({}) …", c.command.join(" "));
             let _ = Command::new(&c.command[0])
                 .args(&c.command[1..])
                 .current_dir(&args.checkout)
                 .env("UV_CACHE_DIR", &uv_cache)
                 .env("UV_PYTHON_INSTALL_DIR", &uv_python)
+                .env("CARGO_HOME", &cargo_home)
+                .env("CARGO_TARGET_DIR", &cargo_target)
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();
@@ -430,12 +560,15 @@ fn main() -> Result<()> {
     // When a branch never ran (a transport note rather than a verdict), the
     // reason is in the host and ingress logs, which the fleet's tempdir throws
     // away on exit. Surface the tail of each so one failed run is diagnosable.
-    if entries.iter().any(|e| !e.note.is_empty()) {
+    // A transport note, OR a branch that produced no candidate at all (0 tokens,
+    // not accepted) — the latter is an agent that trapped or errored before it
+    // ever called the model, and the reason is only in the host log.
+    if entries.iter().any(|e| !e.note.is_empty() || (e.spent_tokens == 0 && !e.accepted)) {
         let tail = |s: &str, n: usize| {
             let lines: Vec<&str> = s.lines().collect();
             lines[lines.len().saturating_sub(n)..].join("\n")
         };
-        eprintln!("\n===== host n1 (last 40 lines) =====\n{}", tail(&fleet.node_log("n1"), 40));
+        eprintln!("\n===== host n1 (last 60 lines) =====\n{}", tail(&fleet.node_log("n1"), 60));
         eprintln!("\n===== ingress (last 25 lines) =====\n{}", tail(&fleet.ingress_log(""), 25));
     }
 
@@ -481,4 +614,25 @@ fn main() -> Result<()> {
         Err(e) => println!("\n  landing failed: {e}"),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{component_scope, trim_members};
+
+    #[test]
+    fn a_component_name_derives_its_build_scope() {
+        let (base_paths, manifest, members) = component_scope("rot13");
+        assert_eq!(base_paths, ["components/rot13/", "components/Cargo.toml"]);
+        assert_eq!(manifest, "components/Cargo.toml");
+        assert_eq!(members, ["rot13"], "the workspace is trimmed to just this crate");
+    }
+
+    #[test]
+    fn trimming_keeps_the_rest_of_the_manifest() {
+        let m = "[workspace]\nmembers = [\"a\", \"b\", \"c\"]\nresolver = \"2\"\n";
+        let out = trim_members(m, &["b".to_string()]);
+        assert!(out.contains("members = [\"b\"]"), "trimmed to the one member");
+        assert!(out.contains("resolver = \"2\""), "the rest survives");
+    }
 }
