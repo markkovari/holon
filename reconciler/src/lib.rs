@@ -9,6 +9,7 @@
 /// differently would produce numbers that cannot be compared with the assertions.
 pub mod fleet;
 pub mod budget;
+pub mod router;
 pub mod bucket;
 pub mod wallet;
 pub mod cost;
