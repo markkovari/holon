@@ -9,6 +9,7 @@
 //! the manifest without making `slugify` do the 1.1.0 thing fails the gate.
 
 pub mod slug;
+pub mod template;
 
 pub const MANIFEST: &str = include_str!("../capabilities.txt");
 
@@ -46,6 +47,28 @@ pub fn conforms(name: &str, version: &str) -> Result<(), String> {
             // 1.1.0 — fold accents to ASCII.
             if ver >= (1, 1, 0) && slug::slugify("Café Déjà Señor") != "cafe-deja-senor" {
                 return Err("slug 1.1.0: fold accented letters to ASCII".into());
+            }
+            Ok(())
+        }
+        "template" => {
+            // 1.0.0 — placeholder substitution with a fistful of edge cases.
+            let r = |t: &str, v: &[(&str, &str)]| template::render(t, v);
+            let cases: &[(&str, &[(&str, &str)], &str)] = &[
+                ("Hi {{name}}", &[("name", "Ada")], "Hi Ada"),
+                ("{{a}}{{b}}", &[("a", "1"), ("b", "2")], "12"),
+                ("{{ name }}", &[("name", "Ada")], "Ada"),               // key trimmed
+                ("{{x}}", &[], "{{x}}"),                                  // unknown: verbatim
+                ("a {{ unmatched", &[("unmatched", "z")], "a {{ unmatched"), // no close: literal
+                ("{{k}} and {{k}}", &[("k", "z")], "z and z"),           // repeats
+                ("", &[], ""),
+                ("no placeholders", &[("a", "b")], "no placeholders"),
+                ("{{k}}", &[("other", "x"), ("k", "hit")], "hit"),       // first-match lookup
+            ];
+            for (t, v, want) in cases {
+                let got = r(t, v);
+                if got != *want {
+                    return Err(format!("template 1.0.0: render({t:?}) = {got:?}, want {want:?}"));
+                }
             }
             Ok(())
         }
