@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# comp-evolve — the loop proposes, the lattice judges, the fittest version stays.
+#
+# One command closes the recursive cycle:
+#   1. the loop authors a capability bump into the manifest        (modify)
+#   2. it opens a PR, gated by capman's well-formedness test       (a valid change)
+#   3. a live lattice runs baseline vs candidate and reads their
+#      self-reports over NATS                                      (judge)
+#   4. PROMOTE -> merge the PR; ROLL BACK -> close it              (the fittest stays)
+#
+# Usage: bin/evolve <capability> <new-semver>
+set -euo pipefail
+CAP="${1:?usage: evolve <capability> <new-semver>}"
+VER="${2:?usage: evolve <capability> <new-semver>}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="markkovari/holon"
+KEY="$HOME/.comp-secrets/anthropic"
+TOK="$HOME/.comp-secrets/ghpat"
+GR="$ROOT/reconciler/target/release/comp-goalrun"
+SI="$ROOT/reconciler/target/release/comp-selfimprove"
+LOG="$(mktemp)"
+caps_of() { python3 -c "import sys;print(','.join(l.split('#')[0].strip() for l in open(sys.argv[1]) if l.split('#')[0].strip()))" "$1"; }
+
+WORK="$(mktemp -d)"
+git clone -q "https://github.com/$REPO.git" "$WORK"
+
+# --- 1+2. the loop authors the bump and opens a PR -----------------------------
+cat > "$WORK/.comp/goal.toml" <<EOF
+text = "In components/capman/capabilities.txt, set the \`$CAP\` capability's version to $VER (its line becomes exactly \`$CAP:$VER\`). Keep every other line unchanged. The file is one name:semver per line."
+title = "evolve: $CAP to $VER"
+component = "capman"
+writable = ["components/capman/capabilities.txt"]
+[[check]]
+id = "manifest-wellformed"
+command = ["cargo","test","-p","capman","--manifest-path","components/Cargo.toml"]
+EOF
+git -C "$WORK" -c user.name=evolve -c user.email=e@e.com commit -aqm "evolve: goal for $CAP $VER"
+
+echo "== MODIFY: the loop authors $CAP:$VER =="
+( cd "$ROOT" && "$GR" --checkout "$WORK" --repo "$REPO" --anthropic-key "$KEY" --github-token "$TOK" --branches 3 --attempts 2 ) | tee "$LOG"
+PR_URL="$(grep -oE 'https://github.com/[^ ]+/pull/[0-9]+' "$LOG" | tail -1)"
+[ -n "$PR_URL" ] || { echo "the loop opened no PR — nothing to judge"; exit 1; }
+PR_NUM="${PR_URL##*/}"
+echo "   proposed: $PR_URL"
+
+# --- 3. baseline (main) vs candidate (PR head) capabilities --------------------
+git -C "$WORK" fetch -q origin main "pull/$PR_NUM/head:pr"
+git -C "$WORK" checkout -q FETCH_HEAD -- components/capman/capabilities.txt 2>/dev/null || git -C "$WORK" checkout -q origin/main -- components/capman/capabilities.txt
+BASE_CAPS="$(caps_of "$WORK/components/capman/capabilities.txt")"
+git -C "$WORK" checkout -q pr -- components/capman/capabilities.txt
+CAND_CAPS="$(caps_of "$WORK/components/capman/capabilities.txt")"
+
+echo ""
+echo "== JUDGE: baseline vs candidate, over the lattice =="
+if ( cd "$ROOT" && "$SI" --baseline "$BASE_CAPS" --candidate "$CAND_CAPS" ); then
+  echo ""
+  echo "== PROMOTE: merging $PR_URL =="
+  GH_TOKEN="$(cat "$TOK")" gh pr merge "$PR_NUM" --repo "$REPO" --squash --delete-branch
+  echo "   the fittest version is on main."
+else
+  echo ""
+  echo "== ROLL BACK: closing $PR_URL =="
+  GH_TOKEN="$(cat "$TOK")" gh pr close "$PR_NUM" --repo "$REPO"
+  echo "   the baseline stays; the proposal is closed."
+fi
