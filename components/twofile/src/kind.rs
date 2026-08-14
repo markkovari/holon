@@ -3,4 +3,5 @@
 pub enum Kind {
     A,
     B,
+    C,
 }
