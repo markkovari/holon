@@ -5,5 +5,6 @@ pub fn render(k: &Kind) -> &'static str {
     match k {
         Kind::A => "a",
         Kind::B => "b",
+        Kind::C => "c",
     }
 }
