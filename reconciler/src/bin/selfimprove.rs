@@ -11,11 +11,15 @@
 //! the interface). This is the tier above that: a capability at the semantic
 //! level — advertised and self-reported — may grow and may not silently shrink.
 //!
-//! The two capability sets are given as `--baseline` / `--candidate` so a run is
-//! reproducible; the authentic source of the candidate is a loop that edited the
-//! component, and the two builds are genuinely different bytes either way.
+//! Two ways to say what to judge. `--baseline-src`/`--candidate-src` build the
+//! REAL component from two source trees — the honest form: the bytes that deploy
+//! carry the capabilities the loop actually wrote into the manifest. Or
+//! `--baseline`/`--candidate` hand in capability lists (via `COMP_CAPS`) for a
+//! reproducible run without two trees. Either way the two builds are different
+//! bytes and the judge is the running code's own report.
 
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -32,24 +36,41 @@ struct Args {
     /// `{healthy, capability_count, capabilities}` (see `version-probe`).
     #[arg(long, default_value = "version-probe")]
     component: String,
-    /// The baseline's advertised capabilities (comma-separated).
+    /// The baseline's advertised capabilities (comma-separated). Ignored when
+    /// `--baseline-src` is given.
     #[arg(long)]
-    baseline: String,
-    /// The candidate's advertised capabilities (comma-separated).
+    baseline: Option<String>,
+    /// The candidate's advertised capabilities (comma-separated). Ignored when
+    /// `--candidate-src` is given.
     #[arg(long)]
-    candidate: String,
+    candidate: Option<String>,
+    /// A source tree to build the baseline component FROM — its own manifest is
+    /// what the deployed bytes report. The honest form.
+    #[arg(long)]
+    baseline_src: Option<PathBuf>,
+    /// A source tree to build the candidate component FROM.
+    #[arg(long)]
+    candidate_src: Option<PathBuf>,
 }
 
-/// Build the probe with a tag and a capability list; hand back the bytes.
-fn build_probe(component: &str, tag: &str, caps: &str) -> Result<Vec<u8>> {
-    let components = repo_root().join("components");
-    let out = Command::new("cargo")
-        .current_dir(&components)
+/// Build the probe with a tag, in the given `components` dir. `caps` overrides
+/// the manifest via `COMP_CAPS` when set; when `None`, the component reports the
+/// tree's own baked-in manifest — the bytes are the loop's real output.
+fn build_probe(components: &Path, component: &str, tag: &str, caps: Option<&str>) -> Result<Vec<u8>> {
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(components)
         .args(["build", "--release", "--target", "wasm32-wasip2", "-p", component])
-        .env("COMP_VERSION_TAG", tag)
-        .env("COMP_CAPS", caps)
-        .output()
-        .context("running cargo")?;
+        .env("COMP_VERSION_TAG", tag);
+    match caps {
+        Some(c) => {
+            cmd.env("COMP_CAPS", c);
+        }
+        // Clear any COMP_CAPS the parent set, so the manifest is what is baked in.
+        None => {
+            cmd.env_remove("COMP_CAPS");
+        }
+    }
+    let out = cmd.output().context("running cargo")?;
     if !out.status.success() {
         bail!("building {tag} failed:\n{}", String::from_utf8_lossy(&out.stderr));
     }
@@ -217,9 +238,23 @@ fn main() -> Result<()> {
 
     println!("comp-selfimprove: judging a candidate of `{}` over the lattice\n", args.component);
 
-    // Two genuinely different builds — different tags AND different capability sets.
-    let base_wasm = build_probe(&args.component, "baseline", &args.baseline)?;
-    let cand_wasm = build_probe(&args.component, "candidate", &args.candidate)?;
+    // Where to build each side from, and how. A source tree wins over a caps
+    // string: the honest form builds the loop's real bytes from its manifest.
+    let here = repo_root().join("components");
+    let base_dir = args.baseline_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
+    let cand_dir = args.candidate_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
+    let base_caps_opt = if args.baseline_src.is_some() { None } else { args.baseline.as_deref() };
+    let cand_caps_opt = if args.candidate_src.is_some() { None } else { args.candidate.as_deref() };
+    if base_caps_opt.is_none() && args.baseline_src.is_none() {
+        bail!("give --baseline-src or --baseline");
+    }
+    if cand_caps_opt.is_none() && args.candidate_src.is_none() {
+        bail!("give --candidate-src or --candidate");
+    }
+
+    // Two genuinely different builds — different tags AND different manifests/caps.
+    let base_wasm = build_probe(&base_dir, &args.component, "baseline", base_caps_opt)?;
+    let cand_wasm = build_probe(&cand_dir, &args.component, "candidate", cand_caps_opt)?;
     if base_wasm == cand_wasm {
         bail!("baseline and candidate built to identical bytes — there is nothing to promote");
     }
@@ -272,7 +307,7 @@ fn main() -> Result<()> {
             "the candidate advanced no capability".to_string()
         };
         println!("  ROLL BACK — {reason}.");
-        let base_again = build_probe(&args.component, "baseline", &args.baseline)?;
+        let base_again = build_probe(&base_dir, &args.component, "baseline", base_caps_opt)?;
         let restored = deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_again, "baseline")?;
         println!("  restored baseline over the lattice: {}", show(&caps_of(&restored)));
         bail!("candidate rejected: {reason}");

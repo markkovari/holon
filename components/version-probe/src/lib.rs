@@ -28,10 +28,16 @@ const TAG: &str = match option_env!("COMP_VERSION_TAG") {
 /// that can do MORE — a new capability, or a higher semver of one it already had
 /// — is genuinely different bytes, read from outside over the lattice rather than
 /// trusted from a record.
-const CAPS: &str = match option_env!("COMP_CAPS") {
+const CAPS_ENV: &str = match option_env!("COMP_CAPS") {
     Some(v) => v,
     None => "",
 };
+
+/// The real manifest, baked in from source at compile time. This is what closes
+/// the loop honestly: the bytes that deploy report the capabilities the loop
+/// actually wrote, not a list handed in at build time. `COMP_CAPS` still wins
+/// when set, for reproducible gate runs.
+const MANIFEST: &str = include_str!("../../capman/capabilities.txt");
 
 impl Guest for Component {
     fn handle(_request: IncomingRequest, response_out: ResponseOutparam) {
@@ -40,11 +46,14 @@ impl Guest for Component {
         // is not a healthy engine — health here is "I initialised and I can do
         // something", reported by the running code, not asserted by whoever
         // deployed it.
-        let items: Vec<(&str, &str)> = CAPS
-            .split(',')
-            .filter(|s| !s.is_empty())
+        // The manifest from source, unless COMP_CAPS overrides for a gate run.
+        let src = if CAPS_ENV.is_empty() { MANIFEST } else { CAPS_ENV };
+        let items: Vec<(&str, &str)> = src
+            .split(|c| c == ',' || c == '\n')
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.starts_with('#'))
             .map(|item| match item.split_once(':') {
-                Some((name, ver)) => (name, ver),
+                Some((name, ver)) => (name.trim(), ver.trim()),
                 None => (item, "1.0.0"),
             })
             .collect();
