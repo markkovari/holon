@@ -10,6 +10,7 @@
 mod bindings;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::wasi::config::store as config;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
@@ -18,40 +19,23 @@ struct Component;
 
 /// Baked in at build time. `unset` when nobody passed one, which is a legitimate
 /// build rather than an error — it just is not the one a version test wants.
+/// The TAG is the only thing compiled in: it is the artifact's identity, so two
+/// versions are different bytes and the fleet can tell them apart. What the
+/// version CAN DO is not compiled in — it is loaded from config at startup.
 const TAG: &str = match option_env!("COMP_VERSION_TAG") {
     Some(v) => v,
     None => "unset",
 };
 
-/// The capabilities this build advertises, baked in at compile time as a
-/// comma-separated `name:semver` list (a bare `name` is `1.0.0`), so a version
-/// that can do MORE — a new capability, or a higher semver of one it already had
-/// — is genuinely different bytes, read from outside over the lattice rather than
-/// trusted from a record.
-const CAPS_ENV: &str = match option_env!("COMP_CAPS") {
-    Some(v) => v,
-    None => "",
-};
-
-/// The real manifest, baked in from source at compile time. This is what closes
-/// the loop honestly: the bytes that deploy report the capabilities the loop
-/// actually wrote, not a list handed in at build time. `COMP_CAPS` still wins
-/// when set, for reproducible gate runs.
-const MANIFEST: &str = include_str!("../../capman/capabilities.txt");
-
 impl Guest for Component {
     fn handle(_request: IncomingRequest, response_out: ResponseOutparam) {
-        // The self-eval, run by the version that is actually running: parse the
-        // capability→version map and judge health. A build that advertises nothing
-        // is not a healthy engine — health here is "I initialised and I can do
-        // something", reported by the running code, not asserted by whoever
-        // deployed it.
-        // The manifest from source, unless COMP_CAPS overrides for a gate run.
-        // Strip comment LINES first, THEN split on commas — so a comment that
-        // contains a comma cannot leak its tail as a bogus capability. The
-        // manifest is one entry per line; COMP_CAPS is one comma-separated line.
-        let src = if CAPS_ENV.is_empty() { MANIFEST } else { CAPS_ENV };
-        let items: Vec<(&str, &str)> = src
+        // Capabilities are LOADED at startup from the registry the platform hands
+        // this instance — `wasi:config/store`, key `capabilities`, a `name:semver`
+        // list. Nothing is baked in. A version that advertises nothing (no config)
+        // is not a healthy engine; health is "I was given a registry and can do
+        // something", reported by the running code, not asserted by a record.
+        let registry = config::get("capabilities").ok().flatten().unwrap_or_default();
+        let items: Vec<(&str, &str)> = registry
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
