@@ -18,9 +18,10 @@ pub type Usage<'a> = (u32, u32, &'a str);
 /// The sum of each attempt priced by `cost_cents` — not a re-derivation, so the
 /// per-model pricing lives in exactly one place. An empty run has spent nothing.
 pub fn spent_cents(attempts: &[Usage]) -> u64 {
-    let _ = attempts;
-    let _ = cost_cents(0, 0, "");
-    unimplemented!("goal 01: sum each attempt's cost_cents — the tests below are the spec")
+    attempts
+        .iter()
+        .map(|(input, output, model)| cost_cents(*input, *output, model))
+        .sum()
 }
 
 #[cfg(test)]
