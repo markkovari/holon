@@ -1,0 +1,10 @@
+// comp:slugprobe — exercise the `slug` capability as a LIVE component, over the
+// lattice. It exports HTTP and imports slug:generate, so a request through the
+// ingress actually invokes the real slug component's `slugify` over NATS — the
+// capability's behavior verified in the running system, not a host test.
+package comp:slugprobe@0.1.0;
+
+world slug-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import slug:generate/generator@0.1.0;
+}
