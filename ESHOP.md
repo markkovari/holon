@@ -1,7 +1,7 @@
 # eshop — eShopOnDapr recreated on wasmCloud
 
 [eShopOnDapr](https://github.com/dotnet-architecture/eShopOnDapr) (Microsoft's
-archived Dapr reference shop) rebuilt as comp components: every Dapr building
+archived Dapr reference shop) rebuilt as holon components: every Dapr building
 block becomes an existing capability contract, every service a wasm component,
 and the whole thing runs three ways from the same bytes — jco-style native
 host, `just host-eshop` locally, and wasmCloud v2 WorkloadDeployments on

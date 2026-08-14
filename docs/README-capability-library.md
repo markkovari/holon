@@ -18,11 +18,11 @@ Every component is the same shape: a `package <ns>:<name>@0.1.0` WIT that
 random, http, config). The backend/provider is bound at **deploy/compose time**,
 never in the WIT — so the same component runs over an in-memory map (jco), NATS,
 redis, sqlite, or a wasmCloud provider unchanged. Pure-compute components import
-nothing. A few **compose** other comp components (via `wac plug`) rather than
+nothing. A few **compose** other holon components (via `wac plug`) rather than
 WASI.
 
 `imports` below = the WASI families each needs (`kv` = keyvalue). `composes` =
-comp components it plugs in. Each has a `jco-<x>` example under `examples/`.
+holon components it plugs in. Each has a `jco-<x>` example under `examples/`.
 
 ### Data & storage
 | package | does | imports |
