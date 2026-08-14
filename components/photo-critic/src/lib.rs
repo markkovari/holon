@@ -32,7 +32,11 @@ interesting (or not).\n\n\
 the background, and the light.\n\n\
 ## What to change\n3 to 5 concrete, actionable changes (reframe, crop, wait for different \
 light, move the subject, etc.) that would make it a stronger photo.\n\n\
-## Verdict\nOne punchy line.";
+## Verdict\nOne punchy line.\n\n\
+IMPORTANT: the image was downscaled and JPEG-compressed for upload, so do NOT \
+comment on technical sharpness or call it 'soft' or 'out of focus' unless there \
+is obvious motion blur or the subject is clearly missing focus — otherwise assume \
+it is sharp and judge composition, light, subject, and moment instead.";
 
 fn model() -> String {
     config::get("photo:model").ok().flatten().filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_MODEL.to_string())
@@ -225,16 +229,25 @@ drop.addEventListener('drop',ev=>{if(ev.dataTransfer.files[0])handle(ev.dataTran
 file.addEventListener('change',()=>{if(file.files[0])handle(file.files[0]);});
 function md(t){const L=t.split('\n');let h='',inl=false;for(let ln of L){ln=ln.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');if(ln.startsWith('## ')){if(inl){h+='</ul>';inl=false;}h+='<h2>'+ln.slice(3)+'</h2>';}else if(/^\s*[-*]\s+/.test(ln)){if(!inl){h+='<ul>';inl=true;}h+='<li>'+ln.replace(/^\s*[-*]\s+/,'')+'</li>';}else if(ln.trim()===''){if(inl){h+='</ul>';inl=false;}}else{if(inl){h+='</ul>';inl=false;}h+='<p>'+ln+'</p>';}}if(inl)h+='</ul>';return h;}
 function loadImage(f){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(f);});}
+function newCanvas(w,h){const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';return[c,x];}
+function downscale(img,LIMIT){
+  // Step-wise halving with high-quality resampling keeps detail crisp; a single
+  // big bilinear step smears it and reads as "soft/out of focus".
+  let [c,x]=newCanvas(img.width,img.height); x.drawImage(img,0,0);
+  let w=img.width,h=img.height;
+  while(Math.max(w,h)>LIMIT*2){
+    const nw=Math.round(w/2),nh=Math.round(h/2);
+    const [c2,x2]=newCanvas(nw,nh); x2.drawImage(c,0,0,nw,nh); c=c2;x=x2;w=nw;h=nh;
+  }
+  const s=Math.min(1,LIMIT/Math.max(w,h)), fw=Math.round(w*s), fh=Math.round(h*s);
+  const [fin,fx]=newCanvas(fw,fh); fx.drawImage(c,0,0,fw,fh);
+  return fin.toDataURL('image/jpeg',0.92);
+}
 async function handle(f){
   out.innerHTML='';spin.style.display='block';
   try{
     const img=await loadImage(f);
-    const LIMIT=1568;                          // Anthropic's vision sweet spot
-    const s=Math.min(1,LIMIT/Math.max(img.width,img.height));
-    const cw=Math.round(img.width*s),ch=Math.round(img.height*s);
-    const c=document.createElement('canvas');c.width=cw;c.height=ch;
-    c.getContext('2d').drawImage(img,0,0,cw,ch);
-    const url=c.toDataURL('image/jpeg',0.85);  // downscaled + re-encoded
+    const url=downscale(img,1568);             // Anthropic's cap, high-quality resample
     preview.src=url;preview.style.display='block';
     const m=/^data:(.+?);base64,(.*)$/.exec(url);
     const r=await fetch('/evaluate',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({media_type:m[1],data:m[2]})});
