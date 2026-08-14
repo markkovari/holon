@@ -1,0 +1,27 @@
+# Holon's first goal on its own code (goal 01 — fuel is money).
+#
+# A NEW small file so the agent writes one clean module, not a 600-line rewrite;
+# base_paths scopes the tree to the reconciler crate + its path-dep lattice, so
+# it fits under the ~1 MB a run can ship; the gate is a warm cargo test.
+
+text = """
+Implement `cost_cents(prompt_tokens, completion_tokens, model)` in
+reconciler/src/cost.rs. It converts a completion's token usage into a whole-cent
+cost using a per-model price table (input and output priced separately, cents per
+million tokens): haiku 100/500, sonnet 300/1500, opus 1500/7500. A model whose id
+does not contain a known tier name is charged the most expensive tier (opus),
+never free. The result rounds UP, never down to zero. The tests in the file are
+the exact specification and must pass. Write the complete file, keeping the tests
+unchanged.
+"""
+
+title = "Implement cost_cents() — fuel is money"
+
+writable = ["reconciler/src/cost.rs"]
+base_paths = ["reconciler/", "lattice/"]
+
+[[check]]
+id = "cost-tests-pass"
+required = true
+weight = 1
+command = ["cargo", "test", "--manifest-path", "reconciler/Cargo.toml", "-p", "comp-reconciler", "--lib", "cost::"]
