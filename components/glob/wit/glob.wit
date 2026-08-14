@@ -1,0 +1,3 @@
+package demo:glob@0.1.0;
+interface matcher { matches: func(pattern: string, text: string) -> bool; }
+world glob { export matcher; }
