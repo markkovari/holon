@@ -1,21 +1,22 @@
-# A bigger goal: the whole run-wallet subsystem in one file (goal 01, complete).
+# A big goal: a stateful token-bucket rate limiter, run wide and deep.
 text = """
-Implement the `Wallet` type in reconciler/src/wallet.rs — a run's spending cap
-and the spend against it. Fill in every method: new, cap, spent, charge,
-remaining, over, can_afford. A cap of 0 is UNBOUNDED (remaining is None, never
-over, can always afford). `charge` prices a completion with `cost_cents` from the
-cost module and accumulates it — call cost_cents, do not re-derive prices.
-`remaining` never goes below zero; `over` is strictly-more-than-the-cap (equal is
-not over); `can_afford(cents)` is true only if spend plus cents does not exceed
-the cap. The tests in the file are the exact and exhaustive specification and must
-all pass. Write the complete file, keeping the tests unchanged.
+Implement `TokenBucket` in reconciler/src/bucket.rs — a token-bucket rate limiter.
+Fill in new, available, and try_take. It starts full. `available(now_ms)` returns
+current tokens plus refill since the last update, capped at capacity, WITHOUT
+consuming or advancing the clock; refill is refill_per_sec * elapsed_ms / 1000,
+floored (integer division); time going backwards refills nothing (never a
+negative — use saturating arithmetic). `try_take(now_ms, n)` refills and advances
+the clock to now_ms, then takes n only if at least n are available (returns
+true), otherwise takes nothing (returns false). The tests in the file are the
+exact and exhaustive specification and must all pass. Write the complete file,
+keeping the tests unchanged.
 """
-title = "Implement the run Wallet — the budgeting subsystem"
-writable = ["reconciler/src/wallet.rs"]
+title = "Implement TokenBucket — a rate limiter"
+writable = ["reconciler/src/bucket.rs"]
 base_paths = ["reconciler/", "lattice/"]
 
 [[check]]
-id = "wallet-tests-pass"
+id = "bucket-tests-pass"
 required = true
 weight = 1
-command = ["cargo", "test", "--manifest-path", "reconciler/Cargo.toml", "-p", "comp-reconciler", "--lib", "wallet::"]
+command = ["cargo", "test", "--manifest-path", "reconciler/Cargo.toml", "-p", "comp-reconciler", "--lib", "bucket::"]
