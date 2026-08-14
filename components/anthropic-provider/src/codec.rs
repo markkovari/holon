@@ -51,35 +51,107 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
+/// Whether a model accepts a `temperature`, as a tagged union rather than a
+/// bare bool, so a future tier that caps at a different range says so in one
+/// place instead of a `< 0.7` scattered through the caller.
+enum TempSupport {
+    /// Accepts temperature up to `max_milli` milli-units (1000 == 1.0).
+    Ranged { max_milli: u32 },
+    /// Sending it is a 400 — the 5-generation models.
+    Deprecated,
+}
+
+/// Classify a model id. The default is DEPRECATED, deliberately: sending
+/// temperature to a model that rejects it is a hard 400 that kills the run,
+/// while withholding it from one that would accept it only forfeits a knob. So a
+/// model earns temperature by being on the known-accepting list, not by failing
+/// to match a deny-list that a new 5-gen name would slip through.
+fn temp_support(model: &str) -> TempSupport {
+    let m = model.to_ascii_lowercase();
+    let accepts = m.contains("haiku-4-5")
+        || m.contains("sonnet-4-5")
+        || m.contains("sonnet-4-6")
+        || m.contains("opus-4-1")
+        || m.contains("haiku-3")
+        || m.contains("sonnet-3");
+    if accepts {
+        TempSupport::Ranged { max_milli: 1000 }
+    } else {
+        TempSupport::Deprecated
+    }
+}
+
 /// Build the `/v1/messages` request body.
 ///
 /// System messages are concatenated into the top-level `system` field and
 /// removed from `messages`; everything else stays a user/assistant turn. An
 /// unknown role is treated as `user`, because the alternative — dropping it —
 /// silently loses a turn the caller meant to send.
+/// The ephemeral cache-breakpoint marker, appended inside a content block.
+/// Everything in the request up to and including a marked block is cached and,
+/// on a later request whose prefix is byte-identical, read back at ~10% of the
+/// price. We keep ONE explicit breakpoint — on the system block — because the
+/// system + files prefix is identical across every branch AND every repair, so
+/// it must cache independently of the message tail that a repair changes. The
+/// growing message tail is left to automatic caching (the top-level field
+/// below), which the docs call the simplest way and which moves its own
+/// breakpoint to the last cacheable block for us.
+const CACHE: &str = ",\"cache_control\":{\"type\":\"ephemeral\"}";
+
 pub fn messages_body(messages: &[Msg], opts: &Opts) -> String {
     let mut system_parts: Vec<&str> = Vec::new();
-    let mut turns: Vec<String> = Vec::new();
+    let mut user_turns: Vec<&Msg> = Vec::new();
     for m in messages {
         if m.role == "system" {
             system_parts.push(m.content);
         } else {
-            let role = if m.role == "assistant" { "assistant" } else { "user" };
-            turns.push(format!("{{\"role\":\"{role}\",\"content\":{}}}", json_str(m.content)));
+            user_turns.push(m);
         }
     }
+
+    // The turns are plain text blocks; the message tail's breakpoint is handled
+    // by automatic caching (the top-level `cache_control` below), which places
+    // and advances its own breakpoint on the last cacheable block. Hand-marking
+    // the last turn here would only duplicate what automatic caching does.
+    let turns: Vec<String> = user_turns
+        .iter()
+        .map(|m| {
+            let role = if m.role == "assistant" { "assistant" } else { "user" };
+            format!(
+                "{{\"role\":\"{role}\",\"content\":[{{\"type\":\"text\",\"text\":{}}}]}}",
+                json_str(m.content)
+            )
+        })
+        .collect();
 
     let mut parts = vec![
         format!("\"model\":{}", json_str(opts.model)),
         // Required. Resolved by the caller, never 0 here.
         format!("\"max_tokens\":{}", opts.max_tokens),
         format!("\"messages\":[{}]", turns.join(",")),
+        // Automatic caching: one top-level breakpoint that the system places on
+        // the last cacheable block and moves forward as the conversation grows.
+        // The docs' simplest enable, and it composes with the explicit system
+        // breakpoint (they take separate breakpoint slots).
+        "\"cache_control\":{\"type\":\"ephemeral\"}".to_string(),
     ];
     if !system_parts.is_empty() {
-        parts.push(format!("\"system\":{}", json_str(&system_parts.join("\n\n"))));
+        // The system prompt is identical across every branch and every attempt,
+        // so it is its own cache breakpoint — written once, read forever after.
+        parts.push(format!(
+            "\"system\":[{{\"type\":\"text\",\"text\":{}{CACHE}}}]",
+            json_str(&system_parts.join("\n\n"))
+        ));
     }
-    if opts.temperature > 0 {
-        parts.push(format!("\"temperature\":{}", opts.temperature as f64 / 1000.0));
+    // Whether `temperature` is sent depends on the model. The 5-generation models
+    // deprecated it and answer 400 if it carries; earlier tiers accept it. Sent
+    // only where accepted, clamped to the tier's range — so a repair can turn the
+    // knob up (the writer escalates it) without a 400 killing the whole run.
+    if let TempSupport::Ranged { max_milli } = temp_support(opts.model) {
+        let milli = opts.temperature.min(max_milli);
+        // milli-units to a JSON float: 200 -> 0.2, 1000 -> 1. Rust's shortest
+        // round-trip formatting keeps it a clean decimal.
+        parts.push(format!("\"temperature\":{}", milli as f64 / 1000.0));
     }
     if !opts.stop.is_empty() {
         let stops: Vec<String> = opts.stop.iter().map(|s| json_str(s)).collect();
@@ -118,6 +190,14 @@ struct UsageResp {
     input_tokens: u32,
     #[serde(default)]
     output_tokens: u32,
+    // With caching on, `input_tokens` counts ONLY the tokens after the last
+    // breakpoint; the cached prefix is reported here instead. Summing all three
+    // gives the true input the model processed — without them a cached run looks
+    // ~free and the wallet under-counts what it spent.
+    #[serde(default)]
+    cache_creation_input_tokens: u32,
+    #[serde(default)]
+    cache_read_input_tokens: u32,
 }
 #[derive(Deserialize)]
 struct ApiError {
@@ -152,12 +232,25 @@ pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
         return Err(ParseError::NoContent);
     }
 
-    let usage = parsed.usage.unwrap_or(UsageResp { input_tokens: 0, output_tokens: 0 });
+    let usage = parsed.usage.unwrap_or(UsageResp {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+    });
+    // True total input = post-breakpoint + freshly-cached + cache-read. Reported
+    // as prompt_tokens so cost/budget see the real work. Cache reads are billed
+    // at ~10% and writes at ~125%, so counting them at par makes the dollar cost
+    // an UPPER bound — safe for a budget ceiling, which should never undershoot.
+    let prompt_tokens = usage
+        .input_tokens
+        .saturating_add(usage.cache_creation_input_tokens)
+        .saturating_add(usage.cache_read_input_tokens);
     Ok(Parsed {
         text,
         finish_reason: parsed.stop_reason.unwrap_or_else(|| "other".to_string()),
         model: parsed.model,
-        prompt_tokens: usage.input_tokens,
+        prompt_tokens,
         completion_tokens: usage.output_tokens,
     })
 }
@@ -182,10 +275,11 @@ mod tests {
             ],
             256,
         );
-        assert_eq!(v["system"], "You write code.");
+        assert_eq!(v["system"][0]["text"], "You write code.");
+        assert_eq!(v["system"][0]["cache_control"]["type"], "ephemeral");
         assert_eq!(v["messages"].as_array().unwrap().len(), 1, "only the user turn remains");
         assert_eq!(v["messages"][0]["role"], "user");
-        assert_eq!(v["messages"][0]["content"], "make it 42");
+        assert_eq!(v["messages"][0]["content"][0]["text"], "make it 42");
     }
 
     #[test]
@@ -198,7 +292,7 @@ mod tests {
             ],
             16,
         );
-        assert_eq!(v["system"], "A.\n\nB.");
+        assert_eq!(v["system"][0]["text"], "A.\n\nB.");
     }
 
     /// max_tokens is required and always present, because a request without it is
@@ -207,14 +301,55 @@ mod tests {
     fn max_tokens_is_always_present() {
         let v = body(&[Msg { role: "user", content: "hi" }], 4096);
         assert_eq!(v["max_tokens"], 4096);
-        assert_eq!(v["temperature"], 0.2);
+        assert!(v.get("temperature").is_none(), "temperature is deprecated on the 5-gen models, so never sent");
         assert!(v.get("seed").is_none(), "there is no seed on this API");
+    }
+
+    fn body_with(model: &str, temp_milli: u32) -> serde_json::Value {
+        let opts = Opts { model, temperature: temp_milli, max_tokens: 16, stop: vec![] };
+        serde_json::from_str(&messages_body(&[Msg { role: "user", content: "hi" }], &opts)).unwrap()
+    }
+
+    #[test]
+    fn temperature_is_sent_only_to_a_model_that_accepts_it() {
+        // Haiku 4.5 accepts it; a 5-gen model would 400, so it is withheld.
+        let ok = body_with("claude-haiku-4-5-20251001", 500);
+        assert_eq!(ok["temperature"], 0.5, "0.5 as a JSON float, not 500 milli-units");
+        let dep = body_with("claude-opus-5", 500);
+        assert!(dep.get("temperature").is_none(), "deprecated on 5-gen — never sent");
+        // The safe default: an unknown model is treated as deprecated.
+        assert!(body_with("some-vendor/model", 500).get("temperature").is_none());
+    }
+
+    #[test]
+    fn an_escalated_temperature_is_clamped_to_the_range() {
+        // The writer may ask for more than 1.0 as it escalates; it clamps to max.
+        let v = body_with("claude-haiku-4-5-20251001", 4000);
+        assert_eq!(v["temperature"], 1.0, "1000 milli is the ceiling");
+    }
+
+    #[test]
+    fn a_top_level_cache_control_turns_on_automatic_caching() {
+        let v = body(&[Msg { role: "user", content: "hi" }], 16);
+        assert_eq!(v["cache_control"]["type"], "ephemeral", "automatic caching is enabled at the request level");
+        // The message tail is a plain text block — automatic caching owns its breakpoint.
+        assert!(v["messages"][0]["content"][0].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn cached_input_tokens_fold_into_the_prompt_total() {
+        // input_tokens is only the post-breakpoint tail; the cached prefix lives
+        // in the two cache fields. The reported prompt total sums all three.
+        let body = br#"{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"output_tokens":7}}"#;
+        let p = parse_completion(body).ok().unwrap();
+        assert_eq!(p.prompt_tokens, 1050, "50 fresh + 1000 read from cache");
+        assert_eq!(p.completion_tokens, 7);
     }
 
     #[test]
     fn content_is_escaped_and_round_trips() {
         let v = body(&[Msg { role: "user", content: "quote \" and \n newline" }], 16);
-        assert_eq!(v["messages"][0]["content"], "quote \" and \n newline");
+        assert_eq!(v["messages"][0]["content"][0]["text"], "quote \" and \n newline");
     }
 
     #[test]
