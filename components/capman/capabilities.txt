@@ -1,6 +1,6 @@
 # The engine's capabilities and their versions — the source of truth.
 # The self-improvement loop edits this file; a version that can do MORE is a
 # new line or a higher semver. What deploys advertises exactly this, over NATS.
-diff-writer:1.0.0
+diff-writer:1.1.0
 temperature-tiers:1.0.0
 component-scope:1.0.0
