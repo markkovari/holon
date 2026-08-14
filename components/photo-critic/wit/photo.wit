@@ -1,0 +1,13 @@
+// demo:photocritic — a photo-critique app on the lattice.
+//
+// Exports HTTP (serves the upload UI + /evaluate) and reaches Claude's vision
+// API by egress, with the key from the vault. The browser downscales the image
+// before upload, so nothing large crosses the wire.
+package demo:photocritic@0.1.0;
+
+world photo-critic {
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import comp:secrets/reader@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

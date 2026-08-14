@@ -1,0 +1,25 @@
+# The photo-critic app: one component that serves HTTP and reaches Claude's
+# vision API by egress, with the key granted from the vault by reference.
+version: comp/v1
+app: photo
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    config:
+      photo:model: claude-sonnet-5
+    secrets:
+      - key: anthropic-api-key
+        ref: vault://acme/anthropic
+    host_needs:
+      - wasi:http/incoming-handler
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - api.anthropic.com:443
+
+ingress:
+  host: photo.acme.test
+  component: gate
