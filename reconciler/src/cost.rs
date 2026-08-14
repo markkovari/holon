@@ -18,8 +18,22 @@
 /// free is not a budget. The result rounds UP: underspending a cap is fine,
 /// overspending it because of a floor is the failure this exists to prevent.
 pub fn cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str) -> u64 {
-    let _ = (prompt_tokens, completion_tokens, model);
-    unimplemented!("goal 01: implement per-model cost — the tests below are the spec")
+    // Price table: (input cents per million, output cents per million)
+    let (input_price, output_price) = if model.contains("haiku") {
+        (100u64, 500u64)
+    } else if model.contains("sonnet") {
+        (300u64, 1500u64)
+    } else if model.contains("opus") {
+        (1500u64, 7500u64)
+    } else {
+        // Unknown model -> charge the most expensive tier (opus)
+        (1500u64, 7500u64)
+    };
+
+    let prompt_cost = (prompt_tokens as u64 * input_price + 999_999) / 1_000_000;
+    let completion_cost = (completion_tokens as u64 * output_price + 999_999) / 1_000_000;
+
+    prompt_cost + completion_cost
 }
 
 #[cfg(test)]
