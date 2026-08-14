@@ -47,11 +47,17 @@ impl Guest for Component {
         // something", reported by the running code, not asserted by whoever
         // deployed it.
         // The manifest from source, unless COMP_CAPS overrides for a gate run.
+        // Strip comment LINES first, THEN split on commas — so a comment that
+        // contains a comma cannot leak its tail as a bogus capability. The
+        // manifest is one entry per line; COMP_CAPS is one comma-separated line.
         let src = if CAPS_ENV.is_empty() { MANIFEST } else { CAPS_ENV };
         let items: Vec<(&str, &str)> = src
-            .split(|c| c == ',' || c == '\n')
+            .lines()
             .map(str::trim)
-            .filter(|s| !s.is_empty() && !s.starts_with('#'))
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .flat_map(|l| l.split(','))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .map(|item| match item.split_once(':') {
                 Some((name, ver)) => (name.trim(), ver.trim()),
                 None => (item, "1.0.0"),
