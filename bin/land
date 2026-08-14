@@ -1,26 +1,18 @@
 #!/usr/bin/env bash
-# Land a completed goal's components onto main — WHOLE, no cherry-picking.
-# Fixes two recurring slips: a partial file copy (a missing lib.rs) and a
-# hand-edited members list. It copies each touched component's ENTIRE directory
-# from the run checkout, overlays the PR's implemented files, and rebuilds the
-# workspace members from what is actually on disk.
+# Land a merged goal's components onto main, WHOLE. Run AFTER `gh pr merge`
+# (which puts the implemented sources on main). It fills in the scaffold files
+# the PR did not carry — Cargo.toml, wit, the non-writable lib.rs — WITHOUT
+# clobbering the merged implementation (cp -Rn, no-clobber), and rebuilds the
+# members list from what is on disk. Fixes both recurring slips: a missing file
+# (whole dir) and a hand-edited members list. Portable (no bash-4 mapfile).
 #
-# Usage: bin/land <run-checkout> <pr-number>
+# Usage: bin/land <run-checkout> <component>...
 set -euo pipefail
-CHECKOUT="${1:?usage: land <run-checkout> <pr-number>}"
-PR="${2:?usage: land <run-checkout> <pr-number>}"
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
-git fetch -q origin main "pull/$PR/head:landpr"
-mapfile -t CHANGED < <(git diff --name-only "origin/main...landpr")
-COMPS=$(printf '%s\n' "${CHANGED[@]}" | sed -n 's#^components/\([^/]*\)/.*#\1#p' | sort -u)
-[ -n "$COMPS" ] || { echo "the PR changed no components"; exit 1; }
-for c in $COMPS; do
-  rm -rf "components/$c"
-  cp -a "$CHECKOUT/components/$c" "components/$c"     # the whole scaffold, every file
-done
-for f in "${CHANGED[@]}"; do
-  git show "landpr:$f" > "$f"                          # the PR's implemented version on top
+CHECKOUT="${1:?usage: land <run-checkout> <component>...}"; shift
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+for c in "$@"; do
+  mkdir -p "components/$c"
+  cp -Rn "$CHECKOUT/components/$c/." "components/$c/"   # fill missing files, keep merged impl
 done
 python3 - "$ROOT" <<'PY'
 import os, re, sys
@@ -33,6 +25,4 @@ f = os.path.join(comp, "Cargo.toml"); s = open(f).read()
 open(f, "w").write(re.sub(r"members\s*=\s*\[[^\]]*\]",
                           "members = [" + ", ".join(f'"{m}"' for m in ms) + "]", s, 1))
 PY
-git branch -q -D landpr
-echo "landed (whole): $COMPS"
-echo "next: run the gate, then git add -A && commit && push"
+echo "landed (scaffold filled, impl kept): $*"
