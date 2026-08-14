@@ -15,6 +15,7 @@
 //! reproducible; the authentic source of the candidate is a loop that edited the
 //! component, and the two builds are genuinely different bytes either way.
 
+use std::collections::BTreeMap;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -156,14 +157,50 @@ fn deploy_and_read(
     report(fleet, host).with_context(|| format!("{want} never answered over the lattice"))
 }
 
-fn caps_of(report: &Value) -> Vec<String> {
+/// The capability→version map the running version reports over the lattice.
+fn caps_of(report: &Value) -> BTreeMap<String, u64> {
     report["capabilities"]
-        .as_array()
+        .as_object()
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|v| v.as_str().map(str::to_string))
+        .filter_map(|(k, v)| v.as_u64().map(|n| (k, n)))
         .collect()
+}
+
+/// Render a map as `name@version` for a human.
+fn show(caps: &BTreeMap<String, u64>) -> String {
+    let mut parts: Vec<String> = caps.iter().map(|(n, v)| format!("{n}@{v}")).collect();
+    parts.sort();
+    format!("[{}]", parts.join(", "))
+}
+
+/// The verdict of comparing two capability maps.
+struct Verdict {
+    /// A baseline capability the candidate dropped or downgraded — a regression.
+    regressions: Vec<String>,
+    /// A capability the candidate added or raised the version of.
+    improvements: Vec<String>,
+}
+
+fn compare(base: &BTreeMap<String, u64>, cand: &BTreeMap<String, u64>) -> Verdict {
+    let mut regressions = Vec::new();
+    for (name, &bv) in base {
+        match cand.get(name) {
+            None => regressions.push(format!("{name} removed")),
+            Some(&cv) if cv < bv => regressions.push(format!("{name} {bv}→{cv}")),
+            _ => {}
+        }
+    }
+    let mut improvements = Vec::new();
+    for (name, &cv) in cand {
+        match base.get(name) {
+            None => improvements.push(format!("{name}@{cv} (new)")),
+            Some(&bv) if cv > bv => improvements.push(format!("{name} {bv}→{cv}")),
+            _ => {}
+        }
+    }
+    Verdict { regressions, improvements }
 }
 
 fn main() -> Result<()> {
@@ -187,46 +224,50 @@ fn main() -> Result<()> {
     // --- deploy the baseline and ask it what it is --------------------------
     let r_base = deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_wasm, "baseline")?;
     let base_caps = caps_of(&r_base);
-    println!(
-        "  baseline  · healthy={} · {} capabilities {:?}",
-        r_base["healthy"], base_caps.len(), base_caps
-    );
+    println!("  baseline  · healthy={} · {}", r_base["healthy"], show(&base_caps));
 
     // --- deploy the candidate over the top and ask again --------------------
     let r_cand = deploy_and_read(&api, &fleet, id, &mut dep_id, host, cand_wasm.clone(), "candidate")?;
     let cand_caps = caps_of(&r_cand);
-    println!(
-        "  candidate · healthy={} · {} capabilities {:?}",
-        r_cand["healthy"], cand_caps.len(), cand_caps
-    );
+    println!("  candidate · healthy={} · {}", r_cand["healthy"], show(&cand_caps));
 
     // --- the decision -------------------------------------------------------
+    // More capable = it kept every capability at no LOWER a version (no
+    // regression) AND advanced at least one — a new capability, or a higher
+    // version of one it already had. The version map is what makes the second
+    // half visible: a bare count cannot see `diff-writer` improve in place.
     let healthy = r_cand["healthy"].as_bool().unwrap_or(false);
-    let kept_all = base_caps.iter().all(|c| cand_caps.contains(c));
-    let gained: Vec<&String> = cand_caps.iter().filter(|c| !base_caps.contains(c)).collect();
-    let more_capable = kept_all && !gained.is_empty();
+    let v = compare(&base_caps, &cand_caps);
+    println!();
+    if !v.improvements.is_empty() {
+        println!("  advances:    {}", v.improvements.join(", "));
+    }
+    if !v.regressions.is_empty() {
+        println!("  regressions: {}", v.regressions.join(", "));
+    }
 
+    let more_capable = v.regressions.is_empty() && !v.improvements.is_empty();
     println!();
     if healthy && more_capable {
-        println!("  PROMOTE — the candidate is healthy and strictly more capable (gained {gained:?}).");
+        println!("  PROMOTE — healthy, no regression, and strictly more capable.");
         println!("  the fleet is left running the candidate.");
         Ok(())
     } else {
         // Roll the baseline back onto the fleet: a candidate that is not an
         // improvement does not get to keep the slot it was deployed into to be
         // judged. (The platform separately refuses a candidate that removes an
-        // EXPORT; this refuses one that fails to advance the capability set.)
+        // EXPORT; this refuses one that fails to advance the capability map.)
         let reason = if !healthy {
             "the candidate reported unhealthy".to_string()
-        } else if !kept_all {
-            "the candidate dropped a capability the baseline had".to_string()
+        } else if !v.regressions.is_empty() {
+            format!("the candidate regressed: {}", v.regressions.join(", "))
         } else {
-            "the candidate added no capability".to_string()
+            "the candidate advanced no capability".to_string()
         };
         println!("  ROLL BACK — {reason}.");
         let base_again = build_probe(&args.component, "baseline", &args.baseline)?;
         let restored = deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_again, "baseline")?;
-        println!("  restored baseline over the lattice: {} capabilities", caps_of(&restored).len());
+        println!("  restored baseline over the lattice: {}", show(&caps_of(&restored)));
         bail!("candidate rejected: {reason}");
     }
 }

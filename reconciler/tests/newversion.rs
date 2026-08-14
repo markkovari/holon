@@ -434,8 +434,8 @@ fn a_more_capable_version_reports_itself_over_the_lattice() {
         caps2 > caps1,
         "the new version did not report itself as more capable over the lattice: {caps1} -> {caps2}"
     );
-    let set1: Vec<String> = r1["capabilities"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
-    let set2: Vec<String> = r2["capabilities"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    let set1: Vec<String> = r1["capabilities"].as_object().unwrap().keys().cloned().collect();
+    let set2: Vec<String> = r2["capabilities"].as_object().unwrap().keys().cloned().collect();
     assert!(set1.iter().all(|c| set2.contains(c)), "the new version dropped a capability: {set1:?} -> {set2:?}");
     let gained: Vec<&String> = set2.iter().filter(|c| !set1.contains(c)).collect();
     println!("    a healthy, MORE capable version is live and said so over the lattice; gained: {gained:?}");
