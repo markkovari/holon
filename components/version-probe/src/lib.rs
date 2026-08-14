@@ -24,9 +24,10 @@ const TAG: &str = match option_env!("COMP_VERSION_TAG") {
 };
 
 /// The capabilities this build advertises, baked in at compile time as a
-/// comma-separated list, so a version that CAN do more is genuinely different
-/// bytes — and what a running version can do is read from outside, over the
-/// lattice, not trusted from a record.
+/// comma-separated `name:version` list (a bare `name` is version 1), so a version
+/// that can do MORE — a new capability, or a higher version of one it already had
+/// — is genuinely different bytes, read from outside over the lattice rather than
+/// trusted from a record.
 const CAPS: &str = match option_env!("COMP_CAPS") {
     Some(v) => v,
     None => "",
@@ -34,16 +35,24 @@ const CAPS: &str = match option_env!("COMP_CAPS") {
 
 impl Guest for Component {
     fn handle(_request: IncomingRequest, response_out: ResponseOutparam) {
-        // The self-eval, run by the version that is actually running: collect the
-        // capabilities and judge health. A build that advertises nothing is not a
-        // healthy engine — health here is "I initialised and I can do something",
-        // reported by the running code rather than asserted by whoever deployed it.
-        let caps: Vec<&str> = CAPS.split(',').filter(|s| !s.is_empty()).collect();
-        let healthy = !caps.is_empty();
-        let list = caps.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(",");
+        // The self-eval, run by the version that is actually running: parse the
+        // capability→version map and judge health. A build that advertises nothing
+        // is not a healthy engine — health here is "I initialised and I can do
+        // something", reported by the running code, not asserted by whoever
+        // deployed it.
+        let items: Vec<(&str, u32)> = CAPS
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|item| match item.split_once(':') {
+                Some((name, ver)) => (name, ver.parse::<u32>().unwrap_or(1)),
+                None => (item, 1),
+            })
+            .collect();
+        let healthy = !items.is_empty();
+        let map = items.iter().map(|(n, v)| format!("\"{n}\":{v}")).collect::<Vec<_>>().join(",");
         let body = format!(
-            "{{\"tag\":\"{TAG}\",\"healthy\":{healthy},\"capability_count\":{},\"capabilities\":[{list}]}}",
-            caps.len()
+            "{{\"tag\":\"{TAG}\",\"healthy\":{healthy},\"capability_count\":{},\"capabilities\":{{{map}}}}}",
+            items.len()
         );
         let headers = Fields::new();
         let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
