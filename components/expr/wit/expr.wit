@@ -1,0 +1,3 @@
+package demo:expr@0.1.0;
+interface language { eval: func(src: string) -> s64; }
+world expr { export language; }

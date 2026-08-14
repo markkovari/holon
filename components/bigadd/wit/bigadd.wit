@@ -1,0 +1,3 @@
+package demo:bigadd@0.1.0;
+interface bignum { add: func(a: string, b: string) -> string; }
+world bigadd { export bignum; }
