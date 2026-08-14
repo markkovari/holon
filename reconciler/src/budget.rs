@@ -29,8 +29,10 @@ pub fn spent_cents(attempts: &[Usage]) -> u64 {
 /// convention (a cap of zero is the absence of a cap, not a cap of nothing).
 /// Equal to the cap is within it; only strictly more is over.
 pub fn over_budget(cap_cents: u64, attempts: &[Usage]) -> bool {
-    let _ = (cap_cents, attempts);
-    unimplemented!("goal 01: is the run over its cap? — the tests below are the spec")
+    if cap_cents == 0 {
+        return false;
+    }
+    spent_cents(attempts) > cap_cents
 }
 
 #[cfg(test)]
