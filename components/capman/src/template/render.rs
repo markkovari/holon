@@ -6,7 +6,19 @@ use super::tokens::{tokenize, Token};
 /// An unknown key is left VERBATIM as `{{key}}` (with its original spacing lost —
 /// re-emitted as `{{key}}` trimmed). Unmatched `{{` stays literal.
 pub fn render(tmpl: &str, vars: &[(&str, &str)]) -> String {
-    let _ = (tokenize, tmpl, vars);
-    let _: Option<Token> = None;
-    unimplemented!("goal: the conformance in capman is the spec")
+    let mut out = String::new();
+    for tok in tokenize(tmpl) {
+        match tok {
+            Token::Literal(text) => out.push_str(text),
+            Token::Placeholder(key) => match vars.iter().find(|(k, _)| *k == key) {
+                Some((_, v)) => out.push_str(v),
+                None => {
+                    out.push_str("{{");
+                    out.push_str(key);
+                    out.push_str("}}");
+                }
+            },
+        }
+    }
+    out
 }
