@@ -97,3 +97,7 @@ path = "src/bin/planscale.rs"
 [[bin]]
 name = "comp-selfimprove"
 path = "src/bin/selfimprove.rs"
+
+[[bin]]
+name = "comp-photoserve"
+path = "src/bin/photoserve.rs"
