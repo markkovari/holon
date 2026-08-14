@@ -43,16 +43,18 @@ PR_URL="$(grep -oE 'https://github.com/[^ ]+/pull/[0-9]+' "$LOG" | tail -1)"
 PR_NUM="${PR_URL##*/}"
 echo "   proposed: $PR_URL"
 
-# --- 3. baseline (main) vs candidate (PR head) capabilities --------------------
+# --- 3. baseline (main) vs candidate (PR head): the REAL bytes -----------------
+# Two worktrees, so the judge builds each side's actual component from its own
+# source and reads the manifest those bytes were compiled with — not a caps
+# string. The platform fleet still comes from the engine root ($ROOT).
 git -C "$WORK" fetch -q origin main "pull/$PR_NUM/head:pr"
-git -C "$WORK" checkout -q FETCH_HEAD -- components/capman/capabilities.txt 2>/dev/null || git -C "$WORK" checkout -q origin/main -- components/capman/capabilities.txt
-BASE_CAPS="$(caps_of "$WORK/components/capman/capabilities.txt")"
-git -C "$WORK" checkout -q pr -- components/capman/capabilities.txt
-CAND_CAPS="$(caps_of "$WORK/components/capman/capabilities.txt")"
+BASE_WT="$(mktemp -d)"; CAND_WT="$(mktemp -d)"
+git -C "$WORK" worktree add -q --detach "$BASE_WT" origin/main
+git -C "$WORK" worktree add -q --detach "$CAND_WT" pr
 
 echo ""
-echo "== JUDGE: baseline vs candidate, over the lattice =="
-if ( cd "$ROOT" && "$SI" --baseline "$BASE_CAPS" --candidate "$CAND_CAPS" ); then
+echo "== JUDGE: baseline vs candidate, real bytes, over the lattice =="
+if ( cd "$ROOT" && "$SI" --baseline-src "$BASE_WT" --candidate-src "$CAND_WT" ); then
   echo ""
   echo "== PROMOTE: merging $PR_URL =="
   GH_TOKEN="$(cat "$TOK")" gh pr merge "$PR_NUM" --repo "$REPO" --squash --delete-branch

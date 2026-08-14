@@ -57,6 +57,18 @@ struct Args {
 /// the manifest via `COMP_CAPS` when set; when `None`, the component reports the
 /// tree's own baked-in manifest — the bytes are the loop's real output.
 fn build_probe(components: &Path, component: &str, tag: &str, caps: Option<&str>) -> Result<Vec<u8>> {
+    // Generate the WIT bindings first. cargo-component hardcodes wasip1 and is
+    // used only for codegen (check is enough); a fresh source tree has no
+    // `bindings.rs` until this runs, and then a plain build targets wasip2. This
+    // is exactly what `just build` does, inlined so any source tree is buildable.
+    let chk = Command::new("cargo")
+        .current_dir(components)
+        .args(["component", "check", "--release", "-p", component])
+        .output()
+        .context("cargo component check (bindings)")?;
+    if !chk.status.success() {
+        bail!("generating bindings for {component} failed:\n{}", String::from_utf8_lossy(&chk.stderr));
+    }
     let mut cmd = Command::new("cargo");
     cmd.current_dir(components)
         .args(["build", "--release", "--target", "wasm32-wasip2", "-p", component])
