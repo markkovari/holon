@@ -89,3 +89,7 @@ path = "src/bin/hopcost.rs"
 [[bin]]
 name = "comp-planscale"
 path = "src/bin/planscale.rs"
+
+[[bin]]
+name = "comp-selfimprove"
+path = "src/bin/selfimprove.rs"
