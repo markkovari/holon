@@ -176,7 +176,7 @@ The honest gap list, in the order it bites:
 2. **Tokens are not money.** Both budgets count tokens; a project's budget is a
    number in a different unit that nothing converts to. And an unusable answer's
    cost is invisible at both levels, because cost travels with a candidate.
-3. **Nothing drives it from the queue.** `comp goal start` records that a goal
+3. **Nothing drives it from the queue.** `holon goal start` records that a goal
    started; no process picks a started goal up and runs a search for it. Both ends
    exist and a person is still the wire between them.
 4. **The knowledge pool is inert.** The graph stores and traverses. Nothing

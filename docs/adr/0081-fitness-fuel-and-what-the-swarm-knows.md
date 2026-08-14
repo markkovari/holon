@@ -440,7 +440,7 @@ defending.
 
 **The CLI, for "before spending".** This one happens once per run — the plan and
 its estimated cost, at the only moment where stopping is free. `comp runs` to
-list what is waiting, `comp approve <id>` to release it. There is already a
+list what is waiting, `holon approve <id>` to release it. There is already a
 session, an auth path, and a tool people run.
 
 Between them they cover the three interventions that earn a human's attention.

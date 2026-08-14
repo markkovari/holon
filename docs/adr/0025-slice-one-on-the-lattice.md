@@ -10,12 +10,12 @@
 A MacBook and a Raspberry Pi 5 (`malna`, 4× A76, Debian bookworm, aarch64), joined only by
 a NATS lattice. The Pi was given the `comp-host` binary and nothing else.
 
-1. `comp login` / `comp component push` against the real `platform-domain` — the wasm
+1. `comp login` / `holon component push` against the real `platform-domain` — the wasm
    control plane, on a `comp-host`, with no Kubernetes and no applier.
 2. The reconciler distributed the artifact into the object store by digest.
 3. **The Pi pulled 372 KB of wasm over NATS**, verified the hash, compiled it and served.
    Nothing was copied to it by hand.
-4. `comp app create` + `comp app deploy` stored a manifest; the reconciler placed it.
+4. `holon app create` + `holon app deploy` stored a manifest; the reconciler placed it.
 5. Both boxes served the app, routed by `Host` header.
 6. `pkill comp-host` on the Pi. Its inventory key expired, the Mac went from one replica
    to two, and it kept serving throughout.
@@ -59,4 +59,4 @@ failing obscurely.
 
 Also out: tenant config and secrets (ADR-0010 still promises both), `public` visibility and
 signing (ADR-0007 rule 3), org-scoped catalogue visibility, per-version catalogue keys, a
-UI, and `comp node ls` — which needs a NATS read the CLI does not yet do.
+UI, and `holon node ls` — which needs a NATS read the CLI does not yet do.

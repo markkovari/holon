@@ -353,7 +353,7 @@ pub fn render_route(spec: &Spec, router: Router) -> String {
 // ---- cli --------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "comp", version, about = "The comp platform: components, apps, and the nodes they run on")]
+#[command(name = "holon", version, about = "The Holon platform: components, apps, and the nodes they run on")]
 struct Args {
     #[command(subcommand)]
     cmd: Cmd,

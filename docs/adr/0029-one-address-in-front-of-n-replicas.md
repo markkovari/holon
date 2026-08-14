@@ -77,7 +77,7 @@ the failure — the Pi entries expired from inventory and the table rebuilt itse
   beyond a cache of inventory, so running several behind DNS or anycast is the obvious
   answer, but nothing here does that or tests it.
 - **Not TLS.** It speaks plain HTTP in both directions. Termination belongs in front of it,
-  which is what the `comp node render` Caddy lane already produces.
+  which is what the `holon node render` Caddy lane already produces.
 - **Not measured under load or with a slow backend.** The even split is from 200 sequential
   requests against healthy nodes. A round robin's weakness is precisely a backend that is
   up but slow, and that case has not been provoked.

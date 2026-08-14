@@ -68,7 +68,7 @@ Almost nothing here is new:
 |---|---|
 | the queue, and `where state = queued` | `records:store` secondary indexes |
 | a lifecycle that refuses illegal jumps | `fsm:workflow` |
-| tokens, by reference | `comp secret set`, `comp:secrets/reader` |
+| tokens, by reference | `holon secret set`, `comp:secrets/reader` |
 | the base sha, the branch, the commit, the PR | `git:forge` |
 | the branches within a run | environments (ADR-0078, nesting since the stress tests) |
 | repeat work made free | `artifact:cache` |
