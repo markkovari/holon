@@ -51,6 +51,164 @@ struct Args {
     /// A source tree to build the candidate component FROM.
     #[arg(long)]
     candidate_src: Option<PathBuf>,
+    /// Judge by BEHAVIOR, not a report: deploy the slug capability baseline
+    /// (no bounded-slug feature) and candidate (with it), CALL both over the
+    /// lattice with conformance cases, and promote iff the candidate passes a
+    /// strict superset. This is the gate reading the running code, not a string.
+    #[arg(long, default_value_t = false)]
+    behavior: bool,
+}
+
+/// Build slug-probe (with the bounded-slug feature iff `feature`) composed with
+/// the real `slug` component into one HTTP artifact — the capability as it
+/// actually deploys. Different feature flag → different bytes → a swap the fleet
+/// can see.
+fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
+    let comp = repo_root().join("components");
+    let rel = comp.join("target/wasm32-wasip2/release");
+    let mut check = Command::new("cargo");
+    check.current_dir(&comp).args(["component", "check", "--release", "-p", "slug-probe"]);
+    if feature {
+        check.env("COMP_SLUGWITH", "1");
+    } else {
+        check.env_remove("COMP_SLUGWITH");
+    }
+    if !check.output().context("cargo component check")?.status.success() {
+        bail!("bindings for slug-probe failed");
+    }
+    let mut build = Command::new("cargo");
+    build
+        .current_dir(&comp)
+        .args(["build", "--release", "--target", "wasm32-wasip2", "-p", "slug-probe", "-p", "slug"]);
+    if feature {
+        build.env("COMP_SLUGWITH", "1");
+    } else {
+        build.env_remove("COMP_SLUGWITH");
+    }
+    let out = build.output().context("cargo build")?;
+    if !out.status.success() {
+        bail!("building slug-probe failed:\n{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let composed = comp.join("target/slug_probe.composed.wasm");
+    let wac = Command::new("wac")
+        .arg("plug")
+        .arg(rel.join("slug_probe.wasm"))
+        .arg("--plug")
+        .arg(rel.join("slug.wasm"))
+        .arg("-o")
+        .arg(&composed)
+        .output()
+        .context("wac plug")?;
+    if !wac.status.success() {
+        bail!("wac plug failed:\n{}", String::from_utf8_lossy(&wac.stderr));
+    }
+    std::fs::read(&composed).context("read composed slug-probe")
+}
+
+/// Call one route over the lattice; return the `slug` field if the response has
+/// one. A route the deployed version does not serve has none — which is exactly
+/// how the gate sees "this version cannot do that".
+fn call_route(fleet: &Fleet, host: &str, path: &str) -> Option<String> {
+    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
+    let r = http
+        .get(format!("http://127.0.0.1:{}{path}", fleet.ingress_port))
+        .header("host", host)
+        .send()
+        .ok()?;
+    let v: Value = serde_json::from_str(&r.text().ok()?).ok()?;
+    v["slug"].as_str().map(str::to_string)
+}
+
+/// The conformance cases, run over the lattice: (route, expected slug).
+const CASES: &[(&str, &str)] = &[
+    ("/slugify?text=Hello+World", "hello-world"),
+    ("/slugify-with?text=Hello+World&max=0", "hello-world"),
+];
+
+/// Which case indices a deployed version passes, when exercised over the lattice.
+fn passing(fleet: &Fleet, host: &str) -> Vec<usize> {
+    CASES
+        .iter()
+        .enumerate()
+        .filter(|(_, (path, want))| call_route(fleet, host, path).as_deref() == Some(*want))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The behavioral gate: judge a capability by CALLING it over the lattice.
+fn behavior_gate() -> Result<()> {
+    let (id, host) = ("cap", "cap.improver.test");
+    println!("comp-selfimprove: judging the `slug` capability by BEHAVIOR, over the lattice\n");
+
+    let base = build_composed_slug(false)?;
+    let cand = build_composed_slug(true)?;
+    if base == cand {
+        bail!("baseline and candidate are identical bytes — nothing changed");
+    }
+
+    let fleet = Fleet::start_with_platform("behavior", 1);
+    let api = Api::new(fleet.platform_url())?;
+    let mut dep_id: Option<String> = None;
+
+    // Deploy baseline; wait until it serves the basic route; record what it passes.
+    deploy_capability(&api, &fleet, id, &mut dep_id, host, base, 0)?;
+    let base_pass = passing(&fleet, host);
+    println!("  baseline  · passes {:?} of {} cases over the lattice", base_pass, CASES.len());
+
+    // Deploy the candidate over the top; wait until the NEW route answers.
+    deploy_capability(&api, &fleet, id, &mut dep_id, host, cand, 1)?;
+    let cand_pass = passing(&fleet, host);
+    println!("  candidate · passes {:?} of {} cases over the lattice", cand_pass, CASES.len());
+
+    let regressed: Vec<usize> = base_pass.iter().copied().filter(|i| !cand_pass.contains(i)).collect();
+    let gained: Vec<usize> = cand_pass.iter().copied().filter(|i| !base_pass.contains(i)).collect();
+    println!();
+    if regressed.is_empty() && !gained.is_empty() {
+        println!("  PROMOTE — the candidate handles cases {gained:?} the baseline could not, and regressed none.");
+        println!("  judged by calling the running code over the lattice, not by a report.");
+        Ok(())
+    } else {
+        let why = if !regressed.is_empty() {
+            format!("regressed cases {regressed:?}")
+        } else {
+            "handled no case the baseline could not".to_string()
+        };
+        println!("  ROLL BACK — the candidate {why}.");
+        bail!("candidate rejected: {why}");
+    }
+}
+
+/// Deploy `wasm` under `id` and wait until case `ready_idx` passes over the
+/// lattice — proof the version is live and serving what this side should.
+fn deploy_capability(
+    api: &Api,
+    fleet: &Fleet,
+    id: &str,
+    dep_id: &mut Option<String>,
+    host: &str,
+    wasm: Vec<u8>,
+    ready_idx: usize,
+) -> Result<()> {
+    api.upload(id, wasm)?;
+    if dep_id.is_none() {
+        let (code, dep) =
+            api.post("/api/deployments", json!({ "name": id, "nodes": [{"id": id}], "edges": [] }));
+        if code != 201 {
+            bail!("deploy create failed: {dep}");
+        }
+        *dep_id = Some(dep["id"].as_str().unwrap_or_default().to_string());
+    }
+    let did = dep_id.clone().unwrap();
+    let (path, want) = CASES[ready_idx];
+    let deadline = Instant::now() + Duration::from_secs(180);
+    while Instant::now() < deadline {
+        let _ = api.post(&format!("/api/deployments/{did}/save"), json!({}));
+        if call_route(fleet, host, path).as_deref() == Some(want) {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    bail!("the capability never served case {ready_idx} over the lattice\n{}", fleet.node_log("n1"))
 }
 
 /// Build the probe with a tag, in the given `components` dir. Only the TAG is
@@ -269,6 +427,9 @@ fn compare(base: &BTreeMap<String, String>, cand: &BTreeMap<String, String>) -> 
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if args.behavior {
+        return behavior_gate();
+    }
     let id = "self";
     let host = "self.improver.test";
 
