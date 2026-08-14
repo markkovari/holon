@@ -1,9 +1,17 @@
-text = "Implement `dollars(cents)` in reconciler/src/money.rs: whole cents to a dollar string, always two decimal places, e.g. 0 -> \"$0.00\", 5 -> \"$0.05\", 1234 -> \"$12.34\". The tests are the exact spec and must pass. Write the complete file, keeping the tests unchanged."
-title = "Implement dollars() — money formatting"
-writable = ["reconciler/src/money.rs"]
-base_paths = ["reconciler/", "lattice/"]
+# Holon builds a wasm component (goal: the platform itself).
+text = """
+Implement `rot13(text)` in components/rot13/src/lib.rs — ROT13 every ASCII letter
+(a↔n, A↔N), leaving digits, punctuation and spaces unchanged. Keep the Guest impl
+and the tests exactly as they are; only fill in the pure `rot13` function. The
+tests are the exact spec and must pass. Write the complete file.
+"""
+title = "Implement the rot13 wasm component"
+writable = ["components/rot13/src/lib.rs"]
+base_paths = ["components/rot13/", "components/Cargo.toml"]
+workspace_manifest = "components/Cargo.toml"
+keep_members = ["rot13"]
 [[check]]
-id = "money-tests-pass"
+id = "rot13-builds-and-passes"
 required = true
 weight = 1
-command = ["cargo", "test", "--manifest-path", "reconciler/Cargo.toml", "-p", "comp-reconciler", "--lib", "money::"]
+command = ["cargo", "component", "test", "--manifest-path", "components/Cargo.toml", "-p", "rot13"]
