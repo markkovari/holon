@@ -8,14 +8,8 @@ struct Component;
 pub fn rot13(text: &str) -> String {
     text.chars().map(|c| {
         match c {
-            'a'..='z' => {
-                let offset = (c as u8 - b'a' + 13) % 26;
-                (b'a' + offset) as char
-            }
-            'A'..='Z' => {
-                let offset = (c as u8 - b'A' + 13) % 26;
-                (b'A' + offset) as char
-            }
+            'a'..='z' => ((c as u8 - b'a' + 13) % 26 + b'a') as char,
+            'A'..='Z' => ((c as u8 - b'A' + 13) % 26 + b'A') as char,
             _ => c,
         }
     }).collect()
