@@ -24,8 +24,8 @@ const TAG: &str = match option_env!("COMP_VERSION_TAG") {
 };
 
 /// The capabilities this build advertises, baked in at compile time as a
-/// comma-separated `name:version` list (a bare `name` is version 1), so a version
-/// that can do MORE — a new capability, or a higher version of one it already had
+/// comma-separated `name:semver` list (a bare `name` is `1.0.0`), so a version
+/// that can do MORE — a new capability, or a higher semver of one it already had
 /// — is genuinely different bytes, read from outside over the lattice rather than
 /// trusted from a record.
 const CAPS: &str = match option_env!("COMP_CAPS") {
@@ -40,16 +40,16 @@ impl Guest for Component {
         // is not a healthy engine — health here is "I initialised and I can do
         // something", reported by the running code, not asserted by whoever
         // deployed it.
-        let items: Vec<(&str, u32)> = CAPS
+        let items: Vec<(&str, &str)> = CAPS
             .split(',')
             .filter(|s| !s.is_empty())
             .map(|item| match item.split_once(':') {
-                Some((name, ver)) => (name, ver.parse::<u32>().unwrap_or(1)),
-                None => (item, 1),
+                Some((name, ver)) => (name, ver),
+                None => (item, "1.0.0"),
             })
             .collect();
         let healthy = !items.is_empty();
-        let map = items.iter().map(|(n, v)| format!("\"{n}\":{v}")).collect::<Vec<_>>().join(",");
+        let map = items.iter().map(|(n, v)| format!("\"{n}\":\"{v}\"")).collect::<Vec<_>>().join(",");
         let body = format!(
             "{{\"tag\":\"{TAG}\",\"healthy\":{healthy},\"capability_count\":{},\"capabilities\":{{{map}}}}}",
             items.len()
