@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use comp_reconciler::fleet::{repo_root, Fleet};
+use semver::Version;
 use serde_json::{json, Value};
 
 #[derive(Parser)]
@@ -157,21 +158,27 @@ fn deploy_and_read(
     report(fleet, host).with_context(|| format!("{want} never answered over the lattice"))
 }
 
-/// The capability→version map the running version reports over the lattice.
-fn caps_of(report: &Value) -> BTreeMap<String, u64> {
+/// The capability→semver map the running version reports over the lattice.
+fn caps_of(report: &Value) -> BTreeMap<String, String> {
     report["capabilities"]
         .as_object()
         .cloned()
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|(k, v)| v.as_u64().map(|n| (k, n)))
+        .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
         .collect()
 }
 
-/// Render a map as `name@version` for a human.
-fn show(caps: &BTreeMap<String, u64>) -> String {
-    let mut parts: Vec<String> = caps.iter().map(|(n, v)| format!("{n}@{v}")).collect();
-    parts.sort();
+/// Parse a capability version. An unparseable version sorts as `0.0.0` — the
+/// lowest — so a candidate that ships a malformed version looks like a downgrade
+/// and is refused, which is the safe direction.
+fn ver(s: &str) -> Version {
+    Version::parse(s.trim()).unwrap_or_else(|_| Version::new(0, 0, 0))
+}
+
+/// Render a map as `name@semver` for a human.
+fn show(caps: &BTreeMap<String, String>) -> String {
+    let parts: Vec<String> = caps.iter().map(|(n, v)| format!("{n}@{v}")).collect();
     format!("[{}]", parts.join(", "))
 }
 
@@ -179,24 +186,24 @@ fn show(caps: &BTreeMap<String, u64>) -> String {
 struct Verdict {
     /// A baseline capability the candidate dropped or downgraded — a regression.
     regressions: Vec<String>,
-    /// A capability the candidate added or raised the version of.
+    /// A capability the candidate added or raised the semver of.
     improvements: Vec<String>,
 }
 
-fn compare(base: &BTreeMap<String, u64>, cand: &BTreeMap<String, u64>) -> Verdict {
+fn compare(base: &BTreeMap<String, String>, cand: &BTreeMap<String, String>) -> Verdict {
     let mut regressions = Vec::new();
-    for (name, &bv) in base {
+    for (name, bv) in base {
         match cand.get(name) {
             None => regressions.push(format!("{name} removed")),
-            Some(&cv) if cv < bv => regressions.push(format!("{name} {bv}→{cv}")),
+            Some(cv) if ver(cv) < ver(bv) => regressions.push(format!("{name} {bv}→{cv}")),
             _ => {}
         }
     }
     let mut improvements = Vec::new();
-    for (name, &cv) in cand {
+    for (name, cv) in cand {
         match base.get(name) {
             None => improvements.push(format!("{name}@{cv} (new)")),
-            Some(&bv) if cv > bv => improvements.push(format!("{name} {bv}→{cv}")),
+            Some(bv) if ver(cv) > ver(bv) => improvements.push(format!("{name} {bv}→{cv}")),
             _ => {}
         }
     }

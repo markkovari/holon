@@ -37,6 +37,9 @@ tempfile = "3"
 axum = "0.8"
 serde_json = "1"
 anyhow = "1"
+# Capability versions are semver, so the self-improve gate orders them by
+# major/minor/patch rather than as strings ("2.0.0" > "10.0.0" the wrong way).
+semver = "1"
 clap = { version = "4", features = ["derive", "env"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 # For content addressing. The optional OCI mirror push is four HTTP calls on the
