@@ -1,0 +1,3 @@
+package demo:ordinal@0.1.0;
+interface suffix { ordinal: func(n: u32) -> string; }
+world ordinal { export suffix; }

@@ -1,0 +1,6 @@
+package demo:roman@0.1.0;
+interface numerals {
+    to-roman: func(n: u32) -> string;
+    from-roman: func(s: string) -> u32;
+}
+world roman { export numerals; }
