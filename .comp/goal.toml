@@ -1,21 +1,9 @@
-# The routing tier: a budget-aware model tier router (run with a bigger model).
-text = """
-Implement the model tier router in reconciler/src/router.rs. The `Tier` enum is
-Haiku < Sonnet < Opus. Fill in Tier::model (the Anthropic id per tier), Tier::rank
-(0/1/2 cheap to dear), Tier::up (escalate one tier, Opus stays Opus), Tier::of
-(map a model id to its tier by the tier name in the id; an id naming no known tier
-is Opus, the most capable), and the free function tier_for(attempt, ceiling): the
-first attempt is Haiku, each repair escalates one tier (attempt 1 Sonnet, 2+
-Opus), capped at ceiling. The tests in the file are the exact and exhaustive
-specification and must all pass. Write the complete file, keeping the tests
-unchanged.
-"""
-title = "Implement the model tier router"
-writable = ["reconciler/src/router.rs"]
+text = "Implement `dollars(cents)` in reconciler/src/money.rs: whole cents to a dollar string, always two decimal places, e.g. 0 -> \"$0.00\", 5 -> \"$0.05\", 1234 -> \"$12.34\". The tests are the exact spec and must pass. Write the complete file, keeping the tests unchanged."
+title = "Implement dollars() — money formatting"
+writable = ["reconciler/src/money.rs"]
 base_paths = ["reconciler/", "lattice/"]
-
 [[check]]
-id = "router-tests-pass"
+id = "money-tests-pass"
 required = true
 weight = 1
-command = ["cargo", "test", "--manifest-path", "reconciler/Cargo.toml", "-p", "comp-reconciler", "--lib", "router::"]
+command = ["cargo", "test", "--manifest-path", "reconciler/Cargo.toml", "-p", "comp-reconciler", "--lib", "money::"]
