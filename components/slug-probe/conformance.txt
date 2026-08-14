@@ -1,0 +1,6 @@
+# Conformance cases for the slug capability, exercised over the lattice.
+# Format:  <route>  =>  <response-field>=<expected>
+# A version passes a case iff, called over the lattice, its JSON response has
+# <field> equal to <expected>. A route a version does not serve simply fails.
+/slugify?text=Hello+World => slug=hello-world
+/slugify-with?text=Hello+World&max=0 => slug=hello-world
