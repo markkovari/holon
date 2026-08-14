@@ -1,12 +1,14 @@
-# Holon's next goal on itself (goal 01, second half — a run's total spend).
+# Holon's next goal on itself (goal 01, the guard — is a run over its cap?).
 text = """
-Implement `spent_cents(attempts)` in reconciler/src/budget.rs: the total cost in
-whole cents of every attempt in a run, summing each attempt priced by
-`cost_cents` from the cost module — do not re-derive prices, call cost_cents. An
-empty run has spent nothing. The tests in the file are the exact specification and
-must pass. Write the complete file, keeping the tests unchanged.
+Add `over_budget(cap_cents, attempts)` to reconciler/src/budget.rs: true if the
+run's spend exceeds the cap, false otherwise. Reuse `spent_cents` — do not
+re-sum. A `cap_cents` of 0 means no cap (never over), matching the codebase's "0
+is unbounded" convention; spend exactly equal to the cap is within it, only
+strictly more is over. Keep the existing `spent_cents` function and all tests
+exactly as they are. The tests are the exact specification and must all pass.
+Write the complete file.
 """
-title = "Implement spent_cents() — a run's total spend"
+title = "Implement over_budget() — the fuel guard"
 writable = ["reconciler/src/budget.rs"]
 base_paths = ["reconciler/", "lattice/"]
 
