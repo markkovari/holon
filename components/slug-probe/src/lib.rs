@@ -66,6 +66,16 @@ impl Guest for Component {
                 let slug = slug::slugify(&param(&query, "text"));
                 format!("{{\"slug\":\"{}\"}}", esc(&slug))
             }
+            // A VERSIONED feature: bounded slugs via the real slug's slugify-with.
+            // Present only when built with COMP_SLUGWITH, so a baseline build
+            // genuinely lacks it and a candidate genuinely gains it — a behavioral
+            // difference the gate can see by CALLING it over the lattice.
+            (Method::Get, "/slugify-with") if option_env!("COMP_SLUGWITH").is_some() => {
+                let max = param(&query, "max").parse().unwrap_or(0);
+                let opts = slug::Options { separator: "-".to_string(), max_length: max };
+                let slug = slug::slugify_with(&param(&query, "text"), &opts);
+                format!("{{\"slug\":\"{}\"}}", esc(&slug))
+            }
             _ => "{\"service\":\"slug-probe\",\"routes\":[\"/slugify?text=\"]}".to_string(),
         };
         let headers = Fields::new();
