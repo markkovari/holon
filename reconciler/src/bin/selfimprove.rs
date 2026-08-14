@@ -57,6 +57,11 @@ struct Args {
     /// strict superset. This is the gate reading the running code, not a string.
     #[arg(long, default_value_t = false)]
     behavior: bool,
+    /// The conformance spec to judge against in --behavior mode (lines of
+    /// `<route> => <field>=<expected>`). Defaults to the slug capability's spec;
+    /// any capability with a probe and a spec file is judged the same way.
+    #[arg(long)]
+    cases: Option<PathBuf>,
 }
 
 /// Build slug-probe (with the bounded-slug feature iff `feature`) composed with
@@ -105,40 +110,73 @@ fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
     std::fs::read(&composed).context("read composed slug-probe")
 }
 
-/// Call one route over the lattice; return the `slug` field if the response has
-/// one. A route the deployed version does not serve has none — which is exactly
-/// how the gate sees "this version cannot do that".
-fn call_route(fleet: &Fleet, host: &str, path: &str) -> Option<String> {
+/// One conformance case, read from a capability's spec: call `path` over the
+/// lattice and the response's JSON `field` must equal `expected`.
+struct Case {
+    path: String,
+    field: String,
+    expected: String,
+}
+
+/// Load a capability's conformance cases from its spec file. Each non-comment
+/// line is `<route> => <field>=<expected>`. This is the generalization: the gate
+/// judges ANY capability by the cases its own spec declares, not a hard-coded set.
+fn load_cases(path: &Path) -> Result<Vec<Case>> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut cases = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (route, rhs) = line.split_once("=>").with_context(|| format!("case has no `=>`: {line}"))?;
+        let (field, expected) = rhs.trim().split_once('=').with_context(|| format!("rhs is not field=value: {rhs}"))?;
+        cases.push(Case {
+            path: route.trim().to_string(),
+            field: field.trim().to_string(),
+            expected: expected.trim().to_string(),
+        });
+    }
+    if cases.is_empty() {
+        bail!("no conformance cases in {}", path.display());
+    }
+    Ok(cases)
+}
+
+/// Call a route over the lattice and return its JSON response, if any.
+fn call_json(fleet: &Fleet, host: &str, path: &str) -> Option<Value> {
     let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
     let r = http
         .get(format!("http://127.0.0.1:{}{path}", fleet.ingress_port))
         .header("host", host)
         .send()
         .ok()?;
-    let v: Value = serde_json::from_str(&r.text().ok()?).ok()?;
-    v["slug"].as_str().map(str::to_string)
+    serde_json::from_str(&r.text().ok()?).ok()
 }
 
-/// The conformance cases, run over the lattice: (route, expected slug).
-const CASES: &[(&str, &str)] = &[
-    ("/slugify?text=Hello+World", "hello-world"),
-    ("/slugify-with?text=Hello+World&max=0", "hello-world"),
-];
-
-/// Which case indices a deployed version passes, when exercised over the lattice.
-fn passing(fleet: &Fleet, host: &str) -> Vec<usize> {
-    CASES
+/// Which case indices a deployed version passes, exercised over the lattice: the
+/// response field equals the expected value. A route it does not serve fails.
+fn passing(fleet: &Fleet, host: &str, cases: &[Case]) -> Vec<usize> {
+    cases
         .iter()
         .enumerate()
-        .filter(|(_, (path, want))| call_route(fleet, host, path).as_deref() == Some(*want))
+        .filter(|(_, c)| {
+            call_json(fleet, host, &c.path).and_then(|v| v[&c.field].as_str().map(str::to_string)).as_deref()
+                == Some(c.expected.as_str())
+        })
         .map(|(i, _)| i)
         .collect()
 }
 
-/// The behavioral gate: judge a capability by CALLING it over the lattice.
-fn behavior_gate() -> Result<()> {
+/// The behavioral gate: judge a capability by CALLING it over the lattice with
+/// the cases from its own conformance spec.
+fn behavior_gate(cases_path: &Path) -> Result<()> {
     let (id, host) = ("cap", "cap.improver.test");
-    println!("comp-selfimprove: judging the `slug` capability by BEHAVIOR, over the lattice\n");
+    let cases = load_cases(cases_path)?;
+    println!(
+        "comp-selfimprove: judging by BEHAVIOR over the lattice — {} cases from {}\n",
+        cases.len(),
+        cases_path.display()
+    );
 
     let base = build_composed_slug(false)?;
     let cand = build_composed_slug(true)?;
@@ -150,15 +188,16 @@ fn behavior_gate() -> Result<()> {
     let api = Api::new(fleet.platform_url())?;
     let mut dep_id: Option<String> = None;
 
-    // Deploy baseline; wait until it serves the basic route; record what it passes.
-    deploy_capability(&api, &fleet, id, &mut dep_id, host, base, 0)?;
-    let base_pass = passing(&fleet, host);
-    println!("  baseline  · passes {:?} of {} cases over the lattice", base_pass, CASES.len());
+    // Deploy baseline; wait until it serves ANY case (it is live); record passes.
+    deploy_capability(&api, &fleet, id, &mut dep_id, host, base, &cases, None)?;
+    let base_pass = passing(&fleet, host, &cases);
+    println!("  baseline  · passes {:?} of {} cases over the lattice", base_pass, cases.len());
 
-    // Deploy the candidate over the top; wait until the NEW route answers.
-    deploy_capability(&api, &fleet, id, &mut dep_id, host, cand, 1)?;
-    let cand_pass = passing(&fleet, host);
-    println!("  candidate · passes {:?} of {} cases over the lattice", cand_pass, CASES.len());
+    // Deploy the candidate over the top; wait until what it passes DIFFERS from
+    // the baseline (the swap took effect), then record.
+    deploy_capability(&api, &fleet, id, &mut dep_id, host, cand, &cases, Some(&base_pass))?;
+    let cand_pass = passing(&fleet, host, &cases);
+    println!("  candidate · passes {:?} of {} cases over the lattice", cand_pass, cases.len());
 
     let regressed: Vec<usize> = base_pass.iter().copied().filter(|i| !cand_pass.contains(i)).collect();
     let gained: Vec<usize> = cand_pass.iter().copied().filter(|i| !base_pass.contains(i)).collect();
@@ -178,8 +217,9 @@ fn behavior_gate() -> Result<()> {
     }
 }
 
-/// Deploy `wasm` under `id` and wait until case `ready_idx` passes over the
-/// lattice — proof the version is live and serving what this side should.
+/// Deploy `wasm` under `id` and wait until it is live: either it passes some case
+/// (`prev` is None — the baseline), or what it passes differs from `prev` (the
+/// candidate's swap has taken effect).
 fn deploy_capability(
     api: &Api,
     fleet: &Fleet,
@@ -187,7 +227,8 @@ fn deploy_capability(
     dep_id: &mut Option<String>,
     host: &str,
     wasm: Vec<u8>,
-    ready_idx: usize,
+    cases: &[Case],
+    prev: Option<&Vec<usize>>,
 ) -> Result<()> {
     api.upload(id, wasm)?;
     if dep_id.is_none() {
@@ -199,16 +240,20 @@ fn deploy_capability(
         *dep_id = Some(dep["id"].as_str().unwrap_or_default().to_string());
     }
     let did = dep_id.clone().unwrap();
-    let (path, want) = CASES[ready_idx];
     let deadline = Instant::now() + Duration::from_secs(180);
     while Instant::now() < deadline {
         let _ = api.post(&format!("/api/deployments/{did}/save"), json!({}));
-        if call_route(fleet, host, path).as_deref() == Some(want) {
+        let now = passing(fleet, host, cases);
+        let ready = match prev {
+            None => !now.is_empty(),
+            Some(before) => &now != before,
+        };
+        if ready {
             return Ok(());
         }
         std::thread::sleep(Duration::from_secs(2));
     }
-    bail!("the capability never served case {ready_idx} over the lattice\n{}", fleet.node_log("n1"))
+    bail!("the capability never went live over the lattice\n{}", fleet.node_log("n1"))
 }
 
 /// Build the probe with a tag, in the given `components` dir. Only the TAG is
@@ -428,7 +473,11 @@ fn compare(base: &BTreeMap<String, String>, cand: &BTreeMap<String, String>) -> 
 fn main() -> Result<()> {
     let args = Args::parse();
     if args.behavior {
-        return behavior_gate();
+        let cases = args
+            .cases
+            .clone()
+            .unwrap_or_else(|| repo_root().join("components/slug-probe/conformance.txt"));
+        return behavior_gate(&cases);
     }
     let id = "self";
     let host = "self.improver.test";
