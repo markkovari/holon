@@ -1,0 +1,16 @@
+[package]
+name = "bigadd"
+description = "Arbitrary-precision decimal addition (demo:bigadd)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+[package.metadata.component]
+package = "demo:bigadd"
+[package.metadata.component.target]
+path = "wit"
+world = "bigadd"
