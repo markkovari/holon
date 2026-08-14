@@ -6,8 +6,19 @@ struct Component;
 /// ROT13 every ASCII letter (a↔n, A↔N), leaving digits, punctuation and spaces
 /// unchanged. UNIMPLEMENTED — the goal. The tests are the spec.
 pub fn rot13(text: &str) -> String {
-    let _ = text;
-    unimplemented!("goal: the tests are the spec")
+    text.chars().map(|c| {
+        match c {
+            'a'..='z' => {
+                let offset = (c as u8 - b'a' + 13) % 26;
+                (b'a' + offset) as char
+            }
+            'A'..='Z' => {
+                let offset = (c as u8 - b'A' + 13) % 26;
+                (b'A' + offset) as char
+            }
+            _ => c,
+        }
+    }).collect()
 }
 
 impl Guest for Component {
