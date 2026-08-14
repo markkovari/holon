@@ -7,6 +7,20 @@
 //! means, and whether a repair actually used the failure it was handed. All of
 //! that is pure and tested; the model is whatever the deployment linked.
 //!
+//! ## Edits, not whole files
+//!
+//! The model answers with search/replace EDIT blocks — only the lines that
+//! change — and the writer applies them against the files it already holds
+//! (`goal.context`) to reconstruct the whole file it ships. Whole files stay on
+//! the wire (the gate and the forge are unchanged); what shrinks is the model's
+//! OUTPUT, the expensive tokens, and with it the failure mode where a whole-file
+//! rewrite of a 300-line file silently drops a function nobody asked it to touch.
+//!
+//! An edit whose SEARCH text is not in the file is a hard error, not a skip: a
+//! diff that does not apply is exactly the case whole-file rewriting turned into
+//! silent corruption. Here it fails the candidate, and the driver repairs it.
+//! A FILE block still exists for creating a new file or replacing most of one.
+//!
 //! ## The repair loop
 //!
 //! `previous` carries the checks that failed last time, and their output. That is
@@ -14,46 +28,53 @@
 //! work — `graph:fitness` got it by running real commands — so it goes into the
 //! prompt verbatim and first, before the goal is restated.
 //!
-//! A repair that ignores it is just a re-roll, and the test asserts the
-//! difference: the same goal with the same seed produces a DIFFERENT prompt once
-//! a failure is known, because otherwise the loop is a retry wearing a costume.
-//!
 //! ## What is refused
 //!
 //! A path outside `writable`. The answer comes from a model, and an agent that
 //! can name any path is an agent that can rewrite the deployment that runs it.
-//! Refused as an error rather than filtered out silently: an answer that touched
-//! something it may not is not a partially good answer, it is one nobody should
-//! act on.
 
 #[allow(warnings)]
 mod bindings;
 
 use bindings::exports::graph::agent::writer::{AgentError, Candidate, File, Goal, Guest, Failure};
 use bindings::llm::inference::inference as llm;
+use std::collections::HashMap;
 
 struct Component;
 
-/// The fences a file block is delimited by.
-///
-/// A model asked for files returns markdown. Rather than fight that, this asks
-/// for a shape markdown already has and parses it — a "return only JSON"
-/// instruction is a request a model honours most of the time, which is the worst
-/// possible reliability for a parser.
-const OPEN: &str = "=== FILE:";
-const CLOSE: &str = "=== END";
+// A whole-file block, for creating a file or replacing most of one.
+const FILE_OPEN: &str = "=== FILE:";
+const FILE_CLOSE: &str = "=== END";
+// An edit block: a path, then a git-conflict-shaped search/replace the model
+// already knows how to produce.
+const EDIT_OPEN: &str = "=== EDIT:";
+const S_MARK: &str = "<<<<<<< SEARCH";
+const DIV: &str = "=======";
+const R_MARK: &str = ">>>>>>> REPLACE";
 
 fn system_prompt() -> String {
     format!(
         "You change code to satisfy a goal.\n\
          \n\
-         Answer ONLY with file blocks, in exactly this form:\n\
-         {OPEN} path/to/file\n\
-         <the complete new contents of that file>\n\
-         {CLOSE}\n\
+         PREFER edit blocks — emit ONLY the lines that change, never a whole file:\n\
+         {EDIT_OPEN} path/to/file\n\
+         {S_MARK}\n\
+         the exact existing lines to replace\n\
+         {DIV}\n\
+         the new lines\n\
+         {R_MARK}\n\
+         \n\
+         - the SEARCH text must be copied EXACTLY from the current file, and be\n\
+         \x20 long enough (a few lines) to occur only once\n\
+         - use several edit blocks for several changes\n\
+         \n\
+         To CREATE a new file, or when the change is most of a file, give the\n\
+         whole contents instead:\n\
+         {FILE_OPEN} path/to/file\n\
+         <the complete new contents>\n\
+         {FILE_CLOSE}\n\
          \n\
          Rules:\n\
-         - give the WHOLE file, not a diff and not an excerpt\n\
          - only write files you were told you may write\n\
          - if a file needs no change, leave it out entirely\n\
          - no prose before, between or after the blocks"
@@ -92,37 +113,183 @@ fn build_prompt(g: &Goal, previous: &[Failure]) -> String {
 
     p.push_str("CURRENT FILES\n");
     for f in &g.context {
-        p.push_str(&format!("{OPEN} {}\n{}\n{CLOSE}\n", f.path, f.content));
+        p.push_str(&format!("{FILE_OPEN} {}\n{}\n{FILE_CLOSE}\n", f.path, f.content));
     }
     p
 }
 
-/// Pull file blocks out of whatever came back.
+/// One change the model asked for: either a whole file, or a search/replace.
+enum Op {
+    Whole { path: String, content: String },
+    Edit { path: String, search: String, replace: String },
+}
+
+fn op_path(op: &Op) -> &str {
+    match op {
+        Op::Whole { path, .. } | Op::Edit { path, .. } => path,
+    }
+}
+
+/// Pull ops out of whatever came back, in document order.
 ///
 /// Tolerant of prose around the blocks, because a model will add it however
 /// firmly it was asked not to, and refusing an otherwise good answer over a
-/// preamble would throw away work that cost real money.
-fn parse_files(answer: &str) -> Vec<File> {
+/// preamble would throw away work that cost real money. Order is preserved so
+/// that several edits to the same file apply as the model intended.
+fn parse_ops(answer: &str) -> Vec<Op> {
     let mut out = Vec::new();
     let mut rest = answer;
-    while let Some(start) = rest.find(OPEN) {
-        let after = &rest[start + OPEN.len()..];
-        let Some(nl) = after.find('\n') else { break };
-        let path = after[..nl].trim().to_string();
-        let body = &after[nl + 1..];
-        let Some(end) = body.find(CLOSE) else { break };
-        let mut content = body[..end].to_string();
-        // A model puts a newline before the closing fence; the file should not
-        // gain one every time it is rewritten.
-        if content.ends_with('\n') {
-            content.pop();
+    loop {
+        let nf = rest.find(FILE_OPEN);
+        let ne = rest.find(EDIT_OPEN);
+        let use_edit = match (nf, ne) {
+            (None, None) => break,
+            (Some(_), None) => false,
+            (None, Some(_)) => true,
+            (Some(f), Some(e)) => e < f,
+        };
+
+        if use_edit {
+            let start = ne.unwrap();
+            let after = &rest[start + EDIT_OPEN.len()..];
+            let Some(nl) = after.find('\n') else { break };
+            let path = after[..nl].trim().to_string();
+            let b = &after[nl + 1..];
+            let Some(sm) = b.find(S_MARK) else { break };
+            let asm = &b[sm + S_MARK.len()..];
+            let Some(snl) = asm.find('\n') else { break };
+            let sbody = &asm[snl + 1..];
+            let Some(dv) = sbody.find(DIV) else { break };
+            let mut search = sbody[..dv].to_string();
+            // The newline before the divider belongs to the fence, not the text.
+            if search.ends_with('\n') {
+                search.pop();
+            }
+            let adv = &sbody[dv + DIV.len()..];
+            let Some(dnl) = adv.find('\n') else { break };
+            let rbody = &adv[dnl + 1..];
+            let Some(rm) = rbody.find(R_MARK) else { break };
+            let mut replace = rbody[..rm].to_string();
+            if replace.ends_with('\n') {
+                replace.pop();
+            }
+            if !path.is_empty() {
+                out.push(Op::Edit { path, search, replace });
+            }
+            rest = &rbody[rm + R_MARK.len()..];
+        } else {
+            let start = nf.unwrap();
+            let after = &rest[start + FILE_OPEN.len()..];
+            let Some(nl) = after.find('\n') else { break };
+            let path = after[..nl].trim().to_string();
+            let body = &after[nl + 1..];
+            let Some(end) = body.find(FILE_CLOSE) else { break };
+            let mut content = body[..end].to_string();
+            // A model puts a newline before the closing fence; the file should
+            // not gain one every time it is rewritten.
+            if content.ends_with('\n') {
+                content.pop();
+            }
+            if !path.is_empty() {
+                out.push(Op::Whole { path, content });
+            }
+            rest = &body[end + FILE_CLOSE.len()..];
         }
-        if !path.is_empty() {
-            out.push(File { path, content });
-        }
-        rest = &body[end + CLOSE.len()..];
     }
     out
+}
+
+/// Replace the first occurrence of `search` in `cur` with `replace`.
+///
+/// Exact first, then a whitespace-tolerant retry that matches line-by-line
+/// ignoring trailing whitespace — the single most common way a model's copy of
+/// the SEARCH text drifts from the file. Returns `None` when the text is nowhere
+/// to be found, which the caller turns into a rejected candidate.
+fn find_replace(cur: &str, search: &str, replace: &str) -> Option<String> {
+    if let Some(pos) = cur.find(search) {
+        let mut s = String::with_capacity(cur.len() - search.len() + replace.len());
+        s.push_str(&cur[..pos]);
+        s.push_str(replace);
+        s.push_str(&cur[pos + search.len()..]);
+        return Some(s);
+    }
+
+    let cur_lines: Vec<&str> = cur.lines().collect();
+    let s_lines: Vec<&str> = search.lines().collect();
+    if s_lines.is_empty() || s_lines.len() > cur_lines.len() {
+        return None;
+    }
+    let matches = |start: usize| {
+        (0..s_lines.len()).all(|k| cur_lines[start + k].trim_end() == s_lines[k].trim_end())
+    };
+    let start = (0..=cur_lines.len() - s_lines.len()).find(|&i| matches(i))?;
+
+    let mut out: Vec<&str> = Vec::new();
+    out.extend_from_slice(&cur_lines[..start]);
+    out.extend(replace.lines());
+    out.extend_from_slice(&cur_lines[start + s_lines.len()..]);
+    let mut s = out.join("\n");
+    // Preserve the file's trailing newline; `lines()` drops it.
+    if cur.ends_with('\n') {
+        s.push('\n');
+    }
+    Some(s)
+}
+
+/// Fold the ops onto the base tree, producing the whole contents of every file
+/// that was touched, in first-touch order.
+fn apply_ops(base: &[File], ops: Vec<Op>) -> Result<Vec<File>, String> {
+    let mut work: HashMap<String, String> =
+        base.iter().map(|f| (f.path.clone(), f.content.clone())).collect();
+    let mut order: Vec<String> = Vec::new();
+    let touch = |order: &mut Vec<String>, path: &str| {
+        if !order.iter().any(|p| p == path) {
+            order.push(path.to_string());
+        }
+    };
+
+    for op in ops {
+        match op {
+            Op::Whole { path, content } => {
+                touch(&mut order, &path);
+                work.insert(path, content);
+            }
+            Op::Edit { path, search, replace } => {
+                touch(&mut order, &path);
+                if search.is_empty() {
+                    // An empty SEARCH is "create or overwrite" — same as a FILE
+                    // block, tolerated so a model that reaches for the edit shape
+                    // for a new file is not punished for it.
+                    work.insert(path, replace);
+                    continue;
+                }
+                let cur = work.get(&path).cloned().unwrap_or_default();
+                let next = find_replace(&cur, &search, &replace).ok_or_else(|| {
+                    format!("edit to {path:?}: its SEARCH block is not in the file")
+                })?;
+                work.insert(path, next);
+            }
+        }
+    }
+
+    Ok(order
+        .into_iter()
+        .map(|path| {
+            let content = work.remove(&path).unwrap_or_default();
+            File { path, content }
+        })
+        .collect())
+}
+
+/// The temperature to request at a given repair depth, in milli-units.
+///
+/// Low first (0.2): a first attempt should be the model's most likely answer,
+/// which a determinable gate rewards. Each repair raises it — a branch that
+/// failed and is re-trying wants to EXPLORE, not re-roll the same near-miss — up
+/// to a 1.0 ceiling. The provider only forwards this to models that accept a
+/// temperature; on the rest it is a no-op, so escalating is always safe to ask.
+fn temperature_for(repair_depth: u32) -> u32 {
+    (200 + 300 * repair_depth).min(1000)
 }
 
 /// May this path be written?
@@ -148,9 +315,10 @@ impl Guest for Component {
 
         let opts = llm::Options {
             model: String::new(),
-            // Deliberately low. A candidate is judged by a gate, and creativity
-            // that fails to compile is not creativity.
-            temperature: 200,
+            // Low on the first try, higher on each repair — a stuck branch should
+            // explore, not re-roll. The provider withholds it from models that
+            // rejected it, so asking is always safe.
+            temperature: temperature_for(previous.len() as u32),
             max_tokens: 0,
             stop: Vec::new(),
             // The knob that makes N branches differ while staying replayable.
@@ -171,27 +339,31 @@ impl Guest for Component {
             })
         })?;
 
-        let files = parse_files(&completion.text);
-        if files.is_empty() {
+        let ops = parse_ops(&completion.text);
+        if ops.is_empty() {
             // Distinct from an inference failure: the model answered, and the
             // answer was not a candidate. A caller retries those differently —
             // one is worth another seed, the other is worth waiting.
             return Err(AgentError::UnusableAnswer(format!(
-                "no file blocks in {} characters of answer",
-                completion.text.len()
+                "no edit or file blocks in {} characters of answer; starts: {:?}",
+                completion.text.len(),
+                completion.text.chars().take(160).collect::<String>()
             )));
         }
 
-        // Refused, not filtered. An answer that wrote somewhere it may not is not
-        // a partially good answer — it is one nobody should act on, and silently
-        // dropping the offending file would ship the rest of a plan that assumed
-        // it.
-        if let Some(bad) = files.iter().find(|f| !writable(&g, &f.path)) {
+        // Refused, not filtered — checked on the ops' target paths, BEFORE any
+        // edit is applied, so an answer that names a path it may not touch never
+        // runs against the tree.
+        if let Some(bad) = ops.iter().map(op_path).find(|p| !writable(&g, p)) {
             return Err(AgentError::UnusableAnswer(format!(
-                "wrote {:?}, which is not in the writable list",
-                bad.path
+                "wrote {bad:?}, which is not in the writable list"
             )));
         }
+
+        // A diff that does not apply is the whole reason edits are safer than
+        // whole-file rewrites: it fails loudly here instead of shipping a file
+        // with a function silently missing.
+        let files = apply_ops(&g.context, ops).map_err(AgentError::UnusableAnswer)?;
 
         // The cost travels with the answer. A caller that has to ask a second
         // question to find out what the first one cost will eventually forget
@@ -222,49 +394,118 @@ mod tests {
         }
     }
 
+    /// Parse + apply, the path a candidate actually travels.
+    fn run(answer: &str, base: &[(&str, &str)]) -> Result<Vec<File>, String> {
+        let base: Vec<File> =
+            base.iter().map(|(p, c)| File { path: p.to_string(), content: c.to_string() }).collect();
+        apply_ops(&base, parse_ops(answer))
+    }
+
     #[test]
     fn a_file_block_becomes_a_file() {
-        let files = parse_files(&format!(
-            "{OPEN} src/lib.rs\npub fn answer() -> u32 {{ 42 }}\n{CLOSE}\n"
-        ));
+        let files = run(
+            &format!("{FILE_OPEN} src/lib.rs\npub fn answer() -> u32 {{ 42 }}\n{FILE_CLOSE}\n"),
+            &[],
+        )
+        .unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "src/lib.rs");
         assert_eq!(files[0].content, "pub fn answer() -> u32 { 42 }");
     }
 
-    /// A model adds prose however firmly it is asked not to. Refusing an
-    /// otherwise good answer over a preamble would throw away work that cost
-    /// money.
+    /// The point of #2: an edit touches only the lines it names, and the rest of
+    /// the file survives verbatim.
+    #[test]
+    fn an_edit_changes_only_its_lines() {
+        let base = [("src/lib.rs", "fn a() {}\nfn answer() -> u32 { 41 }\nfn b() {}\n")];
+        let files = run(
+            &format!(
+                "{EDIT_OPEN} src/lib.rs\n{S_MARK}\nfn answer() -> u32 {{ 41 }}\n{DIV}\nfn answer() -> u32 {{ 42 }}\n{R_MARK}\n"
+            ),
+            &base,
+        )
+        .unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].content, "fn a() {}\nfn answer() -> u32 { 42 }\nfn b() {}\n");
+    }
+
+    /// A SEARCH that is not in the file is a hard error — the candidate is
+    /// rejected, not shipped with a botched edit.
+    #[test]
+    fn an_edit_that_does_not_match_is_an_error() {
+        let base = [("a.rs", "hello\n")];
+        let err = run(
+            &format!("{EDIT_OPEN} a.rs\n{S_MARK}\ngoodbye\n{DIV}\nhi\n{R_MARK}\n"),
+            &base,
+        )
+        .unwrap_err();
+        assert!(err.contains("not in the file"), "a diff that will not apply must fail loudly: {err}");
+    }
+
+    /// The model rarely reproduces trailing whitespace exactly; a match that
+    /// differs only there should still apply.
+    #[test]
+    fn trailing_whitespace_does_not_break_a_match() {
+        // The file is clean; the model's SEARCH carries trailing spaces, so the
+        // exact substring search misses and the line-normalized retry catches it.
+        let base = [("a.rs", "let x = 1;\nlet y = 2;\n")];
+        let files = run(
+            &format!("{EDIT_OPEN} a.rs\n{S_MARK}\nlet x = 1;   \n{DIV}\nlet x = 9;\n{R_MARK}\n"),
+            &base,
+        )
+        .unwrap();
+        assert_eq!(files[0].content, "let x = 9;\nlet y = 2;\n");
+    }
+
+    /// Several edits to one file apply in order and accumulate.
+    #[test]
+    fn several_edits_to_one_file_accumulate() {
+        let base = [("a.rs", "one\ntwo\nthree\n")];
+        let files = run(
+            &format!(
+                "{EDIT_OPEN} a.rs\n{S_MARK}\none\n{DIV}\n1\n{R_MARK}\n\
+                 {EDIT_OPEN} a.rs\n{S_MARK}\nthree\n{DIV}\n3\n{R_MARK}\n"
+            ),
+            &base,
+        )
+        .unwrap();
+        assert_eq!(files.len(), 1, "one file, touched twice");
+        assert_eq!(files[0].content, "1\ntwo\n3\n");
+    }
+
     #[test]
     fn prose_around_the_blocks_is_tolerated() {
-        let files = parse_files(&format!(
-            "Sure! Here is the fix:\n\n{OPEN} a.txt\nhello\n{CLOSE}\n\nLet me know if…"
-        ));
+        let files = run(
+            &format!("Sure! Here is the fix:\n\n{FILE_OPEN} a.txt\nhello\n{FILE_CLOSE}\n\nLet me know if…"),
+            &[],
+        )
+        .unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].content, "hello");
     }
 
     #[test]
     fn several_files_come_back_in_order() {
-        let files = parse_files(&format!(
-            "{OPEN} a.rs\nA\n{CLOSE}\n{OPEN} b.rs\nB\n{CLOSE}\n"
-        ));
+        let files = run(
+            &format!("{FILE_OPEN} a.rs\nA\n{FILE_CLOSE}\n{FILE_OPEN} b.rs\nB\n{FILE_CLOSE}\n"),
+            &[],
+        )
+        .unwrap();
         assert_eq!(files.len(), 2);
         assert_eq!((files[0].path.as_str(), files[1].path.as_str()), ("a.rs", "b.rs"));
     }
 
-    /// An answer with no blocks is a different failure from the model being
-    /// down, and a caller retries them differently.
     #[test]
     fn an_answer_with_no_blocks_yields_nothing() {
-        assert!(parse_files("I would suggest refactoring the module.").is_empty());
+        assert!(parse_ops("I would suggest refactoring the module.").is_empty());
         // A block that never closes is not half a file.
-        assert!(parse_files(&format!("{OPEN} a.rs\nunterminated")).is_empty());
+        assert!(parse_ops(&format!("{FILE_OPEN} a.rs\nunterminated")).is_empty());
+        // An edit missing its REPLACE fence is not half an edit.
+        assert!(parse_ops(&format!("{EDIT_OPEN} a.rs\n{S_MARK}\nx\n{DIV}\ny\n")).is_empty());
     }
 
     /// THE REPAIR LOOP. The same goal and the same seed must produce a different
-    /// prompt once something is known to have failed — otherwise the second
-    /// attempt is a re-roll wearing a costume.
+    /// prompt once something is known to have failed.
     #[test]
     fn a_repair_prompt_differs_because_of_the_failure() {
         let g = goal("make it 42", &["src/lib.rs"], &[("src/lib.rs", "fn answer() { 41 }")]);
@@ -278,8 +519,6 @@ mod tests {
         assert!(repair.contains("the-fix"), "and so must which check it was");
     }
 
-    /// Failures go FIRST. A repair whose prompt buries what went wrong under the
-    /// original goal mostly rewrites the original answer.
     #[test]
     fn the_failure_is_stated_before_the_goal_is_restated() {
         let g = goal("make it 42", &["a.rs"], &[]);
@@ -298,15 +537,22 @@ mod tests {
         assert!(p.contains("new.rs"), "including a path that does not exist yet");
     }
 
-    /// The answer comes from a model. An agent that may write any path is an
-    /// agent that may rewrite the deployment running it.
+    /// Low first, rising with each repair, capped at 1.0 — a stuck branch
+    /// explores instead of re-rolling the same near-miss.
+    #[test]
+    fn temperature_escalates_with_repair_depth_and_caps() {
+        assert_eq!(temperature_for(0), 200, "first attempt is the likely answer");
+        assert_eq!(temperature_for(1), 500);
+        assert_eq!(temperature_for(2), 800);
+        assert_eq!(temperature_for(3), 1000, "capped at 1.0");
+        assert_eq!(temperature_for(99), 1000);
+    }
+
     #[test]
     fn a_path_outside_the_allow_list_is_refused_not_filtered() {
         let g = goal("x", &["src/lib.rs"], &[]);
         assert!(writable(&g, "src/lib.rs"));
         assert!(!writable(&g, "src/other.rs"));
-        // No prefix rule: a near-miss that reads as fine is exactly the kind that
-        // is not.
         assert!(!writable(&g, "src/lib.rs.bak"));
         assert!(!writable(&g, "../etc/passwd"));
     }

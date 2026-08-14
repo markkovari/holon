@@ -151,16 +151,32 @@ fn one_branch(url: &str, host: &str, plan: &Value, name: &str, seed: u64, timeou
         .unwrap_or_default()
         .to_string();
 
+    // A branch that accepted nothing and produced no candidate has its reason in
+    // the per-attempt `error` (the agent said something that was not a candidate).
+    // Surface the last one as the note, so a run where every branch was rejected
+    // by the agent is diagnosable instead of a wall of silent zeros.
+    let accepted = answer["accepted"].as_bool().unwrap_or(false);
+    let note = if !accepted {
+        attempts
+            .iter()
+            .rev()
+            .find_map(|a| a["error"].as_str().filter(|s| !s.is_empty()))
+            .unwrap_or_default()
+            .to_string()
+    } else {
+        String::new()
+    };
+
     Entry {
         branch: name.to_string(),
-        accepted: answer["accepted"].as_bool().unwrap_or(false),
+        accepted,
         score,
         digest,
         spent_tokens: answer["spent_tokens"].as_u64().unwrap_or(0),
         attempts: attempts.len() as u64,
         files: answer["files"].clone(),
         failures: answer["failures"].clone(),
-        note: String::new(),
+        note,
         elapsed_ms: started.elapsed().as_millis() as u64,
         stopped: answer["stopped"].as_str().unwrap_or_default().to_string(),
     }
