@@ -5,3 +5,4 @@ diff-writer:1.1.0
 temperature-tiers:1.0.0
 component-scope:1.0.0
 slug:1.0.0
+template:1.0.0
