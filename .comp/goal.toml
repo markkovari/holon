@@ -1,17 +1,17 @@
-# Holon builds a wasm component (goal: the platform itself).
 text = """
-Implement `rot13(text)` in components/rot13/src/lib.rs — ROT13 every ASCII letter
-(a↔n, A↔N), leaving digits, punctuation and spaces unchanged. Keep the Guest impl
-and the tests exactly as they are; only fill in the pure `rot13` function. The
-tests are the exact spec and must pass. Write the complete file.
+Add a `C` variant to the `Kind` enum and make `render(&Kind::C)` return "c".
+The enum is in components/twofile/src/kind.rs; the exhaustive match is in
+components/twofile/src/render.rs. BOTH files must change together — adding the
+variant without its match arm (or the arm without the variant) does not compile.
+Do not touch lib.rs; its tests are the exact spec.
 """
-title = "Implement the rot13 wasm component"
-writable = ["components/rot13/src/lib.rs"]
-base_paths = ["components/rot13/", "components/Cargo.toml"]
+title = "Add Kind::C across two files (enum + its match)"
+writable = ["components/twofile/src/kind.rs", "components/twofile/src/render.rs"]
+base_paths = ["components/twofile/", "components/Cargo.toml"]
 workspace_manifest = "components/Cargo.toml"
-keep_members = ["rot13"]
+keep_members = ["twofile"]
 [[check]]
-id = "rot13-builds-and-passes"
+id = "two-files-compile-and-pass"
 required = true
 weight = 1
-command = ["cargo", "component", "test", "--manifest-path", "components/Cargo.toml", "-p", "rot13"]
+command = ["cargo", "test", "-p", "twofile", "--manifest-path", "components/Cargo.toml"]
