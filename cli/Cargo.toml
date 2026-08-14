@@ -1,17 +1,17 @@
 [package]
-name = "comp"
+name = "holon"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 publish = false
-description = "The comp CLI: push components, deploy apps onto the lattice, and render the files a bare-metal node needs."
+description = "The Holon CLI: push components, deploy apps onto the lattice, and render the files a bare-metal node needs."
 
 # Native, and deliberately outside the components/ (wasm32) workspace — same reason
 # as host/ and reconciler/.
 [workspace]
 
 [[bin]]
-name = "comp"
+name = "holon"
 path = "src/main.rs"
 
 [dependencies]

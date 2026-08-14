@@ -247,7 +247,7 @@ three of them — and both are now enforced by a helper rather than by rememberi
 
   Still open: an environment is a COPY, so no branch runs a different MODEL from
   its siblings — diversity is prompt-deep. Tokens are not money. And nothing picks
-  a started goal off the queue; `comp goal start` records that one started, and a
+  a started goal off the queue; `holon goal start` records that one started, and a
   person is still the wire between that and a search.
   A branch now spends against a token budget; a PROJECT still does not, and
   nothing converts tokens to money or refunds a branch that died. Branches differ only by seed — same prompt, same context — so herding is
@@ -338,7 +338,7 @@ three of them — and both are now enforced by a helper rather than by rememberi
   concurrently converge in ~3s on one node. Nobody has looked for the width at
   which the reconcile pass, the ports, or the memory give out. Depth is now
   unbounded in principle and measured to 4.
-- **No automated cover for the interactive secret prompt.** `comp secret set`
+- **No automated cover for the interactive secret prompt.** `holon secret set`
   reads a value with the echo off and asks twice; the pipe and `--from` paths are
   tested, the terminal path was verified under a pty by hand. A test for it needs
   a pty in the harness.
