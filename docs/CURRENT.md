@@ -10,7 +10,7 @@ Last revised after ADR-0083.
 Bare metal joined by NATS — no Kubernetes anywhere on the runtime path.
 
 ```
-comp (CLI) ─┐
+holon (CLI) ─┐
             ├─→ platform-domain ── a wasm component, itself hosted by comp-host
 browser ────┘   (orgs, catalogue, market, secrets, deployments, revisions)
                         │  HTTP
@@ -32,7 +32,7 @@ browser ────┘   (orgs, catalogue, market, secrets, deployments, revisi
 | `comp-stub` | a stand-in control plane for tests and benchmarks |
 | `comp-bench` | reads benchmark output; the only thing that interprets a number |
 | `comp-planscale` | times `plan()` over synthetic fleets — control-loop scaling |
-| `comp` | the CLI |
+| `holon` | the CLI |
 
 ## The one rule everything else is an application of
 
