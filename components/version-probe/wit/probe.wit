@@ -12,4 +12,8 @@ package comp:versionprobe@0.1.0;
 
 world version-probe {
     export wasi:http/incoming-handler@0.2.0;
+    // Capabilities are LOADED at startup from config (the registry the deployment
+    // provides), not baked into the bytes. What a version can do is data the
+    // platform hands it, read at request time — not a string compiled in.
+    import wasi:config/store@0.2.0-rc.1;
 }

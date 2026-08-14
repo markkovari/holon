@@ -53,10 +53,11 @@ struct Args {
     candidate_src: Option<PathBuf>,
 }
 
-/// Build the probe with a tag, in the given `components` dir. `caps` overrides
-/// the manifest via `COMP_CAPS` when set; when `None`, the component reports the
-/// tree's own baked-in manifest — the bytes are the loop's real output.
-fn build_probe(components: &Path, component: &str, tag: &str, caps: Option<&str>) -> Result<Vec<u8>> {
+/// Build the probe with a tag, in the given `components` dir. Only the TAG is
+/// baked in — the artifact's identity, so two versions are different bytes and
+/// the fleet can swap them. Capabilities are NOT compiled in; they are handed to
+/// the running instance as config (see `deploy_and_read`).
+fn build_probe(components: &Path, component: &str, tag: &str) -> Result<Vec<u8>> {
     // Generate the WIT bindings first. cargo-component hardcodes wasip1 and is
     // used only for codegen (check is enough); a fresh source tree has no
     // `bindings.rs` until this runs, and then a plain build targets wasip2. This
@@ -72,16 +73,8 @@ fn build_probe(components: &Path, component: &str, tag: &str, caps: Option<&str>
     let mut cmd = Command::new("cargo");
     cmd.current_dir(components)
         .args(["build", "--release", "--target", "wasm32-wasip2", "-p", component])
-        .env("COMP_VERSION_TAG", tag);
-    match caps {
-        Some(c) => {
-            cmd.env("COMP_CAPS", c);
-        }
-        // Clear any COMP_CAPS the parent set, so the manifest is what is baked in.
-        None => {
-            cmd.env_remove("COMP_CAPS");
-        }
-    }
+        .env("COMP_VERSION_TAG", tag)
+        .env_remove("COMP_CAPS");
     let out = cmd.output().context("running cargo")?;
     if !out.status.success() {
         bail!("building {tag} failed:\n{}", String::from_utf8_lossy(&out.stderr));
@@ -124,9 +117,12 @@ impl Api {
     }
 
     fn upload(&self, id: &str, wasm: Vec<u8>) -> Result<()> {
+        // Declare the `capabilities` config key at upload, so the deployment may
+        // hand the running instance its registry (ADR-0047: a component accepts
+        // only the config keys its uploader declared).
         let code = self
             .http
-            .post(format!("{}/api/components?id={id}", self.base))
+            .post(format!("{}/api/components?id={id}&config=capabilities", self.base))
             .bearer_auth(&self.token)
             .body(wasm)
             .send()?
@@ -157,8 +153,11 @@ fn report(fleet: &Fleet, host: &str) -> Option<Value> {
     serde_json::from_str(&r.text().ok()?).ok()
 }
 
-/// Deploy `wasm` under `id` (creating the deployment on the first call) and wait
-/// until the version tagged `want` answers over the lattice. Returns its report.
+/// Deploy `wasm` under `id` with the capability registry as node CONFIG (the
+/// running probe loads it from `wasi:config` at startup — nothing is baked), and
+/// wait until the version tagged `want` answers over the lattice. `caps` is the
+/// registry as a `name:semver` list; it rides in the node config on both create
+/// and save, so switching to a more capable version updates the registry too.
 fn deploy_and_read(
     api: &Api,
     fleet: &Fleet,
@@ -167,11 +166,13 @@ fn deploy_and_read(
     host: &str,
     wasm: Vec<u8>,
     want: &str,
+    caps: &str,
 ) -> Result<Value> {
     api.upload(id, wasm)?;
+    let node = json!({ "id": id, "config": { "capabilities": caps } });
     if dep_id.is_none() {
         let (code, dep) =
-            api.post("/api/deployments", json!({ "name": id, "nodes": [{"id": id}], "edges": [] }));
+            api.post("/api/deployments", json!({ "name": id, "nodes": [node.clone()], "edges": [] }));
         if code != 201 {
             bail!("deploy create failed: {dep}");
         }
@@ -179,16 +180,39 @@ fn deploy_and_read(
     }
     let did = dep_id.clone().unwrap();
     let deadline = Instant::now() + Duration::from_secs(180);
+    let mut last_save = Value::Null;
     while Instant::now() < deadline {
-        // Save is retried: an upload clears the digest, and the reconciler's push
-        // pass must stage the bytes before a revision can name them (ADR-0006).
-        let _ = api.post(&format!("/api/deployments/{did}/save"), json!({}));
-        if report(fleet, host).and_then(|r| r["tag"].as_str().map(str::to_string)).as_deref() == Some(want) {
+        // Save carries the nodes (with config), so a save both stages the new bytes
+        // and updates the registry the instance reads. Retried because an upload
+        // clears the digest and the push pass must stage it first (ADR-0006).
+        let (sc, sb) = api.post(&format!("/api/deployments/{did}/save"), json!({ "nodes": [node.clone()] }));
+        last_save = json!({ "code": sc, "body": sb });
+        let r = report(fleet, host);
+        let tag_ok = r.as_ref().and_then(|r| r["tag"].as_str()) == Some(want);
+        let caps_seen = r.as_ref().map(|r| !caps_of(r).is_empty()).unwrap_or(false);
+        if tag_ok && caps_seen {
             break;
         }
         std::thread::sleep(Duration::from_secs(2));
     }
-    report(fleet, host).with_context(|| format!("{want} never answered over the lattice"))
+    report(fleet, host).with_context(|| {
+        let rec = fleet.reconciler_log();
+        let tail: String = rec.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+        format!("{want} never answered\n--- last save ---\n{last_save}\n--- reconciler (tail) ---\n{tail}")
+    })
+}
+
+/// Read a source tree's capability registry (capman/capabilities.txt) as the
+/// `name:semver` list the probe's config wants — comments and blanks stripped.
+fn registry_caps(tree: &Path) -> Result<String> {
+    let path = tree.join("components/capman/capabilities.txt");
+    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect::<Vec<_>>()
+        .join(","))
 }
 
 /// The capability→semver map the running version reports over the lattice.
@@ -250,38 +274,37 @@ fn main() -> Result<()> {
 
     println!("comp-selfimprove: judging a candidate of `{}` over the lattice\n", args.component);
 
-    // Where to build each side from, and how. A source tree wins over a caps
-    // string: the honest form builds the loop's real bytes from its manifest.
+    // Where to build each side, and the capability REGISTRY each advertises. A
+    // source tree gives both: its bytes (built here) and its registry (read from
+    // capman/capabilities.txt, handed to the instance as config). A caps string
+    // is the registry directly, for a reproducible run against the local tree.
     let here = repo_root().join("components");
     let base_dir = args.baseline_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
     let cand_dir = args.candidate_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
-    let base_caps_opt = if args.baseline_src.is_some() { None } else { args.baseline.as_deref() };
-    let cand_caps_opt = if args.candidate_src.is_some() { None } else { args.candidate.as_deref() };
-    if base_caps_opt.is_none() && args.baseline_src.is_none() {
-        bail!("give --baseline-src or --baseline");
-    }
-    if cand_caps_opt.is_none() && args.candidate_src.is_none() {
-        bail!("give --candidate-src or --candidate");
-    }
+    let base_registry = match &args.baseline_src {
+        Some(d) => registry_caps(d)?,
+        None => args.baseline.clone().context("give --baseline-src or --baseline")?,
+    };
+    let cand_registry = match &args.candidate_src {
+        Some(d) => registry_caps(d)?,
+        None => args.candidate.clone().context("give --candidate-src or --candidate")?,
+    };
 
-    // Two genuinely different builds — different tags AND different manifests/caps.
-    let base_wasm = build_probe(&base_dir, &args.component, "baseline", base_caps_opt)?;
-    let cand_wasm = build_probe(&cand_dir, &args.component, "candidate", cand_caps_opt)?;
-    if base_wasm == cand_wasm {
-        bail!("baseline and candidate built to identical bytes — there is nothing to promote");
-    }
+    // Two genuinely different builds — the TAG differs, so the fleet can swap them.
+    let base_wasm = build_probe(&base_dir, &args.component, "baseline")?;
+    let cand_wasm = build_probe(&cand_dir, &args.component, "candidate")?;
 
     let fleet = Fleet::start_with_platform("selfimprove", 1);
     let api = Api::new(fleet.platform_url())?;
     let mut dep_id: Option<String> = None;
 
     // --- deploy the baseline and ask it what it is --------------------------
-    let r_base = deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_wasm, "baseline")?;
+    let r_base = deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_wasm, "baseline", &base_registry)?;
     let base_caps = caps_of(&r_base);
     println!("  baseline  · healthy={} · {}", r_base["healthy"], show(&base_caps));
 
     // --- deploy the candidate over the top and ask again --------------------
-    let r_cand = deploy_and_read(&api, &fleet, id, &mut dep_id, host, cand_wasm.clone(), "candidate")?;
+    let r_cand = deploy_and_read(&api, &fleet, id, &mut dep_id, host, cand_wasm.clone(), "candidate", &cand_registry)?;
     let cand_caps = caps_of(&r_cand);
     println!("  candidate · healthy={} · {}", r_cand["healthy"], show(&cand_caps));
 
@@ -319,8 +342,9 @@ fn main() -> Result<()> {
             "the candidate advanced no capability".to_string()
         };
         println!("  ROLL BACK — {reason}.");
-        let base_again = build_probe(&base_dir, &args.component, "baseline", base_caps_opt)?;
-        let restored = deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_again, "baseline")?;
+        let base_again = build_probe(&base_dir, &args.component, "baseline")?;
+        let restored =
+            deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_again, "baseline", &base_registry)?;
         println!("  restored baseline over the lattice: {}", show(&caps_of(&restored)));
         bail!("candidate rejected: {reason}");
     }
