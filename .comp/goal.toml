@@ -1,19 +1,21 @@
-# Holon's next goal on itself (goal 01, the guard — is a run over its cap?).
+# A bigger goal: the whole run-wallet subsystem in one file (goal 01, complete).
 text = """
-Add `over_budget(cap_cents, attempts)` to reconciler/src/budget.rs: true if the
-run's spend exceeds the cap, false otherwise. Reuse `spent_cents` — do not
-re-sum. A `cap_cents` of 0 means no cap (never over), matching the codebase's "0
-is unbounded" convention; spend exactly equal to the cap is within it, only
-strictly more is over. Keep the existing `spent_cents` function and all tests
-exactly as they are. The tests are the exact specification and must all pass.
-Write the complete file.
+Implement the `Wallet` type in reconciler/src/wallet.rs — a run's spending cap
+and the spend against it. Fill in every method: new, cap, spent, charge,
+remaining, over, can_afford. A cap of 0 is UNBOUNDED (remaining is None, never
+over, can always afford). `charge` prices a completion with `cost_cents` from the
+cost module and accumulates it — call cost_cents, do not re-derive prices.
+`remaining` never goes below zero; `over` is strictly-more-than-the-cap (equal is
+not over); `can_afford(cents)` is true only if spend plus cents does not exceed
+the cap. The tests in the file are the exact and exhaustive specification and must
+all pass. Write the complete file, keeping the tests unchanged.
 """
-title = "Implement over_budget() — the fuel guard"
-writable = ["reconciler/src/budget.rs"]
+title = "Implement the run Wallet — the budgeting subsystem"
+writable = ["reconciler/src/wallet.rs"]
 base_paths = ["reconciler/", "lattice/"]
 
 [[check]]
-id = "budget-tests-pass"
+id = "wallet-tests-pass"
 required = true
 weight = 1
-command = ["cargo", "test", "--manifest-path", "reconciler/Cargo.toml", "-p", "comp-reconciler", "--lib", "budget::"]
+command = ["cargo", "test", "--manifest-path", "reconciler/Cargo.toml", "-p", "comp-reconciler", "--lib", "wallet::"]
