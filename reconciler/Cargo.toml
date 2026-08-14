@@ -57,6 +57,7 @@ bytes = "1"
 async-trait = "0.1"
 
 [dev-dependencies]
+miniz_oxide = "0.8"
 # The publisher side of ADR-0073: a test has to SIGN, which means holding a
 # private key the platform never sees.
 p256 = { version = "0.13", features = ["ecdsa"] }
