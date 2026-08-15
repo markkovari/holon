@@ -77,6 +77,18 @@ fn model_name() -> String {
     cfg("mock-model", "mock-1")
 }
 
+/// Whether this deployment claims an embedding model, `mock-embeddings=false` to
+/// say it does not.
+///
+/// Not a feature — a test surface. `anthropic-provider` refuses `embed` because
+/// Anthropic has no embeddings endpoint, and a caller that degrades to sparse
+/// retrieval when `describe()` says so (`knowledge:memory` does) has no other way
+/// to exercise that path without an API key and a live vendor. Defaults to
+/// available, so nothing that already links this changes.
+fn embeddings_available() -> bool {
+    cfg("mock-embeddings", "true") != "false"
+}
+
 /// Everything the caller said, joined — what `when` matches against.
 fn conversation(messages: &[Message]) -> String {
     messages
@@ -241,6 +253,13 @@ impl Guest for Component {
     }
 
     fn embed(text: String, _opts: Options) -> Result<Vec<f32>, InferError> {
+        if !embeddings_available() {
+            // A provider that says it cannot embed must also refuse to, or the
+            // degraded path is only tested in the callers that bother to ask.
+            return Err(InferError::InvalidRequest(
+                "mock-embeddings is off — this deployment has no embedding model".into(),
+            ));
+        }
         if text.is_empty() {
             return Err(InferError::InvalidRequest("empty text".into()));
         }
@@ -248,7 +267,7 @@ impl Guest for Component {
     }
 
     fn describe() -> (String, bool) {
-        (model_name(), true)
+        (model_name(), embeddings_available())
     }
 }
 

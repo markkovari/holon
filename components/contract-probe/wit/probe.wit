@@ -1,0 +1,15 @@
+// comp:contractprobe — the door onto `contract:registry`.
+//
+// The reconciler is native and reaches components through the ingress, the same
+// way it reaches the driver (`driver-probe`) and the selector (`select-probe`).
+// The registry has no HTTP surface of its own — it is a contract over a graph —
+// so this is the component that gives it one.
+//
+// A "probe" by the repo's naming, an endpoint by its job: the same shape
+// `driver-probe` has, which `comp-goalrun` calls on every real run.
+package comp:contractprobe@0.1.0;
+
+world contract-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import contract:registry/registry@0.1.0;
+}

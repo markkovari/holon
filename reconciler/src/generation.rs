@@ -607,6 +607,109 @@ mod tests {
         assert_eq!(seeded["context"][0]["path"], json!("new.rs"));
     }
 
+    // ---- a decomposed goal (ADR-0086) -------------------------------------
+
+    fn part(name: &str, text: &str) -> Part {
+        Part {
+            name: name.into(),
+            plan: json!({ "text": text, "context": [], "checks": [], "max_attempts": 1 }),
+        }
+    }
+
+    #[test]
+    fn the_contract_arrives_as_a_file_the_branch_may_not_edit() {
+        let p = part("backend", "serve the search route");
+        let out = with_contract(&p.plan, "{\"routes\":[\"/api/search\"]}", 3);
+        let ctx = out["context"].as_array().unwrap();
+        assert_eq!(ctx.len(), 1, "the contract is context, not a new plan field");
+        assert_eq!(ctx[0]["path"], CONTRACT_PATH);
+        assert!(ctx[0]["content"].as_str().unwrap().contains("/api/search"));
+        let text = out["text"].as_str().unwrap();
+        assert!(text.contains("serve the search route"), "the goal survives: {text}");
+        assert!(text.contains("contract v3"), "the version has to be auditable later: {text}");
+        assert!(text.contains("Do NOT edit it"), "{text}");
+    }
+
+    #[test]
+    fn a_moved_contract_replaces_the_old_one_rather_than_stacking() {
+        let p = part("frontend", "render the results");
+        let v3 = with_contract(&p.plan, "v3 body", 3);
+        let v4 = with_contract(&v3, "v4 body", 4);
+        let ctx = v4["context"].as_array().unwrap();
+        assert_eq!(ctx.len(), 1, "two contracts in one tree is two answers to one question");
+        assert_eq!(ctx[0]["content"], "v4 body");
+    }
+
+    /// Every part gets its own seed lane. Two parts asking the same question with
+    /// the same seed would make a decomposed run a duplicated one.
+    #[test]
+    fn parts_and_rounds_never_share_a_seed() {
+        let seed_of = |part_index: u64, round: u64, branches: u64| {
+            1000 + (part_index + 1) * PART_STRIDE + round * STRIDE * (branches + 1)
+        };
+        let mut seen = std::collections::HashSet::new();
+        for p in 0..4 {
+            for r in 0..20 {
+                // Every branch in the fan-out strides by STRIDE from the base.
+                for b in 0..4 {
+                    assert!(
+                        seen.insert(seed_of(p, r, 4) + b * STRIDE),
+                        "part {p} round {r} branch {b} reused a seed"
+                    );
+                }
+            }
+        }
+    }
+
+    fn outcome(part: &str, accepted: bool, score: u64, rounds: usize) -> PartOutcome {
+        PartOutcome {
+            part: part.into(),
+            rounds: (0..rounds).map(|_| Round { entries: vec![], best: None }).collect(),
+            best: (score > 0).then(|| entry("b0", score, json!([]))),
+            accepted,
+            spent_tokens: 0,
+            built_against: 1,
+        }
+    }
+
+    #[test]
+    fn a_run_missing_one_half_says_which_half() {
+        let c = Composition {
+            parts: vec![outcome("backend", true, 1000, 2), outcome("frontend", false, 400, 2)],
+            contract_version: 2,
+            blocked: vec![],
+            spent_tokens: 0,
+            rounds_run: 2,
+            stopped: SearchStop::Exhausted,
+        };
+        // `blocked` is what `compose_search` fills; this asserts the shape callers
+        // read, and that a composition with a hole is not accepted.
+        let blocked: Vec<String> = c
+            .parts
+            .iter()
+            .filter(|o| !o.accepted)
+            .map(|o| format!("{} never passed its gate", o.part))
+            .collect();
+        assert_eq!(blocked, ["frontend never passed its gate"]);
+        let holed = Composition { blocked, ..c.clone() };
+        assert!(!holed.accepted(), "a brilliant backend and no frontend is nothing");
+        assert!(c.accepted(), "both halves green is the only acceptance");
+        assert_eq!(c.winners().len(), 2, "the selector is handed one winner per part");
+    }
+
+    #[test]
+    fn an_empty_composition_is_not_an_accepted_one() {
+        let c = Composition {
+            parts: vec![],
+            contract_version: 1,
+            blocked: vec![],
+            spent_tokens: 0,
+            rounds_run: 0,
+            stopped: SearchStop::Exhausted,
+        };
+        assert!(!c.accepted(), "no parts is not the same as every part passing");
+    }
+
     #[test]
     fn the_lens_is_appended_and_the_goal_survives_it() {
         let base = json!({ "text": "make it fast", "context": [], "previous": [] });
@@ -630,5 +733,299 @@ mod tests {
         let mut e = [entry("dead", 0, json!([])), entry("alive", 0, json!([]))];
         e[0].note = "unreachable".into();
         assert_eq!(best_of(&e), Some(1));
+    }
+}
+
+// ===========================================================================
+// A DECOMPOSED goal: parts that compose, not branches that compete (ADR-0086).
+// ===========================================================================
+//
+// Everything above is one goal explored by N competing branches, one of which
+// wins. A decomposed goal is the other shape: K PARTS — a backend and a frontend
+// — all of which are needed, each of which is itself a generation of competing
+// branches. A run that produces a brilliant backend and no frontend has produced
+// nothing.
+//
+// Competition is therefore inside a part, and composition is between parts.
+
+/// How far apart two parts' seeds are.
+///
+/// Far enough that a part's rounds can never walk into another part's sequence:
+/// a round already strides by `STRIDE * (branches + 1)`, so this is above any
+/// plausible round count times that.
+pub const PART_STRIDE: u64 = 1_000_000;
+
+/// Where the contract is laid into a part's tree.
+///
+/// A FILE, not a new field in the plan. The writer already renders `context` files
+/// into its prompt and the model already reads them, so this needs no change to
+/// `graph:agent`'s contract — and it is also how a human would see it: a file both
+/// halves of the repository can read and neither may edit.
+pub const CONTRACT_PATH: &str = "CONTRACT.md";
+
+/// One part of a decomposed goal.
+#[derive(Clone, Debug)]
+pub struct Part {
+    /// "backend", "frontend" — the name the registry knows it by, and the name a
+    /// request is addressed to.
+    pub name: String,
+    /// Its own goal text, writable paths, checks and base tree.
+    pub plan: Value,
+}
+
+/// What one part's generations came to.
+#[derive(Clone, Debug)]
+pub struct PartOutcome {
+    pub part: String,
+    pub rounds: Vec<Round>,
+    pub best: Option<Entry>,
+    pub accepted: bool,
+    pub spent_tokens: u64,
+    /// The contract version the accepted candidate was built against. This is what
+    /// `contract:registry/composable` compares, and a run whose parts disagree
+    /// about it must not be landed.
+    pub built_against: u32,
+}
+
+/// What a decomposed run came to.
+#[derive(Clone, Debug)]
+pub struct Composition {
+    pub parts: Vec<PartOutcome>,
+    /// The version in force when the run ended.
+    pub contract_version: u32,
+    /// Empty when every part accepted. Otherwise one line per part that did not,
+    /// because "no PR" without saying which half is missing is the least useful
+    /// sentence a run can end with.
+    pub blocked: Vec<String>,
+    pub spent_tokens: u64,
+    pub rounds_run: u16,
+    pub stopped: SearchStop,
+}
+
+impl Composition {
+    pub fn accepted(&self) -> bool {
+        self.blocked.is_empty() && !self.parts.is_empty()
+    }
+
+    /// The winners, as `(part, candidate digest)` — what `composable` is asked
+    /// about and what the selector is handed.
+    pub fn winners(&self) -> Vec<(String, Entry)> {
+        self.parts
+            .iter()
+            .filter_map(|p| p.best.clone().map(|e| (p.part.clone(), e)))
+            .collect()
+    }
+}
+
+/// Lay the contract into a part's plan as a read-only context file.
+///
+/// Also says so in the goal text: a model handed a file it must not edit and no
+/// sentence about it will edit it. The version is in the text because a branch's
+/// candidate is later recorded as built against that number, and a prompt that
+/// does not name it cannot be audited afterwards.
+pub fn with_contract(plan: &Value, body: &str, version: u32) -> Value {
+    let mut plan = plan.clone();
+    let text = plan["text"].as_str().unwrap_or_default().to_string();
+    plan["text"] = json!(format!(
+        "{text}\n\nThe interface for this work is in `{CONTRACT_PATH}` (contract v{version}). \
+         Build against it exactly. Do NOT edit it — if it is wrong or missing something, \
+         the other part has to agree to the change."
+    ));
+    let mut context = plan["context"].as_array().cloned().unwrap_or_default();
+    let entry = json!({ "path": CONTRACT_PATH, "content": body });
+    match context.iter_mut().find(|c| c["path"] == json!(CONTRACT_PATH)) {
+        Some(existing) => *existing = entry,
+        None => context.push(entry),
+    }
+    plan["context"] = Value::Array(context);
+    plan
+}
+
+/// Run a decomposed goal: every part, generation by generation, until each has
+/// something that passed its own gate.
+///
+/// `boundary` is called between rounds with what every part has so far, and hands
+/// back the contract each part builds against next — `(part, body, version)`.
+///
+/// PER PART, not one for everybody. A part that granted an amendment has to build
+/// against its own proposal, because ratification means "I passed my gate against
+/// it" and a part that is never handed its proposal can never pass against it. The
+/// others stay on the last canonical version until it is ratified, which is what
+/// keeps an unimplemented amendment out of everybody else's prompt. That is where request
+/// resolution belongs (`pending` → `answer` → `ratify` → `current`), and keeping it
+/// a callback is what stops this module from depending on the registry at all: the
+/// fan-out stays testable without a database, and the negotiation stays testable
+/// without threads.
+///
+/// **Nothing blocks inside a round.** Parts run concurrently, requests accumulate,
+/// and the only place a contract can move is between rounds (ADR-0086). Two parts
+/// waiting on each other is therefore not a state this can reach.
+pub fn compose_search<F>(
+    driver_url: &str,
+    host: &str,
+    parts: &[Part],
+    contract: &str,
+    contract_version: u32,
+    bounds: Bounds,
+    base_seed: u64,
+    timeout: Duration,
+    mut boundary: F,
+) -> Composition
+where
+    F: FnMut(u16, &[PartOutcome]) -> Vec<(String, String, u32)>,
+{
+    let strategies = default_strategies(bounds.branches);
+    let mut outcomes: Vec<PartOutcome> = parts
+        .iter()
+        .map(|p| PartOutcome {
+            part: p.name.clone(),
+            rounds: Vec::new(),
+            best: None,
+            accepted: false,
+            spent_tokens: 0,
+            built_against: 0,
+        })
+        .collect();
+    // What each part builds against, by name. They start together and may diverge
+    // for exactly as long as one of them is demonstrating an amendment.
+    let mut agreed: Vec<(String, String, u32)> = parts
+        .iter()
+        .map(|p| (p.name.clone(), contract.to_string(), contract_version))
+        .collect();
+    let contract_of = |agreed: &[(String, String, u32)], part: &str| {
+        agreed
+            .iter()
+            .find(|(n, _, _)| n == part)
+            .map(|(_, b, v)| (b.clone(), *v))
+            .unwrap_or_else(|| (contract.to_string(), contract_version))
+    };
+    let mut spent: u64 = 0;
+    let mut stale: u16 = 0;
+    let mut stopped = SearchStop::Exhausted;
+    let mut rounds_run = 0u16;
+
+    for r in 0..bounds.max_rounds {
+        rounds_run = r + 1;
+        // A part that has already passed its gate does not run again. Re-running a
+        // solved part would spend money to maybe make it worse, and the winner it
+        // has is what the other parts are composing with.
+        let running: Vec<usize> =
+            (0..parts.len()).filter(|i| !outcomes[*i].accepted).collect();
+        if running.is_empty() {
+            stopped = SearchStop::Accepted;
+            break;
+        }
+
+        // Parts run CONCURRENTLY, like branches: they are independent until the
+        // boundary, and running them in sequence would make a two-part run take as
+        // long as both halves added together.
+        let handles: Vec<_> = running
+            .iter()
+            .map(|&i| {
+                let url = driver_url.to_string();
+                let host = host.to_string();
+                let strategies = strategies.clone();
+                let (body, version) = contract_of(&agreed, &parts[i].name);
+                let plan = with_contract(&parts[i].plan, &body, version);
+                let carried = outcomes[i].best.clone();
+                // Each part gets its own seed lane, so two parts never ask the same
+                // question with the same seed.
+                let seed = base_seed
+                    + (i as u64 + 1) * PART_STRIDE
+                    + (r as u64) * STRIDE * (bounds.branches as u64 + 1);
+                std::thread::spawn(move || {
+                    fan_out_from(&url, &host, &plan, &strategies, carried.as_ref(), seed, timeout)
+                })
+            })
+            .collect();
+
+        let mut improved_any = false;
+        for (&i, h) in running.iter().zip(handles) {
+            let entries = h.join().unwrap_or_default();
+            let round_spend: u64 = entries.iter().map(|e| e.spent_tokens).sum();
+            spent += round_spend;
+            outcomes[i].spent_tokens += round_spend;
+
+            let winner = best_of(&entries);
+            let improved = match (&outcomes[i].best, winner.map(|w| &entries[w])) {
+                (None, Some(_)) => true,
+                (Some(b), Some(w)) => w.score > b.score,
+                _ => false,
+            };
+            let (_, version) = contract_of(&agreed, &parts[i].name);
+            if improved {
+                outcomes[i].best = winner.map(|w| entries[w].clone());
+                outcomes[i].built_against = version;
+                improved_any = true;
+            }
+            if entries.iter().any(|e| e.accepted) {
+                outcomes[i].accepted = true;
+                // The accepted candidate, not merely the best-scoring one: a branch
+                // can score well on optional checks while failing a required one.
+                if let Some(a) = entries.iter().filter(|e| e.accepted).max_by_key(|e| e.score) {
+                    outcomes[i].best = Some(a.clone());
+                    outcomes[i].built_against = version;
+                }
+            }
+            outcomes[i].rounds.push(Round { entries, best: winner });
+        }
+
+        if outcomes.iter().all(|o| o.accepted) {
+            stopped = SearchStop::Accepted;
+            break;
+        }
+        // Both checked after the round, because what one costs is not known until
+        // it is run — the same overshoot the driver documents, two levels up.
+        if bounds.max_tokens > 0 && spent >= bounds.max_tokens {
+            stopped = SearchStop::OverBudget;
+            break;
+        }
+        stale = if improved_any { 0 } else { stale + 1 };
+        if bounds.patience > 0 && stale >= bounds.patience {
+            stopped = SearchStop::NoProgress;
+            break;
+        }
+
+        // The boundary: outstanding requests are resolved here and nowhere else.
+        let next = boundary(r, &outcomes);
+        for (i, p) in parts.iter().enumerate() {
+            let (_, was) = contract_of(&agreed, &p.name);
+            let (_, now) = contract_of(&next, &p.name);
+            // A contract that moved under a part invalidates what that part has: a
+            // candidate built against v3 is not a candidate for v4, and pretending
+            // otherwise is how two halves that each pass fail together.
+            if now != was {
+                outcomes[i].accepted = false;
+            }
+        }
+        if !next.is_empty() {
+            agreed = next;
+        }
+    }
+
+    let blocked: Vec<String> = outcomes
+        .iter()
+        .filter(|o| !o.accepted)
+        .map(|o| match &o.best {
+            Some(b) => format!(
+                "{} never passed its gate (best score {}, {} round(s))",
+                o.part,
+                b.score,
+                o.rounds.len()
+            ),
+            None => format!("{} produced nothing in {} round(s)", o.part, o.rounds.len()),
+        })
+        .collect();
+
+    // The version the parts ended on. They agree unless a proposal is still
+    // undemonstrated, and `composable` is what refuses that at landing time.
+    let ended_on = agreed.first().map(|(_, _, v)| *v).unwrap_or(contract_version);
+    Composition {
+        parts: outcomes,
+        contract_version: ended_on,
+        blocked,
+        spent_tokens: spent,
+        rounds_run,
+        stopped,
     }
 }

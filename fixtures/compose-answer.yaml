@@ -1,0 +1,41 @@
+# The model that answers a request on a part's behalf, behind its own door.
+#
+# A separate app because an app has one ingress, and this is a different question
+# from "write me some code": the negotiation call goes to whichever provider the
+# deployment is willing to spend a small call on (ADR-0086). Here it is scripted,
+# so the test asserts a NEGOTIATION rather than a model's mood.
+#
+# The rule matches on the prompt's first line — "You are the backend half" — and
+# answers in the one format the parser accepts. Note what it does: it GRANTS, and
+# it re-emits the whole interface, because a grant that describes a change instead
+# of carrying the amended contract is refused by the parser.
+
+version: comp/v1
+app: composeanswer
+tenant: acme
+strategy: linked
+
+components:
+  - id: lprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: allm
+    config:
+      mock-model: mock-negotiator
+      mock-script: >
+        {"rules":[
+          {"when":"You are the backend half","text":"VERDICT: granted\n---\n{\"agreed\":\"pager\",\"routes\":[{\"method\":\"GET\",\"path\":\"/api/search\",\"example\":{\"hits\":[],\"has_more\":false,\"total_pages\":0}}]}"},
+          {"when":"*","text":"VERDICT: denied\n---\nI have no rule for that, so I am not agreeing to it."}
+        ]}
+    host_needs:
+      - wasi:config/store
+
+links:
+  - from: lprobe
+    import: llm:inference/inference@0.1.0
+    to: allm
+
+ingress:
+  host: composeanswer.acme.test
+  component: lprobe

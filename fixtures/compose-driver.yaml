@@ -1,0 +1,96 @@
+# The driver stack for a DECOMPOSED goal: the same probe → driver → {writer →
+# model, gate → runner} as `driver.yaml`, with a script written for two PARTS
+# rather than for one goal.
+#
+# The script is what makes this test deterministic and cheap, and its rules are
+# the interesting half:
+#
+#   · `backend`  writes the route and, in its first generation, only `has_more` —
+#     which is what the contract says, so its gate passes immediately.
+#   · `frontend` cannot paginate from `has_more` alone, so its first candidate
+#     carries a CONTRACT-REQUEST.md instead of asking anybody directly (a model
+#     has no tool; a request rides the candidate — ADR-0086).
+#   · once the AMENDED contract reaches its prompt — recognisable by the
+#     `"agreed"` marker the answering model puts in it — the frontend writes the
+#     real thing and passes.
+#
+# The trigger is that marker and not `total_pages`, because the frontend's own
+# request says `total_pages` too: a repair lays the previous candidate back into
+# the prompt, so a model keyed on the words of its own question answers itself and
+# the negotiation never happens. That is a real property of a repair loop, not a
+# quirk of this fixture.
+#
+# The frontend's own check greps for `pager`, NOT for `total_pages`: a repair
+# prompt carries the failing check's command, so a gate that names the answer
+# hands it to the model and the negotiation never happens.
+#
+# RULE ORDER MATTERS, and the reason is worth knowing: both parts share one
+# scripted provider, first match wins, and the amended contract reaches BOTH
+# prompts. The backend's rule is keyed on text only its goal has and comes first —
+# otherwise, the moment the amendment carrying `"agreed"` landed in the backend's
+# CONTRACT.md, the backend started writing the frontend's file and its candidate
+# was refused for touching a path outside its `writable`.
+#
+# So the frontend can only go green if the negotiation actually happened: the
+# request was read out of its candidate, answered by another model call, written
+# to the registry, ratified, and laid back into the next generation's prompt as
+# `CONTRACT.md`. Nothing in the script matches on anything else.
+#
+# `checks-url` carries a placeholder port; the test rewrites it, because the
+# runner it starts binds whatever port was free.
+
+version: comp/v1
+app: composedrive
+tenant: acme
+strategy: linked
+
+components:
+  - id: probe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: driver
+    host_needs: []
+
+  - id: agent
+    host_needs: []
+
+  - id: llm
+    config:
+      mock-model: mock-parts
+      mock-script: >
+        {"rules":[
+          {"when":"serve the search route","text":"=== FILE: src/api.rs\npub const ROUTE: &str = \"/api/search\";\npub fn total_pages() -> u32 { 9 }\n=== END"},
+          {"when":"agreed","text":"=== FILE: ui/app.ts\nexport const pager = (r) => r.total_pages;\n=== END"},
+          {"when":"render the results","text":"=== FILE: CONTRACT-REQUEST.md\nSearchResult needs total_pages\nI cannot render a pager from has_more alone.\n=== END"},
+          {"when":"*","text":"=== FILE: src/nothing.rs\n// no rule matched\n=== END"}
+        ]}
+    host_needs:
+      - wasi:config/store
+
+  - id: gate
+    config:
+      checks-url: http://127.0.0.1:CHECKS_PORT/check
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+    egress:
+      - 127.0.0.1:CHECKS_PORT
+
+links:
+  - from: probe
+    import: graph:run/driver@0.1.0
+    to: driver
+  - from: driver
+    import: graph:agent/writer@0.1.0
+    to: agent
+  - from: driver
+    import: graph:fitness/evaluator@0.1.0
+    to: gate
+  - from: agent
+    import: llm:inference/inference@0.1.0
+    to: llm
+
+ingress:
+  host: composedrive.acme.test
+  component: probe

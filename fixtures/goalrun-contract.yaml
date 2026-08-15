@@ -1,0 +1,48 @@
+# The registry a decomposed goal agrees through, for a real run.
+#
+# Deployed only when the goal spec has `[[part]]` sections. Like the knowledge
+# pool, it needs a database and nothing here deploys one (ADR-0080) — so a
+# decomposed run requires `--surreal-url` and says so rather than half-working.
+#
+# SURREAL_URL and SURREAL_EGRESS are rewritten by `comp-goalrun`.
+
+version: comp/v1
+app: goalcontract
+tenant: acme
+strategy: linked
+
+components:
+  - id: cprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: registry
+    host_needs: []
+
+  - id: cgraph
+    config:
+      surreal-url: SURREAL_URL
+      surreal-ns: comp
+      surreal-db: goalcontract
+      surreal-user: root
+    secrets:
+      - key: surreal-password
+        ref: vault://acme/surreal
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - SURREAL_EGRESS
+
+links:
+  - from: cprobe
+    import: contract:registry/registry@0.1.0
+    to: registry
+  - from: registry
+    import: knowledge:graph/store@0.1.0
+    to: cgraph
+
+ingress:
+  host: goalcontract.acme.test
+  component: cprobe

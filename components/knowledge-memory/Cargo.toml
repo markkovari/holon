@@ -1,0 +1,37 @@
+[package]
+name = "knowledge-memory"
+description = "Who may write what the swarm believes, and how a lesson earns a place in a prompt — over knowledge:graph + search:index + llm:inference (knowledge:memory)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "memory:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "knowledge-memory"
+
+[package.metadata.component.target.dependencies]
+"knowledge:graph" = { path = "../knowledge-graph/wit" }
+"search:index" = { path = "../search-index/wit" }
+"llm:inference" = { path = "../llm-inference/wit" }
+# Transitive: the worlds of the three above name these, so the packages have to
+# resolve even though nothing in here imports them.
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }

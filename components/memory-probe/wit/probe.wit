@@ -1,0 +1,21 @@
+// comp:memoryprobe — an instrument for `knowledge:memory`, not a feature.
+//
+// The component's own tests cover the SurrealQL it builds; `scenarios.rs` runs
+// those statements against a real database. Neither can cover the part in
+// between: whether the HOST links three non-`wasi` component interfaces into one
+// caller, whether `llm:inference/embed` is reachable at all (before this test, nothing
+// in this repo had ever called it), and whether `search:index` writes and answers over the
+// host's key-value store. That has to be run, and running it needs a caller —
+// nothing in the catalogue imports `knowledge:memory`.
+//
+// It imports BOTH exported interfaces on purpose. In production an agent's world
+// carries `memory` and not `promotion`, which is the whole anti-poisoning
+// argument (ADR-0084); a probe that could only reach one of them could not
+// demonstrate that they are separately linkable.
+package comp:memoryprobe@0.1.0;
+
+world memory-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import knowledge:memory/memory@0.1.0;
+    import knowledge:memory/promotion@0.1.0;
+}

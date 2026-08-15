@@ -229,27 +229,81 @@ fn missing_namespace(msg: &str) -> bool {
     msg.contains("does not exist") && (msg.contains("namespace") || msg.contains("database"))
 }
 
-fn run(conn: &Conn, statement: &str) -> Result<serde_json::Value, GraphError> {
-    match sql(conn, statement).and_then(|b| first_result(&b)) {
-        Err(GraphError::Rejected(msg)) if missing_namespace(&msg) => {
-            sql(
-                conn,
-                &format!(
-                    "DEFINE NAMESPACE IF NOT EXISTS {}; DEFINE DATABASE IF NOT EXISTS {};",
-                    conn.ns, conn.db
-                ),
-            )
-            .and_then(|b| first_result(&b))
-            // If defining is refused — a scoped user without DEFINE rights —
-            // say what the ORIGINAL statement said, because "permission denied
-            // on DEFINE NAMESPACE" would send the reader after the wrong bug.
-            .map_err(|_| GraphError::NotConfigured(format!(
+/// How many times a conflicted statement is resent.
+///
+/// SurrealDB's transactions are OPTIMISTIC: two writers racing for one record do
+/// not queue and do not deadlock — the loser is aborted and told to try again.
+/// Measured against v3.1.3, 20-way concurrency, one hot key: 60 concurrent
+/// `SET uses += 1` produce 53 commits and 7 rejections carrying "Transaction
+/// conflict: Write conflict, retry the transaction. This transaction can be
+/// retried", and one immediate resend clears all 7 — 60/60, final value exactly
+/// 60. A conflicted transaction did NOT commit, which is what makes a resend safe
+/// for a non-idempotent statement like an increment.
+///
+/// No backoff, deliberately: there is nothing to wait for. The winner committed
+/// before the loser heard about it, so the contended record is already free.
+const MAX_ATTEMPTS: u32 = 4;
+
+/// The loser of an optimistic race, in the database's own words.
+fn conflicted(body: &str) -> bool {
+    body.contains("retry the transaction")
+}
+
+/// The first per-statement error in a response, if any. Needed because a failed
+/// statement comes back inside an HTTP 200.
+fn body_error(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v.as_array()?
+        .iter()
+        .find(|s| s["status"].as_str().unwrap_or("OK") != "OK")
+        .map(|s| s["result"].as_str().unwrap_or("the statement failed").to_string())
+}
+
+/// Send a statement, surviving the two things that are not really failures.
+///
+/// Both live HERE rather than in `run`, because `query` — the escape hatch — needs
+/// them just as much and used to have neither: a component that does its writes
+/// through raw SurrealQL (`knowledge-memory` does, for `+=` and KNN) would
+/// otherwise get no namespace bootstrap and no conflict retry, which is exactly
+/// the caller that hits both hardest.
+fn send(conn: &Conn, statement: &str) -> Result<String, GraphError> {
+    let mut body = sql(conn, statement)?;
+
+    // SurrealDB 3 does not conjure a namespace on first write — it answers "The
+    // namespace 'comp' does not exist" and stops. Requiring an operator to
+    // pre-provision one would mean a component that works on the maintainer's
+    // machine and fails on a fresh database, which is the shape of a 3am page.
+    // Retried ONCE: if the define does not help, the second failure is the real
+    // answer and looping on it would only hide it.
+    if let Some(msg) = body_error(&body).filter(|m| missing_namespace(m)) {
+        sql(
+            conn,
+            &format!(
+                "DEFINE NAMESPACE IF NOT EXISTS {}; DEFINE DATABASE IF NOT EXISTS {};",
+                conn.ns, conn.db
+            ),
+        )
+        // If defining is refused — a scoped user without DEFINE rights — say what
+        // the ORIGINAL statement said, because "permission denied on DEFINE
+        // NAMESPACE" would send the reader after the wrong bug.
+        .map_err(|_| {
+            GraphError::NotConfigured(format!(
                 "{msg}, and this component may not create it — provision the namespace and database first"
-            )))?;
-            sql(conn, statement).and_then(|b| first_result(&b))
-        }
-        other => other,
+            ))
+        })?;
+        body = sql(conn, statement)?;
     }
+
+    let mut attempts = 1;
+    while conflicted(&body) && attempts < MAX_ATTEMPTS {
+        body = sql(conn, statement)?;
+        attempts += 1;
+    }
+    Ok(body)
+}
+
+fn run(conn: &Conn, statement: &str) -> Result<serde_json::Value, GraphError> {
+    send(conn, statement).and_then(|b| first_result(&b))
 }
 
 /// A read of something that was never written is not an error.
@@ -344,7 +398,7 @@ impl Guest for Component {
 
     fn query(surql: String) -> Result<String, GraphError> {
         let conn = Conn::open()?;
-        sql(&conn, &surql)
+        send(&conn, &surql)
     }
 }
 
@@ -437,6 +491,28 @@ mod live_shapes {
         // A real refusal must still be one.
         let refused = Err(GraphError::Rejected("permission denied".into()));
         assert!(absent_is_empty(refused).is_err());
+    }
+
+    /// A write conflict is not a failure, and it is not a deadlock either.
+    ///
+    /// Captured from v3.1.3 under 20-way concurrency on one hot key. The whole
+    /// concurrency strategy rests on the last sentence of that message — the
+    /// transaction did not commit, so resending an increment cannot double-count.
+    #[test]
+    fn the_loser_of_an_optimistic_race_is_told_to_retry() {
+        let body = r#"[{"kind":"Internal","result":"Transaction conflict: Write conflict, retry the transaction. This transaction can be retried","status":"ERR","time":"1ms","type":null}]"#;
+        assert!(conflicted(body));
+        // Not every rejection is retriable, and retrying the rest would turn one
+        // failure into four.
+        assert!(!conflicted(r#"[{"status":"ERR","result":"permission denied"}]"#));
+        assert!(!conflicted(r#"[{"status":"ERR","result":"The table 'nosuch' does not exist"}]"#));
+        // A conflict comes back inside an HTTP 200, so it has to be read out of
+        // the body rather than off the status line.
+        assert_eq!(
+            body_error(body).unwrap(),
+            "Transaction conflict: Write conflict, retry the transaction. This transaction can be retried"
+        );
+        assert_eq!(body_error(r#"[{"status":"OK","result":[]}]"#), None);
     }
 
     /// The success shape, so a future server version changing it fails here.

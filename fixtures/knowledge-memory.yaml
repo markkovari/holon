@@ -1,0 +1,88 @@
+# A probe → knowledge:memory → {the graph → a real SurrealDB, a lexical index, a
+# scripted provider}. Five components, four links, one ingress.
+#
+# This is the first fixture where a component imports THREE non-`wasi` interfaces
+# at once, which is the thing under test as much as anything the probe asserts:
+# ADR-0079's `HOST_NAMESPACES` bug was exactly the shape of "the composer links
+# wasi:* and quietly drops a component interface", and a caller with three of them
+# is where that would show.
+#
+# Note what `memory` declares: NOTHING. No config, no secret, no host capability.
+# It is policy over three contracts, so the only thing it needs is for the links
+# to be there — and if the host hands it none of them, it cannot even start.
+#
+# `surreal-url` carries a placeholder port. The test rewrites it, because the
+# database it starts binds whatever port was free.
+#
+# `wasi:clocks` is deliberately NOT in any `host_needs`: the ambient WASI
+# interfaces (cli, io, clocks, random) are granted to everything, and naming one
+# explicitly makes the host refuse it as a capability it does not hand out by
+# request (see `artifact-cache.yaml`).
+
+version: comp/v1
+app: memory
+tenant: acme
+strategy: linked
+
+components:
+  - id: mprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  # The policy layer. Three imports, no capabilities of its own.
+  - id: memory
+    host_needs: []
+
+  - id: graph
+    config:
+      surreal-url: http://127.0.0.1:SURREAL_PORT
+      surreal-ns: comp
+      surreal-db: memory
+      surreal-user: root
+    secrets:
+      - key: surreal-password
+        ref: vault://acme/surreal
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    # The one address it may reach. Anything else — the NATS bus, this host's own
+    # listener, the platform — stays refused (ADR-0008).
+    egress:
+      - 127.0.0.1:SURREAL_PORT
+
+  # The sparse half of retrieval: TF-IDF over the host's key-value store. No
+  # network, and the half that keeps working when the provider does not.
+  - id: search
+    host_needs:
+      - wasi:keyvalue/store
+
+  # The provider. Scripted, so `embed` is deterministic and the test can assert
+  # about similarity at all — and, like `mock-llm.yaml`, it declares no outgoing
+  # HTTP and holds no secret, so a test using it cannot spend money by accident.
+  - id: mllm
+    config:
+      mock-model: mock-embed-1
+    host_needs:
+      - wasi:config/store
+
+links:
+  - from: mprobe
+    import: knowledge:memory/memory@0.1.0
+    to: memory
+  - from: mprobe
+    import: knowledge:memory/promotion@0.1.0
+    to: memory
+  - from: memory
+    import: knowledge:graph/store@0.1.0
+    to: graph
+  - from: memory
+    import: search:index/index@0.1.0
+    to: search
+  - from: memory
+    import: llm:inference/inference@0.1.0
+    to: mllm
+
+ingress:
+  host: memory.acme.test
+  component: mprobe

@@ -15,6 +15,12 @@ pub mod bucket;
 pub mod wallet;
 pub mod cost;
 pub mod generation;
+/// The interface two parts of a decomposed goal build against (ADR-0086).
+pub mod contract;
+/// Joining the parts of a decomposed goal: mocks, the merge, the composition gate.
+pub mod compose;
+/// Skipping work already done, and recording every verdict so the next run can.
+pub mod memory;
 pub mod oci;
 pub mod plan;
 pub mod settings;

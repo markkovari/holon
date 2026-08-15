@@ -1,0 +1,32 @@
+[package]
+name = "contract-probe"
+description = "The door onto contract:registry — publish, ask, answer, ratify and composable over HTTP (comp:contractprobe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "comp:contractprobe"
+
+[package.metadata.component.target]
+path = "wit"
+world = "contract-probe"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+# The contract itself, from the component that owns it.
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
+"contract:registry" = { path = "../contract-registry/wit" }
+"knowledge:graph" = { path = "../knowledge-graph/wit" }

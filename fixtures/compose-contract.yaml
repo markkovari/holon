@@ -1,0 +1,49 @@
+# The registry the two parts agree through: a probe → contract:registry → the
+# graph → a real SurrealDB (ADR-0086).
+#
+# `registry` declares NOTHING — no config, no secret, no host capability. It is
+# versioning and provenance over one contract, so the only thing it needs is for
+# its link to be there.
+#
+# `surreal-url` carries a placeholder port; the test rewrites it.
+
+version: comp/v1
+app: composecontract
+tenant: acme
+strategy: linked
+
+components:
+  - id: cprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: registry
+    host_needs: []
+
+  - id: cgraph
+    config:
+      surreal-url: http://127.0.0.1:SURREAL_PORT
+      surreal-ns: comp
+      surreal-db: contracts
+      surreal-user: root
+    secrets:
+      - key: surreal-password
+        ref: vault://acme/surreal
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - 127.0.0.1:SURREAL_PORT
+
+links:
+  - from: cprobe
+    import: contract:registry/registry@0.1.0
+    to: registry
+  - from: registry
+    import: knowledge:graph/store@0.1.0
+    to: cgraph
+
+ingress:
+  host: composecontract.acme.test
+  component: cprobe

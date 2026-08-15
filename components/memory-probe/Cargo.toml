@@ -1,0 +1,36 @@
+[package]
+name = "memory-probe"
+description = "An instrument for knowledge:memory — drives observe/recall/attribute/promote/evaluated over HTTP (comp:memoryprobe)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "comp:memoryprobe"
+
+[package.metadata.component.target]
+path = "wit"
+world = "memory-probe"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+# The contracts themselves, from the components that own them — copying them here
+# would be two files to keep in step and one of them would eventually be wrong.
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
+"knowledge:memory" = { path = "../knowledge-memory/wit" }
+"knowledge:graph" = { path = "../knowledge-graph/wit" }
+"search:index" = { path = "../search-index/wit" }
+"llm:inference" = { path = "../llm-inference/wit" }
