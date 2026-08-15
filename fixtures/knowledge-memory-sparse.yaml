@@ -1,0 +1,77 @@
+# The SAME five components as `knowledge-memory.yaml`, with one config value
+# changed: the provider says it has no embedding model.
+#
+# That is the point being demonstrated. `knowledge:memory` asks `describe()` before
+# every embed and degrades to sparse-only retrieval when the answer is no —
+# `anthropic-provider` really does refuse `embed`, because Anthropic has no
+# embeddings endpoint — and until this fixture existed that path was a claim in a
+# doc comment. Every hit this app returns carries `dense: false`.
+#
+# A second APP rather than a second fleet: the two share the same artifacts (the
+# ids match, so the same wasm is placed for both) and differ only in what the
+# manifest says. What they must NOT share is the database, or the sparse app would
+# be reading vectors it could not have written — hence its own `surreal-db`. The
+# key-value store separates itself: a store is named after its app, so the two
+# lexical indexes cannot see each other (ADR-0023).
+
+version: comp/v1
+app: memorysparse
+tenant: acme
+strategy: linked
+
+components:
+  - id: mprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: memory
+    host_needs: []
+
+  - id: graph
+    config:
+      surreal-url: http://127.0.0.1:SURREAL_PORT
+      surreal-ns: comp
+      surreal-db: memorysparse
+      surreal-user: root
+    secrets:
+      - key: surreal-password
+        ref: vault://acme/surreal
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - 127.0.0.1:SURREAL_PORT
+
+  - id: search
+    host_needs:
+      - wasi:keyvalue/store
+
+  - id: mllm
+    config:
+      mock-model: mock-no-embed
+      # The one line this fixture exists for.
+      mock-embeddings: "false"
+    host_needs:
+      - wasi:config/store
+
+links:
+  - from: mprobe
+    import: knowledge:memory/memory@0.1.0
+    to: memory
+  - from: mprobe
+    import: knowledge:memory/promotion@0.1.0
+    to: memory
+  - from: memory
+    import: knowledge:graph/store@0.1.0
+    to: graph
+  - from: memory
+    import: search:index/index@0.1.0
+    to: search
+  - from: memory
+    import: llm:inference/inference@0.1.0
+    to: mllm
+
+ingress:
+  host: memorysparse.acme.test
+  component: mprobe

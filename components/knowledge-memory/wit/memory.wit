@@ -1,0 +1,206 @@
+// knowledge:memory — what the swarm learned, and what it is allowed to believe.
+//
+// `knowledge:graph` stores and traverses; `search:index` ranks lexically;
+// `llm:inference/embed` turns text into a vector. None of them decides WHO may
+// write WHAT, or how a lesson earns its place in a future prompt. That policy is
+// this component, and it is the whole reason it exists (ADR-0084).
+//
+// The one load-bearing rule, from ADR-0081:
+//
+//   An agent may record what it OBSERVED. Only a passing gate may promote
+//   something to what the swarm BELIEVES.
+//
+// That is enforced where this repo enforces everything else — at the linker
+// boundary, not with a flag. `memory` is the agent-facing interface and it cannot
+// write `patterns`. `promotion` can, and is linked only into the post-gate hook.
+// An agent handed only `memory` has no verb that reaches the trusted namespace,
+// so knowledge poisoning is not a check that can be got round; it is a function
+// that is not in the agent's world.
+package knowledge:memory@0.1.0;
+
+/// Write what was observed, read what is worth knowing, and report what happened
+/// to what was read. Safe to hand to an agent.
+interface memory {
+    /// Why a call failed.
+    variant memory-error {
+        /// A backing store refused the write or read. Carries what it said.
+        rejected(string),
+        /// A backing store could not be reached.
+        unavailable(string),
+        /// The call is not allowed to do that — writing `patterns` through the
+        /// agent-facing interface, or storing an entry with no lesson in it.
+        refused(string),
+    }
+
+    /// Which pool an entry belongs to. The three differ by who may write them and
+    /// how fast they become visible, which is why they are an enum and not a tag.
+    enum namespace {
+        /// What the swarm believes. Written ONLY by `promotion`, only downstream
+        /// of a gate that actually passed.
+        patterns,
+        /// What worked, as reported by the branch that did it. Positive but
+        /// untrusted: it reaches retrieval immediately and sinks by outcome.
+        solutions,
+        /// What did not work. Negative knowledge is visible to siblings at once:
+        /// its worst case is avoiding something that would have worked, which
+        /// costs a little diversity — not a poisoned pool.
+        errors,
+    }
+
+    /// One lesson. `text` is what a future agent reads; everything else is
+    /// provenance, and provenance is what keeps attribution recoverable when two
+    /// branches disagree.
+    record entry {
+        ns: namespace,
+        /// Dedup key. Empty means "derive it from the normalised goal", which is
+        /// what makes re-learning the same thing reinforce one row instead of
+        /// growing the pool.
+        key: string,
+        /// The lesson, in prose, for a prompt. Truncated to 900 characters:
+        /// anything longer is a transcript, and a transcript is not a lesson.
+        text: string,
+        /// What was being attempted when this was learned.
+        goal: string,
+        /// Which environment learned it.
+        env: string,
+        /// Which attempt within that environment.
+        attempt: string,
+        /// The gate score at the time, or -1 when there was not one yet.
+        score: s32,
+    }
+
+    /// A retrieved lesson.
+    record hit {
+        /// The opaque handle this entry was stored under — pass it back to
+        /// `attribute` after the run ends.
+        key: string,
+        ns: namespace,
+        text: string,
+        /// The DENSE cosine similarity, or 0 when this hit was found lexically
+        /// only. Deliberately not the fused score: a `min-similarity` threshold
+        /// has to mean the same thing every time it is read, and a fused rank
+        /// score does not.
+        similarity: f64,
+        /// Whether an embedding took part in finding this. False for the whole
+        /// list when no embedding provider is linked, which is a supported
+        /// deployment and not a degraded one.
+        dense: bool,
+    }
+
+    /// How much to read, and how much of it may reach the prompt.
+    ///
+    /// These are the DIVERSITY BUDGET (ADR-0081): siblings exploring one goal
+    /// should not all read the same top-k, or the swarm is an expensive way to
+    /// run one branch. The driver varies these across a generation, and gives at
+    /// least one branch `k = 0` as a control arm.
+    record recall-opts {
+        /// How many hits to return. **0 returns nothing** — that is the cold
+        /// branch, spelled explicitly rather than defaulted into.
+        k: u32,
+        /// Character ceiling on the returned text in total. 0 means 1200.
+        budget: u32,
+        /// Which pools to read. Empty means all three. (`include` is a WIT keyword.)
+        pools: list<namespace>,
+        /// Drop dense hits below this cosine. 0 disables it. Per-model by
+        /// nature: a threshold tuned on one embedding model is a superstition on
+        /// another, so it is a caller's knob and not a constant in here.
+        min-similarity: f64,
+    }
+
+    /// Record an observation. Refuses `patterns`. Returns the handle it was
+    /// stored under, which is also the handle a re-observation reinforces.
+    observe: func(e: entry) -> result<string, memory-error>;
+
+    /// Retrieve, outcome-weighted. Lexical recall, dense rerank when an
+    /// embedding provider is linked, then a multiplier from what happened to
+    /// each entry the last times it was read.
+    recall: func(goal: string, opts: recall-opts) -> result<list<hit>, memory-error>;
+
+    /// Report what happened to the entries a run read. This is the ONLY thing
+    /// that moves an entry's standing: there is no confidence field, because a
+    /// self-reported confidence is a number an agent optimises against.
+    ///
+    /// One transaction for the whole verdict, and the counters move by `+=` in
+    /// the database rather than by read-modify-write here. That is not a
+    /// micro-optimisation: 60 concurrent read-modify-writes on one key were
+    /// measured to land 7 of them (SurrealDB v3.1.3, 20-way), and the same 60 as
+    /// `+=` with a bounded retry land all 60.
+    attribute: func(keys: list<string>, run: string, succeeded: bool)
+        -> result<_, memory-error>;
+
+    /// What a past evaluation of a goal reached.
+    record prior-work {
+        /// The goal that was actually done, which may not be the goal asked
+        /// about — see `similarity`.
+        goal: string,
+        /// Cosine similarity between the goal asked about and the goal that was
+        /// done. 1.0 when the two normalise to the same string (the exact-key
+        /// path, which needs no embedding provider).
+        similarity: f64,
+        /// The gate score the passing run reached.
+        score: s32,
+        /// The run that got there.
+        run: string,
+        /// What it left behind — an artifact id, a PR url — or empty when it left
+        /// nothing addressable. This is what makes skipping the work useful
+        /// rather than merely cheap.
+        artifact: string,
+        /// How many runs have been evaluated against this goal, passing or not.
+        evaluations: u32,
+    }
+
+    /// Record that a goal was evaluated, whatever the verdict.
+    ///
+    /// EVERY evaluation is recorded, not only the passing ones: a goal five runs
+    /// have failed is knowledge as surely as one that passed, and it is the count
+    /// that says whether a sixth attempt is worth the money. Passing evaluations
+    /// additionally overwrite the winner — score, run, artifact — so
+    /// `already-done` has something to hand back.
+    evaluated: func(
+        goal: string,
+        run: string,
+        score: s32,
+        passed: bool,
+        artifact: string,
+    ) -> result<_, memory-error>;
+
+    /// Has this already been done? `none` means go ahead and do the work.
+    ///
+    /// Answered by nearest-neighbour search over the goals that have passed,
+    /// inside the database (`<|1,COSINE|>`), so the pool is not dragged through
+    /// this component to be compared here. `min-similarity` of 0 means 0.9.
+    ///
+    /// Without an embedding provider this degrades to an exact match on the
+    /// normalised goal, which still catches the duplicate work that actually
+    /// dominates — a retried generation asking for the same thing again.
+    already-done: func(goal: string, min-similarity: f64)
+        -> result<option<prior-work>, memory-error>;
+}
+
+/// The gated write. Linked into the system's post-gate hook and nowhere near an
+/// agent — being a separate interface is the enforcement.
+interface promotion {
+    use memory.{entry, memory-error};
+
+    /// Promote a distilled lesson to `patterns`. `gate-score` is what the gate
+    /// actually returned; a promotion is refused below `min-score` so a hook
+    /// wired to the wrong event cannot promote a failure.
+    promote: func(e: entry, gate-score: s32) -> result<string, memory-error>;
+}
+
+/// Pure composition: three contracts in, two out. No host capability, no config,
+/// no secret — the graph owns the database and the credentials, the provider owns
+/// the network, and this owns the policy.
+///
+/// `llm:inference` is a required IMPORT but an optional CAPABILITY: a deployment
+/// may link a provider that answers `describe()` with embeddings unavailable (or
+/// refuses `embed`, as `anthropic-provider` does), and retrieval degrades to
+/// lexical rather than failing. Lexical is also the side that keeps working when
+/// the embedding model changes underneath the index.
+world knowledge-memory {
+    export memory;
+    export promotion;
+    import knowledge:graph/store@0.1.0;
+    import search:index/index@0.1.0;
+    import llm:inference/inference@0.1.0;
+}

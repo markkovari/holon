@@ -1,0 +1,7 @@
+// demo:probe — the other half. It calls `demo:shape/pager` and nothing else.
+package demo:probe@0.1.0;
+
+world demo-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import demo:shape/pager@0.1.0;
+}

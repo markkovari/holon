@@ -1,7 +1,12 @@
 //! `llm-probe` — an instrument for `llm:inference` (see wit/probe.wit).
 //!
-//!   GET /chat?q=…    one user message, the model's reply
-//!   GET /describe    what the provider says it is
+//!   GET  /chat?q=…    one user message in the query string, the model's reply
+//!   POST /chat?seed=  the same, with the message as the BODY
+//!   GET  /describe    what the provider says it is
+//!
+//! The POST exists because a prompt outgrew a URL: the contract-negotiation call
+//! (ADR-0086) carries a whole interface definition and a candidate's failures, and
+//! a query string is not where that belongs.
 //!
 //! Errors come back as JSON with a 200, because the four `infer-error` cases are
 //! the interesting output here: `provider-denied` (the key was wrong),
@@ -27,6 +32,19 @@ fn param(query: &str, key: &str) -> String {
         .find(|(k, _)| *k == key)
         .map(|(_, v)| v.replace('+', " "))
         .unwrap_or_default()
+}
+
+fn read_body(request: IncomingRequest) -> String {
+    let Ok(body) = request.consume() else { return String::new() };
+    let Ok(stream) = body.stream() else { return String::new() };
+    let mut out = Vec::new();
+    while let Ok(chunk) = stream.blocking_read(64 * 1024) {
+        if chunk.is_empty() {
+            break;
+        }
+        out.extend_from_slice(&chunk);
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn esc(s: &str) -> String {
@@ -66,12 +84,18 @@ impl Guest for Component {
             None => (path.clone(), String::new()),
         };
 
-        let body = match (request.method(), route.as_str()) {
-            (Method::Get, "/chat") => {
-                let msg = llm::Message {
-                    role: llm::Role::User,
-                    content: param(&query, "q"),
-                };
+        let method = request.method();
+        // Read the body BEFORE matching: `consume` takes the request, so it cannot
+        // happen inside an arm that also needs the method.
+        let posted = match method {
+            Method::Post => read_body(request),
+            _ => String::new(),
+        };
+
+        let body = match (method, route.as_str()) {
+            (Method::Post, "/chat") | (Method::Get, "/chat") => {
+                let content = if posted.is_empty() { param(&query, "q") } else { posted };
+                let msg = llm::Message { role: llm::Role::User, content };
                 let seed = param(&query, "seed").parse().unwrap_or(0);
                 match llm::chat(&[msg], &options(seed)) {
                     Ok(c) => format!(
@@ -87,7 +111,7 @@ impl Guest for Component {
                 let (name, streaming) = llm::describe();
                 format!("{{\"provider\":\"{}\",\"streaming\":{streaming}}}", esc(&name))
             }
-            _ => "{\"service\":\"llm-probe\",\"routes\":[\"/chat?q=\",\"/describe\"]}".to_string(),
+            _ => "{\"service\":\"llm-probe\",\"routes\":[\"/chat?q=\",\"POST /chat\",\"/describe\"]}".to_string(),
         };
 
         let headers = Fields::new();

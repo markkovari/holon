@@ -163,3 +163,86 @@ impl Platform {
         (code, r.json().unwrap_or(Value::Null))
     }
 }
+
+// ---------------------------------------------------------------------------
+// A real SurrealDB, for the suites that need one.
+//
+// Lived in `graph.rs` until `memory.rs` needed the same database (ADR-0084). Two
+// copies of a PINNED image is two places to forget to pin, so it moved here
+// rather than being duplicated — the same reason the control plane above did.
+// ---------------------------------------------------------------------------
+/// The database's password, which appears in no manifest. That is the point of
+/// ADR-0010 and it is checkable: a fixture holds a `vault://` reference, and this
+/// string is nowhere in it.
+pub const SURREAL_PASSWORD: &str = "root-not-in-any-manifest";
+
+/// The image, PINNED. The three response shapes this component's tests encode —
+/// backtick-quoted ids, a missing namespace, a missing table reading as an error
+/// — were captured from this version. `latest` would let a server upgrade turn
+/// into a mystery failure in a test that never changed.
+pub const SURREAL_IMAGE: &str = "surrealdb/surrealdb:v3.1.3";
+
+/// A SurrealDB container that dies with the test.
+///
+/// A container rather than a local binary so the version is the same everywhere
+/// this runs and nobody has to install a database to run the suite.
+pub struct Surreal {
+    name: String,
+    pub port: u16,
+}
+
+impl Drop for Surreal {
+    fn drop(&mut self) {
+        // `--rm` handles the ordinary exit; this covers a killed test run, which
+        // is exactly when a leaked container would otherwise sit holding a port.
+        let _ = Command::new("docker")
+            .args(["rm", "-f", &self.name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+impl Surreal {
+    pub fn start() -> Option<Self> {
+        // `free_port` is the harness's, so the database is bound the same way the
+        // rest of the fleet is and two concurrent runs do not collide.
+        let port = comp_reconciler::fleet::free_port();
+        let name = format!("comp-test-surreal-{port}");
+        let status = Command::new("docker")
+            .args(["run", "--rm", "-d", "--name", &name])
+            // Bound to loopback explicitly: the container must not be reachable
+            // from the network just because a test is running.
+            .args(["-p", &format!("127.0.0.1:{port}:8000")])
+            .arg(SURREAL_IMAGE)
+            .args(["start", "--no-banner"])
+            .args(["--user", "root", "--pass", SURREAL_PASSWORD])
+            // Inside the container; the port mapping above is what the host sees.
+            .args(["--bind", "0.0.0.0:8000"])
+            .arg("memory")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .ok()?;
+        if !status.success() {
+            return None;
+        }
+        let me = Self { name, port };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        // A container has an image pull and a runtime start in front of it, so
+        // this waits longer than a local process would need.
+        let deadline = std::time::Instant::now() + Duration::from_secs(90);
+        while std::time::Instant::now() < deadline {
+            if client.get(format!("http://127.0.0.1:{port}/health")).send().is_ok() {
+                return Some(me);
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        // `me` drops here, so the container goes with it.
+        panic!("the {SURREAL_IMAGE} container never became healthy on {port}");
+    }
+}
+
