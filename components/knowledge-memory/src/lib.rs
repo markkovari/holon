@@ -490,6 +490,21 @@ impl Guest for Component {
         ask(&surql::attribute(&keys, &run, succeeded)).map(|_| ())
     }
 
+    fn decay(max_age_days: u32, min_uses: u64) -> Result<u32, MemoryError> {
+        if max_age_days == 0 {
+            return Err(MemoryError::Refused(
+                "a max age of zero would forget everything nobody has read yet".into(),
+            ));
+        }
+        let gone = ask(&surql::decay(max_age_days, min_uses))?;
+        // The lexical index is not swept: `search:index` has no "remove what is no
+        // longer in the graph" and a hit whose row is gone is filtered out on
+        // hydration anyway (a row with no text never reaches a prompt). Said out
+        // loud because an index that grows for ever is a real cost, just a slower
+        // one than a pool that does.
+        Ok(gone.len() as u32)
+    }
+
     fn evaluated(
         goal: String,
         run: String,

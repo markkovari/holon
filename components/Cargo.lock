@@ -330,6 +330,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clinic-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "conduit-domain"
 version = "0.1.0"
 dependencies = [
@@ -1570,6 +1579,10 @@ dependencies = [
  "serde",
  "serde_core",
 ]
+
+[[package]]
+name = "semver-range"
+version = "0.1.0"
 
 [[package]]
 name = "serde"

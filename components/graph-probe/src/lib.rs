@@ -18,6 +18,40 @@ use bindings::knowledge::graph::store as graph;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
+use bindings::wasi::io::streams::OutputStream;
+
+/// Write a whole response body, however long it is.
+///
+/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
+/// rather than returning an error, so a probe that answers with something big
+/// simply dies and its caller sees an empty body. Measured: a contract file grew
+/// past 4096 and every generation of a real run reported `the boundary failed:
+/// unreadable answer (EOF while parsing a value at line 1 column 0)` — an error
+/// about JSON, three components away from the write that caused it.
+///
+/// `check-write` is the stream saying how much it will take right now, so this
+/// writes in whatever bites it offers and flushes once, rather than picking a
+/// constant and flushing every 4 KB.
+fn write_all(stream: &OutputStream, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        let ready = match stream.check_write() {
+            Ok(0) => {
+                // Zero is "full, wait" — not a failure. The pollable resolves
+                // when the stream has drained.
+                stream.subscribe().block();
+                continue;
+            }
+            Ok(n) => n as usize,
+            Err(_) => return,
+        };
+        let take = ready.min(bytes.len());
+        if stream.write(&bytes[..take]).is_err() {
+            return;
+        }
+        bytes = &bytes[take..];
+    }
+    let _ = stream.blocking_flush();
+}
 
 struct Component;
 
@@ -115,6 +149,15 @@ impl Guest for Component {
                     Err(e) => err(e),
                 }
             }
+            // The escape hatch, and until now the only interface of the graph no
+            // test could reach: `contract-registry` does every one of its reads and
+            // writes through `query`, and a bug that lived only here — a statement
+            // over 4096 bytes trapping the component — took down a real run while
+            // every typed verb stayed green.
+            (Method::Post, "/query") => match graph::query(&read_body(request)) {
+                Ok(body) => body,
+                Err(e) => err(e),
+            },
             (Method::Get, "/get") => match graph::get(&kind, &id) {
                 Ok(Some(n)) => node_json(&n),
                 Ok(None) => "{\"found\":false}".to_string(),
@@ -158,7 +201,7 @@ impl Guest for Component {
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            let _ = stream.blocking_write_and_flush(body.as_bytes());
+            write_all(&stream, body.as_bytes());
             drop(stream);
         }
         let _ = OutgoingBody::finish(out, None);

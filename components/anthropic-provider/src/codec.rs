@@ -229,6 +229,19 @@ pub fn parse_completion(body: &[u8]) -> Result<Parsed, ParseError> {
         .collect::<Vec<_>>()
         .join("");
     if text.is_empty() {
+        // A thinking model on a real task can spend the WHOLE budget thinking and
+        // never reach a text block: `content` is `["thinking"]` and `stop_reason`
+        // is `max_tokens`. Measured on claude-sonnet-5 at 4096 — which is a
+        // perfectly good budget for a non-thinking model, so the failure arrives
+        // the day someone changes the model and nothing else. "The model returned
+        // nothing" sends that person to the wrong place; this says where to look.
+        if parsed.stop_reason.as_deref() == Some("max_tokens") {
+            return Err(ParseError::BadResponse(
+                "the model used its entire max-tokens budget before writing any text \
+                 (a thinking model on a large task) — raise `anthropic:max-tokens`"
+                    .into(),
+            ));
+        }
         return Err(ParseError::NoContent);
     }
 
