@@ -21,13 +21,19 @@ Three threads, each its own goal once this one is split:
 2. **Artifacts handed between branches, not rebuilt.** `artifact:cache` exists
    and dedupes derived work; wire the driver to it so a compile or an index a
    sibling produced is looked up, not recomputed.
-3. **Knowledge that improves.** `knowledge:graph` stores and traverses; nothing
-   promotes a lesson by outcome or decays a wrong one. Weight what is retrieved
-   by whether the branch that wrote it was accepted.
+3. **Knowledge that improves.** ✅ mostly done — `knowledge:memory` promotes by
+   outcome and weights retrieval by it (ADR-0084). What is left is wiring it into
+   a branch's prompt, which is now its own goal: `08-a-branch-reads-what-the-swarm-learned`.
 
 Herding should also *announce itself in the run's summary*, not only in the
 selector's `distinct` count — a generation whose branches converged bought
 nothing, and that should be as loud as a failure.
+
+The same is now true of NEGOTIATION churn (ADR-0086): a real run was observed
+climbing contract v3 → v7 while no part's score moved, both halves granting each
+other amendments out of desperation, and nothing noticed. A run whose contract
+version rises while its scores do not is spending its budget on paperwork, and
+that is the same class of silent waste as herding.
 
 ## Why it is human-led
 
