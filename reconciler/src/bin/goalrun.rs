@@ -117,18 +117,26 @@ struct Args {
     model: String,
     /// Per-branch HTTP timeout in seconds.
     ///
-    /// NOT generous, which is what this said before it was measured. A branch does
-    /// up to `attempts` model calls AND that many gate runs, and a gate for a real
-    /// goal compiles a Rust crate, composes it and boots a host — 60-150s each. Two
-    /// of those plus two thinking-model calls goes past 300s, and what a branch over
-    /// budget looks like is not a timeout message: the reconciler's client hangs up,
+    /// NOT generous, which is what this said before it was measured — and the gate
+    /// is not what eats it. Measured on the clinic: a gate run from a fresh
+    /// candidate path against the shared cargo cache, including the recompile, the
+    /// composition, booting a host and fifteen HTTP assertions, is 2.3 SECONDS.
+    ///
+    /// The budget goes to the model. From one real run's host log, 11 completed
+    /// calls: median 64s, mean 80s, slowest 174s. A branch makes up to `attempts`
+    /// of those in sequence, so two from the slow tail plus the gate lands on 300s
+    /// exactly — which is why some branches die and others do not.
+    ///
+    /// What a branch over budget looks like is not a timeout message: the
+    /// reconciler's client hangs up,
     /// the host logs `hyper::Error(IncompleteMessage)`, the ingress logs `connection
     /// closed before message completed`, and the run reports `error sending request
     /// for url .../run`. Three branches died that way in one clinic run and four in
     /// another, and every one of them read as a fleet fault rather than as this
     /// number being too small.
     ///
-    /// 900 is the floor for a goal whose gate builds anything.
+    /// 900 leaves ~2.5x headroom over the slowest pair observed. That, not a bigger
+    /// machine, is the fix.
     #[arg(long, default_value_t = 300)]
     timeout: u64,
     /// Open the PR at the end. Off leaves a dry run: search and rank, propose
