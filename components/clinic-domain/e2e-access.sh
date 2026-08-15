@@ -25,7 +25,14 @@ HOST="${COMP_HOST:-}"
 BUILD_LOG="$(mktemp -t clinic-build-XXXX)"
 cargo component build --target wasm32-wasip2 --manifest-path "$MANIFEST" \
   -p clinic-domain -p record-store -p id-generate -p auth-guard -p rate-limiter -p audit-log -p search-index -p csv >"$BUILD_LOG" 2>&1 || {
-  echo "the clinic does not compile:"; tail -25 "$BUILD_LOG"; rm -f "$BUILD_LOG"; exit 1; }
+  # From the FIRST error, not the last 25 lines. A candidate's repair prompt is
+  # built out of this text, and `tail` hands it the trailing macro notes and
+  # "could not compile" while the message, the file and the line scroll off the
+  # top. Measured: a part failed three rounds on an E0277 whose location it was
+  # never shown, then failed again on a different one it was also never shown.
+  echo "the clinic does not compile:"
+  awk '/^error/ { seen = 1 } seen' "$BUILD_LOG" | head -45
+  rm -f "$BUILD_LOG"; exit 1; }
 rm -f "$BUILD_LOG"
 
 T="${CARGO_TARGET_DIR:-components/target}"
