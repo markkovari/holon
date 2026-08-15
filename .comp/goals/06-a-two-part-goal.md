@@ -1,4 +1,13 @@
-# A two-part goal — 🟢 agent-ready
+# A two-part goal — ✅ done, and its gate is now vacuous
+
+> **A run completed this goal** ([PR #29](https://github.com/markkovari/holon/pull/29),
+> restored and corrected in [#46](https://github.com/markkovari/holon/pull/46)):
+> two parts, a shared contract, a join that plugs, one pull request. Because the
+> implementation is now on `main`, every check here passes on the base tree — the
+> gate critic (goal 07) refuses the goal outright, which is the correct answer.
+>
+> To run it again, stub `paginate_ids` and the probe's handler first. Kept as the
+> worked example of what a decomposed goal spec looks like.
 
 **Traces to:** ADR-0086 (*parts negotiate a contract*), and the machinery in
 `compose::run_parts`, `contract:registry` and `generation::compose_search`.

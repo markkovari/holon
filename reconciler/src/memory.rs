@@ -145,6 +145,106 @@ impl Memory {
     }
 }
 
+/// One lesson, as it came back from the pool.
+pub struct Lesson {
+    /// The handle to attribute an outcome to later. Opaque.
+    pub key: String,
+    /// `patterns` | `solutions` | `errors`.
+    pub ns: String,
+    pub text: String,
+    pub dense: bool,
+}
+
+/// What a branch is allowed to read.
+///
+/// The DIVERSITY BUDGET, and the reason it is per branch: a generation whose
+/// branches all read the same top-k is an expensive way to run one branch
+/// (ADR-0081). `k = 0` reads nothing, which is the control arm.
+pub struct Reading {
+    pub k: u32,
+    pub budget: u32,
+    /// Empty means all three pools.
+    pub pools: Vec<String>,
+}
+
+impl Memory {
+    /// What the swarm learned that bears on this goal.
+    ///
+    /// An error is NOT fatal and NOT an empty answer dressed up as one: the caller
+    /// gets the error, prints it, and runs the branch cold. A pool that is down
+    /// must cost a run its advice and nothing else.
+    pub fn recall(&self, goal: &str, r: &Reading) -> Result<Vec<Lesson>, String> {
+        if r.k == 0 {
+            return Ok(Vec::new());
+        }
+        let v = self.call(
+            reqwest::Method::GET,
+            &format!(
+                "/recall?goal={}&k={}&budget={}&pools={}",
+                enc(goal),
+                r.k,
+                r.budget,
+                enc(&r.pools.join(","))
+            ),
+        )?;
+        if let Some(detail) = v["error"].as_str() {
+            return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
+        }
+        Ok(v["hits"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|h| Lesson {
+                key: h["key"].as_str().unwrap_or_default().to_string(),
+                ns: h["ns"].as_str().unwrap_or_default().to_string(),
+                text: h["text"].as_str().unwrap_or_default().to_string(),
+                dense: h["dense"].as_bool().unwrap_or(false),
+            })
+            .collect())
+    }
+
+    /// What happened to the lessons a branch read. The ONLY thing that moves an
+    /// entry's standing, so a branch that read nothing attributes nothing.
+    pub fn attribute(&self, keys: &[String], run: &str, succeeded: bool) -> Result<(), String> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let v = self.call(
+            reqwest::Method::POST,
+            &format!(
+                "/attribute?keys={}&run={}&ok={succeeded}",
+                enc(&keys.join(",")),
+                enc(run)
+            ),
+        )?;
+        if let Some(detail) = v["error"].as_str() {
+            return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
+        }
+        Ok(())
+    }
+}
+
+/// Lessons as a branch sees them: one bullet each, negative knowledge marked.
+///
+/// The namespace is shown because the three are not worth the same. `errors` is
+/// what did not work and is visible to a sibling immediately; `patterns` survived
+/// a gate. A model handed both without the distinction weighs them equally.
+pub fn render(lessons: &[Lesson]) -> String {
+    lessons
+        .iter()
+        .map(|l| {
+            let tag = match l.ns.as_str() {
+                "errors" => "AVOID",
+                "patterns" => "PROVEN",
+                _ => "TRIED",
+            };
+            format!("- [{tag}] {}", l.text.replace('\n', " "))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The run id a verdict is attributed to.
 ///
 /// It has to be stable for one branch of one search and distinct across them, and
@@ -172,6 +272,45 @@ mod tests {
         // The characters that would otherwise end the parameter, or the path.
         assert_eq!(enc("a&b=c?d/e"), "a%26b%3Dc%3Fd%2Fe");
         assert_eq!(enc("café"), "caf%C3%A9");
+    }
+
+    fn lesson(ns: &str, text: &str) -> Lesson {
+        Lesson { key: format!("{ns}:1"), ns: ns.into(), text: text.into(), dense: true }
+    }
+
+    #[test]
+    fn a_lesson_says_which_kind_it_is() {
+        let out = render(&[
+            lesson("errors", "a bare unwrap fails the gate"),
+            lesson("patterns", "split on syntax, not token count"),
+            lesson("solutions", "the retry belongs in the client"),
+        ]);
+        // The three are not worth the same, and a model handed them undifferentiated
+        // weighs them equally: `errors` is what did not work, `patterns` survived a
+        // gate, `solutions` is one branch's word for it.
+        assert!(out.contains("[AVOID] a bare unwrap"), "{out}");
+        assert!(out.contains("[PROVEN] split on syntax"), "{out}");
+        assert!(out.contains("[TRIED] the retry belongs"), "{out}");
+    }
+
+    #[test]
+    fn a_lesson_cannot_break_the_bullet_list_it_is_rendered_into() {
+        let out = render(&[lesson("errors", "line one\nline two")]);
+        assert_eq!(out.lines().count(), 1, "one lesson is one bullet: {out:?}");
+    }
+
+    #[test]
+    fn reading_nothing_asks_for_nothing() {
+        // `k = 0` is the control arm and must not cost a round trip.
+        let m = Memory {
+            url: "http://127.0.0.1:1".into(),
+            host: "nowhere".into(),
+            timeout: Duration::from_millis(1),
+        };
+        let cold = Reading { k: 0, budget: 0, pools: vec![] };
+        assert!(m.recall("anything", &cold).expect("no call, no failure").is_empty());
+        // And a branch that read nothing attributes nothing, for the same reason.
+        assert!(m.attribute(&[], "run-1", true).is_ok());
     }
 
     #[test]

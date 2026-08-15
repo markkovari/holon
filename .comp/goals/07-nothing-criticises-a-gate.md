@@ -1,4 +1,19 @@
-# Nothing criticises a gate — 🔴 human-led
+# Nothing criticises a gate — ✅ built
+
+> **Built.** `compose::criticise` runs every check — the goal's and each part's —
+> against the untouched base tree before a single token is spent, and `holon goal
+> run` refuses when any of them passes. A check that is *supposed* to be green on
+> the base says so with `may_pass_base = true`, because otherwise the critic is a
+> thing people turn off rather than trust.
+>
+> It earned its keep immediately: pointed at this repository it refused the
+> two-part goal, correctly — the work had landed, so every check passed on the base
+> and the gate could no longer judge anything. Stub the implementation and one
+> check drops off the list, which is the behaviour under test.
+>
+> Still true, and left as the next rung: the critic checks whether a gate CAN fail,
+> not whether it measures the right thing. The empty-corpus bug that passed every
+> check would still pass every check.
 
 **Traces to:** `docs/CURRENT.md` — *"a check that already passes on the base tree
 accepts anything, and nothing looks"* — and the first real decomposed run on this

@@ -262,13 +262,17 @@ worklist in [`.comp/goals/`](../.comp/goals/).
 
 **The loop's judgement**
 
-- **Nothing criticises a gate.** A goal's checks are hand-authored, and the first
-  real decomposed run scored 1000 on two candidates that had deleted their own
-  component exports. A check that already passes on the base tree accepts anything
-  — and nothing looks. → goal 07
-- **Retrieval is not wired into a prompt.** `knowledge:memory` stores, ranks and
-  weights; no branch yet READS a lesson, nothing promotes a verified diff into
-  `patterns`, and nothing decays. → goal 08, ADR-0084
+- ~~**Nothing criticises a gate.**~~ → **built**: every check, the goal's and each
+  part's, is run against the untouched base before anything is spent, and a run is
+  refused when one of them passes. What it does NOT check is whether a gate
+  measures the right thing — the empty-corpus candidate that passed everything
+  would still pass everything. → goal 07
+- **Retrieval is wired; promotion and decay are not.** Each branch of an ordinary
+  run now reads lessons — a different `k` and a different pool mix per branch, the
+  control arm reading nothing — and what a branch read is attributed to its verdict
+  when the run ends, so a lesson present when runs fail sinks. What is still
+  missing: nothing distils a verified diff into `patterns`, nothing decays, and a
+  DECOMPOSED run's parts read nothing yet. → goal 08, ADR-0084
 - **Nothing measures herding or churn.** The diversity knobs exist (a lens per
   branch, one branch that reads nothing); no run reports that its generation
   converged. A negotiation was observed climbing v3 → v7 while no score moved, and

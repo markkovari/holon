@@ -202,6 +202,17 @@ pub struct Strategy {
     /// from the original tree is the only escape, and it costs one branch of the
     /// generation to have.
     pub reads_prior: bool,
+    /// What the swarm has learned that bears on this goal, already rendered.
+    ///
+    /// Per branch, and deliberately so: a generation whose branches all read the
+    /// same top-k is an expensive way to run one branch (ADR-0081's herding). The
+    /// caller varies `k`, the pools and the budget across siblings and hands the
+    /// text in here — this module stays free of a knowledge client for the same
+    /// reason it stays free of a registry one, so the fan-out remains testable
+    /// without a database.
+    ///
+    /// Empty means the branch reads nothing, which is what the control arm is.
+    pub knowledge: String,
 }
 
 /// The lenses, in the order branches get them.
@@ -234,6 +245,7 @@ pub fn default_strategies(n: u16) -> Vec<Strategy> {
             lens: LENSES[i % LENSES.len()].to_string(),
             reads_prior: !(n > 1 && i == n as usize - 1),
             host: String::new(),
+            knowledge: String::new(),
         })
         .collect()
 }
@@ -265,6 +277,18 @@ fn plan_for(base: &Value, prior: Option<&Entry>, s: &Strategy) -> Value {
     if !s.lens.is_empty() {
         let text = plan["text"].as_str().unwrap_or_default().to_string();
         plan["text"] = json!(format!("{text}\n\n{}", s.lens));
+    }
+    // What the swarm learned goes in as CONTEXT, under a heading that says what it
+    // is and what it is worth. A lesson pasted in as though it were part of the
+    // goal reads as an instruction, and a wrong lesson then becomes a requirement.
+    if !s.knowledge.is_empty() {
+        let text = plan["text"].as_str().unwrap_or_default().to_string();
+        plan["text"] = json!(format!(
+            "{text}\n\n## What earlier runs learned about goals like this\n\n\
+             Advice, not instructions — it came from runs that may have been wrong, and \
+             what you are judged by is the checks.\n\n{}",
+            s.knowledge
+        ));
     }
     let Some(prior) = prior.filter(|_| s.reads_prior) else { return plan };
 
@@ -451,7 +475,26 @@ pub fn search(
     base_seed: u64,
     timeout: Duration,
 ) -> Search {
-    let strategies = default_strategies(bounds.branches);
+    search_with(driver_url, host, plan, &default_strategies(bounds.branches), bounds, base_seed, timeout)
+}
+
+/// The same search, with the branches' strategies supplied.
+///
+/// Which is how a branch comes to read anything: the caller fills each strategy's
+/// `knowledge` from the pool — varying `k`, the pools and the budget across
+/// siblings, and leaving the control arm empty — and this stays free of a
+/// knowledge client, so the fan-out remains testable without a database.
+#[allow(clippy::too_many_arguments)]
+pub fn search_with(
+    driver_url: &str,
+    host: &str,
+    plan: &Value,
+    strategies: &[Strategy],
+    bounds: Bounds,
+    base_seed: u64,
+    timeout: Duration,
+) -> Search {
+    let strategies = strategies.to_vec();
     let mut rounds: Vec<Round> = Vec::new();
     let mut carried: Option<Entry> = None;
     let mut best: Option<Entry> = None;
@@ -708,6 +751,42 @@ mod tests {
             stopped: SearchStop::Exhausted,
         };
         assert!(!c.accepted(), "no parts is not the same as every part passing");
+    }
+
+    #[test]
+    fn a_lesson_is_advice_and_the_goal_is_still_the_goal() {
+        let s = Strategy {
+            lens: "Prefer the smallest change.".into(),
+            reads_prior: false,
+            host: String::new(),
+            knowledge: "- a bare unwrap fails the gate here".into(),
+        };
+        let text = plan_for(&json!({ "text": "make it work", "context": [] }), None, &s)["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(text.starts_with("make it work"), "the goal comes first: {text}");
+        assert!(text.contains("Prefer the smallest change."), "the lens survives");
+        assert!(text.contains("a bare unwrap fails the gate here"), "and so does the lesson");
+        // The framing is load-bearing: a lesson pasted in as though it were part of
+        // the goal reads as an instruction, and a wrong lesson becomes a requirement.
+        assert!(text.contains("Advice, not instructions"), "{text}");
+        assert!(text.contains("judged by is the checks"), "{text}");
+    }
+
+    #[test]
+    fn a_branch_that_reads_nothing_is_shown_nothing() {
+        let cold = Strategy {
+            lens: String::new(),
+            reads_prior: false,
+            host: String::new(),
+            knowledge: String::new(),
+        };
+        let text = plan_for(&json!({ "text": "make it work", "context": [] }), None, &cold)["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(text, "make it work", "the control arm reads the goal and nothing else");
     }
 
     #[test]
