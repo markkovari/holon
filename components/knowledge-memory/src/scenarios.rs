@@ -613,6 +613,57 @@ fn scenarios() {
     assert_eq!(saved.goals_skipped, 2, "one exact repeat and one paraphrase");
 }
 
+/// Decay: what nobody read goes, what somebody read stays, and what has no date
+/// at all survives — the last being the trap, not the feature.
+#[test]
+fn decay_forgets_the_unread_and_spares_everything_else() {
+    let Some(db) = Db::start() else {
+        eprintln!("SKIPPED: knowledge-memory scenarios need Docker to start {IMAGE}.");
+        return;
+    };
+    let name = "s11_decay";
+    fn entry_at(handle: &str) -> EntryWrite<'_> {
+        EntryWrite {
+            handle,
+            ns: "errors",
+            text: "a lesson",
+            goal: "a goal",
+            env: "env-1",
+            attempt: "1",
+            score: -1,
+            promoted: false,
+        }
+    }
+    for h in ["errors:unread", "errors:earned", "errors:fresh"] {
+        db.must(name, &surql::upsert_entry(&entry_at(h), None, false));
+    }
+    // Age two of them by hand — a test cannot wait a month — and let one earn its
+    // place by being read twice.
+    db.must(name, &format!(
+        "UPDATE {} SET last_used = time::now() - 40d;",
+        surql::rid(surql::ENTRIES, "errors:unread")));
+    db.must(name, &format!(
+        "UPDATE {} SET last_used = time::now() - 40d, uses = 5;",
+        surql::rid(surql::ENTRIES, "errors:earned")));
+    // And one with no date at all: a row from a write path that forgot to stamp it.
+    db.must(name, &format!(
+        "UPDATE {} SET last_used = NONE;",
+        surql::rid(surql::ENTRIES, "errors:fresh")));
+
+    let gone = db.must(name, &surql::decay(30, 2));
+    assert_eq!(gone.len(), 1, "exactly the unread, old one: {gone:?}");
+    assert!(gone[0]["id"].as_str().unwrap_or_default().contains("unread"), "{gone:?}");
+
+    let left = db.must(name, &format!("SELECT id FROM {};", surql::ENTRIES));
+    let ids: Vec<String> = left.iter().map(|r| r["id"].as_str().unwrap_or_default().to_string()).collect();
+    assert!(ids.iter().any(|i| i.contains("earned")), "two reads is earning its place: {ids:?}");
+    assert!(
+        ids.iter().any(|i| i.contains("fresh")),
+        "an entry with no date must NOT be swept — SurrealDB says NONE < any time, \
+         so without the guard this deletes rows because of a bug in the writer: {ids:?}"
+    );
+}
+
 /// The slice-1 cycle exactly as the goal runner drives it: four branch verdicts,
 /// then the winner re-reported with the pull request the forge opened.
 ///

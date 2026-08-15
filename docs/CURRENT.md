@@ -193,6 +193,26 @@ claim about a distributed system without one is a hope.
   rather than N branches that compete, each part its own generation, a contract
   they agree through, and one pull request (ADR-0086). Run against this repository:
   both halves green, the join gate passed, PR opened.
+- **A composition is derived, not written**, and by a library call rather than a
+  subprocess. `reconciler/src/plug.rs` wraps `wac_graph` — `wac` is a crate before
+  it is a command — so the loop can compose a candidate in-process with the wiring,
+  the gaps and the failure as values instead of as stderr to be parsed. It reads a
+  component's imports out of the BINARY (the compiler drops what nothing calls),
+  finds what exports those interfaces, composes each plug before plugging it, and
+  keys the output by content so it is built once and outlives the run. This closes
+  the gap that made a goal-built component undeployable: 59 hand-written `wac plug`
+  chains live in the `Justfile`, and until now anything the loop produced needed a
+  human to add the sixtieth. The derived composition is strictly more complete than
+  the hand-written one — `just compose-vet` leaves 16 capabilities dangling
+  (`ai:inference`, `blob:store`, `money:amount`, `otp:totp`, …) that `just plug
+  vet-domain` binds. Two things it encodes because a shell version got them wrong
+  first: a FLAT plug chain hoists each plug's own imports into the result and still
+  validates (which is why the `Justfile` pre-composes `auth-guard`; there is a test
+  pinning it), and resolution is per-INTERFACE — `cache-backing` exports
+  `cache:store/sink` and `/source` but not `/cache`, so a package-level match calls
+  an import satisfied that then dangles. `components/wit-reflect` wraps the same
+  crate for the component side; this is the native side, the same split as
+  `checks-runner` and `comp-checks`.
 - **The gate is real and joined.** `comp-checks` materialises a candidate over a
   base tree, runs allow-listed commands, and reports the check vector; it is native
   because a component cannot spawn a process, which is the sandbox working rather
@@ -262,17 +282,29 @@ worklist in [`.comp/goals/`](../.comp/goals/).
 
 **The loop's judgement**
 
+- **The pool is a closed loop now**: a failed branch writes what it failed on, each
+  branch reads a different slice, a passing candidate is distilled into `patterns`
+  by the one interface an agent cannot reach, what a branch read is judged by what
+  happened to it, and every run forgets what nobody has read. Both e2es prove it
+  without an AI call. What is NOT proven is that any of it makes a real model
+  better — that needs a goal a real model fails, and the runs so far have not
+  found one.
+
 - ~~**Nothing criticises a gate.**~~ → **built**: every check, the goal's and each
   part's, is run against the untouched base before anything is spent, and a run is
   refused when one of them passes. What it does NOT check is whether a gate
   measures the right thing — the empty-corpus candidate that passed everything
   would still pass everything. → goal 07
-- **Retrieval is wired; promotion and decay are not.** Each branch of an ordinary
-  run now reads lessons — a different `k` and a different pool mix per branch, the
+- **The loop writes and reads; it does not yet promote or forget.** A failed branch
+  writes what it failed on in the gate's own words — no model in that path, so
+  negative knowledge cannot be a hallucination. Each branch of an ordinary run
+  reads lessons — a different `k` and a different pool mix per branch, the
   control arm reading nothing — and what a branch read is attributed to its verdict
-  when the run ends, so a lesson present when runs fail sinks. What is still
-  missing: nothing distils a verified diff into `patterns`, nothing decays, and a
-  DECOMPOSED run's parts read nothing yet. → goal 08, ADR-0084
+  when the run ends, so a lesson present when runs fail sinks. A candidate that passes is
+  distilled into at most 900 characters and promoted to `patterns` by the one
+  interface an agent cannot reach. Every run sweeps the pool on
+  its way out, so it stays bounded without a daemon, and a decomposed run's PARTS
+  do all of it too — each on its own goal. → goal 08, ADR-0084
 - **Nothing measures herding or churn.** The diversity knobs exist (a lens per
   branch, one branch that reads nothing); no run reports that its generation
   converged. A negotiation was observed climbing v3 → v7 while no score moved, and

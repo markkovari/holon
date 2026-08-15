@@ -18,7 +18,31 @@ impl Drop for Kill {
     }
 }
 
+/// Keeps the node logs when asked. The struct's own `drop` runs BEFORE its fields
+/// are dropped, so the scratch directory is still there to copy out of.
+impl Drop for Fleet {
+    fn drop(&mut self) {
+        let Some(dest) = std::env::var_os("COMP_FLEET_KEEP_LOGS") else { return };
+        let dest = std::path::PathBuf::from(dest);
+        if std::fs::create_dir_all(&dest).is_err() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(self.dir.path()) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "log") {
+                if let Some(name) = path.file_name() {
+                    let _ = std::fs::copy(&path, dest.join(name));
+                }
+            }
+        }
+        eprintln!("fleet logs kept in {}", dest.display());
+    }
+}
+
 pub struct Fleet {
+    /// Deleted on drop; `Drop for Fleet` copies the logs out first when
+    /// COMP_FLEET_KEEP_LOGS names somewhere to put them.
     dir: tempfile::TempDir,
     /// The stub control plane's port, so a second reconciler can be pointed at
     /// the same one the first is using.
@@ -336,6 +360,14 @@ impl Fleet {
         let (nats_port, platform_port, ingress_port) = (free_port(), free_port(), free_port());
         let dir = tempfile::tempdir().unwrap();
         let sp = dir.path().to_path_buf();
+        // Every node's stdout and stderr land in here, and the directory is deleted
+        // when the fleet drops — which is fine for a passing test and useless for a
+        // failing run, where "every replica failed; n1 refused" is the whole report
+        // and the reason is in `n1.log`. Set COMP_FLEET_KEEP_LOGS to be told where
+        // to look; the fleet still cleans up after itself when it is not set.
+        if let Some(dest) = std::env::var_os("COMP_FLEET_KEEP_LOGS") {
+            eprintln!("fleet logs: {} (copied to {:?} on shutdown)", sp.display(), dest);
+        }
         let mut children = Vec::new();
 
         let mut nats = Command::new("nats-server");

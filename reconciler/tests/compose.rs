@@ -56,6 +56,12 @@ fn artifacts() -> Vec<String> {
         // the model that answers a request
         ("lprobe", "llm_probe.wasm"),
         ("allm", "mock_provider.wasm"),
+        // the pool the parts read from and write to
+        ("mprobe", "memory_probe.wasm"),
+        ("memory", "knowledge_memory.wasm"),
+        ("graph", "knowledge_graph.wasm"),
+        ("search", "search_index.wasm"),
+        ("mllm", "mock_provider.wasm"),
     ] {
         let p = dir.join(file);
         assert!(p.exists(), "missing {} — run `just build`", p.display());
@@ -110,6 +116,7 @@ fn specs(surreal_port: u16, checks_port: u16) -> Vec<std::path::PathBuf> {
         ("compose-driver.yaml", vec![("CHECKS_PORT", checks_port.to_string())]),
         ("compose-contract.yaml", vec![("SURREAL_PORT", surreal_port.to_string())]),
         ("compose-answer.yaml", vec![]),
+        ("knowledge-memory.yaml", vec![("SURREAL_PORT", surreal_port.to_string())]),
     ]
     .into_iter()
     .map(|(name, subs)| {
@@ -180,6 +187,11 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
         host: "composecontract.acme.test".into(),
         timeout: Duration::from_secs(30),
     };
+    let pool = comp_reconciler::memory::Memory {
+        url: format!("http://127.0.0.1:{port}"),
+        host: "memory.acme.test".into(),
+        timeout: Duration::from_secs(30),
+    };
     let answerer = Answerer {
         url: format!("http://127.0.0.1:{port}"),
         host: "composeanswer.acme.test".into(),
@@ -241,6 +253,9 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
             checks_url: &format!("http://127.0.0.1:{}/check", checks.port),
             registry: &registry,
             answerer: Some(&answerer),
+            // The parts read, write and attribute against a real pool here too, so
+            // the decomposed path is covered by the same claim the ordinary one is.
+            memory: Some(&pool),
         },
         &parts,
         &v1.body,
@@ -317,6 +332,26 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
     assert!(
         !paths.contains(&compose::REQUEST_PATH),
         "a question must not land in the pull request: {paths:?}"
+    );
+
+    // --- the parts learned, and not from each other's pool ---------------------
+    //
+    // The frontend failed twice before the contract moved, so it has something to
+    // say; the pool is keyed by the goal that was ASKED, and a part asks about its
+    // own. Asserted rather than assumed: wiring a pool in and having it quietly do
+    // nothing is the failure mode this whole session kept finding.
+    let fe_goal = "Render the results with a pager, against the fixtures in .contract-mocks.";
+    let learned = pool
+        .recall(fe_goal, &comp_reconciler::memory::Reading { k: 5, budget: 1200, pools: vec![] })
+        .expect("the pool answered");
+    assert!(
+        !learned.is_empty(),
+        "the frontend failed twice and wrote nothing — the decomposed path is not learning"
+    );
+    assert!(
+        learned.iter().any(|l| l.ns == "errors" && l.text.contains("pager-renders")),
+        "a lesson should name the check that failed: {:?}",
+        learned.iter().map(|l| &l.text).collect::<Vec<_>>()
     );
 
     let report = run.report.as_ref().expect("landable means the gate ran");

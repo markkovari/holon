@@ -431,8 +431,14 @@ mod tests {
 // shared harness. So the loop is library code with a thin caller: the binary
 // prints and lands, the test asserts, and both drive THIS.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
 use crate::contract::{Answerer, Ask, Registry};
-use crate::generation::{compose_search, Bounds, Composition, Part};
+use crate::generation::{
+    compose_search, default_strategies, Bounds, Composition, Part, PartOutcome, Strategy,
+};
+use crate::memory::{self, Memory, Reading};
 
 /// What a decomposed run came to, in the order a caller has to check it.
 pub struct Composed {
@@ -469,6 +475,9 @@ pub struct Wiring<'a> {
     /// run continues on the current contract, and nothing blocks. A supported way
     /// to run and the shape a deployment with no provider gets.
     pub answerer: Option<&'a Answerer>,
+    /// `None` runs the parts with no memory: they read nothing, write nothing, and
+    /// the run is what it was before the pool existed.
+    pub memory: Option<&'a Memory>,
 }
 
 /// Run a decomposed goal to the point where a pull request could be opened.
@@ -489,7 +498,36 @@ pub fn run_parts(
     base_tree: &Value,
     composition_checks: &Value,
 ) -> Composed {
-    let mut log: Vec<String> = Vec::new();
+    let log = RefCell::new(Vec::<String>::new());
+    // What each (part, branch) read, so a verdict can be attributed to it.
+    let readings: RefCell<BTreeMap<(String, usize), Vec<String>>> = RefCell::new(BTreeMap::new());
+
+    // What a round taught, and what it owed. Called at every boundary AND once
+    // after the loop, because the loop breaks when every part passes — so the
+    // boundary never sees the round that succeeded, and a run would learn nothing
+    // from the only round that worked.
+    let learn = |outcomes: &[PartOutcome]| {
+        let Some(m) = w.memory else { return };
+        for o in outcomes {
+            let Some(round) = o.rounds.last() else { continue };
+            for (i, e) in round.entries.iter().enumerate() {
+                if !e.accepted {
+                    if let Some(text) = memory::failure_text(&e.failures, e.score) {
+                        if let Err(err) = m.observe_failure(&o.part, &o.part, &e.branch, &text) {
+                            log.borrow_mut().push(format!("{}: lesson not recorded: {err}", o.part));
+                        }
+                    }
+                }
+                let keys = readings.borrow().get(&(o.part.clone(), i)).cloned();
+                if let Some(keys) = keys {
+                    let run = format!("{}/{}", o.part, e.branch);
+                    if let Err(err) = m.attribute(&keys, &run, e.accepted) {
+                        log.borrow_mut().push(format!("{}: reading not attributed: {err}", o.part));
+                    }
+                }
+            }
+        }
+    };
 
     let composition = compose_search(
         w.driver_url,
@@ -500,7 +538,47 @@ pub fn run_parts(
         bounds,
         seed,
         timeout,
+        // What each part reads, per round. A part asks about ITS OWN goal: a
+        // backend and a frontend attempting one feature want different lessons,
+        // and the pool is keyed by the goal that was asked.
+        |part: &Part, _round: u16| -> Vec<Strategy> {
+            let mut ss = default_strategies(bounds.branches);
+            let Some(m) = w.memory else { return ss };
+            let goal = part.plan["text"].as_str().unwrap_or_default().to_string();
+            for (i, s) in ss.iter_mut().enumerate() {
+                // The control arm reads nothing here too — it is the only way to
+                // tell whether the pool helps this part or merely costs it.
+                if !s.reads_prior {
+                    continue;
+                }
+                let reading = Reading {
+                    k: 3 + (i as u32 % 3),
+                    budget: 1200,
+                    pools: match i % 3 {
+                        0 => vec![],
+                        1 => vec!["errors".into()],
+                        _ => vec!["patterns".into(), "solutions".into()],
+                    },
+                };
+                match m.recall(&goal, &reading) {
+                    Ok(lessons) if lessons.is_empty() => {}
+                    Ok(lessons) => {
+                        readings.borrow_mut().insert(
+                            (part.name.clone(), i),
+                            lessons.iter().map(|l| l.key.clone()).collect(),
+                        );
+                        s.knowledge = memory::render(&lessons);
+                    }
+                    Err(e) => {
+                        log.borrow_mut().push(format!("{} branch-{i} runs cold: {e}", part.name))
+                    }
+                }
+            }
+            ss
+        },
         |round, outcomes| {
+            // What the round just run taught, before anything is negotiated.
+            learn(outcomes);
             // A part asks by writing a file, and the orchestrator turns it into a
             // request: a model has no tool, and giving it one would mean an agent
             // that can reach the shared interface directly.
@@ -521,25 +599,34 @@ pub fn run_parts(
                         at_version: o.built_against.max(1),
                     };
                     match w.registry.ask(&ask) {
-                        Ok(_) => log
-                            .push(format!("generation {round}: {} asked {to} for {subject:?}", o.part)),
-                        Err(e) => log.push(format!("generation {round}: could not ask: {e}")),
+                        Ok(_) => log.borrow_mut().push(format!(
+                            "generation {round}: {} asked {to} for {subject:?}",
+                            o.part
+                        )),
+                        Err(e) => {
+                            log.borrow_mut().push(format!("generation {round}: could not ask: {e}"))
+                        }
                     }
                 }
             }
-            match w.registry.boundary(outcomes, w.answerer, &mut log) {
+            let mut lines = log.borrow_mut();
+            match w.registry.boundary(outcomes, w.answerer, &mut lines) {
                 Ok(next) => next,
                 // A boundary that cannot say what the contract is has nothing to
                 // hand the next round, and carrying on from a guess is how two
                 // halves that each pass fail together. The round repeats on what
                 // each part had.
                 Err(e) => {
-                    log.push(format!("generation {round}: the boundary failed: {e}"));
+                    lines.push(format!("generation {round}: the boundary failed: {e}"));
                     Vec::new()
                 }
             }
         },
     );
+
+    // The round that succeeded is the one the boundary never saw.
+    learn(&composition.parts);
+    let mut log = log.into_inner();
 
     // 1. Every part, or nothing. A brilliant backend and no frontend is nothing.
     if !composition.blocked.is_empty() {

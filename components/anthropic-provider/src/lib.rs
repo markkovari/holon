@@ -93,9 +93,30 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), InferError> {
 }
 
 /// POST `body` to `base_url + path` with Anthropic's auth and version headers.
-/// Returns (status, response-body-bytes). Network failures map to
-/// `provider-unavailable`.
+/// One POST, and one retry when the SEND itself fails.
+///
+/// A request that failed to send never reached the server, so resending it cannot
+/// duplicate anything — which is what makes this safe on a non-idempotent
+/// endpoint. Measured need: with six branches calling Anthropic at once from
+/// wasm, roughly half of them died on `reqwest: error sending request` and took a
+/// whole generation with them. A status-carrying answer (429, 500) is NOT retried
+/// here: those have their own meaning and the caller decides.
 fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
+    match post_once(path, body) {
+        Err(InferError::ProviderUnavailable(first)) => match post_once(path, body) {
+            Ok(ok) => Ok(ok),
+            // Both attempts failed: report the SECOND, and say there were two, so
+            // a reader knows this is not a blip that a retry would have caught.
+            Err(InferError::ProviderUnavailable(second)) => Err(InferError::ProviderUnavailable(
+                format!("{second} (and once before: {first})"),
+            )),
+            Err(other) => Err(other),
+        },
+        other => other,
+    }
+}
+
+fn post_once(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     let url = format!("{}{}", base_url().trim_end_matches('/'), path);
     let (scheme, authority, full_path) = parse_url(&url)?;
 

@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use comp_reconciler::plug;
 use comp_reconciler::spec::AppSpec;
 use serde_json::{json, Value};
 
@@ -243,10 +244,16 @@ fn serves(host: &str, within: Duration) -> Result<(), String> {
 fn six_manifests_one_fleet() {
     let root = repo_root();
     let raw = root.join("components/target/wasm32-wasip2/release");
-    let composed = root.join("components/target/gate_domain.composed.wasm");
-    for f in [&composed, &raw.join("record_store.wasm"), &raw.join("shaper.wasm")] {
-        assert!(f.exists(), "missing {} — run `just build` and `just compose-gate`", f.display());
+    for f in [&raw.join("gate_domain.wasm"), &raw.join("record_store.wasm"), &raw.join("shaper.wasm")] {
+        assert!(f.exists(), "missing {} — run `just build`", f.display());
     }
+    // Composed here rather than by `just compose-gate`, which is the whole point of
+    // `plug`: the fused artifact is derived from what `gate-domain` imports, so this
+    // test needs no second manual step and cannot run against a stale composition
+    // someone built by hand three commits ago.
+    let catalog = plug::Catalog::scan(&plug::default_dirs(&root));
+    let composed = plug::compose_to("gate-domain", &catalog, &root.join("components/target/composed"))
+        .expect("gate-domain composes with what it imports");
     assert!(
         comp_host_bin().exists(),
         "missing {} — run `cargo build --release` in host/",

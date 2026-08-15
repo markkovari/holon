@@ -5,6 +5,7 @@
 //!   GET  /recall?goal=&k=&budget=&pools=&min=
 //!   POST /attribute?keys=a,b&run=&ok=
 //!   POST /evaluated?goal=&run=&score=&passed=&artifact=
+//!   POST /decay?days=&min-uses=
 //!   GET  /already-done?goal=&min=
 //!
 //! Every route answers JSON, and reports an error as `{"error":"…"}` with a **200**
@@ -22,6 +23,40 @@ use bindings::knowledge::memory::promotion;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
+use bindings::wasi::io::streams::OutputStream;
+
+/// Write a whole response body, however long it is.
+///
+/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
+/// rather than returning an error, so a probe that answers with something big
+/// simply dies and its caller sees an empty body. Measured: a contract file grew
+/// past 4096 and every generation of a real run reported `the boundary failed:
+/// unreadable answer (EOF while parsing a value at line 1 column 0)` — an error
+/// about JSON, three components away from the write that caused it.
+///
+/// `check-write` is the stream saying how much it will take right now, so this
+/// writes in whatever bites it offers and flushes once, rather than picking a
+/// constant and flushing every 4 KB.
+fn write_all(stream: &OutputStream, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        let ready = match stream.check_write() {
+            Ok(0) => {
+                // Zero is "full, wait" — not a failure. The pollable resolves
+                // when the stream has drained.
+                stream.subscribe().block();
+                continue;
+            }
+            Ok(n) => n as usize,
+            Err(_) => return,
+        };
+        let take = ready.min(bytes.len());
+        if stream.write(&bytes[..take]).is_err() {
+            return;
+        }
+        bytes = &bytes[take..];
+    }
+    let _ = stream.blocking_flush();
+}
 
 struct Component;
 
@@ -225,6 +260,13 @@ impl Guest for Component {
                 Err(e) => err(e),
             },
 
+            (Method::Post, "/decay") => {
+                match mem::decay(num(&query, "days", 30), num(&query, "min-uses", 2) as u64) {
+                    Ok(gone) => format!("{{\"forgotten\":{gone}}}"),
+                    Err(e) => err(e),
+                }
+            }
+
             (Method::Get, "/already-done") => {
                 match mem::already_done(&param(&query, "goal"), float(&query, "min")) {
                     Ok(Some(p)) => format!(
@@ -254,7 +296,7 @@ impl Guest for Component {
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            let _ = stream.blocking_write_and_flush(body.as_bytes());
+            write_all(&stream, body.as_bytes());
             drop(stream);
         }
         let _ = OutgoingBody::finish(out, None);

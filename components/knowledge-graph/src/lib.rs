@@ -32,6 +32,7 @@ use base64::Engine as _;
 use bindings::comp::secrets::reader as secrets;
 use bindings::exports::knowledge::graph::store::{Direction, GraphError, Guest, Node};
 use bindings::wasi::config::store as config;
+use bindings::wasi::io::streams::OutputStream;
 use bindings::wasi::http::types::{
     Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
 };
@@ -134,6 +135,40 @@ fn object(properties: &str) -> Result<String, GraphError> {
 }
 
 /// POST one statement to `/sql` and hand back the body.
+/// Write a whole statement, however long it is.
+///
+/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
+/// rather than returning an error — the component simply dies, and the caller two
+/// links away reports `every replica failed; n1 refused`. Nothing here noticed for
+/// as long as every statement was small: a contract file grew from 3645 bytes to
+/// 4573 and the next real run died with a message that named no size, no
+/// component and no write.
+///
+/// Chunking at a flat 4096 would fix that and flush once per 4 KB, which is a
+/// round trip the stream never asked for. `check-write` is the stream saying how
+/// much it will take right now — usually far more than 4096 — so this writes in
+/// whatever bites it offers, blocks on the pollable when it offers nothing, and
+/// flushes ONCE at the end. No magic constant, correct backpressure, and a
+/// statement carrying a 40 KB contract costs one flush rather than ten.
+fn write_all(stream: &OutputStream, mut bytes: &[u8]) -> Result<(), String> {
+    while !bytes.is_empty() {
+        let ready = match stream.check_write() {
+            Ok(0) => {
+                // Zero is not an error: it is "full, wait". The pollable resolves
+                // when the stream has drained.
+                stream.subscribe().block();
+                continue;
+            }
+            Ok(n) => n as usize,
+            Err(e) => return Err(format!("{e:?}")),
+        };
+        let take = ready.min(bytes.len());
+        stream.write(&bytes[..take]).map_err(|e| format!("{e:?}"))?;
+        bytes = &bytes[take..];
+    }
+    stream.blocking_flush().map_err(|e| format!("{e:?}"))
+}
+
 fn sql(conn: &Conn, statement: &str) -> Result<String, GraphError> {
     let headers = Fields::new();
     let set = |k: &str, v: &str| {
@@ -160,9 +195,8 @@ fn sql(conn: &Conn, statement: &str) -> Result<String, GraphError> {
         let stream = body
             .write()
             .map_err(|_| GraphError::Unavailable("no request stream".into()))?;
-        stream
-            .blocking_write_and_flush(statement.as_bytes())
-            .map_err(|e| GraphError::Unavailable(format!("writing the statement: {e:?}")))?;
+        write_all(&stream, statement.as_bytes())
+            .map_err(|e| GraphError::Unavailable(format!("writing the statement: {e}")))?;
     }
     let _ = OutgoingBody::finish(body, None);
 

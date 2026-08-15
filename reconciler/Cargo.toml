@@ -23,6 +23,12 @@ path = "src/main.rs"
 name = "comp-ingress"
 path = "src/bin/ingress.rs"
 
+# A shim over src/plug.rs, for gates — which are shell scripts and cannot call a
+# Rust function. The composition itself is the library.
+[[bin]]
+name = "comp-plug"
+path = "src/bin/plug.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
@@ -45,6 +51,12 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # For content addressing. The optional OCI mirror push is four HTTP calls on the
 # reqwest client we already have, so it needs no registry crate — see src/oci.rs.
 sha2 = "0.10"
+# Composition as a library call (src/plug.rs): `wac` is a crate before it is a
+# command. Pinned to the pair `components/wit-reflect` uses — wac-graph carries
+# its own wasmparser, and two versions of the component model in one graph is a
+# type error waiting to happen.
+wac-graph = "0.6"
+wasmparser = "0.202"
 
 # comp-ingress: terminates HTTP and spreads it across an app's replicas. A second
 # binary here rather than a sixth crate, because it needs exactly two things this

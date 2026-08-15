@@ -1,0 +1,71 @@
+# The driver stack for the LEARNING e2e: probe → driver → {writer → model, gate →
+# runner}, with a script written so that a second run can only pass by having read
+# what the first run wrote.
+#
+# The rules, and why they are these rules:
+#
+#   · `make the answer 42` with no lesson in the prompt → writes 41. The gate
+#     fails, and the run turns that verdict into an `errors` lesson.
+#   · a prompt containing `AVOID` — the tag a retrieved `errors` lesson is
+#     rendered under — → writes 42, which passes.
+#
+# So the second run's success is not evidence that the model is clever. It is
+# evidence that a lesson written by the first run reached the second run's prompt,
+# because nothing else in this script can produce 42.
+#
+# `checks-url` carries a placeholder port; the test rewrites it.
+
+version: comp/v1
+app: learndrive
+tenant: acme
+strategy: linked
+
+components:
+  - id: probe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: driver
+    host_needs: []
+
+  - id: agent
+    host_needs: []
+
+  - id: llm
+    config:
+      mock-model: mock-learner
+      mock-script: >
+        {"rules":[
+          {"when":"AVOID","text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 42 }\n=== END"},
+          {"when":"make the answer 42","text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 41 }\n=== END"},
+          {"when":"*","text":"=== FILE: src/lib.rs\npub fn answer() -> u32 { 0 }\n=== END"}
+        ]}
+    host_needs:
+      - wasi:config/store
+
+  - id: gate
+    config:
+      checks-url: http://127.0.0.1:CHECKS_PORT/check
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+    egress:
+      - 127.0.0.1:CHECKS_PORT
+
+links:
+  - from: probe
+    import: graph:run/driver@0.1.0
+    to: driver
+  - from: driver
+    import: graph:agent/writer@0.1.0
+    to: agent
+  - from: driver
+    import: graph:fitness/evaluator@0.1.0
+    to: gate
+  - from: agent
+    import: llm:inference/inference@0.1.0
+    to: llm
+
+ingress:
+  host: learndrive.acme.test
+  component: probe

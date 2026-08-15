@@ -1,62 +1,154 @@
 text = """
-Two halves of one small feature, agreed through `CONTRACT.md` — which is this
-repository's `components/demo/wit/demo.wit`.
+Finish the clinic API in components/clinic-domain. Owners, their pets and visits
+are already written and working — read them. What is missing is staff access with
+pet search, and the reports the clinic runs on.
 
-The COMPONENT half implements `pub fn paginate_ids(ids, size, offset) -> (Vec<String>, bool)`
-in components/demo/src/lib.rs: the slice at that offset, and whether more remain
-beyond it. A size of 0 and an offset past the end must not panic. Keep the WIT
-export delegating to it.
+`CONTRACT.md` in that crate is the specification — every route, every status code,
+every rule. Read it first. You may not edit it: if it is wrong or missing
+something you need, write CONTRACT-REQUEST.md (first line the subject, the rest
+why) and the other part will answer between generations.
 
-The PROBE half answers `GET /page?size=&offset=` in
-components/demo-probe/src/lib.rs by CALLING `demo:shape/pager.paginate` over the
-ids ["a","b","c","d","e"] and writing {"hits":[...],"has_more":bool}. It reads the
-query with `request.path_with_query()` — there is no `query()` method on
-`IncomingRequest`; `components/graph-probe/src/lib.rs` shows the idiom.
+The router in src/lib.rs already exists and is not yours to change. It dispatches
+to the four parts and answers /health and /test/seed. Your part is one file.
 
-It must really call the component: the composition gate plugs the two halves
-together and fails if this half imports nothing.
+You are judged by real HTTP requests against the running component — not by
+whether it compiles. `cargo component check` passes happily on code that does
+nothing.
 
-Each half is judged by tests in its own crate's `tests/` directory. You cannot
-edit them: they are the specification. Read them.
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as
+components, bound at compose time. Look at wit/clinic.wit. What is imported there
+is implemented, tested and composed for you — you call it, you do not write it.
+Writing your own password hashing, your own ranked search or your own CSV quoting
+is the one way to fail a gate while answering every request correctly, because the
+gate reads which capabilities the compiled component actually calls.
 
-Neither half may edit the other's files. If the interface is missing something you
-need, write CONTRACT-REQUEST.md — first line the subject, the rest why.
+The store, as wit-bindgen generates it in Rust — this is the exact surface, and
+guessing it wrong is how earlier attempts died:
+
+    use crate::bindings::records::store::store as records;
+
+    records::create(collection: &str, data: &str, index_fields: &[String]) -> Result<Entry, StoreError>
+    records::get(collection: &str, id: &str)                               -> Result<Entry, StoreError>
+    records::update(collection: &str, id: &str, data: &str, expected_revision: u64) -> Result<Entry, StoreError>
+    records::delete(collection: &str, id: &str)                            -> Result<(), StoreError>
+    records::list_records(collection: &str, limit: u32, after: &str)       -> Result<Page, StoreError>
+    records::find_by(collection: &str, field: &str, value: &str)           -> Result<Vec<Entry>, StoreError>
+    records::count(collection: &str)                                       -> Result<u64, StoreError>
+
+    struct Entry { id: String, data: String, revision: u64, … }   // `data` is your JSON
+    struct Page  { entries: Vec<Entry>, next: String }
+
+    // ids, if you want one that is not the store's:
+    use crate::bindings::id::generate::generator as ids;   ids::ulid() -> String
+
+`find_by` only finds what was indexed when the record was CREATED — pass the
+field in `index_fields` or list and filter instead. The collections are `owners`,
+`pets` and `visits`, and src/owners.rs and src/visits.rs show exactly how the two
+finished parts read and write them.
 """
-title = "demo:shape — paginate, and the probe that calls it"
-contract = "components/demo/wit/demo.wit"
+title = "the clinic's staff access, pet search, and reports"
+contract = "components/clinic-domain/CONTRACT.md"
 writable = []
-base_paths = ["components/demo/", "components/demo-probe/", "components/Cargo.toml", "wit/deps/"]
+base_paths = [
+  "components/clinic-domain/",
+  "components/record-store/",
+  "components/id-generate/",
+  # The capabilities these parts compose against, and the WIT that the auth
+  # package's own world pulls in behind them.
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/search-index/",
+  "components/csv/",
+  "wit/auth.wit",
+  "components/Cargo.toml",
+  "wit/deps/",
+  "host/wit/deps/",
+]
 workspace_manifest = "components/Cargo.toml"
-keep_members = ["demo", "demo-probe"]
+keep_members = [
+  "clinic-domain",
+  "record-store",
+  "id-generate",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "search-index",
+  "csv",
+]
 
 [[part]]
-name = "component"
-text = "Implement `paginate` in components/demo/src/lib.rs, exactly as CONTRACT.md describes."
-writable = ["components/demo/src/lib.rs", "CONTRACT-REQUEST.md"]
-context = ["components/demo/tests/paginate.rs", "components/demo/wit/demo.wit"]
-[[part.check]]
-id = "component-passes-its-held-out-tests"
-command = ["cargo", "component", "test", "-p", "demo", "--manifest-path", "components/Cargo.toml"]
+name = "access-and-search"
+text = """
+Implement components/clinic-domain/src/access.rs: staff accounts, login, and
+ranked pet search behind a bearer token.
 
-[[part]]
-name = "probe"
-text = "Answer GET /page?size=&offset= in components/demo-probe/src/lib.rs by calling paginate."
-writable = ["components/demo-probe/src/lib.rs", "CONTRACT-REQUEST.md"]
+This part is deliberately not a domain problem. Every hard piece of it already
+exists as a component and is in your world at wit/clinic.wit:
+`auth:identity/accounts` (register, login, verify-password — argon2 inside),
+`auth:identity/session` (issue and look up a token), and `search:index/index`
+(index a document, query it, ranked hits back).
+
+Call them. The gate reads the compiled component's imports and fails if any of
+the three is missing, so hashing a password yourself or scanning every pet with
+`contains` fails even when the HTTP responses are perfect.
+
+The index must be filled from pets that another part creates, and you may not
+edit src/owners.rs. Indexing on search, from the store, needs nobody's
+cooperation; if you would rather owners-and-pets indexed on create, that is a
+change to a file you do not own — write CONTRACT-REQUEST.md and ask for it.
+"""
+writable = ["components/clinic-domain/src/access.rs", "CONTRACT-REQUEST.md"]
 context = [
-  "components/demo-probe/tests/page_json.rs",
-  "components/demo-probe/wit/probe.wit",
-  # A probe in this repo that already does the thing: reads `path_with_query`,
-  # splits the query, percent-decodes it, writes JSON. Shown rather than
-  # described, because telling the model twice that `query()` does not exist did
-  # not stop it writing `query()`.
-  "components/graph-probe/src/lib.rs",
+  "components/clinic-domain/src/lib.rs",
+  "components/clinic-domain/wit/clinic.wit",
+  # A part of THIS component that is already finished: the store idioms, the
+  # Reply type, the routing shape. Closer to the task than any other example.
+  "components/clinic-domain/src/owners.rs",
+  "components/record-store/wit/records.wit",
+  "components/search-index/wit/search.wit",
+  # The auth surface as WIT. A big file, and only three of its interfaces are in
+  # this world — but guessing a signature is how earlier clinic runs died.
+  "wit/auth.wit",
 ]
 [[part.check]]
-id = "probe-compiles-against-the-contract"
-command = ["cargo", "component", "check", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
-
-[[check]]
-id = "the-halves-plug-together"
+id = "access-half-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "components/demo/join.sh"]
+command = ["bash", "components/clinic-domain/e2e-access.sh"]
+
+[[part]]
+name = "reports"
+text = """
+Implement components/clinic-domain/src/reports.rs: the day's visits as CSV, and
+the day's summary as JSON.
+
+Read the visits the other half wrote — collection `visits`, and `pets` for the
+name and species each row needs. The counting is yours; the CSV is not. Use
+`csv:codec/codec`'s `format` for the file, because one of this clinic's pets is
+called `Rex, Jr.` and a field with a comma in it has to come back quoted or the
+row stops having six columns. The gate parses the CSV with a real parser and
+counts columns, and it also reads the compiled component's imports — so
+formatting it by hand fails even if you get the quoting right.
+"""
+writable = ["components/clinic-domain/src/reports.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/clinic-domain/src/lib.rs",
+  "components/clinic-domain/wit/clinic.wit",
+  # The part that WROTE the visits this one reports on: the shape of a visit
+  # document is defined by that file, not by CONTRACT.md.
+  "components/clinic-domain/src/visits.rs",
+  "components/record-store/wit/records.wit",
+  "components/csv/wit/csv.wit",
+]
+[[part.check]]
+id = "reports-half-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "components/clinic-domain/e2e-reports.sh"]
+
+[[check]]
+id = "the-whole-clinic-works"
+required = true
+weight = 1
+command = ["bash", "components/clinic-domain/e2e.sh"]

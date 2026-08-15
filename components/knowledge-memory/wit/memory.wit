@@ -164,6 +164,14 @@ interface memory {
         artifact: string,
     ) -> result<_, memory-error>;
 
+    /// Forget what nobody used: entries read fewer than `min-uses` times and not
+    /// read for `max-age-days`. Returns how many went.
+    ///
+    /// A verb rather than a daemon, and the caller is expected to drive it — a
+    /// `decay` that is exposed and never called is the gap ADR-0081 caught in
+    /// alpha-swarm2, and naming it here does not close it.
+    decay: func(max-age-days: u32, min-uses: u64) -> result<u32, memory-error>;
+
     /// Has this already been done? `none` means go ahead and do the work.
     ///
     /// Answered by nearest-neighbour search over the goals that have passed,

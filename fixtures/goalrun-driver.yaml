@@ -30,7 +30,7 @@ components:
   - id: llm
     config:
       anthropic:model: ANTHROPIC_MODEL
-      anthropic:max-tokens: "4096"
+      anthropic:max-tokens: "MAX_TOKENS"
     secrets:
       - key: anthropic-api-key
         ref: vault://acme/anthropic

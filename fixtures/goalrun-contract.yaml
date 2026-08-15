@@ -23,7 +23,7 @@ components:
     config:
       surreal-url: SURREAL_URL
       surreal-ns: comp
-      surreal-db: goalcontract
+      surreal-db: SURREAL_DB
       surreal-user: root
     secrets:
       - key: surreal-password
