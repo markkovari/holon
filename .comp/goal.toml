@@ -130,6 +130,23 @@ called `Rex, Jr.` and a field with a comma in it has to come back quoted or the
 row stops having six columns. The gate parses the CSV with a real parser and
 counts columns, and it also reads the compiled component's imports — so
 formatting it by hand fails even if you get the quoting right.
+
+The codec, as wit-bindgen generates it in Rust. The last attempt at this part died
+on a type error here, so this is the exact surface rather than the WIT:
+
+    use crate::bindings::csv::codec::codec;
+
+    pub struct Row { pub fields: Vec<String> }
+    pub struct Dialect {
+        pub delimiter: String,   // a STRING, not a char: ",".to_string()
+        pub has_header: bool,    // affects parse-records only
+        pub trim: bool,
+    }
+
+    codec::format(rows: &[Row], opts: &Dialect) -> String
+
+So a file is `Vec<Row>` — the header is just the first `Row` — and `format`
+returns the whole document as one `String`.
 """
 writable = ["components/clinic-domain/src/reports.rs", "CONTRACT-REQUEST.md"]
 context = [
