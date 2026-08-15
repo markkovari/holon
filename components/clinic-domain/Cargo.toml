@@ -24,6 +24,12 @@ world = "clinic-domain"
 [package.metadata.component.target.dependencies]
 "records:store" = { path = "../record-store/wit" }
 "id:generate" = { path = "../id-generate/wit" }
+"auth:identity" = { path = "../../wit" }
+"search:index" = { path = "../search-index/wit" }
+# auth.wit's own world imports these; needed to merge the auth:identity package.
+"ratelimit:guard" = { path = "../rate-limiter/wit" }
+"audit:log" = { path = "../audit-log/wit" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

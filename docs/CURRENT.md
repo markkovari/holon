@@ -193,6 +193,20 @@ claim about a distributed system without one is a hope.
   rather than N branches that compete, each part its own generation, a contract
   they agree through, and one pull request (ADR-0086). Run against this repository:
   both halves green, the join gate passed, PR opened.
+- **A composition is derived, not written.** `bin/compose <component>` reads the
+  built artifact's imports, finds the components exporting those interfaces, and
+  plugs them — recursively, because a capability has capabilities of its own, and
+  content-addressed, so the result is built once and outlives the run. This closes
+  the gap that made a goal-built component undeployable: 59 hand-written `wac plug`
+  chains live in the `Justfile`, and until now anything the loop produced needed a
+  human to add the sixtieth. The derived composition is also strictly more complete
+  than the hand-written one — `just compose-vet` leaves 16 capabilities dangling
+  (`ai:inference`, `blob:store`, `money:amount`, `otp:totp`, …) that `bin/compose
+  vet-domain` binds. Two things it learned the hard way and now encodes: a FLAT
+  plug chain silently hoists each plug's own imports into the result (which is why
+  the `Justfile` pre-composes `auth-guard`), and interface granularity matters —
+  `cache-backing` exports `cache:store/sink` and `/source` but not `/cache`, so a
+  package-level match reports "satisfied" for an import that then dangles.
 - **The gate is real and joined.** `comp-checks` materialises a candidate over a
   base tree, runs allow-listed commands, and reports the check vector; it is native
   because a component cannot spawn a process, which is the sandbox working rather

@@ -13,6 +13,7 @@
 
 #[allow(warnings)]
 mod bindings;
+mod access;
 mod owners;
 mod visits;
 
@@ -42,10 +43,15 @@ impl Reply {
     }
 }
 
-/// The path segments of a request, and its query string.
+/// The path segments of a request, its query string, and its bearer token.
+///
+/// `bearer` is here rather than read per-handler because the header plumbing is
+/// scaffold: `IncomingRequest` is consumed to read the body, so a part that went
+/// looking for the header afterwards would find nothing. Empty when absent.
 pub struct Route {
     pub segments: Vec<String>,
     pub query: String,
+    pub bearer: String,
 }
 
 impl Route {
@@ -87,7 +93,11 @@ fn percent(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// One owner and one pet, written straight to the store.
+/// One owner and three pets, written straight to the store.
+///
+/// Three, because `access-and-search` is judged on RANKING and a corpus of one
+/// ranks trivially. `pet_id` stays the first of them: `e2e-visits.sh` books
+/// against that field and predates this.
 fn seed() -> Reply {
     let owner = match records::create(
         "owners",
@@ -106,8 +116,29 @@ fn seed() -> Reply {
         Ok(e) => e.id,
         Err(_) => return Reply::err(500, "seed_failed"),
     };
+    for (name, species) in [("Marbles", "cat"), ("Biscuit", "dog")] {
+        let _ = records::create(
+            "pets",
+            &json!({ "owner_id": owner, "name": name, "species": species, "born": "2022-03-04" })
+                .to_string(),
+            &["owner_id".to_string()],
+        );
+    }
     let _ = ids::ulid();
     Reply::json(201, json!({ "owner_id": owner, "pet_id": pet }))
+}
+
+/// The token out of `Authorization: Bearer <token>`, or empty.
+fn bearer(request: &IncomingRequest) -> String {
+    let headers = request.headers();
+    let Some(value) = headers.get(&"authorization".to_string()).into_iter().next() else {
+        return String::new();
+    };
+    String::from_utf8_lossy(&value)
+        .strip_prefix("Bearer ")
+        .unwrap_or_default()
+        .trim()
+        .to_string()
 }
 
 fn read_body(request: &IncomingRequest) -> String {
@@ -133,6 +164,7 @@ impl Guest for Component {
         let route = Route {
             segments: raw.split('/').filter(|s| !s.is_empty()).map(percent).collect(),
             query,
+            bearer: bearer(&request),
         };
         let method = request.method();
         let body = match method {
@@ -150,6 +182,11 @@ impl Guest for Component {
             // code the branch under test has not written. Scaffold, not writable,
             // and it says what it is.
             ["test", "seed"] => seed(),
+            // Before the `api/pets` arm below, or `/api/pets/search` reads as a
+            // pet whose id is "search" and the owners half answers 404.
+            ["api", "staff", ..] | ["api", "pets", "search"] => {
+                access::handle(&method, &route, &body)
+            }
             ["api", "owners", ..] | ["api", "pets", ..] => owners::handle(&method, &route, &body),
             ["api", "visits", ..] => visits::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),

@@ -1,6 +1,6 @@
 text = """
-Build the clinic API in components/clinic-domain: owners, their pets, and visits
-booked against a vet's day.
+Build the clinic API in components/clinic-domain: owners, their pets, visits
+booked against a vet's day, and staff access with pet search.
 
 `CONTRACT.md` in that crate is the specification — every route, every status code,
 every rule. Read it first. You may not edit it: if it is wrong or missing
@@ -8,7 +8,7 @@ something you need, write CONTRACT-REQUEST.md (first line the subject, the rest
 why) and the other half will answer between generations.
 
 The router in src/lib.rs already exists and is not yours to change. It dispatches
-to the two halves and answers /health and /test/seed. Your half is one file.
+to the three parts and answers /health and /test/seed. Your part is one file.
 
 You are judged by real HTTP requests against the running component — not by
 whether it compiles. `cargo component check` passes happily on code that does
@@ -35,20 +35,42 @@ guessing it wrong is how the last two attempts died:
 
 `find_by` only finds what was indexed when the record was CREATED — pass the
 field in `index_fields` or list and filter instead.
+
+Some parts have MORE than the store in their world. Check wit/clinic.wit: what is
+imported there is already implemented by another component in this repository and
+is bound at compose time — you call it, you do not write it. Writing your own
+version of a capability the world already carries is the one way to fail a gate
+while answering every request correctly.
 """
-title = "a clinic API: owners, pets and visits"
+title = "a clinic API: owners, pets, visits, and staff access with search"
 contract = "components/clinic-domain/CONTRACT.md"
 writable = []
 base_paths = [
   "components/clinic-domain/",
   "components/record-store/",
   "components/id-generate/",
+  # The capabilities `access-and-search` composes against, and the WIT that the
+  # auth package's own world pulls in behind them.
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/search-index/",
+  "wit/auth.wit",
+  "bin/compose",
   "components/Cargo.toml",
   "wit/deps/",
   "host/wit/deps/",
 ]
 workspace_manifest = "components/Cargo.toml"
-keep_members = ["clinic-domain", "record-store", "id-generate"]
+keep_members = [
+  "clinic-domain",
+  "record-store",
+  "id-generate",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "search-index",
+]
 
 [[part]]
 name = "owners-and-pets"
@@ -96,6 +118,44 @@ id = "visits-half-answers-real-requests"
 required = true
 weight = 1
 command = ["bash", "components/clinic-domain/e2e-visits.sh"]
+
+[[part]]
+name = "access-and-search"
+text = """
+Implement components/clinic-domain/src/access.rs: staff accounts, login, and
+ranked pet search behind a bearer token.
+
+This part is deliberately not a domain problem. Every hard piece of it already
+exists as a component in this repository and is in your world at wit/clinic.wit:
+`auth:identity/accounts` (register, login, verify-password — argon2 inside),
+`auth:identity/session` (issue and look up a token), and `search:index/index`
+(index a document, query it, ranked hits back).
+
+Call them. The gate reads the compiled component's imports and fails if any of
+the three is missing, so hashing a password yourself or scanning every pet with
+`contains` fails even when the HTTP responses are perfect.
+
+The index must be filled from pets that the other part creates, and you may not
+edit src/owners.rs. Indexing on search, from the store, needs nobody's
+cooperation; if you would rather owners-and-pets indexed on create, that is a
+change to a file you do not own — write CONTRACT-REQUEST.md and ask for it.
+"""
+writable = ["components/clinic-domain/src/access.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/clinic-domain/src/lib.rs",
+  "components/clinic-domain/wit/clinic.wit",
+  "components/record-store/wit/records.wit",
+  "components/search-index/wit/search.wit",
+  # The auth surface as WIT. It is a big file and only three interfaces of it are
+  # in this world, but guessing a signature is how the last two clinic runs died.
+  "wit/auth.wit",
+  "components/paste-bin/src/lib.rs",
+]
+[[part.check]]
+id = "access-half-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "components/clinic-domain/e2e-access.sh"]
 
 [[check]]
 id = "the-whole-clinic-works"

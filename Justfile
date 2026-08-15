@@ -198,6 +198,23 @@ build:
 # Compose the rate-limiter AND audit-log into auth-guard with wac, satisfying
 # auth-guard's `ratelimit:guard/limiter` + `audit:log/recorder` imports. Output
 # is a single self-contained component.
+# Compose ANY component with whatever it imports, derived rather than written.
+#
+# The 59 hand-written plug chains below each name their plugs; this one asks the
+# component. `bin/compose <name>` reads the built artifact's imports, finds the
+# components that export those interfaces, composes each of them first, and caches
+# the result by content hash. A component the loop builds is therefore runnable
+# without anyone editing this file — which was the point.
+#
+#   just plug clinic-domain
+#   just plug vet-domain
+plug name: build
+    @bash bin/compose {{name}}
+
+# What it WOULD plug, and why. Useful when a composition is missing something.
+plug-plan name: build
+    @bash bin/compose {{name}} --print-plan
+
 compose: build
     wac plug {{guard_wasm}} --plug {{ratelimit_wasm}} --plug {{auditlog_wasm}} -o {{guard_composed}}
     @echo "composed auth-guard (+ rate-limiter + audit-log) -> {{guard_composed}}"

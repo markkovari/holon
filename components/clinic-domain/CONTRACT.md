@@ -1,7 +1,7 @@
 # The clinic API — the interface both halves build against
 
-One component serves all of it. Two parts write it: **owners-and-pets** and
-**visits**. Neither may edit this file; if it is wrong or missing something, write
+One component serves all of it. Three parts write it: **owners-and-pets**,
+**visits** and **access-and-search**. Neither may edit this file; if it is wrong or missing something, write
 `CONTRACT-REQUEST.md` — first line the subject, the rest why — and the other part
 will answer at the next generation.
 
@@ -39,7 +39,29 @@ DELETE /api/visits/{id}                                      204 | 404
   Touching at the boundary is not an overlap — 09:00+30 and 09:30+30 both fit.
 - A deleted visit frees its slot.
 
-## Shared by both
+## Staff access and pet search — owned by the `access-and-search` part
+
+```
+POST   /api/staff            {email, password}     201 {id, email} | 400 | 409
+POST   /api/staff/login      {email, password}     200 {token} | 401
+GET    /api/pets/search?q=   Bearer <token>        200 {pets:[{id, name, species, owner_id}]}
+```
+
+- Registering an email that already has an account is **409** `{"error":"taken"}`.
+  A password under 8 characters is **400**.
+- Wrong password, or an unknown email, is **401** `{"error":"unauthorized"}` — the
+  same answer for both, so the endpoint does not say which emails exist.
+- `GET /api/pets/search` without a valid bearer token is **401**. With one, it
+  matches `q` against a pet's name and species, ranked, best first; `q` empty is
+  a **400**.
+
+**These three capabilities are already in the component's world and are bound at
+compose time — use them.** `auth:identity/accounts` for register/login,
+`auth:identity/session` for the token, `search:index/index` for the ranking. The
+gate checks that the composed component imports all three, so hand-rolled password
+hashing or a linear scan over pets fails even if the responses look right.
+
+## Shared by all
 
 - Unknown route → **404** `{"error":"not_found"}`.
 - Malformed JSON → **400** `{"error":"invalid"}`.

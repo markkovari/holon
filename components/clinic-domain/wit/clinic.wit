@@ -6,8 +6,11 @@
 // halves that must agree about a shape neither owns, and behaviour a compiler
 // cannot check (a double-booking is a 409, not a type error).
 //
-// Imports are deliberately few: the storage and the ids. Everything the loop has
-// to get right is in the domain rather than in the plumbing.
+// Imports are deliberately few: the storage and the ids for the domain halves, and
+// — for the third part — two capabilities that already exist in this repository.
+// Staff accounts and full-text search are solved problems here; a part that
+// REIMPLEMENTS them is doing the wrong work, and the gate is written so that the
+// only cheap way to pass is to call them.
 package clinic:domain@0.1.0;
 
 world clinic-domain {
@@ -17,4 +20,12 @@ world clinic-domain {
     import records:store/store@0.1.0;
     /// Their ids.
     import id:generate/generator@0.1.0;
+
+    /// Staff accounts and their sessions — the `auth-guard` component satisfies
+    /// all three at compose time. Do not hash a password by hand.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/types@0.1.0;
+    /// Ranked full-text search over pets — `search-index` satisfies it.
+    import search:index/index@0.1.0;
 }

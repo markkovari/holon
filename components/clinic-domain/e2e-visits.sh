@@ -25,24 +25,29 @@ HOST="${COMP_HOST:-}"
 # is printed, because then it is the answer.
 BUILD_LOG="$(mktemp -t clinic-build-XXXX)"
 cargo component build --target wasm32-wasip2 --manifest-path "$MANIFEST" \
-  -p clinic-domain -p record-store -p id-generate >"$BUILD_LOG" 2>&1 || {
+  -p clinic-domain -p record-store -p id-generate -p auth-guard -p rate-limiter -p audit-log -p search-index >"$BUILD_LOG" 2>&1 || {
   echo "the halves do not compile:"; tail -25 "$BUILD_LOG"; rm -f "$BUILD_LOG"; exit 1; }
 rm -f "$BUILD_LOG"
 
+
+LOG="$(mktemp -t clinic-log-XXXX)"
+PORT=$(( 20000 + RANDOM % 20000 ))
+cleanup() { [ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; rm -f "$LOG"; }
+trap cleanup EXIT
+
+# The plug chain is derived from `wit/clinic.wit`, not written here: a part that
+# reaches for a capability the world already carries would otherwise fail this gate
+# for a reason that has nothing to do with its code.
+# cargo-component writes to wasip1 or wasip2 depending on version; the freshly
+# built artifact is the one this gate must judge, so it is found and handed to
+# `bin/compose` rather than left to the search order.
 for d in wasm32-wasip2 wasm32-wasip1; do
   [ -f "$T/$d/debug/clinic_domain.wasm" ] && OUT="$T/$d/debug" && break
 done
 [ -n "${OUT:-}" ] || { echo "nothing built under $T"; exit 1; }
-
-COMPOSED="$(mktemp -t clinic-XXXX).wasm"
-LOG="$(mktemp -t clinic-log-XXXX)"
-PORT=$(( 20000 + RANDOM % 20000 ))
-cleanup() { [ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; rm -f "$COMPOSED" "$LOG"; }
-trap cleanup EXIT
-
-wac plug "$OUT/clinic_domain.wasm" \
-  --plug "$OUT/record_store.wasm" --plug "$OUT/id_generate.wasm" \
-  -o "$COMPOSED" 2>"$LOG" || { echo "the halves do not compose: $(tail -2 "$LOG")"; exit 1; }
+COMPOSED="$(PLUGS_DIR="$OUT" bash bin/compose clinic-domain 2>&1)" || {
+  echo "the halves do not compose: $COMPOSED"; exit 1; }
+[ -f "$COMPOSED" ] || { echo "the halves do not compose: $COMPOSED"; exit 1; }
 
 "$HOST" --app clinic --config default-tenant=clinic \
   --component "$COMPOSED" --addr "127.0.0.1:$PORT" >"$LOG" 2>&1 &
