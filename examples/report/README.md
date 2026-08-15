@@ -1,6 +1,6 @@
 # report — batch CSV import/report (e2e)
 
-The [REPORT.md](../../REPORT.md) showcase as one composed wasm HTTP component on
+The [docs/apps/REPORT.md](../../REPORT.md) showcase as one composed wasm HTTP component on
 the native Rust host, plus a browser SPA. The batch-ingest axis: parse a CSV,
 validate every row against a typed field-rule set, store the clean ones, and
 round-trip the set back out to CSV.

@@ -5,7 +5,7 @@ turn-taking**. Scalar fields (the title) are **CRDT registers**; the **body is
 an RGA text sequence** so two people typing in the *same* paragraph
 **interleave** instead of one clobbering the other. Every edit is merged
 server-side and **streamed to every open editor over SSE**. It's the payoff of
-the `crdt` primitive ([CRDT.md](CRDT.md)): where that showcase proved
+the `crdt` primitive ([CRDT.md](../capabilities/CRDT.md)): where that showcase proved
 convergence in the abstract, scribe puts two real browsers on one document and
 they converge live.
 

@@ -1,11 +1,11 @@
-# transit — public-transport ticketing (TRANSIT.md)
+# transit — public-transport ticketing (docs/apps/TRANSIT.md)
 
 A **rider** buys a fare (single / 60-min / 90-min / monthly) and gets a **QR**
 (rendered by `qr:encode`); a **validator** scans it with the device **camera**
 (the browser's native `BarcodeDetector`) and the system decides ACCEPT / REJECT.
 A **single** ticket is consumed by one scan — enforced under concurrency by
 `records:store`'s revision CAS (exactly one of N racing scans wins). See
-[TRANSIT.md](../../TRANSIT.md).
+[docs/apps/TRANSIT.md](../../TRANSIT.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

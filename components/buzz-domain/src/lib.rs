@@ -1,4 +1,4 @@
-//! `buzz-domain` — a live multiplayer quiz game (BUZZ.md) as ONE composed wasm
+//! `buzz-domain` — a live multiplayer quiz game (docs/apps/BUZZ.md) as ONE composed wasm
 //! HTTP component. Exports `wasi:http`; imports only WIT contracts: the composed
 //! auth-guard (`auth:identity`) for the host, `records:store` for game state,
 //! `wasi:random` for the PIN, and the wall clock for timing + speed-weighted

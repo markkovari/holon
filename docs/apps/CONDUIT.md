@@ -152,7 +152,7 @@ timestamps) is stated, not hidden.
    `just conformance-conduit` (Hurl → the composed app on the native Rust host).
    *(Upstream retired the Postman/newman suite for Hurl + Bruno; we track Hurl.)*
 5. **Bench** — ✅ done: app-path HTTP bench (`bench/conduit-bench.sh`, memory vs
-   NATS KV) → [`bench/CONDUIT-BENCH.md`](bench/CONDUIT-BENCH.md) (round 13).
+   NATS KV) → [`bench/CONDUIT-BENCH.md`](../../bench/CONDUIT-BENCH.md) (round 13).
 
 ## Known conformance caveats (flagged, not hidden)
 

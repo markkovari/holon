@@ -107,9 +107,9 @@ capabilities into contracts.
    at a time; the saga **survives a host kill and resumes** on NATS
    (`just durable-saga` → PASS).
 4. ✅ **Bench** — app-path round, memory vs NATS: the first bench of a *stateful
-   workflow* path. See [`bench/SAGA-BENCH.md`](bench/SAGA-BENCH.md).
+   workflow* path. See [`bench/SAGA-BENCH.md`](../../bench/SAGA-BENCH.md).
 5. ✅ **Golem-backed legs** — a leg is booked by invoking a real durable
-   [Golem](GOLEM.md) worker over `wasi:http/outgoing-handler` (the same worker the
+   [Golem](../capabilities/GOLEM.md) worker over `wasi:http/outgoing-handler` (the same worker the
    `golem-workflow` provider bridges to). Send a trip with `golemUrl` + `golemHost`
    and each leg becomes a crash-proof workflow while the saga still owns
    compensation. Live proof: `just saga-golem` → the saga commits with

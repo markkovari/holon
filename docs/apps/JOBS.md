@@ -56,7 +56,7 @@ The in-process backend only implements the blocking `trigger` (a synchronous
 decision from workflow-id + payload); `start`/`status` return `unavailable` —
 async, crash-recovering runs are the Golem backend's domain. To get those, the
 same `durable:workflow` import is satisfied by the **`golem-workflow` provider**
-([`providers/golem-workflow`](providers/golem-workflow), see [GOLEM.md](GOLEM.md))
+([`providers/golem-workflow`](providers/golem-workflow), see [GOLEM.md](../capabilities/GOLEM.md))
 running on a **classic wasmCloud host** over wRPC on the lattice. The queue
 component is byte-for-byte unchanged — that's the point of the seam.
 

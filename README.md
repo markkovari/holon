@@ -70,6 +70,7 @@ pointed at itself. (The original capability-library README is kept at
 | | |
 |---|---|
 | what runs today, measured, and honestly missing | [`docs/CURRENT.md`](docs/CURRENT.md) |
+| the thirty-two showcase apps, one file each | [`docs/apps/`](docs/apps/README.md) |
 | how a run succeeds, and every way it fails | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) |
 | the reasoning — 77 decisions in force, 8 superseded and kept | [`docs/adr/`](docs/adr/) |
 | the worklist — goals a person has written | [`.comp/goals/`](.comp/goals/) |

@@ -1,6 +1,6 @@
 # studio — the composition studio (e2e + xyflow SPA)
 
-See **[STUDIO.md](../../STUDIO.md)** for what this is and why.
+See **[docs/apps/STUDIO.md](../../STUDIO.md)** for what this is and why.
 
 ```
 tests/studio.rs   the e2e — reflect, refuse, plan, emit, compose, then RUN the

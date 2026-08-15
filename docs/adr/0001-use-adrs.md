@@ -6,7 +6,7 @@
 
 ## Context
 
-Everything in this repo so far has been decided in prose: `PLATFORM.md` holds a
+Everything in this repo so far has been decided in prose: `docs/PLATFORM.md` holds a
 five-phase plan, `ROADMAP.md` holds tiers, and each app's `*.md` argues its own
 design. That works for one author on one machine, and it has already failed twice
 in ways worth naming:
@@ -51,9 +51,9 @@ Rules that keep them useful rather than ceremonial:
    context.
 4. **Record rejected alternatives with their reason**, not a list of names. The
    reason is what stops the option being re-proposed.
-5. **ADRs decide; design docs describe.** `PLATFORM.md` stays the narrative plan
+5. **ADRs decide; design docs describe.** `docs/PLATFORM.md` stays the narrative plan
    and the phase order; ADRs own the forks inside it. Where they disagree, the
-   ADR wins and `PLATFORM.md` gets updated.
+   ADR wins and `docs/PLATFORM.md` gets updated.
 
 An ADR may be written *before* the code (to settle a fork) or *after* (to record
 one that got settled by discovery). Both are legitimate; the date says which.
@@ -62,7 +62,7 @@ one that got settled by discovery). Both are legitimate; the date says which.
 
 - A new fork in the platform work means a new file, and the PR that implements it
   links the ADR. Cheap.
-- `PLATFORM.md`'s "Isolation model (the core design decision)" section becomes a
+- `docs/PLATFORM.md`'s "Isolation model (the core design decision)" section becomes a
   summary of ADR-0002/0008 rather than the authority.
 - We now have somewhere to record the constraints that keep biting: no CAS in
   `wasi:keyvalue`, one environment per v2 host, wasmtime's ~30 nested-instance

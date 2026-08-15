@@ -1,4 +1,4 @@
-//! E2E for the jobs queue (JOBS.md) as ONE composed wasm HTTP component
+//! E2E for the jobs queue (docs/apps/JOBS.md) as ONE composed wasm HTTP component
 //! (jobs-domain + outbox + inproc-workflow + cron + idempotency + records) on the
 //! native Rust host. Proves the durable-job lifecycle over HTTP: a job runs to
 //! `done`, a flaky job retries with backoff then succeeds, a `boom` job

@@ -1,4 +1,4 @@
-//! `booked-domain` — a Calendly-lite booking service (BOOKED.md) as ONE composed
+//! `booked-domain` — a Calendly-lite booking service (docs/apps/BOOKED.md) as ONE composed
 //! wasm HTTP component. Exports `wasi:http`; imports only WIT contracts: the
 //! composed auth-guard (`auth:identity`), `records:store`, `lock:mutex` (the
 //! no-double-book guarantee), `email:template` (confirmation), `ical:codec`

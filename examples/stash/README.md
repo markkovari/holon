@@ -1,9 +1,9 @@
-# stash — a note stash you export as a .zip (STASH.md)
+# stash — a note stash you export as a .zip (docs/apps/STASH.md)
 
 Keep short Markdown notes; **`GET /api/export.zip`** bundles them all into a real
 ZIP — one `notes/<title>.md` per note, an `index.csv` (via `csv:codec`), and a
 `manifest.json` — assembled by the **`zip:archive`** component. No zip library in
-the app. See [STASH.md](../../STASH.md).
+the app. See [docs/apps/STASH.md](../../STASH.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

@@ -1,6 +1,6 @@
 # bin — a paste/gist bin (e2e)
 
-The [PASTE.md](../../PASTE.md) showcase as one composed wasm HTTP component on
+The [docs/apps/PASTE.md](../../PASTE.md) showcase as one composed wasm HTTP component on
 the native Rust host, plus a browser SPA. The pure-compute axis: the app is a
 fold over four stateless transform contracts (validate → redact → render →
 slug), with exactly one stateful step (the record store).

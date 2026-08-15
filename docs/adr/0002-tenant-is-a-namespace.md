@@ -18,7 +18,7 @@ The platform must give each tenant somewhere to put deployments, and the choice
 of k8s object granularity decides what isolation we get for free versus what we
 have to build.
 
-`PLATFORM.md` already decided the *compute* side: shared hostgroups, tenants
+`docs/PLATFORM.md` already decided the *compute* side: shared hostgroups, tenants
 coexisting in one lattice, because per-tenant hostgroups is the cost model we're
 avoiding. That decision is about where components *execute*. It says nothing
 about how the k8s objects that describe them are grouped, and the two are
@@ -83,7 +83,7 @@ tenant's namespace so that it dies with it.
   rest entirely on the platform stamping every field correctly, with nothing
   underneath it. A single missed `allowedHosts` or bucket prefix becomes a
   cross-tenant breach with no second line of defence, and the adversarial exit
-  test in `PLATFORM.md` phase 2 is the product — it should be passing against
+  test in `docs/PLATFORM.md` phase 2 is the product — it should be passing against
   cluster mechanisms, not against our own diligence.
 - **A namespace per deployment.** Rejected for now: the blast radius is nicer,
   but it multiplies the per-namespace plumbing cost by deployments rather than

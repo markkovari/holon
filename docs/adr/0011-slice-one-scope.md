@@ -61,8 +61,8 @@ Explicitly **out** of slice 1, each with the reason:
 - **`public` visibility** (ADR-0007). Requires signing; `private` + `org` ship
   first.
 - **Tenant secrets** (ADR-0010). Requires proving `secretFrom` on a real workload.
-- **The docker lane.** `PLATFORM.md` phase 4.
-- **Metering and billing.** `PLATFORM.md` phase 3; usage events can be emitted
+- **The docker lane.** `docs/PLATFORM.md` phase 4.
+- **Metering and billing.** `docs/PLATFORM.md` phase 3; usage events can be emitted
   early but nothing aggregates them.
 - **Custom domains, ACME, ingress.** Slice 1 routes by the operator's `Host` header
   on `:9191` with a platform-owned wildcard, as eshop does.
@@ -98,6 +98,6 @@ roll.** Done twice, once per strategy.
 - **One strategy first, the other later.** Rejected by explicit product choice — the
   strategy choice is the differentiating feature, so it is in the first slice even
   though it doubles the render/debug surface.
-- **CLI first, UI later** (`PLATFORM.md` phase 1's `plat deploy`). Rejected: the
+- **CLI first, UI later** (`docs/PLATFORM.md` phase 1's `plat deploy`). Rejected: the
   canvas already exists and is the thing that makes the strategy choice legible. A
   CLI remains a good later addition over the same API.

@@ -2,35 +2,35 @@
 
 > **Correction (2026-08): the bet below was falsified on wasmCloud and has since
 > been won.** Owning the host moved isolation into the linker
-> ([ADR-0023](docs/adr/0023-isolation-is-a-linker-boundary.md)), so a guest string is
+> ([ADR-0023](adr/0023-isolation-is-a-linker-boundary.md)), so a guest string is
 > a key into host-side state rather than a bucket selector — the exact failure
 > ADR-0012 measured. Multi-tenant density is back and measured
-> ([ADR-0033](docs/adr/0033-two-orgs-under-load.md),
-> [ADR-0034](docs/adr/0034-two-machines-one-fleet.md)). The retreat described below —
+> ([ADR-0033](adr/0033-two-orgs-under-load.md),
+> [ADR-0034](adr/0034-two-machines-one-fleet.md)). The retreat described below —
 > one host per application — is no longer what runs. Read
-> [`docs/CURRENT.md`](docs/CURRENT.md) for the platform as it stands; this document
+> [`docs/CURRENT.md`](CURRENT.md) for the platform as it stands; this document
 > is kept for the reasoning, not the conclusions.
 >
-> **Read [`docs/WHY.md`](docs/WHY.md) for the argument.**
+> **Read [`docs/WHY.md`](WHY.md) for the argument.**
 >
 > The isolation model below rests on shared hostgroups with per-tenant keyvalue
 > buckets — "the density economics". That does not work: the bucket is chosen by the
 > guest, not by manifest config, and two tenants were measured reading each other's
-> records ([ADR-0012](docs/adr/0012-keyvalue-isolation-needs-a-cooperative-component.md)).
+> records ([ADR-0012](adr/0012-keyvalue-isolation-needs-a-cooperative-component.md)).
 > Each application now owns a host with a private data bus
-> ([ADR-0014](docs/adr/0014-an-application-owns-a-host.md)), which costs the
+> ([ADR-0014](adr/0014-an-application-owns-a-host.md)), which costs the
 > multi-tenant density this plan was priced on.
 >
 > What survives, measured: **2.3 Mi per extra component inside a host against 70 Mi
 > for a component in its own pod, and 1.2 ms saved per network hop avoided**
-> ([ADR-0019](docs/adr/0019-the-density-number.md)). So the value is decomposing one
+> ([ADR-0019](adr/0019-the-density-number.md)). So the value is decomposing one
 > app into many components — not packing many tenants onto one host. A
 > single-component app should be a container.
 >
 > The forks in this plan are decided in [`docs/adr/`](docs/adr/); the ADRs win where
 > they disagree, and several sections below (isolation model, phase 2's density
 > assumption, the `buckets:` allow-list) are superseded rather than pending. The
-> [index](docs/adr/README.md) has the current state and the open risks.
+> [index](adr/README.md) has the current state and the open risks.
 
 The product: an open service where tenants deploy **signed wasm components**
 (and, secondarily, plain docker images) onto a shared wasmCloud v2 lattice on

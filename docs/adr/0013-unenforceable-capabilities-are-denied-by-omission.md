@@ -91,7 +91,7 @@ grantable one and restore the density bet.
   it. If this ever becomes a per-tenant field rather than a platform-wide config, it
   must be coupled to the environment assignment so the two cannot disagree.
 - Density is now a per-app property rather than a platform-wide bet. That is a worse
-  business position than PLATFORM.md assumed and a better one than ADR-0012 left us
+  business position than docs/PLATFORM.md assumed and a better one than ADR-0012 left us
   with, because it ships a real second tenant instead of waiting.
 - The denial is a *default*, and defaults drift. The grantable list lives in one
   `const` in `render.rs` mirrored by one in `lib.rs`, both with tests. Adding an

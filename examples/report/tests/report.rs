@@ -1,4 +1,4 @@
-//! E2E for the CSV import/report tool (REPORT.md) as ONE composed wasm HTTP
+//! E2E for the CSV import/report tool (docs/apps/REPORT.md) as ONE composed wasm HTTP
 //! component on the native Rust host. The batch-ingest axis: import a CSV with a
 //! mix of valid + invalid rows and prove typed validation splits them with
 //! per-field errors, page the clean set through the opaque cursor, and export

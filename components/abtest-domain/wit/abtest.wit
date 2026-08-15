@@ -3,7 +3,7 @@
 // The axis flags implies but can't reach: named weighted variants + outcome
 // measurement. Assign a subject to a variant via experiment:assign (sticky,
 // weighted), record exposures/conversions via metrics:collect, and stream the
-// per-variant conversion rate live over SSE. See EXPERIMENT.md.
+// per-variant conversion rate live over SSE. See docs/apps/EXPERIMENT.md.
 //
 // Routes:
 //   POST /api/experiments/{name}  {tenant, variants:[{name,weight}]}  define

@@ -1,6 +1,6 @@
 # jco-helpdesk — the helpdesk SaaS domain as ONE wasm HTTP component
 
-Rung 1 of [HELPDESK.md](../../HELPDESK.md): the core ticket loop of a
+Rung 1 of [docs/apps/HELPDESK.md](../../HELPDESK.md): the core ticket loop of a
 multi-tenant support SaaS, built as the **`helpdesk:app`** Rust component and
 composed with every capability it needs into a single self-contained `.wasm`
 that exports `wasi:http/incoming-handler`.
@@ -82,5 +82,5 @@ GET  /api/tickets/{id}/history       the FSM audit trail
 ## Scope
 
 Rung 1 only: no event-bus fan-out, notifications, SLA timers, search,
-quotas, or billing yet — those are rungs 3–6 in HELPDESK.md and compose in
+quotas, or billing yet — those are rungs 3–6 in docs/apps/HELPDESK.md and compose in
 the same way (`wac plug` more capabilities, zero host changes).

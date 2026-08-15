@@ -1,8 +1,8 @@
-# arena — multiplayer Connect Four (ARENA.md)
+# arena — multiplayer Connect Four (docs/apps/ARENA.md)
 
 Two players share one board; the server is the referee — every move validated,
 win/draw detected, the live board streamed to both players and spectators over
-SSE. See [ARENA.md](../../ARENA.md) for the write-up.
+SSE. See [docs/apps/ARENA.md](../../ARENA.md) for the write-up.
 
 A composed HTTP app on the native Rust host, so this directory holds the board
 SPA + a Rust e2e (not a jco harness).

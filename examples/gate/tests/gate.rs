@@ -1,4 +1,4 @@
-//! E2E for the gate traffic-shaping gateway (GATE.md) as ONE composed wasm HTTP
+//! E2E for the gate traffic-shaping gateway (docs/apps/GATE.md) as ONE composed wasm HTTP
 //! component (gate-domain + records + shaper) on the native Rust host. Proves the
 //! three durable-worker patterns: a token bucket admits `capacity` then 429s then
 //! refills; GCRA admits a burst then spaces with an exact retry-after; a batch

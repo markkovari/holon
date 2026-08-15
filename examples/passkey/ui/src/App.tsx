@@ -171,7 +171,7 @@ export default function App() {
         the ES256 or RS256 signature, and the counter that catches a cloned authenticator — is the{" "}
         <code>webauthn:verify</code> component. This app only decides who owns which credential.
         The RP ID and origin come from config, never from the request: a client-supplied origin would
-        make the origin check verify nothing. See <code>PASSKEY.md</code>.
+        make the origin check verify nothing. See <code>docs/apps/PASSKEY.md</code>.
       </footer>
     </div>
   );

@@ -211,7 +211,7 @@ export default function App() {
         component; the circuit itself is a per-key record in <code>records:store</code> under a revision
         compare-and-set, so concurrent callers converge on one circuit. The upstream hop is a real
         outgoing HTTP request through <code>proxy:route</code> — which is why a tripped breaker is
-        observable as a request that never happened. See <code>MESH.md</code>.
+        observable as a request that never happened. See <code>docs/apps/MESH.md</code>.
       </footer>
     </div>
   );

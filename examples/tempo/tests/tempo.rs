@@ -1,4 +1,4 @@
-//! E2E for the tempo worktime logger (TEMPO.md) as ONE composed wasm HTTP
+//! E2E for the tempo worktime logger (docs/apps/TEMPO.md) as ONE composed wasm HTTP
 //! component (tempo-domain + auth-guard + records + pdf) on the native Rust host.
 //! Proves the capability model: admin creates projects/categories + assigns
 //! per-project membership; a user logs only against projects they belong to; a

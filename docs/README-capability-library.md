@@ -123,7 +123,7 @@ Bigger apps, each one HTTP component that imports only contracts — the domain 
 composition, not a bespoke crate. Each has a design doc mapping the app to the
 catalog and a bench round:
 
-- **[TRACK.md](TRACK.md)** — a **Linear-lite project tracker**, the *complex*
+- **[docs/apps/TRACK.md](apps/TRACK.md)** — a **Linear-lite project tracker**, the *complex*
   showcase: **five axes in one component over ~15 contracts** — auth+RBAC (admin
   creates projects, per-project **membership ABAC** via `policy:guard`), an issue
   board on `fsm:workflow`, full-text `search`, a live **SSE activity feed**, a
@@ -131,90 +131,90 @@ catalog and a bench round:
   (`ai:inference`, mock LLM swappable for `openai-provider`) — with a **Vite+TS
   SPA baked into the wasm** (`just host-track`). The widest single-component
   composition in the repo. ([demo](docs/media/track.gif))
-- **[CRDT.md](CRDT.md)** — **conflict-free convergence**: a `crdt:merge`
+- **[docs/capabilities/CRDT.md](capabilities/CRDT.md)** — **conflict-free convergence**: a `crdt:merge`
   component (LWW-register / PN-counter / OR-set / LWW-map) where replicas edit
   **offline with no lock** and still converge — `merge` is commutative +
   associative + idempotent, property-tested in Rust *and* jco. The primitive the
   collaborative editor is built on. ([demo](docs/media/crdt.gif))
-- **[SCRIBE.md](SCRIBE.md)** — a **collaborative document editor**: two browsers
+- **[docs/apps/SCRIBE.md](apps/SCRIBE.md)** — a **collaborative document editor**: two browsers
   edit one doc at once with **no lock** — each field is a `crdt:merge` register,
   merged server-side and **streamed live to every editor over SSE**. Composes
   the convergence class (`crdt`) with realtime push (`pulse`'s SSE); different
   fields both survive, same-field resolves by LWW, out-of-order edits don't
   clobber. ([demo](docs/media/scribe.gif))
-- **[JOBS.md](JOBS.md)** — a **durable background-job queue** (Sidekiq/Temporal-lite):
+- **[docs/apps/JOBS.md](apps/JOBS.md)** — a **durable background-job queue** (Sidekiq/Temporal-lite):
   enqueue → run → **retry with backoff → dead-letter → replay**, plus delayed +
   cron jobs and exactly-once enqueue. Composes `outbox` (durable queue) +
   `cron:expr` + `idempotency` + `records`, and runs each job through the
   **`durable:workflow`** seam — in-process by default, **Golem-provider
   swappable** for crash-resumable execution. Live self-ticking SSE board.
   ([demo](docs/media/jobs.gif))
-- **[ARENA.md](ARENA.md)** — a **multiplayer game** (Connect Four): the
+- **[docs/apps/ARENA.md](apps/ARENA.md)** — a **multiplayer game** (Connect Four): the
   *authoritative, rule-enforced interactive state* class. Two players share one
   board, every move validated server-side (turn / seat / legal / live), win
   detection, and the live board streamed to both players **and spectators** over
   SSE; racing moves resolve by revision check. Composes `records` + `id` + the
   SSE loop. ([demo](docs/media/arena.gif))
-- **[TEMPO.md](TEMPO.md)** — a **multi-person worktime logger**: log time by
+- **[docs/apps/TEMPO.md](apps/TEMPO.md)** — a **multi-person worktime logger**: log time by
   project + category (or a live **pomodoro timer**), and see your contribution
   over week/month/year/custom ranges by project and category — managers see the
   whole team's distribution (by project + person). RBAC-scoped **reporting/charts**
   over `auth-guard` (accounts + roles) + `records`; exports the range to **PDF**
   via `pdf:codec`. ([demo](docs/media/tempo.gif))
-- **[BOOKED.md](BOOKED.md)** — a **Calendly-lite booking service**: an owner
+- **[docs/apps/BOOKED.md](apps/BOOKED.md)** — a **Calendly-lite booking service**: an owner
   publishes resources + weekly availability, anyone books a free slot and
   **can't double-book** — a `lock:mutex` lease guards the check-then-write, so
   racing bookers get a `409` (an e2e fires 8 concurrent bookings; exactly one
   wins). Recurring bookings via `rrule:recur`, `.ics` export via `ical:codec`,
   confirmation via `email-render`. ([demo](docs/media/booked.gif))
-- **[TRANSIT.md](TRANSIT.md)** — **public-transport ticketing**: a **rider** buys
+- **[docs/apps/TRANSIT.md](apps/TRANSIT.md)** — **public-transport ticketing**: a **rider** buys
   a fare (single / duration / monthly) and gets a **QR** (`qr:encode`); a
   **validator** scans it with the device **camera** (native `BarcodeDetector`)
   for a big **ACCEPT/REJECT**. A **single** ticket is consumed by one scan — the
   *optimistic* concurrency counterpart to booked: `records:store` revision CAS
   makes exactly one of 8 racing scans win. ([demo](docs/media/transit.gif))
-- **[DASHBOARDS.md](DASHBOARDS.md)** — **metric dashboards** whose **charts are
+- **[docs/apps/DASHBOARDS.md](apps/DASHBOARDS.md)** — **metric dashboards** whose **charts are
   rendered to SVG on the server** by a new **`svg:chart`** component (bar / line /
   donut / sparkline) — the frontend ships **no charting library** (its bundle is
   ~60% smaller than tempo's). Panels over `auth-guard` + `records`, theme-aware
   via `currentColor`. ([demo](docs/media/dashboards.gif))
-- **[GATE.md](GATE.md)** — a **durable traffic-shaping gateway**: per-key **rate
+- **[docs/apps/GATE.md](apps/GATE.md)** — a **durable traffic-shaping gateway**: per-key **rate
   limiting** (token bucket), **throttling** (GCRA), and **batching** (coalesce +
   atomic flush) — the **Golem Cloud durable-worker patterns**, with the shaping
   math in a new **`shaper:limit`** component and durable per-key state over
   `records:store`. Honestly shows where a shared-store CAS over-admits and a
   single-writer worker wouldn't. ([demo](docs/media/gate.gif))
-- **[BOOKS.md](BOOKS.md)** — **double-entry bookkeeping**: a chart of accounts and
+- **[docs/apps/BOOKS.md](apps/BOOKS.md)** — **double-entry bookkeeping**: a chart of accounts and
   a journal where **every entry must balance** (debits = credits) — the invariant
   lives in a new **`ledger:doubleentry`** component, so a lopsided entry is
   rejected before it's stored. Derives a trial balance, P&L, and balance sheet
   (assets = liabilities + equity), exported to PDF via `pdf:codec`. ([demo](docs/media/books.gif))
-- **[STASH.md](STASH.md)** — a **note stash you export as a `.zip`**: `GET
+- **[docs/apps/STASH.md](apps/STASH.md)** — a **note stash you export as a `.zip`**: `GET
   /api/export.zip` bundles every note into a real ZIP (a `.md` per note +
   `index.csv` + `manifest.json`) via a new **`zip:archive`** component (STORE +
   CRC-32) — no zip library in the app. ([demo](docs/media/stash.gif))
-- **[PAYEES.md](PAYEES.md)** — a **payee book with IBAN-validated bank details**:
+- **[docs/apps/PAYEES.md](apps/PAYEES.md)** — a **payee book with IBAN-validated bank details**:
   each IBAN is checked (country length + ISO 7064 **mod-97 checksum**) by a new
   **`iban:validate`** component before it's stored, and flagged green/red **as you
   type**. ([demo](docs/media/payees.gif))
-- **[LMS.md](LMS.md)** — a **multi-role learning platform**: instructors build
+- **[docs/apps/LMS.md](apps/LMS.md)** — a **multi-role learning platform**: instructors build
   courses of lessons + multiple-choice quizzes; students enroll and take
   **auto-graded** quizzes (`quiz:grade`). Grades roll up consistently into a
   student's progress, an instructor **gradebook** (+ an `svg:chart` distribution),
   and a **certificate** (`pdf:codec`) issued on passing all. ([demo](docs/media/lms.gif))
-- **[BUZZ.md](BUZZ.md)** — a **live multiplayer quiz game** (Kahoot-style): a host
+- **[docs/apps/BUZZ.md](apps/BUZZ.md)** — a **live multiplayer quiz game** (Kahoot-style): a host
   runs a game by **PIN**, players join anonymously on their phones and buzz in;
   answers are graded **speed-weighted** (faster correct = more points) with a live
   leaderboard. Real-time by polling over `auth-guard` + `records`; a host
   big-screen + a player controller. ([demo](docs/media/buzz.gif))
-- **[MESH.md](MESH.md)** — **resilient upstream calls** in front of a
+- **[docs/apps/MESH.md](apps/MESH.md)** — **resilient upstream calls** in front of a
   deliberately **flaky upstream**: retry with backoff + jitter, a **circuit
   breaker**, and an **SLO** that counts *slow* as failed — the state machine and
   the backoff schedule in a new **`resilience:breaker`** component, the circuit
   durable per key over `records:store`. The hop is a real outgoing request
   through `proxy:route`, so the proof that an open breaker sheds load is the
   upstream's own hit counter *not moving*. ([demo](docs/media/mesh.gif))
-- **[PASSKEY.md](PASSKEY.md)** — **passwordless sign-in** with real **WebAuthn
+- **[docs/apps/PASSKEY.md](apps/PASSKEY.md)** — **passwordless sign-in** with real **WebAuthn
   passkeys**: the authenticator (Touch ID / Windows Hello / a phone) keeps the
   private key and signs a single-use challenge — the next rung after `authgate`'s
   TOTP. A new **`webauthn:verify`** component does the exacting half (CBOR + COSE
@@ -223,7 +223,7 @@ catalog and a bench round:
   only accounts, credentials and sessions. The e2e is a **virtual authenticator** —
   a real P-256 key — so every check is proven to bite, phishing origin included.
   ([demo](docs/media/passkey.gif))
-- **[STUDIO.md](STUDIO.md)** — a **composition studio** for this catalog: an
+- **[docs/apps/STUDIO.md](apps/STUDIO.md)** — a **composition studio** for this catalog: an
   **xyflow canvas** whose node ports are each component's *real* WIT interfaces,
   read out of the binary by a new **`wit:reflect`** component. A connection is
   offered only where **`wac`'s own subtype checker** says the plug fits the socket,
@@ -233,67 +233,67 @@ catalog and a bench round:
   **composes for real**: `wac-graph` runs *inside* the wasm, so Compose returns the
   same artifact `wac plug` writes — and the e2e serves it to prove it runs.
   ([demo](docs/media/studio.gif))
-- **[ESHOP.md](ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
+- **[docs/apps/ESHOP.md](apps/ESHOP.md)** — eShopOnDapr (catalog / basket / ordering / payment
   + gateway) on wasmCloud v2 + k8s. ([demo](docs/media/eshop.gif))
-- **[HELPDESK.md](HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
+- **[docs/apps/HELPDESK.md](apps/HELPDESK.md)** — a Zendesk-lite ticketing SaaS; FSM lifecycle,
   events, SLA (rung 1 shipped).
-- **[SAGA.md](SAGA.md)** — a durable **trip-booking saga** (flight → hotel → car,
+- **[docs/apps/SAGA.md](apps/SAGA.md)** — a durable **trip-booking saga** (flight → hotel → car,
   **compensate on failure**); retries a flaky leg, and **survives a host kill and
   resumes** on NATS (`just durable-saga`). The one axis the others don't show:
   compensation + durable, resumable execution. ([demo](docs/media/saga.gif))
-- **[CONDUIT.md](CONDUIT.md)** — the **RealWorld** ("Conduit") spec, **100% green
+- **[docs/apps/CONDUIT.md](apps/CONDUIT.md)** — the **RealWorld** ("Conduit") spec, **100% green
   on the official Hurl conformance suite** (`just conformance-conduit`) from one
   `conduit-domain` + `auth-guard` + `record-store` + `slug`. The strongest proof
   of the thesis: a skeptic clones the upstream suite and it passes.
   ([demo](docs/media/conduit-conformance.gif))
-- **[PIPELINE.md](PIPELINE.md)** — a reliable **event pipeline**: enqueue →
+- **[docs/apps/PIPELINE.md](apps/PIPELINE.md)** — a reliable **event pipeline**: enqueue →
   dispatch **at-least-once** → retry with backoff → **dead-letter** → **replay**,
   live on a board over SSE (`just host-pipeline`). Take the downstream sink down
   and watch events retry into the DLQ, then replay them. The reliability axis
   saga doesn't show: retry-forward, not rollback. ([demo](docs/media/pipeline.gif))
-- **[FLAGS.md](FLAGS.md)** — a live **feature-rollout console**: set a flag,
+- **[docs/apps/FLAGS.md](apps/FLAGS.md)** — a live **feature-rollout console**: set a flag,
   drag a percentage, or trip a kill-switch and every open window updates over
   SSE with each subject **sticky** (`just host-flags`). Drag to 30% and ~30 of
   100 tiles light — the same 30 every eval; the axis nothing else shows: runtime
   behavior change, no redeploy. ([demo](docs/media/flags.gif))
-- **[EXPERIMENT.md](EXPERIMENT.md)** — a live **A/B/n experiment console**:
+- **[docs/apps/EXPERIMENT.md](apps/EXPERIMENT.md)** — a live **A/B/n experiment console**:
   weighted, **sticky** named-variant assignment + conversion attribution
   (`just host-abtest`). Two subjects land in different arms; shift a weight and
   cohorts re-bucket without arm-hopping; convert and watch per-arm rates pull
   apart. Introduces two reusable contracts — `experiment:assign` (the A/B/n
   primitive flags aren't) + `metrics:collect`. ([demo](docs/media/experiment.gif))
-- **[SEARCH.md](SEARCH.md)** — **faceted search-as-you-type**: TF-IDF ranked
+- **[docs/apps/SEARCH.md](apps/SEARCH.md)** — **faceted search-as-you-type**: TF-IDF ranked
   hits narrow live, facet chips filter, a cache hit-ratio climbs on repeats
   (`just host-search`). The one **read/query** axis — everything else is
   write/stream-shaped — over `search:index` + `records` + `cache` +
   `metrics`. ([demo](docs/media/search.gif))
-- **[RATELIMIT.md](RATELIMIT.md)** — a live **throttle wall**: hammer an endpoint
+- **[docs/apps/RATELIMIT.md](apps/RATELIMIT.md)** — a live **throttle wall**: hammer an endpoint
   and watch the attempt bar hit its ceiling, the key **lock out** with a
   countdown, and a cumulative **quota** gauge drain — then recover
   (`just host-ratelimit`). The axis nothing else shows: **backpressure you can
   see**, over `ratelimit:guard` + `quota:meter`. ([demo](docs/media/ratelimit.gif))
-- **[STATUS.md](STATUS.md)** — a **status page / uptime monitor**: register a
+- **[docs/apps/STATUS.md](apps/STATUS.md)** — a **status page / uptime monitor**: register a
   monitor and it becomes a recurring **timer job** that probes its target and
   drives an up → degraded → **down** state machine (one failure degrades, a
   second takes it down, one good probe recovers), transitions fanning out on the
   bus (`just host-status`). The axis nothing else shows: **the workload
   originates from a timer, not a request** — over `sched:timer` + `fsm:workflow`
   + `event:bus` + `notify:dispatch`. ([demo](docs/media/status.gif))
-- **[AUTHGATE.md](AUTHGATE.md)** — a **TOTP 2FA** flow: enroll an account (mints a
+- **[docs/apps/AUTHGATE.md](apps/AUTHGATE.md)** — a **TOTP 2FA** flow: enroll an account (mints a
   secret **sealed in a vault** + the `otpauth://` QR), activate with a first
   correct code (revealing single-use recovery codes), then log in with a **live**
   code or burn a recovery code — minting a session (`just host-authgate`). The
   axis nothing else shows: **challenge-response auth** — prove you hold the
   secret *now*, never re-send it — over `otp:totp` + `secrets:vault` +
   `session:store`. ([demo](docs/media/authgate.gif))
-- **[PASTE.md](PASTE.md)** — a **paste / gist bin**: drop in Markdown and the app
+- **[docs/apps/PASTE.md](apps/PASTE.md)** — a **paste / gist bin**: drop in Markdown and the app
   is a **pure-compute pipeline** — the input is validated, **PII is masked before
   it's stored**, the title becomes a de-duplicated slug, and the Markdown renders
   to **safe HTML** (a raw `<script>` is escaped) on read (`just host-paste`). The
   axis nothing else leads with: a **fold over stateless transforms** with one
   stateful step — over `validate:schema` + `pii:redact` + `md:render` +
   `slug:generate` + `records`. ([demo](docs/media/paste.gif))
-- **[DROP.md](DROP.md)** — a **presigned direct-upload drop-box**: pick a file and
+- **[docs/apps/DROP.md](apps/DROP.md)** — a **presigned direct-upload drop-box**: pick a file and
   the backend answers the policy question, signs a short-lived ticket, and the
   client PUTs the bytes straight to storage — then a **signed, expiring link**
   round-trips them back (`just host-drop`). A blocked type is refused at ticket
@@ -301,24 +301,24 @@ catalog and a bench round:
   shows: **control path split from data path** — over `upload:policy` +
   `blob:store` + `webhook:sign`, the first app to exercise all three.
   ([demo](docs/media/drop.gif))
-- **[REPORT.md](REPORT.md)** — a **batch CSV import/report** tool: paste a CSV and
+- **[docs/apps/REPORT.md](apps/REPORT.md)** — a **batch CSV import/report** tool: paste a CSV and
   typed validation **splits it** into imported rows and rejected rows with
   per-field errors, page the clean set through an opaque cursor, then **export it
   back to CSV** through the same codec (`just host-report`). The axis nothing
   else shows: **a whole file in, an accept/reject split, a clean file out** —
   over `csv:codec` + `validate:schema` + `records` + `paginate`.
   ([demo](docs/media/report.gif))
-- **[REALTIME.md](REALTIME.md)** — **pulse**, a live chat room: a message streams
+- **[docs/apps/REALTIME.md](apps/REALTIME.md)** — **pulse**, a live chat room: a message streams
   to every open window over held-open **SSE** (real server-push on wasip2, no
   WebSocket) — one broadcast fans out to 150 concurrent connections. The one
   *new class*: sustained connections, not request/response. ([demo](docs/media/pulse.gif))
-- **[vet-clinic](examples/jco-vet-clinic/README.md)** — the flagship: owners /
+- **[vet-clinic](../examples/jco-vet-clinic/README.md)** — the flagship: owners /
   doctors / admin, RBAC, ~20 components, browser SPA. ([demo](docs/media/petclinic.gif))
 
 > Demo gifs live in [`docs/media/`](docs/media); regenerate them with the
 > Playwright harness in [`tools/screencast/`](tools/screencast).
 
-**Beyond apps** — [GOLEM.md](GOLEM.md): the first *capability provider* (not a
+**Beyond apps** — [docs/capabilities/GOLEM.md](capabilities/GOLEM.md): the first *capability provider* (not a
 component). A native wasmCloud↔**Golem** bridge (`providers/golem-workflow`) that
 lets a component invoke a **durable Golem worker** over a typed contract —
 **live-verified** against a real Golem 1.5 server (`just golem-e2e`).
@@ -602,7 +602,7 @@ login returns 429.
 
 ## Using it
 
-See **[USAGE.md](USAGE.md)** — the consumer guide: the one `authorize` call,
+See **[docs/capabilities/USAGE.md](capabilities/USAGE.md)** — the consumer guide: the one `authorize` call,
 how token claims map to a `principal`, permissions/RBAC, token formats, all
 config keys, and the error→HTTP table. Per-symbol reference lives in the doc
 comments in `wit/auth.wit`.

@@ -82,7 +82,7 @@ FSM history correct → second order cancelled inside the grace window.
 
 ## Bench + DX evaluation
 
-See [bench/ESHOP-BENCH.md](bench/ESHOP-BENCH.md): 18.6k rps SPA / 2.9k rps
+See [bench/ESHOP-BENCH.md](../../bench/ESHOP-BENCH.md): 18.6k rps SPA / 2.9k rps
 catalog / 184 rps login (argon2) on one hostgroup pod, ~23% gateway-proxy tax,
 choreography drain ≈1.8 orders/s per pump driver — plus the honest list of
 what the component library covered (everything below the domain layer) and

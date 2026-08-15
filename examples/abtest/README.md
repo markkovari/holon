@@ -1,6 +1,6 @@
 # abtest — live A/B/n experiments
 
-A console for the **experiment** capability (see [`EXPERIMENT.md`](../../EXPERIMENT.md)):
+A console for the **experiment** capability (see [`docs/apps/EXPERIMENT.md`](../../EXPERIMENT.md)):
 define named variants with weights, watch 100 subjects split into arms
 **stickily**, fire conversions, and see the **per-arm conversion rate** update
 live over **SSE**.

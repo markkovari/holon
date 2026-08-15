@@ -6,7 +6,7 @@
 // job (claim + retry + DLQ over the outbox); this component just decides
 // success/failure from the workflow id + payload. Swap it for the golem-workflow
 // provider (via `wac`/lattice) and jobs get crash-resumable durable execution
-// with no change to the queue. See JOBS.md + GOLEM.md.
+// with no change to the queue. See docs/apps/JOBS.md + docs/capabilities/GOLEM.md.
 //
 // Only the blocking `trigger` is real here; `start`/`status` (async, for
 // long/crash-recovering runs) return `unavailable` — that's the Golem backend's

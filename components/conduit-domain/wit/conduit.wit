@@ -1,6 +1,6 @@
 // conduit:app — the RealWorld ("Conduit") spec as a WIT HTTP component.
 //
-// Rung 1 of CONDUIT.md: Users & Profiles. Register/login mint a JWT via the
+// Rung 1 of docs/apps/CONDUIT.md: Users & Profiles. Register/login mint a JWT via the
 // composed auth-guard; the current user reads/edits their profile; users follow
 // and unfollow each other. Everything is composition — the only bespoke code is
 // this component's HTTP-to-contract routing.

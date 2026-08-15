@@ -1,6 +1,6 @@
 # mesh — resilience playground (e2e + flaky upstream + SPA)
 
-See **[MESH.md](../../MESH.md)** for what this is and why, and
+See **[docs/apps/MESH.md](../../MESH.md)** for what this is and why, and
 `tools/screencast/mesh.mjs` for the recorder behind its gif.
 
 ```

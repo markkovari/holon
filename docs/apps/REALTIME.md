@@ -60,7 +60,7 @@ a TTL record, not `session-store`, to stay dependency-light.
 3. ✅ **Presence + browser UI** — heartbeat presence + a chat SPA (served via
    `--static-dir`, native `EventSource`); `just host-pulse`, open two windows.
 4. ✅ **Bench** — the new dimension: **one broadcast → 150/150 concurrent
-   held-open SSE connections**. See [`bench/PULSE-BENCH.md`](bench/PULSE-BENCH.md).
+   held-open SSE connections**. See [`bench/PULSE-BENCH.md`](../../bench/PULSE-BENCH.md).
 
 All routes are under `/api/…` so the host's static-dir SPA fallback (index.html
 for unknown GETs) doesn't shadow `GET /api/rooms/{room}/events`.

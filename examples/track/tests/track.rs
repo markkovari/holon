@@ -1,4 +1,4 @@
-//! E2E for the project tracker (TRACK.md) as ONE composed wasm HTTP component
+//! E2E for the project tracker (docs/apps/TRACK.md) as ONE composed wasm HTTP component
 //! on the native Rust host — the biggest composition in the repo (~14 contracts).
 //! Drives all five axes: auth + RBAC (admin creates a project, a member writes,
 //! a non-member is 403), the issue lifecycle over the fsm, full-text search, a

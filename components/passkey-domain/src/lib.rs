@@ -1,4 +1,4 @@
-//! `passkey-domain` — passwordless sign-in (PASSKEY.md) as ONE composed wasm HTTP
+//! `passkey-domain` — passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP
 //! component. Exports `wasi:http`; imports only WIT contracts: `webauthn:verify`
 //! (the ceremony verification), `records:store` (accounts + credentials),
 //! `cache:store` (single-use challenges with a TTL), `session:store` (the session

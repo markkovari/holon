@@ -1,9 +1,9 @@
-# dashboards — server-rendered chart panels (DASHBOARDS.md)
+# dashboards — server-rendered chart panels (docs/apps/DASHBOARDS.md)
 
 Build dashboards out of **panels** (a title, a chart kind, a data series). The
 charts are rendered to **SVG on the server** by the **`svg:chart`** component, so
 the frontend ships **no charting library** — it fetches `chart.svg` and drops it
-in the page. See [DASHBOARDS.md](../../DASHBOARDS.md).
+in the page. See [docs/apps/DASHBOARDS.md](../../DASHBOARDS.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

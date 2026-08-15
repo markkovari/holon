@@ -267,7 +267,7 @@ compose-vet: compose
       -o {{vet_composed}}
     @echo "composed vet-domain (+ auth-guard + records + validate + search + ui) -> {{vet_composed}}"
 
-# Compose helpdesk-domain (HELPDESK.md rung 1) with every capability it
+# Compose helpdesk-domain (docs/apps/HELPDESK.md rung 1) with every capability it
 # imports: the composed auth-guard (auth:identity), records:store,
 # fsm:workflow, id:generate, md:render. Remaining imports are generic WASI.
 compose-helpdesk: compose
@@ -280,7 +280,7 @@ compose-helpdesk: compose
       -o {{helpdesk_composed}}
     @echo "composed helpdesk-domain (+ auth-guard + records + fsm + ids + md) -> {{helpdesk_composed}}"
 
-# Compose conduit-domain (CONDUIT.md rung 1 — the RealWorld spec) with the
+# Compose conduit-domain (docs/apps/CONDUIT.md rung 1 — the RealWorld spec) with the
 # capabilities it imports: the composed auth-guard (auth:identity) + records:store.
 # Remaining imports are generic WASI. Output is ONE self-contained app component.
 compose-conduit: compose
@@ -291,7 +291,7 @@ compose-conduit: compose
       -o {{conduit_composed}}
     @echo "composed conduit-domain (+ auth-guard + records + slug) -> {{conduit_composed}}"
 
-# Run the conduit app (CONDUIT.md rung 1) on the native Rust host, in-memory KV.
+# Run the conduit app (docs/apps/CONDUIT.md rung 1) on the native Rust host, in-memory KV.
 host-conduit: compose-conduit
     cd host && cargo run --release --bin comp-host -- \
       --app conduit --config-file ../examples/defaults.conf --config default-tenant=conduit \
@@ -303,14 +303,14 @@ e2e-conduit: compose-conduit
     cd host && cargo build --release --bin comp-host
     cd examples/conduit && cargo test --release
 
-# RealWorld conformance (CONDUIT.md rung 4): the OFFICIAL Hurl suite (vendored in
+# RealWorld conformance (docs/apps/CONDUIT.md rung 4): the OFFICIAL Hurl suite (vendored in
 # examples/conduit/conformance/hurl) against the composed app on the native host.
 # Requires `hurl` (https://hurl.dev) — like `wash`, not bundled.
 conformance-conduit: compose-conduit
     cd host && cargo build --release --bin comp-host
     bash examples/conduit/conformance/run.sh
 
-# Compose saga-domain (SAGA.md — a durable trip-booking saga) with the durable
+# Compose saga-domain (docs/apps/SAGA.md — a durable trip-booking saga) with the durable
 # primitives it orchestrates: records + fsm + idempotency + event-bus + ids.
 # No auth (anonymous engine). Remaining imports are generic WASI.
 compose-saga: build
@@ -337,23 +337,23 @@ e2e-saga: compose-saga
     cd host && cargo build --release --bin comp-host
     cd examples/saga && cargo test --release
 
-# Durability proof (SAGA.md rung 3): start a saga on NATS KV, advance it, KILL
+# Durability proof (docs/apps/SAGA.md rung 3): start a saga on NATS KV, advance it, KILL
 # the host, restart, and show it resumes. Requires NATS on :4222.
 durable-saga: compose-saga
     cd host && cargo build --release --bin comp-host
     bash examples/saga/durability.sh
 
-# Golem provider (GOLEM.md): unit tests (contract + Value mapping + provider
+# Golem provider (docs/capabilities/GOLEM.md): unit tests (contract + Value mapping + provider
 # compiles). No infra — the live Golem hop skips without GOLEM_E2E.
 golem-provider-test:
     cd providers/golem-workflow && cargo test --release
 
-# Live e2e (GOLEM.md rung 3): download Golem 1.5, run it, deploy the demo agent,
+# Live e2e (docs/capabilities/GOLEM.md rung 3): download Golem 1.5, run it, deploy the demo agent,
 # and invoke it through the provider's bridge (asserts durable state advances).
 golem-e2e:
     bash providers/golem-workflow/e2e.sh
 
-# Live proof (SAGA.md): a saga whose LEGS are real durable Golem workers. Starts
+# Live proof (docs/apps/SAGA.md): a saga whose LEGS are real durable Golem workers. Starts
 # Golem, deploys the agent, runs the saga with golem-backed legs over wasi:http,
 # and asserts it committed with golem-issued refs + the worker's state advanced.
 # Requires the Golem binary (run `just golem-e2e` once to fetch it).
@@ -361,7 +361,7 @@ saga-golem: compose-saga
     cd host && cargo build --release --bin comp-host
     bash examples/saga/golem-legs.sh
 
-# Compose pulse-domain (REALTIME.md — a realtime chat room with SSE server-push)
+# Compose pulse-domain (docs/apps/REALTIME.md — a realtime chat room with SSE server-push)
 # with records + event-bus + id-generate. No auth. Remaining imports are WASI.
 compose-pulse: build
     wac plug {{pulse_wasm}} \
@@ -385,7 +385,7 @@ e2e-pulse: compose-pulse
     cd host && cargo build --release --bin comp-host
     cd examples/pulse && cargo test --release
 
-# Compose jobs-domain (JOBS.md — a durable background-job queue) with its
+# Compose jobs-domain (docs/apps/JOBS.md — a durable background-job queue) with its
 # capabilities: the outbox (durable queue), the IN-PROCESS durable:workflow
 # backend (swap for the golem-workflow provider on a classic host), cron, the
 # idempotency guard, and record-store. Remaining imports are WASI.
@@ -399,7 +399,7 @@ compose-jobs: build
       -o {{jobs_composed}}
     @echo "composed jobs-domain (+ outbox + inproc-workflow + cron + idempotency + records) -> {{jobs_composed}}"
 
-# Compose tempo-domain (TEMPO.md — a multi-person worktime logger) with the
+# Compose tempo-domain (docs/apps/TEMPO.md — a multi-person worktime logger) with the
 # composed auth-guard (auth:identity) + records. Remaining imports are WASI.
 compose-tempo: compose
     wac plug {{tempo_wasm}} \
@@ -443,7 +443,7 @@ push-tempo-ghcr version="0.1.0": compose-tempo
       --user {{ghcr_owner}} --password "$(gh auth token)"
     @echo "pushed oci://ghcr.io/{{ghcr_owner}}/tempo:{{version}} (set the package Public once)"
 
-# Compose booked-domain (BOOKED.md — a Calendly-lite booking service) with the
+# Compose booked-domain (docs/apps/BOOKED.md — a Calendly-lite booking service) with the
 # composed auth-guard + records + lock-mutex (no double-book) + email-render
 # (confirmation) + ical (.ics) + rrule (recurring). Remaining imports are WASI.
 compose-booked: compose
@@ -479,7 +479,7 @@ e2e-booked: compose-booked
     cd host && cargo build --release --bin comp-host
     cd examples/booked && cargo test --release
 
-# Compose transit-domain (TRANSIT.md — a public-transport ticketing service)
+# Compose transit-domain (docs/apps/TRANSIT.md — a public-transport ticketing service)
 # with auth-guard + records (single-use enforced by record-revision CAS) + qr
 # (the scannable ticket). Remaining imports are WASI.
 compose-transit: compose
@@ -512,7 +512,7 @@ e2e-transit: compose-transit
     cd host && cargo build --release --bin comp-host
     cd examples/transit && cargo test --release
 
-# Compose dashboards-domain (DASHBOARDS.md — personal metric dashboards) with
+# Compose dashboards-domain (docs/apps/DASHBOARDS.md — personal metric dashboards) with
 # auth-guard + records + svg-chart (server-side SVG chart rendering). Remaining
 # imports are WASI.
 compose-dashboards: compose
@@ -544,7 +544,7 @@ e2e-dashboards: compose-dashboards
     cd host && cargo build --release --bin comp-host
     cd examples/dashboards && cargo test --release
 
-# Compose gate-domain (GATE.md — a durable traffic-shaping gateway) with records
+# Compose gate-domain (docs/apps/GATE.md — a durable traffic-shaping gateway) with records
 # (the durable per-key state) + shaper (the token-bucket / GCRA math). The three
 # patterns — rate limit, throttle, batch — are the Golem durable-worker model
 # expressed over records:store revision CAS. Remaining imports are WASI.
@@ -577,14 +577,14 @@ e2e-gate: compose-gate
     cd host && cargo build --release --bin comp-host
     cd examples/gate && cargo test --release
 
-# Run gate as a REAL Golem agent (GATE.md) and prove EXACT serialization: a
+# Run gate as a REAL Golem agent (docs/apps/GATE.md) and prove EXACT serialization: a
 # durable single-writer worker per key admits exactly `capacity` under a
 # concurrent burst — where the shared-store gate-domain over-admits. Reuses the
 # Golem 1.5 binary from the golem-workflow provider (fetch once via `golem-e2e`).
 gate-golem:
     bash examples/gate/golem-run.sh
 
-# Compose books-domain (BOOKS.md — double-entry bookkeeping) with auth-guard +
+# Compose books-domain (docs/apps/BOOKS.md — double-entry bookkeeping) with auth-guard +
 # records + ledger (the debits==credits invariant + trial balance) + pdf
 # (statements). Remaining imports are WASI.
 compose-books: compose
@@ -617,7 +617,7 @@ e2e-books: compose-books
     cd host && cargo build --release --bin comp-host
     cd examples/books && cargo test --release
 
-# Compose stash-domain (STASH.md — a note stash you export as a .zip) with
+# Compose stash-domain (docs/apps/STASH.md — a note stash you export as a .zip) with
 # auth-guard + records + zip (the archive) + csv (the index inside it). Remaining
 # imports are WASI.
 compose-stash: compose
@@ -649,7 +649,7 @@ e2e-stash: compose-stash
     cd host && cargo build --release --bin comp-host
     cd examples/stash && cargo test --release
 
-# Compose payees-domain (PAYEES.md — a payee book) with auth-guard + records +
+# Compose payees-domain (docs/apps/PAYEES.md — a payee book) with auth-guard + records +
 # iban (validate the IBAN before storing). Remaining imports are WASI.
 compose-payees: compose
     wac plug {{payees_wasm}} \
@@ -680,7 +680,7 @@ e2e-payees: compose-payees
     cd host && cargo build --release --bin comp-host
     cd examples/payees && cargo test --release
 
-# Compose lms-domain (LMS.md — a learning platform) with auth-guard + records +
+# Compose lms-domain (docs/apps/LMS.md — a learning platform) with auth-guard + records +
 # quiz (auto-grade + stats) + pdf (certificate) + svg-chart (gradebook chart).
 # Remaining imports are WASI.
 compose-lms: compose
@@ -715,7 +715,7 @@ e2e-lms: compose-lms
     cd host && cargo build --release --bin comp-host
     cd examples/lms && cargo test --release
 
-# Compose buzz-domain (BUZZ.md — a live multiplayer quiz game) with auth-guard +
+# Compose buzz-domain (docs/apps/BUZZ.md — a live multiplayer quiz game) with auth-guard +
 # records. Remaining imports are WASI (random for the PIN, clocks for timing).
 compose-buzz: compose
     wac plug {{buzz_wasm}} \
@@ -745,7 +745,7 @@ e2e-buzz: compose-buzz
     cd host && cargo build --release --bin comp-host
     cd examples/buzz && cargo test --release
 
-# Compose mesh-domain (MESH.md — resilient upstream calls) with records (the
+# Compose mesh-domain (docs/apps/MESH.md — resilient upstream calls) with records (the
 # durable per-key circuit state) + resilience (the breaker state machine and the
 # backoff schedule) + proxy-route (the REAL outgoing HTTP hop). Remaining imports
 # are WASI: clocks for latency + the backoff sleep, config for the route table.
@@ -795,7 +795,7 @@ e2e-mesh: compose-mesh
     cd host && cargo build --release --bin comp-host
     cd examples/mesh && cargo build --release --bin flaky && cargo test --release
 
-# Compose passkey-domain (PASSKEY.md — passwordless WebAuthn sign-in) with
+# Compose passkey-domain (docs/apps/PASSKEY.md — passwordless WebAuthn sign-in) with
 # webauthn (the ceremony verification: CBOR/COSE + ES256/RS256 signatures) +
 # records (accounts + credentials) + cache (single-use challenges with a TTL) +
 # session-store (the session a completed ceremony mints). Remaining imports are
@@ -841,7 +841,7 @@ e2e-passkey: compose-passkey
     cd host && cargo build --release --bin comp-host
     cd examples/passkey && cargo test --release
 
-# Compose studio-domain (STUDIO.md — the composition studio) with wit-reflect
+# Compose studio-domain (docs/apps/STUDIO.md — the composition studio) with wit-reflect
 # (inspection + wac's own composition engine) + records (surfaces + saved
 # canvases) + blob-store (the uploaded component bytes). Remaining imports are
 # WASI. Note wit_reflect.wasm is ~1 MB: it carries wasmparser and wac-graph, so
@@ -987,7 +987,7 @@ docker-tempo: compose-tempo build-tempo-ui
     docker build -f examples/tempo/Dockerfile -t tempo .
     @echo "built image 'tempo' — docker run -p 8080:8080 -e REDIS_URL=rediss://user:pw@host:25061 tempo"
 
-# Compose arena-domain (ARENA.md — multiplayer Connect Four) with records +
+# Compose arena-domain (docs/apps/ARENA.md — multiplayer Connect Four) with records +
 # id-generate. Remaining imports are WASI.
 compose-arena: build
     wac plug {{arena_wasm}} \
@@ -1045,7 +1045,7 @@ e2e-jobs: compose-jobs
     cd host && cargo build --release --bin comp-host
     cd examples/jobs && cargo test --release
 
-# Compose scribe-domain (SCRIBE.md — a collaborative document editor) with the
+# Compose scribe-domain (docs/apps/SCRIBE.md — a collaborative document editor) with the
 # crdt merge component + records + id-generate. Remaining imports are WASI.
 compose-scribe: build
     wac plug {{scribe_wasm}} \
@@ -1071,7 +1071,7 @@ e2e-scribe: compose-scribe
     cd host && cargo build --release --bin comp-host
     cd examples/scribe && cargo test --release
 
-# Compose pipeline-domain (PIPELINE.md — a reliable event pipeline with
+# Compose pipeline-domain (docs/apps/PIPELINE.md — a reliable event pipeline with
 # outbox → dispatch → DLQ → replay, SSE server-push) with outbox + event-bus +
 # id-generate. No auth. Remaining imports are WASI (bound at deploy).
 compose-pipeline: build
@@ -1098,7 +1098,7 @@ e2e-pipeline: compose-pipeline
     cd host && cargo build --release --bin comp-host
     cd examples/pipeline && cargo test --release
 
-# Compose flags-domain (FLAGS.md — a live feature-rollout console with SSE
+# Compose flags-domain (docs/apps/FLAGS.md — a live feature-rollout console with SSE
 # server-push) with feature-flags + event-bus + id-generate. No auth. Remaining
 # imports are WASI (kv + config bound at deploy).
 compose-flags: build
@@ -1126,7 +1126,7 @@ e2e-flags: compose-flags
     cd host && cargo build --release --bin comp-host
     cd examples/flags && cargo test --release
 
-# Compose abtest-domain (EXPERIMENT.md — an A/B/n experiment console with SSE)
+# Compose abtest-domain (docs/apps/EXPERIMENT.md — an A/B/n experiment console with SSE)
 # with experiment-assign + metrics-collect + event-bus + id-generate. No auth.
 # Remaining imports are WASI (kv + config bound at deploy).
 compose-abtest: build
@@ -1157,7 +1157,7 @@ e2e-abtest: compose-abtest
     cd host && cargo build --release --bin comp-host
     cd examples/abtest && cargo test --release
 
-# Compose search-domain (SEARCH.md — faceted search-as-you-type) with the
+# Compose search-domain (docs/apps/SEARCH.md — faceted search-as-you-type) with the
 # engine + corpus + cache (pre-composed with its kv backing) + metrics +
 # pagination + ids. No auth. Remaining imports are WASI (kv + config).
 compose-search: build
@@ -1189,7 +1189,7 @@ e2e-search: compose-search
     cd host && cargo build --release --bin comp-host
     cd examples/search && cargo test --release
 
-# Compose throttle-domain (RATELIMIT.md — a live throttle wall) with the two
+# Compose throttle-domain (docs/apps/RATELIMIT.md — a live throttle wall) with the two
 # limiters + event-bus + id-generate. No auth. Remaining imports are WASI
 # (kv + config bound at deploy).
 compose-ratelimit: build
@@ -1219,7 +1219,7 @@ e2e-ratelimit: compose-ratelimit
     cd host && cargo build --release --bin comp-host
     cd examples/ratelimit && cargo test --release
 
-# Compose upload-drop (DROP.md — a presigned direct-upload drop-box) with the
+# Compose upload-drop (docs/apps/DROP.md — a presigned direct-upload drop-box) with the
 # gate + blob store + signer + records + ids. No auth. Remaining imports are
 # WASI (kv + config bound at deploy — see CFG_* below).
 compose-drop: build
@@ -1250,7 +1250,7 @@ e2e-drop: compose-drop
     cd host && cargo build --release --bin comp-host
     cd examples/drop && cargo test --release
 
-# Compose csv-report (REPORT.md — batch CSV import/report) with the codec +
+# Compose csv-report (docs/apps/REPORT.md — batch CSV import/report) with the codec +
 # validator + records + pagination. No auth. Remaining imports are WASI
 # (kv + config bound at deploy).
 compose-report: build
@@ -1280,7 +1280,7 @@ e2e-report: compose-report
     cd host && cargo build --release --bin comp-host
     cd examples/report && cargo test --release
 
-# Compose mfa-authgate (AUTHGATE.md — TOTP 2FA + challenge-response login) with
+# Compose mfa-authgate (docs/apps/AUTHGATE.md — TOTP 2FA + challenge-response login) with
 # the otp primitive + secrets vault + session store + records. No auth-guard —
 # this app IS the second factor. secrets:vault needs a 32-byte base64 master-key
 # from config (CFG_MASTER_KEY below).
@@ -1313,7 +1313,7 @@ e2e-authgate: compose-authgate
     cd host && cargo build --release --bin comp-host
     cd examples/authgate && cargo test --release
 
-# Compose paste-bin (PASTE.md — a paste/gist bin) with the pure-compute
+# Compose paste-bin (docs/apps/PASTE.md — a paste/gist bin) with the pure-compute
 # transform chain (validate + pii-redact + markdown + slug) plus the one
 # stateful piece (records). No auth. Remaining imports are WASI (kv).
 compose-paste: build
@@ -1351,7 +1351,7 @@ e2e-paste: compose-paste
 build-track-ui:
     cd examples/track/ui && npm install && npm run build
 
-# Compose track-domain (TRACK.md — a Linear-lite project tracker) — the biggest
+# Compose track-domain (docs/apps/TRACK.md — a Linear-lite project tracker) — the biggest
 # composition in the repo: the pre-composed auth-guard + records + fsm + search +
 # event-bus + notify + webhook-sign + policy + paginate + markdown + the
 # pre-composed ai-inference (mock llm) + the baked SPA (track-assets). Five axes
@@ -1468,7 +1468,7 @@ host-redis: compose-vet-full
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
       --kv redis --redis-url redis://127.0.0.1:6379
 
-# Run the helpdesk app (HELPDESK.md rung 1) on the native host, persisted to
+# Run the helpdesk app (docs/apps/HELPDESK.md rung 1) on the native host, persisted to
 # NATS JetStream KV. Same bytes the jco example serves — different host.
 host-helpdesk: compose-helpdesk
     cd host && cargo run --release --bin comp-host -- \
@@ -1483,7 +1483,7 @@ host-nats: compose-vet-full
       --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
       --kv nats --nats-url 127.0.0.1:4222
 
-# Compose the eshop-catalog service (ESHOP.md): eShopOnDapr's Catalog.API over
+# Compose the eshop-catalog service (docs/apps/ESHOP.md): eShopOnDapr's Catalog.API over
 # record-store + event-bus + idempotency-guard (at-least-once dedup for the
 # stock consumers). Output imports only generic WASI.
 compose-eshop-catalog: build
@@ -1494,7 +1494,7 @@ compose-eshop-catalog: build
       -o {{eshopcatalog_composed}}
     @echo "composed eshop-catalog (+ records + event-bus + idempotency) -> {{eshopcatalog_composed}}"
 
-# Compose every eshop service (ESHOP.md): eShopOnDapr recreated over comp
+# Compose every eshop service (docs/apps/ESHOP.md): eShopOnDapr recreated over comp
 # contracts. identity = the existing accounts-app + composed auth-guard,
 # untouched. Each output imports only generic WASI.
 compose-eshop: compose compose-eshop-catalog

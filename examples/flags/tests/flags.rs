@@ -1,4 +1,4 @@
-//! E2E for the rollout console (FLAGS.md) as ONE composed wasm HTTP component on
+//! E2E for the rollout console (docs/apps/FLAGS.md) as ONE composed wasm HTTP component on
 //! the native Rust host.
 //!
 //! Rung 1: set + evaluate. The axis the console makes visible — STICKINESS: a

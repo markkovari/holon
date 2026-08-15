@@ -14,7 +14,7 @@
 
 ## Context
 
-`PLATFORM.md` says the platform API is "itself a wasm app". That is the right
+`docs/PLATFORM.md` says the platform API is "itself a wasm app". That is the right
 instinct — a platform for deploying wasm components that is not itself one is a
 weaker argument — but it collides with a hard constraint at exactly one point: the
 Kubernetes API server.
