@@ -1,6 +1,22 @@
-# comp — Evaluation & Roadmap
+# Roadmap — the showcase worklist
 
-## What this is worth today
+> **What this file is, and is not.** It was written when this repository was a
+> library of WASI capability components, and its opening section still evaluates
+> it as one: an auth + RBAC contract with a reference implementation. That is no
+> longer what the repository is *for* — Holon is an agentic engineering loop built
+> out of that library (see [`README.md`](README.md)) — but the per-showcase
+> worklist below is still live and still accurate about what is done.
+>
+> For the current state, in order of usefulness:
+> [`docs/CURRENT.md`](docs/CURRENT.md) (what runs, measured, and honestly
+> missing), [`docs/SCENARIOS.md`](docs/SCENARIOS.md) (how a run succeeds and every
+> way it fails), [`.comp/goals/`](.comp/goals/) (the worklist a person writes), and
+> [`docs/adr/`](docs/adr/) (why any of it is shaped this way).
+>
+> Kept rather than deleted for the same reason `PLATFORM.md` is: its reasoning is
+> the record of how the substrate got here.
+
+## What this was worth as a capability library
 
 A **WIT-first** auth + RBAC contract (`auth:identity`) with a Rust reference
 implementation that provably runs **two ways from the same `.wasm` bytes**:

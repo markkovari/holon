@@ -37,8 +37,8 @@ that is the same class of silent waste as herding.
 
 ## Why it is human-led
 
-Every thread touches the spawn path, the driver's loop, and a stored contract,
-and thread 3 needs an embedding provider that is not wired (retrieval is lexical
-only today). These are design decisions with security edges — an overlay a tenant
+Every thread touches the spawn path, the driver's loop, and a stored contract.
+Thread 3's store is now built and wired to a provider (ADR-0084); what is left of
+it is putting a retrieved lesson into a branch's prompt, which is goal 08. These are design decisions with security edges — an overlay a tenant
 could author is an overlay a tenant could use to escape its box (ADR-0008). A
 person leads; the agent may help on the pure pieces once they are carved out.
