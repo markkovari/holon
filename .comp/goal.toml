@@ -7,13 +7,14 @@ in components/demo/src/lib.rs: the slice at that offset, and whether more remain
 beyond it. A size of 0 and an offset past the end must not panic. Keep the WIT
 export delegating to it.
 
-The PROBE half's handler reads its path and query with
-`request.path_with_query()` — there is no `query()` method on `IncomingRequest`.
-It implements `pub fn page_json(hits, has_more) -> String` in
-components/demo-probe/src/lib.rs — {"hits":[...],"has_more":bool}, correctly
-escaped — and answers `GET /page?size=&offset=` by calling
-`demo:shape/pager.paginate` over the ids ["a","b","c","d","e"] and writing that
-JSON.
+The PROBE half answers `GET /page?size=&offset=` in
+components/demo-probe/src/lib.rs by CALLING `demo:shape/pager.paginate` over the
+ids ["a","b","c","d","e"] and writing {"hits":[...],"has_more":bool}. It reads the
+query with `request.path_with_query()` — there is no `query()` method on
+`IncomingRequest`; `components/graph-probe/src/lib.rs` shows the idiom.
+
+It must really call the component: the composition gate plugs the two halves
+together and fails if this half imports nothing.
 
 Each half is judged by tests in its own crate's `tests/` directory. You cannot
 edit them: they are the specification. Read them.
@@ -51,11 +52,11 @@ context = [
   "components/graph-probe/src/lib.rs",
 ]
 [[part.check]]
-id = "probe-passes-its-held-out-tests"
-command = ["cargo", "component", "test", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
+id = "probe-compiles-against-the-contract"
+command = ["cargo", "component", "check", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
 
 [[check]]
-id = "the-join"
+id = "the-halves-plug-together"
 required = true
 weight = 1
-command = ["cargo", "component", "test", "-p", "demo", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
+command = ["bash", "components/demo/join.sh"]

@@ -1,8 +1,14 @@
 //! `demo-probe` — the other half: it calls `demo:shape/pager` and nothing else.
 //!
 //! A stub. The goal is to answer `GET /page?size=&offset=` by calling
-//! `paginate`, and to render the answer with `page_json` — which
-//! `tests/page_json.rs` judges.
+//! `paginate` and rendering the answer as JSON.
+//!
+//! This half has no held-out test of its own, and the reason is structural:
+//! `cargo component test` runs a crate AS a component, and this one imports
+//! `demo:shape/pager`, which nothing satisfies standalone — "a matching
+//! implementation was not found in the linker". So it is judged by compiling, and
+//! then by `components/demo/join.sh`, which plugs the two halves together and
+//! checks that the import really was satisfied.
 
 #[allow(warnings)]
 mod bindings;
@@ -11,11 +17,6 @@ use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
-
-/// Render a page as JSON. A plain function so the held-out test can reach it.
-pub fn page_json(_hits: &[String], _has_more: bool) -> String {
-    String::new()
-}
 
 struct Component;
 
@@ -28,7 +29,7 @@ impl Guest for Component {
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            let _ = stream.blocking_write_and_flush(page_json(&[], false).as_bytes());
+            let _ = stream.blocking_write_and_flush(b"{\"hits\":[],\"has_more\":false}");
             drop(stream);
         }
         let _ = OutgoingBody::finish(out, None);
