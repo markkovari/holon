@@ -15,3 +15,7 @@
 # purpose — the contract and its pinned, vendored WASI dependencies are part of
 # the repo so the build is reproducible offline.
 sweep.json
+
+# A local scratch database written by an MCP tool in some sessions. Not the
+# project's, 1.5 MB, and it landed in a commit once by way of `git add -A`.
+ruvector.db
