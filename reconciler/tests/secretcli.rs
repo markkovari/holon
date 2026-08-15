@@ -20,10 +20,17 @@ use comp_reconciler::fleet::{repo_root, Fleet};
 
 /// The CLI lives in its own workspace, so `bin_path` — which looks beside the
 /// running test and then in the reconciler's target dir — never finds it.
+/// The CLI under test.
+///
+/// `cli/target/release/holon`, not `.../comp`: the binary was renamed and this
+/// path was not, so the suite asserted "missing … — cargo build --release in cli/"
+/// about a file that would never appear under that name however many times you
+/// built it. It went unnoticed because `just test` never reached this suite —
+/// cargo stops at the first failing test binary, and there were four ahead of it.
 fn comp_bin() -> std::path::PathBuf {
     std::env::var("COMP_COMP_BIN")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| repo_root().join("cli/target/release/comp"))
+        .unwrap_or_else(|_| repo_root().join("cli/target/release/holon"))
 }
 
 /// Stands in for an API key. Long enough that finding it in an unexpected place

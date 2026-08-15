@@ -218,6 +218,55 @@ impl Catalog {
             .collect()
     }
 
+    /// Who consumes what, as edges: `(consumer, interface, provider)`.
+    ///
+    /// This is the capability graph. It is derived from the built artifacts every
+    /// time rather than maintained by hand, because a hand-maintained dependency
+    /// list is wrong the first time somebody adds an import and does not update it
+    /// — and the whole reason this repository can answer "what is using what" is
+    /// that a component's imports are in the binary.
+    ///
+    /// An interface with a provider and no consumers yields no edge; ask
+    /// [`Catalog::orphan_exports`] for those.
+    pub fn edges(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for (consumer, surface) in &self.surfaces {
+            for iface in &surface.imports {
+                if let Some(provider) = self.exporter(iface) {
+                    if provider != consumer {
+                        out.push((consumer.clone(), iface.clone(), provider.to_string()));
+                    }
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// Interfaces something exports that nothing in the tree imports.
+    ///
+    /// Not a finding on its own — a capability library is allowed to be ahead of
+    /// its callers — but worth being able to see, because the answer to "may I
+    /// change this interface?" is completely different for 0 consumers and for 37.
+    pub fn orphan_exports(&self) -> Vec<(String, String)> {
+        let consumed: BTreeSet<&String> =
+            self.surfaces.values().flat_map(|s| s.imports.iter()).collect();
+        let mut out: Vec<(String, String)> = self
+            .exporters
+            .iter()
+            .filter(|(iface, _)| !consumed.contains(iface))
+            .map(|(iface, owner)| (owner.clone(), iface.clone()))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// How many components import this interface. The number that decides whether
+    /// an interface can still be changed.
+    pub fn consumer_count(&self, iface: &str) -> usize {
+        self.surfaces.values().filter(|s| s.imports.contains(iface)).count()
+    }
+
     pub fn len(&self) -> usize {
         self.surfaces.len()
     }

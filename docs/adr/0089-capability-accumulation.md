@@ -92,6 +92,19 @@ this repository runs. Extension has to mean a NEW interface, or a new version wi
 both live — which is what `tests/contracts.rs` already watches for, since an import
 of `@0.1.0` is not satisfied by an export of `@0.2.0` and `wac` will not say so.
 
+*Both live* is the operative phrase, and it is a storage requirement rather than a
+policy one: **components are keyed, and both versions stay resolvable.** The
+ingredients exist — `catalog.json` records a `wasm_sha256_12` per component, and
+`plug::compose_to` already writes content-addressed artifacts, so the same
+component at two versions produces two files that cannot collide. What is missing
+is that the KEY is currently the crate name. It should be the pair the resolver
+actually needs — the exported interface with its version, and the digest of the
+artifact that provides it — so that `records:store/store@0.1.0` and `@0.2.0` are
+two entries rather than one entry that changed. Then a consumer pinned to the old
+one keeps composing while a new consumer takes the new one, migration becomes a
+per-consumer move instead of a flag day, and nothing has to be frozen by social
+convention.
+
 **"Promote every reusable artifact" is the wrong default.** Promotion has a cost
 that is invisible at promotion time and permanent afterwards: a component in the
 pool is something a later agent will find, trust, and build on. Promoting an
@@ -101,10 +114,34 @@ to a *lesson*: a candidate may only promote what a gate proved (ADR-0084 —
 `promote` is refused when the score did not pass, and it is deliberately not
 reachable from an agent's own world).
 
+But the *duplicate* half of the decision should not be a judgement at all —
+**`wac` decides it.** "Does this generalise?" and "is this the twelfth PDF parser?"
+sound like questions for a model and are not: `wit-reflect`'s `satisfies` runs
+`wac`'s own `SubtypeChecker`, which answers exactly whether a candidate's exports
+satisfy an existing interface. That gives a mechanical rule with no taste in it:
+
+| `satisfies` an existing interface? | what it is | what happens |
+| --- | --- | --- |
+| yes, fully | another implementation of a capability we have | do not promote as new — register as an alternative provider, keyed by digest |
+| partially | a near-duplicate | refuse, and say which interface it nearly fits |
+| no | genuinely new capability | promote, under its own key |
+
+The same check answers "can this be swapped in?" for a consumer, so discovery and
+promotion end up using one mechanism rather than two heuristics. An interface a
+candidate merely *names* the same way is not a match, which is the failure mode a
+name-based registry has and a subtype-based one does not.
+
 ## The first slice, if this is taken up
 
 Ordered by what unblocks the most with the least new machinery:
 
+0. **The graph.** *Done, since this ADR was written:* `comp-capgraph` derives
+   who-imports-what-from-whom from the built artifacts and writes
+   [`docs/CAPABILITY-GRAPH.md`](../CAPABILITY-GRAPH.md) — 150 components, 80
+   consumed interfaces, 300 import edges, and the number that decides whether an
+   interface may change at all. `just capgraph` regenerates it and a test fails
+   when the committed copy goes stale. This is the substrate the three steps below
+   query.
 1. **Catalogue query as a component.** `capability:find/search` over
    `catalog.json` — "what exports an interface like this?" and "what does this
    description match?". `knowledge-memory` already does embeddings and KNN over

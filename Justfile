@@ -177,13 +177,17 @@ test:
     set -euo pipefail
     excludes=""
     for c in {{GOAL_STUBS}}; do excludes="$excludes --exclude $c"; done
+    # Binaries too, not just test targets. Several suites shell out to a built
+    # binary — `comp-host`, `comp-plug`, the `holon` CLI — and assert it exists.
+    # Without this the umbrella tells you to go and build it, which is a step it is
+    # perfectly capable of taking itself.
     for ws in components host lattice cli reconciler; do
       echo "=== $ws: compiling test targets"
       if [ "$ws" = components ]; then
         # shellcheck disable=SC2086
         (cd "$ws" && cargo test --release --workspace --no-run $excludes)
       else
-        (cd "$ws" && cargo test --release --workspace --no-run)
+        (cd "$ws" && cargo build --release --bins && cargo test --release --workspace --no-run)
       fi
     done
     for ws in components host lattice cli reconciler; do
@@ -285,6 +289,24 @@ e2e-clinic: build
       fi
     done
     exit $failed
+
+# The capability graph: who imports what from whom, across every built component.
+#
+# Answers the question nobody can answer from memory at this size — "may I change
+# this interface?" — with a number. records:store/store has 37 consumers; some have
+# one. Derived from the artifacts, so it cannot drift from what the components
+# actually do.
+#
+#   just capgraph            # regenerate docs/CAPABILITY-GRAPH.md
+#   just capgraph json       # the same graph for tooling
+capgraph format="md": build
+    @cd reconciler && cargo build --release --quiet --bin comp-capgraph
+    @if [ "{{format}}" = "md" ]; then \
+        ./reconciler/target/release/comp-capgraph --format md > docs/CAPABILITY-GRAPH.md; \
+        echo "wrote docs/CAPABILITY-GRAPH.md"; \
+     else \
+        ./reconciler/target/release/comp-capgraph --format {{format}}; \
+     fi
 
 # What it WOULD plug, and what nothing exports. For a composition that is missing
 # something.
