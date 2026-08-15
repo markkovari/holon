@@ -12,8 +12,30 @@ use bindings::exports::demo::shape::pager::{Guest, Page};
 ///
 /// A plain function so the held-out test can reach it — a `cdylib` export cannot
 /// be called from `tests/`.
-pub fn paginate_ids(_ids: Vec<String>, _size: u32, _offset: u32) -> (Vec<String>, bool) {
-    (Vec::new(), false)
+pub fn paginate_ids(ids: Vec<String>, size: u32, offset: u32) -> (Vec<String>, bool) {
+    let offset = offset as usize;
+    let size = size as usize;
+    
+    // If offset is past the end, return empty
+    if offset >= ids.len() {
+        return (Vec::new(), false);
+    }
+    
+    // If size is 0, return empty but has_more depends on whether list is non-empty
+    if size == 0 {
+        return (Vec::new(), !ids.is_empty());
+    }
+    
+    // Calculate the end index for this page
+    let end = std::cmp::min(offset + size, ids.len());
+    
+    // Extract the slice for this page
+    let hits = ids[offset..end].to_vec();
+    
+    // Check if more items exist beyond this page
+    let has_more = end < ids.len();
+    
+    (hits, has_more)
 }
 
 struct Component;
