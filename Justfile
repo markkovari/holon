@@ -213,6 +213,35 @@ plug name: build
     @cd reconciler && cargo build --release --quiet --bin comp-plug
     @./reconciler/target/release/comp-plug {{name}}
 
+# The clinic's behavioural gates — the four checks `holon goal run` judges the
+# decomposed clinic goal by, run the same way it runs them.
+#
+# Each one builds the component, composes it with `plug` (derived from its own
+# imports, not from a chain written here), starts it on comp-host and drives real
+# HTTP against it. `access` is EXPECTED to fail on a clean tree: `src/access.rs` is
+# the stub the goal exists to replace, and a check that passes before the work is
+# done cannot judge the work.
+e2e-clinic: build
+    #!/usr/bin/env bash
+    set -uo pipefail
+    (cd host && cargo build --release --quiet --bin comp-host)
+    (cd reconciler && cargo build --release --quiet --bin comp-plug)
+    export COMP_HOST="$PWD/host/target/release/comp-host"
+    export COMP_PLUG="$PWD/reconciler/target/release/comp-plug"
+    failed=0
+    for gate in e2e-owners e2e-visits e2e; do
+      printf '%-12s ' "$gate"
+      bash "components/clinic-domain/$gate.sh" 2>&1 | tail -1 || failed=1
+    done
+    # Judged separately, because on a clean tree its FAILURE is the correct
+    # outcome: an exit code that says "broken" every time teaches everyone to
+    # ignore it. When this one passes, the third part has been written.
+    printf '%-12s ' "e2e-access"
+    if bash components/clinic-domain/e2e-access.sh 2>&1 | tail -1; then
+      echo "             ^ access-and-search is implemented — the goal is done"
+    fi
+    exit $failed
+
 # What it WOULD plug, and what nothing exports. For a composition that is missing
 # something.
 plug-wiring name: build
