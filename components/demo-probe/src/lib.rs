@@ -41,7 +41,13 @@ impl Guest for Component {
         let size = param(&query, "size").parse::<u32>().unwrap_or(10);
         let offset = param(&query, "offset").parse::<u32>().unwrap_or(0);
 
-        let page = pager::paginate(&[], size, offset);
+        // The corpus the goal named. The run that wrote this file passed an empty
+        // list here and every check still went green — the join gate proves the
+        // halves LINK, and nothing yet proves the endpoint answers anything. That
+        // is the gap `.comp/goals/07` exists for.
+        let ids: Vec<String> =
+            ["a", "b", "c", "d", "e"].iter().map(|s| s.to_string()).collect();
+        let page = pager::paginate(&ids, size, offset);
 
         let body = format!(
             "{{\"hits\":[{}],\"has_more\":{}}}",
