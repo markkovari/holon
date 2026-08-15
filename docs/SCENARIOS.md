@@ -129,14 +129,17 @@ human in the loop.
 | the search never converges | ✅ **at both levels**: a repeated candidate stops a branch, and `patience` generations that fail to beat the best score stop the search (`search.rs` — 2 of a budget of 4) |
 | a branch runs out of fuel | ⚠️ **a token budget exists at both levels** — per branch, and across a whole search, which is not the same bound: four branches each inside their own can put a project far outside its. Both are enforced after the fact, because what an attempt costs is unknowable until it is made. Still unbuilt from ADR-0081: conservation, escrow, refund-on-death — and tokens are not money |
 | a branch waits on a human for two days | ❌ suspension is designed (`awaiting-human`, environment released, fuel in escrow) and unbuilt. Today a branch would simply sit there holding a node |
-| the knowledge pool fills with a wrong lesson | ❌ the graph stores and traverses; nothing promotes, weights by outcome, or decays |
+| the knowledge pool fills with a wrong lesson | ⚠️ **the poisoning half is closed, the reading half is unwired**: an agent's world carries `memory` and not `promotion`, so nothing an agent says reaches the trusted pool, and retrieval reranks by what happened to the runs that read a lesson (ADR-0084, 19 tests + a composed e2e). Nothing decays, and no branch READS a lesson yet — so today a wrong lesson cannot get in and a right one cannot get out |
+| two halves of one goal invent different DTOs | ✅ **they negotiate instead**: a shared contract, request/deny/counter at the generation boundary, an amendment canonical only once its author's gate passes against it, and a join that refuses two halves built against different versions (ADR-0086, seen end to end on this repository) |
+| a negotiation churns instead of converging | ❌ a real run climbed contract v3 → v7 while no part's score moved, and nothing noticed |
 | two runs race the same repository | ✅ **cannot happen by construction** — one active run per project, which is the entire answer to concurrent pull requests until somebody raises the limit |
 | a run's base goes stale mid-search | ❌ unhandled, and it bites *with* a serial queue — serialising does not avoid it |
 | the loop asks a human fifty times | ❌ **the interruption rate is unmeasured**, and every argument about interfaces is really an argument about that number |
 
-**The honest summary of level 3:** the substrate survives things breaking. The
-search does not exist — no fuel, no stopping rule, no selection strategy, no
-memory that improves.
+**The honest summary of level 3:** the substrate survives things breaking, and the
+search now exists — it stops for a stated reason, selects, and remembers what it
+evaluated. What is still absent is fuel as money, suspension, and a pool any
+branch actually reads.
 
 ---
 
@@ -152,8 +155,12 @@ DECIDES is designed and unbuilt.**
     deciding    the agent, its loop, and selection
                 → built; stops for a stated reason, and only an accepted
                   branch can reach a pull request
-                fuel, generation size, knowledge promotion
-                → ADR-0081, marked proposed, none of it running
+                what the swarm remembers, and what two halves agree on
+                → built and demonstrated (ADR-0084, ADR-0086): a goal already
+                  done is skipped, every verdict is recorded, two parts
+                  negotiate a contract and land one joined tree
+                fuel as money, suspension, retrieval into a prompt
+                → ADR-0081, still proposed
 
 That is a deliberate order rather than an accident: a wrong decision on a
 substrate that loses work is impossible to debug, and every mechanism above was
@@ -179,6 +186,12 @@ The honest gap list, in the order it bites:
 3. **Nothing drives it from the queue.** `holon goal start` records that a goal
    started; no process picks a started goal up and runs a search for it. Both ends
    exist and a person is still the wire between them.
-4. **The knowledge pool is inert.** The graph stores and traverses. Nothing
-   promotes a lesson by outcome or decays a wrong one, and retrieval needs an
-   embedding provider that is not wired.
+4. **The knowledge pool is written and unread.** It promotes by outcome, weights
+   retrieval by what happened to the runs that read a lesson, skips a goal already
+   done, and records every branch's verdict (ADR-0084). What is missing is the last
+   wire: no branch's prompt carries a retrieved lesson, nothing distils a verified
+   diff into `patterns`, and nothing decays (goal 08).
+5. **Nothing criticises a gate.** A goal's checks are hand-authored, and a check
+   that already passes on the base tree accepts anything — measured, on the first
+   real decomposed run, which scored 1000 on two candidates that had deleted their
+   own component exports (goal 07).

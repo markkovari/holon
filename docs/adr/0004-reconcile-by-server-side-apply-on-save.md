@@ -1,6 +1,14 @@
 # ADR-0004 — Reconcile by server-side apply on save
 
-- **Status:** accepted
+> **SUPERSEDED — superseded by [0022](0022-desired-state-is-a-manifest.md).**
+>
+> Kept, not deleted: 2 decisions still in force cite this one, and the
+> record of how the platform got its shape is the point of keeping ADRs at all
+> (ADR-0001). Nothing below is edited to look wiser than it was. For what is true
+> now read [`../CURRENT.md`](../CURRENT.md); for what is in force read
+> [the index](README.md).
+
+- **Status:** superseded by ADR-0022
 - **Date:** 2026-07-27
 - **Supersedes:** —
 

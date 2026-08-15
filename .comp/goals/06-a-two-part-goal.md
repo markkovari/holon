@@ -1,4 +1,4 @@
-# A two-part goal — 🟢 runnable
+# A two-part goal — 🟢 agent-ready
 
 **Traces to:** ADR-0086 (*parts negotiate a contract*), and the machinery in
 `compose::run_parts`, `contract:registry` and `generation::compose_search`.

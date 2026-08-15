@@ -165,247 +165,159 @@ three of them — and both are now enforced by a helper rather than by rememberi
   responses, and retrying THOSE retries away the phenomenon under test until it
   happens to look right — green and worthless.
 
-## Honestly missing
+## What the loop does now
 
-- **One branch runs; nothing compares branches.** `graph:run/driver` now joins the
-  writer to the gate: attempt, judge, repair from what the checks actually said,
-  stop. It stops for a stated reason — `accepted`, `plateau` when an attempt
-  reproduces a candidate already on record, `exhausted` when the attempt budget
-  runs out, `no-progress` when `patience` attempts in a row fail to beat the best
-  score, `over-budget` when the token budget is spent — and keeps the best
-  candidate by score rather than the last, because a repair can be worse than what
-  it repaired. Each repair is shown the best candidate rather than the untouched
-  tree, which is what makes it a repair and not a re-roll with hints attached.
+Everything in this section is built, and most of it carries a number, because a
+claim about a distributed system without one is a hope.
 
-  The budget is in TOKENS, reported by the writer with each candidate, because a
-  budget in tries is not a budget. It under-reports by whatever the unusable
-  answers cost — cost travels with a candidate and an unusable answer produces
-  none — which is why `max-attempts` still exists as the hard bound.
+- **A branch runs, and a generation compares branches.** `graph:run/driver` joins
+  the writer to the gate — attempt, judge, repair from what the checks actually
+  said, stop for a stated reason (`accepted`, `plateau`, `exhausted`,
+  `no-progress`, `over-budget`) — and keeps the best candidate by score rather than
+  the last, because a repair can be worse than what it repaired. The budget is in
+  TOKENS, reported with each candidate; it under-reports by whatever the unusable
+  answers cost, which is why `max-attempts` remains the hard bound.
+- **`graph:select/selector` is the only path from a branch to a pull request**, and
+  the gate is enforced by the SHAPE of `land`, which takes runs rather than files:
+  there is no argument by which a caller lands a candidate the checks rejected.
+  Every selection reports how many DISTINCT candidates a generation produced,
+  because a herded generation looks exactly like a healthy one.
+- **`generation::fan_out` is native**, because a component runs one call at a time
+  and a generation whose branches ran in sequence would be a for-loop wearing the
+  word. Measured at 4 branches: **1948 ms wall against 5849 ms of branch time**.
+- **`generation::search` runs generations of generations**, each seeded with the
+  last one's best candidate AND the checks it still failed. Proven against a goal
+  no single generation can reach. Diversity is authored: each branch gets a lens,
+  and exactly one branch per generation is shown nothing from the previous one.
+- **`generation::compose_search` runs a DECOMPOSED goal** — K parts that compose
+  rather than N branches that compete, each part its own generation, a contract
+  they agree through, and one pull request (ADR-0086). Run against this repository:
+  both halves green, the join gate passed, PR opened.
+- **The gate is real and joined.** `comp-checks` materialises a candidate over a
+  base tree, runs allow-listed commands, and reports the check vector; it is native
+  because a component cannot spawn a process, which is the sandbox working rather
+  than a gap. The runner needs no checkout — the base tree is posted once, keyed by
+  its commit id, and later candidates send only a diff. An unknown commit is ASKED
+  for (409) rather than substituted.
+- **The swarm has a memory with a policy** (ADR-0084). `knowledge:memory` decides
+  who may write what the swarm believes — an agent's world has `memory` and not
+  `promotion` — retrieves by fusing SurrealDB's KNN with `search:index`'s TF-IDF,
+  and weights what it returns by what happened to the runs that read it. `holon
+  goal run --surreal-url …` asks whether a goal has already been done before
+  spending a generation, and records every branch's verdict on the way out.
+- **Two parts can negotiate an interface** (ADR-0086). `contract:registry` versions
+  it; a part asks, another grants, denies or counters; an amendment is canonical
+  only once the granting part's own gate passes against it; and nothing blocks
+  inside a generation, so a needed change costs a generation and never a deadlock.
+- **Desired state pages.** It was silently truncated at 1000 records — a stress run
+  that grew 3906 environments flatlined at exactly 500 running, every one past the
+  cap accepted, reported created, never placed. Whole-collection reads now page and
+  the backstop reports when it is reached: **781/781 converges** where 500 was the
+  ceiling.
+- **Admission control is enforced.** 429 above `max-placement-lag`, 503 when the
+  reconciler's report goes stale — fail closed, because a dead loop is exactly when
+  accepting more is pointless. It counts what it has let through since the last
+  report, so a burst cannot outrun it: **625 spawns in 0.2 s cut to 435**, and all
+  591 resulting apps converge.
+- **Component bytes are staged by CONTENT**, so two workers pushing different
+  builds cannot lose each other's; re-uploading identical bytes is a no-op. The WIT
+  surface is a compatibility gate and never an identity check: a save refuses to
+  remove an export (`?force=true` when that is the intent), but only content
+  decides what an artifact IS.
+- **The loop elects a leader**, so a standby takes over within the lease TTL plus
+  one interval. It does not shard, on purpose (ADR-0072): the pass after a fleet
+  change is **1.23 s at 1000 nodes × 10 000 apps**, 12% of one 10 s interval.
+- **`just test` compiles every test target first, then runs them** — 356 tests, a
+  number nobody could state before, because a workspace whose tests had never
+  compiled hid 34 of them and no suite complained.
 
-  `graph:select/selector` is the layer above one branch, and the only path from a
-  branch to a pull request. The gate is enforced by the SHAPE of `land`, which
-  takes runs rather than files — so there is no argument by which a caller could
-  land a candidate the checks rejected. Ties break on score, then the smaller
-  change, then the cheaper run, then the earlier branch; the last exists to be
-  deterministic. Every selection reports how many DISTINCT candidates the
-  generation produced, because a herded generation looks exactly like a healthy
-  one and nothing else can see it.
+## Known behaviours, not gaps
 
-  `generation::fan_out` joins them, and it is native for the reason the rest is
-  not: a component runs one call at a time, and a generation whose branches ran in
-  sequence would be a for-loop wearing the word. Measured at 4 branches, **1948 ms
-  wall against 5849 ms of branch time**.
+Things that surprise people, are deliberate, and are cheaper to read here than to
+rediscover.
 
-  `generation::search` runs generations of generations. Each after the first is
-  seeded with the last one's best candidate AND the checks it still failed —
-  seeding the code without the verdict hands branches broken work and does not say
-  why. Proven against a goal NO single generation can reach: `max_attempts` is 1
-  so no branch can repair itself, and the only winning answer is keyed on text
-  that exists solely in a seeded prompt.
-
-  Diversity is authored rather than hoped for. Branches differing only by seed
-  share a prompt, a context and a model; each now gets a LENS, and exactly one
-  branch per generation is shown NOTHING from the previous one. That branch is the
-  only escape from a local optimum once every other branch inherits the last
-  winner, and the test asserts it by what it PRODUCED rather than by the flag set
-  on it. The first branch is always asked exactly what the goal says, so a lens
-  that turns out to hurt stays visible.
-
-  Bounded three ways, none replacing another: rounds when generations are cheap, a
-  token budget ACROSS the search when they are not, and patience for a search that
-  is neither expensive nor going anywhere.
-
-  **A branch can now have its own environment.** ADR-0078 gave an environment its
-  own store by deriving the app name and then gave it no ingress at all, which is
-  right about the hazard — the parent's hostname on two apps routes to whichever
-  the ingress saw last — and leaves an app that cannot be driven from outside. A
-  swarm branch is precisely something that must be driven. ADR-0083 derives the
-  host instead: `branch-0.swarm.ada.test`, a strict suffix of the parent's, so it
-  cannot collide with it and collides with a sibling only if the names do — which
-  spawning already refuses. `generation::Strategy` carries the host, so a branch
-  and its address are one thing.
-
-  Proven by three environments writing THE SAME KEY, each reading back its own,
-  the parent finding nothing. The same key on purpose: different keys per branch
-  pass just as happily against one shared bucket.
-
-  **The loop now deploys into per-branch environments.** `gendeploy.rs` uploads the
-  five-component driver graph, deploys it LINKED through the platform API, spawns
-  an environment per branch, and drives a generation across the environments' own
-  derived hosts: branch 0 writes 42 and is accepted, branch 1 writes 41 and is
-  refused, each in an app and a store of its own. The gate here is `mock-fitness`
-  (scripted, reaches nothing), because the real checks-runner needs egress the
-  platform stamps only on a graph's front door (ADR-0008) — the real gate is
-  proven in `driver.rs`, and giving a buried component egress is its own decision.
-
-  Fixing that test surfaced a real platform bug: `internal_pushed` matched a
-  distributed component only by its NAME key, but every raw upload is
-  content-staged and reports its `sha256/<hash>` key, so a linked multi-component
-  graph deployed through the API never distributed — a 404 on each part, forever.
-  Composed single-artifact deployments stage by name and slipped through, which is
-  why it went unnoticed until a graph was deployed this way.
-
-  Still open: an environment is a COPY, so no branch runs a different MODEL from
-  its siblings — diversity is prompt-deep. Tokens are not money. And nothing picks
-  a started goal off the queue; `holon goal start` records that one started, and a
-  person is still the wire between that and a search.
-  A branch now spends against a token budget; a PROJECT still does not, and
-  nothing converts tokens to money or refunds a branch that died. Branches differ only by seed — same prompt, same context — so herding is
-  unmitigated and does not announce itself. And the agent NAMES ITS FILES rather
-  than retrieving them, because no embedding provider is wired.
-- **The gate runs checks; nothing calls it yet.** `comp-checks` materialises a
-  candidate over a base tree, runs allow-listed commands in it, and reports the
-  CHECK VECTOR — every required check passing is the gate, the weighted fraction
-  is the score (ADR-0081). It is native because a component cannot spawn a
-  process, and that is the sandbox working rather than a gap. `checks-runner`
-  wraps it as `graph:fitness/evaluator` and `graph:run/driver` now feeds it
-  candidates, so this end is joined.
-- **The check runner needs no checkout.** A caller that can read `vgit:store`
-  posts the base tree once, keyed by its commit id; the runner caches it under
-  that content address and every later candidate on the same base sends only its
-  diff. An unknown commit is ASKED for (409) rather than substituted, because a
-  runner that quietly fell back to another tree would score a candidate against
-  the wrong code and report it confidently. `--base` still exists for a runner
-  that does have a checkout. Disk remains a materialisation — it is where
-  compiling happens, not where anything is kept.
-- **The inventory TTL is declared by three processes on one shared bucket.** A
-  host asks for `heartbeat_secs * 3`, the reconciler for `inventory_ttl`, the
-  ingress for its own — and whoever calls `create_key_value` first wins, silently.
-  They agree today only because three defaults coincide at 15s. The ingress now
-  takes `--inventory-ttl` explicitly and refreshes at a third of it (it used to
-  refresh on an interval unrelated to the TTL it was reading against, which is
-  a real hazard). What remains missing is anything that NOTICES the mismatch: the
-  bucket's real `max_age` is never compared with the one asked for.
 - **A successful request does not mean the fleet has converged.** An ingress with
   an empty routing table still answers: it asks the reconciler to activate the app
-  and routes to whatever address comes back. So `serves()` — and "poll until
-  requests stop failing" — go green while inventory is empty and nothing is
-  routable. `Fleet::wait_for_placement` reads inventory instead, which is what
-  routing is actually built from. This cost four wrong diagnoses of `ha.rs`.
-- **Placement can lag past ten seconds under load**, which is what exposed the
-  above. Nothing has measured how long convergence takes as a function of load,
-  and the reconcile interval is the obvious suspect.
-- **Desired state was silently truncated at 1000 records** — fixed, and worth
-  recording because of how it presented. `internal_revisions` read revisions with
-  a flat limit; deduplicated to the newest per deployment that is roughly 500
-  apps, and a stress run that grew 3906 environments watched the fleet flatline
-  at exactly 500 running. Every environment past the cap was accepted, reported
-  as created, and never placed, with nothing anywhere saying so. Whole-collection
-  reads now page, and the backstop reports when it is reached instead of
-  quietly dropping the tail. 781/781 converges where 500 was the ceiling.
-- **Component references follow the registry idiom** — `shop` is the moving
-  pointer, `shop:v2` a named one an author may move, `shop@sha256:<hex>` exact
-  bytes nothing can move, and a digest beats a tag in the same reference. Parsed
-  and tested; NOT yet resolved anywhere — a deployment still names a bare id, so
-  pinning is a shape the code understands and does not act on.
-- **Nothing ran all the tests, which is how 34 of them went missing.**
-  `platform-domain`'s native test target had never compiled — a test referenced
-  `node_config`, a function nobody wrote — and no recipe or CI ran that
-  workspace, so nothing complained. `just test` now compiles every test target in
-  every workspace FIRST and then runs them: 356 tests, a number nobody could
-  state before. The compile pass is separate on purpose, because a target that
-  fails to build is the failure that hides — a suite reporting "ok" for the
-  crates it managed to build looks exactly like one where everything ran. The
-  guard was checked by re-breaking `node_config` and watching it exit non-zero.
-- **Component bytes are staged by CONTENT; the catalogue row is a pointer.**
-  `tenant/id` used to hold the bytes, which made an upload destructive — a second
-  build overwrote the first, so two workers pushing different builds of one
-  component raced and the loser's bytes were gone. Staged under `sha256/<hex>`
-  neither writer can lose: identical bytes land in the same place, different bytes
-  land elsewhere, and no lock is needed for either. Re-uploading identical bytes
-  is now a no-op rather than a full redistribution.
-- **The WIT surface is a compatibility gate, never an identity check.** A save
-  refuses when it would remove an export the previous revision had, naming each
-  one, with `?force=true` for when that is the intent. The distinction was
-  learned expensively: the composed artifact used to be invalidated by its
-  SURFACE, so two builds differing in a constant were treated as the same
-  artifact and a recompiled component never reached the fleet while every layer
-  reported success. Surfaces decide whether a change BREAKS something; only
-  content decides whether it IS something.
-- **Admission control exists now and is enforced.** The reconciler reports its
-  lag every pass to `POST /api/internal/status`; the platform refuses a spawn
-  with 429 above `max-placement-lag`, and with 503 when that report goes stale —
-  fail CLOSED, because a dead loop is exactly when accepting more is pointless.
-  Tested against a number rather than against the weather, plus an assertion that
-  the real reconciler's own report lands. Admission counts what it has let through
-  since the last report, so a burst faster than the reporting interval cannot
-  outrun it — without that, 625 spawns in 0.2s all sailed past a limit of 200.
-  Covers environment spawns and deployment saves. Measured: a 625-spawn burst is
-  cut to 435, and all 591 resulting apps converge.
-  Still uncovered: nothing admits against component pushes, and the limit is a
-  flat number rather than anything derived from fleet size.
-- **Breadth is fine and unmeasured beyond 8.** Eight branches spawned
-  concurrently converge in ~3s on one node. Nobody has looked for the width at
-  which the reconcile pass, the ports, or the memory give out. Depth is now
-  unbounded in principle and measured to 4.
-- **No automated cover for the interactive secret prompt.** `holon secret set`
-  reads a value with the echo off and asks twice; the pipe and `--from` paths are
-  tested, the terminal path was verified under a pty by hand. A test for it needs
-  a pty in the harness.
-- **The graph loop has memory and no shape for it.** `knowledge-graph` stores
-  nodes, edges and traversal against a real SurrealDB (ADR-0080), and nothing
-  decides what an environment should remember: whether a fork inherits its
-  parent's graph or starts blank, what prunes it, and which node kinds an agent
-  is supposed to write. The store is proven; the schema is a question.
-- **The database is not part of the platform.** SurrealDB is an external service
-  on an egress allow-list. Nothing deploys it, backs it up, replicates it, or
-  notices when it is gone — every one of which the KV path already does.
-- **No `@version` in a catalogue key — and this is now a FEATURE request, not a
-  gap** (ADR-0076). ADR-0007 rule 1 is held by binding `public` to the signed
-  digest, and revocation turned out to need provenance rather than versions. What
-  is missing is several live versions of one component (rollback, a beta beside a
-  stable), and the key is also the blob key, the push-queue key and the deployment
+  and routes to whatever comes back. So "poll until requests stop failing" goes
+  green while inventory is empty. `Fleet::wait_for_placement` reads inventory,
+  which is what routing is actually built from. This cost four wrong diagnoses.
+- **The read cache is off by default because reads go STALE, not because writes are
+  lost.** The lost update ADR-0065 measured is fixed in the store (`comp:store/cas`).
+  What remains is ADR-0064's documented trade: a plain read can be up to the TTL
+  stale, so read-your-own-writes does not hold across nodes. Opt into it knowingly.
+- **`list-keys` returns keys as STORED on the NATS backend**, not as the guest
+  wrote them. Identical for every component here, which sanitises its own segments;
+  making it reversible would rename every key already written (ADR-0068).
+- **The hop's PERCENTAGE is not a platform property.** A cross-node call is **57 µs**
+  (ADR-0074) — 5.4% of a request that deliberately does almost nothing, and far less
+  of one that touches JetStream. Quote the microseconds.
+- **`cargo component check` and `cargo component build` are not gates.** Both
+  succeed on a crate that implements none of its world — measured twice, while
+  running a real goal. Any goal whose checks are those commands is gated on nothing.
+
+## Honestly missing
+
+One line each, and where the work lives. Anything with a goal number is on the
+worklist in [`.comp/goals/`](../.comp/goals/).
+
+**The loop's judgement**
+
+- **Nothing criticises a gate.** A goal's checks are hand-authored, and the first
+  real decomposed run scored 1000 on two candidates that had deleted their own
+  component exports. A check that already passes on the base tree accepts anything
+  — and nothing looks. → goal 07
+- **Retrieval is not wired into a prompt.** `knowledge:memory` stores, ranks and
+  weights; no branch yet READS a lesson, nothing promotes a verified diff into
+  `patterns`, and nothing decays. → goal 08, ADR-0084
+- **Nothing measures herding or churn.** The diversity knobs exist (a lens per
+  branch, one branch that reads nothing); no run reports that its generation
+  converged. A negotiation was observed climbing v3 → v7 while no score moved, and
+  nothing noticed. → goal 03, ADR-0086
+- **A branch cannot differ by MODEL.** An environment is a copy of its parent, so a
+  generation cannot put haiku on three branches and opus on the fourth. → goal 03
+- **No structural memory of an app that already exists.** ADR-0085 designs a derived
+  code graph and answers none of its isolation question: where a shared index lives,
+  when a store is named after its app. → ADR-0085
+
+**The platform**
+
+- **Nothing notices an inventory TTL mismatch.** Three processes declare a TTL on
+  one shared bucket and whoever creates it first wins, silently; they agree today
+  only because three defaults coincide at 15 s. The bucket's real `max_age` is never
+  compared with the one asked for.
+- **Convergence under load is unmeasured.** Placement can lag past ten seconds and
+  nobody has measured it as a function of load; the reconcile interval is the
+  obvious suspect.
+- **Pinning is understood and not acted on.** `shop`, `shop:v2`,
+  `shop@sha256:<hex>` parse and are tested; a deployment still names a bare id.
+- **Admission does not cover component pushes**, and its limit is a flat number
+  rather than anything derived from fleet size.
+- **Breadth is unmeasured beyond 8** branches (~3 s on one node). Depth is measured
+  to 4.
+- **Nothing schedules the index check.** A record and its indexes are separate
+  writes; a read reports the half it can see and `verify` reports both (ADR-0075),
+  but nothing asks on a timer. Nothing aggregates the drift lines either — they land
+  in the tenant's host log.
+- **No `@version` in a catalogue key** — a feature request rather than a gap
+  (ADR-0076): several live versions of one component, for rollback or a beta beside
+  a stable. The key is also the blob key, the push-queue key and the deployment
   handle, so it is a migration through the deployment path.
 - **No in-transit wrapping** on the secret fetch — TLS only. Replay is closed
-  (ADR-0071: a nonce claimed exactly once, inside a 60s window), but an attacker
-  who can read the transport still reads the plaintext. Nothing sweeps spent
-  nonces yet; they are keyed by window so a sweeper can drop one by prefix.
-- **No UI.** `POST /api/components/satisfies` answers "would this plug fit" with wac's
-  real subtype check, and nothing calls it: a facility, not yet a feature.
-- **The loop does not shard**, on purpose (ADR-0072). It now elects a leader, so
-  a standby takes over within the lease TTL plus one interval — the reconciler was
-  the only control component without one. Sharding stays unbuilt: the pass after a
-  fleet change is 1.23 s at 1000 nodes × 10 000 apps, which is 12% of one 10 s
-  interval. The number to watch is `comp-planscale`'s cold column against
-  `--interval`.
-- **The read cache is off by default because reads go stale, not because writes
-  are lost.** ADR-0065 measured a lost update — `record-store::update` enforced its
-  revision guard as a read-compare-write over the very `wasi:keyvalue` the cache
-  sits under — and ADR-0066 fixed it by moving the comparison into the store
-  (`comp:store/cas`, JetStream's own revision on NATS). What remains is the
-  documented trade from ADR-0064: a plain read can be up to the TTL stale, so
-  read-your-own-writes does not hold across nodes. That is a semantic to opt into.
-- **Nothing SCHEDULES the index check.** A record and its indexes are separate
-  writes, so a crash between them leaves them disagreeing. A read now reports the
-  half it can see (`{"drift":true,…}` from `list`), and `verify` reports both
-  halves without fixing anything (ADR-0075) — but it is a question nobody is
-  asking on a timer. A cron or a pass folded into the reconciler closes it.
-- **Drift lines land in the tenant's host log**, since `record-store` runs in the
-  tenant's graph, and nothing aggregates those yet (ADR-0075).
-- **`list-keys` returns keys as STORED on the NATS backend**, not as the guest
-  wrote them. For every component here that is identical, because they sanitize
-  their own key segments; a key containing bytes that needed escaping comes back
-  escaped. Making it reversible renames every key already written (ADR-0068).
-  wasmCloud's provider does no encoding at all and lets NATS reject what it will
-  not take — a different trade, checked rather than assumed (ADR-0069).
-- **Conduit's `feed` still does one favorites lookup per article.** The author and
+  (ADR-0071), but a reader of the transport reads the plaintext, and nothing sweeps
+  spent nonces.
+- **The database is not part of the platform.** SurrealDB is an external service on
+  an egress allow-list: nothing deploys it, backs it up, replicates it, or notices
+  when it is gone — all of which the KV path already does.
+- **No UI**, and `POST /api/components/satisfies` (wac's real subtype check) is a
+  facility nothing calls.
+- **No automated cover for the interactive secret prompt** — the pipe and `--from`
+  paths are tested, the terminal path was verified by hand and needs a pty.
+- **Conduit's `feed` still does one favourites lookup per article.** The author and
   follow lookups are gone (ADR-0077: 12 fewer store reads per request, 35% fewer
-  over a run), but favorites genuinely differ per article, so removing them needs
-  either a `find-by` over many values or a denormalised counter — a second source
-  of truth, which is the class of bug this repo keeps removing.
-- **Cross-machine benchmarks now have one real run** (`bench/FLEET-BENCH.md`:
-  three Macs, R3, a machine killed under load). What is still unproven is the
-  malna/bobocat *scripts* — they target a Linux aarch64 Pi build and were not
-  exercised by that round. What has been checked without them: every
-  `comp-bench` subcommand and flag the scripts pass still exists, as does every
-  flag they pass to `comp-host`, `comp-stub`, `comp-reconciler` and `comp-ingress`;
-  and the local `bench/tenancy/run.sh` runs clean end to end (3 nodes, both orgs on
-  every node, ~4.8k rps each). Three Justfile recipes — `shared-state`,
-  `five-nodes`, `split-graph` — called scripts deleted three commits ago and are
-  gone. The remote scripts now **fail immediately** when a machine is missing
-  (`bench/preflight.sh`): before, `ssh -f -n` failed silently and the run printed a
-  number for a fleet that never spanned two machines.
-- **The hop's PERCENTAGE is not a platform property.** ADR-0074 re-measured a
-  cross-node call at **57 µs** — 5.4% of a request that deliberately does almost
-  nothing, and a far smaller share of one that touches JetStream. Quote the
-  microseconds, not the percentage.
+  over a run); favourites genuinely differ per article, so removing them needs a
+  `find-by` over many values or a denormalised counter — a second source of truth.
+- **The remote bench scripts are unproven.** One real cross-machine run exists
+  (`bench/FLEET-BENCH.md`: three Macs, a machine killed under load); the
+  malna/bobocat scripts target a Linux aarch64 build that round never exercised.
+  They now fail immediately when a machine is missing rather than printing a number
+  for a fleet that never spanned two.

@@ -450,8 +450,17 @@ fn main() -> Result<()> {
 
     // The commands the gate is allowed to run: the first word of each check.
     // Deduped, so `--allow uv` appears once however many checks use it.
-    let mut allow: Vec<&str> =
-        goal.checks.iter().filter_map(|c| c.command.first().map(String::as_str)).collect();
+    //
+    // EVERY check, including the parts'. A decomposed goal's top-level list is the
+    // composition gate alone, so deriving the allow-list from it left every part's
+    // own command refused by the runner — a whole run scoring zero for a reason
+    // that had nothing to do with the code.
+    let mut allow: Vec<&str> = goal
+        .checks
+        .iter()
+        .chain(goal.parts.iter().flat_map(|p| p.checks.iter()))
+        .filter_map(|c| c.command.first().map(String::as_str))
+        .collect();
     allow.sort_unstable();
     allow.dedup();
 
