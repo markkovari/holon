@@ -1,6 +1,14 @@
 # ADR-0008 — Isolation is stamped by the platform, never authored by tenants
 
-- **Status:** accepted
+> **SUPERSEDED — superseded by [0023](0023-isolation-is-a-linker-boundary.md); its release gate re-met in [0026](0026-the-adversarial-run.md).**
+>
+> Kept, not deleted: 4 decisions still in force cite this one, and the
+> record of how the platform got its shape is the point of keeping ADRs at all
+> (ADR-0001). Nothing below is edited to look wiser than it was. For what is true
+> now read [`../CURRENT.md`](../CURRENT.md); for what is in force read
+> [the index](README.md).
+
+- **Status:** superseded by ADR-0023
 - **Date:** 2026-07-27
 - **Supersedes:** —
 

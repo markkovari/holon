@@ -1,6 +1,14 @@
 # ADR-0016 — Deleting an app is reconciled, not remembered
 
-- **Status:** accepted
+> **SUPERSEDED — reaping half superseded by [0021](0021-there-is-no-kubernetes.md).**
+>
+> Kept, not deleted: 3 decisions still in force cite this one, and the
+> record of how the platform got its shape is the point of keeping ADRs at all
+> (ADR-0001). Nothing below is edited to look wiser than it was. For what is true
+> now read [`../CURRENT.md`](../CURRENT.md); for what is in force read
+> [the index](README.md).
+
+- **Status:** superseded by ADR-0021
 - **Date:** 2026-07-28
 - **Resolves:** the orphaned-`Host` risk left open by [ADR-0015](0015-a-bucket-name-is-not-a-boundary.md)
 
