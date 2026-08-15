@@ -1,6 +1,6 @@
 //! `comp-goalrun` — take a goal to a pull request, for real.
 //!
-//! This is the binary behind `comp goal run`: the one command that turns a goal
+//! This is the binary behind `holon goal run`: the one command that turns a goal
 //! and a repository into an opened PR, with a real model and a real gate. It
 //! assembles the pieces that are each already tested in isolation —
 //! `generation::search` (the fan-out and the loop), `anthropic-provider` (the
@@ -12,7 +12,7 @@
 //! `comp` is a thin HTTP client to the control plane. A real run needs the whole
 //! substrate up — NATS, hosts, the gate's native runner — which is exactly what
 //! `fleet::Fleet` stands up for the tests. So the orchestration lives here, in
-//! the crate that owns the fleet, and `comp goal run` shells to it.
+//! the crate that owns the fleet, and `holon goal run` shells to it.
 //!
 //! ## Secrets never touch argv
 //!
@@ -34,7 +34,10 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
-use comp_reconciler::generation::{search, land, Bounds, Entry};
+use comp_reconciler::compose;
+use comp_reconciler::contract::{Answerer, Ask, Registry};
+use comp_reconciler::generation::{compose_search, land, search, Bounds, Entry, Part};
+use comp_reconciler::memory::{run_id, Memory};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -57,6 +60,31 @@ struct Args {
     /// A file holding the GitHub token. Read here, never placed in argv.
     #[arg(long)]
     github_token: PathBuf,
+    /// A SurrealDB the knowledge pool may use, e.g. `http://127.0.0.1:8000`.
+    ///
+    /// OPT-IN, and absent by default. Given one, the run deploys the memory app,
+    /// asks it whether this goal has already been done, and records every branch's
+    /// verdict on the way out. Absent, none of that happens and the loop is
+    /// exactly what it was — the database is not part of the platform (ADR-0080),
+    /// so a real run must not require one to be up.
+    #[arg(long)]
+    surreal_url: Option<String>,
+    /// The password for that database, as a FILE path. Absent means the server
+    /// takes unauthenticated writes, which is a legitimate local setup.
+    #[arg(long)]
+    surreal_password: Option<PathBuf>,
+    /// Skip the whole search when a past passing run of a goal this similar is on
+    /// record. Cosine; 0.9 is alpha-swarm2's and is high on purpose — redoing work
+    /// costs money, skipping work that was never done is a wrong answer.
+    #[arg(long, default_value = "0.9")]
+    skip_above: f64,
+    /// The model that answers a part's request at a generation boundary.
+    ///
+    /// A verdict and an interface, not an implementation — so it is the cheap one
+    /// by default, and naming it separately is what makes that a decision rather
+    /// than an accident (ADR-0086).
+    #[arg(long, default_value = "claude-haiku-4-5-20251001")]
+    answer_model: String,
     /// Branches per generation.
     #[arg(long, default_value_t = 4)]
     branches: u16,
@@ -113,6 +141,37 @@ struct GoalSpec {
     /// needs (and get them subtly wrong). An explicitly-set field always wins.
     #[serde(default)]
     component: Option<String>,
+    #[serde(rename = "check")]
+    checks: Vec<CheckSpec>,
+    /// A file in the checkout holding the interface both parts build against.
+    ///
+    /// Present only for a DECOMPOSED goal, and required by one: two halves that
+    /// must compose need something to agree on before either exists, and the
+    /// person who described the work is the one who has it (ADR-0086).
+    #[serde(default)]
+    contract: Option<String>,
+    /// The parts. Empty means an ordinary goal — one goal, N competing branches,
+    /// one winner — and everything about that path is unchanged.
+    ///
+    /// With parts, the top-level `[[check]]` list becomes the COMPOSITION gate:
+    /// the checks that belong to the whole rather than to either half, and the
+    /// ones that can only run over the joined tree.
+    #[serde(default, rename = "part")]
+    parts: Vec<PartSpec>,
+}
+
+/// One half of a decomposed goal.
+#[derive(Deserialize)]
+struct PartSpec {
+    /// What the registry knows it by, and what a request is addressed to.
+    name: String,
+    text: String,
+    /// Disjoint from every other part's, or the merge refuses it: two parts
+    /// writing one path is a decomposition bug, not something to resolve.
+    writable: Vec<String>,
+    /// This half's own gate. It runs against the contract alone — the frontend
+    /// against fixtures generated from it, the backend against the routes it
+    /// promises — so neither part ever waits for the other.
     #[serde(rename = "check")]
     checks: Vec<CheckSpec>,
 }
@@ -277,7 +336,20 @@ fn render(fixture: &str, subs: &[(&str, &str)]) -> Result<PathBuf> {
 fn artifacts() -> Result<Vec<String>> {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
+    // The memory app's five are here unconditionally: an artifact nothing places
+    // costs nothing, and making the list conditional would mean two ways to be
+    // missing a file.
     for (id, file) in [
+        ("cprobe", "contract_probe.wasm"),
+        ("registry", "contract_registry.wasm"),
+        ("cgraph", "knowledge_graph.wasm"),
+        ("lprobe", "llm_probe.wasm"),
+        ("allm", "anthropic_provider.wasm"),
+        ("mprobe", "memory_probe.wasm"),
+        ("memory", "knowledge_memory.wasm"),
+        ("graph", "knowledge_graph.wasm"),
+        ("search", "search_index.wasm"),
+        ("mllm", "mock_provider.wasm"),
         ("probe", "driver_probe.wasm"),
         ("driver", "agent_driver.wasm"),
         ("writer", "agent_writer.wasm"),
@@ -467,12 +539,71 @@ fn main() -> Result<()> {
     let forge_spec = render("goalrun-forge.yaml", &[("FORGE_REPO", &args.repo)])?;
 
     // Secrets by file: only the PATHS reach argv.
-    let secrets = vec![
+    let mut secrets = vec![
         format!("vault://acme/anthropic=@{}", args.anthropic_key.display()),
         format!("vault://acme/forge=@{}", args.github_token.display()),
     ];
 
-    let specs = vec![driver_spec.to_str().unwrap().to_string(), forge_spec.to_str().unwrap().to_string()];
+    let mut specs =
+        vec![driver_spec.to_str().unwrap().to_string(), forge_spec.to_str().unwrap().to_string()];
+
+    // A decomposed goal needs somewhere to keep the contract, and that is a
+    // database nothing here deploys. Refused up front rather than half-run.
+    if !goal.parts.is_empty() {
+        if args.surreal_url.is_none() {
+            bail!(
+                "this goal has {} part(s), which need a contract registry — pass --surreal-url \
+                 (the registry keeps versions and the negotiation history in it)",
+                goal.parts.len()
+            );
+        }
+        if goal.contract.is_none() {
+            bail!(
+                "this goal has parts but no `contract = \"…\"` — two halves that must compose \
+                 need something to agree on before either exists"
+            );
+        }
+    }
+
+    // The knowledge pool, only if a database was named.
+    if let Some(url) = &args.surreal_url {
+        // The graph's egress allow-list is a socket, not a URL — and it is the
+        // one address it may dial (ADR-0008).
+        let egress = url
+            .split("://")
+            .nth(1)
+            .map(|rest| rest.split('/').next().unwrap_or(rest).to_string())
+            .unwrap_or_else(|| url.clone());
+        let memory_spec = render(
+            "goalrun-memory.yaml",
+            &[("SURREAL_URL", url), ("SURREAL_DB", "goalmemory"), ("SURREAL_EGRESS", &egress)],
+        )?;
+        specs.push(memory_spec.to_str().unwrap().to_string());
+        // A database with no auth is a legitimate local setup, so the secret is
+        // only granted when a password file was given. The vault reference in the
+        // fixture resolves to empty otherwise, which `knowledge-graph` treats as
+        // "no password" rather than as a failure.
+        if let Some(path) = &args.surreal_password {
+            secrets.push(format!("vault://acme/surreal=@{}", path.display()));
+        }
+        if !goal.parts.is_empty() {
+            specs.push(
+                render(
+                    "goalrun-contract.yaml",
+                    &[("SURREAL_URL", url), ("SURREAL_EGRESS", &egress)],
+                )?
+                .to_str()
+                .unwrap()
+                .to_string(),
+            );
+            specs.push(
+                render("goalrun-answer.yaml", &[("ANSWER_MODEL", &args.answer_model)])?
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+            );
+        }
+    }
     let spec_refs: Vec<&str> = specs.iter().map(String::as_str).collect();
     let art = artifacts()?;
 
@@ -482,6 +613,27 @@ fn main() -> Result<()> {
 
     wait_serving(port, "goalrun.acme.test", Duration::from_secs(180))?;
     wait_serving(port, "goalland.acme.test", Duration::from_secs(180))?;
+
+    // The knowledge pool, if one was deployed. An app that will not serve is
+    // reported and then ignored: this is the half of the run that must never stop
+    // it (see `memory.rs`).
+    let memory = match &args.surreal_url {
+        None => None,
+        Some(url) => match wait_serving(port, "goalmemory.acme.test", Duration::from_secs(180)) {
+            Ok(()) => {
+                println!("knowledge pool serving, backed by {url}");
+                Some(Memory {
+                    url: format!("http://127.0.0.1:{port}"),
+                    host: "goalmemory.acme.test".to_string(),
+                    timeout: Duration::from_secs(30),
+                })
+            }
+            Err(e) => {
+                println!("knowledge pool did not come up ({e}) — running without it");
+                None
+            }
+        },
+    };
 
     if args.smoke {
         // Both apps serving already proves a lot: an app whose secret cannot be
@@ -505,13 +657,100 @@ fn main() -> Result<()> {
         println!("\nSMOKE OK:");
         println!("  · both graphs started and serve → links, egress and secret GRANTS are correct");
         println!("  · driver reachable → {body}");
+
+        // A decomposed goal brings up two more apps and a database, and every one
+        // of them can be proved for FREE: an app whose secret cannot be granted or
+        // whose egress is malformed never serves, publishing the contract exercises
+        // the registry through the graph to a real SurrealDB, and `describe` asks
+        // the provider what it is without asking it to think.
+        if !goal.parts.is_empty() {
+            wait_serving(port, "goalcontract.acme.test", Duration::from_secs(180))?;
+            wait_serving(port, "goalanswer.acme.test", Duration::from_secs(180))?;
+            println!("  · the contract registry and the answer door serve");
+
+            let registry = Registry {
+                url: format!("http://127.0.0.1:{port}"),
+                host: "goalcontract.acme.test".into(),
+                timeout: Duration::from_secs(60),
+            };
+            let contract_path = goal.contract.clone().unwrap_or_default();
+            let contract = std::fs::read_to_string(args.checkout.join(&contract_path))
+                .with_context(|| format!("reading the contract at {contract_path}"))?;
+            match registry.publish(&contract) {
+                Ok(v) => println!(
+                    "  · contract v{v} published from {contract_path} → registry → graph → \
+                     SurrealDB, and the database's secret was granted"
+                ),
+                // A second smoke run against the same database finds the contract
+                // already there, which proves the same chain and is not a failure.
+                Err(e) if e.contains("already published") => match registry.current() {
+                    Ok(c) => println!(
+                        "  · contract v{} already in the registry, and readable → the whole \
+                         chain to SurrealDB works",
+                        c.number
+                    ),
+                    Err(e) => bail!("the registry has a contract it cannot read back: {e}"),
+                },
+                Err(e) => bail!("the contract registry is not usable: {e}"),
+            }
+            let http = reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()?;
+            let describe = http
+                .get(format!("http://127.0.0.1:{port}/describe"))
+                .header("host", "goalanswer.acme.test")
+                .send()?;
+            let d: Value =
+                serde_json::from_str(&describe.text().unwrap_or_default()).unwrap_or(Value::Null);
+            println!("  · the answering model is reachable and says it is → {d}");
+            println!(
+                "  · parts: {}",
+                goal.parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+            );
+        }
+
         println!("\nWhat smoke does NOT check (needs a real call, costs money):");
         println!("  · that the Anthropic key VALUE is accepted");
         println!("  · that the GitHub token VALUE can open a PR");
         println!("  · that `{}` actually runs under the gate", allow.join(" "));
+        if !goal.parts.is_empty() {
+            println!("  · that the parts negotiate — the first request costs one small call");
+        }
         println!("\nRun for real by dropping --smoke.");
         return Ok(());
     }
+    // --- has this already been done? -------------------------------------
+    //
+    // ONCE per goal, before anything is spawned. This is the call that saves a
+    // whole generation, and it is the only one whose failure mode had to be
+    // decided rather than defaulted: an unreachable pool answers "no", because
+    // redoing work costs money and skipping work that was never done is a silent
+    // wrong answer.
+    if let Some(m) = &memory {
+        match m.already_done(&goal.text, args.skip_above) {
+            Ok(Some(prior)) => {
+                println!("\nALREADY DONE — {}", prior.summary());
+                println!(
+                    "\n  no branches spawned. Lower --skip-above (now {:.2}) or clear the pool \n                       if this is not the same work.",
+                    args.skip_above
+                );
+                return Ok(());
+            }
+            Ok(None) => println!("nothing on record for this goal; running it"),
+            Err(e) => println!("could not ask the knowledge pool ({e}) — doing the work"),
+        }
+    }
+
+    // --- a DECOMPOSED goal ---------------------------------------------------
+    //
+    // Parts that compose rather than branches that compete: each half runs its own
+    // generations against a shared contract, asks the other for changes it needs,
+    // and the winners are merged into one tree judged by the goal's own checks
+    // (ADR-0086). One pull request at the end.
+    if !goal.parts.is_empty() {
+        return decomposed(&args, &goal, port, gate.port, &context, &tree, &base_commit, &checks);
+    }
+
     println!("fleet serving; running the search …\n");
 
     let plan = json!({
@@ -536,8 +775,30 @@ fn main() -> Result<()> {
 
     // Every attempt of every branch, so the run is legible even when it fails.
     let mut entries: Vec<Entry> = Vec::new();
+    let mut recorded = 0usize;
+    // The accepted branch with the highest score, as (run id, score) — the run the
+    // pull request will be attributed to. `search` already picks the winning
+    // ENTRY; what is needed here is the run id it was recorded under, which only
+    // this walk knows.
+    let mut winner: Option<(String, u64)> = None;
     for (r, round) in found.rounds.iter().enumerate() {
         for e in &round.entries {
+            // One verdict per BRANCH, not one per generation: the count of failed
+            // attempts on a goal is what says whether another generation is worth
+            // buying, and a generation-level record cannot say it. The artifact is
+            // empty here — nothing has been opened yet — and the landing path
+            // re-reports the winner with it, which is free because a verdict edge
+            // is keyed by (goal, run).
+            let run = run_id(seed, r, &e.branch);
+            if e.accepted && winner.as_ref().is_none_or(|(_, best)| e.score > *best) {
+                winner = Some((run.clone(), e.score));
+            }
+            if let Some(m) = &memory {
+                match m.evaluated(&goal.text, &run, e.score, e.accepted, "") {
+                    Ok(()) => recorded += 1,
+                    Err(err) => println!("  (verdict for {run} not recorded: {err})"),
+                }
+            }
             println!(
                 "  gen {r} {:<9} accepted={:<5} score={:<5} attempts={} tokens={} {}",
                 e.branch,
@@ -556,6 +817,12 @@ fn main() -> Result<()> {
         found.spent_tokens,
         entries.len()
     );
+    if memory.is_some() {
+        println!(
+            "knowledge: {recorded}/{} verdicts recorded — a later run asking for this goal \n               will see them",
+            entries.len()
+        );
+    }
 
     // When a branch never ran (a transport note rather than a verdict), the
     // reason is in the host and ingress logs, which the fleet's tempdir throws
@@ -607,6 +874,198 @@ fn main() -> Result<()> {
     let select_url = format!("http://127.0.0.1:{port}/land");
     match land(&select_url, "goalland.acme.test", &entries, landing, timeout) {
         Ok(v) if v["url"].is_string() => {
+            let url = v["url"].as_str().unwrap();
+            println!("\n  PR opened: {url}");
+            println!("  branch: {}  commit: {}", v["branch"], v["commit"]);
+            // Re-report the winning run, now that there is something addressable
+            // to point the next run at. Idempotent per (goal, run), so this
+            // attaches the pull request without inventing a second evaluation.
+            if let (Some(m), Some(w)) = (&memory, &winner) {
+                if let Err(e) = m.evaluated(&goal.text, &w.0, w.1, true, url) {
+                    println!("  (the pull request was not recorded against the goal: {e})");
+                }
+            }
+        }
+        Ok(v) => println!("\n  the forge answered but opened no PR: {v}"),
+        Err(e) => println!("\n  landing failed: {e}"),
+    }
+    Ok(())
+}
+
+/// One goal, K parts, one pull request.
+///
+/// The shape differs from the ordinary path in exactly one way that matters: a
+/// generation that produces a brilliant backend and no frontend has produced
+/// nothing, so there is no "best" to land until every part is green.
+#[allow(clippy::too_many_arguments)]
+fn decomposed(
+    args: &Args,
+    goal: &GoalSpec,
+    port: u16,
+    checks_port: u16,
+    context: &[Value],
+    tree: &[Value],
+    base_commit: &str,
+    composition_checks: &[Value],
+) -> Result<()> {
+    let registry = Registry {
+        url: format!("http://127.0.0.1:{port}"),
+        host: "goalcontract.acme.test".into(),
+        timeout: Duration::from_secs(60),
+    };
+    let answerer = Answerer {
+        url: format!("http://127.0.0.1:{port}"),
+        host: "goalanswer.acme.test".into(),
+        timeout: Duration::from_secs(180),
+    };
+    wait_serving(port, "goalcontract.acme.test", Duration::from_secs(180))?;
+    wait_serving(port, "goalanswer.acme.test", Duration::from_secs(180))?;
+
+    // The human's contract, from the file named in the goal spec.
+    let contract_path = goal.contract.clone().unwrap_or_default();
+    let body = std::fs::read_to_string(args.checkout.join(&contract_path))
+        .with_context(|| format!("reading the contract at {contract_path}"))?;
+    let version = registry.publish(&body).map_err(|e| anyhow::anyhow!("publishing the contract: {e}"))?;
+    println!("contract v{version} published from {contract_path}");
+
+    let parts: Vec<Part> = goal
+        .parts
+        .iter()
+        .map(|p| Part {
+            name: p.name.clone(),
+            plan: json!({
+                "text": p.text,
+                "writable": p.writable,
+                // Every part sees the same base tree; what differs is what it may
+                // write and what it is judged by.
+                "context": context,
+                "previous": [],
+                "checks": p.checks.iter().map(|c| json!({
+                    "id": c.id, "required": c.required, "weight": c.weight, "command": c.command,
+                })).collect::<Vec<_>>(),
+                "base_commit": base_commit,
+                "base_tree": tree,
+                "max_attempts": args.attempts,
+                "seed": 1,
+            }),
+        })
+        .collect();
+    println!(
+        "parts: {}",
+        parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+    );
+
+    let timeout = Duration::from_secs(args.timeout);
+    let bounds =
+        Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
+    let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+
+    // The loop itself is library code, so the e2e that covers it drives THIS and
+    // not a re-spelling of it. What is left here is what a binary is for: saying
+    // what happened, and landing it.
+    let run = compose::run_parts(
+        &compose::Wiring {
+            driver_url: &format!("http://127.0.0.1:{port}/run"),
+            driver_host: "goalrun.acme.test",
+            checks_url: &format!("http://127.0.0.1:{checks_port}/check"),
+            registry: &registry,
+            answerer: Some(&answerer),
+        },
+        &parts,
+        &body,
+        version,
+        bounds,
+        seed,
+        timeout,
+        base_commit,
+        &json!(tree),
+        &json!(composition_checks),
+    );
+
+    for line in &run.log {
+        println!("  · {line}");
+    }
+    for p in &run.composition.parts {
+        println!(
+            "  {:<10} accepted={:<5} score={:<5} generations={} against contract v{}",
+            p.part,
+            p.accepted,
+            p.best.as_ref().map(|b| b.score).unwrap_or(0),
+            p.rounds.len(),
+            p.built_against
+        );
+    }
+    println!(
+        "\nsearch: {:?}, {} tokens across {} part(s)",
+        run.composition.stopped,
+        run.composition.spent_tokens,
+        run.composition.parts.len()
+    );
+
+    if !run.landable() {
+        println!("\nNo PR opened:");
+        for b in &run.blocked {
+            println!("  · {b}");
+        }
+        return Ok(());
+    }
+    let report = run.report.as_ref().expect("landable means the gate ran");
+    let changes = run.changes.clone().expect("landable means there is a tree");
+    println!("  composition PASSED at score {}", report.score);
+
+    if args.dry_run {
+        println!("\n[dry run] the join passed; not opening a PR.");
+        return Ok(());
+    }
+
+    // One pull request, carrying every part's work and the negotiation that got
+    // them there — the part a reviewer most needs and could never reconstruct.
+    let title = goal.title.clone().unwrap_or_else(|| {
+        goal.text.lines().next().unwrap_or("a composed candidate").to_string()
+    });
+    let history = if run.log.is_empty() {
+        "The parts needed nothing from each other.".to_string()
+    } else {
+        run.log.iter().map(|l| format!("- {l}")).collect::<Vec<_>>().join("\n")
+    };
+    let landing = json!({
+        "base": args.base,
+        "branch": format!("comp/goal-{}", SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs()),
+        "title": title,
+        "body": format!(
+            "Automated candidate from a decomposed graph-engineering run.\n\n\
+             {} part(s) built against contract v{}; the join passed at score {}.\n\n\
+             ## Goal\n\n{}\n\n## How the interface got there\n\n{}\n",
+            run.composition.parts.len(), run.composition.contract_version, report.score,
+            goal.text, history
+        ),
+        "message": title,
+    });
+
+    // ONE candidate: the merged tree. The selector picks between branches, and a
+    // composed run has already chosen — per part, and then joined.
+    let joined = Entry {
+        branch: "composition".into(),
+        accepted: true,
+        score: report.score,
+        digest: String::new(),
+        spent_tokens: run.composition.spent_tokens,
+        attempts: run.composition.rounds_run as u64,
+        files: changes,
+        failures: json!([]),
+        note: String::new(),
+        elapsed_ms: 0,
+        stopped: "accepted".into(),
+    };
+    println!("\nopening a pull request on {} …", args.repo);
+    match land(
+        &format!("http://127.0.0.1:{port}/land"),
+        "goalland.acme.test",
+        &[joined],
+        landing,
+        timeout,
+    ) {
+        Ok(v) if v["url"].is_string() => {
             println!("\n  PR opened: {}", v["url"].as_str().unwrap());
             println!("  branch: {}  commit: {}", v["branch"], v["commit"]);
         }
@@ -618,7 +1077,82 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{component_scope, trim_members};
+    use super::{component_scope, trim_members, GoalSpec};
+
+    /// The goal spec for a decomposed run, as a person writes it.
+    ///
+    /// Three things are being asserted at once, and each is a decision: the parts
+    /// carry their OWN checks (each half gates alone, against the contract), the
+    /// top-level `[[check]]` list becomes the COMPOSITION gate (the checks that
+    /// belong to the whole and can only run over the joined tree), and `contract`
+    /// names a file in the checkout rather than being written inline — a person
+    /// edits an interface in an editor that understands it.
+    #[test]
+    fn a_goal_can_be_two_parts_and_a_contract() {
+        let spec: GoalSpec = toml::from_str(
+            r#"
+text = "Add a paged search box: a backend route and a frontend that renders it."
+title = "Paged search across both halves"
+contract = "CONTRACT.json"
+writable = []
+
+[[part]]
+name = "backend"
+text = "Serve GET /api/search over the corpus, exactly as CONTRACT.md describes."
+writable = ["src/api.rs"]
+[[part.check]]
+id = "backend-serves-the-route"
+command = ["grep", "-q", "/api/search", "src/api.rs"]
+
+[[part]]
+name = "frontend"
+text = "Render the results with a pager, against the fixtures in .contract-mocks."
+writable = ["ui/app.ts", "CONTRACT-REQUEST.md"]
+[[part.check]]
+id = "pager-renders"
+command = ["grep", "-q", "pager", "ui/app.ts"]
+
+[[check]]
+id = "the-join"
+command = ["grep", "-q", "total_pages", "ui/app.ts"]
+"#,
+        )
+        .expect("a decomposed goal spec");
+
+        assert_eq!(spec.contract.as_deref(), Some("CONTRACT.json"));
+        let names: Vec<&str> = spec.parts.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["backend", "frontend"]);
+        assert_eq!(spec.parts[0].checks.len(), 1, "each half gates alone");
+        assert_eq!(spec.checks.len(), 1, "and the top-level checks judge the join");
+        assert_eq!(spec.checks[0].id, "the-join");
+        // `required` and `weight` default, as they do for an ordinary goal.
+        assert!(spec.parts[1].checks[0].required);
+        assert_eq!(spec.parts[1].checks[0].weight, 1);
+        // The parts must not share a writable path — `compose::merge` refuses it,
+        // and a spec that violates it has a decomposition bug, not a merge bug.
+        assert!(
+            spec.parts[0].writable.iter().all(|w| !spec.parts[1].writable.contains(w)),
+            "parts must write disjoint paths"
+        );
+    }
+
+    /// An ordinary goal is unchanged: no parts, no contract, and every existing
+    /// spec in the repo still parses.
+    #[test]
+    fn a_goal_without_parts_is_the_path_it_always_was() {
+        let spec: GoalSpec = toml::from_str(
+            r#"
+text = "make the answer 42"
+writable = ["src/lib.rs"]
+[[check]]
+id = "tests"
+command = ["cargo", "test"]
+"#,
+        )
+        .expect("an ordinary goal spec");
+        assert!(spec.parts.is_empty());
+        assert!(spec.contract.is_none());
+    }
 
     #[test]
     fn a_component_name_derives_its_build_scope() {

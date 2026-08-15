@@ -102,8 +102,11 @@ single-component app should be a container, not a wasm workload.
 | [0078](0078-an-environment-is-a-derived-app.md) | An environment is a derived app — parallel exploration, and why not a host per branch | accepted; desired-state half built |
 | [0079](0079-a-component-forks-its-own-app.md) | A component forks its own app — the instance token as identity | accepted; platform half built |
 | [0080](0080-the-graph-remembers.md) | The graph remembers — a knowledge graph over SurrealDB, as a component | accepted; proven against a live database |
-| [0081](0081-fitness-fuel-and-what-the-swarm-knows.md) | Fitness, fuel, and what the swarm knows — judging a branch, sharing knowledge, and stopping | **proposed**; nothing built |
+| [0081](0081-fitness-fuel-and-what-the-swarm-knows.md) | Fitness, fuel, and what the swarm knows — judging a branch, sharing knowledge, and stopping | **proposed**; §2 (knowledge) built as ADR-0084, the rest unbuilt |
 | [0082](0082-a-project-owns-a-repo-and-a-queue.md) | A project owns a repo and a queue — one repo, a dead-letter queue, and a human starts every goal | accepted; the queue is built, the runner is not |
+| [0084](0084-two-retrievers-and-an-optimistic-database.md) | Two retrievers and an optimistic database — `knowledge:memory`, KNN in SurrealDB, `+=` over read-modify-write | accepted; 9 scenarios + a 5-component composed e2e pass; the goal runner skips work already done, retrieval is not wired yet |
+| [0085](0085-structure-flows-down-lessons-flow-up.md) | Structure flows down, lessons flow up — a derived code graph over an app that EXISTS | **proposed**; nothing built, and its isolation question is open; [0086](0086-parts-negotiate-a-contract.md) is the other tense |
+| [0086](0086-parts-negotiate-a-contract.md) | Parts negotiate a contract — a decomposed goal, request/deny/counter, and nothing blocks inside a generation | built, demonstrated and reachable: `[[part]]` in a goal spec, a composed e2e watching a frontend ask, a backend grant and demonstrate, the amendment ratify, and both halves pass a joined gate |
 
 ## The shape these add up to
 

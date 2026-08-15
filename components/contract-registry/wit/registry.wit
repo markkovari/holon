@@ -1,0 +1,145 @@
+// contract:registry — the interface two parts of one goal build against, and the
+// record of how it got that way.
+//
+// A decomposed goal diverges into parts — a frontend and a backend — that must
+// agree on routes and DTOs neither has written yet (ADR-0086). The first contract
+// is the human's, in the goal spec. After that the parts may ASK each other for
+// changes, and the one that owns a surface may grant, deny, or counter with
+// something better.
+//
+// Three rules are in the shape of this interface rather than in anyone's manners:
+//
+//   1. NOTHING BLOCKS. `ask` records a request and returns; `pending` is read at
+//      a generation boundary. There is no call here that waits for another part,
+//      because two parts waiting on each other is the deadlock this design exists
+//      to make impossible. A needed change therefore costs a generation.
+//
+//   2. AN AMENDMENT IS A PROMOTION. `answer` with `granted` produces a PROPOSED
+//      version. It becomes canonical only when `ratify` is called with the
+//      granting part's passing gate score — the same rule that keeps raw model
+//      output out of `knowledge:memory`'s trusted pool (ADR-0084). A part that
+//      could amend the shared contract at will could poison every sibling.
+//
+//   3. A VERSION MISMATCH IS A REFUSAL. `composable` says no when two candidates
+//      were built against different versions. Individually fine, meaningless
+//      together — the same failure as an index holding vectors from two models,
+//      and it will compile and deploy before failing on one field.
+package contract:registry@0.1.0;
+
+interface registry {
+    variant registry-error {
+        /// The store refused it. Carries what it said.
+        rejected(string),
+        /// The store could not be reached.
+        unavailable(string),
+        /// The call is not allowed to do that: ratifying somebody else's version,
+        /// answering a request twice, publishing a second first contract.
+        refused(string),
+    }
+
+    /// A versioned interface. The BODY is opaque — an OpenAPI fragment, a set of
+    /// JSON Schemas, a `.d.ts`. The registry owns versioning, ownership and
+    /// provenance; the goal owns the format, and a registry that parsed it would
+    /// be a registry that has opinions about which stack you use.
+    record contract {
+        version: u32,
+        body: string,
+        /// Canonical means a gate passed against it. Proposed means a part granted
+        /// a request and has not yet demonstrated it can implement the answer.
+        canonical: bool,
+        /// Which part must ratify it. Empty on the first version, which is the
+        /// human's and canonical on arrival.
+        owner: string,
+        /// The request this version answered, or empty for the first.
+        from-request: string,
+    }
+
+    /// What a part said when it was asked for something.
+    enum verdict {
+        /// The contract amends. A new proposed version comes back.
+        granted,
+        /// It does not, and the reason had better be in the answer — an asker
+        /// that cannot read why will ask again next generation.
+        denied,
+        /// Neither: something better. The answer carries the alternative, and
+        /// this is the reply that makes divergence worth having — the part being
+        /// asked knows what the asker does not.
+        counter,
+    }
+
+    record request {
+        id: string,
+        from-part: string,
+        to-part: string,
+        subject: string,
+        body: string,
+        /// The version the asker was building against when it asked. Kept because
+        /// an answer given three versions later may no longer be about the same
+        /// interface.
+        at-version: u32,
+        answered: bool,
+        verdict: verdict,
+        /// The reason, the counter-proposal, or empty.
+        answer: string,
+    }
+
+    /// The human's contract, from the goal spec. Once, at the start of a run.
+    publish: func(body: string) -> result<u32, registry-error>;
+
+    /// The latest CANONICAL version — what a part builds against. A proposed
+    /// amendment nobody has implemented yet must never become what siblings build
+    /// on.
+    current: func() -> result<contract, registry-error>;
+
+    get: func(version: u32) -> result<option<contract>, registry-error>;
+
+    /// The latest version this part has granted and not yet demonstrated.
+    ///
+    /// The owner of a proposal builds against ITS OWN proposal while everyone else
+    /// stays on the last canonical one — otherwise a granted amendment could never
+    /// be ratified, because ratification means "I passed my gate against it" and
+    /// nothing would ever hand it to the part that has to pass.
+    proposed: func(part: string) -> result<option<contract>, registry-error>;
+
+    /// Ask another part for a change. Returns immediately; the answer arrives at
+    /// a generation boundary, which is the whole liveness argument.
+    ask: func(
+        from-part: string,
+        to-part: string,
+        subject: string,
+        body: string,
+        at-version: u32,
+    ) -> result<string, registry-error>;
+
+    /// What this part has been asked and has not answered. Read at the boundary.
+    pending: func(to-part: string) -> result<list<request>, registry-error>;
+
+    /// Answer one. `granted` needs the amended contract body and returns the new
+    /// PROPOSED version; `denied` and `counter` need prose and return 0.
+    answer: func(id: string, v: verdict, body: string) -> result<u32, registry-error>;
+
+    /// The granting part's gate passed against its own amendment: make it
+    /// canonical. Refused unless the part is that version's owner and the score
+    /// actually passed.
+    ratify: func(version: u32, part: string, gate-score: s32) -> result<_, registry-error>;
+
+    /// Record what a candidate was built against. Provenance, and the input to
+    /// `composable`.
+    built-against: func(candidate: string, part: string, version: u32)
+        -> result<_, registry-error>;
+
+    /// May these candidates be composed? An EMPTY list means yes. Otherwise it
+    /// carries one line per disagreement, because "not composable" without saying
+    /// which part is on which version sends the reader to the wrong place.
+    composable: func(candidates: list<string>) -> result<list<string>, registry-error>;
+}
+
+/// The negotiation history is a graph and nothing else fits it: a request is
+/// asked-of a part, an answer amends a contract, a candidate is built-against a
+/// version. "Which decision broke the join" is then one traversal — the first
+/// place on this path where `knowledge:graph` earns its keep rather than merely
+/// being available.
+world contract-registry {
+    export registry;
+    import knowledge:graph/store@0.1.0;
+}

@@ -1,0 +1,79 @@
+# The knowledge pool, for a real run — deployed ONLY when `holon goal run` is given
+# a `--surreal-url`.
+#
+# It is opt-in because the database is not part of the platform (ADR-0080):
+# nothing here deploys SurrealDB, backs it up, or notices when it is gone. Making
+# every real run depend on one would trade a loop that works for a loop that needs
+# a database to be up, and the whole point of the knowledge layer is that it makes
+# the loop cheaper rather than possible.
+#
+# Same five components as `knowledge-memory.yaml`, with the provider pointed at
+# whatever embedding model the deployment configured. `mock-embeddings=false`
+# would make this sparse-only, which is a supported way to run it.
+#
+# SURREAL_URL, SURREAL_DB and SURREAL_EGRESS are rewritten by `comp-goalrun`.
+
+version: comp/v1
+app: goalmemory
+tenant: acme
+strategy: linked
+
+components:
+  - id: mprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  # Policy over three contracts. No config, no secret, no host capability.
+  - id: memory
+    host_needs: []
+
+  - id: graph
+    config:
+      surreal-url: SURREAL_URL
+      surreal-ns: comp
+      surreal-db: SURREAL_DB
+      surreal-user: root
+    secrets:
+      - key: surreal-password
+        ref: vault://acme/surreal
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - SURREAL_EGRESS
+
+  - id: search
+    host_needs:
+      - wasi:keyvalue/store
+
+  # Deterministic embeddings. A real run's MODEL is Anthropic, which has no
+  # embeddings endpoint and refuses `embed` — so the deployment that wants dense
+  # retrieval links a separate embedding provider here, and this is where it goes.
+  # Until one is configured, the mock keeps retrieval honest and free.
+  - id: mllm
+    config:
+      mock-model: mock-embed-1
+    host_needs:
+      - wasi:config/store
+
+links:
+  - from: mprobe
+    import: knowledge:memory/memory@0.1.0
+    to: memory
+  - from: mprobe
+    import: knowledge:memory/promotion@0.1.0
+    to: memory
+  - from: memory
+    import: knowledge:graph/store@0.1.0
+    to: graph
+  - from: memory
+    import: search:index/index@0.1.0
+    to: search
+  - from: memory
+    import: llm:inference/inference@0.1.0
+    to: mllm
+
+ingress:
+  host: goalmemory.acme.test
+  component: mprobe
