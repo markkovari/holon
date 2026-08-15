@@ -358,6 +358,29 @@ mod tests {
     }
 
     #[test]
+    fn a_check_that_cannot_fail_is_refused_and_an_excused_one_is_not() {
+        let vacuous = vec![
+            Vacuous { id: "component-compiles".into(), excused: false },
+            Vacuous { id: "no-regression".into(), excused: true },
+        ];
+        let out = refusal(&vacuous);
+        assert_eq!(out.len(), 1, "only the unexcused one is a refusal: {out:?}");
+        assert!(out[0].contains("`component-compiles` already passes on the base tree"), "{}", out[0]);
+        // The message has to say what to do, or the critic is a thing people
+        // disable rather than fix.
+        assert!(out[0].contains("Make it fail against the code as it stands"), "{}", out[0]);
+        assert!(out[0].contains("may_pass_base = true"), "{}", out[0]);
+        assert!(refusal(&[]).is_empty());
+    }
+
+    #[test]
+    fn criticising_no_checks_is_itself_a_refusal() {
+        let e = criticise("http://127.0.0.1:1", "c", &json!([]), &json!([]), &[], Duration::from_secs(1))
+            .expect_err("an empty gate accepts everything");
+        assert!(e.contains("empty gate"), "{e}");
+    }
+
+    #[test]
     fn an_empty_gate_is_refused_rather_than_passed() {
         let e = gate("http://127.0.0.1:1", "c", &json!([]), &json!([]), &json!([]), Duration::from_secs(1))
             .expect_err("an empty gate accepts everything");
@@ -570,4 +593,71 @@ pub fn run_parts(
             report: None,
         },
     }
+}
+
+// ===========================================================================
+// Criticising the gate (goal 07).
+// ===========================================================================
+
+/// A check that already passes on the UNMODIFIED base tree.
+///
+/// Such a check cannot fail, so it cannot judge: a candidate that changes nothing
+/// satisfies it, and a run gated on it accepts anything. This is not theoretical —
+/// the first real decomposed run on this repository scored a perfect 1000 on two
+/// candidates that had deleted their own component exports, because
+/// `cargo component check` passes on a crate that implements none of its world.
+///
+/// The critic runs BEFORE the money is spent, which is the whole point: a wrong
+/// gate discovered after a generation has already bought the wrong answer.
+#[derive(Debug, Clone)]
+pub struct Vacuous {
+    pub id: String,
+    /// Why it is being allowed anyway, when it is.
+    pub excused: bool,
+}
+
+/// Run the checks against the base tree alone and report the ones that pass.
+///
+/// `excuse` names the checks a caller has declared may legitimately pass on the
+/// base — a regression test, a benchmark that must not get slower, an invariant
+/// that is already true. Those are real shapes, and refusing them would make the
+/// critic something people turn off rather than something they trust.
+pub fn criticise(
+    checks_url: &str,
+    base_commit: &str,
+    base_tree: &Value,
+    checks: &Value,
+    excuse: &[String],
+    timeout: Duration,
+) -> Result<Vec<Vacuous>, String> {
+    let list = checks.as_array().cloned().unwrap_or_default();
+    if list.is_empty() {
+        return Err("no checks to criticise — an empty gate accepts everything".into());
+    }
+    // The same runner, the same tree, and NO changes. Anything green here is green
+    // for a candidate that did nothing.
+    let report = gate(checks_url, base_commit, base_tree, &json!([]), checks, timeout)?;
+    let failed: Vec<&str> = report.failures.iter().filter_map(|f| f.split(':').next()).collect();
+    Ok(list
+        .iter()
+        .filter_map(|c| c["id"].as_str())
+        .filter(|id| !failed.contains(id))
+        .map(|id| Vacuous { id: id.to_string(), excused: excuse.iter().any(|e| e == id) })
+        .collect())
+}
+
+/// One line per unexcused vacuous check, or nothing.
+pub fn refusal(vacuous: &[Vacuous]) -> Vec<String> {
+    vacuous
+        .iter()
+        .filter(|v| !v.excused)
+        .map(|v| {
+            format!(
+                "`{}` already passes on the base tree, so it cannot judge a candidate. \
+                 Make it fail against the code as it stands, or mark it `may_pass_base = true` \
+                 if it is a regression check that is supposed to be green.",
+                v.id
+            )
+        })
+        .collect()
 }

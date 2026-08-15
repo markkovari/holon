@@ -35,9 +35,10 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
 use comp_reconciler::compose;
-use comp_reconciler::contract::{Answerer, Ask, Registry};
-use comp_reconciler::generation::{compose_search, land, search, Bounds, Entry, Part};
-use comp_reconciler::memory::{run_id, Memory};
+use comp_reconciler::contract::{Answerer, Registry};
+use comp_reconciler::generation::{land, Bounds, Entry, Part};
+use comp_reconciler::memory::{self, run_id, Memory};
+use comp_reconciler::generation as generation_mod;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -214,6 +215,13 @@ fn trim_members(manifest: &str, keep: &[String]) -> String {
 #[derive(Deserialize)]
 struct CheckSpec {
     id: String,
+    /// This check is SUPPOSED to be green on the untouched base — a regression
+    /// test, a benchmark that must not get slower, an invariant already true.
+    ///
+    /// Without an escape hatch the gate critic becomes a thing people turn off
+    /// rather than a thing they trust, and those are real shapes.
+    #[serde(default)]
+    may_pass_base: bool,
     #[serde(default = "yes")]
     required: bool,
     #[serde(default = "one")]
@@ -650,6 +658,58 @@ fn main() -> Result<()> {
         },
     };
 
+    // --- criticise the gate, before the money -------------------------------
+    //
+    // A check that already passes on the base tree cannot judge a candidate: one
+    // that changes nothing satisfies it. The first real decomposed run on this
+    // repository scored 1000 on two candidates that had deleted their own
+    // component exports, because `cargo component check` passes on a crate that
+    // implements none of its world (goal 07). This is the cheapest possible place
+    // to find that out — before a generation buys the wrong answer.
+    let excused: Vec<String> = goal
+        .checks
+        .iter()
+        .chain(goal.parts.iter().flat_map(|p| p.checks.iter()))
+        .filter(|c| c.may_pass_base)
+        .map(|c| c.id.clone())
+        .collect();
+    let mut every_check: Vec<Value> = checks.clone();
+    for p in &goal.parts {
+        every_check.extend(p.checks.iter().map(|c| json!({
+            "id": c.id, "required": c.required, "weight": c.weight, "command": c.command,
+        })));
+    }
+    match compose::criticise(
+        &format!("http://127.0.0.1:{}/check", gate.port),
+        &base_commit,
+        &json!(tree),
+        &json!(every_check),
+        &excused,
+        Duration::from_secs(args.timeout),
+    ) {
+        Ok(vacuous) => {
+            for v in vacuous.iter().filter(|v| v.excused) {
+                println!("gate: `{}` passes on the base, and says it is meant to", v.id);
+            }
+            let refusals = compose::refusal(&vacuous);
+            if !refusals.is_empty() {
+                println!("\nREFUSED — this gate cannot judge anything:\n");
+                for r in &refusals {
+                    println!("  · {r}");
+                }
+                println!(
+                    "\nNothing was spent. A gate that passes on the code as it stands \n\
+                     accepts a candidate that changes nothing."
+                );
+                return Ok(());
+            }
+            println!("gate: every check fails on the base tree, so every check can judge");
+        }
+        // Reported, not fatal: the critic is a guard, and a guard that cannot run
+        // must not stop a run a person asked for.
+        Err(e) => println!("gate: could not be criticised ({e}) — running anyway"),
+    }
+
     if args.smoke {
         // Both apps serving already proves a lot: an app whose secret cannot be
         // granted, or whose egress is malformed, fails to START and never serves
@@ -780,13 +840,72 @@ fn main() -> Result<()> {
         "seed": 1,
     });
 
+    // --- what each branch is allowed to read --------------------------------
+    //
+    // Varied ACROSS branches on purpose: a generation whose branches all read the
+    // same top-k is an expensive way to run one branch (ADR-0081's herding), and
+    // the branch that reads nothing is the only way to tell whether the pool helps
+    // at all. `default_strategies` already keeps one branch from reading the
+    // previous winner; that same branch reads no lessons either.
+    let mut strategies = generation_mod::default_strategies(args.branches);
+    let mut read_by_branch: Vec<Vec<String>> = vec![Vec::new(); strategies.len()];
+    if let Some(m) = &memory {
+        for (i, s) in strategies.iter_mut().enumerate() {
+            if !s.reads_prior {
+                continue; // the control arm reads nothing, and that is the point
+            }
+            let reading = memory::Reading {
+                // Deliberately unequal: 3, 4, 5 … so two branches do not arrive at
+                // the same prompt by arriving at the same advice.
+                k: 3 + (i as u32 % 3),
+                budget: 1200,
+                pools: match i % 3 {
+                    0 => vec![],                                   // everything
+                    1 => vec!["errors".into()],                    // only what failed
+                    _ => vec!["patterns".into(), "solutions".into()], // only what worked
+                },
+            };
+            match m.recall(&goal.text, &reading) {
+                Ok(lessons) if lessons.is_empty() => {}
+                Ok(lessons) => {
+                    println!(
+                        "  branch-{i} reads {} lesson(s) [{}]",
+                        lessons.len(),
+                        lessons.iter().map(|l| l.ns.as_str()).collect::<Vec<_>>().join(", ")
+                    );
+                    read_by_branch[i] = lessons.iter().map(|l| l.key.clone()).collect();
+                    s.knowledge = memory::render(&lessons);
+                }
+                // A pool that is down costs a branch its advice and nothing else.
+                Err(e) => println!("  branch-{i} runs cold: {e}"),
+            }
+        }
+        let distinct: std::collections::BTreeSet<&Vec<String>> = read_by_branch.iter().collect();
+        if strategies.len() > 1 {
+            println!(
+                "  knowledge: {} distinct reading(s) across {} branches{}",
+                distinct.len(),
+                strategies.len(),
+                if distinct.len() == 1 { " — every branch read the same thing, which is herding" } else { "" }
+            );
+        }
+    }
+
     let driver_url = format!("http://127.0.0.1:{port}/run");
     let timeout = Duration::from_secs(args.timeout);
     let bounds = Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
 
     // A fresh seed each run so branches are not a replay of a previous run's.
     let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
-    let found = search(&driver_url, "goalrun.acme.test", &plan, bounds, seed, timeout);
+    let found = generation_mod::search_with(
+        &driver_url,
+        "goalrun.acme.test",
+        &plan,
+        &strategies,
+        bounds,
+        seed,
+        timeout,
+    );
 
     // Every attempt of every branch, so the run is legible even when it fails.
     let mut entries: Vec<Entry> = Vec::new();
@@ -812,6 +931,15 @@ fn main() -> Result<()> {
                 match m.evaluated(&goal.text, &run, e.score, e.accepted, "") {
                     Ok(()) => recorded += 1,
                     Err(err) => println!("  (verdict for {run} not recorded: {err})"),
+                }
+                // What happened to what this branch READ. The only thing that moves
+                // a lesson's standing, and the reason retrieval gets better rather
+                // than merely existing: a lesson present when runs fail sinks.
+                let idx = e.branch.rsplit('-').next().and_then(|n| n.parse::<usize>().ok());
+                if let Some(keys) = idx.and_then(|i| read_by_branch.get(i)) {
+                    if let Err(err) = m.attribute(keys, &run, e.accepted) {
+                        println!("  (what {run} read was not attributed: {err})");
+                    }
                 }
             }
             println!(
