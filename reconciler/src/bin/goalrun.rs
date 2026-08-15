@@ -691,18 +691,32 @@ fn main() -> Result<()> {
             // A database PER GOAL. One shared `goalcontract` meant the second goal
             // this machine ever ran was handed the first goal's contract —
             // silently, because "a contract is already published" reads as a
-            // repeat run rather than as a different goal. Named from the contract
-            // file's own path, so a rerun of one goal keeps its negotiation history
-            // and a new goal starts clean.
-            let db = format!(
-                "goalcontract_{}",
-                goal.contract
-                    .clone()
-                    .unwrap_or_default()
-                    .chars()
-                    .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-                    .collect::<String>()
-            );
+            // repeat run rather than as a different goal.
+            //
+            // Named from the contract file's path AND the goal's title, because
+            // the path alone is not the goal's identity: a second phase over the
+            // same CONTRACT.md — new parts, new sections appended by the human who
+            // owns the file — collided with the first phase's v1 and refused to
+            // start. The title is what distinguishes them, and a rerun of one goal
+            // keeps its title and so keeps its negotiation history.
+            let slug = |s: &str| -> String {
+                s.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect()
+            };
+            // The title goes in as a short digest rather than as text. A title is
+            // free-form and this name travels through a spec, a config value and a
+            // database identifier — a 95-character one made the registry
+            // unreachable rather than saying anything about a name being too long.
+            use sha2::Digest;
+            let mut hash = sha2::Sha256::new();
+            hash.update(goal.title.as_deref().unwrap_or_default().as_bytes());
+            let title_id: String =
+                hash.finalize()[..4].iter().map(|b| format!("{b:02x}")).collect();
+            // Kept SHORT deliberately. This name travels into a spec, a wasi:config
+            // value and a database identifier, and a long one made the registry
+            // unreachable — "n1 refused" — rather than complaining about a name.
+            let path_slug: String =
+                slug(&goal.contract.clone().unwrap_or_default()).chars().take(24).collect();
+            let db = format!("goalcontract_{path_slug}_{title_id}");
             specs.push(
                 render(
                     "goalrun-contract.yaml",
