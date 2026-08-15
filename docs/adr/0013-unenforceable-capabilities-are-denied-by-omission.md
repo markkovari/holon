@@ -1,6 +1,14 @@
 # ADR-0013 — A capability the host cannot partition is denied by omission
 
-- **Status:** accepted
+> **SUPERSEDED — superseded by [0023](0023-isolation-is-a-linker-boundary.md).**
+>
+> Kept, not deleted: 3 decisions still in force cite this one, and the
+> record of how the platform got its shape is the point of keeping ADRs at all
+> (ADR-0001). Nothing below is edited to look wiser than it was. For what is true
+> now read [`../CURRENT.md`](../CURRENT.md); for what is in force read
+> [the index](README.md).
+
+- **Status:** superseded by ADR-0023
 - **Date:** 2026-07-28
 - **Supersedes:** —
 - **Builds on:** [ADR-0012](0012-keyvalue-isolation-needs-a-cooperative-component.md)

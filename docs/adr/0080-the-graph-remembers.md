@@ -118,12 +118,13 @@ for development.
 ## What this does not do yet
 
 - **No retention.** Nothing prunes a graph, and a loop that explores forever
-  writes forever.
+  writes forever. Still true, and now true of three tables rather than one.
 - **One database for the deployment.** The namespace and database are config, so
   two environments of the same app share a graph unless their config differs.
   Whether a fork should inherit its parent's memory or start blank is a real
   question and this ADR does not answer it.
-- **No embedding or similarity.** SurrealDB has vector search; nothing here
-  reaches it except through `query`.
+- ~~**No embedding or similarity.**~~ → **ADR-0084**: `knowledge:memory` reaches
+  SurrealDB's KNN through `query`, fuses it with `search:index`, and the HNSW
+  index's `DIMENSION` turned out to be the model-drift guard this ADR wanted.
 - **The database is not part of the platform.** It is an external service on an
   allow-list. Nothing deploys it, backs it up, or notices when it is gone.

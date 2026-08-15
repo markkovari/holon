@@ -1,6 +1,14 @@
 # ADR-0014 — An application owns a host
 
-- **Status:** accepted
+> **SUPERSEDED — superseded by [0023](0023-isolation-is-a-linker-boundary.md).**
+>
+> Kept, not deleted: 4 decisions still in force cite this one, and the
+> record of how the platform got its shape is the point of keeping ADRs at all
+> (ADR-0001). Nothing below is edited to look wiser than it was. For what is true
+> now read [`../CURRENT.md`](../CURRENT.md); for what is in force read
+> [the index](README.md).
+
+- **Status:** superseded by ADR-0023
 - **Date:** 2026-07-28
 - **Confirmed by:** [ADR-0015](0015-a-bucket-name-is-not-a-boundary.md)
 - **Supersedes:** [ADR-0013](0013-unenforceable-capabilities-are-denied-by-omission.md), and the density bet in `PLATFORM.md`
