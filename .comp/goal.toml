@@ -7,7 +7,9 @@ in components/demo/src/lib.rs: the slice at that offset, and whether more remain
 beyond it. A size of 0 and an offset past the end must not panic. Keep the WIT
 export delegating to it.
 
-The PROBE half implements `pub fn page_json(hits, has_more) -> String` in
+The PROBE half's handler reads its path and query with
+`request.path_with_query()` — there is no `query()` method on `IncomingRequest`.
+It implements `pub fn page_json(hits, has_more) -> String` in
 components/demo-probe/src/lib.rs — {"hits":[...],"has_more":bool}, correctly
 escaped — and answers `GET /page?size=&offset=` by calling
 `demo:shape/pager.paginate` over the ids ["a","b","c","d","e"] and writing that
@@ -30,7 +32,7 @@ keep_members = ["demo", "demo-probe"]
 name = "component"
 text = "Implement `paginate` in components/demo/src/lib.rs, exactly as CONTRACT.md describes."
 writable = ["components/demo/src/lib.rs", "CONTRACT-REQUEST.md"]
-context = ["components/demo/tests/paginate.rs"]
+context = ["components/demo/tests/paginate.rs", "components/demo/wit/demo.wit"]
 [[part.check]]
 id = "component-passes-its-held-out-tests"
 command = ["cargo", "component", "test", "-p", "demo", "--manifest-path", "components/Cargo.toml"]
@@ -39,7 +41,7 @@ command = ["cargo", "component", "test", "-p", "demo", "--manifest-path", "compo
 name = "probe"
 text = "Answer GET /page?size=&offset= in components/demo-probe/src/lib.rs by calling paginate."
 writable = ["components/demo-probe/src/lib.rs", "CONTRACT-REQUEST.md"]
-context = ["components/demo-probe/tests/page_json.rs"]
+context = ["components/demo-probe/tests/page_json.rs", "components/demo-probe/wit/probe.wit"]
 [[part.check]]
 id = "probe-passes-its-held-out-tests"
 command = ["cargo", "component", "test", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
