@@ -1,18 +1,24 @@
-//! `demo` — paging, as a component. One half of a two-part goal (ADR-0086).
-//!
-//! A stub: the goal is to implement `paginate` against `wit/demo.wit`.
-
-#[allow(warnings)]
-mod bindings;
-
-use bindings::exports::demo::shape::pager::{Guest, Page};
-
-struct Component;
-
-impl Guest for Component {
-    fn paginate(_ids: Vec<String>, _size: u32, _offset: u32) -> Page {
-        Page { hits: Vec::new(), has_more: false }
-    }
+struct Page {
+    hits: Vec<String>,
+    has_more: bool,
 }
 
-bindings::export!(Component with_types_in bindings);
+pub fn paginate(ids: Vec<String>, size: u32, offset: u32) -> Page {
+    let offset = offset as usize;
+    let size = size as usize;
+    
+    // Clamp offset to valid range
+    let start = offset.min(ids.len());
+    
+    // Get the slice for this page
+    let hits: Vec<String> = ids[start..]
+        .iter()
+        .take(size)
+        .cloned()
+        .collect();
+    
+    // Check if there are more results after this page
+    let has_more = start + size < ids.len();
+    
+    Page { hits, has_more }
+}
