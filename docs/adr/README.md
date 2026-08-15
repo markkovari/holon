@@ -103,6 +103,8 @@ tells you what is true now rather than what was once believed.
 | [0084](0084-two-retrievers-and-an-optimistic-database.md) | Two retrievers and an optimistic database — `knowledge:memory`, KNN in SurrealDB, `+=` over read-modify-write | accepted; 9 scenarios + a 5-component composed e2e pass; the goal runner skips work already done, retrieval is not wired yet |
 | [0085](0085-structure-flows-down-lessons-flow-up.md) | Structure flows down, lessons flow up — a derived code graph over an app that EXISTS | **proposed**; nothing built, and its isolation question is open; [0086](0086-parts-negotiate-a-contract.md) is the other tense |
 | [0086](0086-parts-negotiate-a-contract.md) | Parts negotiate a contract — a decomposed goal, request/deny/counter, and nothing blocks inside a generation | built, demonstrated and reachable: `[[part]]` in a goal spec, a composed e2e watching a frontend ask, a backend grant and demonstrate, the amendment ratify, and both halves pass a joined gate |
+| [0087](0087-a-composition-is-derived-not-written.md) | A composition is derived, not written — read a component's imports, find what exports them, plug them | built and used by every clinic gate: `reconciler/src/plug.rs` wraps `wac_graph` as a library, `just plug <name>` is the entry point, and the derived composition binds 16 capabilities `just compose-vet` leaves dangling |
+| [0088](0088-what-a-gate-says-is-what-the-next-attempt-reads.md) | What a gate says is what the next attempt reads — a check's output is a prompt, not a log | a rule plus two guards (`gate-lib.sh`, `tests/guestio.rs`), written after four separate ways of getting it wrong, each of which spent money teaching a model to fix a problem that did not exist |
 
 ## History: superseded, and kept
 
