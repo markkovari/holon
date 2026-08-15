@@ -181,6 +181,43 @@ impl Catalog {
         self.exporters.get(iface).map(String::as_str)
     }
 
+    /// Every component in the catalogue, in name order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.surfaces.keys().map(String::as_str)
+    }
+
+    /// Imports nothing in the catalogue can satisfy.
+    ///
+    /// Not the same as "broken". An interface with no exporter is usually a
+    /// types-only interface from the component's OWN package — `audit-log` imports
+    /// `audit:log/types` while exporting `audit:log/query` — and there is nothing
+    /// to plug into it. What is worth knowing is an import from a package the
+    /// component has nothing to do with, which nothing in the repository provides:
+    /// that composition will always be incomplete, and the artifact will still
+    /// carry the import when it is deployed.
+    pub fn unmet(&self, name: &str) -> Vec<String> {
+        let Some(surface) = self.surface(name) else { return Vec::new() };
+        surface
+            .imports
+            .iter()
+            .filter(|iface| self.exporter(iface).is_none())
+            .filter(|iface| {
+                let package = format!("{}/", iface.split('/').next().unwrap_or(iface));
+                // Structural, not missing, in two cases. The component's own
+                // package: `audit-log` imports `audit:log/types` and exports
+                // `audit:log/query`. And a CONSUMER of a package whose other
+                // interfaces are provided: `auth-guard` imports `audit:log/types`
+                // for the types alone, while `audit-log` provides the package —
+                // there is no implementation of a types-only interface to plug in,
+                // anywhere, by construction.
+                let provided_here = surface.exports.iter().any(|e| e.starts_with(&package));
+                let provided_somewhere = self.exporters.keys().any(|e| e.starts_with(&package));
+                !provided_here && !provided_somewhere
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn len(&self) -> usize {
         self.surfaces.len()
     }
