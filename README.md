@@ -29,7 +29,9 @@ Nothing is mocked on the path to a landed change: a real language model writes
 the code (`components/anthropic-provider`), a real test suite gates it
 (`components/checks-runner` over a native runner), a real forge opens the PR
 (`components/github-forge`). It has been run end to end — a goal to `slugify` a
-string went from a queue to a merge-ready pull request for a few cents.
+string went from a queue to a merge-ready pull request for a few cents, and a
+two-part goal ran **on this repository**: a component and the probe that calls it,
+built by separate branches against a shared contract, joined and landed as one PR.
 
 ```bash
 bash goal-demo.sh real      # one command: goal → PR
@@ -69,14 +71,25 @@ pointed at itself. (The original capability-library README is kept at
 |---|---|
 | what runs today, measured, and honestly missing | [`docs/CURRENT.md`](docs/CURRENT.md) |
 | how a run succeeds, and every way it fails | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) |
-| the reasoning, 83 decisions deep | [`docs/adr/`](docs/adr/) |
+| the reasoning — 77 decisions in force, 8 superseded and kept | [`docs/adr/`](docs/adr/) |
 | the worklist — goals a person has written | [`.comp/goals/`](.comp/goals/) |
 | the agentic core | `components/{agent-writer,agent-driver,graph-selector}`, `reconciler/src/generation.rs`, `reconciler/src/bin/goalrun.rs` |
+| what the swarm remembers | `components/knowledge-memory`, [ADR-0084](docs/adr/0084-two-retrievers-and-an-optimistic-database.md) |
+| how two halves of one goal agree | `components/contract-registry`, `reconciler/src/compose.rs`, [ADR-0086](docs/adr/0086-parts-negotiate-a-contract.md) |
 
 ## Status
 
 The engine works end to end and is heavily tested (~400 tests across four
-workspaces). The internal name is still `comp` in the code — renaming it to
-`holon` is itself the first goal on the worklist
+workspaces). It searches, it remembers what it evaluated, and two subgraphs can
+negotiate an interface neither has written yet.
+
+The honest edge is one level up from the machinery: **a run is exactly as good as
+the checks a person wrote for it.** A gate that already passes on the base tree
+accepts anything, and the first real decomposed run scored a perfect 1000 on two
+candidates that had deleted their own component exports. Criticising the gate is
+goal 07, and it is the next thing worth building.
+
+The internal name is still `comp` in the code — renaming it to
+`holon` is itself a goal on the worklist
 ([`.comp/goals/05-become-holon.md`](.comp/goals/05-become-holon.md)), and the
 honest first thing to hand the loop once it can safely make a multi-file change.

@@ -1,5 +1,10 @@
 # ADR-0081 — fitness, fuel, and what the swarm knows
 
+> **Status, as of ADR-0086.** §2 (knowledge) is built — see ADR-0084 for what
+> survived contact and what did not. The rest — fuel as money, escrow, suspension,
+> the tier router and its bandit — is still proposed and unbuilt. Where this
+> document and ADR-0084 disagree, ADR-0084 measured it.
+
 *Three mechanisms a parallel agentic graph cannot run without: how a branch is
 judged, how branches share what they learn, and how they are stopped.*
 
