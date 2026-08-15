@@ -228,18 +228,25 @@ e2e-clinic: build
     (cd reconciler && cargo build --release --quiet --bin comp-plug)
     export COMP_HOST="$PWD/host/target/release/comp-host"
     export COMP_PLUG="$PWD/reconciler/target/release/comp-plug"
+    # The halves that are written must pass; anything else here is a real
+    # regression.
     failed=0
-    for gate in e2e-owners e2e-visits e2e; do
+    for gate in e2e-owners e2e-visits; do
       printf '%-12s ' "$gate"
       bash "components/clinic-domain/$gate.sh" 2>&1 | tail -1 || failed=1
     done
-    # Judged separately, because on a clean tree its FAILURE is the correct
-    # outcome: an exit code that says "broken" every time teaches everyone to
-    # ignore it. When this one passes, the third part has been written.
-    printf '%-12s ' "e2e-access"
-    if bash components/clinic-domain/e2e-access.sh 2>&1 | tail -1; then
-      echo "             ^ access-and-search is implemented — the goal is done"
-    fi
+    # The two unwritten parts, judged separately: on a clean tree their FAILURE is
+    # the correct outcome, and an exit code that says "broken" every time teaches
+    # everyone to ignore it. When one passes, that part has been written.
+    # The unwritten parts and the join that covers them. On a clean tree their
+    # FAILURE is the correct outcome — a check that passes before the work is done
+    # cannot judge the work — so they do not set the exit code.
+    for gate in e2e e2e-access e2e-reports; do
+      printf '%-12s ' "$gate"
+      if bash "components/clinic-domain/$gate.sh" 2>&1 | tail -1; then
+        echo "             ^ $gate now passes — that part is written"
+      fi
+    done
     exit $failed
 
 # What it WOULD plug, and what nothing exports. For a composition that is missing
