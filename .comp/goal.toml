@@ -147,6 +147,15 @@ on a type error here, so this is the exact surface rather than the WIT:
 
 So a file is `Vec<Row>` — the header is just the first `Row` — and `format`
 returns the whole document as one `String`.
+
+One more thing about this workspace, because it cannot be guessed and it is how
+the last attempt died a second time: serde is built WITHOUT std here —
+
+    serde = { default-features = false, features = ["derive", "alloc"] }
+
+so `HashMap` has no `Serialize` impl and `json!({ "by_vet": my_hashmap })` fails
+with E0277. Use `BTreeMap<String, u32>`, which serde's alloc feature does cover
+and which also gives a report the deterministic key order it wants.
 """
 writable = ["components/clinic-domain/src/reports.rs", "CONTRACT-REQUEST.md"]
 context = [
