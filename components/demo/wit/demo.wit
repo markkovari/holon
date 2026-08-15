@@ -1,0 +1,22 @@
+// demo:shape — the interface a decomposed goal negotiates over (ADR-0086).
+//
+// Small on purpose: this exists so a two-part goal has something real to agree
+// on, and so the first decomposed run costs cents rather than dollars.
+package demo:shape@0.1.0;
+
+interface pager {
+    /// One page of results.
+    record page {
+        /// The ids on this page.
+        hits: list<string>,
+        /// Whether another page exists.
+        has-more: bool,
+    }
+
+    /// Page a list of ids.
+    paginate: func(ids: list<string>, size: u32, offset: u32) -> page;
+}
+
+world demo {
+    export pager;
+}

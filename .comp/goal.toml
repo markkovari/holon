@@ -1,17 +1,62 @@
 text = """
-Add a `C` variant to the `Kind` enum and make `render(&Kind::C)` return "c".
-The enum is in components/twofile/src/kind.rs; the exhaustive match is in
-components/twofile/src/render.rs. BOTH files must change together — adding the
-variant without its match arm (or the arm without the variant) does not compile.
-Do not touch lib.rs; its tests are the exact spec.
+Two halves of one small feature, agreed through `CONTRACT.md` — which is this
+repository's `components/demo/wit/demo.wit`.
+
+The COMPONENT half implements `pub fn paginate_ids(ids, size, offset) -> (Vec<String>, bool)`
+in components/demo/src/lib.rs: the slice at that offset, and whether more remain
+beyond it. A size of 0 and an offset past the end must not panic. Keep the WIT
+export delegating to it.
+
+The PROBE half answers `GET /page?size=&offset=` in
+components/demo-probe/src/lib.rs by CALLING `demo:shape/pager.paginate` over the
+ids ["a","b","c","d","e"] and writing {"hits":[...],"has_more":bool}. It reads the
+query with `request.path_with_query()` — there is no `query()` method on
+`IncomingRequest`; `components/graph-probe/src/lib.rs` shows the idiom.
+
+It must really call the component: the composition gate plugs the two halves
+together and fails if this half imports nothing.
+
+Each half is judged by tests in its own crate's `tests/` directory. You cannot
+edit them: they are the specification. Read them.
+
+Neither half may edit the other's files. If the interface is missing something you
+need, write CONTRACT-REQUEST.md — first line the subject, the rest why.
 """
-title = "Add Kind::C across two files (enum + its match)"
-writable = ["components/twofile/src/kind.rs", "components/twofile/src/render.rs"]
-base_paths = ["components/twofile/", "components/Cargo.toml"]
+title = "demo:shape — paginate, and the probe that calls it"
+contract = "components/demo/wit/demo.wit"
+writable = []
+base_paths = ["components/demo/", "components/demo-probe/", "components/Cargo.toml", "wit/deps/"]
 workspace_manifest = "components/Cargo.toml"
-keep_members = ["twofile"]
+keep_members = ["demo", "demo-probe"]
+
+[[part]]
+name = "component"
+text = "Implement `paginate` in components/demo/src/lib.rs, exactly as CONTRACT.md describes."
+writable = ["components/demo/src/lib.rs", "CONTRACT-REQUEST.md"]
+context = ["components/demo/tests/paginate.rs", "components/demo/wit/demo.wit"]
+[[part.check]]
+id = "component-passes-its-held-out-tests"
+command = ["cargo", "component", "test", "-p", "demo", "--manifest-path", "components/Cargo.toml"]
+
+[[part]]
+name = "probe"
+text = "Answer GET /page?size=&offset= in components/demo-probe/src/lib.rs by calling paginate."
+writable = ["components/demo-probe/src/lib.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/demo-probe/tests/page_json.rs",
+  "components/demo-probe/wit/probe.wit",
+  # A probe in this repo that already does the thing: reads `path_with_query`,
+  # splits the query, percent-decodes it, writes JSON. Shown rather than
+  # described, because telling the model twice that `query()` does not exist did
+  # not stop it writing `query()`.
+  "components/graph-probe/src/lib.rs",
+]
+[[part.check]]
+id = "probe-compiles-against-the-contract"
+command = ["cargo", "component", "check", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
+
 [[check]]
-id = "two-files-compile-and-pass"
+id = "the-halves-plug-together"
 required = true
 weight = 1
-command = ["cargo", "test", "-p", "twofile", "--manifest-path", "components/Cargo.toml"]
+command = ["bash", "components/demo/join.sh"]

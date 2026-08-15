@@ -1,0 +1,42 @@
+# The model that answers a part's request, behind its own door.
+#
+# A separate app because an app has one ingress and this is a different question
+# from "write me some code": one small call per request, at a generation boundary
+# (ADR-0086). It is deliberately the CHEAP model — the answer is a verdict and an
+# interface, not an implementation — and it is a spending decision, so it is named
+# in the manifest rather than inherited from the writer's.
+#
+# ANSWER_MODEL is rewritten by `comp-goalrun` (`--answer-model`).
+
+version: comp/v1
+app: goalanswer
+tenant: acme
+strategy: linked
+
+components:
+  - id: lprobe
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: allm
+    config:
+      anthropic:model: ANSWER_MODEL
+      anthropic:max-tokens: "2048"
+    secrets:
+      - key: anthropic-api-key
+        ref: vault://acme/anthropic
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - api.anthropic.com
+
+links:
+  - from: lprobe
+    import: llm:inference/inference@0.1.0
+    to: allm
+
+ingress:
+  host: goalanswer.acme.test
+  component: lprobe
