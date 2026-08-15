@@ -117,8 +117,9 @@ for development.
 
 ## What this does not do yet
 
-- **No retention.** Nothing prunes a graph, and a loop that explores forever
-  writes forever. Still true, and now true of three tables rather than one.
+- **Retention, partly.** ADR-0084's pool is swept by every run that uses it —
+  entries nothing read twice and nothing touched in 30 days go. The GRAPH at large
+  still has none: a loop that writes nodes of any other kind writes them for ever.
 - **One database for the deployment.** The namespace and database are config, so
   two environments of the same app share a graph unless their config differs.
   Whether a fork should inherit its parent's memory or start blank is a real

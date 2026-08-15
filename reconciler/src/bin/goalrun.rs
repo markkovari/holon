@@ -74,11 +74,28 @@ struct Args {
     /// takes unauthenticated writes, which is a legitimate local setup.
     #[arg(long)]
     surreal_password: Option<PathBuf>,
+    /// Forget entries nothing has read in this many days. 0 turns decay off.
+    ///
+    /// Swept by the run that uses the pool, because a decay nothing drives is the
+    /// gap ADR-0081 caught elsewhere and naming it does not close it.
+    #[arg(long, default_value = "30")]
+    forget_after_days: u32,
     /// Skip the whole search when a past passing run of a goal this similar is on
     /// record. Cosine; 0.9 is alpha-swarm2's and is high on purpose — redoing work
     /// costs money, skipping work that was never done is a wrong answer.
     #[arg(long, default_value = "0.9")]
     skip_above: f64,
+    /// The writer's token budget per attempt.
+    ///
+    /// Not 4096: a THINKING model spends part of this before it writes anything,
+    /// and on a real task it can spend all of it — measured on claude-sonnet-5,
+    /// which returned `["thinking"]` and `stop_reason: max_tokens` at 4096, a
+    /// complete file at 16000 on a small prompt, and STILL exhausted 16000 on a
+    /// real one — a third of a clinic run's branches died there. A budget that is
+    /// fine for one model is a silent wall for another, and thinking is bought
+    /// out of the same purse as the answer.
+    #[arg(long, default_value = "32000")]
+    max_tokens: u32,
     /// The model that answers a part's request at a generation boundary.
     ///
     /// A verdict and an interface, not an implementation — so it is the cheap one
@@ -347,6 +364,14 @@ fn render(fixture: &str, subs: &[(&str, &str)]) -> Result<PathBuf> {
     Ok(out)
 }
 
+/// Where `comp-host` is: its own workspace, or wherever the operator says.
+fn host_bin() -> PathBuf {
+    if let Ok(p) = std::env::var("COMP_HOST") {
+        return PathBuf::from(p);
+    }
+    repo_root().join("host/target/release/comp-host")
+}
+
 fn artifacts() -> Result<Vec<String>> {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
@@ -478,6 +503,15 @@ fn main() -> Result<()> {
         args.repo, args.base, args.branches, args.rounds, args.model
     );
     println!("gate allows: {allow:?}");
+    // Said out loud, because a gate that cannot find the host reports the same
+    // thing as a candidate that does not work — and this run spent 280k tokens
+    // learning that once.
+    let hb = host_bin();
+    println!(
+        "gate host:   {} ({})",
+        hb.display(),
+        if hb.exists() { "found" } else { "MISSING — every check that runs the app will fail" }
+    );
 
     // A warm, SHARED tool cache for the gate. Without it comp-checks gives each
     // candidate a fresh HOME, so `uv` re-downloads its toolchain from a cold
@@ -502,6 +536,18 @@ fn main() -> Result<()> {
         format!("CARGO_TARGET_DIR={cargo_target}"),
         // cargo wants a real registry index and network on a cold cache.
         "CARGO_NET_OFFLINE=false".into(),
+        // Where the host binary is, for a gate that wants to RUN what the
+        // candidate built rather than only compile it. The sandbox holds the base
+        // tree and nothing else, so a check that needs the host cannot find it by
+        // path — and a gate that only compiles is not a gate (measured: `cargo
+        // component check` passes on a crate implementing none of its world).
+        // NOT `bin_path`: that resolves against the RECONCILER's target directory,
+        // and the host is built in its own workspace. Pointing the gate at a
+        // binary that does not exist made every check fail with "no comp-host at
+        // …" — sixteen gate runs judging a broken harness rather than the code,
+        // and a model that read the message and wrote an essay about the build
+        // instead of the file it was asked for.
+        format!("COMP_HOST={}", host_bin().display()),
     ];
     // `cargo` is usually a rustup shim, and under the gate's cleared environment
     // it cannot choose a toolchain — no RUSTUP_HOME, no default. Pass both, so the
@@ -547,17 +593,26 @@ fn main() -> Result<()> {
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
     // One guest request does a model call plus a test suite; the ingress's 30s
     // default backend timeout kills that as "n1 timed out". Give it room.
-    std::env::set_var("COMP_FLEET_BACKEND_TIMEOUT", "240");
+    // A thinking model takes minutes on a real task: 240s killed branches mid-
+    // answer and the ingress reported "n1 timed out", which reads as a fleet
+    // problem and is not one. Scaled from the caller's own per-branch timeout,
+    // because that is the number they were already choosing.
+    let backend_timeout = args.timeout.max(600).to_string();
+    std::env::set_var("COMP_FLEET_BACKEND_TIMEOUT", &backend_timeout);
     // And the wrpc budget between components: the same nested model+gate call
     // blows the host's 30s default ("data receipt timed out"). Inherited by the
     // hosts the fleet spawns.
-    std::env::set_var("COMP_RPC_TIMEOUT_SECS", "240");
+    std::env::set_var("COMP_RPC_TIMEOUT_SECS", &backend_timeout);
     // Trace outbound dials, so a stalled model call shows whether the host got a
     // response back at all.
     std::env::set_var("COMP_TRACE_EGRESS", "1");
     let driver_spec = render(
         "goalrun-driver.yaml",
-        &[("CHECKS_PORT", &gate.port.to_string()), ("ANTHROPIC_MODEL", &args.model)],
+        &[
+            ("CHECKS_PORT", &gate.port.to_string()),
+            ("ANTHROPIC_MODEL", &args.model),
+            ("MAX_TOKENS", &args.max_tokens.to_string()),
+        ],
     )?;
     let forge_spec = render("goalrun-forge.yaml", &[("FORGE_REPO", &args.repo)])?;
 
@@ -609,21 +664,39 @@ fn main() -> Result<()> {
         if let Some(path) = &args.surreal_password {
             secrets.push(format!("vault://acme/surreal=@{}", path.display()));
         }
+        // The answer door serves two callers now: a part answering a request, and
+        // the distiller turning a verified diff into a lesson. Deployed whenever
+        // there is a pool to write to.
+        specs.push(
+            render("goalrun-answer.yaml", &[("ANSWER_MODEL", &args.answer_model)])?
+                .to_str()
+                .unwrap()
+                .to_string(),
+        );
         if !goal.parts.is_empty() {
+            // A database PER GOAL. One shared `goalcontract` meant the second goal
+            // this machine ever ran was handed the first goal's contract —
+            // silently, because "a contract is already published" reads as a
+            // repeat run rather than as a different goal. Named from the contract
+            // file's own path, so a rerun of one goal keeps its negotiation history
+            // and a new goal starts clean.
+            let db = format!(
+                "goalcontract_{}",
+                goal.contract
+                    .clone()
+                    .unwrap_or_default()
+                    .chars()
+                    .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                    .collect::<String>()
+            );
             specs.push(
                 render(
                     "goalrun-contract.yaml",
-                    &[("SURREAL_URL", url), ("SURREAL_EGRESS", &egress)],
+                    &[("SURREAL_URL", url), ("SURREAL_EGRESS", &egress), ("SURREAL_DB", &db)],
                 )?
                 .to_str()
                 .unwrap()
                 .to_string(),
-            );
-            specs.push(
-                render("goalrun-answer.yaml", &[("ANSWER_MODEL", &args.answer_model)])?
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
             );
         }
     }
@@ -823,7 +896,17 @@ fn main() -> Result<()> {
     // and the winners are merged into one tree judged by the goal's own checks
     // (ADR-0086). One pull request at the end.
     if !goal.parts.is_empty() {
-        return decomposed(&args, &goal, port, gate.port, &context, &tree, &base_commit, &checks);
+        return decomposed(
+            &args,
+            &goal,
+            port,
+            gate.port,
+            memory.clone(),
+            &context,
+            &tree,
+            &base_commit,
+            &checks,
+        );
     }
 
     println!("fleet serving; running the search …\n");
@@ -880,14 +963,26 @@ fn main() -> Result<()> {
                 Err(e) => println!("  branch-{i} runs cold: {e}"),
             }
         }
-        let distinct: std::collections::BTreeSet<&Vec<String>> = read_by_branch.iter().collect();
-        if strategies.len() > 1 {
+        // Herding is branches reading the SAME thing, not branches reading
+        // nothing: an empty pool makes every reading identical and that is a cold
+        // start, not convergence. Saying otherwise would cry wolf on every first
+        // run, and a warning that fires when it should not is a warning people
+        // learn to skip.
+        let readers = read_by_branch.iter().filter(|r| !r.is_empty()).count();
+        if readers > 1 {
+            let distinct: std::collections::BTreeSet<&Vec<String>> =
+                read_by_branch.iter().filter(|r| !r.is_empty()).collect();
             println!(
-                "  knowledge: {} distinct reading(s) across {} branches{}",
+                "  knowledge: {} distinct reading(s) across {readers} reading branches{}",
                 distinct.len(),
-                strategies.len(),
-                if distinct.len() == 1 { " — every branch read the same thing, which is herding" } else { "" }
+                if distinct.len() == 1 {
+                    " — every one read the same thing, which is herding"
+                } else {
+                    ""
+                }
             );
+        } else if readers == 0 {
+            println!("  knowledge: the pool had nothing for this goal; every branch runs cold");
         }
     }
 
@@ -931,6 +1026,19 @@ fn main() -> Result<()> {
                 match m.evaluated(&goal.text, &run, e.score, e.accepted, "") {
                     Ok(()) => recorded += 1,
                     Err(err) => println!("  (verdict for {run} not recorded: {err})"),
+                }
+                // What this branch LEARNED by failing, in the gate's own words. No
+                // model in the path, so negative knowledge cannot be a
+                // hallucination — and it is visible to a sibling immediately,
+                // because its worst case is avoiding something that would have
+                // worked (ADR-0081's asymmetry).
+                if !e.accepted {
+                    if let Some(text) = memory::failure_text(&e.failures, e.score) {
+                        match m.observe_failure(&goal.text, &e.branch, &run, &text) {
+                            Ok(h) => println!("  {} wrote a lesson: {h}", e.branch),
+                            Err(err) => println!("  (lesson from {run} not recorded: {err})"),
+                        }
+                    }
                 }
                 // What happened to what this branch READ. The only thing that moves
                 // a lesson's standing, and the reason retrieval gets better rather
@@ -980,6 +1088,48 @@ fn main() -> Result<()> {
         };
         eprintln!("\n===== host n1 (last 60 lines) =====\n{}", tail(&fleet.node_log("n1"), 60));
         eprintln!("\n===== ingress (last 25 lines) =====\n{}", tail(&fleet.ingress_log(""), 25));
+    }
+
+    // --- promote what the gate proved ----------------------------------------
+    //
+    // An agent may record what it observed; only a passing gate may promote
+    // (ADR-0084). So this runs here, after the verdict, through the `promotion`
+    // interface an agent's world does not contain — and it costs one cheap call
+    // that most candidates answer with NOTHING, which is the correct answer for a
+    // candidate that taught nobody anything.
+    if let (Some(m), Some(best)) = (&memory, found.best.as_ref().filter(|b| b.accepted)) {
+        let door = Answerer {
+            url: format!("http://127.0.0.1:{port}"),
+            host: "goalanswer.acme.test".into(),
+            timeout: Duration::from_secs(180),
+        };
+        let prompt = memory::distil_prompt(&goal.text, &best.files, best.score);
+        match door.reply_to(&prompt).map(|r| memory::distilled(&r)) {
+            Ok(Some(lesson)) => {
+                match m.promote(&goal.text, &best.branch, &winner.as_ref().map(|(r, _)| r.clone()).unwrap_or_default(), &lesson, best.score) {
+                    Ok(h) => println!("\npromoted to patterns: {h}\n  {lesson}"),
+                    Err(e) => println!("\n(nothing promoted: {e})"),
+                }
+            }
+            Ok(None) => println!("\nthe winner taught nothing transferable, and said so"),
+            Err(e) => println!("\n(the distiller could not be reached: {e})"),
+        }
+    }
+
+    // Keep the pool bounded, at the end, when the run has already got what it came
+    // for — a sweep that ran first could delete a lesson this run was about to read.
+    if let Some(m) = &memory {
+        if args.forget_after_days > 0 {
+            match m.decay(args.forget_after_days, 2) {
+                Ok(0) => {}
+                Ok(n) => println!(
+                    "knowledge: forgot {n} entr{} nothing had read in {} days",
+                    if n == 1 { "y" } else { "ies" },
+                    args.forget_after_days
+                ),
+                Err(e) => println!("knowledge: could not sweep the pool ({e})"),
+            }
+        }
     }
 
     if !found.accepted {
@@ -1046,7 +1196,11 @@ fn decomposed(
     goal: &GoalSpec,
     port: u16,
     checks_port: u16,
-    context: &[Value],
+    memory_for_parts: Option<Memory>,
+    // Kept in the signature and unused on purpose: a part is shown its OWN files
+    // plus what its `context` names, never the goal's top-level list — the bug
+    // that had every part writing blind.
+    _context: &[Value],
     tree: &[Value],
     base_commit: &str,
     composition_checks: &[Value],
@@ -1087,13 +1241,17 @@ fn decomposed(
             let current = registry
                 .current()
                 .map_err(|e| anyhow::anyhow!("a contract is registered but unreadable: {e}"))?;
-            if current.body.trim() != body.trim() && current.number == 1 {
+            if current.body.trim() != body.trim() {
                 bail!(
-                    "the registry holds a contract v{} that is not what {contract_path} says. \
-                     It was published by an earlier run and amendments are made through \
-                     ask/answer, not by editing the file — so either restore the file, or give \
-                     this goal a database of its own (`--surreal-url` at a fresh one).",
-                    current.number
+                    "the registry holds a contract v{} that is not what {contract_path} says.\n\n\
+                     If an earlier run amended it, that is the amendment and the file is stale — \
+                     amendments are made through ask/answer, not by editing the file. If this is \
+                     a different goal, it wants a database of its own.\n\n\
+                     registered: {}\n\n\
+                     the file:   {}",
+                    current.number,
+                    current.body.lines().next().unwrap_or_default().chars().take(90).collect::<String>(),
+                    body.lines().next().unwrap_or_default().chars().take(90).collect::<String>(),
                 );
             }
             println!(
@@ -1162,6 +1320,9 @@ fn decomposed(
             checks_url: &format!("http://127.0.0.1:{checks_port}/check"),
             registry: &registry,
             answerer: Some(&answerer),
+            // A decomposed run reads, writes, attributes and forgets exactly as an
+            // ordinary one does — per PART, on that part's own goal.
+            memory: memory_for_parts.as_ref(),
         },
         &parts,
         &body,
@@ -1179,13 +1340,23 @@ fn decomposed(
     }
     for p in &run.composition.parts {
         println!(
-            "  {:<10} accepted={:<5} score={:<5} generations={} against contract v{}",
+            "  {:<16} accepted={:<5} score={:<5} generations={} against contract v{}",
             p.part,
             p.accepted,
             p.best.as_ref().map(|b| b.score).unwrap_or(0),
             p.rounds.len(),
             p.built_against
         );
+        // Why a branch produced NOTHING, which is a different question from why a
+        // candidate failed and lands in a different field. A run that reports
+        // "produced nothing in 3 rounds" and stops has told the reader nothing
+        // they can act on — the note is the only place a transport failure, a
+        // refused plan or a dead provider says so.
+        for (r, round) in p.rounds.iter().enumerate() {
+            for e in round.entries.iter().filter(|e| !e.note.is_empty()) {
+                println!("      gen {r} {}: {}", e.branch, e.note);
+            }
+        }
     }
     println!(
         "\nsearch: {:?}, {} tokens across {} part(s)",
@@ -1210,8 +1381,14 @@ fn decomposed(
                         println!(
                             "    · {}: {}",
                             f["id"].as_str().unwrap_or("?"),
-                            f["detail"].as_str().unwrap_or("").lines().take(6)
-                                .collect::<Vec<_>>().join("\n      ")
+                            {
+                                // The LAST lines, not the first: a failing command
+                                // says what went wrong at the end and spends its
+                                // beginning telling you what it is doing.
+                                let d = f["detail"].as_str().unwrap_or("");
+                                let lines: Vec<&str> = d.lines().filter(|l| !l.trim().is_empty()).collect();
+                                lines[lines.len().saturating_sub(6)..].join("\n      ")
+                            }
                         );
                     }
                 }

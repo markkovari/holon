@@ -939,7 +939,7 @@ pub fn with_contract(plan: &Value, body: &str, version: u32) -> Value {
 /// **Nothing blocks inside a round.** Parts run concurrently, requests accumulate,
 /// and the only place a contract can move is between rounds (ADR-0086). Two parts
 /// waiting on each other is therefore not a state this can reach.
-pub fn compose_search<F>(
+pub fn compose_search<F, S>(
     driver_url: &str,
     host: &str,
     parts: &[Part],
@@ -948,12 +948,16 @@ pub fn compose_search<F>(
     bounds: Bounds,
     base_seed: u64,
     timeout: Duration,
+    mut strategies_for: S,
     mut boundary: F,
 ) -> Composition
 where
     F: FnMut(u16, &[PartOutcome]) -> Vec<(String, String, u32)>,
+    // Per PART and per ROUND, because what a part should read depends on which
+    // part it is — a backend and a frontend attempting one goal want different
+    // lessons — and on what has been written since the last round.
+    S: FnMut(&Part, u16) -> Vec<Strategy>,
 {
-    let strategies = default_strategies(bounds.branches);
     let mut outcomes: Vec<PartOutcome> = parts
         .iter()
         .map(|p| PartOutcome {
@@ -1003,8 +1007,8 @@ where
             .map(|&i| {
                 let url = driver_url.to_string();
                 let host = host.to_string();
-                let strategies = strategies.clone();
                 let (body, version) = contract_of(&agreed, &parts[i].name);
+                let strategies = strategies_for(&parts[i], r);
                 let plan = with_contract(&parts[i].plan, &body, version);
                 let carried = outcomes[i].best.clone();
                 // Each part gets its own seed lane, so two parts never ask the same

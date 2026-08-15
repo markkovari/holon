@@ -262,17 +262,29 @@ worklist in [`.comp/goals/`](../.comp/goals/).
 
 **The loop's judgement**
 
+- **The pool is a closed loop now**: a failed branch writes what it failed on, each
+  branch reads a different slice, a passing candidate is distilled into `patterns`
+  by the one interface an agent cannot reach, what a branch read is judged by what
+  happened to it, and every run forgets what nobody has read. Both e2es prove it
+  without an AI call. What is NOT proven is that any of it makes a real model
+  better — that needs a goal a real model fails, and the runs so far have not
+  found one.
+
 - ~~**Nothing criticises a gate.**~~ → **built**: every check, the goal's and each
   part's, is run against the untouched base before anything is spent, and a run is
   refused when one of them passes. What it does NOT check is whether a gate
   measures the right thing — the empty-corpus candidate that passed everything
   would still pass everything. → goal 07
-- **Retrieval is wired; promotion and decay are not.** Each branch of an ordinary
-  run now reads lessons — a different `k` and a different pool mix per branch, the
+- **The loop writes and reads; it does not yet promote or forget.** A failed branch
+  writes what it failed on in the gate's own words — no model in that path, so
+  negative knowledge cannot be a hallucination. Each branch of an ordinary run
+  reads lessons — a different `k` and a different pool mix per branch, the
   control arm reading nothing — and what a branch read is attributed to its verdict
-  when the run ends, so a lesson present when runs fail sinks. What is still
-  missing: nothing distils a verified diff into `patterns`, nothing decays, and a
-  DECOMPOSED run's parts read nothing yet. → goal 08, ADR-0084
+  when the run ends, so a lesson present when runs fail sinks. A candidate that passes is
+  distilled into at most 900 characters and promoted to `patterns` by the one
+  interface an agent cannot reach. Every run sweeps the pool on
+  its way out, so it stays bounded without a daemon, and a decomposed run's PARTS
+  do all of it too — each on its own goal. → goal 08, ADR-0084
 - **Nothing measures herding or churn.** The diversity knobs exist (a lens per
   branch, one branch that reads nothing); no run reports that its generation
   converged. A negotiation was observed climbing v3 → v7 while no score moved, and

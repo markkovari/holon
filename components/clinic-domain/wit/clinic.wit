@@ -1,0 +1,20 @@
+// clinic:domain — a small veterinary clinic API, as one component.
+//
+// The Rust counterpart of `examples/jco-vet-clinic`: owners and their pets, and
+// visits booked against a vet's day. Chosen as a goal for the loop because it is
+// the smallest thing in this repository that is genuinely an APPLICATION — two
+// halves that must agree about a shape neither owns, and behaviour a compiler
+// cannot check (a double-booking is a 409, not a type error).
+//
+// Imports are deliberately few: the storage and the ids. Everything the loop has
+// to get right is in the domain rather than in the plumbing.
+package clinic:domain@0.1.0;
+
+world clinic-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Owners, pets and visits are records.
+    import records:store/store@0.1.0;
+    /// Their ids.
+    import id:generate/generator@0.1.0;
+}

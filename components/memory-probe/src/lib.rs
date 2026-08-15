@@ -5,6 +5,7 @@
 //!   GET  /recall?goal=&k=&budget=&pools=&min=
 //!   POST /attribute?keys=a,b&run=&ok=
 //!   POST /evaluated?goal=&run=&score=&passed=&artifact=
+//!   POST /decay?days=&min-uses=
 //!   GET  /already-done?goal=&min=
 //!
 //! Every route answers JSON, and reports an error as `{"error":"…"}` with a **200**
@@ -224,6 +225,13 @@ impl Guest for Component {
                 Ok(()) => "{\"ok\":true}".to_string(),
                 Err(e) => err(e),
             },
+
+            (Method::Post, "/decay") => {
+                match mem::decay(num(&query, "days", 30), num(&query, "min-uses", 2) as u64) {
+                    Ok(gone) => format!("{{\"forgotten\":{gone}}}"),
+                    Err(e) => err(e),
+                }
+            }
 
             (Method::Get, "/already-done") => {
                 match mem::already_done(&param(&query, "goal"), float(&query, "min")) {
