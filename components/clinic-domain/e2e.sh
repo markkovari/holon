@@ -23,7 +23,7 @@ HOST="${COMP_HOST:-}"
 # is printed, because then it is the answer.
 BUILD_LOG="$(mktemp -t clinic-build-XXXX)"
 cargo component build --target wasm32-wasip2 --manifest-path "$MANIFEST" \
-  -p clinic-domain -p record-store -p id-generate -p auth-guard -p rate-limiter -p audit-log -p search-index >"$BUILD_LOG" 2>&1 || {
+  -p clinic-domain -p record-store -p id-generate -p auth-guard -p rate-limiter -p audit-log -p search-index -p csv >"$BUILD_LOG" 2>&1 || {
   echo "the halves do not compile:"; tail -25 "$BUILD_LOG"; rm -f "$BUILD_LOG"; exit 1; }
 rm -f "$BUILD_LOG"
 
@@ -110,6 +110,36 @@ curl -s "$B/api/visits?vet=vet-a&day=2026-09-01" | grep -q "$V1" || fail "the da
 
 [ "$(code -X DELETE "$B/api/visits/$V1")" = "204" ] || fail "DELETE of a visit is a 204"
 expect_post 201 /api/visits "{\"pet_id\":\"$PET\",\"vet\":\"vet-a\",\"start\":\"2026-09-01T09:00:00Z\",\"minutes\":30}" "a deleted visit must free its slot"
+
+# --- staff access, and search behind it ----------------------------------------
+#
+# The JOIN, which is what this gate is for: the four parts share one component and
+# one store, so a report has to see visits the visits half wrote, and a search has
+# to find a pet the owners half created. Each half's own gate can only prove its
+# half; nothing but this proves they add up to a clinic.
+expect_post 201 /api/staff '{"email":"vet@clinic.test","password":"correct-horse"}' \
+  "a staff account is created"
+TOKEN=$(post /api/staff/login '{"email":"vet@clinic.test","password":"correct-horse"}' | field token)
+[ -n "$TOKEN" ] || fail "a correct login returned no token"
+expect_get 401 "$B/api/pets/search?q=Rex" "search without a token is a 401"
+curl -s -H "Authorization: Bearer $TOKEN" "$B/api/pets/search?q=Rex" | grep -q "$PET" \
+  || fail "search does not find the pet the owners half created"
+
+# --- reports over what the visits half booked -----------------------------------
+CSV=$(curl -s "$B/api/reports/visits.csv?day=2026-09-01")
+echo "$CSV" | head -1 | grep -q '^id,pet_id,pet_name,vet,start,minutes' \
+  || fail "the CSV report has no header: $CSV"
+echo "$CSV" | grep -q "vet-b" || fail "the report does not show the visits that were booked: $CSV"
+SUM=$(curl -s "$B/api/reports/summary?day=2026-09-01")
+echo "$SUM" | grep -q '"by_species"' || fail "the summary has no by_species: $SUM"
+python3 - "$SUM" <<'CHECK' || fail "the summary does not count what the visits half booked: $SUM"
+import json, sys
+s = json.loads(sys.argv[1])
+# Three visits survive the day: two for vet-a (one rebooked after a delete) and
+# one for vet-b.
+assert s["visits"] == 3, s
+assert s["by_vet"].get("vet-b") == 1, s
+CHECK
 
 expect_get 404 "$B/api/nope" "an unknown route is a 404"
 echo "clinic: every route behaved"

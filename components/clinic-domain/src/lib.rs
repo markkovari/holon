@@ -15,6 +15,7 @@
 mod bindings;
 mod access;
 mod owners;
+mod reports;
 mod visits;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
@@ -189,6 +190,7 @@ impl Guest for Component {
             }
             ["api", "owners", ..] | ["api", "pets", ..] => owners::handle(&method, &route, &body),
             ["api", "visits", ..] => visits::handle(&method, &route, &body),
+            ["api", "reports", ..] => reports::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),
         };
 

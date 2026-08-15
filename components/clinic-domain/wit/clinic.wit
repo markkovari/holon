@@ -28,4 +28,7 @@ world clinic-domain {
     import auth:identity/types@0.1.0;
     /// Ranked full-text search over pets — `search-index` satisfies it.
     import search:index/index@0.1.0;
+    /// CSV, with the quoting rules already right — the `csv` component. A comma
+    /// inside a field is the whole reason this is not `join(",")`.
+    import csv:codec/codec@0.1.0;
 }

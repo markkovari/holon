@@ -1,21 +1,29 @@
 text = """
-Build the clinic API in components/clinic-domain: owners, their pets, visits
-booked against a vet's day, and staff access with pet search.
+Finish the clinic API in components/clinic-domain. Owners, their pets and visits
+are already written and working — read them. What is missing is staff access with
+pet search, and the reports the clinic runs on.
 
 `CONTRACT.md` in that crate is the specification — every route, every status code,
 every rule. Read it first. You may not edit it: if it is wrong or missing
 something you need, write CONTRACT-REQUEST.md (first line the subject, the rest
-why) and the other half will answer between generations.
+why) and the other part will answer between generations.
 
 The router in src/lib.rs already exists and is not yours to change. It dispatches
-to the three parts and answers /health and /test/seed. Your part is one file.
+to the four parts and answers /health and /test/seed. Your part is one file.
 
 You are judged by real HTTP requests against the running component — not by
 whether it compiles. `cargo component check` passes happily on code that does
 nothing.
 
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as
+components, bound at compose time. Look at wit/clinic.wit. What is imported there
+is implemented, tested and composed for you — you call it, you do not write it.
+Writing your own password hashing, your own ranked search or your own CSV quoting
+is the one way to fail a gate while answering every request correctly, because the
+gate reads which capabilities the compiled component actually calls.
+
 The store, as wit-bindgen generates it in Rust — this is the exact surface, and
-guessing it wrong is how the last two attempts died:
+guessing it wrong is how earlier attempts died:
 
     use crate::bindings::records::store::store as records;
 
@@ -34,27 +42,24 @@ guessing it wrong is how the last two attempts died:
     use crate::bindings::id::generate::generator as ids;   ids::ulid() -> String
 
 `find_by` only finds what was indexed when the record was CREATED — pass the
-field in `index_fields` or list and filter instead.
-
-Some parts have MORE than the store in their world. Check wit/clinic.wit: what is
-imported there is already implemented by another component in this repository and
-is bound at compose time — you call it, you do not write it. Writing your own
-version of a capability the world already carries is the one way to fail a gate
-while answering every request correctly.
+field in `index_fields` or list and filter instead. The collections are `owners`,
+`pets` and `visits`, and src/owners.rs and src/visits.rs show exactly how the two
+finished parts read and write them.
 """
-title = "a clinic API: owners, pets, visits, and staff access with search"
+title = "the clinic's staff access, pet search, and reports"
 contract = "components/clinic-domain/CONTRACT.md"
 writable = []
 base_paths = [
   "components/clinic-domain/",
   "components/record-store/",
   "components/id-generate/",
-  # The capabilities `access-and-search` composes against, and the WIT that the
-  # auth package's own world pulls in behind them.
+  # The capabilities these parts compose against, and the WIT that the auth
+  # package's own world pulls in behind them.
   "components/auth-guard/",
   "components/rate-limiter/",
   "components/audit-log/",
   "components/search-index/",
+  "components/csv/",
   "wit/auth.wit",
   "components/Cargo.toml",
   "wit/deps/",
@@ -69,54 +74,8 @@ keep_members = [
   "rate-limiter",
   "audit-log",
   "search-index",
+  "csv",
 ]
-
-[[part]]
-name = "owners-and-pets"
-text = """
-Implement components/clinic-domain/src/owners.rs: the owner and pet routes of
-CONTRACT.md — create, read, search, and a pet's owner having to exist.
-"""
-writable = ["components/clinic-domain/src/owners.rs", "CONTRACT-REQUEST.md"]
-context = [
-  "components/clinic-domain/src/lib.rs",
-  "components/record-store/wit/records.wit",
-  # The WIT says what the interface IS; it does not say what wit-bindgen makes of
-  # it in Rust — `list_records` answering a `Page` with an `entries` field, an
-  # `Entry` carrying `id` and `data`. A branch asked for exactly that mid-run
-  # ("share the Page struct fields so I can fix the iteration"), which is a fair
-  # question and cheaper to answer here than to make it guess.
-  "components/paste-bin/src/lib.rs",
-]
-[[part.check]]
-id = "owners-half-answers-real-requests"
-required = true
-weight = 1
-command = ["bash", "components/clinic-domain/e2e-owners.sh"]
-
-[[part]]
-name = "visits"
-text = """
-Implement components/clinic-domain/src/visits.rs: booking, listing and cancelling
-visits, including the rule a compiler cannot check for you — a vet cannot be
-double-booked, and touching at the boundary is not an overlap.
-"""
-writable = ["components/clinic-domain/src/visits.rs", "CONTRACT-REQUEST.md"]
-context = [
-  "components/clinic-domain/src/lib.rs",
-  "components/record-store/wit/records.wit",
-  # The WIT says what the interface IS; it does not say what wit-bindgen makes of
-  # it in Rust — `list_records` answering a `Page` with an `entries` field, an
-  # `Entry` carrying `id` and `data`. A branch asked for exactly that mid-run
-  # ("share the Page struct fields so I can fix the iteration"), which is a fair
-  # question and cheaper to answer here than to make it guess.
-  "components/paste-bin/src/lib.rs",
-]
-[[part.check]]
-id = "visits-half-answers-real-requests"
-required = true
-weight = 1
-command = ["bash", "components/clinic-domain/e2e-visits.sh"]
 
 [[part]]
 name = "access-and-search"
@@ -125,7 +84,7 @@ Implement components/clinic-domain/src/access.rs: staff accounts, login, and
 ranked pet search behind a bearer token.
 
 This part is deliberately not a domain problem. Every hard piece of it already
-exists as a component in this repository and is in your world at wit/clinic.wit:
+exists as a component and is in your world at wit/clinic.wit:
 `auth:identity/accounts` (register, login, verify-password — argon2 inside),
 `auth:identity/session` (issue and look up a token), and `search:index/index`
 (index a document, query it, ranked hits back).
@@ -134,7 +93,7 @@ Call them. The gate reads the compiled component's imports and fails if any of
 the three is missing, so hashing a password yourself or scanning every pet with
 `contains` fails even when the HTTP responses are perfect.
 
-The index must be filled from pets that the other part creates, and you may not
+The index must be filled from pets that another part creates, and you may not
 edit src/owners.rs. Indexing on search, from the store, needs nobody's
 cooperation; if you would rather owners-and-pets indexed on create, that is a
 change to a file you do not own — write CONTRACT-REQUEST.md and ask for it.
@@ -143,18 +102,50 @@ writable = ["components/clinic-domain/src/access.rs", "CONTRACT-REQUEST.md"]
 context = [
   "components/clinic-domain/src/lib.rs",
   "components/clinic-domain/wit/clinic.wit",
+  # A part of THIS component that is already finished: the store idioms, the
+  # Reply type, the routing shape. Closer to the task than any other example.
+  "components/clinic-domain/src/owners.rs",
   "components/record-store/wit/records.wit",
   "components/search-index/wit/search.wit",
-  # The auth surface as WIT. It is a big file and only three interfaces of it are
-  # in this world, but guessing a signature is how the last two clinic runs died.
+  # The auth surface as WIT. A big file, and only three of its interfaces are in
+  # this world — but guessing a signature is how earlier clinic runs died.
   "wit/auth.wit",
-  "components/paste-bin/src/lib.rs",
 ]
 [[part.check]]
 id = "access-half-answers-real-requests"
 required = true
 weight = 1
 command = ["bash", "components/clinic-domain/e2e-access.sh"]
+
+[[part]]
+name = "reports"
+text = """
+Implement components/clinic-domain/src/reports.rs: the day's visits as CSV, and
+the day's summary as JSON.
+
+Read the visits the other half wrote — collection `visits`, and `pets` for the
+name and species each row needs. The counting is yours; the CSV is not. Use
+`csv:codec/codec`'s `format` for the file, because one of this clinic's pets is
+called `Rex, Jr.` and a field with a comma in it has to come back quoted or the
+row stops having six columns. The gate parses the CSV with a real parser and
+counts columns, and it also reads the compiled component's imports — so
+formatting it by hand fails even if you get the quoting right.
+"""
+writable = ["components/clinic-domain/src/reports.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/clinic-domain/src/lib.rs",
+  "components/clinic-domain/wit/clinic.wit",
+  # The part that WROTE the visits this one reports on: the shape of a visit
+  # document is defined by that file, not by CONTRACT.md.
+  "components/clinic-domain/src/visits.rs",
+  "components/record-store/wit/records.wit",
+  "components/csv/wit/csv.wit",
+]
+[[part.check]]
+id = "reports-half-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "components/clinic-domain/e2e-reports.sh"]
 
 [[check]]
 id = "the-whole-clinic-works"

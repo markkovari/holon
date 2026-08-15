@@ -1,7 +1,7 @@
 # The clinic API — the interface both halves build against
 
-One component serves all of it. Three parts write it: **owners-and-pets**,
-**visits** and **access-and-search**. Neither may edit this file; if it is wrong or missing something, write
+One component serves all of it. Four parts write it: **owners-and-pets**,
+**visits**, **access-and-search** and **reports**. Neither may edit this file; if it is wrong or missing something, write
 `CONTRACT-REQUEST.md` — first line the subject, the rest why — and the other part
 will answer at the next generation.
 
@@ -60,6 +60,25 @@ compose time — use them.** `auth:identity/accounts` for register/login,
 `auth:identity/session` for the token, `search:index/index` for the ranking. The
 gate checks that the composed component imports all three, so hand-rolled password
 hashing or a linear scan over pets fails even if the responses look right.
+
+## Reports — owned by the `reports` part
+
+```
+GET /api/reports/visits.csv?day=YYYY-MM-DD      200 text/csv
+GET /api/reports/summary?day=YYYY-MM-DD         200 {visits, minutes, by_vet:{}, by_species:{}}
+```
+
+- Both need `day`; missing or unparseable is a **400** `{"error":"invalid"}`.
+- The CSV has a header row, exactly these columns in this order:
+  `id,pet_id,pet_name,vet,start,minutes` — then one row per visit that day,
+  sorted by `start` ascending. A day with no visits is the header alone.
+- `summary` counts that day: `visits` (how many), `minutes` (their total),
+  `by_vet` (vet → count) and `by_species` (the pet's species → count).
+
+**Use `csv:codec` to format the CSV.** A pet's name may contain a comma — the
+clinic has one called `Rex, Jr.` — and a field with a comma in it must come back
+quoted, so the row still has six columns. The gate counts columns; joining with
+commas fails it.
 
 ## Shared by all
 

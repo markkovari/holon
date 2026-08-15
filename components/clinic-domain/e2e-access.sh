@@ -24,7 +24,7 @@ HOST="${COMP_HOST:-}"
 
 BUILD_LOG="$(mktemp -t clinic-build-XXXX)"
 cargo component build --target wasm32-wasip2 --manifest-path "$MANIFEST" \
-  -p clinic-domain -p record-store -p id-generate -p auth-guard -p rate-limiter -p audit-log -p search-index >"$BUILD_LOG" 2>&1 || {
+  -p clinic-domain -p record-store -p id-generate -p auth-guard -p rate-limiter -p audit-log -p search-index -p csv >"$BUILD_LOG" 2>&1 || {
   echo "the clinic does not compile:"; tail -25 "$BUILD_LOG"; rm -f "$BUILD_LOG"; exit 1; }
 rm -f "$BUILD_LOG"
 
