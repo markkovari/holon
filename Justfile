@@ -157,25 +157,62 @@ wit-check:
 # The wasm components are native test targets here — the pure logic in them
 # (codecs, key derivation, escaping, parsers) is testable without a runtime, and
 # that is where most of it lives.
+# Every workspace's tests.
+#
+# GOAL_STUBS are excluded, and that is not a workaround. A goal stub is a crate
+# whose implementation is deliberately absent and whose held-out tests are its
+# SPECIFICATION — `semver-range` is 11 lines returning false, with 8 tests
+# describing what a range matcher must do, kept as a benchmark for the loop to
+# attempt. Its tests are supposed to be red. Leaving them in the umbrella means
+# `just test` is red forever, which teaches everyone to stop reading it; taking
+# them out means the umbrella answers the question it is actually asked, "is the
+# repository broken?", and the stubs are listed at the end as what they are.
+#
+# To attempt one: `holon goal run` with that crate's goal spec. To see it fail on
+# purpose: `cargo test -p semver-range` in components/.
+GOAL_STUBS := "semver-range"
+
 test:
     #!/usr/bin/env bash
     set -euo pipefail
+    excludes=""
+    for c in {{GOAL_STUBS}}; do excludes="$excludes --exclude $c"; done
     for ws in components host lattice cli reconciler; do
       echo "=== $ws: compiling test targets"
-      (cd "$ws" && cargo test --release --workspace --no-run)
+      if [ "$ws" = components ]; then
+        # shellcheck disable=SC2086
+        (cd "$ws" && cargo test --release --workspace --no-run $excludes)
+      else
+        (cd "$ws" && cargo test --release --workspace --no-run)
+      fi
     done
     for ws in components host lattice cli reconciler; do
       echo "=== $ws"
-      (cd "$ws" && cargo test --release --workspace)
+      if [ "$ws" = components ]; then
+        # shellcheck disable=SC2086
+        (cd "$ws" && cargo test --release --workspace $excludes)
+      else
+        (cd "$ws" && cargo test --release --workspace)
+      fi
     done
+    echo
+    echo "open goals, not run above (their held-out tests are the spec, and fail on purpose):"
+    for c in {{GOAL_STUBS}}; do echo "  components/$c — cargo test -p $c"; done
 
 # The same, without the slow integration suites — for a quick check while editing.
 test-fast:
     #!/usr/bin/env bash
     set -euo pipefail
+    excludes=""
+    for c in {{GOAL_STUBS}}; do excludes="$excludes --exclude $c"; done
     for ws in components host lattice cli; do
       echo "=== $ws"
-      (cd "$ws" && cargo test --release --workspace)
+      if [ "$ws" = components ]; then
+        # shellcheck disable=SC2086
+        (cd "$ws" && cargo test --release --workspace $excludes)
+      else
+        (cd "$ws" && cargo test --release --workspace)
+      fi
     done
     (cd reconciler && cargo test --release --lib --bins)
 

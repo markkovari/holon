@@ -26,18 +26,12 @@ fn composed_slug_probe() -> Vec<u8> {
         let out = Command::new("cargo").current_dir(&comp).args(&args).output().expect("cargo");
         assert!(out.status.success(), "{args:?} failed:\n{}", String::from_utf8_lossy(&out.stderr));
     }
-    let composed = comp.join("target/slug_probe.composed.wasm");
-    let out = Command::new("wac")
-        .args(["plug"])
-        .arg(rel.join("slug_probe.wasm"))
-        .arg("--plug")
-        .arg(rel.join("slug.wasm"))
-        .arg("-o")
-        .arg(&composed)
-        .output()
-        .expect("wac");
-    assert!(out.status.success(), "wac plug failed:\n{}", String::from_utf8_lossy(&out.stderr));
-    std::fs::read(&composed).expect("read composed")
+    // Composed by the library rather than by shelling out to `wac`: the plug list
+    // comes from what slug-probe actually imports, so this does not have to name
+    // `slug` and cannot drift from the component (ADR-0087). It also drops a
+    // requirement that the `wac` binary be on PATH to run the test suite.
+    let catalog = comp_reconciler::plug::Catalog::scan(&[rel.clone()]);
+    comp_reconciler::plug::compose("slug-probe", &catalog).expect("slug-probe composes")
 }
 
 struct Api {
