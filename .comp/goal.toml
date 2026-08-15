@@ -2,15 +2,19 @@ text = """
 Two halves of one small feature, agreed through `CONTRACT.md` — which is this
 repository's `components/demo/wit/demo.wit`.
 
-The COMPONENT half implements `paginate` in components/demo/src/lib.rs: given a
-list of ids, a page size and an offset, return that slice as `hits` and set
-`has-more` when ids remain beyond it. A size of 0 and an offset past the end must
-not panic.
+The COMPONENT half implements `pub fn paginate_ids(ids, size, offset) -> (Vec<String>, bool)`
+in components/demo/src/lib.rs: the slice at that offset, and whether more remain
+beyond it. A size of 0 and an offset past the end must not panic. Keep the WIT
+export delegating to it.
 
-The PROBE half answers `GET /page?size=&offset=` in
-components/demo-probe/src/lib.rs by calling `demo:shape/pager.paginate` over the
-ids ["a","b","c","d","e"] and writing the result as JSON:
-{"hits":[...],"has_more":bool}.
+The PROBE half implements `pub fn page_json(hits, has_more) -> String` in
+components/demo-probe/src/lib.rs — {"hits":[...],"has_more":bool}, correctly
+escaped — and answers `GET /page?size=&offset=` by calling
+`demo:shape/pager.paginate` over the ids ["a","b","c","d","e"] and writing that
+JSON.
+
+Each half is judged by tests in its own crate's `tests/` directory. You cannot
+edit them: they are the specification. Read them.
 
 Neither half may edit the other's files. If the interface is missing something you
 need, write CONTRACT-REQUEST.md — first line the subject, the rest why.
@@ -27,19 +31,19 @@ name = "component"
 text = "Implement `paginate` in components/demo/src/lib.rs, exactly as CONTRACT.md describes."
 writable = ["components/demo/src/lib.rs", "CONTRACT-REQUEST.md"]
 [[part.check]]
-id = "component-compiles"
-command = ["cargo", "component", "check", "-p", "demo", "--manifest-path", "components/Cargo.toml"]
+id = "component-passes-its-held-out-tests"
+command = ["cargo", "component", "test", "-p", "demo", "--manifest-path", "components/Cargo.toml"]
 
 [[part]]
 name = "probe"
 text = "Answer GET /page?size=&offset= in components/demo-probe/src/lib.rs by calling paginate."
 writable = ["components/demo-probe/src/lib.rs", "CONTRACT-REQUEST.md"]
 [[part.check]]
-id = "probe-compiles"
-command = ["cargo", "component", "check", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
+id = "probe-passes-its-held-out-tests"
+command = ["cargo", "component", "test", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
 
 [[check]]
 id = "the-join"
 required = true
 weight = 1
-command = ["cargo", "component", "check", "-p", "demo", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
+command = ["cargo", "component", "test", "-p", "demo", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
