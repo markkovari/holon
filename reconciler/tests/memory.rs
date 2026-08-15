@@ -400,6 +400,25 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "an unreachable pool must report a failure rather than answer 'not done'"
     );
 
+    // --- and the pool forgets what nobody read --------------------------------
+    //
+    // Driven by the run, not by a daemon (ADR-0081 caught alpha-swarm2 exposing a
+    // `decay` nothing called). What matters here is what it SPARES: a `days` of 0
+    // is refused outright, and everything written a moment ago survives a sweep
+    // that only forgets what has gone unread for a month.
+    assert!(
+        client.decay(0, 2).is_err(),
+        "a max age of zero would forget everything nobody has read yet"
+    );
+    let before = client.already_done(fresh, 0.9).expect("the pool answered");
+    let forgotten = client.decay(30, 2).expect("the sweep ran");
+    assert_eq!(forgotten, 0, "nothing written in this test is a month old");
+    assert!(
+        client.already_done(fresh, 0.9).expect("the pool answered").is_some(),
+        "a sweep must not take work that was recorded seconds ago: {:?}",
+        before.map(|p| p.summary())
+    );
+
     // --- the two apps are separate stores -------------------------------------
     //
     // Same component, same artifacts, different app: the dense app promoted a

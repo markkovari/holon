@@ -1,4 +1,32 @@
-# A branch reads what the swarm learned — 🔴 human-led
+# A branch reads what the swarm learned — ✅ done
+
+> **Built:** a failed branch writes what it failed on (the gate's own words, no
+> model in the path), each branch of a run reads a different slice of the pool,
+> and what a branch read is attributed to its verdict.
+> `reconciler/tests/learning.rs` proves the loop closes with no AI calls at all:
+> run one fails and writes, run two reads and passes, and a branch that reads
+> nothing still fails — which is what makes the middle claim mean anything.
+>
+> **Slice 3 too:** a candidate that passed is distilled by one cheap call into at
+> most 900 characters of transferable advice and promoted to `patterns` — through
+> the `promotion` interface an agent's world does not contain, and refused outright
+> on a score that did not pass. `NOTHING` is a first-class answer, because most
+> passing candidates teach nobody anything and a pool that records a platitude for
+> each of them buries the few that matter.
+>
+> **Retention too:** every run sweeps the pool on its way out — entries nothing has
+> read twice and nothing has touched in `--forget-after-days` (30 by default) are
+> deleted. Driven by the run rather than by a daemon, because a `decay` that is
+> exposed and never called is the gap ADR-0081 caught in alpha-swarm2 and naming it
+> does not close it.
+>
+> **And the decomposed path too:** each PART reads on its own goal — a backend and
+> a frontend attempting one feature want different lessons — writes what it failed
+> on, and has its reading attributed to its own verdict. Asserted in
+> `reconciler/tests/compose.rs`: the frontend fails twice before the contract moves,
+> and the pool must hold a lesson naming the check it failed. Wiring a pool in and
+> having it quietly do nothing is the failure this session kept finding, so the
+> test looks rather than assumes.
 
 **Traces to:** ADR-0084 (built: the pool, the policy, the retrieval, the work
 dedup) and `docs/CURRENT.md` — *"no branch yet READS a lesson"*.

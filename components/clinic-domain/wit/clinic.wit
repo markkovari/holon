@@ -1,0 +1,34 @@
+// clinic:domain — a small veterinary clinic API, as one component.
+//
+// The Rust counterpart of `examples/jco-vet-clinic`: owners and their pets, and
+// visits booked against a vet's day. Chosen as a goal for the loop because it is
+// the smallest thing in this repository that is genuinely an APPLICATION — two
+// halves that must agree about a shape neither owns, and behaviour a compiler
+// cannot check (a double-booking is a 409, not a type error).
+//
+// Imports are deliberately few: the storage and the ids for the domain halves, and
+// — for the third part — two capabilities that already exist in this repository.
+// Staff accounts and full-text search are solved problems here; a part that
+// REIMPLEMENTS them is doing the wrong work, and the gate is written so that the
+// only cheap way to pass is to call them.
+package clinic:domain@0.1.0;
+
+world clinic-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Owners, pets and visits are records.
+    import records:store/store@0.1.0;
+    /// Their ids.
+    import id:generate/generator@0.1.0;
+
+    /// Staff accounts and their sessions — the `auth-guard` component satisfies
+    /// all three at compose time. Do not hash a password by hand.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/types@0.1.0;
+    /// Ranked full-text search over pets — `search-index` satisfies it.
+    import search:index/index@0.1.0;
+    /// CSV, with the quoting rules already right — the `csv` component. A comma
+    /// inside a field is the whole reason this is not `join(",")`.
+    import csv:codec/codec@0.1.0;
+}

@@ -70,7 +70,8 @@ pub struct EntryWrite<'a> {
 pub fn upsert_entry(e: &EntryWrite, vector: Option<&[f32]>, dim_conflict: bool) -> String {
     let id = rid(ENTRIES, e.handle);
     let mut set = format!(
-        "ns = {}, text = {}, goal = {}, env = {}, attempt = {}, score = {}, promoted = {}, uses += 0, wins += 0",
+        "ns = {}, text = {}, goal = {}, env = {}, attempt = {}, score = {}, promoted = {}, \
+         uses += 0, wins += 0, last_used = time::now()",
         lit(e.ns),
         lit(e.text),
         lit(e.goal),
@@ -110,6 +111,25 @@ pub fn hydrate(handles: &[String]) -> String {
     format!("SELECT * FROM {};", ids.join(", "))
 }
 
+/// Forget what nobody used.
+///
+/// Two conditions, and the second one is a guard rather than a filter: an entry
+/// with NO `last_used` at all would otherwise be swept, because SurrealDB
+/// evaluates `NONE < time::now() - 30d` as TRUE — measured. Every write stamps the
+/// field, so an unstamped row means a write path that forgot, and deleting rows
+/// because of a bug in this component is the one outcome worth writing an extra
+/// clause to avoid.
+///
+/// `uses` rather than a score: an entry two runs have read has earned its place
+/// whatever it says, and one nobody has read in a month has not, whatever it
+/// promised. Time is the database's own — nothing here imports a clock.
+pub fn decay(max_age_days: u32, min_uses: u64) -> String {
+    format!(
+        "DELETE FROM {ENTRIES} WHERE uses < {min_uses} AND last_used != NONE \
+         AND last_used < time::now() - {max_age_days}d RETURN BEFORE;"
+    )
+}
+
 /// A whole verdict in one transaction.
 ///
 /// `UPDATE` and not `UPSERT`, deliberately: a handle a human deleted stays
@@ -121,7 +141,7 @@ pub fn attribute(handles: &[String], run: &str, succeeded: bool) -> String {
     for h in handles {
         let id = rid(ENTRIES, h);
         stmt.push_str(&format!(
-            "UPDATE {id} SET uses += 1, wins += {};",
+            "UPDATE {id} SET uses += 1, wins += {}, last_used = time::now();",
             u8::from(succeeded)
         ));
         stmt.push_str(&format!(

@@ -55,10 +55,14 @@ impl Prior {
         } else {
             self.artifact.clone()
         };
+        // One line of it: a goal is often a paragraph, and a summary that spans
+        // the terminal is a summary nobody reads.
+        let goal = self.goal.lines().next().unwrap_or_default();
+        let goal = if goal.len() > 72 { format!("{}…", &goal[..71]) } else { goal.to_string() };
         format!(
-            "\"{}\" (similarity {:.3}) already passed at score {} in run {} → {artifact}; \
+            "\"{goal}\" (similarity {:.3}) already passed at score {} in run {} → {artifact}; \
              {} evaluation(s) on record",
-            self.goal, self.similarity, self.score, self.run, self.evaluations
+            self.similarity, self.score, self.run, self.evaluations
         )
     }
 }
@@ -80,9 +84,21 @@ fn enc(s: &str) -> String {
 
 impl Memory {
     fn call(&self, method: reqwest::Method, path: &str) -> Result<Value, String> {
+        self.call_with(method, path, String::new())
+    }
+
+    /// The same, with a body — which `/observe` needs, because a lesson is prose
+    /// and prose does not belong in a query string.
+    fn call_with(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: String,
+    ) -> Result<Value, String> {
         let r = client(self.timeout)
             .request(method, format!("{}{path}", self.url))
             .header("host", &self.host)
+            .body(body)
             .send()
             .map_err(|e| format!("{e}"))?;
         let text = r.text().unwrap_or_default();
@@ -112,6 +128,23 @@ impl Memory {
             artifact: v["artifact"].as_str().unwrap_or_default().to_string(),
             evaluations: v["evaluations"].as_u64().unwrap_or(0),
         }))
+    }
+
+    /// Forget what nobody read. Returns how many entries went.
+    ///
+    /// Driven by the run rather than by a daemon: a `decay` that is exposed and
+    /// never called is the gap ADR-0081 caught in alpha-swarm2, and every run
+    /// paying a few milliseconds to keep the pool bounded is cheaper than a
+    /// scheduler nobody remembers to deploy.
+    pub fn decay(&self, days: u32, min_uses: u64) -> Result<u32, String> {
+        let v = self.call(
+            reqwest::Method::POST,
+            &format!("/decay?days={days}&min-uses={min_uses}"),
+        )?;
+        if let Some(detail) = v["error"].as_str() {
+            return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
+        }
+        Ok(v["forgotten"].as_u64().unwrap_or(0) as u32)
     }
 
     /// Record one verdict.
@@ -225,6 +258,160 @@ impl Memory {
     }
 }
 
+/// What a branch learned by failing, in the gate's own words.
+///
+/// The source is deliberately not a model: the failing check ids and the first
+/// line of what the runner said. Negative knowledge derived from a real verdict
+/// cannot be a hallucination, so it needs none of the machinery that keeps model
+/// output out of the trusted pool — and it is visible to siblings immediately,
+/// which is the asymmetry ADR-0081 argues for. Its worst case is a branch avoiding
+/// something that would have worked.
+///
+/// `None` when there is nothing to learn: a branch that passed, or one that never
+/// produced a candidate at all and so failed for a reason about the harness.
+pub fn failure_text(failures: &Value, score: u64) -> Option<String> {
+    let list = failures.as_array()?;
+    if list.is_empty() {
+        return None;
+    }
+    let named: Vec<String> = list
+        .iter()
+        .filter_map(|f| {
+            let id = f["id"].as_str()?;
+            let first = f["detail"]
+                .as_str()
+                .unwrap_or("")
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or("");
+            Some(if first.is_empty() {
+                format!("`{id}` failed")
+            } else {
+                format!("`{id}` failed: {}", first.chars().take(200).collect::<String>())
+            })
+        })
+        .collect();
+    if named.is_empty() {
+        return None;
+    }
+    Some(format!("scored {score}; {}", named.join("; ")))
+}
+
+impl Memory {
+    /// Record what a branch failed on, as negative knowledge.
+    pub fn observe_failure(
+        &self,
+        goal: &str,
+        env: &str,
+        attempt: &str,
+        text: &str,
+    ) -> Result<String, String> {
+        let v = self.call_with(
+            reqwest::Method::POST,
+            &format!(
+                "/observe?ns=errors&goal={}&env={}&attempt={}",
+                enc(goal),
+                enc(env),
+                enc(attempt)
+            ),
+            text.to_string(),
+        )?;
+        if let Some(detail) = v["error"].as_str() {
+            return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
+        }
+        v["handle"].as_str().map(str::to_string).ok_or_else(|| format!("no handle in {v}"))
+    }
+}
+
+/// What to ask a cheap model when a candidate has passed.
+///
+/// The prompt carries the goal, the files that passed, and the score — and asks
+/// for ONE paragraph of transferable advice. Not a summary of the diff: a summary
+/// is what the diff already says, and a future run reading "added a bounds check
+/// to page()" learns nothing it could not have read from the code.
+///
+/// The ≤900 characters is in the prompt as well as enforced after, because a model
+/// told the limit writes to it and a model told nothing writes an essay that gets
+/// cut mid-sentence.
+pub fn distil_prompt(goal: &str, files: &Value, score: u64) -> String {
+    let changed: Vec<String> = files
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|f| {
+            let path = f["path"].as_str()?;
+            let body = f["content"].as_str().unwrap_or("");
+            Some(format!("=== {path}\n{}", body.chars().take(1500).collect::<String>()))
+        })
+        .collect();
+    format!(
+        "A candidate just passed every check for this goal, scoring {score}.\n\n\
+GOAL:\n{goal}\n\n\
+WHAT PASSED:\n{}\n\n\
+Write ONE paragraph, at most 900 characters, that a different agent attempting a \
+SIMILAR goal in this codebase would be glad to have been told before it started.\n\n\
+Transferable, not descriptive: name the trap, the invariant, the API that is not \
+what it looks like, the thing the tests actually demanded. Do NOT summarise the \
+diff — a future reader can read the diff. If there is genuinely nothing \
+transferable here, answer exactly NOTHING and nothing else.",
+        changed.join("\n\n")
+    )
+}
+
+/// The lesson in a reply, or `None` when the model said there was none.
+///
+/// `NOTHING` is a legitimate answer and the reason it is offered: most passing
+/// candidates teach nothing, and a pool that records a platitude for every one of
+/// them buries the few that matter.
+pub fn distilled(reply: &str) -> Option<String> {
+    let text = reply.trim();
+    if text.is_empty() || text.eq_ignore_ascii_case("nothing") {
+        return None;
+    }
+    // A model that ignored the instruction and pasted the diff back has not
+    // distilled anything, and storing it would put a diff in every future prompt.
+    if text.contains("=== ") {
+        return None;
+    }
+    let cut: String = text.chars().take(900).collect();
+    Some(cut.split_whitespace().collect::<Vec<_>>().join(" "))
+}
+
+impl Memory {
+    /// Promote a distilled lesson to `patterns` — the trusted pool.
+    ///
+    /// This is the ONLY writer of it, and it goes through the registry's
+    /// `promotion` interface rather than `memory`, which is the whole
+    /// anti-poisoning argument: an agent's world does not contain this call
+    /// (ADR-0084). The score is the gate's, and a score that did not pass is
+    /// refused on the other side.
+    pub fn promote(
+        &self,
+        goal: &str,
+        env: &str,
+        attempt: &str,
+        text: &str,
+        gate_score: u64,
+    ) -> Result<String, String> {
+        let v = self.call_with(
+            reqwest::Method::POST,
+            &format!(
+                "/promote?goal={}&env={}&attempt={}&score={gate_score}",
+                enc(goal),
+                enc(env),
+                enc(attempt)
+            ),
+            text.to_string(),
+        )?;
+        if let Some(detail) = v["error"].as_str() {
+            return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
+        }
+        v["handle"].as_str().map(str::to_string).ok_or_else(|| format!("no handle in {v}"))
+    }
+}
+
 /// Lessons as a branch sees them: one bullet each, negative knowledge marked.
 ///
 /// The namespace is shown because the three are not worth the same. `errors` is
@@ -258,6 +445,7 @@ pub fn run_id(search_seed: u64, round: usize, branch: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_run_id_is_stable_distinct_and_legible() {
@@ -276,6 +464,65 @@ mod tests {
 
     fn lesson(ns: &str, text: &str) -> Lesson {
         Lesson { key: format!("{ns}:1"), ns: ns.into(), text: text.into(), dense: true }
+    }
+
+    #[test]
+    fn the_distiller_asks_for_advice_and_not_a_summary() {
+        let p = distil_prompt(
+            "make paginate handle an offset past the end",
+            &json!([{ "path": "src/lib.rs", "content": "pub fn paginate() {}" }]),
+            1000,
+        );
+        assert!(p.contains("scoring 1000"), "{p}");
+        assert!(p.contains("make paginate handle an offset past the end"));
+        assert!(p.contains("=== src/lib.rs"), "the files that passed are in it");
+        assert!(p.contains("at most 900 characters"), "a model told the limit writes to it");
+        assert!(p.contains("Do NOT summarise the diff"), "{p}");
+        assert!(p.contains("answer exactly NOTHING"), "silence has to be offerable");
+    }
+
+    #[test]
+    fn most_passing_candidates_teach_nothing_and_that_is_allowed() {
+        // A pool that records a platitude for every passing candidate buries the
+        // few entries that matter, so `NOTHING` is a first-class answer.
+        assert_eq!(distilled("NOTHING"), None);
+        assert_eq!(distilled("  nothing  "), None);
+        assert_eq!(distilled(""), None);
+        // And a model that ignored the brief and pasted the diff back has not
+        // distilled anything.
+        assert_eq!(distilled("=== src/lib.rs\npub fn x() {}"), None);
+    }
+
+    #[test]
+    fn a_distilled_lesson_is_one_paragraph_within_the_budget() {
+        let long = "word ".repeat(400);
+        let out = distilled(&long).expect("a real answer");
+        assert!(out.chars().count() <= 900, "{}", out.chars().count());
+        assert_eq!(out.lines().count(), 1, "a lesson is rendered into a bullet");
+        let out = distilled("  the tests demand `has_more`\n  not a total count  ").unwrap();
+        assert_eq!(out, "the tests demand `has_more` not a total count");
+    }
+
+    #[test]
+    fn a_failure_becomes_a_lesson_in_the_gate_s_own_words() {
+        let failures = json!([
+            { "id": "pager-renders", "detail": "grep: no match\n\nexit status 1" },
+            { "id": "component-tests", "detail": "" }
+        ]);
+        let text = failure_text(&failures, 400).expect("a failed branch has something to teach");
+        assert!(text.starts_with("scored 400;"), "{text}");
+        assert!(text.contains("`pager-renders` failed: grep: no match"), "{text}");
+        assert!(text.contains("`component-tests` failed"), "a check with no detail still names itself");
+        // One line, because it is rendered into a bullet list.
+        assert_eq!(text.lines().count(), 1, "{text:?}");
+    }
+
+    #[test]
+    fn a_branch_with_nothing_to_teach_writes_nothing() {
+        // A branch that passed, and one that never produced a candidate at all —
+        // the second failed for a reason about the harness, not about the code.
+        assert!(failure_text(&json!([]), 1000).is_none());
+        assert!(failure_text(&json!(null), 0).is_none());
     }
 
     #[test]
