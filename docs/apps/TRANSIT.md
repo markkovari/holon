@@ -15,7 +15,7 @@ storage, or QR encoder. The frontend is a **React + shadcn/ui** SPA (Vite +
 Tailwind), mobile-first, served by the host — the validator screen drives the
 device camera via the browser's native **`BarcodeDetector`** (no JS QR library).
 
-![The transit app on a phone: a rider signs in, the Buy tab lists fares (single / 60-min / 90-min / monthly) and taps Buy; My tickets shows the ticket with a status badge and a Show button that reveals a big scannable QR; then a validator signs in to a camera scanner with a manual-entry fallback, pastes a ticket id and gets a big green ACCEPTED card, scans the same single ticket again and gets a red REJECTED "already used". A live recording of the running React app at a mobile viewport.](docs/media/transit.gif)
+![The transit app on a phone: a rider signs in, the Buy tab lists fares (single / 60-min / 90-min / monthly) and taps Buy; My tickets shows the ticket with a status badge and a Show button that reveals a big scannable QR; then a validator signs in to a camera scanner with a manual-entry fallback, pastes a ticket id and gets a big green ACCEPTED card, scans the same single ticket again and gets a red REJECTED "already used". A live recording of the running React app at a mobile viewport.](../media/transit.gif)
 
 The rider UI is **Buy** + **My tickets** (each ticket shows its status and, while
 scannable, its QR). The validator UI is a **camera scanner** (with a manual

@@ -4,7 +4,7 @@ Log time by project + category (or a pomodoro timer); see your contribution over
 week/month/year/custom ranges, broken down by project and category — and as a
 project **lead**, that project's whole distribution. Logging is gated by
 **per-project membership**; owners edit/delete their own entries. See
-[docs/apps/TEMPO.md](../../TEMPO.md).
+[docs/apps/TEMPO.md](../../docs/apps/TEMPO.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 
@@ -51,5 +51,5 @@ docker compose --env-file .env --profile local-redis up -d --build   # REDIS_URL
 ```
 
 For HTTPS later, put a DigitalOcean Load Balancer or Cloudflare in front of
-`:8080` — no change to the compose. See [docs/apps/TEMPO.md](../../TEMPO.md) for the droplet
+`:8080` — no change to the compose. See [docs/apps/TEMPO.md](../../docs/apps/TEMPO.md) for the droplet
 walkthrough and the wasmCloud/GHCR path for scale.

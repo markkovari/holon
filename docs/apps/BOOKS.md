@@ -16,7 +16,7 @@ exports `wasi:http` and imports only WIT contracts — the composed **auth-guard
 PDF writer. The frontend is a **React + shadcn/ui** SPA (Vite + Tailwind),
 mobile-friendly, served by the host.
 
-![The books app: the Journal tab has a double-entry editor — pick accounts, set debit/credit amounts, and a live badge flips from the running debits/credits to “balanced” only when they match; Post is disabled until then. The Reports tab shows a trial balance whose Debit and Credit totals are equal (a BALANCED badge), a profit & loss (income − expenses = net income), and a balance sheet with a BALANCES badge (assets = liabilities + equity + net income), plus a Statements PDF button. A live recording of the running React app.](docs/media/books.gif)
+![The books app: the Journal tab has a double-entry editor — pick accounts, set debit/credit amounts, and a live badge flips from the running debits/credits to “balanced” only when they match; Post is disabled until then. The Reports tab shows a trial balance whose Debit and Credit totals are equal (a BALANCED badge), a profit & loss (income − expenses = net income), and a balance sheet with a BALANCES badge (assets = liabilities + equity + net income), plus a Statements PDF button. A live recording of the running React app.](../media/books.gif)
 
 ## The invariant (why `ledger:doubleentry`)
 

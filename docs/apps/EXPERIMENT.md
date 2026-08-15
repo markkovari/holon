@@ -22,7 +22,7 @@ generic WASI — reusable far beyond the showcase:
 The showcase is one **`abtest-domain`** HTTP component that composes them; the
 domain is composition, not a bespoke experiment engine.
 
-![The experiment console: 100 subjects split into control/variant-a/variant-b by weight (sticky — the same subjects stay in the same arm as weights shift), conversions fired per arm, and the per-variant conversion-rate bars updating live over SSE](docs/media/experiment.gif)
+![The experiment console: 100 subjects split into control/variant-a/variant-b by weight (sticky — the same subjects stay in the same arm as weights shift), conversions fired per arm, and the per-variant conversion-rate bars updating live over SSE](../media/experiment.gif)
 
 ## Why it subsumes "context-based rollout"
 

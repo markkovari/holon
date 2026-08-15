@@ -4,7 +4,7 @@ Three request-shaping patterns — **rate limiting** (token bucket), **throttlin
 (GCRA), and **batching** (coalesce + atomic flush) — each keyed by client with
 **durable per-key state**, demonstrating the **Golem Cloud durable-worker**
 model. The shaping math is the stateless `shaper:limit` component; the durability
-is per-key `records:store` state under a revision CAS. See [docs/apps/GATE.md](../../GATE.md).
+is per-key `records:store` state under a revision CAS. See [docs/apps/GATE.md](../../docs/apps/GATE.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

@@ -17,7 +17,7 @@ The algorithms are a new **`resilience:breaker`** component. The upstream hop is
 demo honest: when the breaker is open, the upstream's own hit counter *stops
 moving*.
 
-![The mesh app: a shield badge reads “closed — calls flow, failures are counted” with counters for calls / ok / failed / shed / trips. A healthy call logs one 200 attempt; a 300ms response against a 100ms SLO logs “failed · slo breach: 304ms > 100ms” despite its 200. Hammering the failing upstream flips the badge red to “open — tripped, requests are refused here, the upstream is not dialled at all”, and the next calls log “shed — circuit open · upstream not called” while the shed counter climbs and calls stops moving. The countdown reaches “cooldown over — next call probes”, one healthy call gets through, and the badge returns to green “closed”. A live recording of the running React app.](docs/media/mesh.gif)
+![The mesh app: a shield badge reads “closed — calls flow, failures are counted” with counters for calls / ok / failed / shed / trips. A healthy call logs one 200 attempt; a 300ms response against a 100ms SLO logs “failed · slo breach: 304ms > 100ms” despite its 200. Hammering the failing upstream flips the badge red to “open — tripped, requests are refused here, the upstream is not dialled at all”, and the next calls log “shed — circuit open · upstream not called” while the shed counter climbs and calls stops moving. The countdown reaches “cooldown over — next call probes”, one healthy call gets through, and the badge returns to green “closed”. A live recording of the running React app.](../media/mesh.gif)
 
 ## The component (why `resilience:breaker`)
 

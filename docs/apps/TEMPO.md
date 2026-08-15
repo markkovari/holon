@@ -17,7 +17,7 @@ no bespoke storage, no PDF library. The frontend is a **React + shadcn/ui** SPA
 (Vite + Tailwind, charts by **recharts**), mobile-friendly, built to
 `examples/tempo/dist` and served by the host — no framework in the backend.
 
-![The tempo dashboard on a phone: a project lead signs in, the Reports tab shows the team's month — a donut of hours by project, bars by category / per-day / per-person (recharts) — flips the range and the Everyone/Mine scope, and exports the range as a PDF; the Calendar tab shows today's time-grid with scheduled blocks, a tap on an empty slot adds an entry, and tapping a block opens an editor to change or delete it; the Log tab runs a pomodoro. A live recording of the running React app at a mobile viewport.](docs/media/tempo.gif)
+![The tempo dashboard on a phone: a project lead signs in, the Reports tab shows the team's month — a donut of hours by project, bars by category / per-day / per-person (recharts) — flips the range and the Everyone/Mine scope, and exports the range as a PDF; the Calendar tab shows today's time-grid with scheduled blocks, a tap on an empty slot adds an entry, and tapping a block opens an editor to change or delete it; the Log tab runs a pomodoro. A live recording of the running React app at a mobile viewport.](../media/tempo.gif)
 
 The SPA has three surfaces: **Log** (quick entry + pomodoro + recent list), a
 **Calendar** day view (a Google-calendar-style time-grid — see a day's entries as
@@ -133,7 +133,9 @@ just push-tempo-ghcr 0.1.0            # gh mints the token, wash does the OCI pu
 # make the package Public once (GitHub → Packages → tempo → visibility)
 ```
 
-or let CI do it on a `tempo-v*` tag ([`.github/workflows/tempo-ghcr.yaml`](../.github/workflows/tempo-ghcr.yaml)).
+The CI half of this — a push on a `tempo-v*` tag — is described here but is NOT in
+the repository: there is no `.github/workflows/` at all. The recipe above is the
+whole story today.
 Then any wasmCloud host pulls it anonymously and links storage to, e.g., a
 Redis/Valkey provider:
 

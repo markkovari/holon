@@ -10,7 +10,7 @@ job runs through the `durable:workflow/orchestrator` contract, satisfied by an
 **in-process backend** by default, or by the **`golem-workflow` provider** for
 crash-resumable durable execution — with no change to the queue.
 
-![The jobs board: a burst of jobs marches Queued → Running → Done; a flaky job retries with backoff (its attempt count climbs) then completes; a boom job exhausts its attempts and lands in the Dead-letter column; then Replay requeues it — a live recording of the running app, jobs advancing on their own over SSE](docs/media/jobs.gif)
+![The jobs board: a burst of jobs marches Queued → Running → Done; a flaky job retries with backoff (its attempt count climbs) then completes; a boom job exhausts its attempts and lands in the Dead-letter column; then Replay requeues it — a live recording of the running app, jobs advancing on their own over SSE](../media/jobs.gif)
 
 ## Two kinds of durability, at two layers
 
@@ -56,7 +56,7 @@ The in-process backend only implements the blocking `trigger` (a synchronous
 decision from workflow-id + payload); `start`/`status` return `unavailable` —
 async, crash-recovering runs are the Golem backend's domain. To get those, the
 same `durable:workflow` import is satisfied by the **`golem-workflow` provider**
-([`providers/golem-workflow`](providers/golem-workflow), see [GOLEM.md](../capabilities/GOLEM.md))
+([`providers/golem-workflow`](../../providers/golem-workflow), see [GOLEM.md](../capabilities/GOLEM.md))
 running on a **classic wasmCloud host** over wRPC on the lattice. The queue
 component is byte-for-byte unchanged — that's the point of the seam.
 
@@ -75,7 +75,7 @@ capabilities to a *component* as host interfaces (`wasi:http`, `wasi:keyvalue`),
 and the provider's Golem call is just an HTTP POST — so there's a v2-native way
 to run the front-half:
 
-- **`golem-bridge`** ([`components/golem-bridge`](components/golem-bridge)) — a
+- **`golem-bridge`** ([`components/golem-bridge`](../../components/golem-bridge)) — a
   WASM component that satisfies the same `durable:workflow/orchestrator` contract
   by POSTing to a durable Golem worker over `wasi:http/outgoing-handler`.
 - **`just compose-jobs-golem`** composes it into the queue in place of the
@@ -97,7 +97,7 @@ the option for a classic-host lattice.
 
 ### Verified live — green run (2026-07-24)
 
-![The jobs board on the wasmCloud v2 operator (Kubernetes): jobs enqueue and each one executes as a real durable Golem worker over wasi:http, landing in Done with the worker's return value — a "shipment" counter climbing 1..8 and an "invoice" counter 1..3, per-workflow durable state persisted in Golem across jobs. A live recording of the cluster.](docs/media/jobs-golem.gif)
+![The jobs board on the wasmCloud v2 operator (Kubernetes): jobs enqueue and each one executes as a real durable Golem worker over wasi:http, landing in Done with the worker's return value — a "shipment" counter climbing 1..8 and an "invoice" counter 1..3, per-workflow durable state persisted in Golem across jobs. A live recording of the cluster.](../media/jobs-golem.gif)
 
 Brought up end to end on the orbstack cluster: `runtime-operator` 2.5.2 (host +
 NATS) in `jobs`, the in-cluster registry, and the `jobs` WorkloadDeployment

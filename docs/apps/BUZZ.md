@@ -14,7 +14,7 @@ exports `wasi:http` and imports only WIT contracts — the composed **auth-guard
 The frontend is a **React + shadcn/ui** SPA with two faces: a **host big-screen**
 and a **player controller**.
 
-![The buzz game on two screens: the host big-screen shows a giant game PIN and the roster filling as players join, then a question with four colored/shaped options (red ▲, blue ◆, yellow ●, green ■), a live “answered” count, and after Reveal the correct option ringed with a ✓ plus a leaderboard; a player's phone shows the four color buttons, a “Locked in” state after tapping, and a big green “Correct! +970” on reveal. A live recording of the running React app.](docs/media/buzz.gif)
+![The buzz game on two screens: the host big-screen shows a giant game PIN and the roster filling as players join, then a question with four colored/shaped options (red ▲, blue ◆, yellow ●, green ■), a live “answered” count, and after Reveal the correct option ringed with a ✓ plus a leaderboard; a player's phone shows the four color buttons, a “Locked in” state after tapping, and a big green “Correct! +970” on reveal. A live recording of the running React app.](../media/buzz.gif)
 
 ## Real-time without a socket
 

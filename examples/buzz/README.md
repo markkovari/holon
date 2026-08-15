@@ -4,7 +4,7 @@ Kahoot-style: a **host** signs in and runs a game (gets a PIN); **players** join
 anonymously with the PIN + a nickname on their own devices and buzz in during
 each question. On reveal the app grades **speed-weighted** (faster correct = more
 points) and updates a live leaderboard. Real-time is client polling — comp-host is
-request/response. See [docs/apps/BUZZ.md](../../BUZZ.md).
+request/response. See [docs/apps/BUZZ.md](../../docs/apps/BUZZ.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA
 (a host big-screen + a player controller).

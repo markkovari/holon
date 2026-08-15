@@ -1,6 +1,6 @@
 # ratelimit — a live throttle wall
 
-A wall for the two limiter capabilities (see [`docs/apps/RATELIMIT.md`](../../RATELIMIT.md)):
+A wall for the two limiter capabilities (see [`docs/apps/RATELIMIT.md`](../../docs/apps/RATELIMIT.md)):
 hammer an endpoint and watch the **attempt bar** climb to its ceiling, the key
 **LOCK** with a countdown, and the **quota gauge** drain — then recover when the
 window elapses. Every verdict streams live over **SSE**.

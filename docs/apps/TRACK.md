@@ -13,7 +13,7 @@ Same shape as the others — one **`track-domain`** HTTP component that exports
 machine, search, an event bus, outbound webhooks, an LLM boundary, ABAC, and an
 embedded SPA, all linked at compose time with `wac`.
 
-![The track board: an admin creates a project and files issues, a member moves them across backlog → todo → in progress → done, comments render as markdown, an AI button summarizes the thread, full-text search narrows the board, and a live activity feed streams every change over SSE — all from one composed wasm component with the SPA baked in](docs/media/track.gif)
+![The track board: an admin creates a project and files issues, a member moves them across backlog → todo → in progress → done, comments render as markdown, an AI button summarizes the thread, full-text search narrows the board, and a live activity feed streams every change over SSE — all from one composed wasm component with the SPA baked in](../media/track.gif)
 
 ## Five axes in one app
 
@@ -36,7 +36,7 @@ issues, and the right — a **separate** board instance holding its own SSE
 connection — sees each change land in its activity feed and its board reload
 **live**, proving the `event:bus` fan-out (one component, no WebSocket):
 
-![Two track boards side by side: Alice (left) files two issues and moves one across the board; Bob (right), a separate session, watches issue.created and issue.moved events stream into his activity feed live over SSE and his board update in lockstep — the event-bus fan-out across independent clients](docs/media/track-sse.gif)
+![Two track boards side by side: Alice (left) files two issues and moves one across the board; Bob (right), a separate session, watches issue.created and issue.moved events stream into his activity feed live over SSE and his board update in lockstep — the event-bus fan-out across independent clients](../media/track-sse.gif)
 
 ## Why it's still (almost) pure composition
 

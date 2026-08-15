@@ -5,7 +5,7 @@ A live **chat room**: post a message and it appears in every open window
 the one *class* none of the other showcases touch — every app so far is
 request/response; this one is a **sustained connection with server push**.
 
-![Two panes (Ada + Bob) in one browser: a message typed in one appears live in the other over a held-open SSE stream — one composed wasm component, no WebSocket](docs/media/pulse.gif)
+![Two panes (Ada + Bob) in one browser: a message typed in one appears live in the other over a held-open SSE stream — one composed wasm component, no WebSocket](../media/pulse.gif)
 
 ## Why this is a new class (and how it works on wasip2)
 

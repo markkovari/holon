@@ -1,6 +1,6 @@
 # search — faceted search-as-you-type
 
-A live search box for the **search** capability (see [`docs/apps/SEARCH.md`](../../SEARCH.md)):
+A live search box for the **search** capability (see [`docs/apps/SEARCH.md`](../../docs/apps/SEARCH.md)):
 type and ranked results narrow with every keystroke, click a **facet** to filter,
 and watch the **cache hit-ratio** climb on repeat queries.
 

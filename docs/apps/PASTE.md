@@ -13,7 +13,7 @@ exports `wasi:http` and imports only WIT contracts. Four of the five are
 pure-compute (`validate:schema`, `pii:redact`, `md:render`, `slug:generate`) —
 no host state of their own — and only `records:store` persists anything.
 
-![The paste bin: pasting Markdown containing an email and a card number stores it with the PII masked (a "2 PII masked" badge), renders the Markdown to safe HTML with a raw &lt;script&gt; escaped, and gives a duplicate title a distinct slug — all over one composed wasm component](docs/media/paste.gif)
+![The paste bin: pasting Markdown containing an email and a card number stores it with the PII masked (a "2 PII masked" badge), renders the Markdown to safe HTML with a raw &lt;script&gt; escaped, and gives a duplicate title a distinct slug — all over one composed wasm component](../media/paste.gif)
 
 ## Why it's almost pure composition
 

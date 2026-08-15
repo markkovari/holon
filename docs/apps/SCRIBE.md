@@ -16,7 +16,7 @@ history — what each edit changed), **`records:store`** (persist it),
 **`id:generate`** (replica ids). It's the first app to compose the convergence
 class with the realtime-push class (`pulse`'s SSE trick).
 
-![Two editors — Alice and Bob — side by side on one document, each with a History rail. Alice titles the doc and it appears live in Bob's pane; Bob writes the body; then both edit the SAME body field — Bob prepends "DRAFT — " while Alice's appended line stands — and both contributions survive and converge in both panes, something last-writer-wins could not do. Each pane's History rail fills with per-revision unified diffs (green additions, red removals) from the diff:text component. A live two-pane recording of the running app.](docs/media/scribe.gif)
+![Two editors — Alice and Bob — side by side on one document, each with a History rail. Alice titles the doc and it appears live in Bob's pane; Bob writes the body; then both edit the SAME body field — Bob prepends "DRAFT — " while Alice's appended line stands — and both contributions survive and converge in both panes, something last-writer-wins could not do. Each pane's History rail fills with per-revision unified diffs (green additions, red removals) from the diff:text component. A live two-pane recording of the running app.](../media/scribe.gif)
 
 ## Why it's a real CRDT app, not "last save wins"
 

@@ -1,6 +1,6 @@
 # flags — live feature rollout, no redeploy
 
-A rollout console for the **feature-flag** capability (see [`docs/apps/FLAGS.md`](../../FLAGS.md)):
+A rollout console for the **feature-flag** capability (see [`docs/apps/FLAGS.md`](../../docs/apps/FLAGS.md)):
 add a flag, drag a percentage slider, or trip a kill-switch — and every open
 window updates *instantly* over a held-open **SSE** stream, with each affected
 subject **sticky** (the same tiles light every evaluation — real cohorts, not

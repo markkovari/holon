@@ -13,7 +13,7 @@ for the export, and **`csv:codec`** for the `index.csv` inside it. No bespoke
 auth, storage, zip, or CSV. The frontend is a **React + shadcn/ui** SPA (Vite +
 Tailwind), served by the host — its bundle carries no archiving code at all.
 
-![The stash app: a notes sidebar with a Markdown editor (title + body, Save/Delete), a New-note button, and an Export .zip button in the header. Clicking Export downloads stash-export.zip; unzipped it holds notes/&lt;title&gt;.md per note plus index.csv and manifest.json. A live recording of the running React app.](docs/media/stash.gif)
+![The stash app: a notes sidebar with a Markdown editor (title + body, Save/Delete), a New-note button, and an Export .zip button in the header. Clicking Export downloads stash-export.zip; unzipped it holds notes/&lt;title&gt;.md per note plus index.csv and manifest.json. A live recording of the running React app.](../media/stash.gif)
 
 ## The export (why a `zip:archive` component)
 

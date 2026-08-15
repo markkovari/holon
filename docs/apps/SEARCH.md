@@ -12,7 +12,7 @@ exports `wasi:http` and imports only WIT contracts. The search *engine* is the
 `search:index` contract (TF-IDF over a KV-backed inverted index) — no
 Elasticsearch, no network, no bespoke ranking.
 
-![The search console: typing "dist wasm" narrows ranked hits live, a facet click (kind:doc) filters the set, and the cache hit-ratio ticks up as repeated queries are served from cache — all over one composed wasm component](docs/media/search.gif)
+![The search console: typing "dist wasm" narrows ranked hits live, a facet click (kind:doc) filters the set, and the cache hit-ratio ticks up as repeated queries are served from cache — all over one composed wasm component](../media/search.gif)
 
 ## Why it's almost pure composition
 

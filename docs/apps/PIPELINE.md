@@ -14,7 +14,7 @@ exports `wasi:http` and imports only WIT contracts. The pattern is demonstrated
 by composing durable primitives already in the catalog — no bespoke queue, no
 business crate.
 
-![The pipeline board: an event marches Pending → In-flight → Done live; with the sink toggled down it retries with backoff, drops to the dead-letter tray, then a Replay click re-enters Pending — all over held-open SSE, no refresh](docs/media/pipeline.gif)
+![The pipeline board: an event marches Pending → In-flight → Done live; with the sink toggled down it retries with backoff, drops to the dead-letter tray, then a Replay click re-enters Pending — all over held-open SSE, no refresh](../media/pipeline.gif)
 
 ## Why it's almost pure composition
 

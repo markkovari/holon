@@ -14,7 +14,7 @@ exports `wasi:http` and imports only WIT contracts. The policy decision is the
 `upload:policy` contract, the bytes land in `blob:store`, the shareable link is
 an HMAC from `webhook:sign` — no S3, no presigned-URL SDK, no bespoke crypto.
 
-![The drop-box: choosing a file asks for a ticket (the policy answer, no bytes), an allowed type mints a signed ticket, the bytes PUT straight to storage, and a signed download link round-trips them — while a blocked type is refused at ticket time — all over one composed wasm component](docs/media/drop.gif)
+![The drop-box: choosing a file asks for a ticket (the policy answer, no bytes), an allowed type mints a signed ticket, the bytes PUT straight to storage, and a signed download link round-trips them — while a blocked type is refused at ticket time — all over one composed wasm component](../media/drop.gif)
 
 ## Why it's almost pure composition
 

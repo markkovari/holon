@@ -14,7 +14,7 @@ exports `wasi:http` and imports only WIT contracts. Parsing is `csv:codec`,
 validation is `validate:schema`, paging is `paginate:cursor` — no CSV crate in
 the domain component, no hand-rolled validator, no offset math.
 
-![The report tool: pasting a CSV imports the valid rows and lists the rejected ones with per-field errors (bad email, age out of range, unknown role), pages the clean set through an opaque cursor, and exports it back to CSV — all over one composed wasm component](docs/media/report.gif)
+![The report tool: pasting a CSV imports the valid rows and lists the rejected ones with per-field errors (bad email, age out of range, unknown role), pages the clean set through an opaque cursor, and exports it back to CSV — all over one composed wasm component](../media/report.gif)
 
 ## Why it's almost pure composition
 

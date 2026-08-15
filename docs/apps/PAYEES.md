@@ -13,7 +13,7 @@ exports `wasi:http` and imports only WIT contracts — the composed **auth-guard
 **`iban:validate`** for the check. No bespoke auth, storage, or IBAN math. The
 frontend is a **React + shadcn/ui** SPA (Vite + Tailwind), served by the host.
 
-![The payees app: a New-payee form with a name and an IBAN field. Typing a tampered IBAN shows a red “checksum failed — check for a typo”; fixing it flips to a green “Valid · NL · NL91 ABNA 0417 1643 00”, and Add is enabled. Below, the payee book lists each payee with a grouped IBAN and a country badge (DE / FR / GB / NL). A live recording of the running React app.](docs/media/payees.gif)
+![The payees app: a New-payee form with a name and an IBAN field. Typing a tampered IBAN shows a red “checksum failed — check for a typo”; fixing it flips to a green “Valid · NL · NL91 ABNA 0417 1643 00”, and Add is enabled. Below, the payee book lists each payee with a grouped IBAN and a country badge (DE / FR / GB / NL). A live recording of the running React app.](../media/payees.gif)
 
 ## The check (why `iban:validate`)
 

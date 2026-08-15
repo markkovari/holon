@@ -15,7 +15,7 @@ mobile-friendly, served by the host — and its production bundle is **~60% smal
 than [tempo](TEMPO.md)'s**, precisely because there is no `recharts` (or any
 charting code) in it.
 
-![The dashboards app on a phone: a new account signs in to a seeded demo dashboard whose panels are a bar chart (hours by project, with value labels), a donut (effort split, with a legend and a centre total), a line (this week) and a sparkline (signups) — all rendered as SVG by the server; then an Add-panel form takes a title, a kind, and “label value” lines and a new donut appears. A live recording of the running React app at a mobile viewport.](docs/media/dashboards.gif)
+![The dashboards app on a phone: a new account signs in to a seeded demo dashboard whose panels are a bar chart (hours by project, with value labels), a donut (effort split, with a legend and a centre total), a line (this week) and a sparkline (signups) — all rendered as SVG by the server; then an Add-panel form takes a title, a kind, and “label value” lines and a new donut appears. A live recording of the running React app at a mobile viewport.](../media/dashboards.gif)
 
 ## The idea (why a chart *component*)
 

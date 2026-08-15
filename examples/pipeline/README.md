@@ -1,6 +1,6 @@
 # pipeline — reliable event delivery, live
 
-A live board for the **at-least-once event pipeline** (see [`docs/apps/PIPELINE.md`](../../PIPELINE.md)):
+A live board for the **at-least-once event pipeline** (see [`docs/apps/PIPELINE.md`](../../docs/apps/PIPELINE.md)):
 enqueue an event, watch it march **Pending → In-flight → Done**; take the
 downstream sink **down** and watch events retry, back off, and drop to the
 **dead-letter tray**; click **Replay** and watch a dead event re-enter the

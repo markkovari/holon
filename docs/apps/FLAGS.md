@@ -12,7 +12,7 @@ Same shape as the rest: one **`flags-domain`** component that exports
 `wasi:http` and imports only WIT contracts. The pattern is demonstrated by
 composing catalog primitives — no bespoke flag engine, no business crate.
 
-![The rollout console: a flag editor on the left (toggle / % slider / kill-switch), a grid of ~100 simulated subjects on the right — drag to 30% and ~30 tiles light up instantly and stay sticky, trip the kill-switch and all go dark at once, live over SSE](docs/media/flags.gif)
+![The rollout console: a flag editor on the left (toggle / % slider / kill-switch), a grid of ~100 simulated subjects on the right — drag to 30% and ~30 tiles light up instantly and stay sticky, trip the kill-switch and all go dark at once, live over SSE](../media/flags.gif)
 
 ## Why it's almost pure composition
 

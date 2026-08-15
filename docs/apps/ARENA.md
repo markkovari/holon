@@ -13,7 +13,7 @@ Same shape as the rest: one **`arena-domain`** HTTP component that exports
 game), **`id:generate`** (game ids + secret seat tokens), and the SSE loop from
 [pulse](REALTIME.md). No bespoke crate beyond the Connect Four rules.
 
-![Two players on one Connect Four board, side by side: Alice creates a game as Red, Bob joins as Yellow, and they alternate moves — each one validated server-side and streamed to both boards over SSE. Red stacks a column, the four-in-a-row lights up in both panes. A live recording of the running app.](docs/media/arena.gif)
+![Two players on one Connect Four board, side by side: Alice creates a game as Red, Bob joins as Yellow, and they alternate moves — each one validated server-side and streamed to both boards over SSE. Red stacks a column, the four-in-a-row lights up in both panes. A live recording of the running app.](../media/arena.gif)
 
 ## Why the server is the referee
 

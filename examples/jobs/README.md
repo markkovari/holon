@@ -2,7 +2,7 @@
 
 A durable job queue with scheduling, retry/backoff, dead-lettering, and replay —
 and a **swappable execution backend** (`durable:workflow`: in-process by default,
-Golem-provider for crash-resumable runs). See [docs/apps/JOBS.md](../../JOBS.md) for the
+Golem-provider for crash-resumable runs). See [docs/apps/JOBS.md](../../docs/apps/JOBS.md) for the
 full write-up.
 
 Like the other composed HTTP showcases, jobs runs on the native Rust host, so

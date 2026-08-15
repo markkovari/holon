@@ -8,7 +8,7 @@ suite (Hurl). "We composed it from contracts with no bespoke business crate"
 stops being our claim and becomes something a skeptic clones and runs:
 `just conformance-conduit` → all green.
 
-![The official RealWorld Hurl conformance suite running against the composed conduit app on the native Rust host: 13/13 files, 154 requests, all green](docs/media/conduit-conformance.gif)
+![The official RealWorld Hurl conformance suite running against the composed conduit app on the native Rust host: 13/13 files, 154 requests, all green](../media/conduit-conformance.gif)
 
 Conduit is API-only (no bundled frontend — its proof is the conformance run
 above, not a UI). Pattern mirrors `vet-domain` / `helpdesk-domain`: one **`conduit-domain`**

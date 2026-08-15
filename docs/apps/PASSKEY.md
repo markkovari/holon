@@ -10,7 +10,7 @@ Pick a username, hit **Create a passkey**, approve the OS prompt. That's the who
 enrolment. Sign out and back in with the same prompt — or with **no username at
 all**, if your authenticator keeps discoverable credentials.
 
-![The passkey app: a “Sign in — no password” card with a username field. Typing “ada” and clicking Create a passkey signs straight in — a green shield reads “ada · signed in with a passkey” and Your passkeys lists one credential with ES256 and verified badges, “used never · counter 1”. Add another device enrols a second authenticator, so two passkeys are listed. Sign out returns to the card, and “Sign in without a username” signs back in as ada with no username typed — the credential id identified the account. A live recording of the running React app, driven by Chromium’s virtual authenticator.](docs/media/passkey.gif)
+![The passkey app: a “Sign in — no password” card with a username field. Typing “ada” and clicking Create a passkey signs straight in — a green shield reads “ada · signed in with a passkey” and Your passkeys lists one credential with ES256 and verified badges, “used never · counter 1”. Add another device enrols a second authenticator, so two passkeys are listed. Sign out returns to the card, and “Sign in without a username” signs back in as ada with no username typed — the credential id identified the account. A live recording of the running React app, driven by Chromium’s virtual authenticator.](../media/passkey.gif)
 
 ## The component (why `webauthn:verify`)
 

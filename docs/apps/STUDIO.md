@@ -13,7 +13,7 @@ allowed only where `wac`'s own type checker says it fits. Then read the same gra
 back as a `wac plug` script, a declarative `.wac` file, or a wasmCloud
 `WorkloadDeployment` — and press **Compose** to get a real composed component.
 
-![The studio: a left palette listing 109 reflected components with sizes, a dark canvas holding four component nodes (mesh-domain, record-store, resilience, proxy-route) whose ports are their actual WIT interfaces, and a right panel. Dragging export handles onto matching import handles draws emerald edges and flips the plan from “Unsatisfied (3)” to “Every composable import is wired”. Tabs switch the same graph between a generated wac plug script, a declarative .wac file, and a wasmCloud v2 WorkloadDeployment. Compose returns a real composed .wasm. A live recording of the running React + xyflow app.](docs/media/studio.gif)
+![The studio: a left palette listing 109 reflected components with sizes, a dark canvas holding four component nodes (mesh-domain, record-store, resilience, proxy-route) whose ports are their actual WIT interfaces, and a right panel. Dragging export handles onto matching import handles draws emerald edges and flips the plan from “Unsatisfied (3)” to “Every composable import is wired”. Tabs switch the same graph between a generated wac plug script, a declarative .wac file, and a wasmCloud v2 WorkloadDeployment. Compose returns a real composed .wasm. A live recording of the running React + xyflow app.](../media/studio.gif)
 
 ## The component (why `wit:reflect`)
 

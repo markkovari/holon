@@ -5,7 +5,7 @@ A **rider** buys a fare (single / 60-min / 90-min / monthly) and gets a **QR**
 (the browser's native `BarcodeDetector`) and the system decides ACCEPT / REJECT.
 A **single** ticket is consumed by one scan — enforced under concurrency by
 `records:store`'s revision CAS (exactly one of N racing scans wins). See
-[docs/apps/TRANSIT.md](../../TRANSIT.md).
+[docs/apps/TRANSIT.md](../../docs/apps/TRANSIT.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

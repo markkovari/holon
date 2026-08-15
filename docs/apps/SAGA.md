@@ -12,7 +12,7 @@ that exports `wasi:http` and imports only WIT contracts. The saga *pattern* is
 demonstrated by composing the durable primitives already in the catalog — no
 bespoke engine, no business crate.
 
-![The trip-booking saga: the commit path (flight → hotel → car booked), a compensation (car unavailable → hotel + flight rolled back in reverse), and the durability proof (host killed mid-saga → state survives on NATS → resumes to committed)](docs/media/saga.gif)
+![The trip-booking saga: the commit path (flight → hotel → car booked), a compensation (car unavailable → hotel + flight rolled back in reverse), and the durability proof (host killed mid-saga → state survives on NATS → resumes to committed)](../media/saga.gif)
 
 ## Why it's almost pure composition
 

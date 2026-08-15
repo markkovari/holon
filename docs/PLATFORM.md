@@ -27,7 +27,7 @@
 > app into many components — not packing many tenants onto one host. A
 > single-component app should be a container.
 >
-> The forks in this plan are decided in [`docs/adr/`](docs/adr/); the ADRs win where
+> The forks in this plan are decided in [`docs/adr/`](adr); the ADRs win where
 > they disagree, and several sections below (isolation model, phase 2's density
 > assumption, the `buckets:` allow-list) are superseded rather than pending. The
 > [index](adr/README.md) has the current state and the open risks.

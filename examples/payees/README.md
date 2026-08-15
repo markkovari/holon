@@ -3,7 +3,7 @@
 A directory of who you pay, where each payee's **IBAN is validated** (country
 length + ISO 7064 mod-97 checksum) by the **`iban:validate`** component before
 it's stored. A `/verify` endpoint runs the same check dry, so the SPA flags an
-IBAN green/red as you type. See [docs/apps/PAYEES.md](../../PAYEES.md).
+IBAN green/red as you type. See [docs/apps/PAYEES.md](../../docs/apps/PAYEES.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

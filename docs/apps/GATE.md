@@ -13,7 +13,7 @@ The frontend is a **React + shadcn/ui** SPA with three live panels — burst the
 rate limiter and watch the token bucket drain to `429`; burst the throttle and
 watch GCRA space requests out; submit items and watch a batch coalesce and flush.
 
-![The gate app: three panels. Rate limit (token bucket, capacity 5) — a burst shows five 200s draining a token meter then 429s with a retry-after; Throttle (GCRA, 4/s) — a burst admits two then 429s spaced ~230 ms apart; Batch (coalesce, max 4) — four sample items accumulate then flush together, each mapped to an uppercased result with a “flushed” badge. A footer notes that on Golem Cloud each key is a single-threaded durable worker.](docs/media/gate.gif)
+![The gate app: three panels. Rate limit (token bucket, capacity 5) — a burst shows five 200s draining a token meter then 429s with a retry-after; Throttle (GCRA, 4/s) — a burst admits two then 429s spaced ~230 ms apart; Batch (coalesce, max 4) — four sample items accumulate then flush together, each mapped to an uppercased result with a “flushed” badge. A footer notes that on Golem Cloud each key is a single-threaded durable worker.](../media/gate.gif)
 
 ## The one primitive: a durable worker per key
 

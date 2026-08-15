@@ -16,7 +16,7 @@ and **`rrule:recur`** (recurring bookings). No bespoke auth, storage, locking,
 calendar format, or recurrence math. The frontend is a **React + shadcn/ui** SPA
 (Vite + Tailwind), mobile-friendly, served by the host.
 
-![The booked app on a phone: an owner signs in, the Manage tab creates a resource and toggles weekly availability (Mon–Fri 09:00–17:00); the Book tab picks a day and shows the free 30-minute slots as buttons — tap one to book it and a confirmation card appears with the rendered email and an "Add to calendar" .ics; a second tap on the same slot is refused; a weekly-repeat toggle books the slot for N weeks at once; the My bookings tab lists them with .ics download and cancel. A live recording of the running React app at a mobile viewport.](docs/media/booked.gif)
+![The booked app on a phone: an owner signs in, the Manage tab creates a resource and toggles weekly availability (Mon–Fri 09:00–17:00); the Book tab picks a day and shows the free 30-minute slots as buttons — tap one to book it and a confirmation card appears with the rendered email and an "Add to calendar" .ics; a second tap on the same slot is refused; a weekly-repeat toggle books the slot for N weeks at once; the My bookings tab lists them with .ics download and cancel. A live recording of the running React app at a mobile viewport.](../media/booked.gif)
 
 The SPA has three surfaces: **Book** (pick a resource + day → free slots → tap to
 book, optionally repeating weekly), **My bookings** (upcoming list with `.ics`

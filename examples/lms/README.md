@@ -4,7 +4,7 @@ A multi-role learning-management app: an **instructor** builds courses of lesson
 + multiple-choice quizzes; a **student** enrolls and takes quizzes that are
 **auto-graded** by the **`quiz:grade`** component. Grades roll up into a student's
 progress, the instructor's **gradebook** (+ a `svg:chart` distribution), and a
-completion **certificate** (`pdf:codec`). See [docs/apps/LMS.md](../../LMS.md).
+completion **certificate** (`pdf:codec`). See [docs/apps/LMS.md](../../docs/apps/LMS.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

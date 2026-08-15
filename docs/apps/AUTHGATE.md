@@ -16,7 +16,7 @@ exports `wasi:http` and imports only WIT contracts. The second-factor crypto is
 post-challenge session is `session:store` — no auth SaaS, no bespoke TOTP, no
 plaintext secret in the data store.
 
-![The authgate: enrolling provisions a TOTP secret sealed in the vault (pending) and shows a scannable QR (from qr:encode) plus the secret; a first correct code activates it and reveals single-use recovery codes, then a live code logs in and mints a session — while a wrong code is refused and a recovery code works exactly once — all over one composed wasm component](docs/media/authgate.gif)
+![The authgate: enrolling provisions a TOTP secret sealed in the vault (pending) and shows a scannable QR (from qr:encode) plus the secret; a first correct code activates it and reveals single-use recovery codes, then a live code logs in and mints a session — while a wrong code is refused and a recovery code works exactly once — all over one composed wasm component](../media/authgate.gif)
 
 ## Why it's almost pure composition
 

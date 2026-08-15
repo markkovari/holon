@@ -15,7 +15,7 @@ exports `wasi:http` and imports only WIT contracts. The recurring jobs are
 out over `wasi:http/outgoing-handler` — no cron, no bespoke scheduler, no
 hand-rolled state transitions.
 
-![The status page: two monitors registered, "Run checks" probes both — one target answers 200 and stays up, a dead target fails once (degraded) then a second time (down), each hop recorded in the fsm transition history — all over one composed wasm component](docs/media/status.gif)
+![The status page: two monitors registered, "Run checks" probes both — one target answers 200 and stays up, a dead target fails once (degraded) then a second time (down), each hop recorded in the fsm transition history — all over one composed wasm component](../media/status.gif)
 
 ## Why it's almost pure composition
 

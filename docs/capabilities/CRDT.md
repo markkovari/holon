@@ -11,7 +11,7 @@ It's a pure-compute component — state in, merged state / value out. No host
 imports, no stored state (the caller owns persistence), no wall clock inside
 (timestamps + replica ids are caller-supplied, so results are deterministic).
 
-![Three replicas of one document edit offline and diverge — Alice renames the title and tags it "urgent", Bob renames it later and moves it to review, Carol removes "urgent" and tags "q3" — then a SYNC merges all three and every pane converges to the identical result: title "Design proposal" (last-writer-wins), ♥ 6 (summed), tags backend/q3/urgent where "urgent" survived Carol's remove because Alice's concurrent add wins](docs/media/crdt.gif)
+![Three replicas of one document edit offline and diverge — Alice renames the title and tags it "urgent", Bob renames it later and moves it to review, Carol removes "urgent" and tags "q3" — then a SYNC merges all three and every pane converges to the identical result: title "Design proposal" (last-writer-wins), ♥ 6 (summed), tags backend/q3/urgent where "urgent" survived Carol's remove because Alice's concurrent add wins](../media/crdt.gif)
 
 ## The one property that matters
 

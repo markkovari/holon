@@ -17,7 +17,7 @@ both already in the catalog:
 - **`quota:meter`** — a **cumulative budget**: used / remaining / resets-at over
   a period (the API-plan / spend-cap shape).
 
-![The throttle wall: a burst of requests drives the attempt bar to its ceiling and the key flips to LOCKED with a countdown, while the quota gauge drains toward 0 — then the window elapses and requests flow again, all live over SSE](docs/media/ratelimit.gif)
+![The throttle wall: a burst of requests drives the attempt bar to its ceiling and the key flips to LOCKED with a countdown, while the quota gauge drains toward 0 — then the window elapses and requests flow again, all live over SSE](../media/ratelimit.gif)
 
 ## Why it's almost pure composition
 

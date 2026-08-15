@@ -3,7 +3,7 @@
 Keep short Markdown notes; **`GET /api/export.zip`** bundles them all into a real
 ZIP — one `notes/<title>.md` per note, an `index.csv` (via `csv:codec`), and a
 `manifest.json` — assembled by the **`zip:archive`** component. No zip library in
-the app. See [docs/apps/STASH.md](../../STASH.md).
+the app. See [docs/apps/STASH.md](../../docs/apps/STASH.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

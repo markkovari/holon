@@ -18,7 +18,7 @@ for certificates, and **`svg:chart`** for the gradebook chart. No bespoke auth,
 storage, grading, PDF, or charting. The frontend is a **React + shadcn/ui** SPA
 with two role modes.
 
-![The lms on two roles: a student opens a course, reads lessons, and answers a multiple-choice quiz — a green “100%” badge and a full progress bar appear, and a Certificate button unlocks; the instructor opens the same course and sees a gradebook table (each student's per-quiz scores + average, a green check for passing all) and a server-rendered bar chart of the class average per quiz. A live recording of the running React app.](docs/media/lms.gif)
+![The lms on two roles: a student opens a course, reads lessons, and answers a multiple-choice quiz — a green “100%” badge and a full progress bar appear, and a Certificate button unlocks; the instructor opens the same course and sees a gradebook table (each student's per-quiz scores + average, a green check for passing all) and a server-rendered bar chart of the class average per quiz. A live recording of the running React app.](../media/lms.gif)
 
 ## The capability model
 
