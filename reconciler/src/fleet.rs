@@ -383,8 +383,24 @@ impl Fleet {
         // environment, for instance, is a `platform-domain` feature the stub has
         // never heard of.
         if real_platform {
-            let component = root.join("components/target/platform_domain.composed.wasm");
-            assert!(component.exists(), "missing {} — just compose-platform", component.display());
+            // Derived when the hand-composed artifact is not there, for the same
+            // reason as the default `gate` above: `just compose-platform` is a
+            // second recipe nobody remembers to run, and its absence surfaced as
+            // an assertion two workspaces into `just test` — hidden, until this
+            // branch, behind an earlier failure that stopped cargo before it got
+            // here. The derived plug list matches the hand-written one.
+            let legacy = root.join("components/target/platform_domain.composed.wasm");
+            let component = if legacy.is_file() {
+                legacy
+            } else {
+                let catalog = crate::plug::Catalog::scan(&crate::plug::default_dirs(&root));
+                crate::plug::compose_to(
+                    "platform-domain",
+                    &catalog,
+                    &root.join("components/target/composed"),
+                )
+                .unwrap_or_else(|e| panic!("composing platform-domain: {e} — `just build` first"))
+            };
             let mut cp = Command::new(&host_bin);
             cp.current_dir(&root)
                 .arg("--component")
