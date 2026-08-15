@@ -56,7 +56,6 @@ base_paths = [
   "components/audit-log/",
   "components/search-index/",
   "wit/auth.wit",
-  "bin/compose",
   "components/Cargo.toml",
   "wit/deps/",
   "host/wit/deps/",

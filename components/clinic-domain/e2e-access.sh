@@ -12,10 +12,10 @@
 # 200. The composed component's IMPORTS can tell them apart, and the whole point
 # of this part is reuse rather than reimplementation.
 #
-# The plug chain is not written here. `bin/compose` derives it from the imports in
-# `wit/clinic.wit` — so when a part adds a capability to the world, the gate keeps
-# working with no edit, which is the only way an agent can reach for a capability
-# it was not handed.
+# The plug chain is not written here. `comp-plug` derives it from the component's
+# own imports (`reconciler/src/plug.rs`, which wraps `wac` as a library) — so when a
+# part reaches for a capability the world already carries, the gate keeps working
+# with no edit. That is the only way an agent can use a capability nobody handed it.
 set -uo pipefail
 
 MANIFEST=components/Cargo.toml
@@ -30,13 +30,15 @@ rm -f "$BUILD_LOG"
 
 T="${CARGO_TARGET_DIR:-components/target}"
 # cargo-component writes to wasip1 or wasip2 depending on version; the freshly
-# built artifact is the one this gate must judge, so it is found and handed to
-# `bin/compose` rather than left to the search order.
+# built artifact is the one this gate must judge, so it is found and passed
+# explicitly rather than left to the search order.
 for d in wasm32-wasip2 wasm32-wasip1; do
   [ -f "$T/$d/debug/clinic_domain.wasm" ] && OUT="$T/$d/debug" && break
 done
 [ -n "${OUT:-}" ] || { echo "nothing built under $T"; exit 1; }
-COMPOSED="$(PLUGS_DIR="$OUT" bash bin/compose clinic-domain 2>&1)" || {
+PLUG="${COMP_PLUG:-reconciler/target/release/comp-plug}"
+[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — the gate cannot assemble what it built"; exit 1; }
+COMPOSED="$("$PLUG" clinic-domain --dir "$OUT" 2>&1 | tail -1)" || {
   echo "the clinic does not compose: $COMPOSED"; exit 1; }
 [ -f "$COMPOSED" ] || { echo "the clinic does not compose: $COMPOSED"; exit 1; }
 

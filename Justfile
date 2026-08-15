@@ -200,20 +200,24 @@ build:
 # is a single self-contained component.
 # Compose ANY component with whatever it imports, derived rather than written.
 #
-# The 59 hand-written plug chains below each name their plugs; this one asks the
-# component. `bin/compose <name>` reads the built artifact's imports, finds the
-# components that export those interfaces, composes each of them first, and caches
-# the result by content hash. A component the loop builds is therefore runnable
-# without anyone editing this file — which was the point.
+# The 59 hand-written plug chains below each name their plugs; this asks the
+# component instead. `reconciler/src/plug.rs` wraps `wac` as a library: read the
+# built artifact's imports, find what exports those interfaces, compose each plug
+# first (a plug that is not whole hoists its own imports into the result), and key
+# the output by content. A component the loop builds is therefore runnable without
+# anyone editing this file — which was the point.
 #
 #   just plug clinic-domain
 #   just plug vet-domain
 plug name: build
-    @bash bin/compose {{name}}
+    @cd reconciler && cargo build --release --quiet --bin comp-plug
+    @./reconciler/target/release/comp-plug {{name}}
 
-# What it WOULD plug, and why. Useful when a composition is missing something.
-plug-plan name: build
-    @bash bin/compose {{name}} --print-plan
+# What it WOULD plug, and what nothing exports. For a composition that is missing
+# something.
+plug-wiring name: build
+    @cd reconciler && cargo build --release --quiet --bin comp-plug
+    @./reconciler/target/release/comp-plug {{name}} --wiring
 
 compose: build
     wac plug {{guard_wasm}} --plug {{ratelimit_wasm}} --plug {{auditlog_wasm}} -o {{guard_composed}}

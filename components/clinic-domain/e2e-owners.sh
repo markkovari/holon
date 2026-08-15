@@ -36,17 +36,19 @@ PORT=$(( 20000 + RANDOM % 20000 ))
 cleanup() { [ -n "${HOST_PID:-}" ] && kill "$HOST_PID" 2>/dev/null; rm -f "$LOG"; }
 trap cleanup EXIT
 
-# The plug chain is derived from `wit/clinic.wit`, not written here: a part that
-# reaches for a capability the world already carries would otherwise fail this gate
-# for a reason that has nothing to do with its code.
+# The plug chain is derived from the component's own imports, not written here: a
+# part that reaches for a capability the world already carries would otherwise fail
+# this gate for a reason that has nothing to do with its code.
 # cargo-component writes to wasip1 or wasip2 depending on version; the freshly
-# built artifact is the one this gate must judge, so it is found and handed to
-# `bin/compose` rather than left to the search order.
+# built artifact is the one this gate must judge, so it is found and passed
+# explicitly rather than left to the search order.
 for d in wasm32-wasip2 wasm32-wasip1; do
   [ -f "$T/$d/debug/clinic_domain.wasm" ] && OUT="$T/$d/debug" && break
 done
 [ -n "${OUT:-}" ] || { echo "nothing built under $T"; exit 1; }
-COMPOSED="$(PLUGS_DIR="$OUT" bash bin/compose clinic-domain 2>&1)" || {
+PLUG="${COMP_PLUG:-reconciler/target/release/comp-plug}"
+[ -x "$PLUG" ] || { echo "no comp-plug at '$PLUG' — the gate cannot assemble what it built"; exit 1; }
+COMPOSED="$("$PLUG" clinic-domain --dir "$OUT" 2>&1 | tail -1)" || {
   echo "the halves do not compose: $COMPOSED"; exit 1; }
 [ -f "$COMPOSED" ] || { echo "the halves do not compose: $COMPOSED"; exit 1; }
 

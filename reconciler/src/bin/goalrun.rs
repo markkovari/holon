@@ -372,6 +372,14 @@ fn host_bin() -> PathBuf {
     repo_root().join("host/target/release/comp-host")
 }
 
+/// The composer a gate uses to assemble what a candidate built.
+fn plug_bin() -> PathBuf {
+    if let Ok(p) = std::env::var("COMP_PLUG") {
+        return PathBuf::from(p);
+    }
+    bin_path("comp-plug")
+}
+
 fn artifacts() -> Result<Vec<String>> {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
@@ -548,6 +556,12 @@ fn main() -> Result<()> {
         // and a model that read the message and wrote an essay about the build
         // instead of the file it was asked for.
         format!("COMP_HOST={}", host_bin().display()),
+        // Composition, for the same reason: a gate has to assemble what the
+        // candidate built before it can run it, and the plug chain is derived
+        // from the component's own imports rather than written down anywhere.
+        // `bin_path` is right here — unlike the host, this one IS built in the
+        // reconciler's workspace.
+        format!("COMP_PLUG={}", plug_bin().display()),
     ];
     // `cargo` is usually a rustup shim, and under the gate's cleared environment
     // it cannot choose a toolchain — no RUSTUP_HOME, no default. Pass both, so the
