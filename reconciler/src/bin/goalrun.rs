@@ -115,8 +115,20 @@ struct Args {
     /// The model. Cheap by default; bump to sonnet/opus for a harder goal.
     #[arg(long, default_value = "claude-haiku-4-5-20251001")]
     model: String,
-    /// Per-branch HTTP timeout in seconds. A branch does up to `attempts` model
-    /// calls and gate runs, so this is generous.
+    /// Per-branch HTTP timeout in seconds.
+    ///
+    /// NOT generous, which is what this said before it was measured. A branch does
+    /// up to `attempts` model calls AND that many gate runs, and a gate for a real
+    /// goal compiles a Rust crate, composes it and boots a host — 60-150s each. Two
+    /// of those plus two thinking-model calls goes past 300s, and what a branch over
+    /// budget looks like is not a timeout message: the reconciler's client hangs up,
+    /// the host logs `hyper::Error(IncompleteMessage)`, the ingress logs `connection
+    /// closed before message completed`, and the run reports `error sending request
+    /// for url .../run`. Three branches died that way in one clinic run and four in
+    /// another, and every one of them read as a fleet fault rather than as this
+    /// number being too small.
+    ///
+    /// 900 is the floor for a goal whose gate builds anything.
     #[arg(long, default_value_t = 300)]
     timeout: u64,
     /// Open the PR at the end. Off leaves a dry run: search and rank, propose
