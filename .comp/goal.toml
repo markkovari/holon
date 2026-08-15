@@ -41,7 +41,15 @@ command = ["cargo", "component", "test", "-p", "demo", "--manifest-path", "compo
 name = "probe"
 text = "Answer GET /page?size=&offset= in components/demo-probe/src/lib.rs by calling paginate."
 writable = ["components/demo-probe/src/lib.rs", "CONTRACT-REQUEST.md"]
-context = ["components/demo-probe/tests/page_json.rs", "components/demo-probe/wit/probe.wit"]
+context = [
+  "components/demo-probe/tests/page_json.rs",
+  "components/demo-probe/wit/probe.wit",
+  # A probe in this repo that already does the thing: reads `path_with_query`,
+  # splits the query, percent-decodes it, writes JSON. Shown rather than
+  # described, because telling the model twice that `query()` does not exist did
+  # not stop it writing `query()`.
+  "components/graph-probe/src/lib.rs",
+]
 [[part.check]]
 id = "probe-passes-its-held-out-tests"
 command = ["cargo", "component", "test", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]
