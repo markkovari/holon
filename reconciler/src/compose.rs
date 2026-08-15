@@ -37,7 +37,10 @@ pub fn request_of(entry: &Entry) -> Option<(String, String)> {
     let f = files.iter().find(|f| f["path"] == json!(REQUEST_PATH))?;
     let content = f["content"].as_str()?.trim();
     let (subject, body) = match content.split_once('\n') {
-        Some((s, b)) => (s.trim(), b.trim()),
+        // A model writing a markdown file writes a markdown TITLE, so the first
+        // line comes back as `# Contract Request` and every request in a run
+        // dedups onto that one subject. Measured on the first real run.
+        Some((s, b)) => (s.trim().trim_start_matches('#').trim(), b.trim()),
         // A subject with no body is a question with no argument. Allowed — the
         // answering part still has the contract and the subject — but the body
         // being empty is not an error worth failing a round over.
@@ -323,7 +326,7 @@ mod tests {
             { "path": REQUEST_PATH, "content": "SearchResult needs total_pages\nI cannot paginate from next_cursor alone.\n" }
         ]));
         let (subject, body) = request_of(&asking).expect("the candidate asked for something");
-        assert_eq!(subject, "SearchResult needs total_pages");
+        assert_eq!(subject, "SearchResult needs total_pages", "a markdown heading is not a subject");
         assert!(body.starts_with("I cannot paginate"));
 
         // And the question does not land.

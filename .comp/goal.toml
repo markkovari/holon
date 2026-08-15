@@ -30,6 +30,7 @@ keep_members = ["demo", "demo-probe"]
 name = "component"
 text = "Implement `paginate` in components/demo/src/lib.rs, exactly as CONTRACT.md describes."
 writable = ["components/demo/src/lib.rs", "CONTRACT-REQUEST.md"]
+context = ["components/demo/tests/paginate.rs"]
 [[part.check]]
 id = "component-passes-its-held-out-tests"
 command = ["cargo", "component", "test", "-p", "demo", "--manifest-path", "components/Cargo.toml"]
@@ -38,6 +39,7 @@ command = ["cargo", "component", "test", "-p", "demo", "--manifest-path", "compo
 name = "probe"
 text = "Answer GET /page?size=&offset= in components/demo-probe/src/lib.rs by calling paginate."
 writable = ["components/demo-probe/src/lib.rs", "CONTRACT-REQUEST.md"]
+context = ["components/demo-probe/tests/page_json.rs"]
 [[part.check]]
 id = "probe-passes-its-held-out-tests"
 command = ["cargo", "component", "test", "-p", "demo-probe", "--manifest-path", "components/Cargo.toml"]

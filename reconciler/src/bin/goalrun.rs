@@ -169,6 +169,12 @@ struct PartSpec {
     /// Disjoint from every other part's, or the merge refuses it: two parts
     /// writing one path is a decomposition bug, not something to resolve.
     writable: Vec<String>,
+    /// Files this part is SHOWN but may not write — its held-out tests, most
+    /// usefully. Without them a part is told "your tests judge you" and handed no
+    /// tests, which is how the first real run of a decomposed goal spent its whole
+    /// budget writing blind.
+    #[serde(default)]
+    context: Vec<String>,
     /// This half's own gate. It runs against the contract alone — the frontend
     /// against fixtures generated from it, the backend against the routes it
     /// promises — so neither part ever waits for the other.
@@ -925,8 +931,51 @@ fn decomposed(
     let contract_path = goal.contract.clone().unwrap_or_default();
     let body = std::fs::read_to_string(args.checkout.join(&contract_path))
         .with_context(|| format!("reading the contract at {contract_path}"))?;
-    let version = registry.publish(&body).map_err(|e| anyhow::anyhow!("publishing the contract: {e}"))?;
-    println!("contract v{version} published from {contract_path}");
+    // `publish` refuses a second contract on purpose: one appearing mid-run would
+    // silently move what every part builds against. But a repeat run of the same
+    // goal — smoke then real, or a second attempt after a failure — finds its own
+    // contract already there, and dying at the door would make `--smoke` something
+    // you can only afford to run once.
+    //
+    // So: continue on what is stored, and refuse only when it DIFFERS from the
+    // file. A stored contract that no longer matches the goal is the one case
+    // where carrying on would have every part building against a version the
+    // person editing the file cannot see.
+    let version = match registry.publish(&body) {
+        Ok(v) => {
+            println!("contract v{v} published from {contract_path}");
+            v
+        }
+        Err(e) if e.contains("already published") => {
+            let current = registry
+                .current()
+                .map_err(|e| anyhow::anyhow!("a contract is registered but unreadable: {e}"))?;
+            if current.body.trim() != body.trim() && current.number == 1 {
+                bail!(
+                    "the registry holds a contract v{} that is not what {contract_path} says. \
+                     It was published by an earlier run and amendments are made through \
+                     ask/answer, not by editing the file — so either restore the file, or give \
+                     this goal a database of its own (`--surreal-url` at a fresh one).",
+                    current.number
+                );
+            }
+            println!(
+                "contract v{} already registered{}",
+                current.number,
+                if current.number > 1 { " (amended by an earlier run)" } else { "" }
+            );
+            current.number
+        }
+        Err(e) => bail!("publishing the contract: {e}"),
+    };
+    // What the parts build against is whatever is canonical NOW, which after an
+    // earlier run's negotiation may be later than v1.
+    let body = registry
+        .get(version)
+        .ok()
+        .flatten()
+        .map(|c| c.body)
+        .unwrap_or(body);
 
     let parts: Vec<Part> = goal
         .parts
@@ -936,9 +985,15 @@ fn decomposed(
             plan: json!({
                 "text": p.text,
                 "writable": p.writable,
-                // Every part sees the same base tree; what differs is what it may
-                // write and what it is judged by.
-                "context": context,
+                // Its OWN files — what it may write, as it stands — plus whatever
+                // it is shown and may not write. Not the goal's top-level context:
+                // for a decomposed goal that is usually empty, and a part handed
+                // nothing writes blind.
+                "context": p.writable.iter().chain(p.context.iter())
+                    .filter_map(|f| std::fs::read_to_string(args.checkout.join(f))
+                        .ok()
+                        .map(|c| json!({ "path": f, "content": c })))
+                    .collect::<Vec<_>>(),
                 "previous": [],
                 "checks": p.checks.iter().map(|c| json!({
                     "id": c.id, "required": c.required, "weight": c.weight, "command": c.command,
@@ -1006,6 +1061,24 @@ fn decomposed(
         println!("\nNo PR opened:");
         for b in &run.blocked {
             println!("  · {b}");
+        }
+        // Which check, and what it said. "component never passed its gate" without
+        // this is the least actionable sentence a run can end with — the ordinary
+        // path has printed its closest failing checks since it existed.
+        for p in &run.composition.parts {
+            if let Some(best) = p.best.as_ref().filter(|_| !p.accepted) {
+                if !best.failures.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+                    println!("\n  {} was still failing:", p.part);
+                    for f in best.failures.as_array().unwrap() {
+                        println!(
+                            "    · {}: {}",
+                            f["id"].as_str().unwrap_or("?"),
+                            f["detail"].as_str().unwrap_or("").lines().take(6)
+                                .collect::<Vec<_>>().join("\n      ")
+                        );
+                    }
+                }
+            }
         }
         return Ok(());
     }
