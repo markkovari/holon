@@ -109,19 +109,12 @@ impl Api {
             .unwrap_or(Value::Null)
     }
 
-    /// The digest the platform currently believes this component has. The whole
-    /// question in a version test is whether this MOVED.
-    fn digest_of(&self, id: &str) -> String {
-        let v = self.get("/api/components");
-        v["components"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .find(|c| c["id"].as_str() == Some(id))
-            .map(|c| c["oci_ref"].as_str().unwrap_or("(none)").to_string())
-            .unwrap_or_else(|| "(not in the catalogue)".into())
-    }
+    // A `digest_of` reading the CATALOGUE's `oci_ref` lived here, claiming to be
+    // "the whole question in a version test". Nothing ever called it, and the
+    // reason is in the next function's own doc: the manifest digest is what the
+    // fleet is actually told to run, and for a fused deployment it is the composed
+    // artifact rather than the uploaded component. The catalogue's answer can move
+    // without the fleet's doing so, which makes it the wrong number to assert on.
 
     /// The digest in the CURRENT manifest — what the fleet is actually told to
     /// run. For a fused deployment this is the composed artifact rather than the

@@ -254,6 +254,53 @@ fn a_queue_that_only_a_person_can_start_and_that_refuses_illegal_moves() {
     println!("    a queue nothing drains, and six illegal transitions refused");
 }
 
+/// The reconciler actually SENDS the numbers admission reads.
+///
+/// Every other admission test posts to `/api/internal/status` itself, with a body
+/// it wrote — which proves the platform's half and says nothing about the writer's.
+/// It said nothing for a long time: `report()` computed `lag` and `nodes`, took
+/// them as arguments, and posted a body containing neither. `fleet_lag()` therefore
+/// read a lag that was permanently 0 and a node count that permanently defaulted to
+/// 1, so the per-node limit was never per-node and the lag half of admission never
+/// fired. rustc had been calling those arguments unused the whole time.
+///
+/// Asserted against the SOURCES rather than by running a fleet, for the same reason
+/// `capgraph_store.rs` checks its coordinates that way: this is a disagreement
+/// between two files, and it survived precisely because every test that could see
+/// it supplied the body itself.
+#[test]
+fn the_reconciler_reports_the_numbers_admission_reads() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
+
+    let platform = read("components/platform-domain/src/lib.rs");
+    let reconciler = read("reconciler/src/main.rs");
+
+    // Whatever `fleet_lag()` pulls off the stored row, `report()` has to put there.
+    let fleet_lag = platform
+        .split("fn fleet_lag()")
+        .nth(1)
+        .expect("platform-domain no longer has fleet_lag — admission moved");
+    let fleet_lag = &fleet_lag[..fleet_lag.find("\n}").unwrap_or(fleet_lag.len())];
+
+    let reported = reconciler
+        .split("/api/internal/status")
+        .nth(1)
+        .expect("the reconciler no longer posts a fleet status");
+
+    for field in ["lag", "nodes"] {
+        assert!(
+            fleet_lag.contains(&format!("row[\"{field}\"]")),
+            "fleet_lag stopped reading `{field}` — drop it from this list, and from the report"
+        );
+        assert!(
+            reported.contains(&format!("\"{field}\":")),
+            "admission reads `{field}` off the fleet row and the reconciler does not send it, \
+             so it is permanently whatever `unwrap_or` says"
+        );
+    }
+}
+
 /// The fleet refuses work it could not possibly place.
 ///
 /// A stress run grew 3906 environments and watched the platform accept 3125 of

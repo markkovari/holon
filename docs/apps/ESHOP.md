@@ -68,12 +68,10 @@ pump (needed on the native lane, which has no messaging plugin).
 just host-eshop                  # storefront at http://127.0.0.1:3100
 GATEWAY=http://127.0.0.1:3100 examples/eshop/smoke.sh
 
-# kubernetes — wasmCloud v2 runtime-operator (chart v2.5.2, ns eshop)
-helm install eshop <wasmCloud checkout>/charts/runtime-operator -n eshop \
-  -f examples/eshop/k8s/values.yaml            # once
-just k8s-eshop                                 # push images + apply workloads
-open http://gateway.eshop.svc.cluster.local    # orbstack resolves cluster svc DNS from the mac
-GATEWAY=http://gateway.eshop.svc.cluster.local examples/eshop/smoke.sh
+# there was a kubernetes lane, on the wasmCloud v2 runtime-operator, driven by a
+# `k8s-eshop` recipe. It went when this repository stopped being connected to
+# wasmCloud; `examples/eshop/k8s/` and the numbers it produced are still in git
+# history. The native lane above is the one that runs.
 ```
 
 `examples/eshop/smoke.sh` asserts the whole flow: register → browse → basket →

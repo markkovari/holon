@@ -47,6 +47,20 @@ use serde_json::{json, Value};
 /// for avoiding.
 pub const STRIDE: u64 = 100;
 
+/// Checked when the crate compiles, not when a test runs.
+///
+/// This lived in `tests/generation.rs` as an `assert!` over two constants, which
+/// clippy correctly called an assertion with a constant value: it could never
+/// fail at runtime, so it was a build-time fact being checked at the one moment
+/// it was already too late to be useful, in a test that `-E 'test(...)'` can
+/// filter out. `--attempts` defaults to 2 and 8 is the headroom over any value
+/// somebody would plausibly pass.
+const _: () = assert!(
+    STRIDE > 8,
+    "attempt n of a branch uses seed+n, so a stride at or below max-attempts makes two \
+     branches ask an identical question — the one thing a generation exists to avoid"
+);
+
 /// What one branch came back with, in the shape `graph:select` wants.
 #[derive(Clone, Debug)]
 pub struct Entry {

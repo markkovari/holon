@@ -1,5 +1,3 @@
-use crate::cost::cost_cents;
-
 /// A run's spending cap and the spend against it.
 #[derive(Debug, Clone)]
 pub struct Wallet {

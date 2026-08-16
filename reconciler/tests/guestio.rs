@@ -204,3 +204,63 @@ fn every_write_all_asks_the_stream_how_much_it_will_take() {
     }
     assert!(wrong.is_empty(), "write_all is not the real one in:\n{}", wrong.join("\n"));
 }
+
+/// Components whose `read_body` may grow without a ceiling, and why.
+///
+/// Much shorter than `READS_ALLOWED`, because "a truncated body is harmless here"
+/// is a claim about one handler's data and "an unbounded body is harmless here" is
+/// a claim about the whole process's memory.
+const UNBOUNDED_ALLOWED: &[(&str, &str)] = &[
+    (
+        "agent-probe",
+        "reads its own test input over a loopback socket the suite writes; there is \
+         no caller who could send it a large body",
+    ),
+    (
+        "bench-suite-p3",
+        "reads through `Request::consume_body().collect()`, an async API with no \
+         chunk loop to put a ceiling in — bounding it means bounding it upstream",
+    ),
+];
+
+/// A request body is read into memory, so something has to say how much.
+///
+/// 38 components declared a `MAX_BODY_BYTES` and 17 did not, which is an
+/// inconsistency rather than a decision: `comp-host` does not bound request bodies
+/// either, so an uncapped read grows until the store's memory cap traps the
+/// component and the connection closes with no status at all. `upload-drop` — an
+/// app whose entire purpose is accepting files — was one of the 17.
+///
+/// The capped ones already say it best in their own comment: *a ceiling, not a
+/// policy*. 16 MiB is not a considered limit on what any particular handler should
+/// accept; it is the difference between refusing a body and dying of one.
+#[test]
+fn a_body_read_into_memory_has_a_ceiling() {
+    let mut unbounded = Vec::new();
+    for path in guest_sources() {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        if !text.contains("fn read_body") {
+            continue;
+        }
+        if text.contains("MAX_BODY_BYTES") {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(repo_root().join("components"))
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        if UNBOUNDED_ALLOWED.iter().any(|(site, _)| rel.starts_with(site)) {
+            continue;
+        }
+        unbounded.push(format!("  {rel}"));
+    }
+    assert!(
+        unbounded.is_empty(),
+        "these read a request body into memory with no ceiling, so a large enough \
+         request traps the component instead of being refused:\n{}\n\nAdd a \
+         `MAX_BODY_BYTES` check to the read loop, or add the component to \
+         UNBOUNDED_ALLOWED with the reason nothing can send it a large body.",
+        unbounded.join("\n")
+    );
+}

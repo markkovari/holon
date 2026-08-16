@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use comp_reconciler::compose;
 use comp_reconciler::contract::{Answerer, Registry};
 use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
-use comp_reconciler::generation::{compose_search, Bounds, Part};
+use comp_reconciler::generation::{Bounds, Part};
 use serde_json::{json, Value};
 
 mod harness;

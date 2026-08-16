@@ -424,7 +424,10 @@ async fn main() -> Result<()> {
         NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(inventory_ttl))
             .await?,
     );
-    let inventory: Arc<dyn Inventory> = fabric.clone();
+    // No inventory handle taken off `fabric`: the refresh loop below opens its own
+    // NATS connection on its own thread, for the priority-inversion reason spelled
+    // out there. This binding outlived that change.
+    //
     // Used only when a host has NO replica placed: ask the reconciler to start one
     // and route to the address it replies with. The ingress still holds no platform
     // credential and no manifest — it asks, it does not decide.

@@ -618,7 +618,9 @@ impl Fleet {
         mut f: impl FnMut() -> std::result::Result<T, String>,
     ) -> T {
         let deadline = Instant::now() + within;
-        let mut last = "never attempted".to_string();
+        // No initializer: the loop either returns or assigns before anything reads
+        // this, so a placeholder here is a value rustc can prove is never seen.
+        let mut last;
         loop {
             match f() {
                 Ok(v) => return v,

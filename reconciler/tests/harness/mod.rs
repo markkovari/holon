@@ -12,10 +12,6 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-/// Each test gets its own control plane on its own port. nextest gives a test its
-/// own process but not its own network, and two of these sharing a port fail only
-/// when the suite is run in parallel — which is how it is normally run.
-
 pub struct Kill(Child);
 
 impl Drop for Kill {

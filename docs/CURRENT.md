@@ -1,9 +1,9 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [80 ADRs](adr/); this page is the map.
+in [92 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0083.
+Last revised after ADR-0092.
 
 ## Shape
 
@@ -265,6 +265,21 @@ claim about a distributed system without one is a hope.
 - **The loop elects a leader**, so a standby takes over within the lease TTL plus
   one interval. It does not shard, on purpose (ADR-0072): the pass after a fleet
   change is **1.23 s at 1000 nodes × 10 000 apps**, 12% of one 10 s interval.
+- **A run leaves a trace, and a browser can read it** (ADR-0092). `comp-goalrun`
+  appends `run`, `attempt`, `event` and `capability` rows as it goes, in one
+  vocabulary, so "why did branch 3 beat branch 7, and what did either of them read"
+  survives the terminal closing. Not through `observe`: events are history and
+  lessons are conclusions, and only one of the two is gate-blessed (ADR-0084).
+  Nothing here may fail a run — every call returns `()` and drops are counted once
+  at the end, because a run that dies of its own telemetry is strictly worse than a
+  run with no telemetry.
+- **The console renders a run as a graph** — `run → round → attempt → capability`,
+  with the event timeline beside it and a branch's cost, paths and verdicts one
+  click away. Two branches in one round is a fan-out; two in consecutive rounds is
+  a retry, and the flat list that preceded this rendered them identically. It is a
+  second CLIENT of the platform API rather than a second control plane, and it
+  polls while a run is unresolved plus a grace period, because the resolution and
+  the last events are separate writes.
 - **`just test` compiles every test target first, then runs them** — 356 tests, a
   number nobody could state before, because a workspace whose tests had never
   compiled hid 34 of them and no suite complained.
@@ -361,8 +376,12 @@ worklist in [`.comp/goals/`](../.comp/goals/).
   obvious suspect.
 - **Pinning is understood and not acted on.** `shop`, `shop:v2`,
   `shop@sha256:<hex>` parse and are tested; a deployment still names a bare id.
-- **Admission does not cover component pushes**, and its limit is a flat number
-  rather than anything derived from fleet size.
+- **Admission does not cover component pushes.** Its limit *is* derived from fleet
+  size — `max-placement-lag-per-node × nodes`, with the flat `max-placement-lag`
+  left as an operator override — but that was true only on paper until recently:
+  the reconciler computed `lag` and `nodes` on every pass and posted neither, so
+  the platform admitted against a lag of 0 across a node count that defaulted to 1.
+  Both are now reported, and `projects.rs` compares the writer with the reader.
 - **Breadth is unmeasured beyond 8** branches (~3 s on one node). Depth is measured
   to 4.
 - **Nothing schedules the index check.** A record and its indexes are separate
@@ -379,8 +398,16 @@ worklist in [`.comp/goals/`](../.comp/goals/).
 - **The database is not part of the platform.** SurrealDB is an external service on
   an egress allow-list: nothing deploys it, backs it up, replicates it, or notices
   when it is gone — all of which the KV path already does.
-- **No UI**, and `POST /api/components/satisfies` (wac's real subtype check) is a
-  facility nothing calls.
+- ~~**No UI.**~~ → **built**: the Holon console (`console-domain`) signs in against
+  the platform, lists a project's goals, authors a new one as a pull request, and
+  renders a run as a graph of `run → round → attempt → capability` beside its event
+  timeline. It is a second CLIENT of the platform API, not a second control plane —
+  it imports no `records:store`, no `auth:identity` and no `policy:guard`, so
+  exactly one thing still knows the control plane's storage layout. → ADR-0092
+- **`POST /api/components/satisfies` is a facility nothing calls.** wac's real
+  subtype check, reachable and unused (ADR-0048). `studio-domain` answers the same
+  question on its own route rather than asking the platform, so the two could drift
+  and nothing would notice.
 - **No automated cover for the interactive secret prompt** — the pipe and `--from`
   paths are tested, the terminal path was verified by hand and needs a pty.
 - **Conduit's `feed` still does one favourites lookup per article.** The author and

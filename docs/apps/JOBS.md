@@ -85,8 +85,9 @@ to run the front-half:
 - **`examples/jobs/k8s/jobs.yaml`** is the `WorkloadDeployment`: the fused
   component with host interfaces (incoming/outgoing http, keyvalue, config), the
   Golem address in `config`, and `allowedHosts` opened to the Golem gateway
-  (egress is fail-closed). `just k8s-jobs` pushes the image to the in-cluster
-  registry and applies it.
+  (egress is fail-closed). A `k8s-jobs` recipe pushed the image to the in-cluster
+  registry and applied it; it went with the Kubernetes lane, and this file and
+  `examples/jobs/k8s/` describe the shape rather than a command you can run.
 
 The bridge dials `golem-url` (default `host.docker.internal:9006` — the Golem
 already running on the laptop, reachable from orbstack pods), targeting a

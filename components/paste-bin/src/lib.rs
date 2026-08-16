@@ -236,6 +236,11 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
     serde_json::from_slice(&body).map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
+/// A ceiling on a request body, not a policy: past this the read stops and the
+/// caller is told, rather than growing until the store's memory cap traps the
+/// component and the connection simply closes.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
     let body = request.consume().map_err(|_| ())?;
     let stream = body.stream().map_err(|_| ())?;
@@ -243,7 +248,12 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
     loop {
         match stream.blocking_read(8192) {
             Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => buf.extend_from_slice(&chunk),
+            Ok(chunk) => {
+                if buf.len() + chunk.len() > MAX_BODY_BYTES {
+                    return Err(());
+                }
+                buf.extend_from_slice(&chunk);
+            }
             // `Closed` is how wasi:io says end-of-body; `LastOperationFailed` is a
             // read that went wrong. Collapsing both into `break` returns a TRUNCATED
             // body as if it were complete — the same silent truncation that, on the
