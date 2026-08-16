@@ -38,6 +38,7 @@ use comp_reconciler::compose;
 use comp_reconciler::contract::{Answerer, Registry};
 use comp_reconciler::generation::{land, Bounds, Entry, Part};
 use comp_reconciler::memory::{self, run_id, Memory};
+use comp_reconciler::trace::Trace;
 use comp_reconciler::generation as generation_mod;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -1095,6 +1096,35 @@ fn main() -> Result<()> {
 
     // A fresh seed each run so branches are not a replay of a previous run's.
     let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+
+    // What this run leaves behind (ADR-0092). The seed IS the run id: one
+    // `holon goal run` is one run, and `run_id(seed, round, branch)` — which
+    // already exists — is one attempt inside it.
+    //
+    // `None` without `--surreal-url`, exactly like the pool: a run with no
+    // database is supported (ADR-0080 keeps the database out of the platform),
+    // and a driver that required one would trade a loop that works for a loop
+    // that needs a database to be up.
+    let run = seed.to_string();
+    // The password by VALUE. `--surreal-password` is a path because a real
+    // password does not belong in argv (the fixture grants it to the graph
+    // component as a vault reference); the trace talks to the database directly,
+    // so it needs the contents. Absent means unauthenticated — the same thing it
+    // means to the fixture above, and to `knowledge-graph`.
+    let surreal_password = args
+        .surreal_password
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string());
+    let trace = args.surreal_url.as_deref().map(|url| {
+        // The same database the graph component was pointed at, so a run and the
+        // lessons it produced land in one place and can be joined (ADR-0091).
+        Trace::new(url, "goalmemory", surreal_password.as_deref())
+    });
+    if let Some(t) = &trace {
+        t.run_started(&run, &goal.text, seed, &base_commit, args.branches.into());
+    }
+
     let found = generation_mod::search_with(
         &driver_url,
         "goalrun.acme.test",
@@ -1121,14 +1151,28 @@ fn main() -> Result<()> {
             // empty here — nothing has been opened yet — and the landing path
             // re-reports the winner with it, which is free because a verdict edge
             // is keyed by (goal, run).
-            let run = run_id(seed, r, &e.branch);
+            let attempt = run_id(seed, r, &e.branch);
             if e.accepted && winner.as_ref().is_none_or(|(_, best)| e.score > *best) {
-                winner = Some((run.clone(), e.score));
+                winner = Some((attempt.clone(), e.score));
+            }
+            if let Some(t) = &trace {
+                // Spawned and finished are recorded together because this walk
+                // happens after the search: the driver sees each branch's whole
+                // life at once, not as it happens. Live progress is the socket's
+                // job (slice three), not something to fake by writing here twice.
+                t.branch_spawned(&run, &attempt, &e.branch, r);
+                t.gate_verdict(&run, &attempt, e.score, e.accepted, &e.failures);
+                t.attempt_finished(
+                    &run,
+                    &attempt,
+                    if e.accepted { "passed" } else { "failed" },
+                    e.score,
+                );
             }
             if let Some(m) = &memory {
-                match m.evaluated(&goal.text, &run, e.score, e.accepted, "") {
+                match m.evaluated(&goal.text, &attempt, e.score, e.accepted, "") {
                     Ok(()) => recorded += 1,
-                    Err(err) => println!("  (verdict for {run} not recorded: {err})"),
+                    Err(err) => println!("  (verdict for {attempt} not recorded: {err})"),
                 }
                 // What this branch LEARNED by failing, in the gate's own words. No
                 // model in the path, so negative knowledge cannot be a
@@ -1137,7 +1181,7 @@ fn main() -> Result<()> {
                 // worked (ADR-0081's asymmetry).
                 if !e.accepted {
                     if let Some(text) = memory::failure_text(&e.failures, e.score) {
-                        match m.observe_failure(&goal.text, &e.branch, &run, &text) {
+                        match m.observe_failure(&goal.text, &e.branch, &attempt, &text) {
                             Ok(h) => println!("  {} wrote a lesson: {h}", e.branch),
                             Err(err) => println!("  (lesson from {run} not recorded: {err})"),
                         }
@@ -1241,12 +1285,27 @@ fn main() -> Result<()> {
         if let Some(b) = &found.best {
             println!("closest failing checks: {}", b.failures);
         }
+        // `exhausted`, not `failed`: every branch ran and none passed, which is a
+        // different thing from a run that broke. The count of these on a goal is
+        // what says whether another generation is worth buying.
+        if let Some(t) = &trace {
+            t.run_resolved(&run, "exhausted", None, "");
+            if let Some(why) = t.report() {
+                println!("trace: {why}");
+            }
+        }
         return Ok(());
     }
 
     if args.dry_run {
         let best = found.best.as_ref().unwrap();
         println!("\n[dry run] a candidate passed (score {}); not opening a PR.", best.score);
+        if let Some(t) = &trace {
+            t.run_resolved(&run, "dry-run", winner.as_ref().map(|(w, _)| w.as_str()), "");
+            if let Some(why) = t.report() {
+                println!("trace: {why}");
+            }
+        }
         return Ok(());
     }
 
@@ -1281,9 +1340,31 @@ fn main() -> Result<()> {
                     println!("  (the pull request was not recorded against the goal: {e})");
                 }
             }
+            if let Some(t) = &trace {
+                t.run_resolved(&run, "merged", winner.as_ref().map(|(w, _)| w.as_str()), url);
+            }
         }
-        Ok(v) => println!("\n  the forge answered but opened no PR: {v}"),
-        Err(e) => println!("\n  landing failed: {e}"),
+        Ok(v) => {
+            println!("\n  the forge answered but opened no PR: {v}");
+            // A branch passed the gate and the forge still produced nothing. That
+            // is a FAILED run, not an exhausted one: the difference is whether
+            // the work was good, and a trace that conflated them would hide the
+            // forge as a cause.
+            if let Some(t) = &trace {
+                t.run_resolved(&run, "failed", winner.as_ref().map(|(w, _)| w.as_str()), "");
+            }
+        }
+        Err(e) => {
+            println!("\n  landing failed: {e}");
+            if let Some(t) = &trace {
+                t.run_resolved(&run, "failed", winner.as_ref().map(|(w, _)| w.as_str()), "");
+            }
+        }
+    }
+    // One line, at the end, if anything did not land. Per-write reporting would
+    // drown the run's real output on a database that is down.
+    if let Some(why) = trace.as_ref().and_then(|t| t.report()) {
+        println!("trace: {why}");
     }
     Ok(())
 }

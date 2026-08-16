@@ -46,7 +46,8 @@ struct Conn {
     path: String,
     ns: String,
     db: String,
-    auth: String,
+    /// `None` when no password was granted — see `Conn::open`.
+    auth: Option<String>,
 }
 
 fn cfg(key: &str, default: &str) -> String {
@@ -79,9 +80,16 @@ impl Conn {
         // The password is the one thing that is not config. `none` is not fatal:
         // a database with no auth is a legitimate local setup, and failing here
         // would make an unauthenticated server unusable for no gain.
+        //
+        // "Not fatal" has to mean sending NO header, not sending `Basic root:`.
+        // An empty-password header is refused by an authenticated server AND by
+        // an `--unauthenticated` one (which has no `root` to name), so the
+        // previous version made the very setup this comment describes the one
+        // configuration that could not work. Found by the console's browser test,
+        // which runs against exactly that setup.
         let password = match secrets::get("surreal-password") {
-            Ok(Some(s)) => secrets::reveal(&s).unwrap_or_default(),
-            _ => String::new(),
+            Ok(Some(s)) => secrets::reveal(&s).ok(),
+            _ => None,
         };
         Ok(Self {
             authority,
@@ -89,7 +97,7 @@ impl Conn {
             path: if path.is_empty() { "/sql".into() } else { format!("{path}/sql") },
             ns: cfg("surreal-ns", "comp"),
             db: cfg("surreal-db", "knowledge"),
-            auth: format!("Basic {}", B64.encode(format!("{user}:{password}"))),
+            auth: password.map(|p| format!("Basic {}", B64.encode(format!("{user}:{p}")))),
         })
     }
 }
@@ -182,7 +190,9 @@ fn sql(conn: &Conn, statement: &str) -> Result<String, GraphError> {
     set("db", &conn.db);
     set("surreal-ns", &conn.ns);
     set("surreal-db", &conn.db);
-    set("authorization", &conn.auth);
+    if let Some(auth) = &conn.auth {
+        set("authorization", auth);
+    }
 
     let req = OutgoingRequest::new(headers);
     let _ = req.set_method(&Method::Post);

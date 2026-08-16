@@ -1,0 +1,27 @@
+// ui:assets — embedded static-file serving as a capability.
+//
+// The built SPA (or any static bundle) embedded in a component of its own, so
+// the HTTP-facing domain component stays slim: it links this capability and
+// forwards non-API GETs here, instead of carrying the bytes in its own
+// artifact (which inflates per-request instantiation on hosts that
+// instantiate per request).
+//
+// Pure compute: the bytes are baked in at build time (build.rs), no imports.
+package ui:assets@0.1.0;
+
+/// Exact-path lookup over the embedded bundle.
+interface files {
+    /// One embedded asset.
+    record asset {
+        content-type: string,
+        body: list<u8>,
+    }
+
+    /// The asset at `path` (e.g. "/index.html", "/assets/app.js"), or none.
+    /// Callers implement their own SPA fallback by retrying "/index.html".
+    get: func(path: string) -> option<asset>;
+}
+
+world ui-assets {
+    export files;
+}
