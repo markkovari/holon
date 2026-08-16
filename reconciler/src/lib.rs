@@ -26,6 +26,8 @@ pub mod compose;
 /// Skipping work already done, and recording every verdict so the next run can.
 pub mod memory;
 pub mod oci;
+/// What a run leaves behind (ADR-0092).
+pub mod trace;
 pub mod plan;
 pub mod settings;
 pub mod spec;
