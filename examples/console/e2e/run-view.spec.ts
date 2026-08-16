@@ -57,19 +57,38 @@ test.describe("the run view", () => {
     await expect(page.getByTestId("run-outcome")).toHaveText("merged");
     await expect(page.getByTestId("run-winner")).toContainText("mvp");
 
-    // Both branches, with the loser kept. "Why did branch 3 beat branch 7" is
-    // unanswerable if the failures are dropped.
+    // What the pool GAINED (ADR-0089). The only part of a run that outlives the
+    // pull request: the app change lands and is done, the component is there for
+    // every run after this one.
+    await expect(page.getByTestId("capabilities")).toContainText("paginate");
+    await expect(page.getByTestId("capabilities")).toContainText("components/paginate");
+
+    // Both branches, with the loser kept, and what each one actually DID.
+    // "Why did branch 3 beat branch 7" is unanswerable if the failures are
+    // dropped, and only half-answerable if their output is.
     const attempts = page.getByTestId("attempts");
     await expect(attempts).toContainText("risk-first");
     await expect(attempts).toContainText("mvp");
     await expect(attempts).toContainText("40");
     await expect(attempts).toContainText("100");
 
+    // The two branches took different approaches, and the page shows it: one
+    // edited the app, the other extracted a component. That difference is the
+    // reason to run more than one branch at all.
+    await expect(attempts).toContainText("apps/search/src/query.rs");
+    await expect(attempts).toContainText("components/paginate/src/lib.rs");
+    // Cost and duration, which exist nowhere else once the terminal is gone.
+    await expect(attempts).toContainText("31.2k tok");
+
     // The timeline, in the vocabulary ADR-0092 defines.
     const timeline = page.getByTestId("timeline");
     await expect(timeline).toContainText("run-started");
     await expect(timeline).toContainText("gate-verdict");
     await expect(timeline).toContainText("run-resolved");
+    // Described, not dumped as JSON — the fallback is for kinds a newer driver
+    // invented, not for ones this view is supposed to know.
+    await expect(timeline).toContainText("paginate — the pool can do this now");
+    await expect(timeline).not.toContainText('{"name"');
 
     // The most actionable row on the page: the graph naming a capability the
     // pool lacks (ADR-0089). If this renders as raw JSON the vocabulary has

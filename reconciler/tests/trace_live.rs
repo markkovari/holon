@@ -88,9 +88,9 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
         trace.lesson_read(run, attempt, &["mem:paginate".to_string()]);
     }
     trace.gate_verdict(run, "77/g1/risk-first", 40, false, &serde_json::json!({"failing": ["test_pages"]}));
-    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40);
+    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40, &serde_json::json!([{"path": "apps/search/a.rs"}]), 18_400, 94_000);
     trace.gate_verdict(run, "77/g1/mvp", 100, true, &serde_json::json!({"failing": []}));
-    trace.attempt_finished(run, "77/g1/mvp", "passed", 100);
+    trace.attempt_finished(run, "77/g1/mvp", "passed", 100, &serde_json::json!([{"path": "components/paginate/src/lib.rs"}]), 31_200, 156_000);
     trace.run_resolved(run, "merged", Some("mvp"), "https://example.test/pull/1");
 
     assert!(trace.report().is_none(), "writes were dropped against a live database: {:?}", trace.report());
@@ -118,11 +118,35 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
     let misses = rows(&store, "SELECT data.query AS q FROM event WHERE kind = 'capsearch-miss';");
     assert_eq!(misses[0]["q"], "render a swimlane chart");
 
+    // What the pool gained (ADR-0089), and which run taught it. A capability node
+    // rather than only an event, because "what can this system do" is a question
+    // about the capability — the run that added it is an attribute, not the key.
+    trace.capability_added(run, "paginate", "components/paginate");
+    let cap = rows(&store, "SELECT name, path, added_by FROM capability;");
+    assert_eq!(cap[0]["name"], "paginate");
+    assert_eq!(cap[0]["added_by"], run, "a capability must say which run taught it");
+
+    // The branch's paths are on the attempt, and its cost with them. Both exist
+    // nowhere else once the terminal is gone — the diff is in the pull request,
+    // but what a branch SPENT is not.
+    let won = rows(
+        &store,
+        "SELECT paths, files, tokens, elapsed_ms FROM attempt WHERE id_text = '77/g1/mvp';",
+    );
+    assert_eq!(won[0]["files"], 1, "the file count did not land");
+    assert_eq!(won[0]["tokens"], 31_200);
+    assert!(
+        won[0]["paths"][0].as_str().unwrap_or_default().starts_with("components/"),
+        "the winning branch's paths were lost: {:?}",
+        won[0]["paths"]
+    );
+
     // 3. A goal that contains quotes and SurrealQL is DATA, not syntax.
     let nasty = r#"add a "search" box'; DELETE event; --"#;
     trace.run_started("78/g1", nasty, 78, "def456", 1);
     assert!(trace.report().is_none(), "the quoted goal broke its own statement");
-    assert_eq!(count(&store, "event"), 13, "DELETE event ran as SurrealQL — the log is gone");
+    // 12 from the run, +1 capability-added, +1 for the hostile run below.
+    assert_eq!(count(&store, "event"), 14, "DELETE event ran as SurrealQL — the log is gone");
     let back = rows(&store, "SELECT goal FROM run WHERE id_text = '78/g1';");
     assert_eq!(back[0]["goal"], nasty, "the goal did not round-trip as written");
 }
@@ -137,7 +161,7 @@ fn a_dead_database_costs_a_line_of_output_and_nothing_else() {
 
     trace.run_started("dead/g1", "a goal", 1, "abc", 1);
     trace.branch_spawned("dead/g1", "dead/g1/a", "a", 1);
-    trace.attempt_finished("dead/g1", "dead/g1/a", "errored", 0);
+    trace.attempt_finished("dead/g1", "dead/g1/a", "errored", 0, &serde_json::json!([]), 0, 0);
     trace.run_resolved("dead/g1", "failed", None, "");
 
     let report = trace.report().expect("dropped writes must be reported");
@@ -246,7 +270,7 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
         for branch in ["risk-first", "mvp"] {
             let attempt = comp_reconciler::memory::run_id(seed, round, branch);
             trace.branch_spawned(&run, &attempt, branch, round);
-            trace.attempt_finished(&run, &attempt, "failed", 10);
+            trace.attempt_finished(&run, &attempt, "failed", 10, &serde_json::json!([]), 100, 1_000);
         }
     }
     trace.run_resolved(&run, "exhausted", None, "");

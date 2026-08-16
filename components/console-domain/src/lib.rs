@@ -355,7 +355,8 @@ fn run_detail(id: &str) -> Outcome {
         "SELECT * FROM run WHERE id_text = {quoted};\n\
          SELECT * FROM attempt WHERE run = {quoted} ORDER BY started_at;\n\
          SELECT count() FROM event WHERE run = {quoted} GROUP ALL;\n\
-         SELECT * FROM event WHERE run = {quoted} ORDER BY at LIMIT {EVENT_PAGE};"
+         SELECT * FROM event WHERE run = {quoted} ORDER BY at LIMIT {EVENT_PAGE};\n\
+         SELECT name, path, added_at FROM capability WHERE added_by = {quoted} ORDER BY added_at;"
     );
     match graph::query(&surql) {
         Ok(answer) => Outcome::Raw(
@@ -374,14 +375,15 @@ fn wrap(answer: &str, key: &str) -> Vec<u8> {
     json!({ key: rows }).to_string().into_bytes()
 }
 
-/// The four statements of a run detail, named.
+/// The five statements of a run detail, named.
 ///
 /// `eventCount` is the total in the store and `events` is the first page of it.
 /// Both are sent so the page can say "the first 500 of 5,000" — a timeline that
 /// silently stops at 500 looks like a run that stopped at 500.
 fn detail(answer: &str) -> Vec<u8> {
     let mut s = statements(answer);
-    // Pop in reverse: the last statement is the events page.
+    // Pop in reverse: the last statement is the capabilities.
+    let capabilities = s.pop().unwrap_or(Value::Array(vec![]));
     let events = s.pop().unwrap_or(Value::Array(vec![]));
     let counted = s.pop().unwrap_or(Value::Array(vec![]));
     let attempts = s.pop().unwrap_or(Value::Array(vec![]));
@@ -399,6 +401,10 @@ fn detail(answer: &str) -> Vec<u8> {
         "events": events,
         "eventCount": total,
         "truncated": total > shown as u64,
+        // What the pool gained (ADR-0089). Usually empty, which is the honest
+        // answer: most runs change an app, and only some leave the system able
+        // to do something it could not do before.
+        "capabilities": capabilities,
     })
     .to_string()
     .into_bytes()
