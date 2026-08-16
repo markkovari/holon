@@ -338,6 +338,7 @@ fn write(e: &Entry, promoted: bool) -> Result<String, MemoryError> {
         attempt: &e.attempt,
         score: e.score,
         promoted,
+        tags: &e.tags,
     };
 
     let vector = embed(&embeddable(&e.goal, &text));
@@ -414,6 +415,27 @@ impl Guest for Component {
             stored.extend(rows.iter().filter_map(stored_of));
         }
 
+        // 2b. Structural recall: what previous work against these INTERFACES
+        // learned, whatever it was called (ADR-0090). This is the half that crosses
+        // applications — a fact about `csv:codec/codec` is true for a billing
+        // ledger and a veterinary clinic, which share almost no wording, so
+        // similarity over goal text cannot connect them.
+        //
+        // Matched exactly, no embedding, and merged into the same candidate set:
+        // these rows then go through the identical fusion and outcome weighting as
+        // everything else, so a tagged lesson that keeps losing still sinks.
+        let mut by_tag: Vec<String> = Vec::new();
+        if !opts.tags.is_empty() {
+            let names: Vec<&str> = pools.iter().map(|n| ns_name(*n)).collect();
+            let rows = ask(&surql::tagged_entries(&opts.tags, opts.k.max(1), &names))?;
+            for row in rows.iter().filter_map(stored_of) {
+                by_tag.push(row.handle.clone());
+                if !stored.iter().any(|s| s.handle == row.handle) {
+                    stored.push(row);
+                }
+            }
+        }
+
         // 3. Hydrate only the lexical candidates the dense pass did not already
         // return, in ONE statement. One read per candidate is the N+1 ADR-0077 was
         // written about, and a retrieval path would do it k×4 times per branch.
@@ -450,7 +472,20 @@ impl Guest for Component {
             // The threshold applies to the dense score only, and only to hits that
             // have one — otherwise a deployment with no embedding provider would
             // filter its whole result set away.
-            if s.similarity.is_some() && opts.min_similarity > 0.0 && sim < opts.min_similarity {
+            //
+            // A TAG MATCH is exempt. `min-similarity` asks "is this text close
+            // enough to my goal", and a tag is the answer to a different question:
+            // somebody learned this while using an interface I import. Applying a
+            // textual threshold to structural evidence would make tags useless for
+            // exactly the case they exist for — the clinic lesson that a payroll
+            // exporter needs scores 0.42 against it, and any threshold worth
+            // setting is higher than that (ADR-0090).
+            let matched_by_tag = by_tag.iter().any(|h| *h == s.handle);
+            if !matched_by_tag
+                && s.similarity.is_some()
+                && opts.min_similarity > 0.0
+                && sim < opts.min_similarity
+            {
                 continue;
             }
             out.push((
