@@ -388,6 +388,34 @@ impl Checks {
 }
 
 /// Write a fixture with placeholders substituted, to a temp path.
+/// The components a run created, as (name, path).
+///
+/// `components/<name>/...` is the only shape that names a component in this
+/// repository — the same rule `plug::tags_for` already uses to decide what a
+/// lesson is about, so the two cannot disagree about what a component is.
+///
+/// Derived from paths rather than announced by the model: a run that SAYS it
+/// built a reusable component and a run that actually left one in the tree are
+/// different things, and only the second changes what the pool can do.
+fn new_capabilities(files: &Value) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = files
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| f["path"].as_str())
+                .filter_map(|p| {
+                    let rest = p.strip_prefix("components/")?;
+                    let name = rest.split('/').next()?;
+                    (!name.is_empty()).then(|| (name.to_string(), format!("components/{name}")))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// The egress allow-list entry for a base URL: its authority, port and all.
 ///
 /// The allow-list is an AUTHORITY, not a URL — the scheme and path come off,
@@ -1167,6 +1195,9 @@ fn main() -> Result<()> {
                     &attempt,
                     if e.accepted { "passed" } else { "failed" },
                     e.score,
+                    &e.files,
+                    e.spent_tokens,
+                    e.elapsed_ms,
                 );
             }
             if let Some(m) = &memory {
@@ -1275,6 +1306,17 @@ fn main() -> Result<()> {
                     args.forget_after_days
                 ),
                 Err(e) => println!("knowledge: could not sweep the pool ({e})"),
+            }
+        }
+    }
+
+    // What the pool gained (ADR-0089). Derived from the WINNER's paths, because a
+    // capability the swarm can reuse is one that passed a gate — a component from
+    // a branch that failed is a directory, not a capability.
+    if let (Some(t), Some(best)) = (&trace, found.best.as_ref()) {
+        if best.accepted {
+            for (name, path) in new_capabilities(&best.files) {
+                t.capability_added(&run, &name, &path);
             }
         }
     }
@@ -1648,7 +1690,7 @@ fn decomposed(
 
 #[cfg(test)]
 mod tests {
-    use super::{component_scope, egress_authority, trim_members, GoalSpec};
+    use super::{component_scope, egress_authority, new_capabilities, trim_members, GoalSpec};
 
     /// The goal spec for a decomposed run, as a person writes it.
     ///
@@ -1755,5 +1797,40 @@ command = ["cargo", "test"]
         // A path must not leak into the authority.
         assert_eq!(egress_authority("https://proxy.internal/anthropic"), "proxy.internal");
         assert_eq!(egress_authority("http://[::1]:8787"), "[::1]:8787");
+    }
+
+    /// A component is `components/<name>/…` and nothing else.
+    ///
+    /// The rule matters because it decides what the pool believes it gained: a
+    /// path outside `components/` is app code, and counting it would report a
+    /// capability that no future run can reuse.
+    #[test]
+    fn only_components_count_as_a_new_capability() {
+        let files = serde_json::json!([
+            { "path": "components/csv-codec/src/lib.rs", "content": "" },
+            { "path": "components/csv-codec/Cargo.toml", "content": "" },
+            { "path": "apps/vet/src/main.rs", "content": "" },
+            { "path": "README.md", "content": "" },
+            { "path": "components/paginate/wit/p.wit", "content": "" },
+        ]);
+        assert_eq!(
+            new_capabilities(&files),
+            vec![
+                ("csv-codec".to_string(), "components/csv-codec".to_string()),
+                ("paginate".to_string(), "components/paginate".to_string()),
+            ],
+            "one entry per COMPONENT, not per file, and nothing outside components/"
+        );
+    }
+
+    /// A run that wrote no component gained the pool nothing, and must say so
+    /// rather than reporting an empty-named capability.
+    #[test]
+    fn a_run_that_built_no_component_adds_no_capability() {
+        let files = serde_json::json!([
+            { "path": "apps/vet/src/main.rs", "content": "" },
+            { "path": "components/", "content": "" },
+        ]);
+        assert!(new_capabilities(&files).is_empty());
     }
 }

@@ -48,6 +48,22 @@ Two components on one database with two schemas is the split store with extra
 steps. `knowledge-memory` absorbs rather than the reverse because it is the one
 that already owns the write rule (ADR-0084) and the retrieval.
 
+**One store means one set of coordinates: `comp` / `goalmemory`.** That is
+`knowledge-graph`'s default namespace and the database `comp-goalrun` rewrites the
+memory app to, so lessons, runs, attempts and capabilities all land there — and
+the projection has to land there too. It did not: `just capgraph-store` defaulted
+to `holon`/`holon` for months, which made the join below correct and unrunnable at
+the same time. The store was merged in the schema and split in the deployment,
+which is the harder half to notice, because every test wrote both halves into a
+database it had started itself. `capgraph_store.rs` now asserts the *coordinates*
+against the two files that declare them, without a database, since a mismatch
+between files is not something booting Docker can see.
+
+The narrowness matters: `contracts` and `memorysparse` stay separate databases on
+purpose, for the reasons `fixtures/knowledge-memory-sparse.yaml` gives. "One
+store" is a claim about the graph and the pool, not a plan to collapse every
+database in the repository.
+
 ## The lifecycle difference, without a store boundary
 
 Three mechanisms replace what the boundary was doing.

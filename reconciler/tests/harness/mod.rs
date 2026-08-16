@@ -277,6 +277,17 @@ pub struct Store {
     http: reqwest::blocking::Client,
 }
 
+/// The coordinates PRODUCTION uses — `knowledge-graph`'s default namespace and
+/// the database `comp-goalrun` rewrites the memory app to.
+///
+/// Not arbitrary test coordinates. This harness used `holon`/`holon` and put both
+/// halves of ADR-0091's join there, which is precisely why it passed while the
+/// real deployment had the capability graph in one database and the lessons in
+/// another. A store fixture that agrees with itself but not with production tests
+/// the fixture.
+const NS: &str = "comp";
+const DB: &str = "goalmemory";
+
 impl Store {
     /// A container with the namespace defined, or `None` when Docker cannot
     /// start one. The caller decides whether that is a skip or a failure.
@@ -288,8 +299,8 @@ impl Store {
             .build()
             .unwrap();
         let me = Self { db, http };
-        me.raw("DEFINE NAMESPACE IF NOT EXISTS holon;");
-        me.raw("DEFINE DATABASE IF NOT EXISTS holon;");
+        me.raw(&format!("DEFINE NAMESPACE IF NOT EXISTS {NS};"));
+        me.raw(&format!("DEFINE DATABASE IF NOT EXISTS {DB};"));
         Some(me)
     }
 
@@ -306,8 +317,8 @@ impl Store {
             .post(format!("http://127.0.0.1:{}/sql", self.db.port))
             .basic_auth("root", Some(SURREAL_PASSWORD))
             .header("accept", "application/json")
-            .header("surreal-ns", "holon")
-            .header("surreal-db", "holon")
+            .header("surreal-ns", NS)
+            .header("surreal-db", DB)
             .body(body.to_string())
             .send()
             .and_then(|r| r.text())

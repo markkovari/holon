@@ -34,6 +34,9 @@ use serde_json::{json, Value};
 const RUN: &str = "run";
 const ATTEMPT: &str = "attempt";
 const EVENT: &str = "event";
+/// What the pool gained. Its own table because "what can this system do" is a
+/// question about the capability, not about the run that happened to add it.
+const CAPABILITY: &str = "capability";
 
 /// Where the trace goes, and the credentials to get in.
 ///
@@ -135,16 +138,61 @@ impl Trace {
         self.event(run, Some(attempt), "lesson-read", json!({ "keys": keys }));
     }
 
-    /// An attempt ended. `outcome` is `passed`, `failed`, `errored` or
-    /// `interrupted` — the last one records a branch that was stopped, whose
-    /// partial work is discarded rather than judged (ADR-0092).
-    pub fn attempt_finished(&self, run: &str, attempt: &str, outcome: &str, score: u64) {
+    /// An attempt ended, and what it produced.
+    ///
+    /// `outcome` is `passed`, `failed`, `errored` or `interrupted` — the last one
+    /// records a branch that was stopped, whose partial work is discarded rather
+    /// than judged (ADR-0092).
+    ///
+    /// The PATHS are recorded and the contents are not. What a person asks of a
+    /// finished run is "which branch touched what, and what did it cost" — and a
+    /// branch's whole diff is already in the pull request, addressable and
+    /// reviewable, whereas a copy of it here would be a second copy that can
+    /// disagree with the first. Cost and duration are the two facts that exist
+    /// nowhere else once the terminal is gone.
+    pub fn attempt_finished(
+        &self,
+        run: &str,
+        attempt: &str,
+        outcome: &str,
+        score: u64,
+        files: &Value,
+        tokens: u64,
+        elapsed_ms: u64,
+    ) {
+        let paths = file_paths(files);
         self.send(&format!(
-            "UPSERT {} SET outcome = {}, score = {score}, resolved_at = time::now();",
+            "UPSERT {} SET outcome = {}, score = {score}, paths = {}, files = {}, \
+             tokens = {tokens}, elapsed_ms = {elapsed_ms}, resolved_at = time::now();",
             rid(ATTEMPT, attempt),
             lit(outcome),
+            json!(paths),
+            paths.len(),
         ));
-        self.event(run, Some(attempt), "attempt-finished", json!({ "outcome": outcome, "score": score }));
+        self.event(
+            run,
+            Some(attempt),
+            "attempt-finished",
+            json!({ "outcome": outcome, "score": score, "files": paths.len(), "tokens": tokens }),
+        );
+    }
+
+    /// A run left the pool able to do something it could not do before.
+    ///
+    /// This is ADR-0089's whole claim made visible: a solved problem should leave
+    /// the system MORE capable, and until now the only way to know it had was to
+    /// notice a new directory. A `capability` node rather than only an event,
+    /// because "what can this system do, and which run taught it" is a question
+    /// about the capability, not about the moment it appeared.
+    pub fn capability_added(&self, run: &str, name: &str, path: &str) {
+        self.send(&format!(
+            "UPSERT {} SET name = {}, path = {}, added_by = {}, added_at = time::now();",
+            rid(CAPABILITY, name),
+            lit(name),
+            lit(path),
+            lit(run),
+        ));
+        self.event(run, None, "capability-added", json!({ "name": name, "path": path }));
     }
 
     /// Whether reuse discovery found anything. A MISS is the most useful row
@@ -254,6 +302,25 @@ fn ureq_post(url: &str, ns: &str, db: &str, user: &str, password: Option<&str>, 
     serde_json::from_str::<Vec<Value>>(&text)
         .map(|statements| statements.iter().all(|s| s["status"] == "OK"))
         .unwrap_or(false)
+}
+
+/// The paths a branch wrote, from the driver's `[{path, content}]`.
+///
+/// Sorted and de-duplicated: a branch that rewrites the same file across repairs
+/// reports it once, and a stable order means two runs of the same branch produce
+/// comparable rows rather than a diff that is only ordering.
+fn file_paths(files: &Value) -> Vec<String> {
+    let mut out: Vec<String> = files
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|f| f["path"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// A record id. `⟨…⟩` is SurrealDB's own quoting for an arbitrary id, and the

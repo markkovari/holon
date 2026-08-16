@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**150 components, 80 interfaces with a provider and at least one consumer, 300 import edges, 13 interfaces exported but unconsumed in-tree, 56 applications composed from them.**
+**152 components, 80 interfaces with a provider and at least one consumer, 303 import edges, 13 interfaces exported but unconsumed in-tree, 57 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -32,6 +32,8 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 5 | `outbox:dispatch/queue` | `outbox` | `billing-ledger`, `dev-portal`, `jobs-domain`, `pipeline-domain`, `webhook-relay` |
 | 4 | `cache:store/cache` | `cache` | `link-shortener`, `passkey-domain`, `search-domain`, `vet-domain` |
 | 4 | `csv:codec/codec` | `csv` | `billing-ledger`, `csv-report`, `stash-domain`, `vet-domain` |
+| 4 | `git:forge/repo` | `github-forge` | `console-domain`, `forge-probe`, `graph-selector`, `select-probe` |
+| 4 | `knowledge:graph/store` | `knowledge-graph` | `console-domain`, `contract-registry`, `graph-probe`, `knowledge-memory` |
 | 4 | `llm:inference/inference` | `anthropic-provider` | `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe` |
 | 4 | `md:render/renderer` | `markdown` | `helpdesk-domain`, `paste-bin`, `track-domain`, `vet-domain` |
 | 4 | `notify:dispatch/dispatcher` | `notify-dispatch` | `dev-portal`, `status-page`, `track-domain`, `webhook-relay` |
@@ -41,15 +43,14 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 4 | `secrets:vault/vault` | `secrets-vault` | `login-app`, `mfa-authgate`, `platform-domain`, `vet-domain` |
 | 4 | `slug:generate/generator` | `slug` | `conduit-domain`, `link-shortener`, `paste-bin`, `slug-probe` |
 | 4 | `webhook:sign/signer` | `webhook-sign` | `dev-portal`, `track-domain`, `upload-drop`, `webhook-relay` |
-| 3 | `git:forge/repo` | `github-forge` | `forge-probe`, `graph-selector`, `select-probe` |
 | 3 | `graph:fitness/evaluator` | `checks-runner` | `agent-driver`, `driver-probe`, `fitness-probe` |
-| 3 | `knowledge:graph/store` | `knowledge-graph` | `contract-registry`, `graph-probe`, `knowledge-memory` |
 | 3 | `paginate:cursor/cursors` | `pagination` | `csv-report`, `track-domain`, `vet-domain` |
 | 3 | `pdf:codec/codec` | `pdf` | `books-domain`, `lms-domain`, `tempo-domain` |
 | 3 | `policy:guard/guard` | `policy-guard` | `dev-portal`, `platform-domain`, `track-domain` |
 | 3 | `proxy:route/router` | `proxy-route` | `eshop-gateway`, `event-pusher`, `mesh-domain` |
 | 3 | `sched:timer/timer` | `scheduler-timer` | `saga-domain`, `status-page`, `vet-domain` |
 | 3 | `session:store/store` | `session-store` | `login-app`, `mfa-authgate`, `passkey-domain` |
+| 3 | `ui:assets/files` | `console-assets` | `console-domain`, `track-domain`, `vet-domain` |
 | 3 | `validate:schema/validator` | `validate` | `csv-report`, `paste-bin`, `vet-domain` |
 | 2 | `ai:inference/inference` | `ai-inference` | `track-domain`, `vet-domain` |
 | 2 | `audit:log/recorder` | `audit-log` | `auth-guard`, `webhook-relay` |
@@ -60,7 +61,6 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 2 | `pii:redact/redactor` | `pii-redact` | `paste-bin`, `vet-domain` |
 | 2 | `qr:encode/encoder` | `qr` | `mfa-authgate`, `transit-domain` |
 | 2 | `svg:chart/charts` | `svg-chart` | `dashboards-domain`, `lms-domain` |
-| 2 | `ui:assets/files` | `static-assets` | `track-domain`, `vet-domain` |
 | 2 | `upload:policy/gate` | `upload-policy` | `upload-drop`, `vet-domain` |
 | 2 | `wit:reflect/composer` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 2 | `wit:reflect/inspector` | `wit-reflect` | `platform-domain`, `studio-domain` |
@@ -164,6 +164,7 @@ This is the number to look at before changing a component, and before deleting o
 | 6 | `markdown` | `helpdesk`, `paste`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `outbox` | `jobs`, `jobs-golem`, `ledger`, `pipeline`, `portal`, `relay` |
 | 6 | `secrets-vault` | `authgate`, `login`, `platform`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `console-assets` | `console`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `pagination` | `report`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `scheduler-timer` | `saga`, `status`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `search-index` | `search`, `track`, `vet`, `vet-full`, `vet-lattice` |
@@ -175,7 +176,6 @@ This is the number to look at before changing a component, and before deleting o
 | 4 | `otp` | `authgate`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `pii-redact` | `paste`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `quota` | `ledger`, `platform`, `portal`, `ratelimit` |
-| 4 | `static-assets` | `track`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `upload-policy` | `drop`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `webhook-sign` | `drop`, `portal`, `relay`, `track` |
 | 3 | `i18n-catalog` | `vet`, `vet-full`, `vet-lattice` |
@@ -195,9 +195,11 @@ This is the number to look at before changing a component, and before deleting o
 | 1 | `email-render` | `booked` |
 | 1 | `experiment-assign` | `abtest` |
 | 1 | `feature-flags` | `flags` |
+| 1 | `github-forge` | `console` |
 | 1 | `iban` | `payees` |
 | 1 | `ical` | `booked` |
 | 1 | `jsonpatch` | `relay` |
+| 1 | `knowledge-graph` | `console` |
 | 1 | `ledger` | `books` |
 | 1 | `quiz-grade` | `lms` |
 | 1 | `resilience` | `mesh` |
@@ -224,6 +226,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **books** | `books-domain` | 6 | `books_domain.composed.wasm` |
 | **buzz** | `buzz-domain` | 4 | `buzz_domain.composed.wasm` |
 | **conduit** | `conduit-domain` | 5 | `conduit_domain.composed.wasm` |
+| **console** | `console-domain` | 3 | `console_domain.composed.wasm` |
 | **dashboards** | `dashboards-domain` | 5 | `dashboards_domain.composed.wasm` |
 | **drop** | `upload-drop` | 4 | `upload_drop.composed.wasm` |
 | **eshop** | `accounts-app` | 3 | `eshop_identity.composed.wasm` |
@@ -311,6 +314,7 @@ graph LR
   app_conduit --> auth_guard([auth-guard])
   app_conduit --> rate_limiter([rate-limiter])
   app_conduit --> record_store([record-store])
+  app_console["console"]
   app_dashboards["dashboards"]
   app_dashboards --> audit_log([audit-log])
   app_dashboards --> auth_guard([auth-guard])
@@ -323,12 +327,6 @@ graph LR
   app_eshop --> audit_log([audit-log])
   app_eshop --> auth_guard([auth-guard])
   app_eshop --> rate_limiter([rate-limiter])
-  app_eshop["eshop"]
-  app_eshop --> audit_log([audit-log])
-  app_eshop --> auth_guard([auth-guard])
-  app_eshop --> event_bus([event-bus])
-  app_eshop --> rate_limiter([rate-limiter])
-  app_eshop --> record_store([record-store])
 ```
 
 
