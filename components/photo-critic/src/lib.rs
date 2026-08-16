@@ -53,6 +53,12 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
 }
 
+/// A ceiling on a body read into memory, not a policy: past this the read gives
+/// up, rather than growing until the store's memory cap traps the component and
+/// the connection simply closes. Both directions — a request, and a model's
+/// reply to one.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 /// POST a JSON body to Anthropic and return (status, response-bytes).
 fn post_anthropic(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     let headers = Fields::new();
@@ -93,7 +99,17 @@ fn post_anthropic(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
             loop {
                 match stream.blocking_read(8192) {
                     Ok(c) if c.is_empty() => break,
-                    Ok(c) => buf.extend_from_slice(&c),
+                    Ok(c) => {
+                        // The same ceiling on the way back. This is a model's
+                        // answer over a network we do not control, and a reply
+                        // larger than the request that provoked it is either a
+                        // mistake or an attack — either way not something to hold
+                        // in memory while deciding.
+                        if buf.len() + c.len() > MAX_BODY_BYTES {
+                            return Err(e("the response body is too large"));
+                        }
+                        buf.extend_from_slice(&c);
+                    }
                     Err(StreamError::Closed) => break,
                     Err(_) => break,
                 }
@@ -111,7 +127,16 @@ fn read_body(request: &IncomingRequest) -> Vec<u8> {
             loop {
                 match stream.blocking_read(65536) {
                     Ok(c) if c.is_empty() => break,
-                    Ok(c) => buf.extend_from_slice(&c),
+                    Ok(c) => {
+                        // No error channel here, so an over-long body reads as
+                        // EMPTY rather than as a plausible prefix of itself — and
+                        // a truncated image would decode into a critique of half a
+                        // photograph.
+                        if buf.len() + c.len() > MAX_BODY_BYTES {
+                            return Vec::new();
+                        }
+                        buf.extend_from_slice(&c);
+                    }
                     Err(bindings::wasi::io::streams::StreamError::Closed) => break,
                     // A failed read is not an end of body: collapsing the two
                     // returns a truncated payload as if it were whole.

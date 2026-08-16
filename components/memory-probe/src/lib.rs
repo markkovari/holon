@@ -157,6 +157,11 @@ fn err(e: mem::MemoryError) -> String {
     format!("{{\"error\":\"{kind}\",\"detail\":\"{}\"}}", esc(&msg))
 }
 
+/// A ceiling on a request body, not a policy: past this the read gives up and
+/// the body reads as empty, rather than growing until the store's memory cap
+/// traps the component and the connection simply closes.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 fn read_body(request: IncomingRequest) -> String {
     let Ok(body) = request.consume() else { return String::new() };
     let Ok(stream) = body.stream() else { return String::new() };
@@ -164,7 +169,14 @@ fn read_body(request: IncomingRequest) -> String {
     loop {
         match stream.blocking_read(64 * 1024) {
             Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => out.extend_from_slice(&chunk),
+            Ok(chunk) => {
+                // Same reasoning as the error arm below: an over-long body reads
+                // as empty rather than as a plausible prefix of itself.
+                if out.len() + chunk.len() > MAX_BODY_BYTES {
+                    return String::new();
+                }
+                out.extend_from_slice(&chunk);
+            }
             Err(bindings::wasi::io::streams::StreamError::Closed) => break,
             // No error channel here, so the choice is a truncated body or none.
             // None: a caller parsing an empty body fails cleanly, where half a
