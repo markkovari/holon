@@ -21,6 +21,10 @@ fn read_body(request: IncomingRequest) -> String {
     let Ok(body) = request.consume() else { return String::new() };
     let Ok(stream) = body.stream() else { return String::new() };
     let mut out = Vec::new();
+    // `while let Ok(..)` treats a failed read exactly like the end of the body.
+    // See platform-domain for the shape that distinguishes them; this probe reads
+    // its own test input, so a truncated read shows up as a failed assertion
+    // rather than as data loss.
     while let Ok(chunk) = stream.blocking_read(64 * 1024) {
         if chunk.is_empty() { break; }
         out.extend_from_slice(&chunk);
