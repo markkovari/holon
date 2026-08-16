@@ -29,10 +29,11 @@ import { chromium } from "playwright";
 
 const repo = path.resolve(new URL(".", import.meta.url).pathname, "../..");
 const OUT = new URL("./videos/console/", import.meta.url).pathname;
-// 700 tall. 800 spent a third of every frame on empty background; 660 put
-// `run-resolved` — the line that says how the run ended — flush against the
-// bottom edge. The GIF is cropped by the recording, not by the converter.
-const W = 1200, H = 700;
+// 880 tall. The run detail grew: it now carries the capability the pool gained
+// and each branch's paths, so the whole thing is about 800px and a shorter frame
+// cuts the timeline — which is the half that explains the branches above it. The
+// GIF is cropped by the recording, not by the converter, so this is the crop.
+const W = 1200, H = 880;
 
 const SURREAL_IMAGE = "surrealdb/surrealdb:v3.1.3";
 const SURREAL_PORT = 8121;
