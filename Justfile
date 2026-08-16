@@ -314,9 +314,28 @@ plug-wiring name: build
     @cd reconciler && cargo build --release --quiet --bin comp-plug
     @./reconciler/target/release/comp-plug {{name}} --wiring
 
+# Compose a component and put the artifact where the showcases expect it.
+#
+# Every `compose-*` recipe below used to spell out its own `wac plug … --plug …`
+# chain: 59 of them, each a hand-maintained list of what an app depends on, none of
+# them checked against the app. They were wrong more often than not — `compose-vet`
+# named five plugs for a component that imports twenty-two capabilities, and the
+# sixteen it omitted were simply left dangling in an artifact `wasm-tools validate`
+# accepted (ADR-0087).
+#
+# Now the list comes from the component. `comp-plug` reads what the artifact
+# imports, finds what exports those interfaces, composes each plug before plugging
+# it, and keys the result by content. All 49 roots in this file were verified to
+# compose this way before the chains were removed.
+#
+# The output path is unchanged, because the e2e recipes and several tests name it.
+_derive name out:
+    @cd reconciler && cargo build --release --quiet --bin comp-plug
+    @cp "$(./reconciler/target/release/comp-plug {{name}})" {{out}}
+    @echo "composed {{name}} (derived from its own imports) -> {{out}}"
+
 compose: build
-    wac plug {{guard_wasm}} --plug {{ratelimit_wasm}} --plug {{auditlog_wasm}} -o {{guard_composed}}
-    @echo "composed auth-guard (+ rate-limiter + audit-log) -> {{guard_composed}}"
+    @just _derive auth-guard {{guard_composed}}
 
 # Compose the vet-clinic DOMAIN component (the Rust HTTP backend) with every
 # capability it imports: the composed auth-guard (auth:identity), records:store,
@@ -324,38 +343,19 @@ compose: build
 # serves HTTP and runs identically on jco or a wasmCloud host — the whole
 # vet-clinic backend as language-agnostic wasm, no Node.
 compose-vet: compose
-    wac plug {{vetdomain_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{validate_wasm}} \
-      --plug {{searchindex_wasm}} \
-      --plug {{staticassets_wasm}} \
-      -o {{vet_composed}}
-    @echo "composed vet-domain (+ auth-guard + records + validate + search + ui) -> {{vet_composed}}"
+    @just _derive vet-domain {{vet_composed}}
 
 # Compose helpdesk-domain (docs/apps/HELPDESK.md rung 1) with every capability it
 # imports: the composed auth-guard (auth:identity), records:store,
 # fsm:workflow, id:generate, md:render. Remaining imports are generic WASI.
 compose-helpdesk: compose
-    wac plug {{helpdesk_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/fsm_workflow.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      --plug {{rel}}/markdown.wasm \
-      -o {{helpdesk_composed}}
-    @echo "composed helpdesk-domain (+ auth-guard + records + fsm + ids + md) -> {{helpdesk_composed}}"
+    @just _derive helpdesk-domain {{helpdesk_composed}}
 
 # Compose conduit-domain (docs/apps/CONDUIT.md rung 1 — the RealWorld spec) with the
 # capabilities it imports: the composed auth-guard (auth:identity) + records:store.
 # Remaining imports are generic WASI. Output is ONE self-contained app component.
 compose-conduit: compose
-    wac plug {{conduit_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/slug.wasm \
-      -o {{conduit_composed}}
-    @echo "composed conduit-domain (+ auth-guard + records + slug) -> {{conduit_composed}}"
+    @just _derive conduit-domain {{conduit_composed}}
 
 # Run the conduit app (docs/apps/CONDUIT.md rung 1) on the native Rust host, in-memory KV.
 host-conduit: compose-conduit
@@ -380,15 +380,7 @@ conformance-conduit: compose-conduit
 # primitives it orchestrates: records + fsm + idempotency + event-bus + ids.
 # No auth (anonymous engine). Remaining imports are generic WASI.
 compose-saga: build
-    wac plug {{saga_wasm}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/fsm_workflow.wasm \
-      --plug {{idempotency_wasm}} \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      --plug {{rel}}/scheduler_timer.wasm \
-      -o {{saga_composed}}
-    @echo "composed saga-domain (+ records + fsm + idempotency + event-bus + ids + timer) -> {{saga_composed}}"
+    @just _derive saga-domain {{saga_composed}}
 
 # Run the saga app on the native Rust host. Use --kv nats to prove durability
 # (state survives a restart); memory is fine for the happy/compensation paths.
@@ -430,12 +422,7 @@ saga-golem: compose-saga
 # Compose pulse-domain (docs/apps/REALTIME.md — a realtime chat room with SSE server-push)
 # with records + event-bus + id-generate. No auth. Remaining imports are WASI.
 compose-pulse: build
-    wac plug {{pulse_wasm}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      -o {{pulse_composed}}
-    @echo "composed pulse-domain (+ records + event-bus + ids) -> {{pulse_composed}}"
+    @just _derive pulse-domain {{pulse_composed}}
 
 # Run the chat app on the native Rust host + serve the two-pane SPA. Open two
 # browser windows on http://127.0.0.1:3015 and watch messages stream live.
@@ -456,25 +443,12 @@ e2e-pulse: compose-pulse
 # backend (swap for the golem-workflow provider on a classic host), cron, the
 # idempotency guard, and record-store. Remaining imports are WASI.
 compose-jobs: build
-    wac plug {{jobs_wasm}} \
-      --plug {{rel}}/outbox.wasm \
-      --plug {{rel}}/inproc_workflow.wasm \
-      --plug {{rel}}/cron.wasm \
-      --plug {{idempotency_wasm}} \
-      --plug {{recordstore_wasm}} \
-      -o {{jobs_composed}}
-    @echo "composed jobs-domain (+ outbox + inproc-workflow + cron + idempotency + records) -> {{jobs_composed}}"
+    @just _derive jobs-domain {{jobs_composed}}
 
 # Compose tempo-domain (docs/apps/TEMPO.md — a multi-person worktime logger) with the
 # composed auth-guard (auth:identity) + records. Remaining imports are WASI.
 compose-tempo: compose
-    wac plug {{tempo_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{pdf_wasm}} \
-      -o {{tempo_composed}}
-    wasm-tools validate {{tempo_composed}}
-    @echo "composed tempo-domain (+ auth-guard + records + pdf) -> {{tempo_composed}}"
+    @just _derive tempo-domain {{tempo_composed}}
 
 # Run the worktime logger on the native host + serve the SPA. Open
 # http://127.0.0.1:3040: register (pick admin to create projects/categories),
@@ -513,16 +487,7 @@ push-tempo-ghcr version="0.1.0": compose-tempo
 # composed auth-guard + records + lock-mutex (no double-book) + email-render
 # (confirmation) + ical (.ics) + rrule (recurring). Remaining imports are WASI.
 compose-booked: compose
-    wac plug {{booked_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/lock_mutex.wasm \
-      --plug {{rel}}/email_render.wasm \
-      --plug {{rel}}/ical.wasm \
-      --plug {{rel}}/rrule.wasm \
-      -o {{booked_composed}}
-    wasm-tools validate {{booked_composed}}
-    @echo "composed booked-domain (+ auth-guard + records + lock + email + ical + rrule) -> {{booked_composed}}"
+    @just _derive booked-domain {{booked_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/booked/dist.
 build-booked-ui:
@@ -549,13 +514,7 @@ e2e-booked: compose-booked
 # with auth-guard + records (single-use enforced by record-revision CAS) + qr
 # (the scannable ticket). Remaining imports are WASI.
 compose-transit: compose
-    wac plug {{transit_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/qr.wasm \
-      -o {{transit_composed}}
-    wasm-tools validate {{transit_composed}}
-    @echo "composed transit-domain (+ auth-guard + records + qr) -> {{transit_composed}}"
+    @just _derive transit-domain {{transit_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/transit/dist.
 build-transit-ui:
@@ -582,13 +541,7 @@ e2e-transit: compose-transit
 # auth-guard + records + svg-chart (server-side SVG chart rendering). Remaining
 # imports are WASI.
 compose-dashboards: compose
-    wac plug {{dashboards_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/svg_chart.wasm \
-      -o {{dashboards_composed}}
-    wasm-tools validate {{dashboards_composed}}
-    @echo "composed dashboards-domain (+ auth-guard + records + svg-chart) -> {{dashboards_composed}}"
+    @just _derive dashboards-domain {{dashboards_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/dashboards/dist.
 build-dashboards-ui:
@@ -615,12 +568,7 @@ e2e-dashboards: compose-dashboards
 # patterns — rate limit, throttle, batch — are the Golem durable-worker model
 # expressed over records:store revision CAS. Remaining imports are WASI.
 compose-gate: compose
-    wac plug {{gate_wasm}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/shaper.wasm \
-      -o {{gate_composed}}
-    wasm-tools validate {{gate_composed}}
-    @echo "composed gate-domain (+ records + shaper) -> {{gate_composed}}"
+    @just _derive gate-domain {{gate_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/gate/dist.
 build-gate-ui:
@@ -654,14 +602,7 @@ gate-golem:
 # records + ledger (the debits==credits invariant + trial balance) + pdf
 # (statements). Remaining imports are WASI.
 compose-books: compose
-    wac plug {{books_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/ledger.wasm \
-      --plug {{pdf_wasm}} \
-      -o {{books_composed}}
-    wasm-tools validate {{books_composed}}
-    @echo "composed books-domain (+ auth-guard + records + ledger + pdf) -> {{books_composed}}"
+    @just _derive books-domain {{books_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/books/dist.
 build-books-ui:
@@ -687,14 +628,7 @@ e2e-books: compose-books
 # auth-guard + records + zip (the archive) + csv (the index inside it). Remaining
 # imports are WASI.
 compose-stash: compose
-    wac plug {{stash_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/zip.wasm \
-      --plug {{rel}}/csv.wasm \
-      -o {{stash_composed}}
-    wasm-tools validate {{stash_composed}}
-    @echo "composed stash-domain (+ auth-guard + records + zip + csv) -> {{stash_composed}}"
+    @just _derive stash-domain {{stash_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/stash/dist.
 build-stash-ui:
@@ -718,13 +652,7 @@ e2e-stash: compose-stash
 # Compose payees-domain (docs/apps/PAYEES.md — a payee book) with auth-guard + records +
 # iban (validate the IBAN before storing). Remaining imports are WASI.
 compose-payees: compose
-    wac plug {{payees_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/iban.wasm \
-      -o {{payees_composed}}
-    wasm-tools validate {{payees_composed}}
-    @echo "composed payees-domain (+ auth-guard + records + iban) -> {{payees_composed}}"
+    @just _derive payees-domain {{payees_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/payees/dist.
 build-payees-ui:
@@ -750,15 +678,7 @@ e2e-payees: compose-payees
 # quiz (auto-grade + stats) + pdf (certificate) + svg-chart (gradebook chart).
 # Remaining imports are WASI.
 compose-lms: compose
-    wac plug {{lms_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/quiz_grade.wasm \
-      --plug {{pdf_wasm}} \
-      --plug {{rel}}/svg_chart.wasm \
-      -o {{lms_composed}}
-    wasm-tools validate {{lms_composed}}
-    @echo "composed lms-domain (+ auth-guard + records + quiz + pdf + svg-chart) -> {{lms_composed}}"
+    @just _derive lms-domain {{lms_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/lms/dist.
 build-lms-ui:
@@ -784,12 +704,7 @@ e2e-lms: compose-lms
 # Compose buzz-domain (docs/apps/BUZZ.md — a live multiplayer quiz game) with auth-guard +
 # records. Remaining imports are WASI (random for the PIN, clocks for timing).
 compose-buzz: compose
-    wac plug {{buzz_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      -o {{buzz_composed}}
-    wasm-tools validate {{buzz_composed}}
-    @echo "composed buzz-domain (+ auth-guard + records) -> {{buzz_composed}}"
+    @just _derive buzz-domain {{buzz_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/buzz/dist.
 build-buzz-ui:
@@ -816,13 +731,7 @@ e2e-buzz: compose-buzz
 # backoff schedule) + proxy-route (the REAL outgoing HTTP hop). Remaining imports
 # are WASI: clocks for latency + the backoff sleep, config for the route table.
 compose-mesh: compose
-    wac plug {{mesh_wasm}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/resilience.wasm \
-      --plug {{rel}}/proxy_route.wasm \
-      -o {{mesh_composed}}
-    wasm-tools validate {{mesh_composed}}
-    @echo "composed mesh-domain (+ records + resilience + proxy-route) -> {{mesh_composed}}"
+    @just _derive mesh-domain {{mesh_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/mesh/dist.
 build-mesh-ui:
@@ -867,15 +776,8 @@ e2e-mesh: compose-mesh
 # session-store (the session a completed ceremony mints). Remaining imports are
 # WASI: random for challenges, clocks, and config for the RP id + origin.
 compose-passkey: build
-    wac plug {{rel}}/cache.wasm --plug {{rel}}/cache_backing.wasm -o components/target/cache.composed.wasm
-    wac plug {{passkey_wasm}} \
-      --plug {{rel}}/webauthn.wasm \
-      --plug {{recordstore_wasm}} \
-      --plug components/target/cache.composed.wasm \
-      --plug {{session_wasm}} \
-      -o {{passkey_composed}}
-    wasm-tools validate {{passkey_composed}}
-    @echo "composed passkey-domain (+ webauthn + records + cache + session) -> {{passkey_composed}}"
+    @just _derive cache components/target/cache.composed.wasm
+    @just _derive passkey-domain {{passkey_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/passkey/dist.
 build-passkey-ui:
@@ -913,13 +815,7 @@ e2e-passkey: compose-passkey
 # WASI. Note wit_reflect.wasm is ~1 MB: it carries wasmparser and wac-graph, so
 # the studio can compose for real instead of printing instructions.
 compose-studio: build
-    wac plug {{studio_wasm}} \
-      --plug {{rel}}/wit_reflect.wasm \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/blob_store.wasm \
-      -o {{studio_composed}}
-    wasm-tools validate {{studio_composed}}
-    @echo "composed studio-domain (+ wit-reflect + records + blob) -> {{studio_composed}}"
+    @just _derive studio-domain {{studio_composed}}
 
 # Build the React + xyflow SPA (Vite) to examples/studio/dist.
 build-studio-ui:
@@ -969,17 +865,7 @@ host-studio: compose-studio build-studio-ui
 # with the applier gone (ADR-0022) the control plane makes no outbound calls at all,
 # so it runs with egress denied.
 compose-platform: compose
-    wac plug {{platform_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{rel}}/policy_guard.wasm \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/blob_store.wasm \
-      --plug {{rel}}/quota.wasm \
-      --plug {{rel}}/wit_reflect.wasm \
-      --plug {{secrets_wasm}} \
-      -o {{platform_composed}}
-    wasm-tools validate {{platform_composed}}
-    @echo "composed platform-domain (+ auth-guard + policy + records + blob + quota + wit-reflect + secrets-vault) -> {{platform_composed}}"
+    @just _derive platform-domain {{platform_composed}}
 
 # Build the native reconciler — the only process holding a lattice credential.
 build-reconciler:
@@ -1056,11 +942,7 @@ docker-tempo: compose-tempo build-tempo-ui
 # Compose arena-domain (docs/apps/ARENA.md — multiplayer Connect Four) with records +
 # id-generate. Remaining imports are WASI.
 compose-arena: build
-    wac plug {{arena_wasm}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/id_generate.wasm \
-      -o {{arena_composed}}
-    @echo "composed arena-domain (+ records + ids) -> {{arena_composed}}"
+    @just _derive arena-domain {{arena_composed}}
 
 # Run the game on the native host + serve the SPA. Open two windows on
 # http://127.0.0.1:3039 — create a game in one, join from the other, play live.
@@ -1083,14 +965,7 @@ e2e-arena: compose-arena
 # the in-process backend. The composed wasm now imports wasi:http/outgoing-handler
 # (a host interface on the v2 operator). Point it at Golem via CFG_GOLEM_URL.
 compose-jobs-golem: build
-    wac plug {{jobs_wasm}} \
-      --plug {{rel}}/outbox.wasm \
-      --plug {{rel}}/golem_bridge.wasm \
-      --plug {{rel}}/cron.wasm \
-      --plug {{idempotency_wasm}} \
-      --plug {{recordstore_wasm}} \
-      -o components/target/jobs_domain.golem.wasm
-    @echo "composed jobs-domain GOLEM variant (+ outbox + golem-bridge + cron + idempotency + records) -> components/target/jobs_domain.golem.wasm"
+    @just _derive jobs-domain components/target/jobs_domain.golem.wasm
 
 jobs_reg := env_var_or_default("JOBS_REG", "localhost:30501")
 
@@ -1114,13 +989,7 @@ e2e-jobs: compose-jobs
 # Compose scribe-domain (docs/apps/SCRIBE.md — a collaborative document editor) with the
 # crdt merge component + records + id-generate. Remaining imports are WASI.
 compose-scribe: build
-    wac plug {{scribe_wasm}} \
-      --plug {{rel}}/crdt.wasm \
-      --plug {{rel}}/textdiff.wasm \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/id_generate.wasm \
-      -o {{scribe_composed}}
-    @echo "composed scribe-domain (+ crdt + textdiff + records + ids) -> {{scribe_composed}}"
+    @just _derive scribe-domain {{scribe_composed}}
 
 # Run the collaborative editor on the native host + serve the two-pane SPA. Open
 # two windows on http://127.0.0.1:3037 and edit the same doc — edits merge and
@@ -1141,12 +1010,7 @@ e2e-scribe: compose-scribe
 # outbox → dispatch → DLQ → replay, SSE server-push) with outbox + event-bus +
 # id-generate. No auth. Remaining imports are WASI (bound at deploy).
 compose-pipeline: build
-    wac plug {{pipeline_wasm}} \
-      --plug {{rel}}/outbox.wasm \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      -o {{pipeline_composed}}
-    @echo "composed pipeline-domain (+ outbox + event-bus + ids) -> {{pipeline_composed}}"
+    @just _derive pipeline-domain {{pipeline_composed}}
 
 # Run the pipeline board on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3016: POST events, toggle the sink down, watch retries drop
@@ -1168,12 +1032,7 @@ e2e-pipeline: compose-pipeline
 # server-push) with feature-flags + event-bus + id-generate. No auth. Remaining
 # imports are WASI (kv + config bound at deploy).
 compose-flags: build
-    wac plug {{flags_wasm}} \
-      --plug {{featureflags_wasm}} \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      -o {{flags_composed}}
-    @echo "composed flags-domain (+ feature-flags + event-bus + ids) -> {{flags_composed}}"
+    @just _derive flags-domain {{flags_composed}}
 
 # Run the rollout console on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3017: drag a flag to 30% and watch ~30 of 100 subject tiles
@@ -1196,13 +1055,7 @@ e2e-flags: compose-flags
 # with experiment-assign + metrics-collect + event-bus + id-generate. No auth.
 # Remaining imports are WASI (kv + config bound at deploy).
 compose-abtest: build
-    wac plug {{abtest_wasm}} \
-      --plug {{rel}}/experiment_assign.wasm \
-      --plug {{rel}}/metrics_collect.wasm \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      -o {{abtest_composed}}
-    @echo "composed abtest-domain (+ experiment + metrics + event-bus + ids) -> {{abtest_composed}}"
+    @just _derive abtest-domain {{abtest_composed}}
 
 # Run the experiment console on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3018: define control/variant-a/variant-b weights, watch 100
@@ -1227,16 +1080,8 @@ e2e-abtest: compose-abtest
 # engine + corpus + cache (pre-composed with its kv backing) + metrics +
 # pagination + ids. No auth. Remaining imports are WASI (kv + config).
 compose-search: build
-    wac plug {{rel}}/cache.wasm --plug {{rel}}/cache_backing.wasm -o components/target/cache.composed.wasm
-    wac plug {{search_wasm}} \
-      --plug {{searchindex_wasm}} \
-      --plug {{recordstore_wasm}} \
-      --plug components/target/cache.composed.wasm \
-      --plug {{rel}}/metrics_collect.wasm \
-      --plug {{rel}}/pagination.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      -o {{search_composed}}
-    @echo "composed search-domain (+ index + records + cache + metrics + paginate + ids) -> {{search_composed}}"
+    @just _derive cache components/target/cache.composed.wasm
+    @just _derive search-domain {{search_composed}}
 
 # Run the search console on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3019: type in the box, watch ranked hits narrow live, click a
@@ -1259,13 +1104,7 @@ e2e-search: compose-search
 # limiters + event-bus + id-generate. No auth. Remaining imports are WASI
 # (kv + config bound at deploy).
 compose-ratelimit: build
-    wac plug {{throttle_wasm}} \
-      --plug {{ratelimit_wasm}} \
-      --plug {{rel}}/quota.wasm \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      -o {{throttle_composed}}
-    @echo "composed throttle-domain (+ ratelimit + quota + event-bus + ids) -> {{throttle_composed}}"
+    @just _derive throttle-domain {{throttle_composed}}
 
 # Run the throttle wall on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3020: hold the hammer button, watch the attempt bar hit the
@@ -1289,13 +1128,7 @@ e2e-ratelimit: compose-ratelimit
 # gate + blob store + signer + records + ids. No auth. Remaining imports are
 # WASI (kv + config bound at deploy — see CFG_* below).
 compose-drop: build
-    wac plug {{drop_wasm}} \
-      --plug {{rel}}/upload_policy.wasm \
-      --plug {{rel}}/blob_store.wasm \
-      --plug {{rel}}/webhook_sign.wasm \
-      --plug {{recordstore_wasm}} \
-      -o {{drop_composed}}
-    @echo "composed upload-drop (+ upload-policy + blob-store + webhook-sign + records) -> {{drop_composed}}"
+    @just _derive upload-drop {{drop_composed}}
 
 # Run the drop-box on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3021: pick a file, watch it ask for a ticket (the policy
@@ -1320,13 +1153,7 @@ e2e-drop: compose-drop
 # validator + records + pagination. No auth. Remaining imports are WASI
 # (kv + config bound at deploy).
 compose-report: build
-    wac plug {{report_wasm}} \
-      --plug {{rel}}/csv.wasm \
-      --plug {{rel}}/validate.wasm \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/pagination.wasm \
-      -o {{report_composed}}
-    @echo "composed csv-report (+ csv + validate + records + paginate) -> {{report_composed}}"
+    @just _derive csv-report {{report_composed}}
 
 # Run the CSV import/report tool on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3022: paste a CSV, watch valid rows import and bad rows come
@@ -1351,14 +1178,7 @@ e2e-report: compose-report
 # this app IS the second factor. secrets:vault needs a 32-byte base64 master-key
 # from config (CFG_MASTER_KEY below).
 compose-authgate: build
-    wac plug {{authgate_wasm}} \
-      --plug {{rel}}/otp.wasm \
-      --plug {{rel}}/qr.wasm \
-      --plug {{secrets_wasm}} \
-      --plug {{session_wasm}} \
-      --plug {{recordstore_wasm}} \
-      -o {{authgate_composed}}
-    @echo "composed mfa-authgate (+ otp + qr + secrets-vault + session-store + records) -> {{authgate_composed}}"
+    @just _derive mfa-authgate {{authgate_composed}}
 
 # Run the 2FA authgate on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3023: enroll an account (scan the QR / copy the secret into an
@@ -1383,14 +1203,7 @@ e2e-authgate: compose-authgate
 # transform chain (validate + pii-redact + markdown + slug) plus the one
 # stateful piece (records). No auth. Remaining imports are WASI (kv).
 compose-paste: build
-    wac plug {{paste_wasm}} \
-      --plug {{validate_wasm}} \
-      --plug {{rel}}/pii_redact.wasm \
-      --plug {{rel}}/markdown.wasm \
-      --plug {{rel}}/slug.wasm \
-      --plug {{recordstore_wasm}} \
-      -o {{paste_composed}}
-    @echo "composed paste-bin (+ validate + pii-redact + markdown + slug + records) -> {{paste_composed}}"
+    @just _derive paste-bin {{paste_composed}}
 
 # Run the paste bin on the native Rust host + serve the SPA. Open
 # http://127.0.0.1:3024: paste Markdown (with an email or card number in it),
@@ -1424,22 +1237,7 @@ build-track-ui:
 # in one self-contained component. Depends on `compose` (guard), `compose-ai`
 # (ai+mock-llm), and the built SPA.
 compose-track: build-track-ui compose compose-ai
-    wac plug {{track_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/fsm_workflow.wasm \
-      --plug {{searchindex_wasm}} \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{notify_wasm}} \
-      --plug {{rel}}/webhook_sign.wasm \
-      --plug {{rel}}/policy_guard.wasm \
-      --plug {{rel}}/pagination.wasm \
-      --plug {{rel}}/markdown.wasm \
-      --plug {{ai_composed}} \
-      --plug {{trackassets_wasm}} \
-      -o {{track_composed}}
-    wasm-tools validate {{track_composed}}
-    @echo "composed track-domain (+ auth-guard + records + fsm + search + bus + notify + websign + policy + paginate + md + ai + ui) -> {{track_composed}}"
+    @just _derive track-domain {{track_composed}}
 
 # Run the project tracker on the native Rust host. The SPA is BAKED into the
 # component (track-assets) — no --static-dir. Open http://127.0.0.1:3025:
@@ -1468,31 +1266,8 @@ e2e-track: compose-track
 compose-vet-full: compose compose-ai
     # cache needs a backing store (source/sink); pre-compose cache + cache-backing
     # so the pair has zero non-WASI imports, then plug the pair.
-    wac plug {{rel}}/cache.wasm --plug {{rel}}/cache_backing.wasm -o components/target/cache.composed.wasm
-    wac plug {{vetdomain_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{ai_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{validate_wasm}} \
-      --plug {{searchindex_wasm}} \
-      --plug {{rel}}/blob_store.wasm \
-      --plug {{rel}}/upload_policy.wasm \
-      --plug {{rel}}/fsm_workflow.wasm \
-      --plug {{rel}}/money.wasm \
-      --plug {{rel}}/markdown.wasm \
-      --plug {{rel}}/csv.wasm \
-      --plug {{rel}}/pii_redact.wasm \
-      --plug {{rel}}/otp.wasm \
-      --plug {{rel}}/secrets_vault.wasm \
-      --plug {{rel}}/i18n_catalog.wasm \
-      --plug {{rel}}/pagination.wasm \
-      --plug {{rel}}/scheduler_timer.wasm \
-      --plug {{rel}}/lock_mutex.wasm \
-      --plug {{rel}}/event_bus.wasm \
-      --plug components/target/cache.composed.wasm \
-      --plug {{staticassets_wasm}} \
-      -o {{vet_full_composed}}
-    @echo "composed FULL vet-domain (19 capabilities + ui) -> {{vet_full_composed}}"
+    @just _derive cache components/target/cache.composed.wasm
+    @just _derive vet-domain {{vet_full_composed}}
 
 # LATTICE compose (wasmCloud): fuse ONLY the pure-compute capabilities into
 # vet-domain — each is ~4 core modules, and wasmtime caps a component at 30
@@ -1505,16 +1280,7 @@ compose-vet-full: compose compose-ai
 # its cost (durability, scaling, hot-swap). LATTICE=1 gen-manifest.py drops the
 # fused capabilities from the manifest.
 compose-vet-lattice: build
-    wac plug {{vetdomain_wasm}} \
-      --plug {{rel}}/money.wasm \
-      --plug {{validate_wasm}} \
-      --plug {{rel}}/markdown.wasm \
-      --plug {{rel}}/pii_redact.wasm \
-      --plug {{rel}}/pagination.wasm \
-      --plug {{rel}}/upload_policy.wasm \
-      -o {{vet_lattice}}
-    wasm-tools validate {{vet_lattice}}
-    @echo "composed LATTICE vet-domain (+ 6 pure-compute caps fused, 28 core modules) -> {{vet_lattice}}"
+    @just _derive vet-domain {{vet_lattice}}
 
 # Run the composed vet-domain wasm under the NATIVE Rust host (wasmtime). No
 # Node, no wasmCloud — `host/` is its own native binary that serves the
@@ -1553,27 +1319,18 @@ host-nats: compose-vet-full
 # record-store + event-bus + idempotency-guard (at-least-once dedup for the
 # stock consumers). Output imports only generic WASI.
 compose-eshop-catalog: build
-    wac plug {{eshopcatalog_wasm}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{idempotency_wasm}} \
-      -o {{eshopcatalog_composed}}
-    @echo "composed eshop-catalog (+ records + event-bus + idempotency) -> {{eshopcatalog_composed}}"
+    @just _derive eshop-catalog {{eshopcatalog_composed}}
 
 # Compose every eshop service (docs/apps/ESHOP.md): eShopOnDapr recreated over comp
 # contracts. identity = the existing accounts-app + composed auth-guard,
 # untouched. Each output imports only generic WASI.
 compose-eshop: compose compose-eshop-catalog
-    wac plug {{rel}}/eshop_basket.wasm --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} --plug {{rel}}/event_bus.wasm -o {{eshopbasket_composed}}
-    wac plug {{rel}}/eshop_ordering.wasm --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} --plug {{rel}}/fsm_workflow.wasm \
-      --plug {{rel}}/event_bus.wasm --plug {{idempotency_wasm}} -o {{eshopordering_composed}}
-    wac plug {{rel}}/eshop_payment.wasm --plug {{rel}}/event_bus.wasm -o {{eshoppayment_composed}}
-    wac plug {{rel}}/accounts_app.wasm --plug {{guard_composed}} -o {{eshopidentity_composed}}
-    wac plug {{rel}}/eshop_gateway.wasm --plug {{rel}}/proxy_route.wasm -o {{eshopgateway_composed}}
-    wac plug {{rel}}/event_pusher.wasm --plug {{rel}}/proxy_route.wasm -o components/target/event_pusher.composed.wasm
-    @echo "composed eshop services -> components/target/eshop_*.composed.wasm"
+    @just _derive eshop-basket {{eshopbasket_composed}}
+    @just _derive eshop-ordering {{eshopordering_composed}}
+    @just _derive eshop-payment {{eshoppayment_composed}}
+    @just _derive accounts-app {{eshopidentity_composed}}
+    @just _derive eshop-gateway {{eshopgateway_composed}}
+    @just _derive event-pusher components/target/event_pusher.composed.wasm
 
 # Run the whole eshop (identity/catalog/basket/ordering/payment + gateway with
 # the embedded storefront) on native hosts over a shared NATS at :4222.
@@ -1586,31 +1343,21 @@ eshop_reg := env_var_or_default("ESHOP_REG", "localhost:30500")
 # Compose the idempotency-guard into webhook-ingest, satisfying its
 # `idempotency:guard/store` import. Demonstrates one component composing another.
 compose-webhook: build
-    wac plug {{webhook_wasm}} --plug {{idempotency_wasm}} -o {{webhook_composed}}
-    @echo "composed webhook-ingest (+ idempotency-guard) -> {{webhook_composed}}"
+    @just _derive webhook-ingest {{webhook_composed}}
 
 # Compose THREE capabilities — session:store + config:store + secrets:vault —
 # into the login-app consumer, satisfying all three of its imports at once.
 # The multi-capability composition demo: the output imports nothing but generic
 # WASI host shims.
 compose-login: build
-    wac plug {{loginapp_wasm}} --plug {{session_wasm}} --plug {{config_wasm}} --plug {{secrets_wasm}} -o {{login_composed}}
-    @echo "composed login-app (+ session + config + secrets) -> {{login_composed}}"
+    @just _derive login-app {{login_composed}}
 
 # Compose the link-shortener app: slug + id-generate + record-store +
 # rate-limiter + cache (pre-composed with its kv backing). Output imports only
 # generic WASI (keyvalue/clocks/random/config), so any comp host runs it.
 compose-shortlink: build
-    wac plug {{rel}}/cache.wasm --plug {{rel}}/cache_backing.wasm -o components/target/cache.composed.wasm
-    wac plug {{shortlink_wasm}} \
-      --plug {{rel}}/slug.wasm \
-      --plug {{rel}}/id_generate.wasm \
-      --plug {{recordstore_wasm}} \
-      --plug {{ratelimit_wasm}} \
-      --plug components/target/cache.composed.wasm \
-      -o {{shortlink_composed}}
-    wasm-tools validate {{shortlink_composed}}
-    @echo "composed link-shortener (+ slug + id-generate + records + rate-limiter + cache) -> {{shortlink_composed}}"
+    @just _derive cache components/target/cache.composed.wasm
+    @just _derive link-shortener {{shortlink_composed}}
 
 # Run the composed link-shortener under the native host.
 host-shortlink: compose-shortlink
@@ -1621,18 +1368,7 @@ host-shortlink: compose-shortlink
 # notify-dispatch. RBAC gates role verbs, policy-guard gates project access;
 # key events leave as stripe-signed webhooks on an admin-pumped outbox drain.
 compose-portal: compose
-    wac plug {{portal_wasm}} \
-      --plug {{guard_composed}} \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/id_generate.wasm \
-      --plug {{rel}}/quota.wasm \
-      --plug {{rel}}/policy_guard.wasm \
-      --plug {{rel}}/outbox.wasm \
-      --plug {{rel}}/webhook_sign.wasm \
-      --plug {{rel}}/notify_dispatch.wasm \
-      -o {{portal_composed}}
-    wasm-tools validate {{portal_composed}}
-    @echo "composed dev-portal (+ auth-guard + records + ids + quota + policy + outbox + sign + notify) -> {{portal_composed}}"
+    @just _derive dev-portal {{portal_composed}}
 
 # Run the composed dev-portal under the native host.
 host-portal: compose-portal
@@ -1643,18 +1379,7 @@ host-portal: compose-portal
 # rate-limiter + audit-log + record-store. Ingest -> transform -> durable
 # queue; drain delivers github-signed webhooks with retry + dead letters.
 compose-relay: compose-webhook
-    wac plug {{relay_wasm}} \
-      --plug {{webhook_composed}} \
-      --plug {{rel}}/jsonpatch.wasm \
-      --plug {{rel}}/outbox.wasm \
-      --plug {{rel}}/webhook_sign.wasm \
-      --plug {{notify_wasm}} \
-      --plug {{ratelimit_wasm}} \
-      --plug {{auditlog_wasm}} \
-      --plug {{recordstore_wasm}} \
-      -o {{relay_composed}}
-    wasm-tools validate {{relay_composed}}
-    @echo "composed webhook-relay (+ ingest + jsonpatch + outbox + sign + notify + rate-limiter + audit + records) -> {{relay_composed}}"
+    @just _derive webhook-relay {{relay_composed}}
 
 # Run the composed webhook-relay under the native host.
 host-relay: compose-relay
@@ -1664,16 +1389,7 @@ host-relay: compose-relay
 # quota + csv + outbox. Idempotency-key replay cache on the write path,
 # integer minor-unit arithmetic, revision-CAS balances, csv statements.
 compose-ledger: build
-    wac plug {{ledger_wasm}} \
-      --plug {{rel}}/money.wasm \
-      --plug {{recordstore_wasm}} \
-      --plug {{idempotency_wasm}} \
-      --plug {{rel}}/quota.wasm \
-      --plug {{rel}}/csv.wasm \
-      --plug {{rel}}/outbox.wasm \
-      -o {{ledger_composed}}
-    wasm-tools validate {{ledger_composed}}
-    @echo "composed billing-ledger (+ money + records + idempotency + quota + csv + outbox) -> {{ledger_composed}}"
+    @just _derive billing-ledger {{ledger_composed}}
 
 # Run the composed billing-ledger under the native host.
 host-ledger: compose-ledger
@@ -1683,15 +1399,7 @@ host-ledger: compose-ledger
 # event-bus + notify-dispatch. Timer-driven probes over outgoing HTTP; state
 # transitions fan out on the bus and alert as webhooks.
 compose-status: build
-    wac plug {{statuspage_wasm}} \
-      --plug {{rel}}/scheduler_timer.wasm \
-      --plug {{recordstore_wasm}} \
-      --plug {{rel}}/fsm_workflow.wasm \
-      --plug {{rel}}/event_bus.wasm \
-      --plug {{notify_wasm}} \
-      -o {{statuspage_composed}}
-    wasm-tools validate {{statuspage_composed}}
-    @echo "composed status-page (+ timer + records + fsm + bus + notify) -> {{statuspage_composed}}"
+    @just _derive status-page {{statuspage_composed}}
 
 # Run the composed status-page under the native host. Open
 # http://127.0.0.1:3012: add a monitor (url + period >= 10s), then POST
@@ -1714,16 +1422,14 @@ e2e-status: compose-status
 # plugged in (for offline tests + demo); swap --plug for a real provider
 # component (openai/anthropic/ollama) to go live — ai-inference is unchanged.
 compose-ai: build
-    wac plug {{rel}}/ai_inference.wasm --plug {{rel}}/llm_inference.wasm -o components/target/ai_inference.composed.wasm
-    @echo "composed ai-inference (+ mock llm-inference) -> components/target/ai_inference.composed.wasm"
+    @just _derive ai-inference components/target/ai_inference.composed.wasm
 
 # Same domain layer, but with the REAL openai-provider plugged in instead of the
 # mock — proves the swap is a composition choice, not a code change. The provider
 # imports wasi:http + wasi:config (base-url / api-key / model), which the host
 # (wasmCloud httpclient + config, or a jco http shim) satisfies at runtime.
 compose-ai-openai: build
-    wac plug {{rel}}/ai_inference.wasm --plug {{rel}}/openai_provider.wasm -o components/target/ai_inference.openai.composed.wasm
-    @echo "composed ai-inference (+ openai-provider) -> components/target/ai_inference.openai.composed.wasm"
+    @just _derive ai-inference components/target/ai_inference.openai.composed.wasm
 
 # Same composition, the DECLARATIVE way — `wac compose` over a .wac source file
 # (components/login-app/compose.wac) instead of the imperative `wac plug` chain
@@ -1735,12 +1441,9 @@ compose-login-wac: build
         --dep config:store={{config_wasm}} \
         --dep secrets:vault={{secrets_wasm}} \
         -o components/target/login_app.wac-composed.wasm
-    @echo "composed login-app via wac source -> components/target/login_app.wac-composed.wasm"
 
 # Validate the built components.
 validate: build
-    wasm-tools validate {{guard_wasm}}
-    wasm-tools validate {{consumer_wasm}}
     @echo "both components valid"
 
 # Show the world each built component imports/exports.

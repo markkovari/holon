@@ -436,7 +436,12 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
         match stream.blocking_read(8192) {
             Ok(chunk) if chunk.is_empty() => break,
             Ok(chunk) => buf.extend_from_slice(&chunk),
-            Err(_) => break,
+            // `Closed` is how wasi:io says end-of-body; `LastOperationFailed` is a
+            // read that went wrong. Collapsing both into `break` returns a TRUNCATED
+            // body as if it were complete — the same silent truncation that, on the
+            // write side, took four runs to find.
+            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+            Err(_) => return Err(()),
         }
     }
     Ok(buf)

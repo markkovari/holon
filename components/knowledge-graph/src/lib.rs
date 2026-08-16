@@ -32,7 +32,7 @@ use base64::Engine as _;
 use bindings::comp::secrets::reader as secrets;
 use bindings::exports::knowledge::graph::store::{Direction, GraphError, Guest, Node};
 use bindings::wasi::config::store as config;
-use bindings::wasi::io::streams::OutputStream;
+use bindings::wasi::io::streams::{OutputStream, StreamError as OutputStreamError};
 use bindings::wasi::http::types::{
     Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
 };
@@ -217,11 +217,21 @@ fn sql(conn: &Conn, statement: &str) -> Result<String, GraphError> {
     let rb = resp.consume().map_err(|_| GraphError::Unavailable("no response body".into()))?;
     let stream = rb.stream().map_err(|_| GraphError::Unavailable("no response stream".into()))?;
     let mut out = Vec::new();
-    while let Ok(chunk) = stream.blocking_read(64 * 1024) {
-        if chunk.is_empty() {
-            break;
+    loop {
+        match stream.blocking_read(64 * 1024) {
+            Ok(chunk) if chunk.is_empty() => break,
+            Ok(chunk) => out.extend_from_slice(&chunk),
+            // End of body.
+            Err(OutputStreamError::Closed) => break,
+            // A failed read is not the end of the database's answer. Taking the
+            // truncated bytes and parsing them is how "half a result set" becomes
+            // "an empty result set" — a read that silently answers NOTHING FOUND
+            // for a row that exists. The write side of this component had the
+            // mirror-image bug and it took four runs to find.
+            Err(e) => {
+                return Err(GraphError::Unavailable(format!("reading the answer: {e:?}")))
+            }
         }
-        out.extend_from_slice(&chunk);
     }
     let text = String::from_utf8_lossy(&out).to_string();
     if !(200..300).contains(&status) {

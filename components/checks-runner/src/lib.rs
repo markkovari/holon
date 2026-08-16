@@ -120,11 +120,16 @@ fn post(body: &str) -> Result<(u16, String), EvalError> {
     let incoming = resp.consume().map_err(|_| net("no response body".into()))?;
     let stream = incoming.stream().map_err(|_| net("no response stream".into()))?;
     let mut buf = Vec::new();
-    while let Ok(chunk) = stream.blocking_read(64 * 1024) {
-        if chunk.is_empty() {
-            break;
+    loop {
+        match stream.blocking_read(64 * 1024) {
+            Ok(chunk) if chunk.is_empty() => break,
+            Ok(chunk) => buf.extend_from_slice(&chunk),
+            // End of body.
+            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+            // A failed read is not the end of the answer. Keeping the truncated
+            // bytes turns half a reply into a whole one that happens to be wrong.
+            Err(e) => return Err(net(format!("reading the response: {e:?}"))),
         }
-        buf.extend_from_slice(&chunk);
     }
     Ok((status, String::from_utf8_lossy(&buf).into_owned()))
 }

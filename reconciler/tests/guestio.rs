@@ -33,6 +33,29 @@ use comp_reconciler::fleet::repo_root;
 /// preamble, say — has somewhere to go other than a workaround.
 const ALLOWED: &[(&str, &str)] = &[];
 
+/// Read loops that may keep treating a failed read as the end of the body.
+const READS_ALLOWED: &[(&str, &str)] = &[
+    (
+        "agent-probe",
+        "reads its own test input; a truncated read fails an assertion rather than \
+         silently storing half a payload",
+    ),
+    (
+        "eshop-gateway",
+        "proxies to another component, which sees the truncation as a malformed \
+         request and refuses it",
+    ),
+    (
+        "photo-critic",
+        "a truncated image fails to decode; the failure is loud and immediate",
+    ),
+    (
+        "bench-suite",
+        "counts bytes to measure throughput; a failed read shows up as a number so \
+         far off that nobody reads it as a result",
+    ),
+];
+
 fn guest_sources() -> Vec<PathBuf> {
     let mut out = Vec::new();
     let Ok(dirs) = std::fs::read_dir(repo_root().join("components")) else { return out };
@@ -91,6 +114,63 @@ fn no_component_writes_an_unbounded_payload_in_one_call() {
          component that has one), or add the site to ALLOWED in this test with the \
          reason it cannot grow.",
         offenders.join("\n")
+    );
+}
+
+/// A failed read is not the end of the body.
+///
+/// `wasi:io`'s `blocking-read` signals end-of-body with `Err(StreamError::Closed)`
+/// and a genuine failure with `Err(StreamError::LastOperationFailed)`. Collapsing
+/// both into `break` — which 53 of 55 `read_body` copies did — returns a TRUNCATED
+/// body as if it were complete. For a handler that parses, that is a confusing
+/// 400; for `upload-drop` or `artifact-probe`, which store what they read, it is a
+/// half a file accepted as whole.
+///
+/// It is the same silent truncation as the write side, in the other direction, and
+/// it was found by asking the question that fixed the write side: the 55 copies of
+/// this function — do they agree? Two already distinguished the cases
+/// (`platform-domain`, `studio-domain`), which is how we know the shape is right
+/// rather than invented here.
+#[test]
+fn a_read_loop_tells_end_of_body_from_a_failed_read() {
+    let mut sloppy = Vec::new();
+    for path in guest_sources() {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if !line.contains("blocking_read") {
+                continue;
+            }
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            // The window is the loop body that follows the read.
+            let to = (i + 14).min(lines.len());
+            let window = lines[i..to].join("\n");
+            let distinguishes = window.contains("StreamError::Closed");
+            // `while let Ok(..)` has no error arm to distinguish anything in.
+            let swallows = line.contains("while let Ok(");
+            if !distinguishes && (swallows || window.contains("Err(_) => break")) {
+                let rel = path
+                    .strip_prefix(repo_root().join("components"))
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                if READS_ALLOWED.iter().any(|(site, _)| rel.starts_with(site)) {
+                    continue;
+                }
+                sloppy.push(format!("  {rel}:{}", i + 1));
+            }
+        }
+    }
+    assert!(
+        sloppy.is_empty(),
+        "these treat a failed read as the end of the body, so a truncated payload \
+         arrives looking complete:\n{}\n\nMatch `Err(StreamError::Closed)` for the \
+         end and handle the other arm, or add the site to READS_ALLOWED with the \
+         reason truncation is harmless there.",
+        sloppy.join("\n")
     );
 }
 

@@ -56,11 +56,16 @@ fn read_body(request: IncomingRequest) -> Vec<u8> {
     let Ok(body) = request.consume() else { return Vec::new() };
     let Ok(stream) = body.stream() else { return Vec::new() };
     let mut out = Vec::new();
-    while let Ok(chunk) = stream.blocking_read(64 * 1024) {
-        if chunk.is_empty() {
-            break;
+    loop {
+        match stream.blocking_read(64 * 1024) {
+            Ok(chunk) if chunk.is_empty() => break,
+            Ok(chunk) => out.extend_from_slice(&chunk),
+            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+            // No error channel here, so the choice is a truncated body or none.
+            // None: a caller reading an empty body fails cleanly, where half an
+            // artifact is a plausible-looking file that is not the one uploaded.
+            Err(_) => return Vec::new(),
         }
-        out.extend_from_slice(&chunk);
     }
     out
 }

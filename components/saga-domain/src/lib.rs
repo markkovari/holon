@@ -390,7 +390,13 @@ fn golem_book(url: &str, host: &str, workflow: &str) -> Result<String, String> {
                 match stream.blocking_read(8192) {
                     Ok(c) if c.is_empty() => break,
                     Ok(c) => bytes.extend_from_slice(&c),
-                    Err(_) => break,
+                    Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+                    // A failed read is not the end of the reply; a truncated one
+                    // parses into a plausible and wrong result.
+                    Err(_) => {
+                        bytes.clear();
+                        break;
+                    }
                 }
             }
         }
@@ -519,7 +525,12 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
         match stream.blocking_read(8192) {
             Ok(chunk) if chunk.is_empty() => break,
             Ok(chunk) => buf.extend_from_slice(&chunk),
-            Err(_) => break,
+            // `Closed` is how wasi:io says end-of-body; `LastOperationFailed` is a
+            // read that went wrong. Collapsing both into `break` returns a TRUNCATED
+            // body as if it were complete — the same silent truncation that, on the
+            // write side, took four runs to find.
+            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+            Err(_) => return Err(()),
         }
     }
     Ok(buf)
