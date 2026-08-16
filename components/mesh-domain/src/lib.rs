@@ -456,6 +456,19 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
+/// The most a request body may be, before the component stops reading it.
+///
+/// There was no ceiling anywhere: 148 of 150 components accumulated whatever
+/// arrived until the guest hit wasmtime's 64 MiB per-store memory cap and TRAPPED,
+/// which reaches the caller as a closed connection saying nothing about a size.
+/// A component that answers JSON has no business reading sixteen megabytes, and
+/// the ones that legitimately handle uploads police it themselves with a 413 and a
+/// granted max-size — those are left alone.
+///
+/// Generous on purpose. This is a backstop against an unbounded read, not a
+/// content policy; an API that needs a real limit should state its own and say 413.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
     let b = request.consume().map_err(|_| ())?;
     let stream = b.stream().map_err(|_| ())?;
@@ -463,7 +476,15 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
     loop {
         match stream.blocking_read(8192) {
             Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => buf.extend_from_slice(&chunk),
+            Ok(chunk) => {
+                // A ceiling, not a policy: past this the read stops and the caller
+                // is told, rather than growing until the store's memory cap traps
+                // the component and the connection just closes.
+                if buf.len() + chunk.len() > MAX_BODY_BYTES {
+                    return Err(());
+                }
+                buf.extend_from_slice(&chunk);
+            }
             // `Closed` is how wasi:io says end-of-body; `LastOperationFailed` is a
             // read that went wrong. Collapsing both into `break` returns a TRUNCATED
             // body as if it were complete — the same silent truncation that, on the

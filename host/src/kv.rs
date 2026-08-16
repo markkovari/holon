@@ -106,11 +106,11 @@ impl KvBackend for MemoryKv {
 
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
         let bucket = bucket.as_str();
-        Ok(self.buckets.lock().unwrap().get(bucket).and_then(|b| b.get(key)).map(|(_, v)| v.clone()))
+        Ok(crate::sync::held(&self.buckets).get(bucket).and_then(|b| b.get(key)).map(|(_, v)| v.clone()))
     }
     fn set(&self, bucket: &BucketId, key: &str, value: &[u8]) -> Result<()> {
         let bucket = bucket.as_str();
-        let mut g = self.buckets.lock().unwrap();
+        let mut g = crate::sync::held(&self.buckets);
         let b = g.entry(bucket.into()).or_default();
         let rev = b.get(key).map(|(r, _)| *r).unwrap_or(0) + 1;
         b.insert(key.into(), (rev, value.to_vec()));
@@ -118,22 +118,22 @@ impl KvBackend for MemoryKv {
     }
     fn delete(&self, bucket: &BucketId, key: &str) -> Result<()> {
         let bucket = bucket.as_str();
-        if let Some(b) = self.buckets.lock().unwrap().get_mut(bucket) {
+        if let Some(b) = crate::sync::held(&self.buckets).get_mut(bucket) {
             b.remove(key);
         }
         Ok(())
     }
     fn exists(&self, bucket: &BucketId, key: &str) -> Result<bool> {
         let bucket = bucket.as_str();
-        Ok(self.buckets.lock().unwrap().get(bucket).map(|b| b.contains_key(key)).unwrap_or(false))
+        Ok(crate::sync::held(&self.buckets).get(bucket).map(|b| b.contains_key(key)).unwrap_or(false))
     }
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         let bucket = bucket.as_str();
-        Ok(self.buckets.lock().unwrap().get(bucket).map(|b| b.keys().cloned().collect()).unwrap_or_default())
+        Ok(crate::sync::held(&self.buckets).get(bucket).map(|b| b.keys().cloned().collect()).unwrap_or_default())
     }
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
         let bucket = bucket.as_str();
-        let mut g = self.buckets.lock().unwrap();
+        let mut g = crate::sync::held(&self.buckets);
         let b = g.entry(bucket.into()).or_default();
         let (rev, cur) = b
             .get(key)
@@ -148,7 +148,7 @@ impl KvBackend for MemoryKv {
 
     fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<Versioned>> {
         let bucket = bucket.as_str();
-        Ok(self.buckets.lock().unwrap().get(bucket).and_then(|b| b.get(key)).cloned())
+        Ok(crate::sync::held(&self.buckets).get(bucket).and_then(|b| b.get(key)).cloned())
     }
 
     /// Atomic because the compare and the write happen under one lock. That is the
@@ -162,7 +162,7 @@ impl KvBackend for MemoryKv {
         expected: u64,
     ) -> Result<Cas> {
         let bucket = bucket.as_str();
-        let mut g = self.buckets.lock().unwrap();
+        let mut g = crate::sync::held(&self.buckets);
         let b = g.entry(bucket.into()).or_default();
         let current = b.get(key).map(|(r, _)| *r).unwrap_or(0);
         if current != expected {
@@ -212,13 +212,13 @@ impl KvBackend for RedisKv {
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
         let bucket = bucket.as_str();
         use redis::Commands;
-        let mut c = self.conn.lock().unwrap();
+        let mut c = crate::sync::held(&self.conn);
         let v: Option<Vec<u8>> = c.get(Self::k(bucket, key)).context("redis get")?;
         Ok(v)
     }
     fn set(&self, bucket: &BucketId, key: &str, value: &[u8]) -> Result<()> {
         let bucket = bucket.as_str();
-        let mut c = self.conn.lock().unwrap();
+        let mut c = crate::sync::held(&self.conn);
         // The revision moves for a plain `set` too, or a guarded write could land
         // on top of one and never know.
         redis::pipe()
@@ -234,7 +234,7 @@ impl KvBackend for RedisKv {
     fn delete(&self, bucket: &BucketId, key: &str) -> Result<()> {
         let bucket = bucket.as_str();
         use redis::Commands;
-        let mut c = self.conn.lock().unwrap();
+        let mut c = crate::sync::held(&self.conn);
         // The revision goes with it: a lingering one would make the next create
         // look like an update of something that is not there.
         c.del::<_, ()>(&[Self::k(bucket, key), Self::rev_k(bucket, key)][..])
@@ -244,13 +244,13 @@ impl KvBackend for RedisKv {
     fn exists(&self, bucket: &BucketId, key: &str) -> Result<bool> {
         let bucket = bucket.as_str();
         use redis::Commands;
-        let mut c = self.conn.lock().unwrap();
+        let mut c = crate::sync::held(&self.conn);
         Ok(c.exists(Self::k(bucket, key)).context("redis exists")?)
     }
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         let bucket = bucket.as_str();
         use redis::Commands;
-        let mut c = self.conn.lock().unwrap();
+        let mut c = crate::sync::held(&self.conn);
         let prefix = format!("{bucket}{SEP}");
         let pattern = format!("{prefix}*");
         let keys: Vec<String> = c.scan_match(pattern).context("redis scan")?.collect();
@@ -258,7 +258,7 @@ impl KvBackend for RedisKv {
     }
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
         let bucket = bucket.as_str();
-        let mut c = self.conn.lock().unwrap();
+        let mut c = crate::sync::held(&self.conn);
         let (next,): (i64,) = redis::pipe()
             .atomic()
             .incr(Self::k(bucket, key), delta as i64)
@@ -272,7 +272,7 @@ impl KvBackend for RedisKv {
     fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<Versioned>> {
         let bucket = bucket.as_str();
         use redis::Commands;
-        let mut c = self.conn.lock().unwrap();
+        let mut c = crate::sync::held(&self.conn);
         // One MGET so the value and its revision come from the same instant. Two
         // round trips could straddle a write and hand back a revision that does not
         // belong to the value beside it.
@@ -303,7 +303,7 @@ impl KvBackend for RedisKv {
             return {1, nxt}
             "#,
         );
-        let mut c = self.conn.lock().unwrap();
+        let mut c = crate::sync::held(&self.conn);
         let (ok, rev): (i64, i64) = script
             .key(Self::k(bucket, key))
             .key(Self::rev_k(bucket, key))
@@ -414,7 +414,7 @@ impl NatsKv {
     }
 
     fn store_for(&self, bucket: &str) -> Result<JsStore> {
-        if let Some(s) = self.stores.read().unwrap().get(bucket) {
+        if let Some(s) = crate::sync::reading(&self.stores).get(bucket) {
             return Ok(s.clone());
         }
         let name = Self::bucket_name(bucket);
@@ -455,7 +455,7 @@ impl NatsKv {
                 }
             }
         })?;
-        self.stores.write().unwrap().insert(bucket.to_string(), store.clone());
+        crate::sync::writing(&self.stores).insert(bucket.to_string(), store.clone());
         Ok(store)
     }
 
@@ -730,7 +730,7 @@ impl KvBackend for SqliteKv {
 
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
         let bucket = bucket.as_str();
-        let conn = self.conn.lock().unwrap();
+        let conn = crate::sync::held(&self.conn);
         let mut q = conn.prepare_cached("SELECT value FROM kv WHERE bucket = ?1 AND key = ?2")?;
         let mut rows = q.query(rusqlite::params![bucket, key])?;
         match rows.next()? {
@@ -741,7 +741,7 @@ impl KvBackend for SqliteKv {
 
     fn set(&self, bucket: &BucketId, key: &str, value: &[u8]) -> Result<()> {
         let bucket = bucket.as_str();
-        let conn = self.conn.lock().unwrap();
+        let conn = crate::sync::held(&self.conn);
         // The revision moves for a plain `set` too, or a guarded write could land
         // on top of one and never know.
         conn.prepare_cached(
@@ -754,7 +754,7 @@ impl KvBackend for SqliteKv {
 
     fn delete(&self, bucket: &BucketId, key: &str) -> Result<()> {
         let bucket = bucket.as_str();
-        let conn = self.conn.lock().unwrap();
+        let conn = crate::sync::held(&self.conn);
         conn.prepare_cached("DELETE FROM kv WHERE bucket = ?1 AND key = ?2")?
             .execute(rusqlite::params![bucket, key])?;
         Ok(())
@@ -762,7 +762,7 @@ impl KvBackend for SqliteKv {
 
     fn exists(&self, bucket: &BucketId, key: &str) -> Result<bool> {
         let bucket = bucket.as_str();
-        let conn = self.conn.lock().unwrap();
+        let conn = crate::sync::held(&self.conn);
         let mut q = conn
             .prepare_cached("SELECT 1 FROM kv WHERE bucket = ?1 AND key = ?2")?;
         Ok(q.exists(rusqlite::params![bucket, key])?)
@@ -770,7 +770,7 @@ impl KvBackend for SqliteKv {
 
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         let bucket = bucket.as_str();
-        let conn = self.conn.lock().unwrap();
+        let conn = crate::sync::held(&self.conn);
         let mut q = conn.prepare_cached("SELECT key FROM kv WHERE bucket = ?1 ORDER BY key")?;
         let rows = q.query_map(rusqlite::params![bucket], |r| r.get::<_, String>(0))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
@@ -785,7 +785,7 @@ impl KvBackend for SqliteKv {
     /// backend does (ADR-0008).
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
         let bucket = bucket.as_str();
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = crate::sync::held(&self.conn);
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let current: Option<Vec<u8>> = tx
             .prepare_cached("SELECT value FROM kv WHERE bucket = ?1 AND key = ?2")?
@@ -809,7 +809,7 @@ impl KvBackend for SqliteKv {
 
     fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<Versioned>> {
         let bucket = bucket.as_str();
-        let conn = self.conn.lock().unwrap();
+        let conn = crate::sync::held(&self.conn);
         let mut q =
             conn.prepare_cached("SELECT rev, value FROM kv WHERE bucket = ?1 AND key = ?2")?;
         let mut rows = q.query(rusqlite::params![bucket, key])?;
@@ -831,7 +831,7 @@ impl KvBackend for SqliteKv {
         expected: u64,
     ) -> Result<Cas> {
         let bucket = bucket.as_str();
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = crate::sync::held(&self.conn);
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let current: u64 = tx
             .prepare_cached("SELECT rev FROM kv WHERE bucket = ?1 AND key = ?2")?

@@ -190,18 +190,35 @@ test:
         (cd "$ws" && cargo build --release --bins && cargo test --release --workspace --no-run)
       fi
     done
+    # Teed, so the skips can be counted afterwards. A skipped test reports as a
+    # PASS, and that is the one number nobody should read casually: without Docker
+    # the suites proving the knowledge loop, the contract negotiation and every
+    # composed deployment all skip, and the umbrella still says everything passed.
+    # Failing on a skip would be wrong — skipping is correct on a machine with no
+    # database — so it is counted and named instead.
+    log="$(mktemp -t comp-test-XXXX)"
+    trap 'rm -f "$log"' EXIT
     for ws in components host lattice cli reconciler; do
       echo "=== $ws"
       if [ "$ws" = components ]; then
         # shellcheck disable=SC2086
-        (cd "$ws" && cargo test --release --workspace $excludes)
+        (cd "$ws" && cargo test --release --workspace $excludes) 2>&1 | tee -a "$log"
       else
-        (cd "$ws" && cargo test --release --workspace)
+        (cd "$ws" && cargo test --release --workspace) 2>&1 | tee -a "$log"
       fi
     done
+    skipped=$(grep -c 'SKIPPED' "$log" || true)
+    echo
+    if [ "$skipped" -gt 0 ]; then
+      echo "$skipped test(s) SKIPPED — green here does not mean these were verified:"
+      grep 'SKIPPED' "$log" | sed 's/^/  /' | cut -c1-110
+    else
+      echo "nothing skipped: every suite that can run, ran."
+    fi
     echo
     echo "open goals, not run above (their held-out tests are the spec, and fail on purpose):"
     for c in {{GOAL_STUBS}}; do echo "  components/$c — cargo test -p $c"; done
+
 
 # The same, without the slow integration suites — for a quick check while editing.
 test-fast:

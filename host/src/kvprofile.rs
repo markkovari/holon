@@ -119,7 +119,7 @@ impl ProfileKv {
     /// its steady state have different mixes, and a running total is the honest
     /// summary of the whole run either way.
     pub fn report(&self) -> String {
-        let s = self.stats.lock().unwrap();
+        let s = crate::sync::held(&self.stats);
         let reads = s.get.calls + s.exists.calls + s.list_keys.calls + s.get_revision.calls;
         let writes = s.set.calls + s.delete.calls + s.increment.calls + s.set_if_revision.calls;
         let total = reads + writes;
@@ -220,7 +220,7 @@ impl KvBackend for ProfileKv {
         let t = Instant::now();
         let r = self.inner.get(bucket, key);
         let d = t.elapsed();
-        let mut s = self.stats.lock().unwrap();
+        let mut s = crate::sync::held(&self.stats);
         s.get.add(d);
         s.touch(id(bucket, key));
         r
@@ -230,7 +230,7 @@ impl KvBackend for ProfileKv {
         let t = Instant::now();
         let r = self.inner.set(bucket, key, value);
         let d = t.elapsed();
-        let mut s = self.stats.lock().unwrap();
+        let mut s = crate::sync::held(&self.stats);
         s.set.add(d);
         s.invalidate(&id(bucket, key));
         r
@@ -240,7 +240,7 @@ impl KvBackend for ProfileKv {
         let t = Instant::now();
         let r = self.inner.delete(bucket, key);
         let d = t.elapsed();
-        let mut s = self.stats.lock().unwrap();
+        let mut s = crate::sync::held(&self.stats);
         s.delete.add(d);
         s.invalidate(&id(bucket, key));
         r
@@ -252,7 +252,7 @@ impl KvBackend for ProfileKv {
         let d = t.elapsed();
         // Counted as a read but NOT as a cache hit: `exists` answers from metadata a
         // value cache does not necessarily hold.
-        self.stats.lock().unwrap().exists.add(d);
+        crate::sync::held(&self.stats).exists.add(d);
         r
     }
 
@@ -260,7 +260,7 @@ impl KvBackend for ProfileKv {
         let t = Instant::now();
         let r = self.inner.list_keys(bucket);
         let d = t.elapsed();
-        self.stats.lock().unwrap().list_keys.add(d);
+        crate::sync::held(&self.stats).list_keys.add(d);
         r
     }
 
@@ -268,7 +268,7 @@ impl KvBackend for ProfileKv {
         let t = Instant::now();
         let r = self.inner.increment(bucket, key, delta);
         let d = t.elapsed();
-        let mut s = self.stats.lock().unwrap();
+        let mut s = crate::sync::held(&self.stats);
         s.increment.add(d);
         // A read-modify-write, and the reason ADR-0059's mirror excluded it: a
         // cached read here is a LOST UPDATE, not a stale one.
@@ -284,7 +284,7 @@ impl KvBackend for ProfileKv {
         let t = Instant::now();
         let r = self.inner.get_revision(bucket, key);
         let d = t.elapsed();
-        self.stats.lock().unwrap().get_revision.add(d);
+        crate::sync::held(&self.stats).get_revision.add(d);
         r
     }
 
@@ -298,7 +298,7 @@ impl KvBackend for ProfileKv {
         let t = Instant::now();
         let r = self.inner.set_if_revision(bucket, key, value, expected);
         let d = t.elapsed();
-        let mut s = self.stats.lock().unwrap();
+        let mut s = crate::sync::held(&self.stats);
         s.set_if_revision.add(d);
         s.invalidate(&id(bucket, key));
         r

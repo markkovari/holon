@@ -72,23 +72,23 @@ impl CacheKv {
     }
 
     pub fn report(&self) -> String {
-        let (h, m) = *self.hits.lock().unwrap();
+        let (h, m) = *crate::sync::held(&self.hits);
         format!(
             "comp-host --kv-cache-ms {}: {h} hits, {m} misses ({:.1}% served), {} entries held",
             self.ttl.as_millis(),
             100.0 * h as f64 / (h + m).max(1) as f64,
-            self.entries.lock().unwrap().len()
+            crate::sync::held(&self.entries).len()
         )
     }
 
     fn fresh(&self, id: &str) -> Option<Option<Vec<u8>>> {
-        let entries = self.entries.lock().unwrap();
+        let entries = crate::sync::held(&self.entries);
         let (at, v) = entries.get(id)?;
         (at.elapsed() < self.ttl).then(|| v.clone())
     }
 
     fn store(&self, id: String, v: Option<Vec<u8>>) {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = crate::sync::held(&self.entries);
         if entries.len() >= MAX_ENTRIES {
             entries.clear();
         }
@@ -100,7 +100,7 @@ impl CacheKv {
     /// servable would break read-your-own-writes on the node that did the writing,
     /// which is the one guarantee this design does keep.
     fn drop_key(&self, id: &str) {
-        self.entries.lock().unwrap().remove(id);
+        crate::sync::held(&self.entries).remove(id);
     }
 }
 
@@ -116,10 +116,10 @@ impl KvBackend for CacheKv {
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
         let id = id(bucket, key);
         if let Some(v) = self.fresh(&id) {
-            self.hits.lock().unwrap().0 += 1;
+            crate::sync::held(&self.hits).0 += 1;
             return Ok(v);
         }
-        self.hits.lock().unwrap().1 += 1;
+        crate::sync::held(&self.hits).1 += 1;
         let v = self.inner.get(bucket, key)?;
         self.store(id, v.clone());
         Ok(v)
