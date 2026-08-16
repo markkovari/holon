@@ -545,6 +545,17 @@ pub fn run_parts(
             let mut ss = default_strategies(bounds.branches);
             let Some(m) = w.memory else { return ss };
             let goal = part.plan["text"].as_str().unwrap_or_default().to_string();
+            // What this part's work touches, so what it learns is findable by the
+            // next part to build against the same interfaces rather than only by
+            // the next part to describe its goal the same way (ADR-0090).
+            let writable: Vec<String> = part.plan["writable"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .unwrap_or_default();
+            let tags = crate::plug::tags_for(
+                &writable,
+                &crate::plug::Catalog::scan(&crate::plug::default_dirs(&crate::fleet::repo_root())),
+            );
             for (i, s) in ss.iter_mut().enumerate() {
                 // The control arm reads nothing here too — it is the only way to
                 // tell whether the pool helps this part or merely costs it.
@@ -559,6 +570,7 @@ pub fn run_parts(
                         1 => vec!["errors".into()],
                         _ => vec!["patterns".into(), "solutions".into()],
                     },
+                    tags: tags.clone(),
                 };
                 match m.recall(&goal, &reading) {
                     Ok(lessons) if lessons.is_empty() => {}

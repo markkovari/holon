@@ -419,6 +419,30 @@ pub fn compose_to(name: &str, catalog: &Catalog, out_dir: &Path) -> Result<PathB
     Ok(out)
 }
 
+/// What a piece of work TOUCHES, as tags for the knowledge pool (ADR-0090).
+///
+/// Given the files a part may write — `components/clinic-domain/src/reports.rs` —
+/// this names the component and every interface that component imports. Those are
+/// the keys a later run with different wording can be found by: a lesson about
+/// `csv:codec/codec` is true for a billing ledger and a veterinary clinic alike,
+/// and nothing in their goal text connects them.
+///
+/// Derived, never authored. A tag decides what future runs are shown, so it comes
+/// from the artifact rather than from the model that would like to be found — the
+/// same rule that keeps `promote` out of an agent's world (ADR-0084).
+pub fn tags_for(writable: &[String], catalog: &Catalog) -> Vec<String> {
+    let mut tags = BTreeSet::new();
+    for path in writable {
+        // `components/<name>/...` is the only shape that names a component.
+        let Some(rest) = path.strip_prefix("components/") else { continue };
+        let Some(component) = rest.split('/').next() else { continue };
+        let Some(surface) = catalog.surface(component) else { continue };
+        tags.insert(component.to_string());
+        tags.extend(surface.imports.iter().cloned());
+    }
+    tags.into_iter().collect()
+}
+
 /// The directories built components normally live in.
 pub fn default_dirs(repo_root: &Path) -> Vec<PathBuf> {
     ["wasm32-wasip2/release", "wasm32-wasip2/debug", "wasm32-wasip1/debug"]
