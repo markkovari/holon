@@ -28,90 +28,35 @@
 //! says so is honest; one that passes because it did nothing is not.
 
 use std::process::Command;
-use std::time::Duration;
 
 use serde_json::Value;
 
 mod harness;
-use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
+use harness::{Store, SURREAL_IMAGE};
 
 /// The app the join is asserted against. It reaches `csv:codec/codec` through a
 /// part rather than through its own root, so a pass cannot be explained by the app
 /// node alone.
 const APP: &str = "vet";
 
-/// A SurrealDB from the shared harness, plus the two things this file adds: a way
-/// to run the projection binary into it, and a reader for the last statement's
-/// result.
+/// Write one generation of the projection, exactly as `just capgraph-store`
+/// does: the tool's stdout, unedited, posted to `/sql`.
 ///
-/// The container, the pinned image, the free port and the `Drop` that reclaims it
-/// all come from `harness::Surreal`, which every other database test in this suite
-/// already uses.
-struct Store {
-    db: Surreal,
-    http: reqwest::blocking::Client,
-}
-
-impl Store {
-    fn start() -> Option<Self> {
-        let db = Surreal::start()?;
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(120))
-            .build()
-            .unwrap();
-        let me = Self { db, http };
-        me.raw("DEFINE NAMESPACE IF NOT EXISTS holon;");
-        me.raw("DEFINE DATABASE IF NOT EXISTS holon;");
-        Some(me)
-    }
-
-    fn raw(&self, body: &str) -> Vec<Value> {
-        let text = self
-            .http
-            .post(format!("http://127.0.0.1:{}/sql", self.db.port))
-            .basic_auth("root", Some(SURREAL_PASSWORD))
-            .header("accept", "application/json")
-            .header("surreal-ns", "holon")
-            .header("surreal-db", "holon")
-            .body(body.to_string())
-            .send()
-            .and_then(|r| r.text())
-            .unwrap_or_default();
-        serde_json::from_str(&text).unwrap_or_default()
-    }
-
-    /// The result of the LAST statement, with every statement checked. A rejected
-    /// statement in the middle of a projection is the failure mode that would
-    /// otherwise show up as a mysteriously empty query later.
-    fn last(&self, body: &str) -> Value {
-        let answered = self.raw(body);
-        let failed: Vec<&Value> = answered.iter().filter(|s| s["status"] != "OK").collect();
-        assert!(failed.is_empty(), "{} statement(s) rejected: {:?}", failed.len(), failed);
-        answered.last().map(|s| s["result"].clone()).unwrap_or(Value::Null)
-    }
-
-    fn count(&self, table: &str) -> u64 {
-        self.last(&format!("SELECT count() FROM {table} GROUP ALL;"))[0]["count"]
-            .as_u64()
-            .unwrap_or(0)
-    }
-
-    /// Write one generation of the projection, exactly as `just capgraph-store`
-    /// does: the tool's stdout, unedited, posted to `/sql`.
-    fn project(&self, generation: u64) {
-        let out = Command::new(env!("CARGO_BIN_EXE_comp-capgraph"))
-            .args(["--format", "surql", "--gen", &generation.to_string()])
-            .output()
-            .expect("comp-capgraph did not run");
-        assert!(
-            out.status.success(),
-            "comp-capgraph failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let sql = String::from_utf8_lossy(&out.stdout).to_string();
-        assert!(sql.contains("UPSERT interface:"), "projection wrote no interfaces");
-        self.last(&sql);
-    }
+/// Not on `harness::Store` because it is the one capgraph-specific thing here —
+/// the harness owns talking to SurrealDB, this owns what capgraph writes into it.
+fn project(db: &Store, generation: u64) {
+    let out = Command::new(env!("CARGO_BIN_EXE_comp-capgraph"))
+        .args(["--format", "surql", "--gen", &generation.to_string()])
+        .output()
+        .expect("comp-capgraph did not run");
+    assert!(
+        out.status.success(),
+        "comp-capgraph failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let sql = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(sql.contains("UPSERT interface:"), "projection wrote no interfaces");
+    db.last(&sql);
 }
 
 /// The connections survive being written to the database.
@@ -127,7 +72,7 @@ fn the_projection_preserves_the_app_and_component_connections() {
         eprintln!("SKIPPED: docker could not start {SURREAL_IMAGE} — the connections are unverified");
         return;
     };
-    db.project(1);
+    project(&db, 1);
 
     // 1. No edge points at a node that is not there. `out.name = NONE` is how a
     //    dangling record link reads, and it is exactly what a partial write or a
@@ -215,7 +160,7 @@ fn the_join_works_and_a_rebuild_cannot_reach_the_lessons() {
     db.last(SEED);
     assert_eq!(db.count("memory"), 2, "the fixture did not seed the accumulated half");
 
-    db.project(1);
+    project(&db, 1);
 
     // The derived half arrived. Exact counts are not asserted — they move every
     // time somebody adds a component, and a test that has to be edited for that is
@@ -248,7 +193,7 @@ fn the_join_works_and_a_rebuild_cannot_reach_the_lessons() {
 
     // 2. THE ISOLATION. A second generation lands on top of a live pool.
     let before = db.count("memory");
-    db.project(2);
+    project(&db, 2);
     assert_eq!(
         db.count("memory"),
         before,

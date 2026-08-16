@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 mod harness;
-use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
+use harness::{Store, SURREAL_IMAGE};
 
 /// How much bigger than the real catalogue each round is. `1` is not synthetic at
 /// all — it is the repository as it stands, which anchors the synthetic rows to
@@ -75,60 +75,6 @@ const SUPERLINEAR_ALLOWANCE: f64 = 8.0;
 /// real app, so the assertion survives the synthetic rows being removed.
 const TAGGED: &str = "csv:codec/codec@0.1.0";
 const APP: &str = "vet";
-
-struct Store {
-    db: Surreal,
-    http: reqwest::blocking::Client,
-}
-
-impl Store {
-    fn start() -> Option<Self> {
-        let db = Surreal::start()?;
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(600))
-            .build()
-            .unwrap();
-        let me = Self { db, http };
-        me.raw("DEFINE NAMESPACE IF NOT EXISTS holon;");
-        me.raw("DEFINE DATABASE IF NOT EXISTS holon;");
-        Some(me)
-    }
-
-    fn raw(&self, body: &str) -> Vec<Value> {
-        let text = self
-            .http
-            .post(format!("http://127.0.0.1:{}/sql", self.db.port))
-            .basic_auth("root", Some(SURREAL_PASSWORD))
-            .header("accept", "application/json")
-            .header("surreal-ns", "holon")
-            .header("surreal-db", "holon")
-            .body(body.to_string())
-            .send()
-            .and_then(|r| r.text())
-            .unwrap_or_default();
-        serde_json::from_str(&text).unwrap_or_default()
-    }
-
-    fn last(&self, body: &str) -> Value {
-        let answered = self.raw(body);
-        let failed: Vec<&Value> = answered.iter().filter(|s| s["status"] != "OK").collect();
-        assert!(failed.is_empty(), "{} statement(s) rejected: {:?}", failed.len(), failed);
-        answered.last().map(|s| s["result"].clone()).unwrap_or(Value::Null)
-    }
-
-    fn count(&self, table: &str) -> u64 {
-        self.last(&format!("SELECT count() FROM {table} GROUP ALL;"))[0]["count"]
-            .as_u64()
-            .unwrap_or(0)
-    }
-
-    /// Post a body and return how long the server took to answer it.
-    fn timed(&self, body: &str) -> (Duration, Value) {
-        let at = Instant::now();
-        let out = self.last(body);
-        (at.elapsed(), out)
-    }
-}
 
 /// The real projection, as the tool emits it.
 fn real_projection(generation: u64) -> String {

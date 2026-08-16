@@ -260,3 +260,85 @@ impl Surreal {
     }
 }
 
+
+/// A SurrealDB with a `holon` namespace and a reader for what it answered.
+///
+/// `Surreal` above gives a container; this gives a way to talk to it. Both
+/// capgraph database tests want the same four things — define the namespace,
+/// post SurrealQL, read the last statement's result, count a table — and each
+/// had its own copy until the second one was written.
+///
+/// The reason it belongs here rather than in one test that the other imports: a
+/// test file is not a library, and the one that happened to be written first is
+/// not more canonical than the second. `harness` is where this suite already
+/// puts what more than one test needs.
+pub struct Store {
+    db: Surreal,
+    http: reqwest::blocking::Client,
+}
+
+impl Store {
+    /// A container with the namespace defined, or `None` when Docker cannot
+    /// start one. The caller decides whether that is a skip or a failure.
+    pub fn start() -> Option<Self> {
+        let db = Surreal::start()?;
+        let http = reqwest::blocking::Client::builder()
+            // Long, because a stress round posts a lot of statements at once.
+            .timeout(Duration::from_secs(600))
+            .build()
+            .unwrap();
+        let me = Self { db, http };
+        me.raw("DEFINE NAMESPACE IF NOT EXISTS holon;");
+        me.raw("DEFINE DATABASE IF NOT EXISTS holon;");
+        Some(me)
+    }
+
+    /// The port the container is bound to, for a test that needs to reach it by
+    /// some route other than `raw`.
+    pub fn port(&self) -> u16 {
+        self.db.port
+    }
+
+    /// Post SurrealQL and return the per-statement array, unchecked.
+    pub fn raw(&self, body: &str) -> Value {
+        let text = self
+            .http
+            .post(format!("http://127.0.0.1:{}/sql", self.db.port))
+            .basic_auth("root", Some(SURREAL_PASSWORD))
+            .header("accept", "application/json")
+            .header("surreal-ns", "holon")
+            .header("surreal-db", "holon")
+            .body(body.to_string())
+            .send()
+            .and_then(|r| r.text())
+            .unwrap_or_default();
+        serde_json::from_str(&text).unwrap_or(Value::Null)
+    }
+
+    /// The result of the LAST statement, with every statement checked.
+    ///
+    /// A rejected statement in the middle of a multi-statement body is the
+    /// failure mode that would otherwise surface much later as a mysteriously
+    /// empty query, pointing at the read rather than the write that failed.
+    pub fn last(&self, body: &str) -> Value {
+        let answered = self.raw(body);
+        let empty = Vec::new();
+        let statements = answered.as_array().unwrap_or(&empty);
+        let failed: Vec<&Value> = statements.iter().filter(|s| s["status"] != "OK").collect();
+        assert!(failed.is_empty(), "{} statement(s) rejected: {:?}", failed.len(), failed);
+        statements.last().map(|s| s["result"].clone()).unwrap_or(Value::Null)
+    }
+
+    pub fn count(&self, table: &str) -> u64 {
+        self.last(&format!("SELECT count() FROM {table} GROUP ALL;"))[0]["count"]
+            .as_u64()
+            .unwrap_or(0)
+    }
+
+    /// `last`, plus how long the server took to answer.
+    pub fn timed(&self, body: &str) -> (Duration, Value) {
+        let at = std::time::Instant::now();
+        let out = self.last(body);
+        (at.elapsed(), out)
+    }
+}
