@@ -32,6 +32,18 @@ async function surql(page: Page, body: string) {
 /// to the platform, so a test that fabricated one would skip the exchange that
 /// makes every later request authenticate. Driving the form is also the only way
 /// to prove the SPA can actually get in.
+/// A node on the canvas, by its label.
+///
+/// Scoped to `.react-flow__node` rather than to the graph box: the selection panel
+/// is laid over the canvas and repeats the branch name, so a plain text lookup
+/// inside the box matches twice once something is selected.
+function graphNode(page: Page, label: string) {
+  return page
+    .locator(".react-flow__node")
+    .filter({ has: page.getByText(label, { exact: true }) })
+    .first();
+}
+
 async function signIn(page: Page) {
   await page.goto("/");
   await page.getByPlaceholder("email").fill("e2e@example.test");
@@ -126,7 +138,7 @@ test.describe("the run view", () => {
     // The WINNER, because it is the branch whose paths became the capability —
     // the one place `run → round → attempt → capability` is a real chain rather
     // than a diagram.
-    await page.getByTestId("run-graph").getByText("mvp", { exact: true }).click();
+    await graphNode(page, "mvp").click();
 
     const panel = page.getByTestId("attempt-panel");
     await expect(panel).toBeVisible();
@@ -152,7 +164,7 @@ test.describe("the run view", () => {
       .toBeLessThan(all);
 
     // Clicking the same node again clears it.
-    await page.getByTestId("run-graph").getByText("mvp", { exact: true }).click();
+    await graphNode(page, "mvp").click();
     await expect(page.getByTestId("attempt-panel")).toHaveCount(0);
     await expect(timeline.locator("li[data-selected]")).toHaveCount(0);
   });

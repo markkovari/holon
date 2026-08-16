@@ -55,7 +55,11 @@ function Shell({ children }: { children: React.ReactNode }) {
       <header className="border-b border-slate-800 px-6 py-4">
         <h1 className="text-sm font-semibold tracking-wide text-slate-300">HOLON</h1>
       </header>
-      <main className="mx-auto max-w-3xl px-6 py-8">{children}</main>
+      {/* 5xl rather than 3xl. The prose here is short — goal titles and event
+          lines — and the run graph is the widest thing the console renders; at
+          3xl `fitView` was shrinking a three-round run until its labels were
+          unreadable. */}
+      <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
     </div>
   );
 }
