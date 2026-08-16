@@ -7,7 +7,9 @@ Derived from the BUILT artifacts, not from `components/*/wit/` and not from the
 the ones nothing calls — so this cannot drift from what the components
 actually do, the way a hand-maintained dependency list does.
 
-**150 components, 80 interfaces with a provider and at least one consumer, 300 import edges, 13 interfaces exported but unconsumed in-tree.**
+Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
+
+**150 components, 80 interfaces with a provider and at least one consumer, 300 import edges, 13 interfaces exported but unconsumed in-tree, 56 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -137,6 +139,198 @@ graph LR
   agent_writer[agent-writer] --> graph_agent_writer
   graph_agent_writer --> many_graph_agent_writer["5 consumers"]
 ```
+
+## Which apps is this component inside?
+
+The blast radius, and it is not the consumer count above. That column counts components that IMPORT an interface; this one counts APPLICATIONS that carry the component once it is composed, plugs of plugs included. A capability with two direct consumers can still end up inside twenty apps.
+
+This is the number to look at before changing a component, and before deleting one — something nothing imports directly may still be composed into a dozen artifacts.
+
+| apps | component | which |
+| --: | --- | --- |
+| 38 | `record-store` | `arena`, `authgate`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `drop`, `eshop`, `eshop-catalog`, `gate`, `helpdesk`, `jobs`, `jobs-golem`, `ledger`, `lms`, `mesh`, `passkey`, `paste`, `payees`, `platform`, `portal`, `pulse`, `relay`, `report`, `saga`, `scribe`, `search`, `shortlink`, `stash`, `status`, `studio`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 22 | `rate-limiter` | `auth-guard`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `eshop`, `helpdesk`, `lms`, `payees`, `platform`, `portal`, `ratelimit`, `relay`, `shortlink`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 20 | `audit-log` | `auth-guard`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `eshop`, `helpdesk`, `lms`, `payees`, `platform`, `portal`, `relay`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 18 | `auth-guard` | `booked`, `books`, `buzz`, `conduit`, `dashboards`, `eshop`, `helpdesk`, `lms`, `payees`, `platform`, `portal`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 13 | `event-bus` | `abtest`, `eshop`, `eshop-catalog`, `flags`, `pipeline`, `pulse`, `ratelimit`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 11 | `id-generate` | `abtest`, `arena`, `flags`, `helpdesk`, `pipeline`, `portal`, `pulse`, `ratelimit`, `saga`, `scribe`, `shortlink` |
+| 8 | `fsm-workflow` | `eshop`, `helpdesk`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 8 | `idempotency-guard` | `eshop`, `eshop-catalog`, `jobs`, `jobs-golem`, `ledger`, `relay`, `saga`, `webhook` |
+| 6 | `anthropic-provider` | `ai`, `ai-openai`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 6 | `blob-store` | `drop`, `platform`, `studio`, `vet`, `vet-full`, `vet-lattice` |
+| 6 | `cache` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
+| 6 | `cache-backing` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
+| 6 | `csv` | `ledger`, `report`, `stash`, `vet`, `vet-full`, `vet-lattice` |
+| 6 | `markdown` | `helpdesk`, `paste`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 6 | `outbox` | `jobs`, `jobs-golem`, `ledger`, `pipeline`, `portal`, `relay` |
+| 6 | `secrets-vault` | `authgate`, `login`, `platform`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `pagination` | `report`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `scheduler-timer` | `saga`, `status`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `search-index` | `search`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `validate` | `paste`, `report`, `vet`, `vet-full`, `vet-lattice` |
+| 4 | `ai-inference` | `track`, `vet`, `vet-full`, `vet-lattice` |
+| 4 | `lock-mutex` | `booked`, `vet`, `vet-full`, `vet-lattice` |
+| 4 | `money` | `ledger`, `vet`, `vet-full`, `vet-lattice` |
+| 4 | `notify-dispatch` | `portal`, `relay`, `status`, `track` |
+| 4 | `otp` | `authgate`, `vet`, `vet-full`, `vet-lattice` |
+| 4 | `pii-redact` | `paste`, `vet`, `vet-full`, `vet-lattice` |
+| 4 | `quota` | `ledger`, `platform`, `portal`, `ratelimit` |
+| 4 | `static-assets` | `track`, `vet`, `vet-full`, `vet-lattice` |
+| 4 | `upload-policy` | `drop`, `vet`, `vet-full`, `vet-lattice` |
+| 4 | `webhook-sign` | `drop`, `portal`, `relay`, `track` |
+| 3 | `i18n-catalog` | `vet`, `vet-full`, `vet-lattice` |
+| 3 | `pdf` | `books`, `lms`, `tempo` |
+| 3 | `policy-guard` | `platform`, `portal`, `track` |
+| 3 | `session-store` | `authgate`, `login`, `passkey` |
+| 3 | `slug` | `conduit`, `paste`, `shortlink` |
+| 2 | `cron` | `jobs`, `jobs-golem` |
+| 2 | `golem-bridge` | `jobs`, `jobs-golem` |
+| 2 | `metrics-collect` | `abtest`, `search` |
+| 2 | `proxy-route` | `eshop`, `mesh` |
+| 2 | `qr` | `authgate`, `transit` |
+| 2 | `svg-chart` | `dashboards`, `lms` |
+| 2 | `wit-reflect` | `platform`, `studio` |
+| 1 | `config-store` | `login` |
+| 1 | `crdt` | `scribe` |
+| 1 | `email-render` | `booked` |
+| 1 | `experiment-assign` | `abtest` |
+| 1 | `feature-flags` | `flags` |
+| 1 | `iban` | `payees` |
+| 1 | `ical` | `booked` |
+| 1 | `jsonpatch` | `relay` |
+| 1 | `ledger` | `books` |
+| 1 | `quiz-grade` | `lms` |
+| 1 | `resilience` | `mesh` |
+| 1 | `rrule` | `booked` |
+| 1 | `shaper` | `gate` |
+| 1 | `textdiff` | `scribe` |
+| 1 | `webauthn` | `passkey` |
+| 1 | `webhook-ingest` | `relay` |
+| 1 | `zip` | `stash` |
+
+## What is each app made of?
+
+Read off the artifact, not off a build file. Every showcase used to name its own plug list by hand and most were wrong — the vet clinic claimed five and composes twenty-two. A recipe now states only the ROOT; everything after it is derived, so this table cannot disagree with what `just compose-*` actually produces (ADR-0087).
+
+| app | root component | composes | artifact |
+| --- | --- | --: | --- |
+| **abtest** | `abtest-domain` | 4 | `abtest_domain.composed.wasm` |
+| **ai** | `ai-inference` | 1 | `ai_inference.composed.wasm` |
+| **ai-openai** | `ai-inference` | 1 | `ai_inference.openai.composed.wasm` |
+| **arena** | `arena-domain` | 2 | `arena_domain.composed.wasm` |
+| **auth-guard** | `auth-guard` | 2 | `auth_guard.composed.wasm` |
+| **authgate** | `mfa-authgate` | 5 | `mfa_authgate.composed.wasm` |
+| **booked** | `booked-domain` | 8 | `booked_domain.composed.wasm` |
+| **books** | `books-domain` | 6 | `books_domain.composed.wasm` |
+| **buzz** | `buzz-domain` | 4 | `buzz_domain.composed.wasm` |
+| **conduit** | `conduit-domain` | 5 | `conduit_domain.composed.wasm` |
+| **dashboards** | `dashboards-domain` | 5 | `dashboards_domain.composed.wasm` |
+| **drop** | `upload-drop` | 4 | `upload_drop.composed.wasm` |
+| **eshop** | `accounts-app` | 3 | `eshop_identity.composed.wasm` |
+| **eshop** | `eshop-basket` | 5 | `eshop_basket.composed.wasm` |
+| **eshop** | `eshop-gateway` | 1 | `eshop_gateway.composed.wasm` |
+| **eshop** | `eshop-ordering` | 7 | `eshop_ordering.composed.wasm` |
+| **eshop** | `eshop-payment` | 1 | `eshop_payment.composed.wasm` |
+| **eshop** | `event-pusher` | 1 | `event_pusher.composed.wasm` |
+| **eshop-catalog** | `eshop-catalog` | 3 | `eshop_catalog.composed.wasm` |
+| **flags** | `flags-domain` | 3 | `flags_domain.composed.wasm` |
+| **gate** | `gate-domain` | 2 | `gate_domain.composed.wasm` |
+| **helpdesk** | `helpdesk-domain` | 7 | `helpdesk_domain.composed.wasm` |
+| **jobs** | `jobs-domain` | 5 | `jobs_domain.composed.wasm` |
+| **jobs-golem** | `jobs-domain` | 5 | `jobs_domain.golem.wasm` |
+| **ledger** | `billing-ledger` | 6 | `billing_ledger.composed.wasm` |
+| **lms** | `lms-domain` | 7 | `lms_domain.composed.wasm` |
+| **login** | `login-app` | 3 | `login_app.composed.wasm` |
+| **mesh** | `mesh-domain` | 3 | `mesh_domain.composed.wasm` |
+| **passkey** | `cache` | 1 | `cache.composed.wasm` |
+| **passkey** | `passkey-domain` | 5 | `passkey_domain.composed.wasm` |
+| **paste** | `paste-bin` | 5 | `paste_bin.composed.wasm` |
+| **payees** | `payees-domain` | 5 | `payees_domain.composed.wasm` |
+| **pipeline** | `pipeline-domain` | 3 | `pipeline_domain.composed.wasm` |
+| **platform** | `platform-domain` | 9 | `platform_domain.composed.wasm` |
+| **portal** | `dev-portal` | 10 | `dev_portal.composed.wasm` |
+| **pulse** | `pulse-domain` | 3 | `pulse_domain.composed.wasm` |
+| **ratelimit** | `throttle-domain` | 4 | `throttle_domain.composed.wasm` |
+| **relay** | `webhook-relay` | 9 | `webhook_relay.composed.wasm` |
+| **report** | `csv-report` | 4 | `csv_report.composed.wasm` |
+| **saga** | `saga-domain` | 6 | `saga_domain.composed.wasm` |
+| **scribe** | `scribe-domain` | 4 | `scribe_domain.composed.wasm` |
+| **search** | `cache` | 1 | `cache.composed.wasm` |
+| **search** | `search-domain` | 5 | `search_domain.composed.wasm` |
+| **shortlink** | `cache` | 1 | `cache.composed.wasm` |
+| **shortlink** | `link-shortener` | 6 | `link_shortener.composed.wasm` |
+| **stash** | `stash-domain` | 6 | `stash_domain.composed.wasm` |
+| **status** | `status-page` | 5 | `status_page.composed.wasm` |
+| **studio** | `studio-domain` | 3 | `studio_domain.composed.wasm` |
+| **tempo** | `tempo-domain` | 5 | `tempo_domain.composed.wasm` |
+| **track** | `track-domain` | 15 | `track_domain.composed.wasm` |
+| **transit** | `transit-domain` | 5 | `transit_domain.composed.wasm` |
+| **vet** | `vet-domain` | 25 | `vet_domain.composed.wasm` |
+| **vet-full** | `cache` | 1 | `cache.composed.wasm` |
+| **vet-full** | `vet-domain` | 25 | `vet_domain.full.composed.wasm` |
+| **vet-lattice** | `vet-domain` | 25 | `vet_domain.lattice.wasm` |
+| **webhook** | `webhook-ingest` | 1 | `webhook_ingest.composed.wasm` |
+
+### The apps, and the capabilities they share
+
+```mermaid
+graph LR
+  app_abtest["abtest"]
+  app_abtest --> event_bus([event-bus])
+  app_abtest --> id_generate([id-generate])
+  app_ai["ai"]
+  app_ai --> anthropic_provider([anthropic-provider])
+  app_ai_openai["ai-openai"]
+  app_ai_openai --> anthropic_provider([anthropic-provider])
+  app_arena["arena"]
+  app_arena --> id_generate([id-generate])
+  app_arena --> record_store([record-store])
+  app_auth_guard["auth-guard"]
+  app_auth_guard --> audit_log([audit-log])
+  app_auth_guard --> rate_limiter([rate-limiter])
+  app_authgate["authgate"]
+  app_authgate --> record_store([record-store])
+  app_authgate --> secrets_vault([secrets-vault])
+  app_booked["booked"]
+  app_booked --> audit_log([audit-log])
+  app_booked --> auth_guard([auth-guard])
+  app_booked --> rate_limiter([rate-limiter])
+  app_booked --> record_store([record-store])
+  app_books["books"]
+  app_books --> audit_log([audit-log])
+  app_books --> auth_guard([auth-guard])
+  app_books --> rate_limiter([rate-limiter])
+  app_books --> record_store([record-store])
+  app_buzz["buzz"]
+  app_buzz --> audit_log([audit-log])
+  app_buzz --> auth_guard([auth-guard])
+  app_buzz --> rate_limiter([rate-limiter])
+  app_buzz --> record_store([record-store])
+  app_conduit["conduit"]
+  app_conduit --> audit_log([audit-log])
+  app_conduit --> auth_guard([auth-guard])
+  app_conduit --> rate_limiter([rate-limiter])
+  app_conduit --> record_store([record-store])
+  app_dashboards["dashboards"]
+  app_dashboards --> audit_log([audit-log])
+  app_dashboards --> auth_guard([auth-guard])
+  app_dashboards --> rate_limiter([rate-limiter])
+  app_dashboards --> record_store([record-store])
+  app_drop["drop"]
+  app_drop --> blob_store([blob-store])
+  app_drop --> record_store([record-store])
+  app_eshop["eshop"]
+  app_eshop --> audit_log([audit-log])
+  app_eshop --> auth_guard([auth-guard])
+  app_eshop --> rate_limiter([rate-limiter])
+  app_eshop["eshop"]
+  app_eshop --> audit_log([audit-log])
+  app_eshop --> auth_guard([auth-guard])
+  app_eshop --> event_bus([event-bus])
+  app_eshop --> rate_limiter([rate-limiter])
+  app_eshop --> record_store([record-store])
+```
+
 
 ## Exported, and nothing in this repository imports it
 
