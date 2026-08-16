@@ -88,7 +88,7 @@ Both produced numbers that read as platform behaviour:
 So transport failures are now reported separately from 4xx/5xx, **with the first
 error's text**. A count alone cannot distinguish "the platform refused" from
 "the load generator ran out of sockets", and this project has now been fooled by
-that class of thing five times ([0032](0032-a-pi-and-a-remote-store.md),
+that class of thing five times ([0032](0032-cross-node-invocation-and-what-the-hop-costs.md),
 [0036](0036-open-loop-stress-and-a-correction.md),
 [0052](0052-one-copy-per-digest.md), [0053](0053-the-matrix.md), here).
 

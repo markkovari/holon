@@ -11,7 +11,7 @@ turn that graph into something running, the repo has already built all of them b
 hand, and they are **not equivalent** — they differ in instance count, in what can
 be debugged, in what a cycle means, and in whether a capability is shared.
 
-What exists today, per STUDIO.md and the studio's three emitters:
+What exists today, per docs/apps/STUDIO.md and the studio's three emitters:
 
 | | fused (`wac`) | linked (one workload) | separate workloads + v1 `link` traits |
 |---|---|---|---|

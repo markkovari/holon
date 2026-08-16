@@ -4,7 +4,7 @@
 // route table, and the verbose wasi:http outgoing round trip (build request,
 // write body, subscribe, block, drain response). This contract owns both; the
 // consumer keeps only its edge concerns (which headers to pass, fallbacks,
-// auth). Extracted from the eshop-gateway (ESHOP.md), which shrank to glue.
+// auth). Extracted from the eshop-gateway (docs/apps/ESHOP.md), which shrank to glue.
 //
 // The route TABLE is wasi:config key `routes`: comma-separated
 // `prefix=upstream` entries, longest prefix wins. Strip convention: an

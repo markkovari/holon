@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# saga app-path bench (SAGA.md rung 4) — the first bench of a stateful WORKFLOW
+# saga app-path bench (docs/apps/SAGA.md rung 4) — the first bench of a stateful WORKFLOW
 # path, not stateless CRUD. Every request goes browser → hyper → wasmtime →
 # saga_domain.composed.wasm (saga-domain + fsm + records + idempotency +
 # event-bus + ids + timer) → wasi:keyvalue backend.

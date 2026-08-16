@@ -4,7 +4,7 @@
 // latency + cache hit-ratio (every other showcase is write/stream-shaped). The
 // engine is the search:index contract (TF-IDF over a KV inverted index); the
 // corpus is records:store; a cache short-circuits repeat queries and
-// metrics:collect tracks the hit-ratio. See SEARCH.md.
+// metrics:collect tracks the hit-ratio. See docs/apps/SEARCH.md.
 //
 // Routes:
 //   GET  /api/search   ?q=&mode=&tags=&limit=&offset=   ranked, hydrated hits + timing + cache-hit

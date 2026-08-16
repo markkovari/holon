@@ -1,4 +1,4 @@
-//! `studio-domain` — the composition studio (STUDIO.md) as ONE composed wasm HTTP
+//! `studio-domain` — the composition studio (docs/apps/STUDIO.md) as ONE composed wasm HTTP
 //! component. Exports `wasi:http`; imports only contracts: `wit:reflect` (every
 //! interesting answer), `records:store` (surfaces + saved canvases), `blob:store`
 //! (the uploaded bytes, needed again at compose time).

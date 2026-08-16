@@ -1,6 +1,6 @@
 # passkey — passwordless sign-in (e2e + SPA)
 
-See **[PASSKEY.md](../../PASSKEY.md)** for what this is and why.
+See **[docs/apps/PASSKEY.md](../../docs/apps/PASSKEY.md)** for what this is and why.
 `tools/screencast/passkey.mjs` records its gif with Chromium's CDP virtual
 authenticator — the same trick works for driving passkeys in your own browser
 tests, no Touch ID needed.

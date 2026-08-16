@@ -6,13 +6,13 @@ in [ADR-0001](0001-use-adrs.md).
 For the platform **as it stands** — what runs, what is measured, what is missing —
 read [`../CURRENT.md`](../CURRENT.md). These are how it got there.
 
-`PLATFORM.md` is the original narrative plan, kept for its reasoning: its central bet
+`docs/PLATFORM.md` is the original narrative plan, kept for its reasoning: its central bet
 was falsified on wasmCloud and then won by owning the host (ADR-0023), so its
 conclusions no longer describe what runs. Where anything disagrees, the ADR wins.
 
 **[`../WHY.md`](../WHY.md) is the value proposition, with the measurements behind it.**
 **Read [ADR-0019](0019-the-density-number.md) for the numbers themselves.** The
-multi-tenant density bet PLATFORM.md was built on is falsified (ADR-0012, ADR-0014). What
+multi-tenant density bet docs/PLATFORM.md was built on is falsified (ADR-0012, ADR-0014). What
 survives, measured: **2.3 Mi per extra component inside a host against 70 Mi for a
 component in its own pod, and 1.2 ms saved per network hop avoided** — and under load,
 **identical throughput and CPU, 3.2× less memory, and a 36% better p99**
@@ -103,6 +103,9 @@ tells you what is true now rather than what was once believed.
 | [0084](0084-two-retrievers-and-an-optimistic-database.md) | Two retrievers and an optimistic database — `knowledge:memory`, KNN in SurrealDB, `+=` over read-modify-write | accepted; 9 scenarios + a 5-component composed e2e pass; the goal runner skips work already done, retrieval is not wired yet |
 | [0085](0085-structure-flows-down-lessons-flow-up.md) | Structure flows down, lessons flow up — a derived code graph over an app that EXISTS | **proposed**; nothing built, and its isolation question is open; [0086](0086-parts-negotiate-a-contract.md) is the other tense |
 | [0086](0086-parts-negotiate-a-contract.md) | Parts negotiate a contract — a decomposed goal, request/deny/counter, and nothing blocks inside a generation | built, demonstrated and reachable: `[[part]]` in a goal spec, a composed e2e watching a frontend ask, a backend grant and demonstrate, the amendment ratify, and both halves pass a joined gate |
+| [0087](0087-a-composition-is-derived-not-written.md) | A composition is derived, not written — read a component's imports, find what exports them, plug them | built and used by every clinic gate: `reconciler/src/plug.rs` wraps `wac_graph` as a library, `just plug <name>` is the entry point, and the derived composition binds 16 capabilities `just compose-vet` leaves dangling |
+| [0088](0088-what-a-gate-says-is-what-the-next-attempt-reads.md) | What a gate says is what the next attempt reads — a check's output is a prompt, not a log | a rule plus two guards (`gate-lib.sh`, `tests/guestio.rs`), written after four separate ways of getting it wrong, each of which spent money teaching a model to fix a problem that did not exist |
+| [0089](0089-capability-accumulation.md) | Capability accumulation — reuse before build, promote what generalises, and a component is executable knowledge | **proposed**, and about half built: the pool, the catalogue, interface lookup and ENFORCED reuse all exist (a real model passed a gate by calling auth-guard and search-index rather than reimplementing them). Missing: discovery, promotion, duplicate detection |
 
 ## History: superseded, and kept
 

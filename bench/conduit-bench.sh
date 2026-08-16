@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# conduit app-path bench (CONDUIT.md rung 5). Every request goes
+# conduit app-path bench (docs/apps/CONDUIT.md rung 5). Every request goes
 # browser -> hyper -> wasmtime -> conduit_domain.composed.wasm
 # (conduit-domain + auth-guard + record-store + slug) -> wasi:keyvalue backend.
 #

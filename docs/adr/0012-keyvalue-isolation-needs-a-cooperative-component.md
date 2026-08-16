@@ -82,7 +82,7 @@ the guest.
 - The alternative shape, one host *environment* per tenant, remains available and is
   now more attractive than ADR-0008 assumed: it needs no catalog change, and
   `template.spec.environment` already selects a host across namespaces. It costs a
-  host per tenant, which is the density bet PLATFORM.md declined — but "declined" was
+  host per tenant, which is the density bet docs/PLATFORM.md declined — but "declined" was
   priced against a bucket stamp that does not exist.
 - Namespace-level `NetworkPolicy` is also weaker than ADR-0002 implied for
   shared-host workloads: the component runs in a pod in the *host's* namespace, so a

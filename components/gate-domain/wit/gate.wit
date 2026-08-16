@@ -13,7 +13,7 @@
 // double-spend). That CAS-guarded per-key record is exactly a Golem worker:
 // addressed by key, single-writer, state that survives restarts. Batch flush is
 // wrapped in one CAS update — the "atomic region" that guarantees a crash can't
-// flush twice or lose buffered items. See GATE.md for the full Golem mapping.
+// flush twice or lose buffered items. See docs/apps/GATE.md for the full Golem mapping.
 //
 // No auth: a gateway keys by a client-supplied API key. Times are unix millis.
 //

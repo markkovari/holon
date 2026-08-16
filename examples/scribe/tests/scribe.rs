@@ -1,4 +1,4 @@
-//! E2E for the scribe collaborative editor (SCRIBE.md) as ONE composed wasm HTTP
+//! E2E for the scribe collaborative editor (docs/apps/SCRIBE.md) as ONE composed wasm HTTP
 //! component (scribe-domain + crdt + record-store + id-generate) on the native
 //! Rust host. The subject is CRDT convergence over HTTP:
 //!   - concurrent edits to DIFFERENT fields both survive (lwwmap merge),

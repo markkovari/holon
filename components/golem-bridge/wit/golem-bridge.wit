@@ -8,7 +8,7 @@
 // contract is satisfied here by a COMPONENT that calls Golem over
 // `wasi:http/outgoing-handler`. Compose it into the jobs queue in place of the
 // in-process backend and jobs run as real durable Golem workers, on the v2
-// operator, no `par`/classic host required. See JOBS.md + GOLEM.md.
+// operator, no `par`/classic host required. See docs/apps/JOBS.md + docs/capabilities/GOLEM.md.
 //
 // Config (wasi:config): `golem-url` (gateway base), `golem-path-template`
 // (`{workflow-id}` substituted; default `/counters/{workflow-id}/increment`),

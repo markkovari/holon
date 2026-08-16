@@ -1,4 +1,4 @@
-//! E2E for the arena game (ARENA.md) as ONE composed wasm HTTP component
+//! E2E for the arena game (docs/apps/ARENA.md) as ONE composed wasm HTTP component
 //! (arena-domain + records + id-generate) on the native Rust host. Proves
 //! authoritative, rule-enforced interactive state: create + join, turn/seat and
 //! illegal-move rejection server-side, a scripted win with the winning line

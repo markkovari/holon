@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# RealWorld API conformance for conduit (CONDUIT.md rung 4).
+# RealWorld API conformance for conduit (docs/apps/CONDUIT.md rung 4).
 #
 # Spins the composed conduit app on the native Rust host (in-memory KV, so each
 # run starts clean) and runs the OFFICIAL RealWorld Hurl suite (vendored under

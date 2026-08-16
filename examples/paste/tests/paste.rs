@@ -1,4 +1,4 @@
-//! E2E for the paste bin (PASTE.md) as ONE composed wasm HTTP component on the
+//! E2E for the paste bin (docs/apps/PASTE.md) as ONE composed wasm HTTP component on the
 //! native Rust host. The pure-compute pipeline axis: validate -> redact -> store
 //! -> slug, then render on read. The headline property is that PII is masked
 //! BEFORE storage — the raw email/card never lands in the record store — and

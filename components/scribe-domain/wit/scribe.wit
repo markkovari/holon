@@ -7,7 +7,7 @@
 // Two people editing at once converge — different fields both survive, the same
 // field resolves deterministically by (ts, replica) everywhere, and an edit
 // made while disconnected still merges correctly on reconnect (its timestamp is
-// captured at edit time, not receipt). See CRDT.md + SCRIBE.md.
+// captured at edit time, not receipt). See docs/capabilities/CRDT.md + docs/apps/SCRIBE.md.
 //
 // Merges use optimistic concurrency (record revision as the CAS token) with
 // retry: two concurrent ops that would clobber each other both re-merge onto the

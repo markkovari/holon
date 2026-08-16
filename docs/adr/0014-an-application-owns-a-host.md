@@ -11,7 +11,7 @@
 - **Status:** superseded by ADR-0023
 - **Date:** 2026-07-28
 - **Confirmed by:** [ADR-0015](0015-a-bucket-name-is-not-a-boundary.md)
-- **Supersedes:** [ADR-0013](0013-unenforceable-capabilities-are-denied-by-omission.md), and the density bet in `PLATFORM.md`
+- **Supersedes:** [ADR-0013](0013-unenforceable-capabilities-are-denied-by-omission.md), and the density bet in `docs/PLATFORM.md`
 - **Revises:** ADR-0002 (the namespace is the outer ring, not the isolation unit), ADR-0008 (isolation is provisioned, not only stamped)
 
 ## Context
@@ -115,7 +115,7 @@ And the new risk this creates, with its guard:
 ## Consequences
 
 - **Density is now one pod per application** (two containers, one PVC), where
-  `PLATFORM.md` bet on many apps per hostgroup. That bet is retired: it was priced
+  `docs/PLATFORM.md` bet on many apps per hostgroup. That bet is retired: it was priced
   against a bucket stamp that ADR-0012 proved does not exist. What remains of the
   wasm density win is *within* an app — many components, one host, in-process links —
   which is where `linked` already lives.

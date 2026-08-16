@@ -128,9 +128,9 @@ capabilities, so anything marked reusable drops into another app via
 - **bench-suite-p3** — `bench-suite-p3` — the compute rungs of the HTTP overhead ladder on WASI p3
 - **billing-ledger** — ledger:app — billing ledger over composed capability contracts
 - **blob-store** — `blob-store` — reference implementation of `blob:store`
-- **booked-domain** — `booked-domain` — a Calendly-lite booking service (BOOKED.md) as ONE composed
-- **books-domain** — `books-domain` — a double-entry bookkeeping service (BOOKS.md) as ONE composed
-- **buzz-domain** — `buzz-domain` — a live multiplayer quiz game (BUZZ.md) as ONE composed wasm
+- **booked-domain** — `booked-domain` — a Calendly-lite booking service (docs/apps/BOOKED.md) as ONE composed
+- **books-domain** — `books-domain` — a double-entry bookkeeping service (docs/apps/BOOKS.md) as ONE composed
+- **buzz-domain** — `buzz-domain` — a live multiplayer quiz game (docs/apps/BUZZ.md) as ONE composed wasm
 - **cache** — `cache` — reference implementation of `cache:store`
 - **cache-backing** — `cache-backing` — exports cache:store's `source` + `sink` over wasi:keyvalue
 - **conduit-domain** — conduit:app — the RealWorld ("Conduit") spec over composed contracts
@@ -139,7 +139,7 @@ capabilities, so anything marked reusable drops into another app via
 - **cron** — `cron` — reference implementation of `cron:expr`
 - **csv** — `csv` — reference implementation of `csv:stream/codec`
 - **csv-report** — report:app — batch CSV import -> typed validate -> store -> paged report ->
-- **dashboards-domain** — `dashboards-domain` — personal metric dashboards (DASHBOARDS.md) as ONE
+- **dashboards-domain** — `dashboards-domain` — personal metric dashboards (docs/apps/DASHBOARDS.md) as ONE
 - **dev-portal** — portal:app — developer portal / API-key service over composed contracts
 - **email-render** — `email-render` — reference implementation of `email:template`
 - **eshop-basket** — eshop:basket — the eShopOnDapr Basket.API over composed contracts
@@ -153,7 +153,7 @@ capabilities, so anything marked reusable drops into another app via
 - **feature-flags** — `feature-flags` — reference implementation of `featureflags:guard`
 - **flags-domain** — flags:app — a live feature-rollout console over composed contracts
 - **fsm-workflow** — `fsm-workflow` — reference implementation of `fsm:workflow/engine`
-- **gate-domain** — `gate-domain` — a durable traffic-shaping gateway (GATE.md) as ONE composed
+- **gate-domain** — `gate-domain` — a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed
 - **geo** — `geo` — reference implementation of `geo:resolve`
 - **golem-bridge** — `golem-bridge` — durable:workflow/orchestrator over `wasi:http`, to Golem
 - **helpdesk-domain** — helpdesk:app — support/ticketing SaaS domain over composed contracts
@@ -169,11 +169,11 @@ capabilities, so anything marked reusable drops into another app via
 - **ledger** — `ledger` — reference implementation of `ledger:doubleentry/ledger`
 - **link-shortener** — shortlink:app — link shortener over composed capability contracts
 - **llm-inference** — `llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`
-- **lms-domain** — `lms-domain` — a learning-management service (LMS.md) as ONE composed wasm
+- **lms-domain** — `lms-domain` — a learning-management service (docs/apps/LMS.md) as ONE composed wasm
 - **lock-mutex** — `lock-mutex` — reference implementation of `lock:mutex`
 - **login-app** — `login-app` — a consumer component that composes three universal
 - **markdown** — `markdown` — reference implementation of `md:render`
-- **mesh-domain** — `mesh-domain` — the resilience playground (MESH.md) as ONE composed wasm HTTP
+- **mesh-domain** — `mesh-domain` — the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP
 - **metrics-collect** — `metrics-collect` — reference implementation of `metrics:collect`
 - **mfa-authgate** — mfa:app — TOTP 2FA enrollment + challenge-response login over composed
 - **money** — `money` — reference implementation of `money:amount`
@@ -182,9 +182,9 @@ capabilities, so anything marked reusable drops into another app via
 - **otp** — `otp` — reference implementation of `otp:totp` (RFC 4226 HOTP / RFC 6238 TOTP)
 - **outbox** — `outbox` — reference implementation of `outbox:dispatch`
 - **pagination** — `pagination` — reference implementation of `paginate:cursor`
-- **passkey-domain** — `passkey-domain` — passwordless sign-in (PASSKEY.md) as ONE composed wasm HTTP
+- **passkey-domain** — `passkey-domain` — passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP
 - **paste-bin** — bin:app — a paste / gist bin over a chain of mostly pure-compute contracts
-- **payees-domain** — `payees-domain` — a payee book (PAYEES.md) as ONE composed wasm HTTP
+- **payees-domain** — `payees-domain` — a payee book (docs/apps/PAYEES.md) as ONE composed wasm HTTP
 - **pdf** — `pdf` — reference implementation of `pdf:codec/codec`
 - **pii-redact** — `pii-redact` — reference implementation of `pii:redact`
 - **pipeline-domain** — pipeline:app — a reliable event pipeline over composed contracts
@@ -208,17 +208,17 @@ capabilities, so anything marked reusable drops into another app via
 - **session-store** — `session-store` — reference implementation of `session:store`
 - **shaper** — `shaper` — reference implementation of `shaper:limit/limiter`
 - **slug** — `slug` — reference implementation of `slug:generate`
-- **stash-domain** — `stash-domain` — a personal note stash (STASH.md) as ONE composed wasm HTTP
+- **stash-domain** — `stash-domain` — a personal note stash (docs/apps/STASH.md) as ONE composed wasm HTTP
 - **static-assets** — `static-assets` — reference implementation of `static:assets`
 - **status-page** — status:app — uptime monitor over composed capability contracts
-- **studio-domain** — `studio-domain` — the composition studio (STUDIO.md) as ONE composed wasm HTTP
+- **studio-domain** — `studio-domain` — the composition studio (docs/apps/STUDIO.md) as ONE composed wasm HTTP
 - **svg-chart** — `svg-chart` — reference implementation of `svg:chart/charts`
 - **tempo-domain** — tempo:app — a multi-person worktime logger over composed contracts
 - **textdiff** — `textdiff` — reference implementation of `diff:text`
 - **throttle-domain** — throttle:app — a live throttle wall over composed contracts
 - **track-assets** — `track-assets` — the track (project tracker) SPA embedded as `ui:assets`
 - **track-domain** — track:app — a Linear-lite project tracker over composed contracts
-- **transit-domain** — `transit-domain` — a public-transport ticketing service (TRANSIT.md) as ONE
+- **transit-domain** — `transit-domain` — a public-transport ticketing service (docs/apps/TRANSIT.md) as ONE
 - **upload-drop** — drop:app — a presigned direct-upload drop-box over composed contracts
 - **upload-policy** — `upload-policy` — reference implementation of `upload:policy`
 - **validate** — `validate` — reference implementation of `validate:schema`

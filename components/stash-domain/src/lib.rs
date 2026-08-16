@@ -1,4 +1,4 @@
-//! `stash-domain` — a personal note stash (STASH.md) as ONE composed wasm HTTP
+//! `stash-domain` — a personal note stash (docs/apps/STASH.md) as ONE composed wasm HTTP
 //! component. Exports `wasi:http`; imports only WIT contracts: the composed
 //! auth-guard (`auth:identity`), `records:store`, `zip:archive` (the export) and
 //! `csv:codec` (the index inside it). No bespoke auth, storage, or zip library.

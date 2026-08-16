@@ -1,4 +1,4 @@
-//! E2E for the mesh resilience playground (MESH.md) as ONE composed wasm HTTP
+//! E2E for the mesh resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP
 //! component (mesh-domain + records + resilience + proxy-route) on the native
 //! Rust host, in front of the REAL flaky upstream (`src/bin/flaky.rs`).
 //!

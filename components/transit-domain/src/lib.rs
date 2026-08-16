@@ -1,4 +1,4 @@
-//! `transit-domain` — a public-transport ticketing service (TRANSIT.md) as ONE
+//! `transit-domain` — a public-transport ticketing service (docs/apps/TRANSIT.md) as ONE
 //! composed wasm HTTP component. Exports `wasi:http`; imports only WIT contracts:
 //! the composed auth-guard (`auth:identity`), `records:store`, `qr:encode` (the
 //! scannable ticket), `lock:mutex` (single-use under concurrency) and the wall

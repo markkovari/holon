@@ -851,7 +851,7 @@ pooled row), seed one link, then
 
 ## Round 10 — dev-portal: auth + ABAC + quota on every request, still ~free
 
-`components/dev-portal` is the control-plane app from PLATFORM.md: projects,
+`components/dev-portal` is the control-plane app from docs/PLATFORM.md: projects,
 sha256-hashed API keys, a metered gateway, and stripe-signed webhook delivery
 off a durable outbox. Its composed graph is **9 components** (the composed
 auth-guard bundle + record-store + id-generate + quota + policy-guard +

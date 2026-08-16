@@ -1,4 +1,4 @@
-//! E2E for the transit ticketing app (TRANSIT.md) as ONE composed wasm HTTP
+//! E2E for the transit ticketing app (docs/apps/TRANSIT.md) as ONE composed wasm HTTP
 //! component (transit-domain + auth-guard + records + qr + lock-mutex) on the
 //! native Rust host. Proves the capability model: a rider buys fares; a
 //! validator validates — a single ticket is consumed by ONE scan (a second is

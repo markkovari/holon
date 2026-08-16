@@ -13,7 +13,7 @@
 > way it fails), [`.comp/goals/`](.comp/goals/) (the worklist a person writes), and
 > [`docs/adr/`](docs/adr/) (why any of it is shaped this way).
 >
-> Kept rather than deleted for the same reason `PLATFORM.md` is: its reasoning is
+> Kept rather than deleted for the same reason `docs/PLATFORM.md` is: its reasoning is
 > the record of how the substrate got here.
 
 ## What this covers
@@ -25,14 +25,14 @@ as a plan is the kind of document people act on by mistake.
 
 ## TODO — next up
 
-### Native wRPC-to-Golem capability provider — built (GOLEM.md)
+### Native wRPC-to-Golem capability provider — built (docs/capabilities/GOLEM.md)
 
 - [x] **`providers/golem-workflow`** — the first *provider* in the repo (all else
       is components + hosts). A native wasmCloud v2 provider exporting
       `durable:workflow/orchestrator` over wRPC, bridging to durable **Golem**
       workers. **Live-verified end-to-end**: the bridge invokes a real deployed
       Golem 1.5 worker and its durable state advances (`just golem-e2e`,
-      `GOLEM_E2E=1 cargo test`). Two findings baked into GOLEM.md: pin
+      `GOLEM_E2E=1 cargo test`). Two findings baked into docs/capabilities/GOLEM.md: pin
       `wit-bindgen-wrpc 0.10` to match `wasmcloud-provider-sdk 0.17.1`'s
       `wrpc-transport 0.28`; and a direct `reqwest` gateway call beats the
       non-OSS, build-time-generated `golem-client`.
@@ -127,14 +127,14 @@ Ensure all Rust code is strictly typed, handles errors safely, and includes clea
 
 </details>
 
-### Helpdesk (HELPDESK.md)
+### Helpdesk (docs/apps/HELPDESK.md)
 
 - [ ] Rungs 2–7: multi-tenant + API keys + quotas, event-bus fan-out +
       notifications + signed webhooks, `mail-parse`, SLA timers + search,
       billing rollup, AI drafts. Rung 1 is done (`components/helpdesk-domain`,
       `examples/jco-helpdesk`, `just host-helpdesk` on the native host + NATS).
 
-### Conduit / RealWorld (CONDUIT.md) — done
+### Conduit / RealWorld (docs/apps/CONDUIT.md) — done
 
 - [x] The full RealWorld ("Conduit") spec as one `conduit-domain` component +
       `auth-guard` + `record-store` + `slug`, run on the native Rust host.
@@ -147,7 +147,7 @@ Ensure all Rust code is strictly typed, handles errors safely, and includes clea
       conformance caveats), a `?search` extension (`search-index`), and a stock
       RealWorld frontend SPA served from `--static-dir`.
 
-### Saga / durable orchestration (SAGA.md) — done
+### Saga / durable orchestration (docs/apps/SAGA.md) — done
 
 - [x] A durable **trip-booking saga** (`saga-domain`) — flight → hotel → car with
       **compensation** on failure — composed over `fsm-workflow` + `record-store`
@@ -161,7 +161,7 @@ Ensure all Rust code is strictly typed, handles errors safely, and includes clea
       compensation definitions), and land the Golem wRPC provider so a leg can be
       a real durable Golem worker (the roadmap item above).
 
-### Realtime / pulse (REALTIME.md) — done
+### Realtime / pulse (docs/apps/REALTIME.md) — done
 
 - [x] A realtime chat room (`pulse-domain`) — the first showcase in a new
       *class*: a **sustained connection with server push** rather than
