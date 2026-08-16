@@ -122,3 +122,77 @@ fn a_question_the_catalogue_cannot_answer_returns_nothing() {
         );
     }
 }
+
+/// Interfaces two components are SUPPOSED to export, and why.
+///
+/// Every one of these is a substitution point — the reason a WIT interface exists
+/// at all. What the audit is looking for is the entry nobody put here.
+const DELIBERATE: &[(&str, &str)] = &[
+    (
+        "durable:workflow/orchestrator",
+        "two backends for the same contract: `golem-bridge` runs it on a real Golem \
+         worker, `inproc-workflow` in-process, and the app cannot tell",
+    ),
+    (
+        "graph:fitness/evaluator",
+        "`checks-runner` shells out to the project's own commands; `mock-fitness` \
+         returns a scripted verdict so the loop can be tested without a gate",
+    ),
+    (
+        "llm:inference/inference",
+        "the provider boundary: anthropic, openai, a local `llm-inference` and a \
+         mock. Swapping the model is a composition, which is the whole point",
+    ),
+    (
+        "ui:assets/files",
+        "one bundle per SPA — `console-assets`, `track-assets` — plus the generic \
+         `static-assets`. These are app-local by nature (ADR-0089): a bundle is \
+         wanted by exactly the app it was built for",
+    ),
+];
+
+/// Nobody built the same thing twice.
+///
+/// ADR-0089's last unbuilt gap, in the cheapest form that works. Prevention is the
+/// real mechanism — `capsearch` consulted before writing — but a working search and
+/// a broken one look identical from outside, so this counts what got through.
+///
+/// Structural on purpose. "Exports the same interface" is a fact the catalogue
+/// already holds; it needs no model and no descriptions, which matters because 57
+/// of the 109 descriptions are tautologies.
+#[test]
+fn the_same_capability_was_not_built_twice() {
+    let root = repo_root();
+    let catalog = Catalog::scan(&default_dirs(&root));
+    if catalog.is_empty() {
+        eprintln!("SKIPPED: nothing is built, so no duplicate could be seen. `just build` first.");
+        return;
+    }
+
+    let mut undeclared = Vec::new();
+    for t in comp_reconciler::capsearch::twins(&catalog) {
+        // A standard interface exported by everything is the shape of the system,
+        // not a duplicate — and `wasi:http/incoming-handler`'s 65 exporters are
+        // the population that would stop owning their own entry point, which is a
+        // design question rather than a mistake.
+        if t.interface.starts_with("wasi:") {
+            continue;
+        }
+        let bare = t.interface.split('@').next().unwrap_or(&t.interface);
+        if DELIBERATE.iter().any(|(iface, _)| *iface == bare) {
+            continue;
+        }
+        undeclared.push(format!("  {} exported by {}", t.interface, t.components.join(", ")));
+    }
+
+    assert!(
+        undeclared.is_empty(),
+        "these interfaces have more than one exporter and nothing says why:\n{}\n\nEither the \
+         capability was built twice — in which case `comp-capgraph --find` should have found \
+         the first one, and why it did not is the interesting question — or it is a deliberate \
+         substitution point, in which case add it to DELIBERATE with the reason. Note that \
+         `comp-plug` resolves an interface to ONE exporter by scan order, so today one of \
+         them silently wins every composition.",
+        undeclared.join("\n")
+    );
+}

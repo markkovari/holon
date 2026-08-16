@@ -1,9 +1,9 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [92 ADRs](adr/); this page is the map.
+in [93 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0092.
+Last revised after ADR-0093.
 
 ## Shape
 
@@ -265,6 +265,12 @@ claim about a distributed system without one is a hope.
 - **The loop elects a leader**, so a standby takes over within the lease TTL plus
   one interval. It does not shard, on purpose (ADR-0072): the pass after a fleet
   change is **1.23 s at 1000 nodes × 10 000 apps**, 12% of one 10 s interval.
+- **A lesson is reached through the interface it is about** (ADR-0093). The
+  projection writes `lesson -about-> interface`, so an app walks
+  `app -carries-> artifact -imports-> interface <-about<- memory` to reach what
+  previous runs learned — nothing in that path names a goal or a topic. It replaces
+  a full table scan of the half ADR-0091 measured as not scaling. `recall` is
+  unchanged and still retrieves by a goal's wording; this is the edge underneath it.
 - **A run leaves a trace, and a browser can read it** (ADR-0092). `comp-goalrun`
   appends `run`, `attempt`, `event` and `capability` rows as it goes, in one
   vocabulary, so "why did branch 3 beat branch 7, and what did either of them read"
