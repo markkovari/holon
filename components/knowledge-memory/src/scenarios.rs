@@ -158,7 +158,11 @@ impl Db {
             body = self.raw(db, statement);
         }
         let mut attempts = 1;
-        while body.contains("retry the transaction") && attempts < 4 {
+        // 12, matching `knowledge:graph`'s MAX_ATTEMPTS. This mirrors production
+        // deliberately, so when the bound is wrong the scenario is what says so —
+        // at 4 it lost a write about one run in three on a loaded machine, which is
+        // how the bound came to be raised.
+        while body.contains("retry the transaction") && attempts < 12 {
             body = self.raw(db, statement);
             attempts += 1;
         }
