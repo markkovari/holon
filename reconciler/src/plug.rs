@@ -218,6 +218,27 @@ impl Catalog {
             .collect()
     }
 
+    /// Everything that ends up inside a composed artifact, transitively.
+    ///
+    /// `wiring` gives the direct plugs; this is what `compose` actually pulls in,
+    /// because a plug has plugs of its own. It is the answer to "what is this app
+    /// made of", and — read backwards — to "which apps am I inside", which is the
+    /// question nobody could answer before: a capability's blast radius is not its
+    /// direct consumers, it is every app that transitively composes it.
+    pub fn closure(&self, name: &str) -> Vec<String> {
+        let mut seen = BTreeSet::new();
+        let mut queue = vec![name.to_string()];
+        while let Some(current) = queue.pop() {
+            let Ok(w) = wiring(&current, self) else { continue };
+            for plug in w.plugs {
+                if seen.insert(plug.clone()) {
+                    queue.push(plug);
+                }
+            }
+        }
+        seen.into_iter().collect()
+    }
+
     /// Who consumes what, as edges: `(consumer, interface, provider)`.
     ///
     /// This is the capability graph. It is derived from the built artifacts every

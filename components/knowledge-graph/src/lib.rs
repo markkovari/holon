@@ -286,7 +286,15 @@ fn missing_namespace(msg: &str) -> bool {
 ///
 /// No backoff, deliberately: there is nothing to wait for. The winner committed
 /// before the loser heard about it, so the contended record is already free.
-const MAX_ATTEMPTS: u32 = 4;
+///
+/// Twelve, not four. Four was chosen from the measurement above, on an idle
+/// machine, where one resend cleared every conflict. On a busy one it is not
+/// enough: the scenario that mirrors this shape lost a write roughly one run in
+/// three under the same 20-way concurrency while the machine was compiling — 59
+/// of 60, then 58 of 60. A resend costs one HTTP round trip against a database
+/// that is by then uncontended, so the ceiling is cheap to raise and expensive to
+/// leave low.
+const MAX_ATTEMPTS: u32 = 12;
 
 /// The loser of an optimistic race, in the database's own words.
 fn conflicted(body: &str) -> bool {
@@ -342,6 +350,20 @@ fn send(conn: &Conn, statement: &str) -> Result<String, GraphError> {
     while conflicted(&body) && attempts < MAX_ATTEMPTS {
         body = sql(conn, statement)?;
         attempts += 1;
+    }
+    // Out of attempts and STILL conflicted is a write that did not commit, and it
+    // must not be returned as a success. It used to be: `query` — the raw-SurrealQL
+    // hatch that `contract-registry` and `knowledge-memory` do all their work
+    // through, including every `uses += 1` — handed the caller an `Ok(String)`
+    // whose contents said "retry the transaction". A silently dropped increment
+    // that reports success is the same shape as the truncated write and the
+    // truncated read: a failure wearing the return type of a success.
+    if conflicted(&body) {
+        return Err(GraphError::Unavailable(format!(
+            "the database rejected this statement {MAX_ATTEMPTS} times running with a \
+             write conflict and it never committed; the caller must retry or give up, \
+             not carry on as though it had landed"
+        )));
     }
     Ok(body)
 }
