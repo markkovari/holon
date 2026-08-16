@@ -232,18 +232,14 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
             No branches recorded yet.
           </p>
         ) : (
-          <div className="flex gap-4">
-            <div className="min-w-0 flex-1">
-              <RunGraph
-                run={run}
-                attempts={data.attempts}
-                capabilities={data.capabilities ?? []}
-                selected={selected}
-                onSelect={setSelected}
-              />
-            </div>
-            {chosen && <AttemptPanel attempt={chosen} events={data.events} />}
-          </div>
+          <RunGraph
+            run={run}
+            attempts={data.attempts}
+            capabilities={data.capabilities ?? []}
+            selected={selected}
+            onSelect={setSelected}
+            panel={chosen && <AttemptPanel attempt={chosen} events={data.events} />}
+          />
         )}
       </section>
 
@@ -291,7 +287,9 @@ function AttemptPanel({ attempt, events }: { attempt: Attempt; events: Ev[] }) {
   return (
     <aside
       data-testid="attempt-panel"
-      className="w-72 shrink-0 space-y-3 rounded border border-slate-800 bg-slate-950 p-3"
+      // Opaque, not translucent: it sits over the graph and the edges behind it
+      // would otherwise read as strikethrough on the paths.
+      className="space-y-3 rounded border border-slate-700 bg-slate-950 p-3 shadow-lg shadow-black/40"
     >
       <div className="flex items-baseline justify-between">
         <span data-testid="panel-branch" className="text-sm">
