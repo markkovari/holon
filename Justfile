@@ -340,6 +340,63 @@ capability query:
     @cd reconciler && cargo build --release --quiet --bin comp-capgraph
     @./reconciler/target/release/comp-capgraph --find "{{query}}"
 
+# Push the capability graph into the store the knowledge pool lives in (ADR-0091).
+#
+# The graph stops being a report a person reads and becomes rows a query can join
+# against. `just lessons-for` below is the whole point of doing it.
+#
+# Rerun this after any build. It is a PROJECTION: comp-capgraph stays the source,
+# nothing here is anybody's only copy, and dropping the six derived tables costs a
+# second of recompute. What it must never touch is `memory` and `task` — the half
+# that cannot be recomputed from anything — and that is enforced by the generation
+# stamp plus a test in capgraph.rs, not by being careful.
+#
+#   just capgraph-store                        # against the compose surreal
+#   SURREAL_URL=… SURREAL_PASS=… just capgraph-store
+capgraph-store:
+    @cd reconciler && cargo build --release --quiet --bin comp-capgraph
+    @url="${SURREAL_URL:-http://localhost:8000}"; \
+     ns="${SURREAL_NS:-holon}"; db="${SURREAL_DB:-holon}"; \
+     user="${SURREAL_USER:-root}"; pass="${SURREAL_PASS:-root}"; \
+     gen=$(date +%s); \
+     curl -sS -u "$user:$pass" -H "Accept: application/json" \
+       -H "surreal-ns: $ns" -H "surreal-db: $db" \
+       --data-binary "DEFINE NAMESPACE IF NOT EXISTS $ns; USE NS $ns; DEFINE DATABASE IF NOT EXISTS $db;" \
+       "$url/sql" > /dev/null; \
+     ./reconciler/target/release/comp-capgraph --format surql --gen "$gen" \
+       | curl -sS -u "$user:$pass" -H "Accept: application/json" \
+           -H "surreal-ns: $ns" -H "surreal-db: $db" \
+           --data-binary @- "$url/sql" \
+       | grep -o '"status":"ERR"' | wc -l | tr -d ' ' | { \
+           read errs; \
+           if [ "$errs" != "0" ]; then echo "FAILED: $errs statement(s) rejected"; exit 1; fi; \
+           echo "projection written at generation $gen"; \
+         }
+
+# What did previous runs learn about the interfaces THIS app imports?
+#
+# The query ADR-0091 exists to make possible, and the one that was not possible
+# while the capability graph and the knowledge pool were separate stores. Nothing
+# in it mentions the app's subject matter: `just lessons-for vet` finds a lesson
+# about `csv:codec/codec` because the vet app imports that interface, not because
+# a veterinary clinic and a CSV parser share any wording. That last part is what
+# killed two paid runs before this existed (ADR-0090).
+#
+# Run `just capgraph-store` first, or the graph half of the join is empty.
+#
+#   just lessons-for vet
+lessons-for app:
+    @url="${SURREAL_URL:-http://localhost:8000}"; \
+     ns="${SURREAL_NS:-holon}"; db="${SURREAL_DB:-holon}"; \
+     user="${SURREAL_USER:-root}"; pass="${SURREAL_PASS:-root}"; \
+     printf 'LET $ifaces = (SELECT VALUE array::distinct(array::flatten(->carries->artifact->imports->interface.name)) FROM ONLY app:%s{{app}}%s);\nSELECT ns, text, array::intersect(tags, $ifaces) AS matched FROM memory WHERE tags CONTAINSANY $ifaces;\n' '⟨' '⟩' \
+       | curl -sS -u "$user:$pass" -H "Accept: application/json" \
+           -H "surreal-ns: $ns" -H "surreal-db: $db" \
+           --data-binary @- "$url/sql" \
+       | jq -r 'last | if .status != "OK" then "query failed: \(.result)" \
+                elif (.result | length) == 0 then "no lessons about anything {{app}} imports (yet)" \
+                else (.result[] | "  [\(.ns)] \(.text)\n      via \(.matched | join(", "))") end'
+
 # What it WOULD plug, and what nothing exports. For a composition that is missing
 # something.
 plug-wiring name: build
