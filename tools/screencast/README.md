@@ -205,5 +205,20 @@ node studio.mjs
 bash to-gif.sh videos/studio/*.webm ../../docs/media/studio.gif 780 6
 ```
 
+**console** — the Holon console: sign in, the worklist, then the runs tab and one
+run's whole history — both branches kept (the loser's 40 beside the winner's 100),
+the gate's verdicts in order, and the capability the pool was missing. The only
+recorder here that starts its **own** stack, because the console needs three things
+behind it (the knowledge store it reads runs from, a platform to authenticate
+against, and the composed component) where every other app needs one. The run it
+opens is written by `comp-trace-seed` through `trace.rs` — the driver's own code
+path — so what is on screen is the shape a real run records (ADR-0092).
+
+```bash
+just compose-console                    # from repo root; needs docker for SurrealDB
+node console.mjs                        # starts + tears down everything itself
+bash to-gif.sh videos/console/*.webm ../../docs/media/console.gif 900 12
+```
+
 `node_modules/` and `videos/` are gitignored; only the scripts + the final gifs
 are tracked.
