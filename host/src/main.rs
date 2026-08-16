@@ -27,6 +27,7 @@ mod kv;
 mod kvcache;
 mod kvprofile;
 mod secrets;
+mod sync;
 mod rpc;
 mod tenant;
 use kv::KvBackend;
@@ -351,16 +352,16 @@ impl batch::Host for Host {
 
 impl cache_source::Host for Host {
     fn load(&mut self, key: String) -> wasmtime::Result<Result<Option<Vec<u8>>, String>> {
-        Ok(Ok(self.cache_backing.lock().unwrap().get(&key).cloned()))
+        Ok(Ok(crate::sync::held(&self.cache_backing).get(&key).cloned()))
     }
 }
 impl cache_sink::Host for Host {
     fn store(&mut self, key: String, value: Vec<u8>) -> wasmtime::Result<Result<(), String>> {
-        self.cache_backing.lock().unwrap().insert(key, value);
+        crate::sync::held(&self.cache_backing).insert(key, value);
         Ok(Ok(()))
     }
     fn remove(&mut self, key: String) -> wasmtime::Result<Result<(), String>> {
-        self.cache_backing.lock().unwrap().remove(&key);
+        crate::sync::held(&self.cache_backing).remove(&key);
         Ok(Ok(()))
     }
 }
@@ -1115,7 +1116,7 @@ async fn main() -> Result<()> {
             // The catch-all exists ONLY here. A lattice node routes by Host header
             // and 404s on a miss — a fallback there would send one tenant's traffic
             // into another tenant's component on a bad DNS record.
-            routes.write().unwrap().insert(CATCH_ALL.into(), id.clone());
+            crate::sync::writing(&routes).insert(CATCH_ALL.into(), id.clone());
             println!("comp-host: serving {} on http://{} as {id}", args.component, addr);
             println!(
                 "comp-host: kv backend = {} | allocator = {}",
@@ -1282,11 +1283,11 @@ fn resolve(
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    let routes = routes.read().unwrap();
+    let routes = crate::sync::reading(&routes);
     let id = routes.get(&host).or_else(|| routes.get(CATCH_ALL))?;
     // A plug is in the instance table but has no HTTP world, so it can never be
     // reached through the door even if something routed to it by mistake.
-    instances.read().unwrap().get(id).filter(|i| i.pre.is_some()).cloned()
+    crate::sync::reading(&instances).get(id).filter(|i| i.pre.is_some()).cloned()
 }
 
 fn not_found() -> hyper::Response<HyperOutgoingBody> {
