@@ -46,7 +46,8 @@ pub struct Trace {
     namespace: String,
     database: String,
     user: String,
-    password: String,
+    /// `None` means send NO auth header at all.
+    password: Option<String>,
     /// Writes that did not land. Reported once, at the end.
     dropped: AtomicU64,
     /// Whether the namespace and database have been defined this process.
@@ -74,7 +75,13 @@ impl Trace {
             namespace: "comp".to_string(),
             database: database.to_string(),
             user: "root".to_string(),
-            password: password.unwrap_or("root").to_string(),
+            // Kept as an Option rather than defaulted. An `--unauthenticated`
+            // SurrealDB REJECTS a Basic header naming a user it does not have,
+            // so "no password" and "the password is root" are different requests
+            // — and `goalrun` already treats absent as "the server takes
+            // unauthenticated writes". Defaulting here erased that distinction,
+            // and every write against a local unauthenticated database failed.
+            password: password.map(|p| p.to_string()),
             dropped: AtomicU64::new(0),
             defined: AtomicBool::new(false),
         }
@@ -201,12 +208,12 @@ impl Trace {
             "DEFINE NAMESPACE IF NOT EXISTS {}; USE NS {}; DEFINE DATABASE IF NOT EXISTS {};",
             self.namespace, self.namespace, self.database
         );
-        let _ = ureq_post(&self.url, &self.namespace, &self.database, &self.user, &self.password, &surql);
+        let _ = ureq_post(&self.url, &self.namespace, &self.database, &self.user, self.password.as_deref(), &surql);
     }
 
     fn send(&self, surql: &str) {
         self.ensure_defined();
-        let ok = ureq_post(&self.url, &self.namespace, &self.database, &self.user, &self.password, surql);
+        let ok = ureq_post(&self.url, &self.namespace, &self.database, &self.user, self.password.as_deref(), surql);
         if !ok {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
@@ -214,7 +221,7 @@ impl Trace {
 }
 
 /// POST one body to `/sql`. Returns whether every statement in it was accepted.
-fn ureq_post(url: &str, ns: &str, db: &str, user: &str, password: &str, surql: &str) -> bool {
+fn ureq_post(url: &str, ns: &str, db: &str, user: &str, password: Option<&str>, surql: &str) -> bool {
     let client = match reqwest::blocking::Client::builder()
         // Short on purpose: a trace write must never be the reason a run stalls,
         // and the run has already done the expensive part by the time we write.
@@ -224,9 +231,12 @@ fn ureq_post(url: &str, ns: &str, db: &str, user: &str, password: &str, surql: &
         Ok(c) => c,
         Err(_) => return false,
     };
-    let Ok(r) = client
-        .post(format!("{url}/sql"))
-        .basic_auth(user, Some(password))
+    let mut req = client.post(format!("{url}/sql"));
+    // Only when there is one: see the `password` field.
+    if let Some(p) = password {
+        req = req.basic_auth(user, Some(p));
+    }
+    let Ok(r) = req
         .header("accept", "application/json")
         .header("surreal-ns", ns)
         .header("surreal-db", db)

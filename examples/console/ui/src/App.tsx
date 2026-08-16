@@ -12,6 +12,7 @@
 // have on it.
 
 import { useEffect, useState } from "react";
+import { RunDetail, RunList } from "./Runs";
 
 type Session = { authenticated?: boolean; subject?: string };
 type Project = { id: string; name?: string };
@@ -128,19 +129,48 @@ function Worklist({ subject }: { subject?: string }) {
     if (selected) loadGoals(selected);
   }, [selected]);
 
+  const [tab, setTab] = useState<"goals" | "runs">("goals");
+  const [openRun, setOpenRun] = useState<string | null>(null);
+
   return (
     <div className="space-y-8">
-      <p className="text-xs text-slate-500">signed in as {subject ?? "—"}</p>
+      <div className="flex items-baseline justify-between">
+        {/* Two views and a back button do not need a router, and reaching for one
+            before the second view exists is how a dependency arrives unearned. */}
+        <nav className="flex gap-4 text-sm">
+          {(["goals", "runs"] as const).map((t) => (
+            <button
+              key={t}
+              data-testid={`tab-${t}`}
+              onClick={() => {
+                setTab(t);
+                setOpenRun(null);
+              }}
+              className={tab === t ? "text-slate-100 underline" : "text-slate-500 hover:text-slate-300"}
+            >
+              {t}
+            </button>
+          ))}
+        </nav>
+        <p className="text-xs text-slate-500">signed in as {subject ?? "—"}</p>
+      </div>
       {error && <Notice kind="error">{error}</Notice>}
 
-      {projects?.length === 0 && (
+      {tab === "runs" &&
+        (openRun ? (
+          <RunDetail id={openRun} onBack={() => setOpenRun(null)} />
+        ) : (
+          <RunList onOpen={setOpenRun} />
+        ))}
+
+      {tab === "goals" && projects?.length === 0 && (
         <Notice kind="error">
           No projects. Create one with <code>holon project add</code> — the console does not
           create projects yet.
         </Notice>
       )}
 
-      {selected && (
+      {tab === "goals" && selected && (
         <>
           <section className="space-y-3">
             <h2 className="text-lg">Worklist</h2>

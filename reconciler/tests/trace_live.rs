@@ -148,3 +148,69 @@ fn a_dead_database_costs_a_line_of_output_and_nothing_else() {
         started.elapsed()
     );
 }
+
+/// An unauthenticated database takes writes with NO auth header.
+///
+/// This is the path `comp-trace-seed` and any local `goalrun` without
+/// `--surreal-password` take, and it was broken while every test passed: `None`
+/// was defaulted to `"root"`, so a Basic header naming a user the server does
+/// not have went out — and an `--unauthenticated` SurrealDB rejects that with a
+/// non-JSON body. Every write was dropped, silently, exactly as designed.
+///
+/// Its own container, because `--unauthenticated` is a server-start flag and the
+/// shared harness starts an authenticated one.
+#[test]
+fn an_unauthenticated_database_takes_writes_with_no_auth_header() {
+    use std::process::{Command, Stdio};
+
+    let port = comp_reconciler::fleet::free_port();
+    let name = format!("trace-unauth-{port}");
+    let started = Command::new("docker")
+        .args(["run", "--rm", "-d", "--name", &name])
+        .args(["-p", &format!("127.0.0.1:{port}:8000")])
+        .arg(SURREAL_IMAGE)
+        .args(["start", "--no-banner", "--unauthenticated"])
+        .args(["--bind", "0.0.0.0:8000", "memory"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !started {
+        eprintln!("SKIPPED: docker could not start {SURREAL_IMAGE} unauthenticated");
+        return;
+    }
+    struct Container(String);
+    impl Drop for Container {
+        fn drop(&mut self) {
+            let _ = Command::new("docker")
+                .args(["rm", "-f", &self.0])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+    let _c = Container(name);
+
+    let url = format!("http://127.0.0.1:{port}");
+    let http = reqwest::blocking::Client::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
+        if http.get(format!("{url}/health")).send().is_ok() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+
+    // No password: the case the seeder and a local run actually use.
+    let trace = Trace::new(&url, DB, None);
+    trace.run_started("unauth/g1", "a goal with no password", 1, "abc", 1);
+    trace.run_resolved("unauth/g1", "merged", Some("only"), "");
+
+    assert!(
+        trace.report().is_none(),
+        "writes were dropped against an unauthenticated database — a Basic header \
+         naming a user it does not have is refused, so `None` must send none: {:?}",
+        trace.report()
+    );
+}

@@ -33,12 +33,15 @@
 // `platform-domain` does not import a forge, and giving the control plane the
 // ability to push code to satisfy a UI would be the wrong trade.
 //
-// What is deliberately NOT imported yet: `knowledge:graph`. Run history and the
-// capability graph live in the merged store (ADR-0091), and the run view will
-// read them through here rather than through the control plane — but slice one
-// does not, so the capability is not granted. A component that imports what it
-// might need later is a component whose manifest has stopped describing what it
-// can actually do (ADR-0013).
+// `knowledge:graph/store` — READS, for the run view. Run history lives in the
+// merged store (ADR-0091, ADR-0092), which the control plane deliberately cannot
+// reach; the console reads it here so the browser still has one origin to talk
+// to. It arrived in slice two rather than slice one because a component that
+// imports what it might need later has a manifest that has stopped describing
+// what it can do (ADR-0013).
+//
+// Nothing here writes through it. `comp-goalrun` appends the trace; the console
+// only ever asks what happened.
 //
 // Config (wasi:config/store):
 //   platform-url   where `platform-domain` answers, e.g. http://platform.acme.test
@@ -56,6 +59,10 @@ world console-domain {
 
     // A goal spec is prose in git; authoring one is a pull request.
     import git:forge/repo@0.1.0;
+
+    // The merged store (ADR-0091). Reads only — the console shows a run, the
+    // driver is what records one.
+    import knowledge:graph/store@0.1.0;
 
     import wasi:config/store@0.2.0-rc.1;
 }

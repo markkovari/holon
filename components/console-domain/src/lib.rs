@@ -41,6 +41,7 @@ mod bindings;
 use serde_json::{json, Value};
 
 use bindings::git::forge::repo as forge;
+use bindings::knowledge::graph::store as graph;
 use bindings::ui::assets::files as statics;
 use bindings::wasi::config::store as config;
 
@@ -79,6 +80,9 @@ impl Guest for Component {
             }
 
             (Method::Post, ["api", "goals"]) => author_goal(&request),
+
+            (Method::Get, ["api", "runs"]) => runs(),
+            (Method::Get, ["api", "runs", id]) => run_detail(&percent_decode(id)),
 
             // Anything else that is a GET is the SPA — client-side routes render
             // the shell. API routes are matched above, so this cannot swallow one.
@@ -300,6 +304,127 @@ fn forge_error(e: forge::ForgeError) -> Outcome {
         }
         forge::ForgeError::Rejected(m) => Outcome::Err(422, format!("the forge refused it: {m}")),
         forge::ForgeError::Unavailable(m) => Outcome::Err(502, format!("the forge is unreachable: {m}")),
+    }
+}
+
+// ---- runs (ADR-0092) --------------------------------------------------------
+
+/// The runs, newest first.
+///
+/// Reads the merged store directly rather than through the platform: run history
+/// is the accumulated half that the control plane deliberately cannot see
+/// (ADR-0091). The console is the one place both halves are on screen together.
+fn runs() -> Outcome {
+    // A bounded list. Runs accumulate forever and nobody scrolls past the last
+    // few dozen; an unbounded SELECT here is the query that gets slow silently.
+    let surql = "SELECT id_text, goal, outcome, winner, url, branches, started_at, resolved_at \
+                 FROM run ORDER BY started_at DESC LIMIT 50;";
+    match graph::query(&surql.to_string()) {
+        Ok(answer) => Outcome::Raw(
+            200,
+            vec![("content-type".into(), "application/json".into())],
+            wrap(&answer, "runs"),
+        ),
+        Err(e) => graph_error(e),
+    }
+}
+
+/// One run: the node, its attempts, and its events in order.
+///
+/// Three statements in one request rather than three round trips — the run page
+/// wants all of it at once, and a partially-loaded timeline is worse than a slow
+/// one because it looks complete.
+fn run_detail(id: &str) -> Outcome {
+    let quoted = surql_string(id);
+    let surql = format!(
+        "SELECT * FROM run WHERE id_text = {quoted};\n\
+         SELECT * FROM attempt WHERE run = {quoted} ORDER BY started_at;\n\
+         SELECT * FROM event WHERE run = {quoted} ORDER BY at;"
+    );
+    match graph::query(&surql) {
+        Ok(answer) => Outcome::Raw(
+            200,
+            vec![("content-type".into(), "application/json".into())],
+            detail(&answer),
+        ),
+        Err(e) => graph_error(e),
+    }
+}
+
+/// `knowledge:graph/query` answers SurrealDB's per-statement envelope. The SPA
+/// wants the rows, so unwrap the LAST statement's result under `key`.
+fn wrap(answer: &str, key: &str) -> Vec<u8> {
+    let rows = statements(answer).pop().unwrap_or(Value::Array(vec![]));
+    json!({ key: rows }).to_string().into_bytes()
+}
+
+/// The three statements of a run detail, named.
+fn detail(answer: &str) -> Vec<u8> {
+    let mut s = statements(answer);
+    // Pop in reverse: the last statement is the events.
+    let events = s.pop().unwrap_or(Value::Array(vec![]));
+    let attempts = s.pop().unwrap_or(Value::Array(vec![]));
+    let run = s.pop().unwrap_or(Value::Array(vec![]));
+    json!({
+        "run": run.get(0).cloned().unwrap_or(Value::Null),
+        "attempts": attempts,
+        "events": events,
+    })
+    .to_string()
+    .into_bytes()
+}
+
+/// Per-statement results, in order. An unreadable answer is an empty list rather
+/// than a panic: the run view showing nothing is recoverable, the component
+/// trapping is not.
+fn statements(answer: &str) -> Vec<Value> {
+    serde_json::from_str::<Value>(answer)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .map(|a| a.into_iter().map(|s| s["result"].clone()).collect())
+        .unwrap_or_default()
+}
+
+/// Enough percent-decoding for a run id in a path segment.
+///
+/// A run id is `seed/g1/branch` (ADR-0078), so the SPA sends it
+/// `encodeURIComponent`'d and the `/` arrives as `%2F`. `path-with-query` hands
+/// the component the RAW path — nothing decodes it on the way in — so without
+/// this the id is the literal `77%2Fg1` and every run detail is empty while the
+/// list beside it works. `studio-domain` carries the same helper for the same
+/// reason.
+fn percent_decode(s: &str) -> String {
+    let bytes = s.replace('+', " ").into_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&String::from_utf8_lossy(&bytes[i + 1..i + 3]), 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
+
+/// A SurrealQL string literal. Through JSON so a value cannot carry syntax —
+/// this one takes a run id straight off the URL (ADR-0080).
+fn surql_string(s: &str) -> String {
+    Value::String(s.to_string()).to_string()
+}
+
+fn graph_error(e: graph::GraphError) -> Outcome {
+    match e {
+        // No credentials is an operator problem, not a caller's — say which.
+        graph::GraphError::NotConfigured(m) => {
+            Outcome::Err(503, format!("no knowledge store configured: {m}"))
+        }
+        graph::GraphError::Unavailable(m) => Outcome::Err(502, format!("the knowledge store is unreachable: {m}")),
+        graph::GraphError::Rejected(m) => Outcome::Err(502, format!("the knowledge store refused the read: {m}")),
     }
 }
 
