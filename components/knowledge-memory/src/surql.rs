@@ -58,6 +58,12 @@ pub struct EntryWrite<'a> {
     pub attempt: &'a str,
     pub score: i32,
     pub promoted: bool,
+    /// What the work TOUCHED, read off the capability graph rather than authored:
+    /// the interfaces the part's component imports (ADR-0090). These are what make
+    /// a lesson findable by a later goal that shares an interface but shares no
+    /// wording — which is most of them, since a fact about `csv:codec/codec` is
+    /// true for a billing ledger and a veterinary clinic alike.
+    pub tags: &'a [String],
 }
 
 /// Store an entry, with or without its vector.
@@ -71,7 +77,7 @@ pub fn upsert_entry(e: &EntryWrite, vector: Option<&[f32]>, dim_conflict: bool) 
     let id = rid(ENTRIES, e.handle);
     let mut set = format!(
         "ns = {}, text = {}, goal = {}, env = {}, attempt = {}, score = {}, promoted = {}, \
-         uses += 0, wins += 0, last_used = time::now()",
+         tags = [{}], uses += 0, wins += 0, last_used = time::now()",
         lit(e.ns),
         lit(e.text),
         lit(e.goal),
@@ -79,6 +85,7 @@ pub fn upsert_entry(e: &EntryWrite, vector: Option<&[f32]>, dim_conflict: bool) 
         lit(e.attempt),
         e.score,
         e.promoted,
+        e.tags.iter().map(|t| lit(t)).collect::<Vec<_>>().join(", "),
     );
     let mut define = String::new();
     match vector {
@@ -100,6 +107,30 @@ pub fn knn_entries(query: &[f32], k: u32, pools: &[&str]) -> String {
         "SELECT *, vector::distance::knn() AS dist FROM {ENTRIES} \
          WHERE vec <|{k},COSINE|> {} AND ns IN [{pool_list}];",
         vec_lit(query)
+    )
+}
+
+/// Recall by what the work TOUCHED rather than by what the goal SAID.
+///
+/// An exact match on a tag, with no embedding involved, because an interface name
+/// is an identifier and not a sentence: `csv:codec/codec@0.1.0` either was imported
+/// or was not. This is the half of retrieval that crosses applications — the two
+/// paid runs this repository has made both died on facts about an interface that a
+/// similarity search over goal text had no way to surface (ADR-0090).
+///
+/// `LIMIT` is generous relative to `k` because these candidates are ranked and
+/// trimmed with the dense ones afterwards; taking k here would let a tag match
+/// crowd out a better textual hit.
+pub fn tagged_entries(tags: &[String], k: u32, pools: &[&str]) -> String {
+    if tags.is_empty() {
+        return String::new();
+    }
+    let pool_list = pools.iter().map(|p| lit(p)).collect::<Vec<_>>().join(", ");
+    let tag_list = tags.iter().map(|t| lit(t)).collect::<Vec<_>>().join(", ");
+    format!(
+        "SELECT * FROM {ENTRIES} WHERE tags CONTAINSANY [{tag_list}] AND ns IN [{pool_list}] \
+         ORDER BY wins DESC, uses DESC LIMIT {};",
+        k * 3
     )
 }
 

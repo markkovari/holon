@@ -211,6 +211,9 @@ fn write_entry(db: &Db, name: &str, handle: &str, ns: &str, goal: &str, text: &s
         attempt: "1",
         score: -1,
         promoted: ns == "patterns",
+        // These scenarios pin SurrealQL behaviour, not retrieval policy; the
+        // tagged path has its own test (reconciler/tests/tagged.rs).
+        tags: &[],
     };
     let vector = embed(&format!("{goal} — {text}"));
     db.must(name, &surql::upsert_entry(&w, Some(&vector), false));
@@ -574,6 +577,7 @@ fn scenarios() {
         attempt: "1",
         score: -1,
         promoted: false,
+                tags: &[],
     };
     db.must(s8, &surql::upsert_entry(&w, Some(&vec![0.5; DIM]), false));
     let refused = db
@@ -636,6 +640,8 @@ fn decay_forgets_the_unread_and_spares_everything_else() {
             attempt: "1",
             score: -1,
             promoted: false,
+            // This scenario is about decay, which does not read tags.
+            tags: &[],
         }
     }
     for h in ["errors:unread", "errors:earned", "errors:fresh"] {
