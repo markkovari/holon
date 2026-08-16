@@ -162,18 +162,80 @@ impl Agent {
     /// the fleet's desired state. Atomic rename: a half-written ledger read on the
     /// next boot would start a subset and look like a partial outage.
     fn persist(&self, commands: &BTreeMap<String, StartCommand>) {
+        // Every failure here used to be discarded — a `let ... else { return }` and
+        // an `if .is_ok()` with no else — in the one function whose doc comment
+        // promises that a reboot is not a data-loss event. A full disk or a
+        // read-only directory made every persist a silent no-op, and the fleet
+        // found out one reboot later, as the partial outage described above.
+        //
+        // It still does not propagate: the caller is a heartbeat with nothing
+        // useful to do about it, and failing the heartbeat would turn "the ledger
+        // did not save" into "the node is down". But it SAYS SO, once per failure,
+        // which is the difference between a degraded node and a silently degraded
+        // one.
         let tmp = self.ledger().with_extension("json.tmp");
-        let Ok(bytes) = serde_json::to_vec_pretty(commands) else { return };
-        if std::fs::write(&tmp, bytes).is_ok() {
-            let _ = std::fs::rename(&tmp, self.ledger());
+        let bytes = match serde_json::to_vec_pretty(commands) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "comp-host: WARNING the run ledger could not be serialised ({e}); the \
+                     desired state of {} instance(s) is NOT on disk and a reboot will start \
+                     a subset",
+                    commands.len()
+                );
+                return;
+            }
+        };
+        if let Err(e) = std::fs::write(&tmp, bytes) {
+            eprintln!(
+                "comp-host: WARNING could not write {} ({e}); the run ledger is NOT on disk \
+                 and a reboot will start a subset",
+                tmp.display()
+            );
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp, self.ledger()) {
+            eprintln!(
+                "comp-host: WARNING could not replace {} ({e}); the run ledger is STALE and \
+                 a reboot will start whatever it last contained",
+                self.ledger().display()
+            );
         }
     }
 
+    /// The other half of the same promise.
+    ///
+    /// An unreadable or corrupt ledger is not the same thing as an empty one, and
+    /// both used to become `BTreeMap::new()`. "No instances were running" is a
+    /// perfectly plausible answer, so a boot that lost the file looked exactly like
+    /// a boot that had nothing to restore.
     fn load_ledger(&self) -> BTreeMap<String, StartCommand> {
-        std::fs::read(self.ledger())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+        let bytes = match std::fs::read(self.ledger()) {
+            Ok(b) => b,
+            // Absent is normal: nothing has been started yet.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return BTreeMap::new(),
+            Err(e) => {
+                eprintln!(
+                    "comp-host: WARNING the run ledger at {} exists but could not be read \
+                     ({e}); starting nothing, which is NOT the same as having nothing to \
+                     start",
+                    self.ledger().display()
+                );
+                return BTreeMap::new();
+            }
+        };
+        match serde_json::from_slice(&bytes) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!(
+                    "comp-host: WARNING the run ledger at {} is corrupt ({e}); starting \
+                     nothing. The file is left in place rather than overwritten, so it can \
+                     be looked at.",
+                    self.ledger().display()
+                );
+                BTreeMap::new()
+            }
+        }
     }
 }
 
@@ -200,7 +262,7 @@ pub async fn run(agent: Arc<Agent>, fabric: Fabric) -> Result<()> {
     // operator: a node that reboots while the control plane is down comes back
     // serving, from its own disk, with no help from anyone.
     {
-        let saved = ledger.lock().unwrap().clone();
+        let saved = crate::sync::held(&ledger).clone();
         if !saved.is_empty() {
             eprintln!("comp-host: restoring {} instance(s) from the ledger", saved.len());
         }
@@ -232,7 +294,7 @@ pub async fn run(agent: Arc<Agent>, fabric: Fabric) -> Result<()> {
                     address: &agent.address,
                     capacity: Capacity {
                         cpus: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
-                        instances: agent.instances.read().unwrap().len(),
+                        instances: crate::sync::reading(&agent.instances).len(),
                     },
                     instances: agent.snapshot(),
                 };
@@ -285,7 +347,7 @@ async fn handle(
             let id = instance_id(&cmd.tenant, &cmd.app, &cmd.component);
             start(agent, cmd.clone(), Some(artifacts)).await?;
             let saved = {
-                let mut l = ledger.lock().unwrap();
+                let mut l = crate::sync::held(&ledger);
                 l.insert(id.clone(), cmd);
                 l.clone()
             };
@@ -306,9 +368,9 @@ async fn handle(
             // Stop means gone. Shrinking to a smaller non-zero count is a `start`
             // with a lower absolute count, so there is only one code path that
             // changes a replica count and only one that removes an instance.
-            let removed = agent.instances.write().unwrap().remove(&id);
+            let removed = crate::sync::writing(&agent.instances).remove(&id);
             if let Some(gone) = &removed {
-                agent.routes.write().unwrap().retain(|_, v| *v != id);
+                crate::sync::writing(&agent.routes).retain(|_, v| *v != id);
                 // Drop the shared module when the LAST instance on that digest goes.
                 // Holding machine code for something nothing runs is exactly the idle
                 // cost this cache exists to reduce, and the .cwasm stays on disk, so
@@ -321,11 +383,11 @@ async fn handle(
                     .values()
                     .any(|i| i.scope.digest == digest);
                 if !still_used {
-                    agent.compiled.write().unwrap().remove(&digest);
+                    crate::sync::writing(&agent.compiled).remove(&digest);
                 }
             }
             let saved = {
-                let mut l = ledger.lock().unwrap();
+                let mut l = crate::sync::held(&ledger);
                 l.remove(&id);
                 l.clone()
             };
@@ -339,9 +401,9 @@ async fn handle(
             })
         }
         "drain" => {
-            let ids: Vec<String> = agent.instances.read().unwrap().keys().cloned().collect();
-            agent.instances.write().unwrap().clear();
-            agent.routes.write().unwrap().clear();
+            let ids: Vec<String> = crate::sync::reading(&agent.instances).keys().cloned().collect();
+            crate::sync::writing(&agent.instances).clear();
+            crate::sync::writing(&agent.routes).clear();
             // The ledger is deliberately NOT cleared: a drain is an operator asking
             // this node to shed load now, not a decision that these apps should
             // never come back. The reconciler will place them elsewhere.
@@ -374,7 +436,7 @@ async fn start(
     // the node then stops publishing inventory and gets its work rescheduled out
     // from under it. Also measured, not theorised.
     let resized = {
-        let table = agent.instances.read().unwrap();
+        let table = crate::sync::reading(&agent.instances);
         table
             .get(&id)
             .filter(|e| e.scope.digest == cmd.digest && e.count != cmd.count.max(1))
@@ -389,12 +451,12 @@ async fn start(
     };
     if let Some(resized) = resized {
         let n = resized.count;
-        agent.instances.write().unwrap().insert(id.clone(), resized);
+        crate::sync::writing(&agent.instances).insert(id.clone(), resized);
         eprintln!("comp-host: {id} now holds {n} replica(s)");
         return Ok(());
     }
     // Already exactly as asked: say so and touch nothing.
-    if agent.instances.read().unwrap().get(&id).is_some_and(|e| e.scope.digest == cmd.digest) {
+    if crate::sync::reading(&agent.instances).get(&id).is_some_and(|e| e.scope.digest == cmd.digest) {
         return Ok(());
     }
 
@@ -463,7 +525,7 @@ async fn start(
     // machine code and internally reference-counted, so N apps on one digest hold one
     // copy — per-instance state lives in the Store. Everything below still runs per
     // instance: the linker, the remotes and the route are what make it an instance.
-    let in_memory = agent.compiled.read().unwrap().get(&scope.digest).cloned();
+    let in_memory = crate::sync::reading(&agent.compiled).get(&scope.digest).cloned();
     let shared = in_memory.is_some();
     let (component, from_cache) = match in_memory {
         Some(hit) => (hit, true),
@@ -533,7 +595,7 @@ async fn start(
     // Inserted before the linker because everything below is per-instance and this
     // is the only part that is not.
     if !shared {
-        agent.compiled.write().unwrap().insert(scope.digest.clone(), component.clone());
+        crate::sync::writing(&agent.compiled).insert(scope.digest.clone(), component.clone());
     }
 
     let mut linker = crate::build_linker(&agent.engine)?;
@@ -590,7 +652,7 @@ async fn start(
         .unwrap()
         .insert(id.clone(), Arc::new(Instance { scope: scope.clone(), pre, remotes, count }));
     if let Some(host) = ingress_host {
-        agent.routes.write().unwrap().insert(host.to_ascii_lowercase(), id.clone());
+        crate::sync::writing(&agent.routes).insert(host.to_ascii_lowercase(), id.clone());
     }
     eprintln!(
         "comp-host: started {id} ({}) in {} us (fetch {} us, {} {} us, link {} us)",
