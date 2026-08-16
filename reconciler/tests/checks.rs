@@ -100,13 +100,21 @@ impl Runner {
         // Under a loaded machine one connection in a few hundred is reset, and a
         // single one used to fail the whole file. Retrying an actual report
         // would instead retry away the verdict under test.
+        // Budgeted by TIME, not by a count. Five attempts at 200ms is one second,
+        // which is fine on an idle machine and not fine while the rest of the suite
+        // is compiling 150 crates around it — `Connection refused, attempt 5/5`
+        // failed a full run that passed in isolation thirty seconds later. The same
+        // mistake as `--timeout 300`: a bound measured idle and spent under load.
         let payload = body.to_string();
         let mut last = String::new();
-        for attempt in 0..5 {
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let mut attempt = 0;
+        while std::time::Instant::now() < deadline {
+            attempt += 1;
             match Self::once(self.port, &payload) {
                 Ok(v) => return v,
                 Err(e) => {
-                    last = format!("attempt {}/5: {e}", attempt + 1);
+                    last = format!("attempt {attempt} over {:?}: {e}", deadline.elapsed());
                     std::thread::sleep(Duration::from_millis(200));
                 }
             }
