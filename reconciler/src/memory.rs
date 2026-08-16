@@ -198,6 +198,14 @@ pub struct Reading {
     pub budget: u32,
     /// Empty means all three pools.
     pub pools: Vec<String>,
+    /// Interfaces the part imports, so retrieval can cross applications.
+    ///
+    /// Text similarity finds a lesson when the wording rhymes. These find it when
+    /// the CONTRACT is shared, which is the case that actually repeats: a fact
+    /// about `csv:codec/codec` is true for a billing ledger and a veterinary
+    /// clinic alike, and those two goals have almost nothing in common to match on
+    /// (ADR-0090). Empty is text-only, which is what the control arm wants.
+    pub tags: Vec<String>,
 }
 
 impl Memory {
@@ -213,11 +221,12 @@ impl Memory {
         let v = self.call(
             reqwest::Method::GET,
             &format!(
-                "/recall?goal={}&k={}&budget={}&pools={}",
+                "/recall?goal={}&k={}&budget={}&pools={}&tags={}",
                 enc(goal),
                 r.k,
                 r.budget,
-                enc(&r.pools.join(","))
+                enc(&r.pools.join(",")),
+                enc(&r.tags.join(","))
             ),
         )?;
         if let Some(detail) = v["error"].as_str() {
@@ -307,13 +316,26 @@ impl Memory {
         attempt: &str,
         text: &str,
     ) -> Result<String, String> {
+        self.observe_failure_tagged(goal, env, attempt, text, &[])
+    }
+
+    /// The same, carrying what the work touched (ADR-0090).
+    pub fn observe_failure_tagged(
+        &self,
+        goal: &str,
+        env: &str,
+        attempt: &str,
+        text: &str,
+        tags: &[String],
+    ) -> Result<String, String> {
         let v = self.call_with(
             reqwest::Method::POST,
             &format!(
-                "/observe?ns=errors&goal={}&env={}&attempt={}",
+                "/observe?ns=errors&goal={}&env={}&attempt={}&tags={}",
                 enc(goal),
                 enc(env),
-                enc(attempt)
+                enc(attempt),
+                enc(&tags.join(","))
             ),
             text.to_string(),
         )?;
@@ -554,7 +576,7 @@ mod tests {
             host: "nowhere".into(),
             timeout: Duration::from_millis(1),
         };
-        let cold = Reading { k: 0, budget: 0, pools: vec![] };
+        let cold = Reading { k: 0, budget: 0, pools: vec![], tags: vec![] };
         assert!(m.recall("anything", &cold).expect("no call, no failure").is_empty());
         // And a branch that read nothing attributes nothing, for the same reason.
         assert!(m.attribute(&[], "run-1", true).is_ok());

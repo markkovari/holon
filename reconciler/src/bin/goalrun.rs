@@ -980,6 +980,13 @@ fn main() -> Result<()> {
     // previous winner; that same branch reads no lessons either.
     let mut strategies = generation_mod::default_strategies(args.branches);
     let mut read_by_branch: Vec<Vec<String>> = vec![Vec::new(); strategies.len()];
+    // What this goal's work touches, so what it learns is findable by the next
+    // goal that builds against the same interfaces rather than only by the next
+    // goal worded like this one (ADR-0090).
+    let tags = comp_reconciler::plug::tags_for(
+        &goal.writable,
+        &comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&repo_root())),
+    );
     if let Some(m) = &memory {
         for (i, s) in strategies.iter_mut().enumerate() {
             if !s.reads_prior {
@@ -990,6 +997,7 @@ fn main() -> Result<()> {
                 // the same prompt by arriving at the same advice.
                 k: 3 + (i as u32 % 3),
                 budget: 1200,
+                tags: tags.clone(),
                 pools: match i % 3 {
                     0 => vec![],                                   // everything
                     1 => vec!["errors".into()],                    // only what failed

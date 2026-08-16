@@ -175,6 +175,16 @@ fn read_body(request: IncomingRequest) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// A repeated query parameter, as a list: `tags=a,b,c`.
+fn csv_param(query: &str, key: &str) -> Vec<String> {
+    param(query, key)
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn entry_from(query: &str, text: String) -> Entry {
     Entry {
         ns: ns_of(&param(query, "ns")),
@@ -184,6 +194,9 @@ fn entry_from(query: &str, text: String) -> Entry {
         env: param(query, "env"),
         attempt: param(query, "attempt"),
         score: signed(query, "score", -1),
+        // Comma-separated, so a test can write against the structural half of
+        // retrieval the same way it writes against everything else here.
+        tags: csv_param(query, "tags"),
     }
 }
 
@@ -222,6 +235,7 @@ impl Guest for Component {
                     budget: num(&query, "budget", 0),
                     pools: pools_of(&param(&query, "pools")),
                     min_similarity: float(&query, "min"),
+                    tags: csv_param(&query, "tags"),
                 };
                 match mem::recall(&param(&query, "goal"), &opts) {
                     Ok(hits) => format!(

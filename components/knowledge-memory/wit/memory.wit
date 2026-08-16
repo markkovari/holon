@@ -67,6 +67,20 @@ interface memory {
         attempt: string,
         /// The gate score at the time, or -1 when there was not one yet.
         score: s32,
+        /// What the work TOUCHED: the interfaces the part's component imports,
+        /// read off the capability graph rather than authored (ADR-0090).
+        ///
+        /// This is what lets a lesson cross applications. `Dialect.delimiter is a
+        /// String, not a char` is a fact about `csv:codec/codec` and is true for
+        /// every future user of it, but a billing ledger and a veterinary clinic
+        /// share almost no wording — so retrieval by goal similarity alone will
+        /// not find it. Tags are matched exactly, with no embedding: an interface
+        /// name is an identifier, not a sentence.
+        ///
+        /// Never written by an agent. A tag decides what future runs are shown,
+        /// which is the same reason `promote` is not reachable from an agent's
+        /// world (ADR-0084).
+        tags: list<string>,
     }
 
     /// A retrieved lesson.
@@ -105,6 +119,14 @@ interface memory {
         /// nature: a threshold tuned on one embedding model is a superstition on
         /// another, so it is a caller's knob and not a constant in here.
         min-similarity: f64,
+        /// Also return lessons tagged with any of these, whatever the goal says.
+        ///
+        /// The structural half of retrieval (ADR-0090): the caller passes the
+        /// interfaces the part imports, and gets what previous work against those
+        /// interfaces learned. Empty means text similarity only, which is what
+        /// every caller did before this existed — and is still what the control
+        /// arm wants.
+        tags: list<string>,
     }
 
     /// Record an observation. Refuses `patterns`. Returns the handle it was
