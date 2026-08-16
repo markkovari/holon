@@ -133,7 +133,7 @@
   {
     "name": "booked-domain",
     "package": "booked:app@0.1.0",
-    "description": "`booked-domain` \u2014 a Calendly-lite booking service (BOOKED.md) as ONE composed",
+    "description": "`booked-domain` \u2014 a Calendly-lite booking service (docs/apps/BOOKED.md) as ONE composed",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -157,7 +157,7 @@
   {
     "name": "books-domain",
     "package": "books:app@0.1.0",
-    "description": "`books-domain` \u2014 a double-entry bookkeeping service (BOOKS.md) as ONE composed",
+    "description": "`books-domain` \u2014 a double-entry bookkeeping service (docs/apps/BOOKS.md) as ONE composed",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -179,7 +179,7 @@
   {
     "name": "buzz-domain",
     "package": "buzz:app@0.1.0",
-    "description": "`buzz-domain` \u2014 a live multiplayer quiz game (BUZZ.md) as ONE composed wasm",
+    "description": "`buzz-domain` \u2014 a live multiplayer quiz game (docs/apps/BUZZ.md) as ONE composed wasm",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -323,7 +323,7 @@
   {
     "name": "dashboards-domain",
     "package": "dashboards:app@0.1.0",
-    "description": "`dashboards-domain` \u2014 personal metric dashboards (DASHBOARDS.md) as ONE",
+    "description": "`dashboards-domain` \u2014 personal metric dashboards (docs/apps/DASHBOARDS.md) as ONE",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -582,7 +582,7 @@
   {
     "name": "gate-domain",
     "package": "gate:app@0.1.0",
-    "description": "`gate-domain` \u2014 a durable traffic-shaping gateway (GATE.md) as ONE composed",
+    "description": "`gate-domain` \u2014 a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -852,7 +852,7 @@
   {
     "name": "lms-domain",
     "package": "lms:app@0.1.0",
-    "description": "`lms-domain` \u2014 a learning-management service (LMS.md) as ONE composed wasm",
+    "description": "`lms-domain` \u2014 a learning-management service (docs/apps/LMS.md) as ONE composed wasm",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -921,7 +921,7 @@
   {
     "name": "mesh-domain",
     "package": "mesh:app@0.1.0",
-    "description": "`mesh-domain` \u2014 the resilience playground (MESH.md) as ONE composed wasm HTTP",
+    "description": "`mesh-domain` \u2014 the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1094,7 +1094,7 @@
   {
     "name": "passkey-domain",
     "package": "passkey:app@0.1.0",
-    "description": "`passkey-domain` \u2014 passwordless sign-in (PASSKEY.md) as ONE composed wasm HTTP",
+    "description": "`passkey-domain` \u2014 passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1145,7 +1145,7 @@
   {
     "name": "payees-domain",
     "package": "payees:app@0.1.0",
-    "description": "`payees-domain` \u2014 a payee book (PAYEES.md) as ONE composed wasm HTTP",
+    "description": "`payees-domain` \u2014 a payee book (docs/apps/PAYEES.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1604,7 +1604,7 @@
   {
     "name": "stash-domain",
     "package": "stash:app@0.1.0",
-    "description": "`stash-domain` \u2014 a personal note stash (STASH.md) as ONE composed wasm HTTP",
+    "description": "`stash-domain` \u2014 a personal note stash (docs/apps/STASH.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1659,7 +1659,7 @@
   {
     "name": "studio-domain",
     "package": "studio:app@0.1.0",
-    "description": "`studio-domain` \u2014 the composition studio (STUDIO.md) as ONE composed wasm HTTP",
+    "description": "`studio-domain` \u2014 the composition studio (docs/apps/STUDIO.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1785,7 +1785,7 @@
   {
     "name": "transit-domain",
     "package": "transit:app@0.1.0",
-    "description": "`transit-domain` \u2014 a public-transport ticketing service (TRANSIT.md) as ONE",
+    "description": "`transit-domain` \u2014 a public-transport ticketing service (docs/apps/TRANSIT.md) as ONE",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],

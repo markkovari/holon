@@ -8,7 +8,7 @@
 // wasi:http.
 //
 // Prereq: the k8s stack is up (just k8s-jobs) and Golem + the CounterAgent are
-// reachable (see JOBS.md). Board: http://jobs.jobs.svc.cluster.local
+// reachable (see docs/apps/JOBS.md). Board: http://jobs.jobs.svc.cluster.local
 import { chromium } from "playwright";
 
 const BASE = process.env.JOBS_URL || "http://jobs.jobs.svc.cluster.local";

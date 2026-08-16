@@ -212,7 +212,25 @@ claim about a distributed system without one is a hope.
   `cache:store/sink` and `/source` but not `/cache`, so a package-level match calls
   an import satisfied that then dangles. `components/wit-reflect` wraps the same
   crate for the component side; this is the native side, the same split as
-  `checks-runner` and `comp-checks`.
+  `checks-runner` and `comp-checks`. Recorded as [ADR-0087](adr/0087-a-composition-is-derived-not-written.md).
+- **Every contract is checked from both sides**, repo-wide, by
+  `reconciler/tests/contracts.rs`. The consumer side is asserted: all 150
+  components, every import has a provider, 0 orphans — and that catches version
+  drift, since an import of `foo:bar@0.1.0` is not satisfied by an export of
+  `@0.2.0` and `wac` will not say so, it will just leave the import in place. The
+  provider side is reported and never asserted: 93 interfaces exported, 80
+  consumed in-tree, `records:store/store` carrying 37 consumers and therefore
+  frozen in practice. A capability catalogue is allowed to be ahead of its
+  callers, so the 13 unconsumed ones are a fact rather than a finding.
+- **No guest writes a payload in one call.** `wasi:io`'s
+  `blocking-write-and-flush` accepts 4096 bytes and TRAPS above that, killing the
+  component mid-response; 30 of 91 write sites did exactly that, including the
+  clinic's own router. They now share a `write_all` that asks `check-write` how
+  much the stream will take and flushes once, and `reconciler/tests/guestio.rs`
+  fails on a new unbounded write. The bug survived for as long as it did because
+  nothing in the chain — `IncompleteMessage`, `connection closed before message
+  completed`, a JSON parse error about an empty string — names a size or a write
+  ([ADR-0088](adr/0088-what-a-gate-says-is-what-the-next-attempt-reads.md)).
 - **The gate is real and joined.** `comp-checks` materialises a candidate over a
   base tree, runs allow-listed commands, and reports the check vector; it is native
   because a component cannot spawn a process, which is the sandbox working rather
@@ -290,6 +308,23 @@ worklist in [`.comp/goals/`](../.comp/goals/).
   better — that needs a goal a real model fails, and the runs so far have not
   found one.
 
+- **A decomposed goal has still never been DELIVERED.** Two paid runs of the
+  clinic's phase two, 290k tokens, no pull request. `access-and-search` passed at
+  1000 on its first generation both times — a real model reaching for `auth-guard`
+  and `search-index` rather than reimplementing them, clearing the behavioural
+  gate and the imports check — but the join is all-or-nothing, so it went down
+  with a sibling that failed. Neither of the sibling's failures was the model's
+  fault: the gate handed the repair `tail -25` of a build log with the error
+  scrolled off the top, and the actual bug (serde built without `std`, so
+  `HashMap` has no `Serialize` impl) is unguessable from outside this repo. Both
+  are fixed and unspent — the next run is the test of it.
+- **Half a branch's budget can vanish into a message that names nothing.** Seven
+  branches across those two runs died as `error sending request for url .../run`,
+  which reads as a fleet fault and is not one: `--timeout` defaults to 300s, the
+  gate costs 2.3s of it, and the model calls have a median of 64s with a tail of
+  174s. Two from that tail is the whole budget. The default is unchanged, because
+  changing it silently is worse than documenting it; `--timeout 900` is the fix
+  and nothing sets it automatically. → ADR-0088
 - ~~**Nothing criticises a gate.**~~ → **built**: every check, the goal's and each
   part's, is run against the untouched base before anything is spent, and a run is
   refused when one of them passes. What it does NOT check is whether a gate

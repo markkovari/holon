@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The helpdesk SaaS domain (HELPDESK.md rung 1) as ONE wasm HTTP component (helpdesk-domain composed with auth-guard + records + fsm + ids + markdown), served in-process via jco's WASI HTTPServer",
+  "description": "The helpdesk SaaS domain (docs/apps/HELPDESK.md rung 1) as ONE wasm HTTP component (helpdesk-domain composed with auth-guard + records + fsm + ids + markdown), served in-process via jco's WASI HTTPServer",
   "scripts": {
     "transpile": "jco transpile helpdesk_domain.composed.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue.js --map wasi:keyvalue/atomics@0.2.0-draft=../src/keyvalue.js --map wasi:keyvalue/batch@0.2.0-draft=../src/keyvalue.js --map wasi:config/store@0.2.0-rc.1=../src/config.js",
     "start": "npm run transpile && tsx src/server.ts",

@@ -1,6 +1,6 @@
 # eshop bench + component-DX evaluation
 
-The eShopOnDapr recreation (ESHOP.md) measured on the orbstack cluster
+The eShopOnDapr recreation (docs/apps/ESHOP.md) measured on the orbstack cluster
 (2026-07-19: ns `eshop`, runtime-operator chart v2.5.2, wash-runtime 2.5.2,
 1 hostgroup pod, 1 replica per workload, NATS JetStream KV, laptop). Method:
 in-cluster `oha` pods against the operator-maintained Services — same as

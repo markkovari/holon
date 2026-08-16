@@ -1,4 +1,4 @@
-//! `books-domain` — a double-entry bookkeeping service (BOOKS.md) as ONE composed
+//! `books-domain` — a double-entry bookkeeping service (docs/apps/BOOKS.md) as ONE composed
 //! wasm HTTP component. Exports `wasi:http`; imports only WIT contracts: the
 //! composed auth-guard (`auth:identity`), `records:store`, `ledger:doubleentry`
 //! (the debits==credits invariant + trial balance) and `pdf:codec` (statements).

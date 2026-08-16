@@ -7,7 +7,7 @@
 > round-trip count, and the wasm path is not the bottleneck — but do not quote the
 > figures.
 
-The whole *app* request path for the RealWorld showcase (CONDUIT.md). Every
+The whole *app* request path for the RealWorld showcase (docs/apps/CONDUIT.md). Every
 request below goes browser → hyper → wasmtime → `conduit_domain.composed.wasm`
 (conduit-domain + auth-guard + record-store + slug) → `wasi:keyvalue` backend.
 Same harness shape as the helpdesk round, so the numbers are comparable.

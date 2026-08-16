@@ -82,4 +82,4 @@ Two facts force the design:
   name in a file uploaded by a tenant is a claim, not a fact.
 - **Re-derive the surface from source WIT.** Rejected: tenants upload binaries, not
   source trees. This is also why `tools/gen-catalog.py`'s regex-over-source
-  approach cannot be the platform's catalog — see STUDIO.md.
+  approach cannot be the platform's catalog — see docs/apps/STUDIO.md.

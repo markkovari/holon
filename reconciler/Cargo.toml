@@ -29,6 +29,11 @@ path = "src/bin/ingress.rs"
 name = "comp-plug"
 path = "src/bin/plug.rs"
 
+# The capability graph: who imports what from whom, derived from the artifacts.
+[[bin]]
+name = "comp-capgraph"
+path = "src/bin/capgraph.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a

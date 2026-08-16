@@ -1,6 +1,6 @@
 // passkey:app — passwordless sign-in with real WebAuthn passkeys.
 //
-// The next rung after AUTHGATE.md's TOTP: instead of a shared secret both sides
+// The next rung after docs/apps/AUTHGATE.md's TOTP: instead of a shared secret both sides
 // know, the authenticator (Touch ID, Windows Hello, a phone, a security key)
 // holds a private key it never releases and signs a fresh challenge. There is no
 // password to phish, reuse, or leak — and the origin check makes a lookalike

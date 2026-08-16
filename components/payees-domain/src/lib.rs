@@ -1,4 +1,4 @@
-//! `payees-domain` — a payee book (PAYEES.md) as ONE composed wasm HTTP
+//! `payees-domain` — a payee book (docs/apps/PAYEES.md) as ONE composed wasm HTTP
 //! component. Exports `wasi:http`; imports only WIT contracts: the composed
 //! auth-guard (`auth:identity`), `records:store`, and `iban:validate` (the
 //! country-length + mod-97 check). No bespoke auth, storage, or IBAN math.

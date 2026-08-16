@@ -133,6 +133,24 @@ fn wait_until_gone(fleet: &Fleet, app: &str, within: Duration) -> bool {
     false
 }
 
+/// The composed `gate-domain`, derived when nobody has run `just compose-gate`.
+///
+/// Reading the hand-composed path directly meant this suite failed with a bare
+/// `NotFound` in any checkout that had only run `just build` — and, because cargo
+/// stops at the first failing test binary, each such suite hid the next one. This
+/// is the same rule `Fleet::start` follows: honour the hand-made artifact when it
+/// is there, derive it from gate-domain's own imports when it is not.
+fn composed_gate() -> Vec<u8> {
+    let root = repo_root();
+    let legacy = root.join("components/target/gate_domain.composed.wasm");
+    if let Ok(bytes) = std::fs::read(&legacy) {
+        return bytes;
+    }
+    let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
+    comp_reconciler::plug::compose("gate-domain", &catalog)
+        .expect("gate-domain composes with what it imports — `just build` first")
+}
+
 #[test]
 fn an_environment_spins_up_and_closes_down() {
     let fleet = Fleet::start_with_platform("envs", 1);
@@ -142,8 +160,7 @@ fn an_environment_spins_up_and_closes_down() {
     // The COMPOSED gate: records and shaper are already inside it, so this test is
     // about environments rather than about wiring a graph — `crossnode.rs` covers
     // the linked case.
-    let wasm = std::fs::read(repo_root().join("components/target/gate_domain.composed.wasm"))
-        .expect("run `just build && just compose-gate`");
+    let wasm = composed_gate();
     assert!(matches!(api.upload("gate", wasm), 200 | 201), "upload failed");
     let (code, dep) = api.post("/api/deployments", json!({ "name": "graph", "nodes": [{"id": "gate"}], "edges": [] }));
     assert_eq!(code, 201, "deploy failed: {dep}");

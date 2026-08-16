@@ -1,4 +1,4 @@
-//! E2E for the pipeline board (PIPELINE.md) as ONE composed wasm HTTP component
+//! E2E for the pipeline board (docs/apps/PIPELINE.md) as ONE composed wasm HTTP component
 //! on the native Rust host.
 //!
 //! Rung 1: enqueue + snapshot. Rung 2 (the headline): an event enqueued by one

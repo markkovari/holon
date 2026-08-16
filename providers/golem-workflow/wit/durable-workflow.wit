@@ -5,7 +5,7 @@
 // wRPC on the NATS lattice, bridging each call to a durable Golem worker — so
 // the work survives its own crashes, retries with exactly-once effects, and
 // resumes. Swap the provider (Temporal, Step Functions, …) and the component is
-// unchanged. See GOLEM.md.
+// unchanged. See docs/capabilities/GOLEM.md.
 package durable:workflow@0.1.0;
 
 interface orchestrator {

@@ -1,4 +1,4 @@
-//! `gate-domain` — a durable traffic-shaping gateway (GATE.md) as ONE composed
+//! `gate-domain` — a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed
 //! wasm HTTP component. Exports `wasi:http`; imports only WIT contracts:
 //! `records:store` (the durable per-key state — the "worker" memory) and
 //! `shaper:limit` (the stateless token-bucket / GCRA math). Per-key records are

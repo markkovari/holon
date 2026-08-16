@@ -1,4 +1,4 @@
-//! E2E for passwordless passkey sign-in (PASSKEY.md) as ONE composed wasm HTTP
+//! E2E for passwordless passkey sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP
 //! component (passkey-domain + webauthn + records + cache + session-store) on the
 //! native Rust host — driven by a **virtual authenticator**.
 //!

@@ -1,6 +1,6 @@
 # authgate — TOTP 2FA + challenge-response login (e2e)
 
-The [AUTHGATE.md](../../AUTHGATE.md) showcase as one composed wasm HTTP component
+The [docs/apps/AUTHGATE.md](../../docs/apps/AUTHGATE.md) showcase as one composed wasm HTTP component
 on the native Rust host, plus a browser SPA. The challenge-response axis: the
 server stores only the *sealed* TOTP secret; a login proves you hold it right
 now, it never re-sends it.

@@ -1,6 +1,6 @@
 # status — status page / uptime monitor (e2e)
 
-The [STATUS.md](../../STATUS.md) showcase as one composed wasm HTTP component on
+The [docs/apps/STATUS.md](../../docs/apps/STATUS.md) showcase as one composed wasm HTTP component on
 the native Rust host. The timer-driven axis: the workload originates from
 `sched:timer`, not an inbound request — each monitor is a recurring check job,
 and `POST /api/tick` is the explicit pump (wasip2 has no background tasks).

@@ -4,7 +4,7 @@
 // complementary limiters — ratelimit:guard (fixed-window attempts + lockout)
 // and quota:meter (cumulative budget) — and every verdict is streamed over SSE
 // so a wall UI shows the attempt bar filling, the lockout latch tripping with a
-// countdown, and the quota gauge draining/refilling. See RATELIMIT.md.
+// countdown, and the quota gauge draining/refilling. See docs/apps/RATELIMIT.md.
 //
 // Routes:
 //   POST /api/hit      {key?, subject?}   one request → allow | throttled

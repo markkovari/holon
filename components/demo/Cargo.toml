@@ -7,6 +7,17 @@ license.workspace = true
 publish.workspace = true
 
 [lib]
+# cdylib for the component, rlib so `tests/paginate.rs` can call `paginate_ids`.
+#
+# The rlib is load-bearing: that test is a HELD-OUT gate (ADR-0081) and lives in
+# `tests/` precisely because the goal's `writable` list does not include it, so a
+# candidate cannot make it pass by editing it. Moving it into `src/lib.rs` as a
+# unit test would hand it to the model.
+#
+# The cost is that `cargo test --workspace` on the HOST tries to link libdemo.dylib,
+# where this component's wit-bindgen exports are undefined symbols. `just test`
+# excludes this crate from the native pass for that reason and runs its held-out
+# test on its own.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
