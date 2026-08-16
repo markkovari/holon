@@ -340,6 +340,26 @@ capability query:
     @cd reconciler && cargo build --release --quiet --bin comp-capgraph
     @./reconciler/target/release/comp-capgraph --find "{{query}}"
 
+# Serve `/v1/messages` from `claude -p` instead of the Anthropic API.
+#
+# Runs the loop's inference on a Claude Code subscription rather than an API key.
+# Nothing in the component graph changes: `anthropic-provider` already reads its
+# base URL from `wasi:config`, which is the same swap point `mock-provider` uses.
+#
+# Each request spawns a fresh `claude -p`, so a generation's branches stay
+# concurrent and context-isolated (ADR-0078, ADR-0091) — one shared conversation
+# would hand every branch the same context and undo both.
+#
+#   just claude-shim &
+#   COMP_FLEET_ALLOW_PRIVATE_EGRESS=1 \
+#     holon goal run --anthropic-base-url http://127.0.0.1:8787 …
+#
+# The private-egress flag is required and deliberately not set here: the fleet
+# blocks private ranges by default, and a base URL pointing at localhost is
+# exactly what a prompt-injected run would aim for.
+claude-shim port="8787" model="":
+    @CLAUDE_MODEL="{{model}}" PORT="{{port}}" node tools/claude-shim.mjs
+
 # Push the capability graph into the store the knowledge pool lives in (ADR-0091).
 #
 # The graph stops being a report a person reads and becomes rows a query can join
