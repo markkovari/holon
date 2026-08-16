@@ -140,7 +140,8 @@ Golem backend; jobs execute as durable Golem workers and land in Done with the
 worker's climbing counter value. Records the real cluster board.
 
 ```bash
-just k8s-jobs &                         # deploy on the v2 operator (see docs/apps/JOBS.md)
+just host-jobs &                        # the native lane (the `k8s-jobs` recipe went
+                                        # with the Kubernetes lane; docs/apps/JOBS.md)
 node jobs-golem.mjs                      # JOBS_URL defaults to the cluster DNS
 bash to-gif.sh videos/jobs-golem/*.webm ../../docs/media/jobs-golem.gif 820 9
 ```

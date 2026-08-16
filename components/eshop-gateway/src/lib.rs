@@ -92,6 +92,11 @@ fn header(request: &IncomingRequest, name: &str) -> Option<String> {
         .and_then(|v| String::from_utf8(v).ok())
 }
 
+/// A ceiling on a request body, not a policy: past this the read stops and the
+/// caller is told, rather than growing until the store's memory cap traps the
+/// component and the connection simply closes.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 fn read_body(request: &IncomingRequest) -> Vec<u8> {
     let mut buf = Vec::new();
     if let Ok(body) = request.consume() {
@@ -99,7 +104,14 @@ fn read_body(request: &IncomingRequest) -> Vec<u8> {
             loop {
                 match stream.blocking_read(8192) {
                     Ok(c) if c.is_empty() => break,
-                    Ok(c) => buf.extend_from_slice(&c),
+                    Ok(c) => {
+                        if buf.len() + c.len() > MAX_BODY_BYTES {
+                            // No error channel on this one, so an over-long body reads as
+                            // EMPTY rather than as a plausible prefix of itself.
+                            return Vec::new();
+                        }
+                        buf.extend_from_slice(&c);
+                    }
                     Err(bindings::wasi::io::streams::StreamError::Closed) => break,
                     // A failed read is not an end of body: collapsing the two
                     // returns a truncated payload as if it were whole.

@@ -579,7 +579,22 @@ async fn report(
     let _ = http
         .post(&url)
         .header("x-platform-secret", &args.secret)
+        // The NUMBERS, not only the problems.
+        //
+        // `platform-domain`'s `fleet_lag()` reads `lag` and `nodes` off this row
+        // and `admit_one_more()` sizes its limit from them — and neither field was
+        // ever sent, so the lag it admitted against was permanently 0 and the
+        // per-node limit was permanently `per_node × 1`. Half of admission control
+        // was measuring a number nobody reported.
+        //
+        // rustc had been saying so for a while: these four arguments were computed,
+        // passed in, and then unused, which is what an unimplemented half of a
+        // feature looks like from inside the compiler.
         .json(&json!({
+            "lag": lag,
+            "desired": desired,
+            "placed": placed,
+            "nodes": nodes,
             "unschedulable": outcome.unschedulable,
             "at_ceiling": outcome.at_ceiling,
         }))
