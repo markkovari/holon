@@ -198,6 +198,14 @@ pub struct Reading {
     pub budget: u32,
     /// Empty means all three pools.
     pub pools: Vec<String>,
+    /// Drop dense hits below this cosine. 0 disables it.
+    ///
+    /// The contract has always offered this and the client never passed it, so a
+    /// caller could not say "only text that is genuinely close". That matters now
+    /// that tags exist: a threshold is how you ask for structural evidence WITHOUT
+    /// whatever the embedding happens to think of your goal, and a tag match is
+    /// exempt from it by design (ADR-0090).
+    pub min_similarity: f64,
     /// Interfaces the part imports, so retrieval can cross applications.
     ///
     /// Text similarity finds a lesson when the wording rhymes. These find it when
@@ -221,12 +229,13 @@ impl Memory {
         let v = self.call(
             reqwest::Method::GET,
             &format!(
-                "/recall?goal={}&k={}&budget={}&pools={}&tags={}",
+                "/recall?goal={}&k={}&budget={}&pools={}&tags={}&min={}",
                 enc(goal),
                 r.k,
                 r.budget,
                 enc(&r.pools.join(",")),
-                enc(&r.tags.join(","))
+                enc(&r.tags.join(",")),
+                r.min_similarity
             ),
         )?;
         if let Some(detail) = v["error"].as_str() {
@@ -576,7 +585,7 @@ mod tests {
             host: "nowhere".into(),
             timeout: Duration::from_millis(1),
         };
-        let cold = Reading { k: 0, budget: 0, pools: vec![], tags: vec![] };
+        let cold = Reading { k: 0, budget: 0, pools: vec![], tags: vec![], min_similarity: 0.0 };
         assert!(m.recall("anything", &cold).expect("no call, no failure").is_empty());
         // And a branch that read nothing attributes nothing, for the same reason.
         assert!(m.attribute(&[], "run-1", true).is_ok());

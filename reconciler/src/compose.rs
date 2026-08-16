@@ -571,6 +571,7 @@ pub fn run_parts(
                         _ => vec!["patterns".into(), "solutions".into()],
                     },
                     tags: tags.clone(),
+                    min_similarity: 0.0,
                 };
                 match m.recall(&goal, &reading) {
                     Ok(lessons) if lessons.is_empty() => {}

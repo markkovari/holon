@@ -998,6 +998,7 @@ fn main() -> Result<()> {
                 k: 3 + (i as u32 % 3),
                 budget: 1200,
                 tags: tags.clone(),
+                min_similarity: 0.0,
                 pools: match i % 3 {
                     0 => vec![],                                   // everything
                     1 => vec!["errors".into()],                    // only what failed

@@ -342,7 +342,7 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
     // nothing is the failure mode this whole session kept finding.
     let fe_goal = "Render the results with a pager, against the fixtures in .contract-mocks.";
     let learned = pool
-        .recall(fe_goal, &comp_reconciler::memory::Reading { k: 5, budget: 1200, pools: vec![], tags: vec![] })
+        .recall(fe_goal, &comp_reconciler::memory::Reading { k: 5, budget: 1200, pools: vec![], tags: vec![], min_similarity: 0.0 })
         .expect("the pool answered");
     assert!(
         !learned.is_empty(),
