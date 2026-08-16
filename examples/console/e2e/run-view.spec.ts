@@ -14,6 +14,18 @@
 
 import { expect, type Page, test } from "@playwright/test";
 
+const SURREAL = "http://127.0.0.1:8111";
+
+/// Write straight to the store, so a test can make something happen WHILE the
+/// page is open. `comp-trace-seed` runs once in `globalSetup` and cannot.
+async function surql(page: Page, body: string) {
+  const r = await page.request.post(`${SURREAL}/sql`, {
+    headers: { accept: "application/json", "surreal-ns": "comp", "surreal-db": "goalmemory" },
+    data: body,
+  });
+  expect(r.ok(), `seeding failed: ${await r.text()}`).toBeTruthy();
+}
+
 /// Sign in through the form, not by planting a cookie.
 ///
 /// The session is an HttpOnly cookie the console sets after forwarding the login
@@ -57,19 +69,39 @@ test.describe("the run view", () => {
     await expect(page.getByTestId("run-outcome")).toHaveText("merged");
     await expect(page.getByTestId("run-winner")).toContainText("mvp");
 
+    // What the pool GAINED (ADR-0089). The only part of a run that outlives the
+    // pull request: the app change lands and is done, the component is there for
+    // every run after this one.
+    await expect(page.getByTestId("capabilities")).toContainText("paginate");
+    await expect(page.getByTestId("capabilities")).toContainText("components/paginate");
+
     // Both branches, with the loser kept. "Why did branch 3 beat branch 7" is
     // unanswerable if the failures are dropped.
-    const attempts = page.getByTestId("attempts");
-    await expect(attempts).toContainText("risk-first");
-    await expect(attempts).toContainText("mvp");
-    await expect(attempts).toContainText("40");
-    await expect(attempts).toContainText("100");
+    const graph = page.getByTestId("run-graph");
+    await expect(graph).toContainText("risk-first");
+    await expect(graph).toContainText("mvp");
+    await expect(graph).toContainText("40");
+    await expect(graph).toContainText("100");
+
+    // The ROUND is on the page, which the flat list could not say. Two branches
+    // in one round is a fan-out; two branches in two rounds is a retry, and those
+    // are different things that used to render identically.
+    await expect(graph).toContainText("round 1");
+    await expect(page.getByTestId("run-size")).toContainText("round");
+
+    // The capability hangs off the graph too, not just the banner: it is the last
+    // node in `run → round → attempt → capability`.
+    await expect(graph).toContainText("paginate");
 
     // The timeline, in the vocabulary ADR-0092 defines.
     const timeline = page.getByTestId("timeline");
     await expect(timeline).toContainText("run-started");
     await expect(timeline).toContainText("gate-verdict");
     await expect(timeline).toContainText("run-resolved");
+    // Described, not dumped as JSON — the fallback is for kinds a newer driver
+    // invented, not for ones this view is supposed to know.
+    await expect(timeline).toContainText("paginate — the pool can do this now");
+    await expect(timeline).not.toContainText('{"name"');
 
     // The most actionable row on the page: the graph naming a capability the
     // pool lacks (ADR-0089). If this renders as raw JSON the vocabulary has
@@ -80,6 +112,98 @@ test.describe("the run view", () => {
     // Back, and the list still stands.
     await page.getByText("← all runs").click();
     await expect(page.getByTestId("run-list")).toBeVisible();
+  });
+
+  test("clicking a branch opens its detail and highlights its rows", async ({ page }) => {
+    await signIn(page);
+    await page.getByTestId("tab-runs").click();
+    await page.getByTestId("run-77/g1").click();
+
+    // Nothing is selected until something is clicked. The graph is the shape; the
+    // detail is on demand.
+    await expect(page.getByTestId("attempt-panel")).toHaveCount(0);
+
+    // The WINNER, because it is the branch whose paths became the capability —
+    // the one place `run → round → attempt → capability` is a real chain rather
+    // than a diagram.
+    await page.getByTestId("run-graph").getByText("mvp", { exact: true }).click();
+
+    const panel = page.getByTestId("attempt-panel");
+    await expect(panel).toBeVisible();
+    await expect(page.getByTestId("panel-branch")).toHaveText("mvp");
+    // What the flat list used to carry, now behind one click: the paths and the
+    // cost, which exist nowhere else once the terminal is gone.
+    await expect(page.getByTestId("panel-paths")).toContainText("components/paginate/src/lib.rs");
+    await expect(panel).toContainText("31.2k");
+    // Its own events, not the run's.
+    await expect(page.getByTestId("panel-events")).toContainText("gate-verdict");
+    await expect(page.getByTestId("panel-events")).not.toContainText("run-started");
+
+    // The timeline is HIGHLIGHTED, not filtered. Filtering would destroy the
+    // interleaving, and the interleaving is the only thing here that shows two
+    // branches running concurrently rather than one after the other — so the
+    // other branch's rows and the run-level rows must both still be present.
+    const timeline = page.getByTestId("timeline");
+    await expect(timeline).toContainText("run-started");
+    const lit = timeline.locator("li[data-selected]");
+    await expect(lit.first()).toBeVisible();
+    const all = await timeline.locator("li").count();
+    expect(await lit.count(), "the selection filtered the timeline instead of marking it")
+      .toBeLessThan(all);
+
+    // Clicking the same node again clears it.
+    await page.getByTestId("run-graph").getByText("mvp", { exact: true }).click();
+    await expect(page.getByTestId("attempt-panel")).toHaveCount(0);
+    await expect(timeline.locator("li[data-selected]")).toHaveCount(0);
+  });
+
+  test("an open run picks up what happens next, and the tail after it resolves", async ({
+    page,
+  }) => {
+    // The claim polling exists to make true: a run you are WATCHING updates. And
+    // the one that is easy to get wrong — the writes that land after the run says
+    // it is finished. `trace.rs` writes the resolution, the attempts and the
+    // events as separate statements and counts drops rather than retrying, so
+    // stopping the instant `resolved_at` appears truncates the timeline exactly
+    // at the end, which is the part somebody opened the page for.
+    const RUN = "poll/g1";
+    try {
+      await surql(
+        page,
+        `UPSERT run:⟨${RUN}⟩ SET id_text = '${RUN}', goal = 'a run being watched', branches = 2, started_at = time::now(), resolved_at = NONE;
+         UPSERT attempt:⟨${RUN}/first⟩ SET id_text = '${RUN}/first', run = '${RUN}', branch = 'first', round = 1, started_at = time::now();`,
+      );
+
+      await signIn(page);
+      await page.getByTestId("tab-runs").click();
+      await page.getByTestId(`run-${RUN}`).click();
+      await expect(page.getByTestId("run-graph")).toContainText("first");
+      await expect(page.getByTestId("run-graph")).not.toContainText("second");
+
+      // A branch spawns while the page is open. No reload below this line.
+      await surql(
+        page,
+        `UPSERT attempt:⟨${RUN}/second⟩ SET id_text = '${RUN}/second', run = '${RUN}', branch = 'second', round = 1, started_at = time::now();`,
+      );
+      await expect(page.getByTestId("run-graph")).toContainText("second", { timeout: 15_000 });
+
+      // The run resolves, and then a straggler lands. Both must show up.
+      await surql(
+        page,
+        `UPDATE run:⟨${RUN}⟩ SET outcome = 'merged', winner = 'second', resolved_at = time::now();`,
+      );
+      await expect(page.getByTestId("run-outcome")).toHaveText("merged", { timeout: 15_000 });
+      await surql(
+        page,
+        `CREATE event SET run = '${RUN}', kind = 'run-resolved', data = { outcome: 'merged' }, at = time::now();`,
+      );
+      await expect(page.getByTestId("timeline")).toContainText("run-resolved", { timeout: 15_000 });
+    } finally {
+      await surql(
+        page,
+        `DELETE event WHERE run = '${RUN}'; DELETE attempt WHERE run = '${RUN}'; DELETE run WHERE id_text = '${RUN}';`,
+      );
+    }
   });
 
   test("a run id from the URL cannot carry SurrealQL", async ({ page }) => {
