@@ -29,6 +29,11 @@ path = "src/bin/ingress.rs"
 name = "comp-plug"
 path = "src/bin/plug.rs"
 
+# Write one run's history, so the console's browser test has a run to look at.
+[[bin]]
+name = "comp-trace-seed"
+path = "src/bin/traceseed.rs"
+
 # The capability graph: who imports what from whom, derived from the artifacts.
 [[bin]]
 name = "comp-capgraph"
