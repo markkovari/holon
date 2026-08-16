@@ -32,7 +32,6 @@
 //! an arbitrary shell string on the machine holding the fleet's credentials is a
 //! remote code execution with extra steps.
 
-use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
