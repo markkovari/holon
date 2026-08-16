@@ -418,12 +418,19 @@ claude-shim port="8787" model="":
 # that cannot be recomputed from anything — and that is enforced by the generation
 # stamp plus a test in capgraph.rs, not by being careful.
 #
+# `comp`/`goalmemory` are not a preference — they are where the other half already
+# is. `knowledge-graph` defaults its namespace to `comp` and `comp-goalrun` rewrites
+# the memory app's database to `goalmemory`, so lessons, runs and capabilities all
+# land there. This recipe defaulted to `holon`/`holon` and therefore wrote the
+# capability graph into a database with nothing to join against: ADR-0091's whole
+# claim, in production, was projecting into an empty room.
+#
 #   just capgraph-store                        # against the compose surreal
 #   SURREAL_URL=… SURREAL_PASS=… just capgraph-store
 capgraph-store:
     @cd reconciler && cargo build --release --quiet --bin comp-capgraph
     @url="${SURREAL_URL:-http://localhost:8000}"; \
-     ns="${SURREAL_NS:-holon}"; db="${SURREAL_DB:-holon}"; \
+     ns="${SURREAL_NS:-comp}"; db="${SURREAL_DB:-goalmemory}"; \
      user="${SURREAL_USER:-root}"; pass="${SURREAL_PASS:-root}"; \
      gen=$(date +%s); \
      curl -sS -u "$user:$pass" -H "Accept: application/json" \
@@ -454,7 +461,7 @@ capgraph-store:
 #   just lessons-for vet
 lessons-for app:
     @url="${SURREAL_URL:-http://localhost:8000}"; \
-     ns="${SURREAL_NS:-holon}"; db="${SURREAL_DB:-holon}"; \
+     ns="${SURREAL_NS:-comp}"; db="${SURREAL_DB:-goalmemory}"; \
      user="${SURREAL_USER:-root}"; pass="${SURREAL_PASS:-root}"; \
      printf 'LET $ifaces = (SELECT VALUE array::distinct(array::flatten(->carries->artifact->imports->interface.name)) FROM ONLY app:%s{{app}}%s);\nSELECT ns, text, array::intersect(tags, $ifaces) AS matched FROM memory WHERE tags CONTAINSANY $ifaces;\n' '⟨' '⟩' \
        | curl -sS -u "$user:$pass" -H "Accept: application/json" \

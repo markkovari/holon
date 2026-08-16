@@ -61,13 +61,33 @@ fn main() {
         trace.lesson_read(run, attempt, &["mem:paginate".to_string()]);
     }
 
+    // The two branches took DIFFERENT approaches, which is the whole reason to
+    // run more than one: risk-first edited the app in place and failed its tests;
+    // mvp extracted a reusable component and passed. A seeded run where both
+    // branches wrote the same files would render correctly and demonstrate
+    // nothing about why a swarm is worth its cost.
+    let risk_files = json!([
+        { "path": "apps/search/src/handler.rs", "content": "" },
+        { "path": "apps/search/src/query.rs", "content": "" },
+    ]);
+    let mvp_files = json!([
+        { "path": "components/paginate/wit/paginate.wit", "content": "" },
+        { "path": "components/paginate/src/lib.rs", "content": "" },
+        { "path": "components/paginate/Cargo.toml", "content": "" },
+        { "path": "apps/search/src/handler.rs", "content": "" },
+    ]);
+
     // The loser is kept, with its verdict. Dropping failed branches is what makes
     // a run unexplainable a day later.
     trace.gate_verdict(run, "77/g1/risk-first", 40, false, &json!({ "failing": ["test_pages"] }));
-    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40);
+    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40, &risk_files, 18_400, 94_000);
 
     trace.gate_verdict(run, "77/g1/mvp", 100, true, &json!({ "failing": [] }));
-    trace.attempt_finished(run, "77/g1/mvp", "passed", 100);
+    trace.attempt_finished(run, "77/g1/mvp", "passed", 100, &mvp_files, 31_200, 156_000);
+
+    // What the pool gained. The point of ADR-0089: the app change lands and is
+    // done, the component is there for every run after this one.
+    trace.capability_added(run, "paginate", "components/paginate");
 
     trace.run_resolved(run, "merged", Some("mvp"), "https://example.test/pull/1");
 
