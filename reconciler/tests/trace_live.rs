@@ -214,3 +214,63 @@ fn an_unauthenticated_database_takes_writes_with_no_auth_header() {
         trace.report()
     );
 }
+
+/// `goalrun`'s own id scheme joins run to attempts.
+///
+/// The driver uses the seed as the run id and `memory::run_id(seed, round,
+/// branch)` — the function that already existed, for attributing verdicts — as
+/// the attempt id. Those ids contain `/`, and the console finds a run's attempts
+/// with `WHERE run = <id>`, so the two have to agree exactly.
+///
+/// Written with the REAL function rather than a hand-typed string: a test that
+/// spelled the id itself would keep passing if `run_id`'s format changed, which
+/// is the one way this join can silently break.
+#[test]
+fn goalruns_own_ids_join_a_run_to_its_attempts() {
+    let Some(store) = Store::start() else {
+        eprintln!("SKIPPED: docker could not start {SURREAL_IMAGE}");
+        return;
+    };
+    let trace = Trace::new(
+        &format!("http://127.0.0.1:{}", store.port()),
+        DB,
+        Some(harness::SURREAL_PASSWORD),
+    );
+
+    // Exactly what `comp-goalrun` does: the seed is the run, `run_id` is the
+    // attempt, two branches over two rounds.
+    let seed: u64 = 1_700_000_000;
+    let run = seed.to_string();
+    trace.run_started(&run, "a real goal", seed, "deadbeef", 2);
+    for round in 0..2 {
+        for branch in ["risk-first", "mvp"] {
+            let attempt = comp_reconciler::memory::run_id(seed, round, branch);
+            trace.branch_spawned(&run, &attempt, branch, round);
+            trace.attempt_finished(&run, &attempt, "failed", 10);
+        }
+    }
+    trace.run_resolved(&run, "exhausted", None, "");
+    assert!(trace.report().is_none(), "writes dropped: {:?}", trace.report());
+
+    // The console's own query, verbatim from `run_detail`.
+    let attempts = rows(
+        &store,
+        // `started_at` is in the projection because SurrealDB v3 REQUIRES the
+        // ordered field to be selected — omitting it is a 400, not a silent
+        // reorder. The console's own queries are safe only because they either
+        // `SELECT *` or happen to list the field they order by.
+        &format!("SELECT id_text, started_at FROM attempt WHERE run = '{run}' ORDER BY started_at;"),
+    );
+    assert_eq!(
+        attempts.as_array().map(|a| a.len()),
+        Some(4),
+        "the run and its attempts did not join on goalrun's ids: {attempts:?}"
+    );
+    // And the ids are the ones a person reads in the graph — `seed/g1/branch`,
+    // not an opaque number (the reason `run_id` is shaped that way).
+    let first = attempts[0]["id_text"].as_str().unwrap_or_default().to_string();
+    assert!(
+        first.starts_with(&format!("{seed}/g")),
+        "an attempt id stopped being legible: {first}"
+    );
+}

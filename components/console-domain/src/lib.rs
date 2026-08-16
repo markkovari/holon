@@ -317,6 +317,11 @@ fn forge_error(e: forge::ForgeError) -> Outcome {
 fn runs() -> Outcome {
     // A bounded list. Runs accumulate forever and nobody scrolls past the last
     // few dozen; an unbounded SELECT here is the query that gets slow silently.
+    //
+    // `started_at` must stay in the projection: SurrealDB v3 refuses an ORDER BY
+    // on a field the statement does not select, with a 400 rather than an
+    // unordered result. Trimming this list to "just what the UI shows" would
+    // break the query, not merely the sort.
     let surql = "SELECT id_text, goal, outcome, winner, url, branches, started_at, resolved_at \
                  FROM run ORDER BY started_at DESC LIMIT 50;";
     match graph::query(&surql.to_string()) {
