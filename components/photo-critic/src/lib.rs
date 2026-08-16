@@ -112,6 +112,9 @@ fn read_body(request: &IncomingRequest) -> Vec<u8> {
                 match stream.blocking_read(65536) {
                     Ok(c) if c.is_empty() => break,
                     Ok(c) => buf.extend_from_slice(&c),
+                    Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+                    // A failed read is not an end of body: collapsing the two
+                    // returns a truncated payload as if it were whole.
                     Err(_) => break,
                 }
             }
