@@ -123,17 +123,35 @@ fn the_committed_capability_graph_is_not_stale() {
 
     let edges = cat.edges();
     let ifaces: std::collections::BTreeSet<&String> = edges.iter().map(|(_, i, _)| i).collect();
-    let headline = format!(
+    // The counts that come from the artifacts. The app count is deliberately not
+    // asserted here: it is read from the Justfile, and a test that fails because
+    // somebody added a showcase is a test that gets deleted.
+    let prefix = format!(
         "**{} components, {} interfaces with a provider and at least one consumer, {} \
-         import edges, {} interfaces exported but unconsumed in-tree.**",
+         import edges, {} interfaces exported but unconsumed in-tree,",
         cat.len(),
         ifaces.len(),
         edges.len(),
         cat.orphan_exports().len()
     );
     assert!(
-        doc.contains(&headline),
-        "docs/CAPABILITY-GRAPH.md is stale — run `just capgraph`.\n  expected: {headline}"
+        doc.contains(&prefix),
+        "docs/CAPABILITY-GRAPH.md is stale — run `just capgraph`.\n  expected it to start: {prefix}"
+    );
+
+    // The application layer has to be there at all. It is the half that answers
+    // "which apps carry this component", and it disappears silently if the
+    // Justfile stops being parseable — the `_derive` lines are its only source.
+    assert!(
+        doc.contains("## Which apps is this component inside?"),
+        "the graph has lost its application layer — comp-capgraph found no `_derive` \
+         lines in the Justfile, so no app could be resolved to a root component"
+    );
+    let apps_listed = doc.lines().filter(|l| l.starts_with("| **")).count();
+    assert!(
+        apps_listed > 30,
+        "only {apps_listed} applications in the graph; the Justfile has more \
+         `compose-*` recipes than that, so parsing them has broken"
     );
 
     // And the number that actually matters: the most-consumed interface's count,
