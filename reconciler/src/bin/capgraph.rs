@@ -118,7 +118,7 @@ fn main() -> Result<(), String> {
     let orphans = catalog.orphan_exports();
 
     match args.format.as_str() {
-        "json" => println!("{}", json(&by_iface, &orphans)),
+        "json" => println!("{}", json(&catalog, &by_iface, &orphans, &apps(&root))),
         "mermaid" => println!("{}", mermaid(&by_iface, args.diagram_top)),
         "md" => println!(
             "{}",
@@ -129,9 +129,18 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
+/// The same graph, for something other than a reader.
+///
+/// ADR-0089's first slice is a capability search — "what already provides this?"
+/// — and it needs the graph as data rather than as a table. The application layer
+/// is in here for the same reason: "how many apps carry this" is the number a
+/// promotion or a deletion should be checked against, and no tool can read it out
+/// of a markdown file.
 fn json(
+    catalog: &Catalog,
     by_iface: &BTreeMap<String, (String, Vec<String>)>,
     orphans: &[(String, String)],
+    apps: &[App],
 ) -> String {
     let mut out = String::from("{\n  \"interfaces\": [\n");
     let mut first = true;
@@ -154,6 +163,35 @@ fn json(
             out.push_str(",\n");
         }
         out.push_str(&format!("    {{ \"component\": \"{owner}\", \"interface\": \"{iface}\" }}"));
+    }
+    out.push_str("\n  ],\n  \"apps\": [\n");
+    let mut used_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (i, app) in apps.iter().enumerate() {
+        if i > 0 {
+            out.push_str(",\n");
+        }
+        let parts = catalog.closure(&app.root);
+        for p in &parts {
+            used_by.entry(p.clone()).or_default().push(app.name.clone());
+        }
+        let list = parts.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ");
+        out.push_str(&format!(
+            "    {{ \"app\": \"{}\", \"root\": \"{}\", \"artifact\": \"{}\", \"composes\": [{list}] }}",
+            app.name, app.root, app.artifact
+        ));
+    }
+    out.push_str("\n  ],\n  \"component_in_apps\": [\n");
+    let mut ranked: Vec<_> = used_by.into_iter().collect();
+    ranked.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(&b.0)));
+    for (i, (component, apps_using)) in ranked.iter().enumerate() {
+        if i > 0 {
+            out.push_str(",\n");
+        }
+        let list = apps_using.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(", ");
+        out.push_str(&format!(
+            "    {{ \"component\": \"{component}\", \"app_count\": {}, \"apps\": [{list}] }}",
+            apps_using.len()
+        ));
     }
     out.push_str("\n  ]\n}");
     out

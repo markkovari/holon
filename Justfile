@@ -299,7 +299,10 @@ e2e-clinic: build
 #
 #   just capgraph            # regenerate docs/CAPABILITY-GRAPH.md
 #   just capgraph json       # the same graph for tooling
-capgraph format="md": build
+# No `build` dependency on purpose: cargo's progress goes to stdout, so
+# `just capgraph json | jq` was parsing compiler output. The tool says what to do
+# when nothing is built.
+capgraph format="md":
     @cd reconciler && cargo build --release --quiet --bin comp-capgraph
     @if [ "{{format}}" = "md" ]; then \
         ./reconciler/target/release/comp-capgraph --format md > docs/CAPABILITY-GRAPH.md; \
