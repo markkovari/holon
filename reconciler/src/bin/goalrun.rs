@@ -115,6 +115,20 @@ struct Args {
     /// The model. Cheap by default; bump to sonnet/opus for a harder goal.
     #[arg(long, default_value = "claude-haiku-4-5-20251001")]
     model: String,
+    /// Where `anthropic-provider` sends `/v1/messages`.
+    ///
+    /// Defaults to the real API. Point it at `tools/claude-shim.mjs` to run the
+    /// loop's inference through `claude -p` on a Claude Code subscription
+    /// instead of an API key:
+    ///
+    ///   just claude-shim &
+    ///   holon goal run --anthropic-base-url http://127.0.0.1:8787 ...
+    ///
+    /// A private address additionally needs `COMP_FLEET_ALLOW_PRIVATE_EGRESS=1`
+    /// — the fleet blocks egress to private ranges by default, and a base URL is
+    /// exactly the knob an injected prompt would reach for.
+    #[arg(long, default_value = "https://api.anthropic.com")]
+    anthropic_base_url: String,
     /// Per-branch HTTP timeout in seconds.
     ///
     /// NOT generous, which is what this said before it was measured — and the gate
@@ -373,6 +387,29 @@ impl Checks {
 }
 
 /// Write a fixture with placeholders substituted, to a temp path.
+/// The egress allow-list entry for a base URL: its authority, port and all.
+///
+/// The allow-list is an AUTHORITY, not a URL — the scheme and path come off,
+/// everything else stays. `https://api.anthropic.com` allows
+/// `api.anthropic.com`; the shim's `http://127.0.0.1:8787` allows
+/// `127.0.0.1:8787`.
+///
+/// **The port is kept on purpose.** `Egress::permits_authority` will match a
+/// bare `127.0.0.1` entry against an authority of `127.0.0.1:8787`, so dropping
+/// the port would still work — and would quietly widen the allow-list to every
+/// port on loopback. `fixtures/llm-secret.yaml` pins `127.0.0.1:OPENAI_PORT` for
+/// the same reason. Egress is a security control; the narrower entry is the
+/// correct one even when the wider one happens to function.
+///
+/// Deriving this from the base URL rather than taking a second flag means the
+/// two cannot disagree — an allow-list naming a different authority than the
+/// base URL fails at the first call, with an egress error about a host nobody
+/// typed rather than about the URL somebody actually mistyped.
+fn egress_authority(base_url: &str) -> String {
+    let rest = base_url.split_once("://").map(|(_, r)| r).unwrap_or(base_url);
+    rest.split('/').next().unwrap_or(rest).to_string()
+}
+
 fn render(fixture: &str, subs: &[(&str, &str)]) -> Result<PathBuf> {
     let mut yaml = std::fs::read_to_string(repo_root().join("fixtures").join(fixture))
         .with_context(|| format!("reading fixture {fixture}"))?;
@@ -646,6 +683,8 @@ fn main() -> Result<()> {
             ("CHECKS_PORT", &gate.port.to_string()),
             ("ANTHROPIC_MODEL", &args.model),
             ("MAX_TOKENS", &args.max_tokens.to_string()),
+            ("ANTHROPIC_BASE_URL", &args.anthropic_base_url),
+            ("ANTHROPIC_HOST", &egress_authority(&args.anthropic_base_url)),
         ],
     )?;
     let forge_spec = render("goalrun-forge.yaml", &[("FORGE_REPO", &args.repo)])?;
@@ -702,7 +741,14 @@ fn main() -> Result<()> {
         // the distiller turning a verified diff into a lesson. Deployed whenever
         // there is a pool to write to.
         specs.push(
-            render("goalrun-answer.yaml", &[("ANSWER_MODEL", &args.answer_model)])?
+            render(
+                "goalrun-answer.yaml",
+                &[
+                    ("ANSWER_MODEL", &args.answer_model),
+                    ("ANTHROPIC_BASE_URL", &args.anthropic_base_url),
+                    ("ANTHROPIC_HOST", &egress_authority(&args.anthropic_base_url)),
+                ],
+            )?
                 .to_str()
                 .unwrap()
                 .to_string(),
@@ -1521,7 +1567,7 @@ fn decomposed(
 
 #[cfg(test)]
 mod tests {
-    use super::{component_scope, trim_members, GoalSpec};
+    use super::{component_scope, egress_authority, trim_members, GoalSpec};
 
     /// The goal spec for a decomposed run, as a person writes it.
     ///
@@ -1612,5 +1658,21 @@ command = ["cargo", "test"]
         let out = trim_members(m, &["b".to_string()]);
         assert!(out.contains("members = [\"b\"]"), "trimmed to the one member");
         assert!(out.contains("resolver = \"2\""), "the rest survives");
+    }
+
+    /// The egress allow-list is derived from the base URL, so a mismatch is
+    /// impossible by construction — but only if this derivation is right. A wrong
+    /// answer fails at the first inference call with an egress error naming a host
+    /// nobody typed, which is a bad place to start debugging.
+    #[test]
+    fn the_egress_authority_comes_from_the_base_url() {
+        assert_eq!(egress_authority("https://api.anthropic.com"), "api.anthropic.com");
+        // The shim. The port is KEPT: a bare `127.0.0.1` entry would also work,
+        // and would allow every port on loopback rather than this one.
+        assert_eq!(egress_authority("http://127.0.0.1:8787"), "127.0.0.1:8787");
+        assert_eq!(egress_authority("http://localhost:8787/v1"), "localhost:8787");
+        // A path must not leak into the authority.
+        assert_eq!(egress_authority("https://proxy.internal/anthropic"), "proxy.internal");
+        assert_eq!(egress_authority("http://[::1]:8787"), "[::1]:8787");
     }
 }

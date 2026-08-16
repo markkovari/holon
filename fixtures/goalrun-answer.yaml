@@ -21,6 +21,7 @@ components:
   - id: allm
     config:
       anthropic:model: ANSWER_MODEL
+      anthropic:base-url: ANTHROPIC_BASE_URL
       anthropic:max-tokens: "2048"
     secrets:
       - key: anthropic-api-key
@@ -30,7 +31,7 @@ components:
       - wasi:config/store
       - comp:secrets/reader
     egress:
-      - api.anthropic.com
+      - ANTHROPIC_HOST
 
 links:
   - from: lprobe

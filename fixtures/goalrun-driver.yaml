@@ -31,6 +31,7 @@ components:
     config:
       anthropic:model: ANTHROPIC_MODEL
       anthropic:max-tokens: "MAX_TOKENS"
+      anthropic:base-url: ANTHROPIC_BASE_URL
     secrets:
       - key: anthropic-api-key
         ref: vault://acme/anthropic
@@ -39,7 +40,7 @@ components:
       - wasi:config/store
       - comp:secrets/reader
     egress:
-      - api.anthropic.com
+      - ANTHROPIC_HOST
 
   - id: gate
     config:

@@ -6,7 +6,14 @@
 `Dialect.delimiter` being a `String`. Neither can reach the other, so the second
 fact is retrieved by guessing at the wording of a goal.*
 
-**Status: proposed. The join is the missing edge, not a missing store.**
+**Status: superseded by [ADR-0091](0091-one-store-one-schema.md).** Its reading of
+the two truth models stands, and so does the title — a lesson really is about a
+capability. Its conclusion does not: the stores merged. Two truth models needed
+two *lifecycles*, and a generation column is a cheaper way to get one than a
+store boundary that puts a component edge in the middle of every query worth
+asking.
+
+*Original status: proposed. The join is the missing edge, not a missing store.*
 
 ## The two graphs
 

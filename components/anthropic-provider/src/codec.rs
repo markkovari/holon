@@ -399,4 +399,52 @@ mod tests {
     fn bad_json_is_bad_response() {
         assert!(matches!(parse_completion(b"not json"), Err(ParseError::BadResponse(_))));
     }
+
+    /// `tools/claude-shim.mjs` answers `/v1/messages` from `claude -p` instead of
+    /// the API, so the loop can run on a Claude Code subscription. It is only
+    /// useful if THIS parser accepts what it emits — and the shim is a separate
+    /// file in a different language, so nothing else would catch a drift between
+    /// the two. This is the contract, pinned as the exact bytes the shim writes.
+    ///
+    /// Zeroed usage is deliberate on the shim's side: `claude -p` reports no
+    /// token counts, and inventing them would make the wallet's numbers look
+    /// measured. The assertion is here so that stays a decision rather than
+    /// something that quietly starts failing.
+    #[test]
+    fn the_claude_code_shims_response_parses() {
+        let shim = br#"{"type":"message","role":"assistant","model":"claude-haiku-4-5-20251001",
+            "content":[{"type":"text","text":"PONG\n"}],"stop_reason":"end_turn",
+            "usage":{"input_tokens":0,"output_tokens":0}}"#;
+
+        let Ok(p) = parse_completion(shim) else {
+            panic!("the shim's response must parse");
+        };
+        assert_eq!(p.text, "PONG\n");
+        assert_eq!(p.finish_reason, "end_turn");
+        assert_eq!(p.model, "claude-haiku-4-5-20251001");
+        assert_eq!(p.prompt_tokens, 0, "the shim reports no counts rather than guessing");
+        assert_eq!(p.completion_tokens, 0);
+    }
+
+    /// The shim's failure envelope must reach the driver as a RETRYABLE error.
+    ///
+    /// A crashed or timed-out `claude -p` is a transient local fault, so the shim
+    /// answers 529 — which `status_error` maps to `provider-unavailable` and the
+    /// driver retries. If it answered 400 or 500 the whole generation would die
+    /// on one slow subprocess. The status mapping lives in `lib.rs`; what this
+    /// pins is that the body shape is the error envelope the parser recognises,
+    /// so the message survives to the log rather than becoming "bad json".
+    #[test]
+    fn the_shims_error_envelope_is_recognised_as_an_api_error() {
+        let shim = br#"{"type":"error","error":{"type":"overloaded_error",
+            "message":"claude -p exceeded 540000ms"}}"#;
+
+        match parse_completion(shim) {
+            Err(ParseError::BadResponse(m)) => {
+                assert!(m.contains("claude -p exceeded"), "the cause must survive: {m}");
+            }
+            Err(ParseError::NoContent) => panic!("the error envelope read as empty content"),
+            Ok(_) => panic!("an error envelope parsed as a successful completion"),
+        }
+    }
 }

@@ -4,7 +4,13 @@
 address between the branches of a goal — and why it must not live in the pool
 that holds what the swarm learned.*
 
-**Status: proposed. Nothing is built.** ADR-0084 built the lessons pool and wired
+**Status: superseded by [ADR-0091](0091-one-store-one-schema.md).** Its gap is
+real and still unclosed — nothing populates the structure graph. Its answer is
+not: there is no second pool, and the isolation question it declined to answer
+alone has been answered as split *visibility* within one store (structure visible
+to every branch, lessons snapshot-isolated) rather than as a second store.
+
+*Original status: proposed. Nothing is built.* ADR-0084 built the lessons pool and wired
 its first slice; this is the design for the other half, written before any code
 because the isolation question in it is not mine to answer alone.
 

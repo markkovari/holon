@@ -1,0 +1,50 @@
+# A probe wired to `anthropic-provider`, pointed at `tools/claude-shim.mjs`.
+#
+# The same shape as `llm-secret.yaml`, with one thing changed: `anthropic:base-url`
+# names a local shim that answers `/v1/messages` out of `claude -p` instead of the
+# Anthropic API. That is the whole claim being tested — that inference can run on a
+# Claude Code subscription with no change to any component, because the provider
+# already reads its endpoint from `wasi:config` (the swap point `mockllm.rs` uses
+# for `mock-provider`).
+#
+# The key is still a vault REFERENCE even though the shim ignores it (ADR-0010):
+# the deployment shape must not quietly differ between the API path and this one,
+# or the thing under test stops being the thing that runs in production.
+#
+# `base-url` and `egress` both carry the placeholder port, rewritten by the test —
+# the shim binds whatever port was free. They are written out separately here and
+# derived from one flag in `comp-goalrun`, which is where a mismatch would matter.
+
+version: comp/v1
+app: llm
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: llm
+    config:
+      anthropic:base-url: http://127.0.0.1:SHIM_PORT
+      anthropic:model: claude-haiku-4-5-20251001
+      anthropic:max-tokens: "1024"
+    secrets:
+      - key: anthropic-api-key
+        ref: vault://acme/anthropic
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - 127.0.0.1:SHIM_PORT
+
+links:
+  - from: gate
+    import: llm:inference/inference@0.1.0
+    to: llm
+
+ingress:
+  host: llm.acme.test
+  component: gate

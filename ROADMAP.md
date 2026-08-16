@@ -23,109 +23,14 @@ evaluation and its Tier 1–5 roadmap lived here until every tier was done; they
 are in git history rather than above, because a finished roadmap that still reads
 as a plan is the kind of document people act on by mistake.
 
+The native wRPC-to-Golem capability provider headed this list until 2026-08-16 and
+is retired with it: **this repository is no longer connected to wasmCloud.** The
+provider was live-verified against a real Golem worker and its two hard-won
+findings are still in `docs/capabilities/GOLEM.md`; the work brief and the
+remaining lattice half are in git history, for the same reason the tiers above
+are.
+
 ## TODO — next up
-
-### Native wRPC-to-Golem capability provider — built (docs/capabilities/GOLEM.md)
-
-- [x] **`providers/golem-workflow`** — the first *provider* in the repo (all else
-      is components + hosts). A native wasmCloud v2 provider exporting
-      `durable:workflow/orchestrator` over wRPC, bridging to durable **Golem**
-      workers. **Live-verified end-to-end**: the bridge invokes a real deployed
-      Golem 1.5 worker and its durable state advances (`just golem-e2e`,
-      `GOLEM_E2E=1 cargo test`). Two findings baked into docs/capabilities/GOLEM.md: pin
-      `wit-bindgen-wrpc 0.10` to match `wasmcloud-provider-sdk 0.17.1`'s
-      `wrpc-transport 0.28`; and a direct `reqwest` gateway call beats the
-      non-OSS, build-time-generated `golem-client`.
-- [ ] Remaining: the wasmCloud-lattice *front* half (component → provider) needs
-      the classic wasmCloud host — the installed `wash 2.3` is the new
-      component-shell, so it's compiled-but-not-hosted-here. Plus the saga
-      integration (a saga leg = a durable Golem worker). Original work brief:
-
-<details>
-<summary>Work brief (verbatim)</summary>
-
-```
-You are an expert systems-level Rust engineer specializing in the WebAssembly Component Model, wasmCloud (v2.x), and native wRPC (WebAssembly RPC) transports over NATS.
-
-Your task is to write a complete, production-grade wasmCloud Capability Provider in Rust that acts as a native wRPC-to-Golem adapter.
-
-Core Architecture
-This provider runs as a native wasmCloud Capability Provider process. It implements the target WIT world using "wit-bindgen-wrpc" to automatically handle native, typed serialization and deserialization over NATS. Under the hood, it converts these typed Rust structs into Golem's universal "golem_wasm_rpc::Value" structure, triggers the durable Golem Worker via the Golem HTTP Client, and returns the strongly typed Rust result back to the caller over wRPC.
-
-The control flow works as follows:
-
-The wasmCloud Component makes a native wRPC call over the NATS Lattice.
-
-The Golem wRPC Provider (this Rust application) intercepts the call.
-
-The provider uses the "wit_bindgen_wrpc::generate!" macro to implement the generated asynchronous Rust Trait natively.
-
-The provider directly maps typed Rust inputs to the Golem dynamic "Value" types.
-
-The provider invokes Golem's REST API using the "golem_client::api::WorkerClient".
-
-The provider maps Golem's returned values back to the strongly typed Rust return types.
-
-Technical Specs and Dependencies
-Generate a standard Rust binary crate project. Ensure your Cargo.toml targets these dependencies:
-
-wit-bindgen-wrpc (For generating typed async Rust server bindings from WIT)
-
-wasmcloud-provider-sdk (For handshake, linking, and managing the host-provider connection)
-
-wrpc-transport-nats (For serving the generated wRPC bindings over the NATS bus)
-
-golem-client (Golem's API Client SDK)
-
-golem-wasm-rpc (with host feature enabled, for translating WIT types to Golem values)
-
-tokio (multi-threaded async runtime)
-
-tracing (structured logging)
-
-The WIT Contract
-Create a "wit/world.wit" file containing this exact contract:
-
-Code snippet
-package local:workflow;
-
-interface orchestrator {
-    record run-request {
-        workflow-id: string,
-        payload: string,
-    }
-
-    trigger-workflow: func(req: run-request) -> result<string, string>;
-}
-
-world golem-provider {
-    export orchestrator;
-}
-Code Requirements
-Please generate the following files:
-
-Cargo.toml: Fully resolved dependencies using correct crate versions for a modern wasmCloud v2 ecosystem.
-
-wit/world.wit: The interface definition provided above.
-
-src/main.rs:
-
-Invoke "wit_bindgen_wrpc::generate!({ world: "golem-provider" })" to build the traits.
-
-Implement the async handler trait for the "orchestrator" interface. The signature must match the generated asynchronous signature, returning a standard "Result<Result<String, String>, ...>".
-
-Instantiate Golem's "WorkerClient" during startup. Use environment variables (like GOLEM_URL and GOLEM_TEMPLATE_ID) passed during wasmCloud startup to configure the Golem endpoint.
-
-Map the Rust types ("RunRequest" record) cleanly to "golem_wasm_rpc::Value" using helper mapping blocks (specifically matching a Record containing string fields).
-
-In main(), initialize the wasmcloud-provider-sdk connection, obtain the NATS client, and pass the NATS transport directly to the generated serve function from the wRPC bindings to run the async server loop.
-
-wadm.yaml: An application manifest showing how a frontend wasmCloud API component links to this provider to trigger durable workflows on Golem.
-
-Ensure all Rust code is strictly typed, handles errors safely, and includes clean, descriptive error logging via the tracing crate.
-```
-
-</details>
 
 ### Helpdesk (docs/apps/HELPDESK.md)
 
