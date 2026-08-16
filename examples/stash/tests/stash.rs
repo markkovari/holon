@@ -1,4 +1,4 @@
-//! E2E for the stash note app (STASH.md) as ONE composed wasm HTTP component
+//! E2E for the stash note app (docs/apps/STASH.md) as ONE composed wasm HTTP component
 //! (stash-domain + auth-guard + records + zip + csv) on the native Rust host.
 //! Proves the export: notes CRUD, then `GET /api/export.zip` returns a VALID ZIP
 //! (PK local + central-directory + end-of-central-directory records) whose entry

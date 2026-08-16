@@ -1,4 +1,4 @@
-//! `dashboards-domain` — personal metric dashboards (DASHBOARDS.md) as ONE
+//! `dashboards-domain` — personal metric dashboards (docs/apps/DASHBOARDS.md) as ONE
 //! composed wasm HTTP component. Exports `wasi:http`; imports only WIT contracts:
 //! the composed auth-guard (`auth:identity`), `records:store`, and `svg:chart`
 //! to render each panel's series to an SVG on the server — the frontend carries

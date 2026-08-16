@@ -1,4 +1,4 @@
-//! E2E for the drop-box (DROP.md) as ONE composed wasm HTTP component on the
+//! E2E for the drop-box (docs/apps/DROP.md) as ONE composed wasm HTTP component on the
 //! native Rust host. The presigned-ticket axis: a ticket is the policy answer,
 //! the client PUTs bytes against it, and a signed link round-trips the object
 //! back out while a tampered signature is refused.

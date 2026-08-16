@@ -383,8 +383,24 @@ impl Fleet {
         // environment, for instance, is a `platform-domain` feature the stub has
         // never heard of.
         if real_platform {
-            let component = root.join("components/target/platform_domain.composed.wasm");
-            assert!(component.exists(), "missing {} — just compose-platform", component.display());
+            // Derived when the hand-composed artifact is not there, for the same
+            // reason as the default `gate` above: `just compose-platform` is a
+            // second recipe nobody remembers to run, and its absence surfaced as
+            // an assertion two workspaces into `just test` — hidden, until this
+            // branch, behind an earlier failure that stopped cargo before it got
+            // here. The derived plug list matches the hand-written one.
+            let legacy = root.join("components/target/platform_domain.composed.wasm");
+            let component = if legacy.is_file() {
+                legacy
+            } else {
+                let catalog = crate::plug::Catalog::scan(&crate::plug::default_dirs(&root));
+                crate::plug::compose_to(
+                    "platform-domain",
+                    &catalog,
+                    &root.join("components/target/composed"),
+                )
+                .unwrap_or_else(|e| panic!("composing platform-domain: {e} — `just build` first"))
+            };
             let mut cp = Command::new(&host_bin);
             cp.current_dir(&root)
                 .arg("--component")
@@ -422,7 +438,36 @@ impl Fleet {
             stub.args(["--spec", s]);
         }
         if artifacts.is_empty() {
-            stub.args(["--artifact", "gate=components/target/gate_domain.composed.wasm"]);
+            // The default `gate` artifact, derived rather than assumed.
+            //
+            // This used to name `components/target/gate_domain.composed.wasm`, a
+            // file produced by a hand-written plug chain (`just compose-gate`), so
+            // every fleet test that did not pass its own artifacts silently
+            // depended on somebody having run a second, unrelated recipe. A fresh
+            // checkout that had only run `just build` got "never served to begin
+            // with" from a 120-second timeout, which says nothing about a missing
+            // file.
+            //
+            // `plug::compose_to` derives the composition from gate-domain's own
+            // imports and keys it by content, so the first caller builds it and
+            // the rest reuse it. The hand-made path is still honoured when it
+            // exists, because it is what `just compose-gate` writes and there is
+            // no reason to make the two disagree.
+            let legacy = root.join("components/target/gate_domain.composed.wasm");
+            let gate = if legacy.is_file() {
+                legacy
+            } else {
+                let catalog = crate::plug::Catalog::scan(&crate::plug::default_dirs(&root));
+                crate::plug::compose_to(
+                    "gate-domain",
+                    &catalog,
+                    &root.join("components/target/composed"),
+                )
+                .unwrap_or_else(|e| {
+                    panic!("composing the default `gate` artifact: {e} — `just build` first")
+                })
+            };
+            stub.args(["--artifact", &format!("gate={}", gate.display())]);
         } else {
             for a in artifacts {
                 stub.args(["--artifact", a]);

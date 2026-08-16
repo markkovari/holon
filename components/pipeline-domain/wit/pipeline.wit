@@ -6,7 +6,7 @@
 // When the sink is down the event is `fail`ed (backoff), and after the retry
 // ceiling it drops to `dead` — the dead-letter tray you can `replay`. Every
 // state change fans out on event:bus, and `GET /api/stream` pushes each as an
-// SSE `data:` frame so the board updates live. See PIPELINE.md.
+// SSE `data:` frame so the board updates live. See docs/apps/PIPELINE.md.
 //
 // Routes:
 //   POST /api/events                    {topic, payload}   enqueue

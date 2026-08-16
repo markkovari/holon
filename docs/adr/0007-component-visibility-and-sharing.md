@@ -17,7 +17,7 @@ the RBAC store and never trusted from a token, and `policy:guard` exists precise
 for row-level "does this principal own THIS row" decisions with rules stored in KV
 and a default of deny.
 
-What we do not have: any signing. `cosign` appears in `PLATFORM.md` phase 1 as a
+What we do not have: any signing. `cosign` appears in `docs/PLATFORM.md` phase 1 as a
 plan and nowhere in the repo as a fact. The registry has no authentication at all.
 
 ## Decision

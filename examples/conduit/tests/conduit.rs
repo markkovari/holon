@@ -1,4 +1,4 @@
-//! E2E for the conduit domain (CONDUIT.md rung 1) running as ONE composed wasm
+//! E2E for the conduit domain (docs/apps/CONDUIT.md rung 1) running as ONE composed wasm
 //! HTTP component on the NATIVE Rust host (`host/` comp-host over wasmtime). No
 //! Node, no jco: every route is the Rust conduit-domain component orchestrating
 //! auth-guard + records:store, linked into one .wasm and served over real HTTP.

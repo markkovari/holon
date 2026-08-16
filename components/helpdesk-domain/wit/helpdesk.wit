@@ -1,6 +1,6 @@
 // helpdesk:app — a multi-tenant support/ticketing SaaS as a WIT HTTP component.
 //
-// Rung 1 of HELPDESK.md: the core ticket loop. Requesters open tickets and
+// Rung 1 of docs/apps/HELPDESK.md: the core ticket loop. Requesters open tickets and
 // reply; agents triage, reply (public or internal note), assign, and drive the
 // lifecycle. The lifecycle is not if-statements — it is a declarative
 // fsm:workflow machine (new -> open -> pending -> solved -> closed, reopen on

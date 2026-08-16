@@ -1,6 +1,6 @@
 // portal:app — a developer portal / API-key service as a WIT HTTP component.
 //
-// The control-plane shape from PLATFORM.md, composed from capability
+// The control-plane shape from docs/PLATFORM.md, composed from capability
 // contracts: developers register and log in (auth:identity, via the composed
 // auth-guard), create projects, invite members, and mint API keys; a metered
 // gateway route enforces a per-key hourly quota; key lifecycle events flow

@@ -6,7 +6,7 @@
 // `GET /api/stream` pushes it as an SSE `data:` frame so every open console +
 // simulated client updates instantly. Percentage rollouts bucket on a stable
 // hash of the subject, so cohorts are STICKY — the thing you can see. See
-// FLAGS.md.
+// docs/apps/FLAGS.md.
 //
 // Routes:
 //   GET  /api/flags            ?tenant=            list flags + rule + source

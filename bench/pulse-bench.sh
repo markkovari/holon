@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pulse app-path bench (REALTIME.md rung 4). The new dimension isn't rps — it's
+# pulse app-path bench (docs/apps/REALTIME.md rung 4). The new dimension isn't rps — it's
 # CONCURRENT SUSTAINED CONNECTIONS: how many held-open SSE streams the host
 # fans a message out to. Plus post/history throughput for reference.
 #

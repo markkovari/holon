@@ -1,6 +1,6 @@
 # Helpdesk bench (round 12) — full app path on the native host, NATS vs memory KV
 
-The first bench of a whole *app* request path (HELPDESK.md rung 1) rather than
+The first bench of a whole *app* request path (docs/apps/HELPDESK.md rung 1) rather than
 per-capability calls: every request below goes browser → hyper → wasmtime →
 `helpdesk_domain.composed.wasm` (helpdesk-domain + auth-guard + record-store +
 fsm-workflow + id-generate + markdown) → `wasi:keyvalue` backend.

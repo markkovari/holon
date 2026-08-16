@@ -166,8 +166,7 @@ fn total_running(fleet: &Fleet, dead: &[u16]) -> usize {
 }
 
 fn deploy_root(api: &Api, fleet: &Fleet, name: &str) -> String {
-    let wasm = std::fs::read(repo_root().join("components/target/gate_domain.composed.wasm"))
-        .expect("run `just build && just compose-gate`");
+    let wasm = composed_gate();
     assert!(matches!(api.upload("gate", wasm), 200 | 201), "upload failed");
     let (code, dep) =
         api.post("/api/deployments", json!({ "name": name, "nodes": [{"id": "gate"}], "edges": [] }));
@@ -203,6 +202,24 @@ struct Sample {
     running: usize,
     per_node: BTreeMap<String, usize>,
     note: String,
+}
+
+/// The composed `gate-domain`, derived when nobody has run `just compose-gate`.
+///
+/// Reading the hand-composed path directly meant this suite failed with a bare
+/// `NotFound` in any checkout that had only run `just build` — and, because cargo
+/// stops at the first failing test binary, each such suite hid the next one. This
+/// is the same rule `Fleet::start` follows: honour the hand-made artifact when it
+/// is there, derive it from gate-domain's own imports when it is not.
+fn composed_gate() -> Vec<u8> {
+    let root = repo_root();
+    let legacy = root.join("components/target/gate_domain.composed.wasm");
+    if let Ok(bytes) = std::fs::read(&legacy) {
+        return bytes;
+    }
+    let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
+    comp_reconciler::plug::compose("gate-domain", &catalog)
+        .expect("gate-domain composes with what it imports — `just build` first")
 }
 
 #[test]

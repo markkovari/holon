@@ -1,8 +1,8 @@
-# scribe — collaborative document editor (SCRIBE.md)
+# scribe — collaborative document editor (docs/apps/SCRIBE.md)
 
 A shared document edited by many windows at once with **no lock**: each field is
 a `crdt:merge` CRDT register, merged server-side and streamed to every open
-editor over SSE. See [SCRIBE.md](../../SCRIBE.md) for the full write-up.
+editor over SSE. See [docs/apps/SCRIBE.md](../../docs/apps/SCRIBE.md) for the full write-up.
 
 Unlike the pure-compute `jco-*` examples, scribe is a **composed HTTP app** run
 on the native Rust host (like `pulse`), so this directory holds the SPA + a Rust

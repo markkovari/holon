@@ -3,7 +3,7 @@
 The full [RealWorld](https://realworld-docs.netlify.app/) ("Conduit") backend as
 **one composed wasm HTTP component** — `conduit-domain` + auth-guard +
 record-store + slug — served by the native Rust host (`host/`, wasmtime). No
-Node, no jco. See [`../../CONDUIT.md`](../../CONDUIT.md) for the full design.
+Node, no jco. See [`../../docs/apps/CONDUIT.md`](../../docs/apps/CONDUIT.md) for the full design.
 
 Users & profiles, articles (CRUD + slug + filters + feed + tags), comments,
 favorites — the complete API, composed from contracts with no bespoke business

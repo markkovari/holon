@@ -1,4 +1,4 @@
-//! E2E for the A/B/n experiment console (EXPERIMENT.md) as ONE composed wasm
+//! E2E for the A/B/n experiment console (docs/apps/EXPERIMENT.md) as ONE composed wasm
 //! HTTP component on the native Rust host — two new contracts
 //! (experiment:assign + metrics:collect) exercised through the domain.
 //!

@@ -1,4 +1,4 @@
-//! E2E for the payees book (PAYEES.md) as ONE composed wasm HTTP component
+//! E2E for the payees book (docs/apps/PAYEES.md) as ONE composed wasm HTTP component
 //! (payees-domain + auth-guard + records + iban) on the native Rust host. Proves
 //! IBAN validation end to end: `/verify` parses a valid IBAN and flags a bad one;
 //! adding a payee stores a valid IBAN (normalized + country) and rejects a

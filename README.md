@@ -70,11 +70,14 @@ pointed at itself. (The original capability-library README is kept at
 | | |
 |---|---|
 | what runs today, measured, and honestly missing | [`docs/CURRENT.md`](docs/CURRENT.md) |
+| the thirty-two showcase apps, one file each | [`docs/apps/`](docs/apps/README.md) |
 | how a run succeeds, and every way it fails | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) |
 | the reasoning — 77 decisions in force, 8 superseded and kept | [`docs/adr/`](docs/adr/) |
 | the worklist — goals a person has written | [`.comp/goals/`](.comp/goals/) |
 | the agentic core | `components/{agent-writer,agent-driver,graph-selector}`, `reconciler/src/generation.rs`, `reconciler/src/bin/goalrun.rs` |
 | what the swarm remembers | `components/knowledge-memory`, [ADR-0084](docs/adr/0084-two-retrievers-and-an-optimistic-database.md) |
+| why a component is worth more than a note about one | [ADR-0089](docs/adr/0089-capability-accumulation.md) — 150 components, reuse enforced by a gate that reads what a candidate actually called |
+| what is using what, and may I change it | [`docs/CAPABILITY-GRAPH.md`](docs/CAPABILITY-GRAPH.md) — derived from the artifacts; `records:store/store` has 37 consumers |
 | how two halves of one goal agree | `components/contract-registry`, `reconciler/src/compose.rs`, [ADR-0086](docs/adr/0086-parts-negotiate-a-contract.md) |
 
 ## Status

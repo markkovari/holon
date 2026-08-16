@@ -1,4 +1,4 @@
-//! E2E for the buzz live quiz game (BUZZ.md) as ONE composed wasm HTTP component
+//! E2E for the buzz live quiz game (docs/apps/BUZZ.md) as ONE composed wasm HTTP component
 //! (buzz-domain + auth-guard + records) on the native Rust host. Proves the game
 //! loop and SPEED-WEIGHTED scoring: a host runs a game; players join by PIN and
 //! answer; on reveal a faster correct answer beats a slower correct one, a wrong

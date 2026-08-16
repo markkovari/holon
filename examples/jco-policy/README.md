@@ -45,7 +45,7 @@ Enum values map to kebab strings: `op ∈ 'eq' | 'ne' | 'in-list' | 'lt' | 'gt' 
 ## The keyvalue shim is swappable
 
 The component imports `wasi:keyvalue/store`. Here it's a trivial in-memory `Map`
-([`src/keyvalue-shim.js`](../src/keyvalue-shim.js), shared with the other jco
+([`src/keyvalue-shim.js`](src/keyvalue-shim.js), shared with the other jco
 examples). Point the `--map` at a redis / sqlite / NATS shim and the persistence
 becomes real — the component neither knows nor cares.
 

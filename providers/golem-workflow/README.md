@@ -3,7 +3,7 @@
 The first thing in this repo that isn't a wasm component: a **native wasmCloud
 capability provider** that lets a component call a durable [Golem](https://golem.cloud)
 worker through the typed `durable:workflow/orchestrator` contract. See
-[`../../GOLEM.md`](../../GOLEM.md) for the design.
+[`../../docs/capabilities/GOLEM.md`](../../docs/capabilities/GOLEM.md) for the design.
 
 ## What's verified (and what isn't)
 

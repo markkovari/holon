@@ -1,10 +1,10 @@
-# booked — a Calendly-lite booking service (BOOKED.md)
+# booked — a Calendly-lite booking service (docs/apps/BOOKED.md)
 
 An owner publishes bookable **resources** with weekly **availability**; anyone
 books a free slot — and **can't double-book**: a booking takes a `lock:mutex`
 lease over its check-then-write, so racing bookers get a `409`, never a clash.
 Recurring bookings expand via `rrule:recur`; bookings export to `.ics` via
-`ical:codec`; the confirmation is an `email:template`. See [BOOKED.md](../../BOOKED.md).
+`ical:codec`; the confirmation is an `email:template`. See [docs/apps/BOOKED.md](../../docs/apps/BOOKED.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

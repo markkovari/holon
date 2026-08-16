@@ -1,4 +1,4 @@
-//! E2E for the booked scheduling app (BOOKED.md) as ONE composed wasm HTTP
+//! E2E for the booked scheduling app (docs/apps/BOOKED.md) as ONE composed wasm HTTP
 //! component (booked-domain + auth-guard + records + lock-mutex + email-render +
 //! ical + rrule) on the native Rust host. Proves the capability model: an owner
 //! creates a resource + weekly availability; a member books a free slot and

@@ -1,4 +1,4 @@
-//! E2E for the LMS (LMS.md) as ONE composed wasm HTTP component (lms-domain +
+//! E2E for the LMS (docs/apps/LMS.md) as ONE composed wasm HTTP component (lms-domain +
 //! auth-guard + records + quiz + pdf + svg-chart) on the native Rust host. Proves
 //! the multi-role flow AND that grades roll up consistently: an instructor
 //! creates a course + quiz; a student enrolls and submits (auto-graded by

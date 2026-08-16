@@ -1,4 +1,4 @@
-//! E2E for the throttle wall (RATELIMIT.md) as ONE composed wasm HTTP component
+//! E2E for the throttle wall (docs/apps/RATELIMIT.md) as ONE composed wasm HTTP component
 //! on the native Rust host. The backpressure axis: prove the ceiling (N allowed
 //! then a 429), the cumulative quota decrementing, lockout after a burst, and a
 //! verdict reaching a SEPARATE held-open SSE connection live.

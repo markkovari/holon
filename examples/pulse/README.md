@@ -4,7 +4,7 @@ A live chat room as ONE composed wasm HTTP component (`pulse-domain` +
 record-store + event-bus + id-generate), served by the native Rust host. Post a
 message and it streams to every open window over a held-open **Server-Sent
 Events** connection — real server push on wasip2, no WebSocket. See
-[`../../REALTIME.md`](../../REALTIME.md).
+[`../../docs/apps/REALTIME.md`](../../docs/apps/REALTIME.md).
 
 The axis no other showcase covers: a **sustained connection**, not
 request/response. The host spawns the guest as a task and streams the response

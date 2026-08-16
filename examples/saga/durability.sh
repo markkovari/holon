@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Durability proof (SAGA.md rung 3): a saga's state lives entirely in NATS
+# Durability proof (docs/apps/SAGA.md rung 3): a saga's state lives entirely in NATS
 # JetStream KV (records + fsm), so it survives the host process dying mid-flight.
 # Start a saga, advance it one leg, KILL the host, restart it, and show the saga
 # resumes exactly where it left off — then pump it to commit.

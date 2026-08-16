@@ -1,4 +1,4 @@
-//! `mesh-domain` — the resilience playground (MESH.md) as ONE composed wasm HTTP
+//! `mesh-domain` — the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP
 //! component. Exports `wasi:http`; imports only WIT contracts: `resilience:breaker`
 //! (the stateless breaker + backoff math), `records:store` (the durable per-key
 //! circuit state), and `proxy:route` (the real outgoing hop to the upstream).

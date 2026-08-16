@@ -181,6 +181,92 @@ impl Catalog {
         self.exporters.get(iface).map(String::as_str)
     }
 
+    /// Every component in the catalogue, in name order.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.surfaces.keys().map(String::as_str)
+    }
+
+    /// Imports nothing in the catalogue can satisfy.
+    ///
+    /// Not the same as "broken". An interface with no exporter is usually a
+    /// types-only interface from the component's OWN package — `audit-log` imports
+    /// `audit:log/types` while exporting `audit:log/query` — and there is nothing
+    /// to plug into it. What is worth knowing is an import from a package the
+    /// component has nothing to do with, which nothing in the repository provides:
+    /// that composition will always be incomplete, and the artifact will still
+    /// carry the import when it is deployed.
+    pub fn unmet(&self, name: &str) -> Vec<String> {
+        let Some(surface) = self.surface(name) else { return Vec::new() };
+        surface
+            .imports
+            .iter()
+            .filter(|iface| self.exporter(iface).is_none())
+            .filter(|iface| {
+                let package = format!("{}/", iface.split('/').next().unwrap_or(iface));
+                // Structural, not missing, in two cases. The component's own
+                // package: `audit-log` imports `audit:log/types` and exports
+                // `audit:log/query`. And a CONSUMER of a package whose other
+                // interfaces are provided: `auth-guard` imports `audit:log/types`
+                // for the types alone, while `audit-log` provides the package —
+                // there is no implementation of a types-only interface to plug in,
+                // anywhere, by construction.
+                let provided_here = surface.exports.iter().any(|e| e.starts_with(&package));
+                let provided_somewhere = self.exporters.keys().any(|e| e.starts_with(&package));
+                !provided_here && !provided_somewhere
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Who consumes what, as edges: `(consumer, interface, provider)`.
+    ///
+    /// This is the capability graph. It is derived from the built artifacts every
+    /// time rather than maintained by hand, because a hand-maintained dependency
+    /// list is wrong the first time somebody adds an import and does not update it
+    /// — and the whole reason this repository can answer "what is using what" is
+    /// that a component's imports are in the binary.
+    ///
+    /// An interface with a provider and no consumers yields no edge; ask
+    /// [`Catalog::orphan_exports`] for those.
+    pub fn edges(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for (consumer, surface) in &self.surfaces {
+            for iface in &surface.imports {
+                if let Some(provider) = self.exporter(iface) {
+                    if provider != consumer {
+                        out.push((consumer.clone(), iface.clone(), provider.to_string()));
+                    }
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    /// Interfaces something exports that nothing in the tree imports.
+    ///
+    /// Not a finding on its own — a capability library is allowed to be ahead of
+    /// its callers — but worth being able to see, because the answer to "may I
+    /// change this interface?" is completely different for 0 consumers and for 37.
+    pub fn orphan_exports(&self) -> Vec<(String, String)> {
+        let consumed: BTreeSet<&String> =
+            self.surfaces.values().flat_map(|s| s.imports.iter()).collect();
+        let mut out: Vec<(String, String)> = self
+            .exporters
+            .iter()
+            .filter(|(iface, _)| !consumed.contains(iface))
+            .map(|(iface, owner)| (owner.clone(), iface.clone()))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// How many components import this interface. The number that decides whether
+    /// an interface can still be changed.
+    pub fn consumer_count(&self, iface: &str) -> usize {
+        self.surfaces.values().filter(|s| s.imports.contains(iface)).count()
+    }
+
     pub fn len(&self) -> usize {
         self.surfaces.len()
     }

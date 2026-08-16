@@ -6,7 +6,7 @@
 //! read-decide-write of `take` is inherently serialized — no compare-and-swap,
 //! no revision retry, and it survives restarts. Fire N concurrent `take`s at one
 //! key and EXACTLY `capacity` succeed (the shared-store CAS over-admits under the
-//! same load — that's the whole point of GATE.md).
+//! same load — that's the whole point of docs/apps/GATE.md).
 
 use golem_rust::{agent_definition, agent_implementation, endpoint};
 

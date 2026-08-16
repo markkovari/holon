@@ -42,9 +42,23 @@ impl Platform {
     pub fn start(port: u16) -> Self {
         let root = repo_root();
         let host = root.join("host/target/release/comp-host");
-        let component = root.join("components/target/platform_domain.composed.wasm");
         assert!(host.exists(), "missing {} — cargo build --release in host/", host.display());
-        assert!(component.exists(), "missing {} — just compose-platform", component.display());
+        // Derived when the hand-composed artifact is not there, matching
+        // `Fleet::start`: `just compose-platform` is a second recipe a fresh
+        // checkout has no reason to have run, and the plug list is already implied
+        // by what platform-domain imports.
+        let legacy = root.join("components/target/platform_domain.composed.wasm");
+        let component = if legacy.is_file() {
+            legacy
+        } else {
+            let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
+            comp_reconciler::plug::compose_to(
+                "platform-domain",
+                &catalog,
+                &root.join("components/target/composed"),
+            )
+            .unwrap_or_else(|e| panic!("composing platform-domain: {e} — `just build` first"))
+        };
 
         let dir = tempfile::tempdir().unwrap();
         // A real 32-byte key, per run. The vault seals every value with

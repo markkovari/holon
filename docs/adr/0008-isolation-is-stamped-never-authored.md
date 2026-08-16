@@ -14,7 +14,7 @@
 
 ## Context
 
-Tenants share hostgroups (`PLATFORM.md`'s density bet, unchanged by ADR-0002's
+Tenants share hostgroups (`docs/PLATFORM.md`'s density bet, unchanged by ADR-0002's
 namespace split). wasm gives compute isolation for free. Data and network
 isolation are ours to add, and the mechanisms exist in the operator's vocabulary:
 
@@ -23,7 +23,7 @@ isolation are ours to add, and the mechanisms exist in the operator's vocabulary
 - `components[].{poolSize,maxInvocations}` — concurrency and warm-instance budgets;
 - namespace-level `ResourceQuota` / `NetworkPolicy` (ADR-0002).
 
-Two things must be said plainly, because the plan in `PLATFORM.md` reads more
+Two things must be said plainly, because the plan in `docs/PLATFORM.md` reads more
 finished than the evidence supports:
 
 1. **The `buckets:` allow-list has only ever been exercised for blobstore**, once,
@@ -66,7 +66,7 @@ And the gate on multi-tenancy itself:
 
 > **No second tenant until the adversarial test passes.** Two tenants on one
 > hostgroup; tenant A's component provably cannot read B's buckets, call B's
-> services, or exceed its egress allow-list. `PLATFORM.md` already names this the
+> services, or exceed its egress allow-list. `docs/PLATFORM.md` already names this the
 > product. This ADR makes it a **release gate**: until it passes, the platform runs
 > single-tenant (you are the tenant), regardless of what the UI can express.
 
@@ -81,7 +81,7 @@ is the one mechanism above with no working precedent.
 - **A tenant cannot bring their own KV backend** while a v2 host serves one
   environment. Per-tenant *backends* wait for upstream #5051; per-tenant *buckets*
   are what we ship. Tenants needing a private datastore use their own external
-  database over egress (the `PLATFORM.md` phase-4 tunnel story), not our KV.
+  database over egress (the `docs/PLATFORM.md` phase-4 tunnel story), not our KV.
 - Tenants must be shown the consistency envelope: no CAS, so RMW is best-effort
   and advisory locking is advisory. Catalog components should carry this per
   component (`records:store`'s revision check is best-effort under contention —

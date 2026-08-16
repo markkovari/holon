@@ -3,7 +3,7 @@
 // The new class: a sustained connection with server push. `GET /events` sets
 // its response early and then loops writing Server-Sent-Events `data:` frames
 // as new messages arrive — the host streams them to the browser while the guest
-// keeps running. See REALTIME.md.
+// keeps running. See docs/apps/REALTIME.md.
 //
 // Routes:
 //   POST /rooms/{room}/messages   {user, text}     post

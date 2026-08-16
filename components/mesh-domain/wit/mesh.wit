@@ -11,7 +11,7 @@
 // The ALGORITHMS are the stateless `resilience:breaker` component. The DURABILITY
 // is this domain's per-key circuit record in `records:store`, updated under a
 // revision compare-and-set so concurrent callers converge on one circuit (the
-// same shape `gate:app` uses for rate-limit state — see GATE.md). The upstream
+// same shape `gate:app` uses for rate-limit state — see docs/apps/GATE.md). The upstream
 // hop is a REAL outgoing HTTP request through `proxy:route`, so a tripped
 // breaker is observably a request that never leaves the host.
 //

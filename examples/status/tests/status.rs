@@ -1,4 +1,4 @@
-//! E2E for the status page (STATUS.md) as ONE composed wasm HTTP component on
+//! E2E for the status page (docs/apps/STATUS.md) as ONE composed wasm HTTP component on
 //! the native Rust host. The timer-driven axis: the workload originates from
 //! sched:timer, not an inbound request. A monitor is a recurring timer job;
 //! `POST /api/tick` claims due jobs, probes each target over outgoing HTTP, and

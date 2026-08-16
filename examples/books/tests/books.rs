@@ -1,4 +1,4 @@
-//! E2E for the books bookkeeping app (BOOKS.md) as ONE composed wasm HTTP
+//! E2E for the books bookkeeping app (docs/apps/BOOKS.md) as ONE composed wasm HTTP
 //! component (books-domain + auth-guard + records + ledger + pdf) on the native
 //! Rust host. Proves the double-entry invariant end to end: a fresh account is
 //! seeded a demo chart + entries; a BALANCED entry posts and an UNBALANCED one

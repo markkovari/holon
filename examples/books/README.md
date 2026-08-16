@@ -1,10 +1,10 @@
-# books — double-entry bookkeeping (BOOKS.md)
+# books — double-entry bookkeeping (docs/apps/BOOKS.md)
 
 A chart of accounts and a journal where **every entry must balance** (debits =
 credits) — the invariant lives in the **`ledger:doubleentry`** component, so a
 lopsided entry is rejected before it's stored. From the balanced journal the app
 derives a trial balance, a profit & loss, and a balance sheet (assets =
-liabilities + equity), exported to PDF via `pdf:codec`. See [BOOKS.md](../../BOOKS.md).
+liabilities + equity), exported to PDF via `pdf:codec`. See [docs/apps/BOOKS.md](../../docs/apps/BOOKS.md).
 
 A composed HTTP app on the native Rust host, with a **React + shadcn/ui** SPA.
 

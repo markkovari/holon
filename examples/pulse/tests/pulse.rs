@@ -1,4 +1,4 @@
-//! E2E for the pulse chat room (REALTIME.md) as ONE composed wasm HTTP component
+//! E2E for the pulse chat room (docs/apps/REALTIME.md) as ONE composed wasm HTTP component
 //! on the native Rust host. Rung 1: post + history. Rung 2 (the headline): a
 //! message posted by one request is delivered LIVE over a separate, held-open
 //! Server-Sent-Events connection — real server push on wasip2.

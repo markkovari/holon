@@ -60,7 +60,7 @@ export default function App() {
         Each panel is a durable, per-key <b>worker pattern</b>: state lives in <code>records:store</code> under a
         revision compare-and-set, the shaping math is <code>shaper:limit</code>. On <b>Golem Cloud</b> each key would be a
         single-threaded durable worker — the CAS becomes exact serialization, the batch flush an atomic region, and the
-        throttle a scheduled drain. See <code>GATE.md</code>.
+        throttle a scheduled drain. See <code>docs/apps/GATE.md</code>.
       </footer>
     </div>
   );

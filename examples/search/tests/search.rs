@@ -1,4 +1,4 @@
-//! E2E for the search console (SEARCH.md) as ONE composed wasm HTTP component
+//! E2E for the search console (docs/apps/SEARCH.md) as ONE composed wasm HTTP component
 //! on the native Rust host. The read/query axis: seed a corpus, then prove
 //! ranked retrieval, all-mode intersection, tag-facet filtering, and that a
 //! repeat query is served from cache (hit-ratio rises).

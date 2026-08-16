@@ -1,4 +1,4 @@
-//! E2E for the trip-booking saga (SAGA.md) as ONE composed wasm HTTP component
+//! E2E for the trip-booking saga (docs/apps/SAGA.md) as ONE composed wasm HTTP component
 //! on the native Rust host. Every route is the Rust saga-domain orchestrating
 //! fsm-workflow + record-store + idempotency-guard + event-bus, linked into one
 //! .wasm. Covers rung 1 (commit) and rung 2 (compensation) — same engine, two

@@ -1,4 +1,4 @@
-//! E2E for the 2FA authgate (AUTHGATE.md) as ONE composed wasm HTTP component
+//! E2E for the 2FA authgate (docs/apps/AUTHGATE.md) as ONE composed wasm HTTP component
 //! on the native Rust host. The challenge-response axis: enroll mints a TOTP
 //! secret sealed in the vault; activation requires a first correct code; login
 //! verifies a live code (or burns a single-use recovery code) and mints a

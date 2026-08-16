@@ -1,4 +1,4 @@
-//! `lms-domain` — a learning-management service (LMS.md) as ONE composed wasm
+//! `lms-domain` — a learning-management service (docs/apps/LMS.md) as ONE composed wasm
 //! HTTP component. Exports `wasi:http`; imports only WIT contracts: the composed
 //! auth-guard (`auth:identity`), `records:store`, `quiz:grade` (auto-grading +
 //! gradebook stats), `pdf:codec` (certificates) and `svg:chart` (the gradebook

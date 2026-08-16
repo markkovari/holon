@@ -1,4 +1,4 @@
-//! E2E for the dashboards app (DASHBOARDS.md) as ONE composed wasm HTTP
+//! E2E for the dashboards app (docs/apps/DASHBOARDS.md) as ONE composed wasm HTTP
 //! component (dashboards-domain + auth-guard + records + svg-chart) on the native
 //! Rust host. Proves: a fresh account is seeded a demo dashboard; every panel
 //! renders to a valid SVG per kind (bar/line/donut/sparkline) via svg:chart; a

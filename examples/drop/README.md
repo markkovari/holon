@@ -1,6 +1,6 @@
 # drop — presigned direct-upload drop-box (e2e)
 
-The [DROP.md](../../DROP.md) showcase as one composed wasm HTTP component on the
+The [docs/apps/DROP.md](../../docs/apps/DROP.md) showcase as one composed wasm HTTP component on the
 native Rust host, plus a browser SPA. The presigned axis: the backend answers
 the policy question and signs a ticket — it never proxies the upload.
 

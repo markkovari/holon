@@ -4,7 +4,7 @@ The textbook distributed **saga** as ONE composed wasm HTTP component
 (`saga-domain` + fsm-workflow + record-store + idempotency-guard + event-bus +
 id-generate + scheduler-timer), served by the native Rust host. Book flight →
 hotel → car; if any leg fails, **compensate** the booked legs in reverse. See
-[`../../SAGA.md`](../../SAGA.md).
+[`../../docs/apps/SAGA.md`](../../docs/apps/SAGA.md).
 
 The axis no other showcase covers: **compensation + durable, resumable
 execution**. State lives entirely in `wasi:keyvalue` (records + fsm), so a saga

@@ -1,6 +1,6 @@
 # track — a Linear-lite project tracker (e2e)
 
-The [TRACK.md](../../TRACK.md) showcase — the *complex* one — as one composed
+The [docs/apps/TRACK.md](../../docs/apps/TRACK.md) showcase — the *complex* one — as one composed
 wasm HTTP component on the native Rust host, with a **Vite + TypeScript SPA baked
 into the wasm** (no `--static-dir`). Five axes over ~15 contracts: auth+RBAC,
 a board state machine, full-text search, a live SSE activity feed, a background

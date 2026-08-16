@@ -94,20 +94,12 @@ fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
     if !out.status.success() {
         bail!("building slug-probe failed:\n{}", String::from_utf8_lossy(&out.stderr));
     }
-    let composed = comp.join("target/slug_probe.composed.wasm");
-    let wac = Command::new("wac")
-        .arg("plug")
-        .arg(rel.join("slug_probe.wasm"))
-        .arg("--plug")
-        .arg(rel.join("slug.wasm"))
-        .arg("-o")
-        .arg(&composed)
-        .output()
-        .context("wac plug")?;
-    if !wac.status.success() {
-        bail!("wac plug failed:\n{}", String::from_utf8_lossy(&wac.stderr));
-    }
-    std::fs::read(&composed).context("read composed slug-probe")
+    // Composed by the library rather than by shelling out to `wac`: the plug list
+    // is derived from what slug-probe imports, so a capability added to its world
+    // is picked up without editing this file (ADR-0087).
+    let catalog = comp_reconciler::plug::Catalog::scan(&[rel.clone()]);
+    comp_reconciler::plug::compose("slug-probe", &catalog)
+        .map_err(|e| anyhow::anyhow!("composing slug-probe: {e}"))
 }
 
 /// One conformance case, read from a capability's spec: call `path` over the

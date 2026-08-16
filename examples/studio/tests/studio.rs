@@ -1,4 +1,4 @@
-//! E2E for the composition studio (STUDIO.md) as ONE composed wasm HTTP component
+//! E2E for the composition studio (docs/apps/STUDIO.md) as ONE composed wasm HTTP component
 //! (studio-domain + wit-reflect + records + blob) on the native Rust host.
 //!
 //! The claims under test are strong, so they are checked against the real tools

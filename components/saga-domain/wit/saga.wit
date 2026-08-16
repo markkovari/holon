@@ -3,7 +3,7 @@
 // Book flight → hotel → car in sequence; if any leg fails, compensate the legs
 // already booked, in reverse. The saga *pattern* (forward + compensation +
 // durable, resumable state + once-only steps) is composed from catalog
-// contracts — no bespoke engine. See SAGA.md.
+// contracts — no bespoke engine. See docs/apps/SAGA.md.
 //
 // Routes:
 //   POST /trips            {traveler, failLeg?}   start a saga
