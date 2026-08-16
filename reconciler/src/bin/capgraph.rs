@@ -22,6 +22,17 @@
 //!   comp-capgraph                 → the markdown report (docs/CAPABILITY-GRAPH.md)
 //!   comp-capgraph --format json   → the same graph, for tooling
 //!   comp-capgraph --format mermaid → just the diagram
+//!   comp-capgraph --format surql  → the same graph as a PROJECTION, for the store
+//!
+//! The last one is ADR-0091. The graph stops being a report a person reads and
+//! becomes rows a query can join against, in the same database the knowledge pool
+//! lives in — so "what did previous runs learn about the interfaces this app
+//! imports" is one query rather than a tool invocation feeding a second call.
+//!
+//! This binary stays the SOURCE. What lands in SurrealDB is a projection: written
+//! only by a rebuild, never hand-edited, and always safe to drop, because it is
+//! recomputed from the built artifacts in under a second. That is what makes the
+//! generation stamp below load-bearing rather than decorative.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,9 +43,24 @@ use comp_reconciler::plug::{default_dirs, Catalog};
 #[derive(Parser)]
 #[command(name = "comp-capgraph", about = "The capability graph: who imports what from whom")]
 struct Args {
-    /// `md` (default), `json`, or `mermaid`.
+    /// `md` (default), `json`, `mermaid`, or `surql`.
     #[arg(long, default_value = "md")]
     format: String,
+
+    /// The generation to stamp a `surql` projection with (ADR-0091).
+    ///
+    /// Every derived node and edge carries it, and the projection ends by deleting
+    /// everything stamped with anything older. That is the whole of the isolation
+    /// between the derived half and the accumulated half now that they share a
+    /// database: a rebuild can only ever reach rows it wrote itself, so the one
+    /// thing in the system that cannot be recomputed is not reachable from the
+    /// thing that is recomputed constantly.
+    ///
+    /// Defaults to the wall clock in seconds — monotonic enough for "newer than
+    /// the last rebuild", which is the only comparison made on it. Pass it
+    /// explicitly to get a byte-identical projection out of the same catalogue.
+    #[arg(long)]
+    gen: Option<u64>,
 
     /// Ask the catalogue "do we already have something for this?" and print the
     /// answer instead of the graph.
@@ -168,12 +194,21 @@ fn main() -> Result<(), String> {
 
     match args.format.as_str() {
         "json" => println!("{}", json(&catalog, &by_iface, &orphans, &apps(&root))),
+        "surql" => {
+            let generation = args.gen.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            });
+            println!("{}", surql(&catalog, &apps(&root), generation));
+        }
         "mermaid" => println!("{}", mermaid(&by_iface, args.diagram_top)),
         "md" => println!(
             "{}",
             markdown(&catalog, &by_iface, &orphans, args.diagram_top, &apps(&root))
         ),
-        other => return Err(format!("unknown format {other:?} — md, json or mermaid")),
+        other => return Err(format!("unknown format {other:?} — md, json, mermaid or surql")),
     }
     Ok(())
 }
@@ -243,6 +278,155 @@ fn json(
         ));
     }
     out.push_str("\n  ]\n}");
+    out
+}
+
+/// A record id. `⟨…⟩` is SurrealDB's own quoting for an arbitrary id, and the
+/// closing bracket is the one character that could end the quoting early — so it
+/// goes. Interface names carry `:`, `/` and `@`, none of which need escaping
+/// inside the brackets, which is why this is three lines rather than a parser.
+fn rid(table: &str, id: &str) -> String {
+    format!("{table}:⟨{}⟩", id.replace('⟩', ""))
+}
+
+/// A string literal. Through JSON, so a value cannot carry syntax (ADR-0080).
+fn lit(s: &str) -> String {
+    serde_json::Value::String(s.to_string()).to_string()
+}
+
+/// The capability graph as a projection into the store the knowledge pool lives
+/// in (ADR-0091).
+///
+/// ## Why the shape is what it is
+///
+/// **Nodes are upserted, edges are generation-scoped.** A node keeps a stable id
+/// across rebuilds — `interface:⟨csv:codec/codec@0.1.0⟩` is the same row today and
+/// next week — because that id is what anything else in the database points at.
+/// An edge cannot: `RELATE` with an id that already exists is an error, so every
+/// generation mints its own edge ids and the old ones are deleted at the end.
+///
+/// **The delete is the isolation.** It names six tables, all six derived, and it
+/// is bounded by `gen < N` so it can only ever remove rows an older run of this
+/// same function wrote. `memory` and `task` — the accumulated half, the half that
+/// cannot be recomputed from anything — are not named here and there is no
+/// statement in this output that could reach them. That property is the entire
+/// reason ADR-0091 was willing to put both halves in one database, so it is worth
+/// checking by reading rather than trusting: every statement below is against
+/// `interface`, `artifact`, `app`, `imports`, `exports` or `carries`.
+///
+/// **Insert before delete.** The new generation lands first and the old one goes
+/// afterwards, so a reader between the two sees both rather than neither. A
+/// projection that is briefly doubled degrades a ranking; a projection that is
+/// briefly empty looks exactly like a codebase nobody has ever learned anything
+/// about, which is the wrong answer rather than a slow one.
+fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "-- comp-capgraph projection, generation {generation}.\n\
+         -- Derived from the built artifacts. Never hand-edit: the next rebuild\n\
+         -- overwrites this, and nothing here is anybody's only copy (ADR-0091).\n"
+    ));
+
+    // Interfaces. Every name that is exported or imported by anything, so an
+    // interface nobody provides still gets a node — that absence is a fact a
+    // capability search wants, not a row to omit.
+    let mut interfaces: BTreeSet<String> = BTreeSet::new();
+    for name in catalog.names() {
+        if let Some(surface) = catalog.surface(name) {
+            interfaces.extend(surface.exports.iter().cloned());
+            interfaces.extend(surface.imports.iter().cloned());
+        }
+    }
+    for iface in &interfaces {
+        let exporter = catalog.exporter(iface).unwrap_or("");
+        out.push_str(&format!(
+            "UPSERT {} SET name = {}, exporter = {}, consumers = {}, gen = {generation};\n",
+            rid("interface", iface),
+            lit(iface),
+            lit(exporter),
+            catalog.consumer_count(iface),
+        ));
+    }
+
+    // Artifacts. The digest is what makes a lesson's staleness visible: a lesson
+    // is retrieved by interface so that it survives a rebuild, and stamped with
+    // the digest it was learned against so that "has this changed underneath the
+    // lesson" stays an answerable question rather than an assumption (ADR-0091).
+    for name in catalog.names() {
+        let digest = catalog
+            .bytes(name)
+            .map(comp_reconciler::oci::digest_of)
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "UPSERT {} SET name = {}, digest = {}, gen = {generation};\n",
+            rid("artifact", name),
+            lit(name),
+            lit(&digest),
+        ));
+    }
+
+    // Apps, and what each one is actually composed from — the closure, not the
+    // root, because "which interfaces does this app import" is a question about
+    // every part in it.
+    for app in apps {
+        out.push_str(&format!(
+            "UPSERT {} SET name = {}, root = {}, artifact = {}, gen = {generation};\n",
+            rid("app", &app.name),
+            lit(&app.name),
+            lit(&app.root),
+            lit(&app.artifact),
+        ));
+    }
+
+    // Edges.
+    for name in catalog.names() {
+        let Some(surface) = catalog.surface(name) else {
+            continue;
+        };
+        for (table, ifaces) in [("imports", &surface.imports), ("exports", &surface.exports)] {
+            for iface in ifaces.iter() {
+                out.push_str(&format!(
+                    "RELATE {}->{}->{} SET gen = {generation};\n",
+                    rid("artifact", name),
+                    rid(table, &format!("{generation}|{name}|{iface}")),
+                    rid("interface", iface),
+                ));
+            }
+        }
+    }
+    // `closure` is the root's DEPENDENCIES and does not include the root itself,
+    // which is right for "what did this get composed from" and wrong here. The
+    // root is the app's own domain component, and its imports are the ones a
+    // lesson is most likely to be about — leave it out and `conduit` appears to
+    // import three interfaces from its shared parts, when `conduit-domain` alone
+    // imports five that nothing else in the query can see.
+    for app in apps {
+        let mut parts = catalog.closure(&app.root);
+        if !parts.contains(&app.root) {
+            parts.push(app.root.clone());
+        }
+        for part in parts {
+            out.push_str(&format!(
+                "RELATE {}->{}->{} SET gen = {generation};\n",
+                rid("app", &app.name),
+                rid("carries", &format!("{generation}|{}|{part}", app.name)),
+                rid("artifact", &part),
+            ));
+        }
+    }
+
+    out.push_str("-- Age out the previous generation. Six derived tables, and only\n");
+    out.push_str("-- rows older than this run — `memory` and `task` are unreachable from here.\n");
+    for table in [
+        "interface",
+        "artifact",
+        "app",
+        "imports",
+        "exports",
+        "carries",
+    ] {
+        out.push_str(&format!("DELETE {table} WHERE gen < {generation};\n"));
+    }
     out
 }
 
@@ -418,4 +602,96 @@ fn markdown(
         s.push_str(&format!("| `{owner}` | `{short}` |\n"));
     }
     s
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The projection must not be able to touch the accumulated half.
+    ///
+    /// This is the check ADR-0091 rests on. Both halves now share one database,
+    /// and the only thing standing between a rebuild and the one table in the
+    /// system that cannot be recomputed is that this function never names it. A
+    /// reviewer can see that by reading; this fails the build if it stops being
+    /// true — including from a table added later whose name happens to be
+    /// accumulated.
+    #[test]
+    fn projection_never_names_the_accumulated_tables() {
+        let root = comp_reconciler::fleet::repo_root();
+        let catalog = Catalog::scan(&default_dirs(&root));
+        if catalog.is_empty() {
+            // Nothing built. The statement-shape check below has nothing to read,
+            // and a green test on an empty catalogue would be a lie.
+            eprintln!("skipped: nothing built — run `just build`");
+            return;
+        }
+        let out = surql(&catalog, &apps(&root), 42);
+
+        for statement in out.lines().filter(|l| !l.trim_start().starts_with("--")) {
+            let target = statement
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or_default()
+                .split([':', '-'])
+                .next()
+                .unwrap_or_default();
+            assert!(
+                [
+                    "interface",
+                    "artifact",
+                    "app",
+                    "imports",
+                    "exports",
+                    "carries"
+                ]
+                .contains(&target),
+                "projection statement targets {target:?}, which is not a derived table:\n  \
+                 {statement}"
+            );
+        }
+        // No denylist of `memory` and `task` here on purpose. A substring search
+        // for them matches `artifact:⟨knowledge-memory⟩`, which is a component in
+        // this repository and a perfectly legal thing for the projection to write.
+        // The allowlist above is the stronger check anyway: it passes only tables
+        // named here, so an accumulated table added next year is caught without
+        // anybody remembering to add it to a list.
+    }
+
+    /// Every generation mints its own edge ids, or the second rebuild fails on a
+    /// duplicate id and the projection silently stops updating.
+    #[test]
+    fn edge_ids_are_generation_scoped_and_nodes_are_not() {
+        let root = comp_reconciler::fleet::repo_root();
+        let catalog = Catalog::scan(&default_dirs(&root));
+        if catalog.is_empty() {
+            eprintln!("skipped: nothing built — run `just build`");
+            return;
+        }
+        let one = surql(&catalog, &apps(&root), 1);
+        let two = surql(&catalog, &apps(&root), 2);
+
+        let edge_ids = |s: &str| {
+            s.lines()
+                .filter(|l| l.starts_with("RELATE"))
+                .map(|l| l.split("->").nth(1).unwrap_or_default().to_string())
+                .collect::<BTreeSet<_>>()
+        };
+        assert!(!edge_ids(&one).is_empty(), "no edges at all");
+        assert!(
+            edge_ids(&one).is_disjoint(&edge_ids(&two)),
+            "two generations share an edge id — the second RELATE will be refused"
+        );
+
+        let node_ids = |s: &str| {
+            s.lines()
+                .filter(|l| l.starts_with("UPSERT"))
+                .map(|l| l.split_whitespace().nth(1).unwrap_or_default().to_string())
+                .collect::<BTreeSet<_>>()
+        };
+        assert_eq!(
+            node_ids(&one),
+            node_ids(&two),
+            "node ids moved between generations — anything pointing at one would dangle"
+        );
+    }
 }
