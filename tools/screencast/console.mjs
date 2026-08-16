@@ -29,10 +29,10 @@ import { chromium } from "playwright";
 
 const repo = path.resolve(new URL(".", import.meta.url).pathname, "../..");
 const OUT = new URL("./videos/console/", import.meta.url).pathname;
-// 880 tall. The run detail grew: it now carries the capability the pool gained
-// and each branch's paths, so the whole thing is about 800px and a shorter frame
-// cuts the timeline — which is the half that explains the branches above it. The
-// GIF is cropped by the recording, not by the converter, so this is the crop.
+// 880 tall. The run detail no longer fits in one frame — the branches are a
+// graph now, and a graph short enough to fit above the timeline is a graph you
+// cannot read — so the recording scrolls once instead of growing the crop. A
+// taller frame would just make the whole GIF smaller on the page.
 const W = 1200, H = 880;
 
 const SURREAL_IMAGE = "surrealdb/surrealdb:v3.1.3";
@@ -212,14 +212,23 @@ try {
   await page.getByTestId("tab-runs").click();
   await sleep(2200);
 
-  // Open the run that merged.
+  // Open the run that merged. The graph is the point: two branches in ONE round
+  // is a fan-out, and the flat list this replaced could not say that.
   await page.getByTestId("run-77/g1").click();
-  await sleep(2600);
+  await sleep(3200);
 
-  // Let the timeline sit. No scrolling: at this viewport the whole run fits, and
-  // wheel events on a page with nothing to scroll are three seconds of stillness
-  // that read as a hang.
-  await sleep(3400);
+  // Click the winner. The panel is what the flat list used to be — cost, paths,
+  // its own events — now for the one branch somebody asked about.
+  await page.getByTestId("run-graph").getByText("mvp", { exact: true }).click();
+  await sleep(3000);
+
+  // Down to the timeline, where that branch's rows are lit rather than filtered:
+  // the interleaving stays, which is the only thing on the page that shows the
+  // two branches ran at the same time.
+  await page.mouse.wheel(0, 420);
+  await sleep(3200);
+  await page.mouse.wheel(0, -420);
+  await sleep(900);
 
   // Back out to the list, so the last frame is the thing you would open again.
   await page.getByText("← all runs").click();

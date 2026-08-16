@@ -29,8 +29,6 @@
 
 use std::process::Command;
 
-use serde_json::Value;
-
 mod harness;
 use harness::{Store, SURREAL_IMAGE};
 
@@ -57,6 +55,47 @@ fn project(db: &Store, generation: u64) {
     let sql = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(sql.contains("UPSERT interface:"), "projection wrote no interfaces");
     db.last(&sql);
+}
+
+/// The projection is aimed at the database the lessons are in.
+///
+/// Every other test in this file starts its own container and writes both halves
+/// of the join into it, so all of them passed while production had the capability
+/// graph in `holon`/`holon` and the knowledge pool in `comp`/`goalmemory`. The join
+/// was correct; the two halves were in different rooms.
+///
+/// So this asserts the COORDINATES rather than the query, by reading the places
+/// that declare them. It needs no database, which is the point — the bug it guards
+/// is a mismatch between files, and a test that has to boot Docker to notice is a
+/// test nobody runs before shipping the mismatch.
+#[test]
+fn the_projection_targets_the_database_the_pool_lives_in() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
+
+    // What the component falls back to when `surreal-ns` is unset, and what the
+    // driver rewrites the memory app's database to.
+    assert!(
+        read("components/knowledge-graph/src/lib.rs").contains(r#"cfg("surreal-ns", "comp")"#),
+        "knowledge-graph's default namespace moved — the Justfile recipes need to move with it"
+    );
+    assert!(
+        read("reconciler/src/bin/goalrun.rs").contains(r#"("SURREAL_DB", "goalmemory")"#),
+        "comp-goalrun no longer points the pool at `goalmemory` — the projection is aimed elsewhere"
+    );
+
+    // Both recipes, because `lessons-for` reading a database `capgraph-store` never
+    // wrote is the same bug wearing the other half's clothes.
+    let justfile = read("Justfile");
+    let defaults: Vec<&str> =
+        justfile.lines().filter(|l| l.contains("SURREAL_NS:-")).map(|l| l.trim()).collect();
+    assert_eq!(defaults.len(), 2, "expected capgraph-store and lessons-for, found {defaults:?}");
+    for line in defaults {
+        assert!(
+            line.contains("SURREAL_NS:-comp") && line.contains("SURREAL_DB:-goalmemory"),
+            "a recipe defaults somewhere the knowledge pool is not: {line}"
+        );
+    }
 }
 
 /// The connections survive being written to the database.

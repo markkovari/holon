@@ -582,11 +582,14 @@ fn platform_call(
                 match stream.blocking_read(8192) {
                     Ok(c) if c.is_empty() => break,
                     Ok(c) => buf.extend_from_slice(&c),
-                    // Both arms break, unlike the REQUEST side: here a short read
-                    // is reported with the status the server already sent, and the
-                    // caller sees a body it can judge. Erroring would discard a
-                    // status that is the more useful half of the answer.
-                    Err(_) => break,
+                    // `Closed` is the end of the body. Anything else is a read that
+                    // went wrong, and treating it as the end hands back a truncated
+                    // response with a 200 on it — which every caller here then
+                    // parses as JSON, so the failure surfaces as "expected value at
+                    // line 1" pointing at the platform's payload instead of at the
+                    // read that lost half of it.
+                    Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+                    Err(e) => return Err(format!("the platform's response was cut short: {e:?}")),
                 }
             }
         }

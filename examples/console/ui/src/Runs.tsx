@@ -1,15 +1,35 @@
 // The run view (ADR-0092): what happened, after the terminal closed.
 //
-// Read-only on purpose. Slice two's value is persistence — being able to answer
-// "why did branch 3 beat branch 7" a day later — and that arrives the moment the
-// events are stored, with no socket involved. Live push is slice three.
+// Read-only on purpose. The value here is persistence — being able to answer "why
+// did branch 3 beat branch 7" a day later — and that arrives the moment the events
+// are stored.
 //
 // The timeline is rendered from `events`, but the run's own bounds and outcome
 // come from the run NODE. A timeline that reconstructs those by scanning its own
 // events gets them wrong the moment one is missing, which is exactly when you are
 // looking at the page.
+//
+// ## Polled, not pushed
+//
+// Refetching the whole detail on a timer, because it is the cut that works today:
+// a socket needs a `ws:socket/handler` WIT contract decided before any host code
+// exists, and this endpoint is the one a socket would push the same JSON down. The
+// upgrade replaces `tick` and nothing else.
 
 import { useEffect, useState } from "react";
+
+import { RunGraph } from "./RunGraph";
+
+/// How often an unresolved run is refetched.
+const POLL_MS = 2000;
+/// How many more polls happen AFTER `resolved_at` appears.
+///
+/// Not zero. `trace.rs` writes the run's resolution and the last attempts and
+/// events as separate statements, and it COUNTS dropped writes rather than
+/// retrying them — so the tail of a run can land after the resolution does.
+/// Stopping the instant a run resolves truncates the timeline exactly at the end,
+/// which is the part people opened the page for.
+const GRACE_POLLS = 3;
 
 export type Run = {
   id_text: string;
@@ -22,7 +42,7 @@ export type Run = {
   resolved_at?: string;
 };
 
-type Attempt = {
+export type Attempt = {
   id_text: string;
   branch?: string;
   round?: number;
@@ -35,7 +55,7 @@ type Attempt = {
   elapsed_ms?: number;
 };
 
-type Capability = { name: string; path?: string };
+export type Capability = { name: string; path?: string };
 
 type Ev = { kind: string; attempt?: string; at?: string; data?: any };
 
@@ -106,12 +126,45 @@ export function RunList({ onOpen }: { onOpen: (id: string) => void }) {
 export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const [data, setData] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
 
   useEffect(() => {
     setData(null);
-    api(`/api/runs/${encodeURIComponent(id)}`)
-      .then(setData)
-      .catch((e) => setError(e.message));
+    setSelected(null);
+    let stopped = false;
+    let timer = 0;
+    // Polls taken since the run reported itself resolved.
+    let after = 0;
+    let loaded = false;
+
+    const tick = async () => {
+      try {
+        const next = await api(`/api/runs/${encodeURIComponent(id)}`);
+        if (stopped) return;
+        loaded = true;
+        setData(next);
+        if (next.run?.resolved_at) {
+          if (++after > GRACE_POLLS) return;
+        } else {
+          after = 0;
+        }
+      } catch (e: any) {
+        if (stopped) return;
+        // Only fatal on the FIRST fetch. A poll that fails against a page already
+        // showing a run leaves the run on screen — a transient blip is not a
+        // reason to replace what somebody is reading with an error.
+        if (!loaded) {
+          setError(e.message);
+          return;
+        }
+      }
+      timer = window.setTimeout(tick, POLL_MS);
+    };
+    tick();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
   }, [id]);
 
   if (error)
@@ -123,6 +176,8 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
   if (!data) return <p className="text-slate-400">Loading…</p>;
 
   const run = data.run;
+  const rounds = new Set(data.attempts.map((a) => a.round ?? 0)).size;
+  const chosen = data.attempts.find((a) => a.id_text === selected) ?? null;
   return (
     <div data-testid="run-detail" className="space-y-6">
       <button onClick={onBack} className="text-xs text-slate-400 hover:text-slate-200">
@@ -135,6 +190,15 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
         </h2>
         <p className="mt-1 flex gap-3 text-xs text-slate-500">
           <span data-testid="run-outcome">{run?.outcome ?? "running"}</span>
+          {/* The size, stated. The graph is not capped or virtualised — it is
+              bounded by two numbers a person typed — so a graph panned off-screen
+              would otherwise be indistinguishable from a graph missing nodes. */}
+          {!!data.attempts.length && (
+            <span data-testid="run-size">
+              {data.attempts.length} attempt{data.attempts.length === 1 ? "" : "s"} over {rounds}{" "}
+              round{rounds === 1 ? "" : "s"}
+            </span>
+          )}
           {run?.winner && <span data-testid="run-winner">won by {run.winner}</span>}
           {run?.url && (
             <a className="underline" href={run.url} target="_blank" rel="noreferrer">
@@ -163,31 +227,24 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       <section className="space-y-2">
         <h3 className="text-sm uppercase tracking-wide text-slate-500">Branches</h3>
-        <ul data-testid="attempts" className="divide-y divide-slate-800">
-          {data.attempts.map((a) => (
-            <li key={a.id_text} className="py-2 text-sm">
-              <div className="flex items-baseline justify-between">
-                <span>{a.branch ?? a.id_text}</span>
-                <span className="flex items-baseline gap-3">
-                  {/* Cost and duration exist nowhere else once the terminal is
-                      gone, and they are how a fan-out is told from a for-loop. */}
-                  {a.tokens ? <span className="text-xs text-slate-600">{fmt(a.tokens)} tok</span> : null}
-                  {a.elapsed_ms ? <span className="text-xs text-slate-600">{secs(a.elapsed_ms)}</span> : null}
-                  <span className="text-slate-500">{a.score ?? "—"}</span>
-                  <Outcome value={a.outcome} />
-                </span>
-              </div>
-              {!!a.paths?.length && (
-                <ul className="mt-1 space-y-0.5 font-mono text-xs text-slate-600">
-                  {a.paths.slice(0, 6).map((p) => (
-                    <li key={p}>{p}</li>
-                  ))}
-                  {a.paths.length > 6 && <li>+{a.paths.length - 6} more</li>}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
+        {data.attempts.length === 0 ? (
+          <p data-testid="no-attempts" className="text-sm text-slate-500">
+            No branches recorded yet.
+          </p>
+        ) : (
+          <div className="flex gap-4">
+            <div className="min-w-0 flex-1">
+              <RunGraph
+                run={run}
+                attempts={data.attempts}
+                capabilities={data.capabilities ?? []}
+                selected={selected}
+                onSelect={setSelected}
+              />
+            </div>
+            {chosen && <AttemptPanel attempt={chosen} events={data.events} />}
+          </div>
+        )}
       </section>
 
       <section className="space-y-2">
@@ -199,16 +256,92 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
             showing the first {data.events.length} of {data.eventCount} events
           </p>
         )}
+        {/* Selecting a branch HIGHLIGHTS its rows rather than filtering to them.
+            Filtering would destroy the interleaving, and the interleaving is the
+            only thing on this page that shows two branches running concurrently
+            rather than one after the other. */}
         <ol data-testid="timeline" className="space-y-1 font-mono text-xs">
-          {data.events.map((e, i) => (
-            <li key={i} className="flex gap-3">
-              <span className="w-40 shrink-0 text-slate-600">{e.kind}</span>
-              <span className="text-slate-400">{describe(e)}</span>
-            </li>
-          ))}
+          {data.events.map((e, i) => {
+            const on = !!selected && e.attempt === selected;
+            return (
+              <li
+                key={i}
+                data-selected={on || undefined}
+                className={`flex gap-3 rounded px-1 ${on ? "bg-sky-950/60" : ""}`}
+              >
+                <span className="w-40 shrink-0 text-slate-600">{e.kind}</span>
+                <span className="text-slate-400">{describe(e)}</span>
+              </li>
+            );
+          })}
         </ol>
       </section>
     </div>
+  );
+}
+
+/// One branch, in full: what it cost, what it touched, and what it did.
+///
+/// The facts here exist nowhere else once the terminal is gone — tokens and
+/// duration are how a fan-out is told from a for-loop — and they were the flat
+/// list's whole content. The graph shows the shape; this shows the detail, on
+/// demand, for the one branch somebody asked about.
+function AttemptPanel({ attempt, events }: { attempt: Attempt; events: Ev[] }) {
+  const mine = events.filter((e) => e.attempt === attempt.id_text);
+  return (
+    <aside
+      data-testid="attempt-panel"
+      className="w-72 shrink-0 space-y-3 rounded border border-slate-800 bg-slate-950 p-3"
+    >
+      <div className="flex items-baseline justify-between">
+        <span data-testid="panel-branch" className="text-sm">
+          {attempt.branch ?? attempt.id_text}
+        </span>
+        <Outcome value={attempt.outcome} />
+      </div>
+
+      <dl className="grid grid-cols-2 gap-y-1 text-xs text-slate-500">
+        <dt>round</dt>
+        <dd className="text-slate-300">{attempt.round ?? "—"}</dd>
+        <dt>score</dt>
+        <dd className="text-slate-300">{attempt.score ?? "—"}</dd>
+        <dt>tokens</dt>
+        <dd className="text-slate-300">{attempt.tokens ? fmt(attempt.tokens) : "—"}</dd>
+        <dt>took</dt>
+        <dd className="text-slate-300">{attempt.elapsed_ms ? secs(attempt.elapsed_ms) : "—"}</dd>
+      </dl>
+
+      {!!attempt.paths?.length && (
+        <div>
+          <h4 className="text-xs uppercase tracking-wide text-slate-600">Wrote</h4>
+          {/* Paths, not the diff. The diff is in the pull request, addressable and
+              reviewable; a copy here could only disagree with it. */}
+          <ul data-testid="panel-paths" className="mt-1 space-y-0.5 font-mono text-xs text-slate-500">
+            {attempt.paths.map((p) => (
+              <li key={p} className="truncate" title={p}>
+                {p}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div>
+        <h4 className="text-xs uppercase tracking-wide text-slate-600">Its events</h4>
+        {mine.length === 0 ? (
+          <p className="mt-1 text-xs text-slate-600">None in the loaded page.</p>
+        ) : (
+          <ol data-testid="panel-events" className="mt-1 space-y-1 font-mono text-xs">
+            {mine.map((e, i) => (
+              <li key={i}>
+                <span className="text-slate-600">{e.kind}</span>{" "}
+                <span className="text-slate-400">{describe(e)}</span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </aside>
   );
 }
 
