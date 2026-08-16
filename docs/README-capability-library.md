@@ -8,7 +8,7 @@ It grew into a **library of 40+ reusable WASI capability components** — the
 boring infrastructure every backend reimplements (sessions, rate limits,
 search, money, validation, idempotency, audit, secrets, …), each a WIT contract
 + a reference Rust impl + an in-process `jco` example. See the
-[capability map](#component-library-the-capability-map) below for the full
+[capability map](#component-library--the-capability-map) below for the full
 catalog, and `examples/jco-vet-clinic` for a full app composed only from them.
 
 ## Component library — the capability map

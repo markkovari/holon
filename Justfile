@@ -1799,7 +1799,14 @@ selfhost-deploy-all host router="caddy":
 # run. Needs nats-server and oha; needs no cluster and no second machine.
 #
 #   just adversarial                                    # address backstop (the real test)
-#   MANIFEST=bench/adversarial/two-tenants-denyall.json just adversarial
+#
+# The second variant, with egress denied outright rather than allow-listed — so the
+# adversary cannot reach the bus it would otherwise use to talk around the host
+# (ADR-0008). `run.sh` reads SPECS; it has never read a MANIFEST, and the JSON this
+# line used to name has never existed in this repository:
+#
+#   SPECS="--spec fixtures/two-tenants-denyall-eve.yaml \
+#          --spec fixtures/two-tenants-denyall-alice.yaml" just adversarial
 #
 # Re-run this when the linker gains a capability, a kv backend changes, or anyone
 # proposes relaxing the address deny-list.

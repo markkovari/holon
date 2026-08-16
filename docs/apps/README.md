@@ -21,6 +21,7 @@ built out of, ask the component rather than this table — `just plug-wiring
 | [BOOKS](BOOKS.md) | `books` | double-entry bookkeeping (the books always balance) |
 | [BUZZ](BUZZ.md) | `buzz` | a live multiplayer quiz game (Kahoot-style) |
 | [CONDUIT](CONDUIT.md) | `conduit` | the RealWorld spec, composed from capability contracts |
+| [CONSOLE](CONSOLE.md) | `console` | the Holon console — author a goal as a PR, read a run as a graph |
 | [DASHBOARDS](DASHBOARDS.md) | `dashboards` | metric panels, charts rendered on the server |
 | [DROP](DROP.md) | `drop` | a presigned direct-upload drop-box |
 | [ESHOP](ESHOP.md) | `eshop` | eShopOnDapr recreated on wasmCloud |
