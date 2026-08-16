@@ -38,9 +38,8 @@
 //! `#[ignore]`d: it writes hundreds of thousands of rows and takes a minute or two.
 
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use serde_json::Value;
 
 mod harness;
 use harness::{Store, SURREAL_IMAGE};

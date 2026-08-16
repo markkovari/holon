@@ -170,9 +170,10 @@ to know what is true.
 | tenant config (`localResources.config`) | ADR-0010 | not wired — a deployed app cannot be configured yet, so `mesh` on the cluster answers `no route configured` |
 | namespace scaffolding applied | ADR-0002 | **done** — it rides along with every save, because the app's host pod needs it (ADR-0014) |
 
-Run it: `just host-platform` (applier in validate-only — it builds no Kubernetes
-client, so the default loop cannot touch a cluster), `just e2e-platform`,
-`just host-platform-live` to actually apply.
+Run it: `just host-platform` and `just e2e-platform`. There was a
+`host-platform-live` recipe that actually applied against a cluster; it went with
+the Kubernetes lane, so the applier no longer has a live half to be the
+validate-only counterpart of.
 
 ## Open risks these ADRs name rather than solve
 

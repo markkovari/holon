@@ -201,3 +201,161 @@ fn every_relative_markdown_link_resolves() {
     );
     println!("  {checked} relative links and {anchors_checked} anchors, all of them resolve");
 }
+
+/// The counts `README.md` states out loud are the counts on disk.
+///
+/// It said thirty-two showcases when there were thirty-three, 77 ADRs when there
+/// were 92, and 150 components and 56 apps against a capability graph that had
+/// moved to 152 and 57. None of them was wrong when written; a number copied into
+/// prose has no way to notice that its source changed.
+///
+/// `docs/CAPABILITY-GRAPH.md` does not have this problem, because `contracts.rs`
+/// regenerates it and compares. This is the same idea for the handful of numbers a
+/// human wrote by hand — the README is the first thing anybody reads, and a number
+/// there that is quietly wrong costs more trust than one that was never given.
+#[test]
+fn the_readme_counts_what_is_actually_there() {
+    let root = repo_root();
+    let readme = std::fs::read_to_string(root.join("README.md")).expect("no README.md");
+    let mut wrong = Vec::new();
+
+    let count = |dir: &str| -> usize {
+        std::fs::read_dir(root.join(dir))
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| {
+                        let n = e.file_name();
+                        let n = n.to_string_lossy();
+                        n.ends_with(".md") && n != "README.md"
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+
+    // Spelled out in prose, so the check is on the word.
+    let apps = count("docs/apps");
+    let spelled = match apps {
+        32 => "thirty-two",
+        33 => "thirty-three",
+        34 => "thirty-four",
+        35 => "thirty-five",
+        _ => "",
+    };
+    if spelled.is_empty() {
+        wrong.push(format!(
+            "  there are now {apps} showcases and this test has no word for it — add one"
+        ));
+    } else if !readme.contains(&format!("the {spelled} showcase apps")) {
+        wrong.push(format!("  README does not say \"the {spelled} showcase apps\" ({apps} on disk)"));
+    }
+
+    let adrs = count("docs/adr");
+    if !readme.contains(&format!("{adrs} decisions")) {
+        wrong.push(format!("  README does not say \"{adrs} decisions\" ({adrs} files in docs/adr)"));
+    }
+
+    // These two are quoted FROM the capability graph, which `contracts.rs` already
+    // keeps honest — so checking the README against it chains onto a guard that
+    // exists rather than counting components a second, differently-wrong way.
+    let graph = std::fs::read_to_string(root.join("docs/CAPABILITY-GRAPH.md")).unwrap_or_default();
+    let number_before = |needle: &str| -> Option<String> {
+        let at = graph.find(needle)?;
+        let head = &graph[..at];
+        let digits: String =
+            head.chars().rev().take_while(|c| c.is_ascii_digit() || *c == ' ').collect();
+        Some(digits.chars().rev().collect::<String>().trim().to_string())
+    };
+    for (needle, phrase) in [
+        (" components,", "{} components, reuse enforced"),
+        (" applications composed", "the {} apps composed from them"),
+    ] {
+        let Some(n) = number_before(needle).filter(|n| !n.is_empty()) else {
+            wrong.push(format!("  could not read the count before `{needle}` in CAPABILITY-GRAPH.md"));
+            continue;
+        };
+        let expect = phrase.replace("{}", &n);
+        if !readme.contains(&expect) {
+            wrong.push(format!("  README does not say \"{expect}\""));
+        }
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "README.md states counts that no longer match what is on disk:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// Every `just <recipe>` a document tells you to run is a recipe that exists.
+///
+/// Four did not. `just k8s-eshop`, `just k8s-jobs`, `just k8s-collapse` and
+/// `just host-platform-live` all went with the Kubernetes lane when this
+/// repository stopped being connected to wasmCloud, and four documents kept
+/// telling people to run them — including a showcase page's own "Run it" block.
+///
+/// Not the same failure as a broken link, which at least announces itself. A
+/// missing recipe fails with `Justfile does not contain recipe`, which reads as
+/// "your checkout is wrong" rather than "this document is."
+///
+/// ADR BODIES are exempt. An ADR is a record of what was decided when it was
+/// decided, and rewriting one so its commands still run would falsify the record;
+/// the index and the operational docs are the ones a person acts on today.
+#[test]
+fn every_just_recipe_a_document_names_exists() {
+    let root = repo_root();
+    let justfile = std::fs::read_to_string(root.join("Justfile")).expect("no Justfile");
+
+    // A recipe is a line starting at column zero with `name:` or `name arg:`.
+    let recipes: BTreeSet<String> = justfile
+        .lines()
+        .filter(|l| !l.starts_with(char::is_whitespace) && !l.starts_with('#'))
+        .filter_map(|l| {
+            let head = l.split(':').next()?;
+            let name = head.split_whitespace().next()?;
+            (!name.is_empty()
+                && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                && l.contains(':'))
+            .then(|| name.to_string())
+        })
+        .collect();
+    assert!(recipes.len() > 50, "only found {} recipes — the parser is wrong", recipes.len());
+
+    let mut missing: BTreeSet<String> = BTreeSet::new();
+    for file in markdown_files(&root) {
+        let rel = file.strip_prefix(&root).unwrap_or(&file).display().to_string();
+        if rel.starts_with("docs/adr/0") {
+            continue; // the record, not an instruction
+        }
+        let Ok(text) = std::fs::read_to_string(&file) else { continue };
+        for (i, line) in text.lines().enumerate() {
+            let mut hay = line;
+            while let Some(at) = hay.find("just ") {
+                hay = &hay[at + 5..];
+                let word: String =
+                    hay.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+                // `just <app>-ui` style placeholders and ordinary English after the
+                // word "just" are not recipe names; a hyphen or a known prefix is
+                // what distinguishes an instruction from a sentence.
+                if word.len() < 3
+                    || !word.contains('-')
+                    || word.ends_with('-')
+                    // `just --list` is a flag. A recipe name never starts with one.
+                    || word.starts_with('-')
+                {
+                    continue;
+                }
+                if !recipes.contains(&word) {
+                    missing.insert(format!("  {rel}:{} -> just {word}", i + 1));
+                }
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "{} document(s) tell you to run a recipe the Justfile does not have:\n{}",
+        missing.len(),
+        missing.into_iter().collect::<Vec<_>>().join("\n")
+    );
+}

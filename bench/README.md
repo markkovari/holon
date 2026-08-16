@@ -53,7 +53,9 @@ npm install
 (cd ../examples/jco-eventbus     && npm install && npm run transpile)
 AUDIT_ENABLED=false npm run bench:inproc      # -> results-inproc.json (runs with an 8 GiB heap; ~27 wasm instances in one process)
 
-# HTTP: a single wasmCloud host must be up (see `just k8s-collapse`). The
+# HTTP: a single wasmCloud host must be up. (A `k8s-collapse` recipe set one up; it
+#       went with the Kubernetes lane, and this line is kept because the number
+#       below was measured against it.) The
 # in-cluster runner (incluster-bench.mjs in a pod) avoids flaky port-forwards.
 # Or locally with a port-forward + AUTH_BASE_URL set:
 AUTH_BASE_URL=http://localhost:8001 npm run bench:http   # -> results-http.json

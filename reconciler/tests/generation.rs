@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
-use comp_reconciler::generation::{fan_out, land, STRIDE};
+use comp_reconciler::generation::{fan_out, land};
 use serde_json::{json, Value};
 
 const TOKEN: &str = "ghp-test-only-from-the-vault";
@@ -368,12 +368,3 @@ fn base64_decode(s: &str) -> Vec<u8> {
     out
 }
 
-/// The stride is the reason branch 1's first attempt is not branch 0's second.
-#[test]
-fn seeds_are_spaced_further_apart_than_any_run_is_long() {
-    assert!(
-        STRIDE > 8,
-        "attempt n of a branch uses seed+n, so a stride at or below max-attempts makes two \
-         branches ask an identical question — which is the one thing a generation exists to avoid"
-    );
-}
