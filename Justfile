@@ -371,6 +371,22 @@ host-console: compose-console
       --config platform-url=${PLATFORM_URL:-http://127.0.0.1:8080} \
       --component ../{{console_composed}} --addr 0.0.0.0:3055
 
+# The console's browser suite: Playwright against the real stack.
+#
+#   playwright -> console-domain (wasm) -> knowledge:graph (wasm) -> SurrealDB
+#
+# Nothing below the browser is stubbed. `globalSetup` starts a pinned SurrealDB,
+# seeds one run through `comp-trace-seed` (the SAME `trace.rs` a run calls, so a
+# schema drift fails here too), stands in for the platform's login, and runs
+# `comp-host` on the composed component.
+#
+# Fails loudly when a prerequisite is missing rather than skipping: a browser
+# suite that "passes" because the app never started is the worst outcome there
+# is.
+e2e-console: compose-console
+    @cd reconciler && cargo build --release --quiet --bin comp-trace-seed
+    cd examples/console && npm ci && npx playwright install --with-deps chromium && npx playwright test
+
 # Serve `/v1/messages` from `claude -p` instead of the Anthropic API.
 #
 # Runs the loop's inference on a Claude Code subscription rather than an API key.

@@ -32,6 +32,8 @@ type Attempt = {
 
 type Ev = { kind: string; attempt?: string; at?: string; data?: any };
 
+type Detail = { run: Run | null; attempts: Attempt[]; events: Ev[]; eventCount?: number; truncated?: boolean };
+
 const api = async (path: string) => {
   const r = await fetch(path, { credentials: "same-origin" });
   const text = await r.text();
@@ -88,7 +90,7 @@ export function RunList({ onOpen }: { onOpen: (id: string) => void }) {
 }
 
 export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
-  const [data, setData] = useState<{ run: Run | null; attempts: Attempt[]; events: Ev[] } | null>(null);
+  const [data, setData] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -145,6 +147,13 @@ export function RunDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       <section className="space-y-2">
         <h3 className="text-sm uppercase tracking-wide text-slate-500">What happened</h3>
+        {/* A truncated timeline that does not say so looks like a run that
+            stopped early — the more expensive of the two mistakes. */}
+        {data.truncated && (
+          <p data-testid="timeline-truncated" className="text-xs text-amber-400">
+            showing the first {data.events.length} of {data.eventCount} events
+          </p>
+        )}
         <ol data-testid="timeline" className="space-y-1 font-mono text-xs">
           {data.events.map((e, i) => (
             <li key={i} className="flex gap-3">

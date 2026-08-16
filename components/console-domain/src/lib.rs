@@ -329,9 +329,19 @@ fn runs() -> Outcome {
     }
 }
 
+/// How many events one run detail may return.
+///
+/// A long agentic run emits events per attempt, per repair, per generation. This
+/// was unbounded and a 5,000-event run returned all 5,000 — found by the browser
+/// suite, which seeded exactly that. The cap is not the interesting part; the
+/// COUNT beside it is, because a truncated timeline that does not say it is
+/// truncated is the failure this repository keeps re-learning (ADR-0080, and
+/// every `read_body` comment here).
+const EVENT_PAGE: usize = 500;
+
 /// One run: the node, its attempts, and its events in order.
 ///
-/// Three statements in one request rather than three round trips — the run page
+/// Four statements in one request rather than four round trips — the run page
 /// wants all of it at once, and a partially-loaded timeline is worse than a slow
 /// one because it looks complete.
 fn run_detail(id: &str) -> Outcome {
@@ -339,7 +349,8 @@ fn run_detail(id: &str) -> Outcome {
     let surql = format!(
         "SELECT * FROM run WHERE id_text = {quoted};\n\
          SELECT * FROM attempt WHERE run = {quoted} ORDER BY started_at;\n\
-         SELECT * FROM event WHERE run = {quoted} ORDER BY at;"
+         SELECT count() FROM event WHERE run = {quoted} GROUP ALL;\n\
+         SELECT * FROM event WHERE run = {quoted} ORDER BY at LIMIT {EVENT_PAGE};"
     );
     match graph::query(&surql) {
         Ok(answer) => Outcome::Raw(
@@ -358,17 +369,31 @@ fn wrap(answer: &str, key: &str) -> Vec<u8> {
     json!({ key: rows }).to_string().into_bytes()
 }
 
-/// The three statements of a run detail, named.
+/// The four statements of a run detail, named.
+///
+/// `eventCount` is the total in the store and `events` is the first page of it.
+/// Both are sent so the page can say "the first 500 of 5,000" — a timeline that
+/// silently stops at 500 looks like a run that stopped at 500.
 fn detail(answer: &str) -> Vec<u8> {
     let mut s = statements(answer);
-    // Pop in reverse: the last statement is the events.
+    // Pop in reverse: the last statement is the events page.
     let events = s.pop().unwrap_or(Value::Array(vec![]));
+    let counted = s.pop().unwrap_or(Value::Array(vec![]));
     let attempts = s.pop().unwrap_or(Value::Array(vec![]));
     let run = s.pop().unwrap_or(Value::Array(vec![]));
+
+    let shown = events.as_array().map(|a| a.len()).unwrap_or(0);
+    // `count()` on an empty table answers with no rows at all, not a zero — so
+    // fall back to what was actually returned rather than reporting 0 events
+    // beside a list that has some.
+    let total = counted[0]["count"].as_u64().unwrap_or(shown as u64);
+
     json!({
         "run": run.get(0).cloned().unwrap_or(Value::Null),
         "attempts": attempts,
         "events": events,
+        "eventCount": total,
+        "truncated": total > shown as u64,
     })
     .to_string()
     .into_bytes()
