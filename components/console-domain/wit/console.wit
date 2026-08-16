@@ -1,0 +1,61 @@
+// console:app — the Holon console.
+//
+// A web UI for the loop: the worklist, the goals, and (later) the runs and what
+// the swarm knows. One composed wasm HTTP component, the same shape as every
+// other app here.
+//
+// ## Why this is a second client and not a second control plane
+//
+// `platform-domain` already serves `/api/*` — components, deployments, orgs,
+// projects, goals — and the `holon` CLI is a client of it. This is the second
+// client. It calls that API over HTTP exactly as the CLI does rather than
+// importing `records:store` and reading the control plane's storage itself:
+// two components that independently know the storage layout is two places the
+// control plane's invariants can be broken, and the CLI already proves the API
+// is a complete boundary.
+//
+// That is why there is no `records:store`, no `auth:identity`, and no
+// `policy:guard` in here. Sessions are the platform's — the console forwards
+// the login and carries the cookie back — so there is exactly one place that
+// decides who anyone is.
+//
+// ## What it does import, and why each one is unavoidable
+//
+// `ui:assets` — the built SPA, in a component of its own so this artifact stays
+// slim (the reason `static-assets` exists at all).
+//
+// `wasi:http/outgoing-handler` — to be a client of `platform-domain`.
+//
+// `git:forge/repo` — a goal's SPEC is prose in git, not a row. Authoring one
+// from a browser therefore means opening a pull request, and a component has no
+// filesystem: `git:forge` is how six HTTP calls become a branch, a commit and a
+// PR without a working tree. The console does this itself because
+// `platform-domain` does not import a forge, and giving the control plane the
+// ability to push code to satisfy a UI would be the wrong trade.
+//
+// What is deliberately NOT imported yet: `knowledge:graph`. Run history and the
+// capability graph live in the merged store (ADR-0091), and the run view will
+// read them through here rather than through the control plane — but slice one
+// does not, so the capability is not granted. A component that imports what it
+// might need later is a component whose manifest has stopped describing what it
+// can actually do (ADR-0013).
+//
+// Config (wasi:config/store):
+//   platform-url   where `platform-domain` answers, e.g. http://platform.acme.test
+//   goals-dir      where a goal spec lands in the repo, default ".comp/goals"
+package console:app@0.1.0;
+
+world console-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // The SPA, embedded in its own component.
+    import ui:assets/files@0.1.0;
+
+    // A client of the control plane, like the CLI.
+    import wasi:http/outgoing-handler@0.2.0;
+
+    // A goal spec is prose in git; authoring one is a pull request.
+    import git:forge/repo@0.1.0;
+
+    import wasi:config/store@0.2.0-rc.1;
+}

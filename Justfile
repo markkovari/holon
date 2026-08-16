@@ -87,6 +87,7 @@ dashboards_wasm := rel / "dashboards_domain.wasm"
 dashboards_composed := "components/target/dashboards_domain.composed.wasm"
 gate_wasm := rel / "gate_domain.wasm"
 gate_composed := "components/target/gate_domain.composed.wasm"
+console_composed := "components/target/console_domain.composed.wasm"
 books_wasm := rel / "books_domain.wasm"
 books_composed := "components/target/books_domain.composed.wasm"
 stash_wasm := rel / "stash_domain.wasm"
@@ -339,6 +340,36 @@ capgraph format="md":
 capability query:
     @cd reconciler && cargo build --release --quiet --bin comp-capgraph
     @./reconciler/target/release/comp-capgraph --find "{{query}}"
+
+# Build the console SPA (Vite) straight into components/console-assets/static,
+# which that component's build.rs walks and embeds. There is no separate dist:
+# the console is served by `ui:assets` (the deployable path), not --static-dir.
+build-console-ui:
+    cd examples/console/ui && npm ci && npm run build
+
+# Compose console-domain with what it imports: the embedded SPA (ui:assets) and
+# a forge (git:forge) — because a goal's SPEC is prose in git, so authoring one
+# from a browser is a pull request, and a component has no filesystem.
+#
+# It does NOT import the control plane's storage. `platform-domain` already
+# serves /api and the CLI is a client of it; this is the second client. Two
+# components independently knowing the storage layout is two places the control
+# plane's invariants can break.
+compose-console: build-console-ui compose
+    @just _derive console-domain {{console_composed}}
+
+# Run the console on the native host. Needs `platform-url` pointing at a running
+# platform, and — to author a goal — a forge repo and token, because the write
+# path is a real pull request.
+#
+#   just host-console
+#   open http://127.0.0.1:3055
+host-console: compose-console
+    cd host && cargo run --release --bin comp-host -- \
+      --app console --config-file ../examples/defaults.conf \
+      --config default-tenant=console \
+      --config platform-url=${PLATFORM_URL:-http://127.0.0.1:8080} \
+      --component ../{{console_composed}} --addr 0.0.0.0:3055
 
 # Serve `/v1/messages` from `claude -p` instead of the Anthropic API.
 #
