@@ -311,6 +311,18 @@ capgraph format="md":
         ./reconciler/target/release/comp-capgraph --format {{format}}; \
      fi
 
+# "Do we already have something for this?" — the question ADR-0089 says a goal
+# should ask before generating an implementation.
+#
+# No model: term overlap over each package's WIT header, with the capability graph
+# breaking ties towards what applications already carry. Costs nothing, answers in
+# a millisecond, and says WHICH terms matched so the ranking can be checked.
+#
+#   just capability "hash a password and issue a session token"
+capability query:
+    @cd reconciler && cargo build --release --quiet --bin comp-capgraph
+    @./reconciler/target/release/comp-capgraph --find "{{query}}"
+
 # What it WOULD plug, and what nothing exports. For a composition that is missing
 # something.
 plug-wiring name: build

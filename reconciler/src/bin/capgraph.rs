@@ -36,6 +36,16 @@ struct Args {
     #[arg(long, default_value = "md")]
     format: String,
 
+    /// Ask the catalogue "do we already have something for this?" and print the
+    /// answer instead of the graph.
+    ///
+    /// The question ADR-0089 says a goal should ask before generating an
+    /// implementation. No model involved: term overlap over the descriptions and
+    /// the exported interface names, with the graph breaking ties towards what
+    /// applications already carry.
+    #[arg(long)]
+    find: Option<String>,
+
     /// How many interfaces the diagram shows, most-consumed first. The full graph
     /// has 93 of them and renders as a hairball; the tables below it are complete.
     #[arg(long, default_value_t = 12)]
@@ -116,6 +126,45 @@ fn main() -> Result<(), String> {
             .push(consumer.clone());
     }
     let orphans = catalog.orphan_exports();
+
+    if let Some(query) = &args.find {
+        let mut apps_of: BTreeMap<String, usize> = BTreeMap::new();
+        for app in apps(&root) {
+            for part in catalog.closure(&app.root) {
+                *apps_of.entry(part).or_default() += 1;
+            }
+        }
+        let pool = comp_reconciler::capsearch::capabilities(&root, &catalog, &apps_of);
+        let hits = comp_reconciler::capsearch::find(query, &pool);
+        if hits.is_empty() {
+            println!(
+                "nothing in the catalogue matches {query:?}.\n\nThat is an answer: build \
+                 it, and if it generalises, promote it (ADR-0089)."
+            );
+            return Ok(());
+        }
+        println!("{} of {} capabilities match {query:?}:\n", hits.len(), pool.len());
+        for m in hits.iter().take(8) {
+            println!(
+                "  {:<20} {:>2} app(s)  matched on {}\n      {}\n      exports {}",
+                m.capability.name,
+                m.capability.apps,
+                m.because.join(", "),
+                if m.capability.description.is_empty() {
+                    "(no description in catalog.json)"
+                } else {
+                    &m.capability.description
+                },
+                m.capability
+                    .exports
+                    .iter()
+                    .map(|e| e.split('@').next().unwrap_or(e))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        return Ok(());
+    }
 
     match args.format.as_str() {
         "json" => println!("{}", json(&catalog, &by_iface, &orphans, &apps(&root))),

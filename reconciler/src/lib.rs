@@ -17,6 +17,8 @@ pub mod cost;
 pub mod generation;
 /// Composition as a library call — wrap `wac`, do not run it.
 pub mod plug;
+/// "Do we already have something for this?", asked of the catalogue (ADR-0089).
+pub mod capsearch;
 /// The interface two parts of a decomposed goal build against (ADR-0086).
 pub mod contract;
 /// Joining the parts of a decomposed goal: mocks, the merge, the composition gate.
