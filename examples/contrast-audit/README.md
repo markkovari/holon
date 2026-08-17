@@ -78,12 +78,26 @@ tailscale serve --bg --https=443 http://127.0.0.1:<host-proxy-port>
 
 ## Two things worth knowing
 
-**`max_tokens` is 16000 for a report of a few hundred tokens.** The default model
-is a thinking model: it spends part of the budget before writing anything, and on
-a small budget it spends all of it and returns a valid 200 whose content holds a
-`thinking` block and no text. This app asked for 1500 first and failed exactly
-that way; `goalrun`'s `--max-tokens` records the same measurement. The headroom is
-for the thinking, not the answer.
+**`max_tokens` is 16000 for a report of a few hundred tokens** — nearly all
+headroom, and the story behind it is a correction rather than a finding.
+
+The app asked for 1500 and the live test failed once with `the model returned no
+text` on a **200**. The obvious explanation was a thinking model spending the whole
+budget before writing anything, which `goalrun`'s `--max-tokens` documents as real
+(`["thinking"]`, `stop_reason: max_tokens` at 4096 on claude-sonnet-5). Raising the
+budget did make it pass — so that explanation went into this README, the commit
+message, and the PR.
+
+It does not survive checking. `photo-critic` runs the same model at `max_tokens:
+1024` and its live e2e passes. Setting this app back to 1500 also passes, on the
+same prompt and model. So the budget was probably not the cause, the single
+failure is unexplained, and raising it was a change that happened to coincide with
+the problem going away.
+
+16000 stays because `max_tokens` is a cap rather than a reservation, so headroom is
+free. The part that actually earns its place is the error: an empty completion now
+reports its `stop_reason` and which block types came back, so the next occurrence
+names itself instead of sending someone to read the parser.
 
 **A declared secret grant is a precondition of *starting*.** The free test first
 tried to run with no secret at all, on the theory that a request refused before

@@ -38,15 +38,21 @@ const DEFAULT_MODEL: &str = "claude-sonnet-5";
 /// findings and drops the ones that already pass comfortably.
 const MAX_PAIRS: usize = 12;
 
-/// The reply budget, and NOT 1500 — which is what this asked for first and is how
-/// the live test failed with `the model returned no text` on a 200.
+/// The reply budget. A report is a few hundred tokens, so this is nearly all
+/// headroom, deliberately.
 ///
-/// The default model is a THINKING model: it spends part of this budget before it
-/// writes anything, and on a small budget it spends ALL of it, returning content
-/// that holds a `thinking` block and no text. `goalrun`'s `--max-tokens` records
-/// the same measurement from the other direction — `["thinking"]` and
-/// `stop_reason: max_tokens` at 4096 on claude-sonnet-5. A report here is a few
-/// hundred tokens; the headroom is for the thinking, not the answer.
+/// `max_tokens` is a cap and not a reservation, so a large one costs nothing and
+/// buys room for a model that thinks before it writes — `goalrun`'s
+/// `--max-tokens` documents that case being real and expensive to diagnose:
+/// `["thinking"]` and `stop_reason: max_tokens` at 4096 on claude-sonnet-5.
+///
+/// Honest history, because the comment here first claimed more than was measured:
+/// this app asked for 1500, saw `the model returned no text` on a 200 ONCE, and
+/// raising the budget was the change that followed. 1500 has since succeeded on
+/// the same prompt and model, and `photo-critic` runs the same model at 1024, so
+/// the budget was probably not the cause and the one failure is unexplained. The
+/// error below is the part that earns its place: next time it will say which empty
+/// it is instead of leaving the next person to guess as I did.
 const MAX_TOKENS: u32 = 16000;
 
 const PROMPT: &str = "You are an accessibility engineer reviewing the colour contrast of a user \
