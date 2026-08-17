@@ -11,14 +11,14 @@ capabilities, so anything marked reusable drops into another app via
 | **abtest-domain** | `abtest:app@0.1.0` | event:bus/bus, experiment:assign/assigner, id:generate/generator, metrics:collect/collector | — | 148 KiB | ✓ |
 | **adversary** | `probe:adversary@0.1.0` | http/outgoing-handler, kv:batch, kv:store | — | 73 KiB | ✓ |
 | **agent-driver** | `driver:agent@0.1.0` | graph:agent/writer, graph:fitness/evaluator | — | 70 KiB | ✓ |
-| **agent-probe** | `comp:agentprobe@0.1.0` | graph:agent/writer | — | 112 KiB | ✓ |
-| **agent-writer** | `writer:agent@0.1.0` | llm:inference/inference | — | 83 KiB | ✓ |
-| **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 114 KiB | ✓ |
-| **anthropic-provider** | `anthropic:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `seed`, `cache_control`, `anthropic-api-key` | 173 KiB | ✓ |
+| **agent-probe** | `comp:agentprobe@0.1.0` | graph:agent/writer | — | 113 KiB | ✓ |
+| **agent-writer** | `writer:agent@0.1.0` | llm:inference/inference | — | 84 KiB | ✓ |
+| **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 115 KiB | ✓ |
+| **anthropic-provider** | `anthropic:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `seed`, `cache_control`, `anthropic-api-key` | 175 KiB | ✓ |
 | **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 162 KiB | ✓ |
-| **artifact-cache** | `artifact:cache@0.1.0` | blob:store/blobstore, comp:store/cas, config/store, kv:store | `artifact-container`, `artifact-claim-secs` | 83 KiB | ✓ |
+| **artifact-cache** | `artifact:cache@0.1.0` | blob:store/blobstore, comp:store/cas, config/store, kv:store | `artifact-container`, `artifact-claim-secs` | 84 KiB | ✓ |
 | **artifact-probe** | `comp:artifactprobe@0.1.0` | artifact:cache/store | — | 98 KiB | ✓ |
-| **audit-log** | `audit:log@0.1.0` | kv:store | — | 118 KiB | ✓ |
+| **audit-log** | `audit:log@0.1.0` | kv:store | — | 119 KiB | ✓ |
 | **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 123 KiB | app/demo |
 | **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — | ✓ |
 | **bigadd** | `demo:bigadd@0.1.0` | pure compute | — | 50 KiB | ✓ |
@@ -28,16 +28,17 @@ capabilities, so anything marked reusable drops into another app via
 | **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 205 KiB | ✓ |
 | **buzz-domain** | `buzz:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 201 KiB | ✓ |
 | **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 75 KiB | ✓ |
-| **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 61 KiB | ✓ |
+| **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 62 KiB | ✓ |
 | **calc** | `demo:calc@0.1.0` | pure compute | — | 47 KiB | ✓ |
 | **checks-runner** | `checks:runner@0.1.0` | config/store, http/outgoing-handler | `checks-url` | 142 KiB | ✓ |
-| **clinic-domain** | `clinic:domain@0.1.0` | auth:identity/accounts, auth:identity/session, auth:identity/types, csv:codec/codec, id:generate/generator, records:store/store, search:index/index | — | 165 KiB | ✓ |
+| **clinic-domain** | `clinic:domain@0.1.0` | auth:identity/accounts, auth:identity/session, auth:identity/types, csv:codec/codec, id:generate/generator, records:store/store, search:index/index | — | 196 KiB | ✓ |
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 226 KiB | ✓ |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
-| **console-assets** | `ui:assets@0.1.0` | pure compute | — | 398 KiB | ✓ |
+| **console-assets** | `ui:assets@0.1.0` | pure compute | — | 399 KiB | ✓ |
 | **console-domain** | `console:app@0.1.0` | git:forge/repo, knowledge:graph/store, ui:assets/files, config/store, http/outgoing-handler | `platform-url`, `goals-dir` | 176 KiB | ✓ |
 | **contract-probe** | `comp:contractprobe@0.1.0` | contract:registry/registry | — | 74 KiB | ✓ |
-| **contract-registry** | `contract:registry@0.1.0` | knowledge:graph/store | — | 124 KiB | ✓ |
+| **contract-registry** | `contract:registry@0.1.0` | knowledge:graph/store | — | 125 KiB | ✓ |
+| **contrast-audit** | `demo:contrastaudit@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `anthropic-api-key` | 171 KiB | ✓ |
 | **crdt** | `crdt:merge@0.1.0` | pure compute | — | 209 KiB | ✓ |
 | **cron** | `cron:expr@0.1.0` | pure compute | — | 59 KiB | ✓ |
 | **csv** | `csv:codec@0.1.0` | pure compute | — | 55 KiB | ✓ |
@@ -61,8 +62,8 @@ capabilities, so anything marked reusable drops into another app via
 | **fitness-probe** | `comp:fitnessprobe@0.1.0` | graph:fitness/evaluator | — | 113 KiB | ✓ |
 | **flags-domain** | `rollout:app@0.1.0` | event:bus/bus, featureflags:guard/evaluator, id:generate/generator | — | 141 KiB | ✓ |
 | **forge-probe** | `comp:forgeprobe@0.1.0` | git:forge/repo | — | 112 KiB | ✓ |
-| **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 133 KiB | ✓ |
-| **gate-domain** | `gate:app@0.1.0` | comp:store/cas, records:store/store, shaper:limit/limiter, kv:store | — | 155 KiB | ✓ |
+| **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 134 KiB | ✓ |
+| **gate-domain** | `gate:app@0.1.0` | comp:store/cas, records:store/store, shaper:limit/limiter, kv:store | — | 156 KiB | ✓ |
 | **geo** | `geo:resolve@0.1.0` | pure compute | — | 60 KiB | ✓ |
 | **github-forge** | `github:forge@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `forge-repo`, `forge-api`, `forge-token`, `forge-base` | 158 KiB | ✓ |
 | **glob** | `demo:glob@0.1.0` | pure compute | — | 46 KiB | ✓ |
@@ -92,12 +93,12 @@ capabilities, so anything marked reusable drops into another app via
 | **memory-probe** | `comp:memoryprobe@0.1.0` | knowledge:memory/memory, knowledge:memory/promotion | — | 112 KiB | ✓ |
 | **mesh-domain** | `mesh:app@0.1.0` | proxy:route/router, records:store/store, resilience:breaker/breaker | — | 158 KiB | ✓ |
 | **metrics-collect** | `metrics:collect@0.1.0` | kv:atomics, kv:store | — | 70 KiB | ✓ |
-| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 166 KiB | ✓ |
+| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 167 KiB | ✓ |
 | **mock-fitness** | `mockgate:fitness@0.1.0` | config/store | `gate-script` | 76 KiB | ✓ |
 | **mock-provider** | `mock:provider@0.1.0` | config/store | `mock-model`, `mock-embeddings`, `mock-script` | 115 KiB | ✓ |
 | **money** | `money:amount@0.1.0` | pure compute | — | 56 KiB | ✓ |
 | **notify-dispatch** | `notify:dispatch@0.1.0` | config/store, http/outgoing-handler | — | 90 KiB | ✓ |
-| **openai-provider** | `openai:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed`, `openai-api-key` | 170 KiB | ✓ |
+| **openai-provider** | `openai:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed`, `openai-api-key` | 171 KiB | ✓ |
 | **ordinal** | `demo:ordinal@0.1.0` | pure compute | — | 46 KiB | ✓ |
 | **otp** | `otp:totp@0.1.0` | pure compute | — | 82 KiB | ✓ |
 | **outbox** | `outbox:dispatch@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `base-backoff` | 93 KiB | ✓ |
@@ -123,17 +124,17 @@ capabilities, so anything marked reusable drops into another app via
 | **rot13** | `demo:rot13@0.1.0` | pure compute | — | 45 KiB | ✓ |
 | **rrule** | `rrule:recur@0.1.0` | pure compute | — | 56 KiB | ✓ |
 | **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | ✓ |
-| **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 91 KiB | ✓ |
+| **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 92 KiB | ✓ |
 | **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 172 KiB | ✓ |
-| **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 149 KiB | ✓ |
+| **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 150 KiB | ✓ |
 | **search-index** | `search:index@0.1.0` | kv:store | — | 96 KiB | ✓ |
 | **secret-probe** | `comp:secretprobe@0.1.0` | comp:secrets/reader | — | 70 KiB | ✓ |
 | **secrets-vault** | `secrets:vault@0.1.0` | config/store, kv:store | `master-key` | 96 KiB | ✓ |
 | **select-probe** | `comp:selectprobe@0.1.0` | graph:select/selector | — | 116 KiB | ✓ |
 | **session-store** | `session:store@0.1.0` | config/store, kv:store | `default-ttl` | 84 KiB | ✓ |
 | **shaper** | `shaper:limit@0.1.0` | pure compute | — | 14 KiB | ✓ |
-| **slug** | `slug:generate@0.1.0` | pure compute | — | 71 KiB | ✓ |
-| **slug-probe** | `comp:slugprobe@0.1.0` | slug:generate/generator | — | 63 KiB | ✓ |
+| **slug** | `slug:generate@0.1.0` | pure compute | — | 76 KiB | ✓ |
+| **slug-probe** | `comp:slugprobe@0.1.0` | slug:generate/generator | — | 66 KiB | ✓ |
 | **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 176 KiB | ✓ |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 644 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 182 KiB | app/demo |
@@ -148,15 +149,15 @@ capabilities, so anything marked reusable drops into another app via
 | **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 146 KiB | ✓ |
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 77 KiB | ✓ |
 | **validate** | `validate:schema@0.1.0` | pure compute | — | 100 KiB | ✓ |
-| **version-probe** | `comp:versionprobe@0.1.0` | config/store | `capabilities` | 55 KiB | ✓ |
+| **version-probe** | `comp:versionprobe@0.1.0` | config/store | `capabilities` | 59 KiB | ✓ |
 | **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — | 290 KiB | app/demo |
 | **vgit-probe** | `comp:vgitprobe@0.1.0` | vgit:store/objects, vgit:store/refs, vgit:store/worktree | — | 125 KiB | ✓ |
 | **virt-git** | `vgit:store@0.1.0` | blob:store/blobstore, comp:store/cas, config/store | `git-container` | 133 KiB | ✓ |
 | **webauthn** | `webauthn:verify@0.1.0` | pure compute | — | 192 KiB | ✓ |
 | **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 68 KiB | ✓ |
-| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 176 KiB | app/demo |
+| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 177 KiB | app/demo |
 | **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 59 KiB | ✓ |
-| **wit-reflect** | `wit:reflect@0.1.0` | pure compute | — | 1075 KiB | ✓ |
+| **wit-reflect** | `wit:reflect@0.1.0` | pure compute | — | 1074 KiB | ✓ |
 | **zip** | `zip:archive@0.1.0` | pure compute | — | 47 KiB | ✓ |
 
 ## Descriptions
@@ -189,6 +190,7 @@ capabilities, so anything marked reusable drops into another app via
 - **console-domain** — `console-domain` — the Holon console (see `wit/console.wit` for why it is a
 - **contract-probe** — `contract-probe` — the door onto `contract:registry` (see wit/probe.wit)
 - **contract-registry** — `contract-registry` — what two parts of a decomposed goal build against
+- **contrast-audit** — `contrast-audit` — a WCAG contrast auditor that runs on the lattice
 - **crdt** — `crdt` — merge concurrent replicas with no lock — state-based CRDTs that converge whatever order updates arrive in
 - **cron** — `cron` — parse a cron expression like `0 */6 * * *` and compute when it next fires
 - **csv** — `csv` — parse and format CSV — RFC 4180, with quoted fields, embedded commas, newlines and custom delimiters

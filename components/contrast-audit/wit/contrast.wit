@@ -1,0 +1,14 @@
+// demo:contrastaudit — a WCAG contrast auditor on the lattice.
+//
+// Exports HTTP (serves the page + /audit) and reaches Claude by egress with the
+// key from the vault. The same grants `photo-critic` needs, and the opposite
+// payload: the browser measures the pixels and sends only the COLOURS it found,
+// so the screenshot never leaves the device.
+package demo:contrastaudit@0.1.0;
+
+world contrast-audit {
+    export wasi:http/incoming-handler@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import comp:secrets/reader@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

@@ -123,3 +123,7 @@ path = "src/bin/selfimprove.rs"
 [[bin]]
 name = "comp-photoserve"
 path = "src/bin/photoserve.rs"
+
+[[bin]]
+name = "comp-contrastserve"
+path = "src/bin/contrastserve.rs"

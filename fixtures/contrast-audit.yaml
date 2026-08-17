@@ -1,0 +1,29 @@
+# The contrast-audit app: one component that serves HTTP and reaches Claude by
+# egress, with the key granted from the vault by reference.
+#
+# The same two grants `photo-critic.yaml` needs — an external secret and one
+# egress authority — because they are what any app that consults a model needs,
+# and nothing here consults a store.
+version: comp/v1
+app: contrast
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    config:
+      contrast:model: claude-sonnet-5
+    secrets:
+      - key: anthropic-api-key
+        ref: vault://acme/anthropic
+    host_needs:
+      - wasi:http/incoming-handler
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - api.anthropic.com:443
+
+ingress:
+  host: contrast.acme.test
+  component: gate
