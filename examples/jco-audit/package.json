@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Exercise the audit:log component in-process via jco",
   "scripts": {
-    "transpile": "jco transpile audit_log.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue-shim.js",
+    "transpile": "jco transpile audit_log.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue-shim.js --map audit:log/types@0.1.0=../src/audit-types-shim.js",
     "test": "npm run transpile && tsx --test test/**/*.test.ts"
   },
   "dependencies": {

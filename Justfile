@@ -1840,6 +1840,52 @@ adversarial: compose-gate build-reconciler
     cd host && cargo build --release --bin comp-host
     bash bench/adversarial/run.sh
 
+# Stage what `bench:inproc` needs, so it runs from a CLEAN CHECKOUT.
+#
+# It did not. The in-process benchmark imports transpiled `gen/` from 34 jco
+# examples, and seven of their `.wasm` inputs are absent from a fresh clone: they
+# are build outputs (`.gitignore` has `**/*.wasm`), while the other 27 are tracked
+# from before that rule existed. The committed `results-inproc.json` includes the
+# ops those seven provide, so the numbers were real — measured on a machine that
+# happened to have them lying around, which is the `goal-demo.sh` failure again
+# (ADR-0057: a number whose label describes something other than what ran).
+#
+# Committing 1.2 MB of binaries would have "fixed" it against the repo's own
+# intent. Staging them from what `just build` already produces is the same result
+# with nothing new tracked.
+#
+#   just bench-setup && (cd bench && npm run bench:inproc)
+bench-setup: build compose-webhook
+    #!/usr/bin/env bash
+    set -euo pipefail
+    R=components/target/wasm32-wasip2/release
+    # Two of these want the COMPOSED artifact, not the bare component, because the
+    # bare one leaves non-WASI imports for jco to emit as bare specifiers — which
+    # Node then rejects outright as a URL scheme (`protocol 'audit:'`). `_derive`
+    # says which: auth-guard imports ratelimit:guard + audit:log/recorder, and both
+    # it and audit-log import audit:log/types, a TYPES-ONLY interface nothing
+    # exports and composition therefore cannot satisfy. That last one is mapped to
+    # a stub at transpile time; see the shims the package.json files point at.
+    just _derive audit-log components/target/audit_log.composed.wasm
+    just _derive auth-guard components/target/auth_guard.composed.wasm
+    cp "$R/blob_store.wasm"         examples/jco-blob/blob_store.wasm
+    cp "$R/cache.wasm"              examples/jco-cache/cache.wasm
+    cp "$R/feature_flags.wasm"      examples/jco-featureflags/feature_flags.wasm
+    cp "$R/idempotency_guard.wasm"  examples/jco-idempotency/idempotency_guard.wasm
+    cp components/target/audit_log.composed.wasm  examples/jco-audit/audit_log.wasm
+    cp components/target/auth_guard.composed.wasm examples/jco-embed/auth_guard.wasm
+    cp components/target/webhook_ingest.composed.wasm examples/jco-webhook/webhook_ingest.wasm
+    # Every example the bench imports, installed and transpiled. Derived from the
+    # bench source rather than listed here: a hand-kept list of 34 goes stale on the
+    # next import and fails as a missing module three files away from the cause.
+    EX=$(node -e 'const fs=require("fs");const s=fs.readFileSync("bench/src/bench-inproc.ts","utf8");console.log([...new Set([...s.matchAll(/examples\/(jco-[a-z0-9-]+)\//g)].map(m=>m[1]))].sort().join(" "))')
+    n=0
+    for e in $EX; do
+      ( cd "examples/$e" && npm install --silent --no-audit --no-fund && npm run transpile --silent >/dev/null )
+      n=$((n+1))
+    done
+    echo "staged + transpiled $n example(s) — now: cd bench && npm install && npm run bench:inproc"
+
 # `shared-state`, `five-nodes` and `split-graph` were recipes here. Their scripts
 # were deleted when the scenarios became Rust tests, and the recipes were not — so
 # for three commits `just shared-state` failed with "No such file or directory"
