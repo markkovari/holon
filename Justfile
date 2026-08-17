@@ -365,10 +365,29 @@ compose-console: build-console-ui compose
 #   just host-console
 #   open http://127.0.0.1:3055
 host-console: compose-console
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The run view reads the knowledge store DIRECTLY (ADR-0091 keeps run history
+    # out of the control plane), so without this the console comes up, serves, and
+    # shows no runs — which reads as "no runs happened" rather than as a console
+    # that was never told where they are. `e2e-console` passed these all along;
+    # only the recipe a PERSON runs by hand did not.
+    #
+    # The store is on loopback, which the host denies by default (ADR-0008).
+    surreal=()
+    if [ -n "${SURREAL_URL:-}" ]; then
+      auth=${SURREAL_URL#*://}
+      surreal=(--config "surreal-url=$SURREAL_URL" \
+               --config "surreal-ns=${SURREAL_NS:-comp}" \
+               --config "surreal-db=${SURREAL_DB:-goalmemory}" \
+               --config "surreal-user=${SURREAL_USER:-root}" \
+               --egress "$auth" --allow-private-egress)
+    fi
     cd host && cargo run --release --bin comp-host -- \
       --app console --config-file ../examples/defaults.conf \
       --config default-tenant=console \
       --config platform-url=${PLATFORM_URL:-http://127.0.0.1:8080} \
+      "${surreal[@]}" \
       --component ../{{console_composed}} --addr 0.0.0.0:3055
 
 # The console's browser suite: Playwright against the real stack.
@@ -1945,6 +1964,15 @@ restore:
 #   SMOKE=1 just goal-run
 #
 # Optional: BRANCHES, ROUNDS, MODEL, ATTEMPTS, DRY_RUN=1, SMOKE=1.
+#
+# BASE_URL points inference somewhere other than the real API — the shim being
+# the reason it exists. A private address also needs
+# COMP_FLEET_ALLOW_PRIVATE_EGRESS=1, which is inherited from the environment and
+# deliberately not set here (see `claude-shim`).
+#
+#   just claude-shim &
+#   CHECKOUT=… REPO=… ANTHROPIC_KEY=… GITHUB_TOKEN=… \
+#   BASE_URL=http://127.0.0.1:8787 COMP_FLEET_ALLOW_PRIVATE_EGRESS=1 just goal-run
 goal-run:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1960,6 +1988,12 @@ goal-run:
     args=(--checkout "$ck" --repo "$REPO" --anthropic-key "$ak" --github-token "$gt" \
           --branches "${BRANCHES:-4}" --rounds "${ROUNDS:-1}" \
           --model "${MODEL:-claude-haiku-4-5-20251001}" --attempts "${ATTEMPTS:-2}")
+    [ -n "${BASE_URL:-}" ] && args+=(--anthropic-base-url "$BASE_URL")
+    # A multi-part goal needs the contract registry; a one-part goal never does.
+    [ -n "${SURREAL_URL:-}" ] && args+=(--surreal-url "$SURREAL_URL")
+    [ -n "${SURREAL_PASSWORD:-}" ] && args+=(--surreal-password "${SURREAL_PASSWORD/#\~/$HOME}")
+    # Through the shim a call is a whole `claude -p`, so the default 300s is short.
+    [ -n "${TIMEOUT:-}" ] && args+=(--timeout "$TIMEOUT")
     [ "${DRY_RUN:-0}" = "1" ] && args+=(--dry-run)
     [ "${SMOKE:-0}" = "1" ] && args+=(--smoke)
     ./reconciler/target/release/comp-goalrun "${args[@]}"
