@@ -423,6 +423,24 @@ e2e-console: compose-console
 # The private-egress flag is required and deliberately not set here: the fleet
 # blocks private ranges by default, and a base URL pointing at localhost is
 # exactly what a prompt-injected run would aim for.
+# THREE timeouts sit in a row and the one here is the lowest, which is why raising
+# the obvious one changes nothing:
+#
+#   CLAUDE_TIMEOUT_MS   this shim kills `claude -p`         default 540s  <- lowest
+#   anthropic:timeout   the provider waits for a first byte from --timeout
+#   --timeout           the branch's whole budget           goal-run's TIMEOUT
+#
+# They must stay in that order. A shim cap ABOVE the provider timeout means the
+# provider hangs up on a call the shim is still happily running; a branch budget
+# below either means the branch dies mid-answer. Measured on a three-part goal: six
+# branches came back `errored` with no files, every one of them at 540006-540010ms —
+# the cap, to the millisecond — while the branch budget of 900s was never reached.
+# A big file through `claude -p` takes 300-500s on an idle machine and considerably
+# longer with a dozen of them running at once, so the default is too small for any
+# part that writes more than a hundred lines.
+#
+#   CLAUDE_TIMEOUT_MS=1500000 just claude-shim &        # 25 min per call
+#   … TIMEOUT=3000 just goal-run                        # 50 min per branch
 claude-shim port="8787" model="":
     @CLAUDE_MODEL="{{model}}" PORT="{{port}}" node tools/claude-shim.mjs
 

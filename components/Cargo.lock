@@ -1883,6 +1883,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "triage-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "twofile"
 version = "0.1.0"
 
