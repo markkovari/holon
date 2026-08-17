@@ -1,4 +1,4 @@
-//! `iban` — reference implementation of `iban:validate/validator`.
+//! `iban` — validate a bank account number — IBAN mod-97 checksum and the per-country length
 //!
 //! Normalize an IBAN (strip spaces, upper-case), check its length against the
 //! country's rule (for known countries), and verify the ISO 7064 mod-97

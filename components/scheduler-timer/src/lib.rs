@@ -1,4 +1,4 @@
-//! `scheduler-timer` — reference implementation of `sched:timer`.
+//! `scheduler-timer` — do this later — durable timers for reminders, payment retries and nightly sweeps
 //!
 //! A durable store of future jobs, backed by `wasi:keyvalue`. The "do this
 //! later" problem: send a reminder 24h before an appointment, retry in an hour,

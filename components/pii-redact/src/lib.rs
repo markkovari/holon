@@ -1,4 +1,4 @@
-//! `pii-redact` — reference implementation of `pii:redact`.
+//! `pii-redact` — find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink
 //!
 //! Detect and mask personally-identifiable information in free text before it
 //! lands in a log line, an audit trail, an LLM prompt, or an analytics sink.

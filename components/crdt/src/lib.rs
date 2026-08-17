@@ -1,4 +1,4 @@
-//! `crdt` — reference implementation of `crdt:merge`.
+//! `crdt` — merge concurrent replicas with no lock — state-based CRDTs that converge whatever order updates arrive in
 //!
 //! State-based CvRDTs. Each value is an opaque, self-describing JSON string
 //! with a `"type"` tag; `merge` and `value` dispatch on it. The invariant that

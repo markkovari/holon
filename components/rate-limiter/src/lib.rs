@@ -1,4 +1,4 @@
-//! `rate-limiter` — reference implementation of `ratelimit:guard`.
+//! `rate-limiter` — stop a caller making too many requests — count attempts against a key and lock it out after too many
 //!
 //! Fixed-window failure counter with lockout, backed by `wasi:keyvalue`.
 //! State is two keys per limited identifier:

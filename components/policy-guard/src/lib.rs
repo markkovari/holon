@@ -1,4 +1,4 @@
-//! `policy-guard` — reference implementation of `policy:guard`.
+//! `policy-guard` — does this principal own THIS row? — attribute-based, row-level authorization beyond roles
 //!
 //! Declarative attribute-based access control (ABAC) / row-level authz that
 //! *complements* `auth-guard`'s RBAC. RBAC answers "does this principal's ROLE

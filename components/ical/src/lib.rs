@@ -1,4 +1,4 @@
-//! `ical` — reference implementation of `ical:codec/codec`.
+//! `ical` — write an .ics calendar file — RFC 5545, with the line folding, escaping and UTC timestamps it requires
 //!
 //! A correct, dependency-free RFC 5545 writer: events in, a `.ics` VCALENDAR
 //! document out. Handles the parts that actually bite — CRLF line endings,

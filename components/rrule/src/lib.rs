@@ -1,4 +1,4 @@
-//! `rrule` — reference implementation of `rrule:recur/recur`.
+//! `rrule` — expand a repeating or recurring event into concrete dates — every weekday, every 2 weeks on Mon and Wed
 //!
 //! Expand a normalized recurrence rule into occurrence dates (`YYYY-MM-DD`),
 //! clipped to a half-open-ish inclusive window. Dates are days-since-epoch

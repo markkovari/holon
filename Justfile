@@ -458,12 +458,18 @@ capgraph-store:
 #
 # Run `just capgraph-store` first, or the graph half of the join is empty.
 #
+# TRAVERSED, not scanned. The first version of this read `memory WHERE tags
+# CONTAINSANY $ifaces`, which is a full table scan of the one half ADR-0091
+# measured as not scaling — 55ms at 200k lessons, against ~12ms for the edge. The
+# projection now writes `lesson -about-> interface`, so this walks from the app to
+# its interfaces to their lessons and touches nothing else.
+#
 #   just lessons-for vet
 lessons-for app:
     @url="${SURREAL_URL:-http://localhost:8000}"; \
      ns="${SURREAL_NS:-comp}"; db="${SURREAL_DB:-goalmemory}"; \
      user="${SURREAL_USER:-root}"; pass="${SURREAL_PASS:-root}"; \
-     printf 'LET $ifaces = (SELECT VALUE array::distinct(array::flatten(->carries->artifact->imports->interface.name)) FROM ONLY app:%s{{app}}%s);\nSELECT ns, text, array::intersect(tags, $ifaces) AS matched FROM memory WHERE tags CONTAINSANY $ifaces;\n' '⟨' '⟩' \
+     printf 'LET $ls = (SELECT VALUE array::distinct(array::flatten(->carries->artifact->imports->interface<-about<-memory)) FROM ONLY app:%s{{app}}%s);\nSELECT ns, text, array::distinct(->about->interface.name) AS matched FROM $ls;\n' '⟨' '⟩' \
        | curl -sS -u "$user:$pass" -H "Accept: application/json" \
            -H "surreal-ns: $ns" -H "surreal-db: $db" \
            --data-binary @- "$url/sql" \

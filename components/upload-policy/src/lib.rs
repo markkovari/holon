@@ -1,4 +1,4 @@
-//! `upload-policy` — reference implementation of `upload:policy`.
+//! `upload-policy` — validate a file upload against a size and content-type policy, then mint a signed upload ticket
 //!
 //! File-upload gatekeeping: validate a declared content-type + size against a
 //! config allow-policy, then mint a short-lived, HMAC-signed upload ticket the

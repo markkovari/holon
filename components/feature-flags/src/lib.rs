@@ -1,4 +1,4 @@
-//! `feature-flags` — reference implementation of `featureflags:guard`.
+//! `feature-flags` — is this feature on for this user? — flag evaluation with percentage rollouts and kill switches
 //!
 //! Flag evaluation + runtime management backed by `wasi:keyvalue` (runtime
 //! rules) + `wasi:config` (deploy-time definitions).
