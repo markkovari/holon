@@ -11,6 +11,12 @@
 //!   anthropic:model       default "claude-haiku-4-5-20251001"
 //!   anthropic:version     default "2023-06-01"
 //!   anthropic:max-tokens  default "4096", used when the caller sets none
+//!   anthropic:timeout     seconds to wait for the first response byte,
+//!                         default "180". Raise it when `base-url` points at
+//!                         something slower than the API — `claude -p` behind
+//!                         `tools/claude-shim.mjs` has a median near 130s and a
+//!                         tail past 300s, and 180 silently killed a whole part
+//!                         of a two-part run while the shim was still working.
 //!
 //! Secret (comp:secrets/reader):
 //!   anthropic-api-key     the x-api-key value, granted by reference in the
@@ -40,6 +46,9 @@ const DEFAULT_BASE: &str = "https://api.anthropic.com";
 const DEFAULT_MODEL: &str = "claude-haiku-4-5-20251001";
 const DEFAULT_VERSION: &str = "2023-06-01";
 const DEFAULT_MAX_TOKENS: u32 = 4096;
+/// Seconds to wait for the first response byte. Fine for the API, and NOT fine
+/// for every base URL — see `anthropic:timeout` in the module docs.
+const DEFAULT_TIMEOUT_SECS: u64 = 180;
 
 // ---- config -------------------------------------------------------------
 
@@ -49,6 +58,14 @@ fn cfg(key: &str) -> Option<String> {
 
 fn base_url() -> String {
     cfg("anthropic:base-url").unwrap_or_else(|| DEFAULT_BASE.to_string())
+}
+
+fn timeout_ns() -> u64 {
+    cfg("anthropic:timeout")
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
+        .saturating_mul(1_000_000_000)
 }
 
 fn default_model() -> String {
@@ -162,10 +179,15 @@ fn post_once(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     // Generous, because a model generating a whole file takes seconds. All three
     // are set explicitly: an unset default that is short is exactly how a call
     // that should take three seconds dies as "data receipt timed out".
+    //
+    // The read side is configurable because "generous" depends on what
+    // `base-url` points at, and being wrong about it fails as a network error
+    // the caller reads as the provider being down (`anthropic:timeout`).
+    let read_ns = timeout_ns();
     let opts = RequestOptions::new();
     let _ = opts.set_connect_timeout(Some(30_000_000_000)); // 30s
-    let _ = opts.set_first_byte_timeout(Some(180_000_000_000)); // 180s
-    let _ = opts.set_between_bytes_timeout(Some(180_000_000_000)); // 180s
+    let _ = opts.set_first_byte_timeout(Some(read_ns));
+    let _ = opts.set_between_bytes_timeout(Some(read_ns));
     let future = outgoing_handler::handle(req, Some(opts))
         .map_err(|e| InferError::ProviderUnavailable(format!("http handle: {e:?}")))?;
     future.subscribe().block();

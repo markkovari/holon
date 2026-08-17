@@ -22,6 +22,7 @@ components:
     config:
       anthropic:model: ANSWER_MODEL
       anthropic:base-url: ANTHROPIC_BASE_URL
+      anthropic:timeout: "ANTHROPIC_TIMEOUT"
       anthropic:max-tokens: "2048"
     secrets:
       - key: anthropic-api-key
