@@ -359,3 +359,78 @@ fn every_just_recipe_a_document_names_exists() {
         missing.into_iter().collect::<Vec<_>>().join("\n")
     );
 }
+
+/// Nothing in this repository is pinned to one machine's filesystem.
+///
+/// Three scripts were. `goal-demo.sh` — offered in `README.md` as *the* one
+/// command that takes a goal to a pull request — named one person's home
+/// directory, so it was one command that worked for exactly one person.
+///
+/// The other two were worse than broken. `bench/adversarial/run.sh` and
+/// `bench/idle/run.sh` began with `cd /Users/…/experiments/comp`: a SIBLING
+/// checkout of this repository. `just adversarial` therefore built artifacts here
+/// and measured the ones over there, and reported a number. A benchmark reading
+/// the wrong tree is worse than one that fails, because it produces a result
+/// somebody will quote.
+///
+/// `bench/idle/run.sh` also wrote to a scratch directory belonging to a single
+/// editor session on a single machine, which stopped existing when it ended.
+#[test]
+fn no_script_is_pinned_to_one_machine() {
+    let root = repo_root();
+    let mut pinned = Vec::new();
+    let mut checked = 0usize;
+
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let path = e.path();
+            let rel = path.strip_prefix(&root).unwrap_or(&path).to_string_lossy().to_string();
+            if SKIP.iter().any(|s| rel.starts_with(s) || rel.contains(&format!("/{s}/"))) {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let is_script = path
+                .extension()
+                .is_some_and(|x| x == "sh" || x == "mjs" || x == "py" || x == "rs");
+            if !(is_script || rel == "Justfile") {
+                continue;
+            }
+            // This file spells the needles out in order to look for them.
+            if rel.ends_with("tests/docs.rs") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            checked += 1;
+            for (i, line) in text.lines().enumerate() {
+                let t = line.trim();
+                // A comment may quote one — that is how the reason gets recorded.
+                if t.starts_with("//") || t.starts_with('#') || t.starts_with("///") {
+                    continue;
+                }
+                // `/Users/` and `/home/` are somebody's machine. `/private/tmp/claude-…`
+                // is one editor session's scratch directory.
+                for needle in ["/Users/", "/home/", "/private/tmp/claude-"] {
+                    if line.contains(needle) {
+                        pinned.push(format!("  {rel}:{} -> {}", i + 1, t.chars().take(96).collect::<String>()));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(checked > 50, "only read {checked} scripts — the walk is wrong");
+    assert!(
+        pinned.is_empty(),
+        "{} line(s) name a path that exists on one machine:\n{}\n\nDerive it instead — \
+         `cd \"$(dirname \"$0\")/../..\"` for a script's own repo, `$(mktemp -d)` for scratch, \
+         or `${{VAR:?why}}` for something the caller must supply.",
+        pinned.len(),
+        pinned.join("\n")
+    );
+    println!("  {checked} scripts, none pinned to a machine");
+}

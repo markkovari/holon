@@ -28,6 +28,9 @@ use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
 use comp_reconciler::generation::{fan_out, land};
 use serde_json::{json, Value};
 
+mod harness;
+use harness::read_chunked;
+
 const TOKEN: &str = "ghp-test-only-from-the-vault";
 const BASE_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const COMMIT_SHA: &str = "cccccccccccccccccccccccccccccccccccccccc";
@@ -114,27 +117,6 @@ fn stand_in_forge(port: u16) -> Log {
     log
 }
 
-fn read_chunked(reader: &mut BufReader<std::net::TcpStream>) -> Vec<u8> {
-    let mut out = Vec::new();
-    loop {
-        let mut size_line = String::new();
-        if reader.read_line(&mut size_line).unwrap_or(0) == 0 {
-            break;
-        }
-        let size = usize::from_str_radix(size_line.trim(), 16).unwrap_or(0);
-        if size == 0 {
-            break;
-        }
-        let mut chunk = vec![0u8; size];
-        if std::io::Read::read_exact(reader, &mut chunk).is_err() {
-            break;
-        }
-        out.extend_from_slice(&chunk);
-        let mut crlf = String::new();
-        let _ = reader.read_line(&mut crlf);
-    }
-    out
-}
 
 struct Checks {
     child: Child,
