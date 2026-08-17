@@ -1,29 +1,39 @@
+# The goal, versioned in the repo it acts on (ADR-0082).
+#
+# THREE parts, which is the point. The clinic proved two halves can negotiate a
+# contract; three is where agreement stops being a handshake and becomes a protocol —
+# one version every part must land on, and a join that fails if any one of them
+# drifts. It is also the first goal whose parts form a CHAIN rather than a pair:
+# `digest` can only be right if `intake` and `workflow` both wrote what the contract
+# says, which is a failure mode two independent halves cannot produce.
+
 text = """
-Finish the clinic API in components/clinic-domain. Owners, their pets and visits
-are already written and working — read them. What is missing is staff access with
-pet search, and the reports the clinic runs on.
+Finish the defect triage API in components/triage-domain. Nothing is implemented
+yet: three parts are written at the same time, by three agents, against one
+contract.
 
 `CONTRACT.md` in that crate is the specification — every route, every status code,
-every rule. Read it first. You may not edit it: if it is wrong or missing
-something you need, write CONTRACT-REQUEST.md (first line the subject, the rest
-why) and the other part will answer between generations.
+every rule, and the shape of the report document all three parts share. Read it
+first. You may not edit it: if it is wrong or missing something you need, write
+CONTRACT-REQUEST.md (first line the subject, the rest why) and the other parts will
+answer between generations.
 
-The router in src/lib.rs already exists and is not yours to change. It dispatches
-to the four parts and answers /health and /test/seed. Your part is one file.
+The router in src/lib.rs already exists and is not yours to change. It dispatches to
+the three parts, answers /health, and seeds a fixture at POST /test/seed so your
+part can be judged before the part upstream of it exists. Your part is one file.
 
-You are judged by real HTTP requests against the running component — not by
-whether it compiles. `cargo component check` passes happily on code that does
-nothing.
+You are judged by real HTTP requests against the running component — not by whether
+it compiles. `cargo component check` passes happily on code that does nothing.
 
 THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as
-components, bound at compose time. Look at wit/clinic.wit. What is imported there
-is implemented, tested and composed for you — you call it, you do not write it.
-Writing your own password hashing, your own ranked search or your own CSV quoting
-is the one way to fail a gate while answering every request correctly, because the
-gate reads which capabilities the compiled component actually calls.
+components, bound at compose time. Look at wit/triage.wit. What is imported there is
+implemented, tested and composed for you — you call it, you do not write it. Writing
+your own PII scanner, your own transition table or your own CSV quoting is the one
+way to fail a gate while answering every request correctly, because the gate reads
+which capabilities the compiled component actually calls.
 
 The store, as wit-bindgen generates it in Rust — this is the exact surface, and
-guessing it wrong is how earlier attempts died:
+guessing it wrong is how earlier runs of other goals died:
 
     use crate::bindings::records::store::store as records;
 
@@ -38,143 +48,192 @@ guessing it wrong is how earlier attempts died:
     struct Entry { id: String, data: String, revision: u64, … }   // `data` is your JSON
     struct Page  { entries: Vec<Entry>, next: String }
 
-    // ids, if you want one that is not the store's:
-    use crate::bindings::id::generate::generator as ids;   ids::ulid() -> String
+`find_by` only works on a field that was passed in `index_fields` when the record was
+created. The router's fixture indexes `component` and `state`; anything else means
+listing and filtering. The collection is `reports`, and src/lib.rs's `seed` shows
+exactly how a report document is written.
 
-`find_by` only finds what was indexed when the record was CREATED — pass the
-field in `index_fields` or list and filter instead. The collections are `owners`,
-`pets` and `visits`, and src/owners.rs and src/visits.rs show exactly how the two
-finished parts read and write them.
+AND `find_by` WANTS THE JSON ENCODING OF THE VALUE, NOT THE VALUE. `record-store`
+indexes the serialised form, so a string field `billing` is indexed under
+`"billing"` — quotes included:
+
+    records::find_by("reports", "component", "billing")     // matches NOTHING
+    records::find_by("reports", "component", "\"billing\"")  // matches
+
+It returns `Ok(vec![])` either way, so a wrong query and an empty collection are
+indistinguishable from the caller — this was found by writing the thing once, and it
+cost an hour. Use `serde_json::to_string(&value)` and pass that.
+
+One more thing about this workspace, because it cannot be guessed: serde is built
+WITHOUT std here —
+
+    serde = { default-features = false, features = ["derive", "alloc"] }
+
+so `HashMap` has no `Serialize` impl and `json!({ "by_state": my_hashmap })` fails
+with E0277. Use `BTreeMap<String, u32>`, which serde's alloc feature does cover and
+which also gives a report the deterministic key order it wants.
 """
-title = "the clinic's staff access, pet search, and reports"
-contract = "components/clinic-domain/CONTRACT.md"
+title = "the triage API's intake, lifecycle and digest"
+contract = "components/triage-domain/CONTRACT.md"
 writable = []
 base_paths = [
-  "components/clinic-domain/",
+  "components/triage-domain/",
   "components/record-store/",
   "components/id-generate/",
-  # The capabilities these parts compose against, and the WIT that the auth
-  # package's own world pulls in behind them.
-  "components/auth-guard/",
-  "components/rate-limiter/",
-  "components/audit-log/",
-  "components/search-index/",
+  # The capabilities these parts compose against.
+  "components/pii-redact/",
+  "components/fsm-workflow/",
   "components/csv/",
-  "wit/auth.wit",
   "components/Cargo.toml",
   "wit/deps/",
   "host/wit/deps/",
 ]
 workspace_manifest = "components/Cargo.toml"
 keep_members = [
-  "clinic-domain",
+  "triage-domain",
   "record-store",
   "id-generate",
-  "auth-guard",
-  "rate-limiter",
-  "audit-log",
-  "search-index",
+  "pii-redact",
+  "fsm-workflow",
   "csv",
 ]
 
 [[part]]
-name = "access-and-search"
+name = "intake"
 text = """
-Implement components/clinic-domain/src/access.rs: staff accounts, login, and
-ranked pet search behind a bearer token.
+Implement components/triage-domain/src/intake.rs: taking a defect report in, reading
+one back, listing them with filters, and refusing a duplicate.
 
-This part is deliberately not a domain problem. Every hard piece of it already
-exists as a component and is in your world at wit/clinic.wit:
-`auth:identity/accounts` (register, login, verify-password — argon2 inside),
-`auth:identity/session` (issue and look up a token), and `search:index/index`
-(index a document, query it, ranked hits back).
+The rule that is not obvious: what you STORE is masked. A reporter pastes their email
+and phone number into a bug report constantly, and that body goes on to a digest
+anyone can read — so `pii:redact` masks it before it reaches the store, and the raw
+text is never written. The gate posts a body containing `ada@example.test` and fails
+you if it can read that address back.
 
-Call them. The gate reads the compiled component's imports and fails if any of
-the three is missing, so hashing a password yourself or scanning every pet with
-`contains` fails even when the HTTP responses are perfect.
+    use crate::bindings::pii::redact::redactor as pii;
 
-The index must be filled from pets that another part creates, and you may not
-edit src/owners.rs. Indexing on search, from the store, needs nobody's
-cooperation; if you would rather owners-and-pets indexed on create, that is a
-change to a file you do not own — write CONTRACT-REQUEST.md and ask for it.
+    pii::redact(text: &str, opts: pii::Options) -> String
+    pii::detect(text: &str, opts: pii::Options) -> Vec<pii::Finding>
+
+    pub struct Options { pub kinds: Vec<Kind> }   // EMPTY kinds = every kind
+    pub enum Kind { Email, CreditCard, Ssn, Phone, Ip }
+
+The duplicate rule is the other one worth reading twice: same `component` AND same
+`title` as an existing report that is NOT closed is a 409 naming the existing id. A
+closed report does not block a new one — the bug came back.
 """
-writable = ["components/clinic-domain/src/access.rs", "CONTRACT-REQUEST.md"]
+writable = ["components/triage-domain/src/intake.rs", "CONTRACT-REQUEST.md"]
 context = [
-  "components/clinic-domain/src/lib.rs",
-  "components/clinic-domain/wit/clinic.wit",
-  # A part of THIS component that is already finished: the store idioms, the
-  # Reply type, the routing shape. Closer to the task than any other example.
-  "components/clinic-domain/src/owners.rs",
+  "components/triage-domain/src/lib.rs",
+  "components/triage-domain/wit/triage.wit",
+  "components/pii-redact/wit/pii.wit",
   "components/record-store/wit/records.wit",
-  "components/search-index/wit/search.wit",
-  # The auth surface as WIT. A big file, and only three of its interfaces are in
-  # this world — but guessing a signature is how earlier clinic runs died.
-  "wit/auth.wit",
 ]
 [[part.check]]
-id = "access-half-answers-real-requests"
+id = "intake-half-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "components/clinic-domain/e2e-access.sh"]
+command = ["bash", "components/triage-domain/e2e-intake.sh"]
 
 [[part]]
-name = "reports"
+name = "workflow"
 text = """
-Implement components/clinic-domain/src/reports.rs: the day's visits as CSV, and
-the day's summary as JSON.
+Implement components/triage-domain/src/workflow.rs: moving a report through its
+lifecycle, and the queue that ranks what is still open.
 
-Read the visits the other half wrote — collection `visits`, and `pets` for the
-name and species each row needs. The counting is yours; the CSV is not. Use
-`csv:codec/codec`'s `format` for the file, because one of this clinic's pets is
-called `Rex, Jr.` and a field with a comma in it has to come back quoted or the
-row stops having six columns. The gate parses the CSV with a real parser and
-counts columns, and it also reads the compiled component's imports — so
-formatting it by hand fails even if you get the quoting right.
+The lifecycle is a DEFINITION, not a ladder of `if state == "open"`. Register it once
+with `fsm:workflow` under the machine name `report`, then drive each report as an
+instance whose id is the report id. An illegal move comes back as
+`IllegalTransition(String)` carrying the CURRENT state — which is exactly what the
+contract's 409 body has to report, so you do not need to look it up yourself.
 
-The codec, as wit-bindgen generates it in Rust. The last attempt at this part died
-on a type error here, so this is the exact surface rather than the WIT:
+    use crate::bindings::fsm::workflow::engine as fsm;
 
-    use crate::bindings::csv::codec::codec;
+    fsm::define(name: &str, def: &fsm::Definition)            -> Result<(), fsm::FsmError>
+    fsm::create_instance(machine: &str, instance: &str)       -> Result<fsm::Status, fsm::FsmError>
+    fsm::get_status(machine: &str, instance: &str)            -> Result<fsm::Status, fsm::FsmError>
+    fsm::fire(machine: &str, instance: &str, event: &str)     -> Result<fsm::Status, fsm::FsmError>
 
-    pub struct Row { pub fields: Vec<String> }
-    pub struct Dialect {
-        pub delimiter: String,   // a STRING, not a char: ",".to_string()
-        pub has_header: bool,    // affects parse-records only
-        pub trim: bool,
-    }
+    pub struct Definition { pub states: Vec<String>, pub initial: String,
+                            pub transitions: Vec<Transition>, pub terminal: Vec<String> }
+    pub struct Transition { pub event: String, pub source: String, pub target: String }
+    pub struct Status { pub machine: String, pub instance: String,
+                        pub state: String, pub done: bool, pub steps: u32 }
 
-    codec::format(rows: &[Row], opts: &Dialect) -> String
+`define` is idempotent, so calling it before you need it is the simplest way to be
+sure the machine exists on a cold store. `create_instance` RESETS an existing
+instance to initial — so a report that is already in the machine must not be
+re-created, or every transition starts from `open` again.
 
-So a file is `Vec<Row>` — the header is just the first `Row` — and `format`
-returns the whole document as one `String`.
-
-One more thing about this workspace, because it cannot be guessed and it is how
-the last attempt died a second time: serde is built WITHOUT std here —
-
-    serde = { default-features = false, features = ["derive", "alloc"] }
-
-so `HashMap` has no `Serialize` impl and `json!({ "by_vet": my_hashmap })` fails
-with E0277. Use `BTreeMap<String, u32>`, which serde's alloc feature does cover
-and which also gives a report the deterministic key order it wants.
+THE TRAP: the fsm holds the state, and so does the report document. A transition has
+to update BOTH — the fsm instance and the `state` field in `records:store` — because
+`digest` reads the document and must not have to ask the fsm. Updating only the fsm
+passes nothing; updating only the document passes your own gate and fails the
+composition.
 """
-writable = ["components/clinic-domain/src/reports.rs", "CONTRACT-REQUEST.md"]
+writable = ["components/triage-domain/src/workflow.rs", "CONTRACT-REQUEST.md"]
 context = [
-  "components/clinic-domain/src/lib.rs",
-  "components/clinic-domain/wit/clinic.wit",
-  # The part that WROTE the visits this one reports on: the shape of a visit
-  # document is defined by that file, not by CONTRACT.md.
-  "components/clinic-domain/src/visits.rs",
+  "components/triage-domain/src/lib.rs",
+  "components/triage-domain/wit/triage.wit",
+  "components/fsm-workflow/wit/fsm.wit",
   "components/record-store/wit/records.wit",
-  "components/csv/wit/csv.wit",
 ]
 [[part.check]]
-id = "reports-half-answers-real-requests"
+id = "workflow-half-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "components/clinic-domain/e2e-reports.sh"]
+command = ["bash", "components/triage-domain/e2e-workflow.sh"]
 
-[[check]]
-id = "the-whole-clinic-works"
+[[part]]
+name = "digest"
+text = """
+Implement components/triage-domain/src/digest.rs: the day's reports as a JSON summary
+and as a CSV.
+
+The counting is yours; the CSV is not. Use `csv:codec`'s `format`, because one seeded
+report is titled `Login fails, silently` and a field with a comma in it has to come
+back quoted or the row stops having five columns. The gate parses the CSV with a real
+parser and counts columns, and it also reads the compiled component's imports — so
+formatting it by hand fails even if you get the quoting right.
+
+    use crate::bindings::csv::codec::codec as csv;
+
+    pub struct Row { pub fields: Vec<String> }
+    pub struct Dialect { pub delimiter: String,   // a STRING, not a char: ",".to_string()
+                         pub has_header: bool, pub trim: bool }
+    csv::format(rows: &[Row], opts: &Dialect) -> String
+
+A file is `Vec<Row>` — the header is just the first `Row` — and `format` returns the
+whole document as one `String`.
+
+Answer the CSV with `Reply::raw(200, "text/csv", document.into_bytes())`, NOT
+`Reply::json`. The router serialises a JSON body with `to_string()`, and a
+`Value::String` serialises to a JSON string literal — quotes and escapes included —
+so a correct CSV document would arrive as one quoted blob and a CSV reader would see
+a single column. The gate checks the content type too.
+
+`by_state` and `by_component` include only the states and components that OCCUR: no
+zero-filled keys. A day with nothing in it is a digest of zero, not a 404.
+"""
+writable = ["components/triage-domain/src/digest.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/triage-domain/src/lib.rs",
+  "components/triage-domain/wit/triage.wit",
+  "components/csv/wit/csv.wit",
+  "components/record-store/wit/records.wit",
+]
+[[part.check]]
+id = "digest-half-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "components/clinic-domain/e2e.sh"]
+command = ["bash", "components/triage-domain/e2e-digest.sh"]
+
+# The COMPOSITION gate: the one no single part can pass. It drives one report the
+# whole way through all three — intake writes it, workflow moves it and assigns a
+# severity, digest counts it — so a part that stored its own shape passes its own
+# gate and fails here.
+[[check]]
+id = "the-whole-triage-api-works"
+required = true
+weight = 1
+command = ["bash", "components/triage-domain/e2e.sh"]

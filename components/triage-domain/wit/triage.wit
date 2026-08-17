@@ -1,0 +1,39 @@
+// triage:domain — a defect triage API, as one component.
+//
+// Chosen as a goal for the loop because it is the smallest thing here that needs
+// THREE parts to agree rather than two. The clinic proved two halves can negotiate
+// a contract; three is where agreement stops being a handshake and starts being a
+// protocol — a version every part must land on, and a join that fails if any one of
+// them drifts.
+//
+// The data flows one way through the parts, which is the point: `digest` can only
+// be right if `intake` and `workflow` both wrote what the contract says they would.
+// A part that invents its own storage shape passes its own gate and fails the
+// composition, which is exactly the failure two parts could not produce.
+//
+// Every import is a solved problem in this repository. A part that reimplements one
+// is doing the wrong work, and each gate is written so the only cheap way to pass is
+// to call it.
+package triage:domain@0.1.0;
+
+world triage-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Reports and their triage records.
+    import records:store/store@0.1.0;
+    /// Their ids.
+    import id:generate/generator@0.1.0;
+
+    /// Masking the reporter's details out of a report body — `pii-redact`
+    /// satisfies it. Hand-rolling an email scanner is how `intake` fails.
+    import pii:redact/redactor@0.1.0;
+
+    /// The report lifecycle as a DEFINITION rather than scattered string
+    /// comparisons — `fsm-workflow` satisfies it. An `if state == "open"` ladder
+    /// is how `workflow` fails.
+    import fsm:workflow/engine@0.1.0;
+
+    /// CSV with the quoting rules already right — the `csv` component. A comma
+    /// inside a title is the whole reason this is not `join(",")`.
+    import csv:codec/codec@0.1.0;
+}

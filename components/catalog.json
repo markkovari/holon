@@ -428,8 +428,8 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 201318,
-    "wasm_sha256_12": "d17aab7655be",
+    "wasm_size_bytes": 203602,
+    "wasm_sha256_12": "21d7736a9a39",
     "reusable_as_is": true
   },
   {
@@ -555,8 +555,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 175455,
-    "wasm_sha256_12": "637eed3a010d",
+    "wasm_size_bytes": 177062,
+    "wasm_sha256_12": "51b8d6e0d253",
     "reusable_as_is": true
   },
   {
@@ -2530,6 +2530,25 @@
     "config_keys": [],
     "wasm_size_bytes": 189881,
     "wasm_sha256_12": "79b9e3e21309",
+    "reusable_as_is": true
+  },
+  {
+    "name": "triage-domain",
+    "package": "triage:domain@0.1.0",
+    "description": "`triage-domain` \u2014 defect intake, lifecycle and digest, as one component",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "csv:codec/codec",
+      "fsm:workflow/engine",
+      "id:generate/generator",
+      "pii:redact/redactor",
+      "records:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 93554,
+    "wasm_sha256_12": "10aa9ce39344",
     "reusable_as_is": true
   },
   {

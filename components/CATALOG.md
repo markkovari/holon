@@ -31,14 +31,14 @@ capabilities, so anything marked reusable drops into another app via
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 62 KiB | ✓ |
 | **calc** | `demo:calc@0.1.0` | pure compute | — | 47 KiB | ✓ |
 | **checks-runner** | `checks:runner@0.1.0` | config/store, http/outgoing-handler | `checks-url` | 142 KiB | ✓ |
-| **clinic-domain** | `clinic:domain@0.1.0` | auth:identity/accounts, auth:identity/session, auth:identity/types, csv:codec/codec, id:generate/generator, records:store/store, search:index/index | — | 196 KiB | ✓ |
+| **clinic-domain** | `clinic:domain@0.1.0` | auth:identity/accounts, auth:identity/session, auth:identity/types, csv:codec/codec, id:generate/generator, records:store/store, search:index/index | — | 198 KiB | ✓ |
 | **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 226 KiB | ✓ |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
 | **console-assets** | `ui:assets@0.1.0` | pure compute | — | 399 KiB | ✓ |
 | **console-domain** | `console:app@0.1.0` | git:forge/repo, knowledge:graph/store, ui:assets/files, config/store, http/outgoing-handler | `platform-url`, `goals-dir` | 176 KiB | ✓ |
 | **contract-probe** | `comp:contractprobe@0.1.0` | contract:registry/registry | — | 74 KiB | ✓ |
 | **contract-registry** | `contract:registry@0.1.0` | knowledge:graph/store | — | 125 KiB | ✓ |
-| **contrast-audit** | `demo:contrastaudit@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `anthropic-api-key` | 171 KiB | ✓ |
+| **contrast-audit** | `demo:contrastaudit@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `anthropic-api-key` | 172 KiB | ✓ |
 | **crdt** | `crdt:merge@0.1.0` | pure compute | — | 209 KiB | ✓ |
 | **cron** | `cron:expr@0.1.0` | pure compute | — | 59 KiB | ✓ |
 | **csv** | `csv:codec@0.1.0` | pure compute | — | 55 KiB | ✓ |
@@ -146,6 +146,7 @@ capabilities, so anything marked reusable drops into another app via
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 58 KiB | ✓ |
 | **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 246 KiB | ✓ |
 | **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 185 KiB | ✓ |
+| **triage-domain** | `triage:domain@0.1.0` | csv:codec/codec, fsm:workflow/engine, id:generate/generator, pii:redact/redactor, records:store/store | — | 91 KiB | ✓ |
 | **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 146 KiB | ✓ |
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 77 KiB | ✓ |
 | **validate** | `validate:schema@0.1.0` | pure compute | — | 100 KiB | ✓ |
@@ -293,6 +294,7 @@ capabilities, so anything marked reusable drops into another app via
 - **track-assets** — `track-assets` — the track (project tracker) SPA embedded as `ui:assets`
 - **track-domain** — track:app — a Linear-lite project tracker over composed contracts
 - **transit-domain** — `transit-domain` — a public-transport ticketing service (docs/apps/TRANSIT.md) as ONE
+- **triage-domain** — `triage-domain` — defect intake, lifecycle and digest, as one component
 - **upload-drop** — drop:app — a presigned direct-upload drop-box over composed contracts
 - **upload-policy** — `upload-policy` — validate a file upload against a size and content-type policy, then mint a signed upload ticket
 - **validate** — `validate` — validate input against declared per-field rules and return structured errors
