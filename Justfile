@@ -88,6 +88,7 @@ dashboards_composed := "components/target/dashboards_domain.composed.wasm"
 gate_wasm := rel / "gate_domain.wasm"
 gate_composed := "components/target/gate_domain.composed.wasm"
 console_composed := "components/target/console_domain.composed.wasm"
+poll_composed := "components/target/poll_domain.composed.wasm"
 books_wasm := rel / "books_domain.wasm"
 books_composed := "components/target/books_domain.composed.wasm"
 stash_wasm := rel / "stash_domain.wasm"
@@ -357,6 +358,38 @@ build-console-ui:
 # plane's invariants can break.
 compose-console: build-console-ui compose
     @just _derive console-domain {{console_composed}}
+
+# Compose the poll app: poll-domain + record-store + id-generate + svg-chart +
+# qr-encode. The chain is DERIVED from the component's own imports, so adding a
+# capability to the world does not mean editing this. Output imports only generic
+# WASI (keyvalue, clocks, random), so any comp host runs it.
+compose-poll: build
+    @just _derive poll-domain {{poll_composed}}
+
+# Run the poll app on the native host, in-memory kv.
+#
+#   just host-poll
+#   open http://127.0.0.1:3057
+host-poll: compose-poll
+    cd host && cargo run --release --bin comp-host -- \
+      --app poll --config default-tenant=poll \
+      --component ../{{poll_composed}} --addr 127.0.0.1:3057
+
+# The poll's browser suite: Playwright against the real stack.
+#
+#   playwright -> poll-domain (wasm) -> record-store + svg-chart + qr-encode (wasm)
+#
+# A browser and not curl, because what is being asserted needs one: ONE VOTE PER
+# BROWSER is a cookie rule, so it takes two cookie jars, and a single HTTP client
+# either replays the cookie it was just handed or never sends one — both wrong, both
+# green. And a chart is only right if the PAGE embedded it; `<svg>` in a response
+# body proves the renderer, `<svg>` in the DOM proves the app.
+#
+# Fails loudly when a prerequisite is missing rather than skipping: a browser suite
+# that "passes" because the app never started is the worst outcome there is.
+e2e-poll: compose-poll build-reconciler
+    cd host && cargo build --release --quiet --bin comp-host
+    cd examples/poll && npm ci && npx playwright install --with-deps chromium && npx playwright test
 
 # Run the console on the native host. Needs `platform-url` pointing at a running
 # platform, and — to author a goal — a forge repo and token, because the write
