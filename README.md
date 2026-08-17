@@ -34,7 +34,8 @@ two-part goal ran **on this repository**: a component and the probe that calls i
 built by separate branches against a shared contract, joined and landed as one PR.
 
 ```bash
-bash goal-demo.sh real      # one command: goal → PR
+# CHECKOUT is the repository the loop works ON — not this one.
+CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → PR
 ```
 
 ## Why WebAssembly, and what is native on purpose
@@ -84,7 +85,7 @@ pointed at itself. (The original capability-library README is kept at
 
 ## Status
 
-The engine works end to end and is heavily tested (~400 tests across four
+The engine works end to end and is heavily tested (374 tests across four
 workspaces). It searches, it remembers what it evaluated, and two subgraphs can
 negotiate an interface neither has written yet.
 

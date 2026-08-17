@@ -347,7 +347,7 @@ async fn handle(
             let id = instance_id(&cmd.tenant, &cmd.app, &cmd.component);
             start(agent, cmd.clone(), Some(artifacts)).await?;
             let saved = {
-                let mut l = crate::sync::held(&ledger);
+                let mut l = crate::sync::held(ledger);
                 l.insert(id.clone(), cmd);
                 l.clone()
             };
@@ -387,7 +387,7 @@ async fn handle(
                 }
             }
             let saved = {
-                let mut l = crate::sync::held(&ledger);
+                let mut l = crate::sync::held(ledger);
                 l.remove(&id);
                 l.clone()
             };
