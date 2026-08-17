@@ -231,6 +231,19 @@ impl Guest for Component {
         let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "seed"] => seed(),
+            // The stored document, straight out of the store. Scaffold, and it says
+            // what it is: a part must be judgeable on what it WROTE without
+            // depending on the part that owns the route for reading it back.
+            //
+            // `workflow`'s gate needs exactly this. The contract makes it update the
+            // report document as well as the fsm instance, and the only other way to
+            // see the document is `GET /api/reports/{id}` — which belongs to
+            // `intake`, is a stub while `workflow` is judged alone, and answered
+            // `not_implemented` to a gate that then blamed `workflow` for it.
+            ["test", "report", id] => match records::get("reports", id) {
+                Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
+                Err(_) => Reply::err(404, "not_found"),
+            },
             // `digest.csv` and `digest` both start with "digest", and the CSV arm
             // must come first or a path-segment match on ["digest"] alone would
             // swallow it.

@@ -56,7 +56,12 @@ PY
 
 # The DOCUMENT must have moved too, not just the fsm instance: `digest` reads the
 # document and must not have to ask the fsm what state a report is in.
-python3 - "$(get "/api/reports/$A")" <<'PY' || fail "the report document did not follow the fsm"
+#
+# Read through the SCAFFOLD's `/test/report/{id}`, not `GET /api/reports/{id}` —
+# that route belongs to `intake`, which is a stub while this part is judged alone.
+# This gate asked intake for the document, got `{"error":"not_implemented"}`, and
+# reported it as `workflow` having failed to move it.
+python3 - "$(get "/test/report/$A")" <<'PY' || fail "the report document did not follow the fsm"
 import json,sys
 d=json.loads(sys.argv[1])
 assert d.get("state")=="triaged", ("the document still says", d.get("state"), d)

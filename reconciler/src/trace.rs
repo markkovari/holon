@@ -159,11 +159,23 @@ impl Trace {
         files: &Value,
         tokens: u64,
         elapsed_ms: u64,
+        tries: u64,
     ) {
         let paths = file_paths(files);
+        // NONE rather than 0 when nothing was reported.
+        //
+        // A finished attempt made at least one model call, so it did not cost zero
+        // tokens — a 0 here means the provider reported no usage, which is exactly
+        // what `tools/claude-shim.mjs` does on purpose: `claude -p` bills against a
+        // subscription and it refuses to fabricate a count. Storing that as 0 makes
+        // the wallet read "this run was free" when the truth is "nobody measured",
+        // and a column of zeroes is indistinguishable from a cheap run. Absent is
+        // the honest answer and the one a reader cannot mistake.
+        let tokens_sql = tokens_sql(tokens);
         self.send(&format!(
             "UPSERT {} SET outcome = {}, score = {score}, paths = {}, files = {}, \
-             tokens = {tokens}, elapsed_ms = {elapsed_ms}, resolved_at = time::now();",
+             tokens = {tokens_sql}, elapsed_ms = {elapsed_ms}, tries = {tries}, \
+             resolved_at = time::now();",
             rid(ATTEMPT, attempt),
             lit(outcome),
             json!(paths),
@@ -173,7 +185,8 @@ impl Trace {
             run,
             Some(attempt),
             "attempt-finished",
-            json!({ "outcome": outcome, "score": score, "files": paths.len(), "tokens": tokens }),
+            json!({ "outcome": outcome, "score": score, "files": paths.len(),
+                    "tokens": tokens, "tries": tries }),
         );
     }
 
@@ -304,6 +317,17 @@ fn ureq_post(url: &str, ns: &str, db: &str, user: &str, password: Option<&str>, 
         .unwrap_or(false)
 }
 
+/// `tokens` as SurrealQL: the count, or `NONE` when nothing was reported.
+///
+/// See `attempt_finished` for why absent and zero must not be the same value.
+fn tokens_sql(tokens: u64) -> String {
+    if tokens == 0 {
+        "NONE".to_string()
+    } else {
+        tokens.to_string()
+    }
+}
+
 /// The paths a branch wrote, from the driver's `[{path, content}]`.
 ///
 /// Sorted and de-duplicated: a branch that rewrites the same file across repairs
@@ -364,6 +388,16 @@ mod tests {
 
     /// Dropped writes are counted, and silence means everything landed — the
     /// report is what tells an operator the history is incomplete.
+    #[test]
+    fn an_unmeasured_cost_is_absent_rather_than_zero() {
+        // The shim reports no usage on purpose — `claude -p` bills against a
+        // subscription and it will not fabricate a count. Stored as 0, a whole run
+        // reads as free; stored as NONE, it reads as unmeasured, which is true.
+        assert_eq!(tokens_sql(0), "NONE");
+        assert_eq!(tokens_sql(1), "1");
+        assert_eq!(tokens_sql(31_500), "31500");
+    }
+
     #[test]
     fn nothing_is_reported_until_something_is_dropped() {
         let t = Trace::new("http://127.0.0.1:1", "goalmemory", None);
