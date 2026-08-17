@@ -1165,6 +1165,7 @@ fn main() -> Result<()> {
             ("ANTHROPIC_MODEL", &args.model),
             ("MAX_TOKENS", &args.max_tokens.to_string()),
             ("ANTHROPIC_BASE_URL", &args.anthropic_base_url),
+            ("ANTHROPIC_TIMEOUT", &args.timeout.to_string()),
             ("ANTHROPIC_HOST", &egress_authority(&args.anthropic_base_url)),
         ],
     )?;
@@ -1227,6 +1228,7 @@ fn main() -> Result<()> {
                 &[
                     ("ANSWER_MODEL", &args.answer_model),
                     ("ANTHROPIC_BASE_URL", &args.anthropic_base_url),
+                    ("ANTHROPIC_TIMEOUT", &args.timeout.to_string()),
                     ("ANTHROPIC_HOST", &egress_authority(&args.anthropic_base_url)),
                 ],
             )?
@@ -1322,6 +1324,44 @@ fn main() -> Result<()> {
     }
 
 
+    // --- what this run leaves behind (ADR-0092) -----------------------------
+    //
+    // BEFORE the decomposed dispatch below, and that is the whole point of where
+    // it sits. This block used to live after it, so `decomposed` returned before a
+    // `Trace` was ever constructed and a two-part run recorded NOTHING — no run
+    // row, no attempts, no events. Silently: `report()` counts writes that were
+    // dropped, and a trace that does not exist drops nothing, so the run ended
+    // clean and the history was simply absent. An absent record reading as a fine
+    // one is the same shape as the listing failure in #80.
+    //
+    // The seed IS the run id: one `holon goal run` is one run, and
+    // `run_id(seed, round, branch)` is one attempt inside it. Both paths take it
+    // from here so a run has ONE identity rather than a timestamp per code path.
+    let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+    let run = seed.to_string();
+    // The password by VALUE. `--surreal-password` is a path because a real
+    // password does not belong in argv (the fixture grants it to the graph
+    // component as a vault reference); the trace talks to the database directly,
+    // so it needs the contents. Absent means unauthenticated — the same thing it
+    // means to the fixture above, and to `knowledge-graph`.
+    let surreal_password = args
+        .surreal_password
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string());
+    // `None` without `--surreal-url`, exactly like the pool: a run with no
+    // database is supported (ADR-0080 keeps the database out of the platform),
+    // and a driver that required one would trade a loop that works for a loop
+    // that needs a database to be up.
+    let trace = args.surreal_url.as_deref().map(|url| {
+        // The same database the graph component was pointed at, so a run and the
+        // lessons it produced land in one place and can be joined (ADR-0091).
+        Trace::new(url, "goalmemory", surreal_password.as_deref())
+    });
+    if let Some(t) = &trace {
+        t.run_started(&run, &goal.text, seed, &base_commit, args.branches.into());
+    }
+
     // --- a DECOMPOSED goal ---------------------------------------------------
     //
     // Parts that compose rather than branches that compete: each half runs its own
@@ -1339,6 +1379,8 @@ fn main() -> Result<()> {
             &tree,
             &base_commit,
             &checks,
+            seed,
+            trace.as_ref(),
         );
     }
 
@@ -1363,37 +1405,8 @@ fn main() -> Result<()> {
     let timeout = Duration::from_secs(args.timeout);
     let bounds = Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
 
-    // A fresh seed each run so branches are not a replay of a previous run's.
-    let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
-
-    // What this run leaves behind (ADR-0092). The seed IS the run id: one
-    // `holon goal run` is one run, and `run_id(seed, round, branch)` — which
-    // already exists — is one attempt inside it.
-    //
-    // `None` without `--surreal-url`, exactly like the pool: a run with no
-    // database is supported (ADR-0080 keeps the database out of the platform),
-    // and a driver that required one would trade a loop that works for a loop
-    // that needs a database to be up.
-    let run = seed.to_string();
-    // The password by VALUE. `--surreal-password` is a path because a real
-    // password does not belong in argv (the fixture grants it to the graph
-    // component as a vault reference); the trace talks to the database directly,
-    // so it needs the contents. Absent means unauthenticated — the same thing it
-    // means to the fixture above, and to `knowledge-graph`.
-    let surreal_password = args
-        .surreal_password
-        .as_ref()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_string());
-    let trace = args.surreal_url.as_deref().map(|url| {
-        // The same database the graph component was pointed at, so a run and the
-        // lessons it produced land in one place and can be joined (ADR-0091).
-        Trace::new(url, "goalmemory", surreal_password.as_deref())
-    });
-    if let Some(t) = &trace {
-        t.run_started(&run, &goal.text, seed, &base_commit, args.branches.into());
-    }
-
+    // `seed`, `run` and `trace` come from above the decomposed dispatch, so both
+    // paths share one run identity and one trace.
     let reuse = search_the_pool(&goal.text, &run, trace.as_ref());
 
     let mut plan = plan;
@@ -1647,6 +1660,10 @@ fn decomposed(
     tree: &[Value],
     base_commit: &str,
     composition_checks: &[Value],
+    // The run's identity and its record, from the caller — see the ADR-0092 block
+    // in `main` for why they are not constructed here.
+    seed: u64,
+    trace: Option<&Trace>,
 ) -> Result<()> {
     let registry = Registry {
         url: format!("http://127.0.0.1:{port}"),
@@ -1751,7 +1768,24 @@ fn decomposed(
     let timeout = Duration::from_secs(args.timeout);
     let bounds =
         Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
-    let seed = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+    // `seed` is the caller's — one run, one identity, and the trace keys on it.
+    let run_key = seed.to_string();
+    // How the run ended, said once. Every `return` below this point goes through
+    // it, so an early exit cannot leave a run row that started and never resolved
+    // — which is indistinguishable from a crash when someone reads it later.
+    let resolve = |outcome: &str, url: &str| {
+        if let Some(t) = trace {
+            // "composition", not a branch name: a decomposed run has no single
+            // winning branch — each part picked one and the JOIN is what passed a
+            // gate neither half could pass alone. Naming one part's branch here
+            // would credit half the work.
+            let winner = (outcome == "merged").then_some("composition");
+            t.run_resolved(&run_key, outcome, winner, url);
+            if let Some(why) = t.report() {
+                println!("\ntrace: {why}");
+            }
+        }
+    };
 
     // The loop itself is library code, so the e2e that covers it drives THIS and
     // not a re-spelling of it. What is left here is what a binary is for: saying
@@ -1777,6 +1811,44 @@ fn decomposed(
         &json!(tree),
         &json!(composition_checks),
     );
+
+    // --- the record, before anything below can fail -------------------------
+    //
+    // Every branch of every generation of every part, keyed the same way the
+    // ordinary path keys them. The part name is IN the attempt id: two parts each
+    // run a `branch-0` in round 0, and `run_id(seed, round, branch)` alone would
+    // give them one id and silently overwrite one half's history with the other's.
+    if let Some(t) = trace {
+        for p in &run.composition.parts {
+            for (r, round) in p.rounds.iter().enumerate() {
+                for e in &round.entries {
+                    let attempt = run_id(seed, r, &format!("{}/{}", p.part, e.branch));
+                    t.branch_spawned(&run_key, &attempt, &e.branch, r);
+                    t.gate_verdict(&run_key, &attempt, e.score, e.accepted, &e.failures);
+                    // `errored` when the branch produced nothing at all — a note
+                    // and no files is how a provider failure or an answer with no
+                    // file block reaches here, and calling that "failed" would put
+                    // it in with candidates the gate actually judged.
+                    let outcome = if e.accepted {
+                        "passed"
+                    } else if e.files.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+                        "errored"
+                    } else {
+                        "failed"
+                    };
+                    t.attempt_finished(
+                        &run_key,
+                        &attempt,
+                        outcome,
+                        e.score,
+                        &e.files,
+                        e.spent_tokens,
+                        e.elapsed_ms,
+                    );
+                }
+            }
+        }
+    }
 
     for line in &run.log {
         println!("  · {line}");
@@ -1837,6 +1909,7 @@ fn decomposed(
                 }
             }
         }
+        resolve("exhausted", "");
         return Ok(());
     }
     let report = run.report.as_ref().expect("landable means the gate ran");
@@ -1845,6 +1918,7 @@ fn decomposed(
 
     if args.dry_run {
         println!("\n[dry run] the join passed; not opening a PR.");
+        resolve("dry-run", "");
         return Ok(());
     }
 
@@ -1896,11 +1970,19 @@ fn decomposed(
         timeout,
     ) {
         Ok(v) if v["url"].is_string() => {
-            println!("\n  PR opened: {}", v["url"].as_str().unwrap());
+            let url = v["url"].as_str().unwrap();
+            println!("\n  PR opened: {url}");
             println!("  branch: {}  commit: {}", v["branch"], v["commit"]);
+            resolve("merged", url);
         }
-        Ok(v) => println!("\n  the forge answered but opened no PR: {v}"),
-        Err(e) => println!("\n  landing failed: {e}"),
+        Ok(v) => {
+            println!("\n  the forge answered but opened no PR: {v}");
+            resolve("failed", "");
+        }
+        Err(e) => {
+            println!("\n  landing failed: {e}");
+            resolve("failed", "");
+        }
     }
     Ok(())
 }
@@ -2014,6 +2096,47 @@ command = ["cargo", "test"]
         // A path must not leak into the authority.
         assert_eq!(egress_authority("https://proxy.internal/anthropic"), "proxy.internal");
         assert_eq!(egress_authority("http://[::1]:8787"), "[::1]:8787");
+    }
+
+    /// Two parts running the same branch of the same round are two attempts.
+    ///
+    /// `run_id(seed, round, branch)` is the ordinary path's key, where a branch
+    /// name is unique within a run. A decomposed run breaks that: both halves
+    /// spawn `branch-0` in round 0, so keying on it alone gives them ONE attempt
+    /// row and the second half silently overwrites the first half's history —
+    /// visible only as a run whose branch count is half what it should be.
+    #[test]
+    fn two_parts_do_not_share_one_attempt_id() {
+        use comp_reconciler::memory::run_id;
+        assert_ne!(
+            run_id(7, 0, "access-and-search/branch-0"),
+            run_id(7, 0, "reports/branch-0"),
+            "the part name must be part of the key"
+        );
+        // And a run still separates its own rounds and branches.
+        assert_ne!(run_id(7, 0, "reports/branch-0"), run_id(7, 1, "reports/branch-0"));
+        assert_ne!(run_id(7, 0, "reports/branch-0"), run_id(7, 0, "reports/branch-1"));
+    }
+
+    /// Both manifests that hold a provider must carry the read timeout.
+    ///
+    /// A fixture that names no `ANTHROPIC_TIMEOUT` renders to a manifest without
+    /// the key, the provider falls back to its 180s default, and every call
+    /// slower than that dies as `error sending request` — the provider reading as
+    /// DOWN while the thing behind the base URL is still working. That is what
+    /// killed a whole part of a two-part run, and it is silent: nothing in the
+    /// run log mentions a timeout, and the shim logs the call as a success
+    /// because it finished it after the caller had already hung up.
+    #[test]
+    fn every_manifest_with_a_provider_carries_the_read_timeout() {
+        for f in ["goalrun-driver.yaml", "goalrun-answer.yaml"] {
+            let out = crate::render(f, &[("ANTHROPIC_TIMEOUT", "900")]).expect("render");
+            let yaml = std::fs::read_to_string(out).expect("read back");
+            assert!(
+                yaml.contains("anthropic:timeout: \"900\""),
+                "{f} must carry anthropic:timeout, substituted"
+            );
+        }
     }
 
     /// A component is `components/<name>/…` and nothing else.

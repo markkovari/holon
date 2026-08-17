@@ -41,6 +41,9 @@ const HOST = process.env.HOST || '127.0.0.1'
 const MODEL = process.env.CLAUDE_MODEL || ''
 /** A generated file on a real task takes a while; the provider waits 10 minutes. */
 const TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS || 540_000)
+/** Everything that lets the CLI act instead of answer. See `runClaude`. */
+const ACTING_TOOLS =
+  'Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit,TodoWrite'
 
 /** Anthropic's error envelope — `codec.rs` keys on `type == "error"`. */
 const apiError = (type, message) => JSON.stringify({ type: 'error', error: { type, message } })
@@ -83,10 +86,23 @@ function runClaude({ system, prompt }) {
   return new Promise((resolve, reject) => {
     const args = ['-p']
     if (MODEL) args.push('--model', MODEL)
-    // `--append-system-prompt` adds to Claude Code's own system prompt rather
-    // than replacing it, which is what we want: the caller's instructions land
-    // on top of a working coding agent instead of blanking it out.
-    if (system) args.push('--append-system-prompt', system)
+    // REPLACES Claude Code's system prompt rather than appending to it, and this
+    // used to be the other way around. Appending left a coding AGENT on the far
+    // end of an `llm:inference` call, and an agent does the work with tools and
+    // then reports on it: measured over two full runs, 5 of 8 branches came back
+    // as "Implemented `access.rs` — compiles clean." in 447–1631 characters, with
+    // no file block for the loop to extract. The branch's ANSWER is the
+    // deliverable here; nothing reads a filesystem it wrote.
+    if (system) args.push('--system-prompt', system)
+    // And the tools go too, because the prompt alone does not stop it: a branch
+    // with tools spends its budget exploring a checkout it cannot submit. With
+    // these denied the same prompt answers in seconds.
+    //
+    // ponytail: a hand-listed deny-list, so a NEW acting tool would slip
+    // through. `--allowedTools ''` is the future-proof form and does not work —
+    // the empty value does not deny anything. Revisit if the CLI grows a real
+    // "no tools" switch.
+    args.push('--disallowedTools', ACTING_TOOLS)
 
     const child = spawn('claude', args, { stdio: ['pipe', 'pipe', 'pipe'] })
     let out = ''
