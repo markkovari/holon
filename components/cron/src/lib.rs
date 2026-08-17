@@ -1,4 +1,4 @@
-//! `cron` — reference implementation of `cron:expr`.
+//! `cron` — parse a cron expression like `0 */6 * * *` and compute when it next fires
 //!
 //! Parses standard 5-field cron (`min hour dom month dow`) with `*`, `,`, `-`,
 //! `/`, 3-letter month/day names, and the `@daily`/`@hourly`/… macros, all in

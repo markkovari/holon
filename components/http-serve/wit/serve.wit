@@ -1,0 +1,139 @@
+// app:routes — a component declares its routes; something else owns the socket.
+//
+// ## Why this exists
+//
+// 66 components in this repository export `wasi:http/incoming-handler`, and 56 of
+// them wrote the same `read_body` — in three non-identical clusters, one of which
+// had no size ceiling until recently. Roughly a quarter of every domain
+// component is HTTP plumbing that is provably not app-specific, because five
+// dozen people wrote it independently and got the same answer.
+//
+// The reason it was never a capability is that `wasi:http/incoming-handler` is
+// the ENTRY POINT, and an entry point feels un-delegatable. It is not. A shared
+// component can own the socket, parse and route, and call the app through the
+// interface below — which is composition, not a shared crate, so the per-crate
+// generated-bindings problem that blocks a normal library never arises.
+//
+// ## Auth is data, on purpose
+//
+// 19 components import `auth:identity/authorizer` and each decides for itself
+// when to call `introspect`. A route that forgets looks exactly like a route that
+// did not need it. Here, `requires` is a field: a route with no requirement is
+// visibly unauthenticated rather than invisibly missing a call.
+//
+// An app that composes without an auth provider cannot declare `requires` at all
+// — the server's import goes unsatisfied and the composition refuses to plug,
+// which is ADR-0013's denial-by-omission doing the work instead of a reviewer.
+//
+// ## What is deliberately NOT here
+//
+// Body validation against a schema. A 400's message is domain prose — "a booking
+// cannot start before it ends" — and a validator can only say `field: invalid`.
+// That is the point where declarative stops paying, so it stays in the handler.
+package app:routes@0.1.0;
+
+interface types {
+    /// What a route needs from the caller before the handler is reached.
+    variant requirement {
+        /// Anyone, authenticated or not.
+        %public,
+        /// A valid session, whoever it belongs to.
+        authenticated,
+        /// A valid session carrying this role.
+        role(string),
+    }
+
+    /// One route. `path` uses `{name}` for a segment the server captures:
+    /// `/api/projects/{project}/goals`.
+    record route {
+        /// `GET`, `POST`, … Matched case-insensitively.
+        method: string,
+        path: string,
+        requires: requirement,
+        /// Opaque to the server, and the only thing the handler is told about
+        /// which route matched. An id rather than the path, so a route can be
+        /// re-spelled without touching the handler's dispatch.
+        id: string,
+    }
+
+    /// A captured path segment.
+    record param {
+        name: string,
+        value: string,
+    }
+
+    /// Who the caller is, when the route required anyone in particular.
+    ///
+    /// Absent for a `%public` route EVEN IF a session was presented: a handler
+    /// that reads the subject on a route it did not protect is reading something
+    /// the server never checked.
+    record caller {
+        subject: string,
+        roles: list<string>,
+    }
+
+    record request {
+        route-id: string,
+        params: list<param>,
+        query: string,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+        caller: option<caller>,
+    }
+
+    /// A response body.
+    ///
+    /// The `stream` case is declared and NOT YET SERVED. 10 of the 66 components
+    /// hold a `ResponseOutparam` and write over time — SSE — and a handler
+    /// contract that could never express that would strand them permanently.
+    ///
+    /// It is declared now rather than added later because under append-only
+    /// interfaces (ADR-0093's sibling decision) adding a case to a variant is a
+    /// breaking change, which is to say a whole new interface. Reserving the shape
+    /// costs one unused case; discovering it was needed costs `app:routes@0.2.0`
+    /// and every consumer.
+    ///
+    /// UNVERIFIED: whether a `wasi:io` output-stream resource survives a
+    /// `wac plug` between two components at these versions. That is the first
+    /// thing the streaming pilot has to answer, and if it does not, this case
+    /// becomes a second interface rather than a case.
+    variant body {
+        bytes(list<u8>),
+        /// Hand the writable body back to the handler, which owns it until it is
+        /// finished. Not yet served — the server answers `unsupported`.
+        %stream,
+    }
+
+    record response {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: body,
+    }
+
+    /// Why a handler could not answer. Distinct from a 4xx/5xx it chose to
+    /// return: this is the handler failing, not the request failing.
+    variant handler-error {
+        /// The server routed something the handler does not implement — a route
+        /// table and a dispatch that disagree, which is a build-time mistake.
+        unknown-route(string),
+        /// The handler asked for something the server does not serve yet.
+        unsupported(string),
+        failed(string),
+    }
+}
+
+/// Implemented by the APP. The server calls this.
+interface handler {
+    use types.{route, request, response, handler-error};
+
+    /// Every route this component serves.
+    ///
+    /// Asked once, at startup. It lives here — a WIT export rather than config or
+    /// a manifest — because it is the one place it cannot drift from the code
+    /// that serves it: same component, same compilation unit, and a route naming
+    /// a handler that does not exist fails to build rather than 404ing in
+    /// production.
+    routes: func() -> list<route>;
+
+    handle: func(req: request) -> result<response, handler-error>;
+}

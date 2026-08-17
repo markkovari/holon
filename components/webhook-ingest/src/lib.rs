@@ -1,4 +1,4 @@
-//! `webhook-ingest` — reference implementation of `webhook:ingest`.
+//! `webhook-ingest` — verify an inbound webhook's HMAC signature, then dedup a redelivery
 //!
 //! Two composed capabilities behind one call:
 //!   1. HMAC-SHA256 signature verification (vetted `hmac` crate, constant-time

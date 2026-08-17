@@ -1,4 +1,4 @@
-//! `webhook-sign` — reference implementation of `webhook:sign`.
+//! `webhook-sign` — sign an outbound webhook the way the major providers do — HMAC-SHA256 over a timestamped payload
 //!
 //! The SEND side that matches `webhook:ingest`'s verify side: it produces the
 //! same HMAC-SHA256 signature headers that `webhook:ingest` checks, so a

@@ -72,6 +72,13 @@ struct Args {
     #[arg(long)]
     find: Option<String>,
 
+    /// Report every interface exported by more than one component, and stop.
+    ///
+    /// ADR-0089's duplicate-detection gap, structurally: prevention is
+    /// `--find` consulted before writing, and this counts what got through.
+    #[arg(long)]
+    twins: bool,
+
     /// How many interfaces the diagram shows, most-consumed first. The full graph
     /// has 93 of them and renders as a hairball; the tables below it are complete.
     #[arg(long, default_value_t = 12)]
@@ -152,6 +159,57 @@ fn main() -> Result<(), String> {
             .push(consumer.clone());
     }
     let orphans = catalog.orphan_exports();
+
+    if args.twins {
+        let found = comp_reconciler::capsearch::twins(&catalog);
+        if found.is_empty() {
+            println!(
+                "no interface in the catalogue is exported by more than one component.\n\n\
+                 That is a finding, not a blank: {} components, and nothing was built twice.",
+                catalog.names().count()
+            );
+            return Ok(());
+        }
+        println!(
+            "{} interface(s) exported by more than one component, most-overlapping first.\n\n\
+             A pair is not automatically a mistake — a reference and its mock share an \n\
+             interface on purpose. What to look at is `shared`: two components that agree \n\
+             on ONE interface may be alternatives, two that agree on their whole surface \n\
+             are the same component written twice.\n",
+            found.len()
+        );
+        for t in &found {
+            // A standard interface exported by everything is not duplication, it
+            // is the shape of the system — and printing 65 component names every
+            // run buries the lines that are about capabilities somebody built.
+            // Still reported, because the count is the interesting part: it is the
+            // population that would stop owning its own entry point.
+            if t.interface.starts_with("wasi:") {
+                println!(
+                    "  {:<34} {} components export it — a standard entry point, not a duplicate",
+                    t.interface,
+                    t.components.len()
+                );
+                continue;
+            }
+            println!(
+                "  {:<34} {}\n      overlap {:.0}%  shared: {}",
+                t.interface,
+                t.components.join(", "),
+                t.overlap * 100.0,
+                if t.shared.len() > 1 { t.shared.join(", ") } else { "(only this one)".into() },
+            );
+        }
+        // The silent half. `comp-plug` resolves an interface to ONE exporter with
+        // `or_insert_with`, so for every pair above the winner is decided by scan
+        // order and nothing says so at compose time.
+        println!(
+            "\nNote: `comp-plug` picks a single exporter per interface by scan order. For \
+             each line above,\nwhichever component sorts first is what every composition \
+             silently gets."
+        );
+        return Ok(());
+    }
 
     if let Some(query) = &args.find {
         let mut apps_of: BTreeMap<String, usize> = BTreeMap::new();
@@ -415,7 +473,68 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
         }
     }
 
-    out.push_str("-- Age out the previous generation. Six derived tables, and only\n");
+    // `lesson -about-> interface` — the edge ADR-0091 drafted and deferred.
+    //
+    // Computed in the database rather than here, because this process reads the
+    // filesystem and the lessons are rows: the projection emits the join and
+    // SurrealDB performs it. That keeps the direction of authority right — a tag
+    // on a lesson is the accumulated fact, and this edge is only an INDEX over it,
+    // which is what makes it safe to stamp, drop and recompute like every other
+    // derived row here.
+    //
+    // Nothing writes to `memory`. The edge is a separate table; ageing out a
+    // generation of `about` rows leaves every lesson exactly as it was, which is
+    // the property the whole generation scheme exists to protect.
+    out.push_str(
+        "\n-- Lessons, indexed by the interface they are about (ADR-0090's key, ADR-0091's store).\n",
+    );
+    // Driven from the LESSONS, not from the interfaces, and not by preference:
+    // SurrealDB v3.1.3 accepts `RELATE <one>->edge-><list>` and rejects the mirror
+    // image with "Cannot execute statement using value: interface:`…`". Iterating
+    // interfaces and relating a list of lessons to each — the shape with fewer
+    // iterations — is the one that does not bind.
+    //
+    // The cost is a loop over the pool rather than over the 80 interfaces. That is
+    // a REBUILD cost, paid by `just capgraph-store` and never on a read, which is
+    // the whole reason this is a projection.
+    // Defined, not written. `SELECT ... FROM memory` is an error on a database
+    // where no lesson has ever been recorded, which is every fresh install — the
+    // same class of failure as the namespace that did not exist. A table
+    // DEFINITION is not a row: the generation delete below still names `about` and
+    // never `memory`, so the accumulated half remains unreachable from here in the
+    // only sense that matters.
+    out.push_str("DEFINE TABLE IF NOT EXISTS memory;\n");
+    out.push_str("DEFINE TABLE IF NOT EXISTS about TYPE RELATION;\n");
+    // The pairs are computed into an ARRAY first, and only then iterated.
+    //
+    // Three shapes were tried against v3.1.3 and two of them are landmines that a
+    // seeded test would not have found:
+    //
+    //   * iterating `interface` and relating a LIST of lessons to each — the shape
+    //     with the fewest iterations — is rejected outright: `RELATE` takes a list
+    //     as its target but not as its source.
+    //   * iterating `memory` directly works only while every lesson matches
+    //     something. A pool with no lessons fails on `NONE`, and a lesson whose
+    //     tags name no interface fails on an empty target — so the version that
+    //     passed a happy-path test would have broken on the first fresh install
+    //     and on the first lesson about a retired interface.
+    //
+    // Hence: build `{lesson, interfaces}` rows, skip the empty ones, relate the
+    // rest. `$parent` is how the inner SELECT reaches the row it belongs to.
+    out.push_str(&format!(
+        "LET $pairs = (SELECT id AS lesson, \
+           (SELECT VALUE id FROM interface WHERE gen = {generation} AND name IN $parent.tags) \
+           AS ifaces FROM memory WHERE tags != []);\n\
+         FOR $pair IN $pairs {{\n    \
+           IF array::len($pair.ifaces) > 0 {{\n        \
+             LET $from = $pair.lesson;\n        \
+             LET $to = $pair.ifaces;\n        \
+             RELATE $from->about->$to SET gen = {generation};\n    \
+           }};\n\
+         }};\n"
+    ));
+
+    out.push_str("\n-- Age out the previous generation. Seven derived tables, and only\n");
     out.push_str("-- rows older than this run — `memory` and `task` are unreachable from here.\n");
     for table in [
         "interface",
@@ -424,6 +543,9 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
         "imports",
         "exports",
         "carries",
+        // The index, never the lessons. `about` rows are recomputed from
+        // `memory.tags` on every projection; deleting them cannot lose a lesson.
+        "about",
     ] {
         out.push_str(&format!("DELETE {table} WHERE gen < {generation};\n"));
     }
@@ -609,52 +731,105 @@ mod tests {
 
     /// The projection must not be able to touch the accumulated half.
     ///
-    /// This is the check ADR-0091 rests on. Both halves now share one database,
-    /// and the only thing standing between a rebuild and the one table in the
-    /// system that cannot be recomputed is that this function never names it. A
-    /// reviewer can see that by reading; this fails the build if it stops being
-    /// true — including from a table added later whose name happens to be
-    /// accumulated.
+    /// This is the check ADR-0091 rests on. Both halves share one database, and the
+    /// only thing between a rebuild and the one table that cannot be recomputed is
+    /// this function.
+    ///
+    /// It used to assert that the projection never NAMED `memory`. That was the
+    /// right instinct and the wrong rule, and ADR-0093 broke it for a good reason:
+    /// indexing lessons by interface means reading `memory` and defining it, since
+    /// `SELECT` on a table that does not exist is an error on every fresh install.
+    /// Reading cannot lose a lesson. Neither can a table definition.
+    ///
+    /// So the rule is now what it always meant: **no statement WRITES OR DELETES an
+    /// accumulated table.** That is strictly stronger than the old one, because the
+    /// old one only inspected the second whitespace token and would have waved
+    /// through any statement shape it had not anticipated — which is exactly what
+    /// happened when the first `LET`/`FOR` block was added.
     #[test]
-    fn projection_never_names_the_accumulated_tables() {
+    fn the_projection_never_writes_or_deletes_an_accumulated_table() {
         let root = comp_reconciler::fleet::repo_root();
         let catalog = Catalog::scan(&default_dirs(&root));
         if catalog.is_empty() {
-            // Nothing built. The statement-shape check below has nothing to read,
-            // and a green test on an empty catalogue would be a lie.
             eprintln!("skipped: nothing built — run `just build`");
             return;
         }
         let out = surql(&catalog, &apps(&root), 42);
 
+        /// Tables a rebuild is allowed to create rows in and delete rows from.
+        /// `about` is here and `memory` is not: the edge is an index over a tag,
+        /// recomputed every build, and the lesson is the thing it indexes.
+        const DERIVED: &[&str] =
+            &["interface", "artifact", "app", "imports", "exports", "carries", "about"];
+
+        let mut mutations = 0usize;
         for statement in out.lines().filter(|l| !l.trim_start().starts_with("--")) {
-            let target = statement
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or_default()
-                .split([':', '-'])
-                .next()
-                .unwrap_or_default();
+            let mut words = statement.split_whitespace();
+            let Some(verb) = words.next() else { continue };
+            // Only the verbs that can change a row. `DEFINE`, `LET`, `FOR`, `IF`
+            // and `SELECT` cannot, whatever they name.
+            if !["UPSERT", "CREATE", "UPDATE", "DELETE", "REMOVE", "RELATE"].contains(&verb) {
+                continue;
+            }
+            let Some(rest) = words.next() else { continue };
+            // `RELATE a->edge->b` writes to the EDGE table in the middle; every
+            // other verb writes to the table it names first.
+            let target = if verb == "RELATE" {
+                rest.split("->").nth(1).unwrap_or_default()
+            } else {
+                rest
+            };
+            let table = target.split([':', '⟨']).next().unwrap_or_default().trim_start_matches('$');
+            mutations += 1;
             assert!(
-                [
-                    "interface",
-                    "artifact",
-                    "app",
-                    "imports",
-                    "exports",
-                    "carries"
-                ]
-                .contains(&target),
-                "projection statement targets {target:?}, which is not a derived table:\n  \
-                 {statement}"
+                DERIVED.contains(&table),
+                "a {verb} targets {table:?}, which is not a derived table — a rebuild must \
+                 never change a row it cannot recompute:\n  {statement}"
             );
         }
-        // No denylist of `memory` and `task` here on purpose. A substring search
-        // for them matches `artifact:⟨knowledge-memory⟩`, which is a component in
-        // this repository and a perfectly legal thing for the projection to write.
-        // The allowlist above is the stronger check anyway: it passes only tables
-        // named here, so an accumulated table added next year is caught without
-        // anybody remembering to add it to a list.
+        assert!(mutations > 100, "only {mutations} mutating statements — the parser is wrong");
+
+        // And the reads, separately: naming `memory` is legal now, so state exactly
+        // what may be done to it rather than leaving it open.
+        //
+        // Record IDS are stripped first. `artifact:⟨memory-probe⟩` and
+        // `artifact:⟨knowledge-memory⟩` are components in this repository whose
+        // NAMES contain the word, and a substring search over the raw line flags
+        // both — which is the mistake the previous version of this test warned
+        // about in a comment and this version made anyway.
+        for line in out.lines() {
+            let t = line.trim();
+            if t.starts_with("--") {
+                continue;
+            }
+            // Everything that is DATA rather than syntax comes out: record ids in
+            // `⟨…⟩` and string literals in `"…"`. `interface:⟨knowledge:memory/…⟩`
+            // and `SET exporter = "knowledge-memory"` both contain the word and
+            // neither is a reference to the table.
+            let mut outside = String::new();
+            let mut depth = 0usize;
+            let mut quoted = false;
+            for c in t.chars() {
+                match c {
+                    '"' => quoted = !quoted,
+                    _ if quoted => {}
+                    '⟨' => depth += 1,
+                    '⟩' => depth = depth.saturating_sub(1),
+                    _ if depth == 0 => outside.push(c),
+                    _ => {}
+                }
+            }
+            if !outside.contains("memory") {
+                continue;
+            }
+            let permitted = outside.starts_with("DEFINE TABLE IF NOT EXISTS memory")
+                || (outside.starts_with("LET") && outside.contains("FROM memory"));
+            assert!(
+                permitted,
+                "this statement names the `memory` TABLE in a way nothing has justified — \
+                 the projection may define it and read it, and nothing else:\n  {t}"
+            );
+        }
     }
 
     /// Every generation mints its own edge ids, or the second rebuild fails on a

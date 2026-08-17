@@ -1,4 +1,4 @@
-//! `textdiff` — reference implementation of `diff:text`.
+//! `textdiff` — what changed between two texts — a structured edit script, a unified diff, and apply
 //!
 //! Line-based diff. The edit script comes from a longest-common-subsequence
 //! backtrack; `unified` groups the script into hunks with context, and

@@ -1,4 +1,4 @@
-//! `outbox` — reference implementation of `outbox:dispatch`.
+//! `outbox` — emit an event reliably after a state change — the transactional outbox, so a crash neither loses nor double-fires it
 //!
 //! A durable, at-least-once event queue implementing the transactional-outbox
 //! pattern, backed by `wasi:keyvalue`. The reliable-event problem: an app

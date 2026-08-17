@@ -1,4 +1,4 @@
-//! `otp` — reference implementation of `otp:totp` (RFC 4226 HOTP / RFC 6238 TOTP).
+//! `otp` — generate and verify a one-time password for two-factor login — TOTP and HOTP, RFC 6238 and 4226
 //!
 //! Second-factor primitive over HMAC-SHA1, the algorithm Google Authenticator /
 //! Authy expect:

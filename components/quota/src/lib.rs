@@ -1,4 +1,4 @@
-//! `quota` — reference implementation of `quota:meter`.
+//! `quota` — meter cumulative usage against a budget over a billing period — reserve, consume, refund
 //!
 //! Cumulative usage metering + enforcement, backed by `wasi:keyvalue`.
 //!

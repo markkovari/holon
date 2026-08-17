@@ -1,4 +1,4 @@
-//! `cache` — reference implementation of `cache:store`.
+//! `cache` — a TTL-aware key/value cache with read-through, write-through, write-behind and refresh-ahead
 //!
 //! TTL-aware byte cache over `wasi:keyvalue`. The store has no native expiry,
 //! so each entry is stored as an 8-byte big-endian expiry epoch followed by the

@@ -1,4 +1,4 @@
-//! `quiz-grade` — reference implementation of `quiz:grade/grader`.
+//! `quiz-grade` — grade answers against an answer key, and roll a cohort's scores into statistics
 //!
 //! Grade one submission against an answer key (integer-percent score + pass/fail),
 //! and roll a cohort's percentage scores into gradebook stats (mean, median,

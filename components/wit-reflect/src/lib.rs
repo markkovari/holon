@@ -1,4 +1,4 @@
-//! `wit-reflect` — reference implementation of `wit:reflect`.
+//! `wit-reflect` — read a component's real imports and exports out of the binary, and compose components from them
 //!
 //! Three layers, and only the middle one is interesting:
 //!

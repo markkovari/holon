@@ -1,4 +1,4 @@
-//! `record-store` — reference implementation of `record:store`.
+//! `record-store` — store JSON records in named collections, query them by field, and index them
 //!
 //! Typed JSON records in named COLLECTIONS, the primitive every app
 //! reimplements as glue. Each record is an opaque JSON object string keyed by

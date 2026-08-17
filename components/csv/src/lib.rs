@@ -1,4 +1,4 @@
-//! `csv` — reference implementation of `csv:stream/codec`.
+//! `csv` — parse and format CSV — RFC 4180, with quoted fields, embedded commas, newlines and custom delimiters
 //!
 //! A correct, dependency-free RFC 4180 CSV codec: parse delimited text into
 //! rows (or header-keyed records) and format rows back out with proper quoting.
