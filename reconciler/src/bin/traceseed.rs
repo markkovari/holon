@@ -80,10 +80,12 @@ fn main() {
     // The loser is kept, with its verdict. Dropping failed branches is what makes
     // a run unexplainable a day later.
     trace.gate_verdict(run, "77/g1/risk-first", 40, false, &json!({ "failing": ["test_pages"] }));
-    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40, &risk_files, 18_400, 94_000);
+    // The last argument is `tries`: this branch needed a repair, the one below did
+    // not, and the seeded run is the console's fixture for showing that difference.
+    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40, &risk_files, 18_400, 94_000, 2);
 
     trace.gate_verdict(run, "77/g1/mvp", 100, true, &json!({ "failing": [] }));
-    trace.attempt_finished(run, "77/g1/mvp", "passed", 100, &mvp_files, 31_200, 156_000);
+    trace.attempt_finished(run, "77/g1/mvp", "passed", 100, &mvp_files, 31_200, 156_000, 1);
 
     // What the pool gained. The point of ADR-0089: the app change lands and is
     // done, the component is there for every run after this one.

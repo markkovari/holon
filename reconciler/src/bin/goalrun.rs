@@ -1461,6 +1461,11 @@ fn main() -> Result<()> {
                     &e.files,
                     e.spent_tokens,
                     e.elapsed_ms,
+                    // How many tries this branch took. A branch that got it right
+                    // first and one that needed a repair were indistinguishable
+                    // here, which is the one number that says whether repair earns
+                    // its budget.
+                    e.attempts,
                 );
             }
             if let Some(m) = &memory {
@@ -1844,6 +1849,7 @@ fn decomposed(
                         &e.files,
                         e.spent_tokens,
                         e.elapsed_ms,
+                        e.attempts,
                     );
                 }
             }
