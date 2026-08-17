@@ -85,7 +85,7 @@ pointed at itself. (The original capability-library README is kept at
 
 ## Status
 
-The engine works end to end and is heavily tested (~400 tests across four
+The engine works end to end and is heavily tested (374 tests across four
 workspaces). It searches, it remembers what it evaluated, and two subgraphs can
 negotiate an interface neither has written yet.
 
