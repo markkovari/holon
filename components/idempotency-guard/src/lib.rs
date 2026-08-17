@@ -1,4 +1,4 @@
-//! `idempotency-guard` — reference implementation of `idempotency:guard`.
+//! `idempotency-guard` — make a mutating request safe to retry — dedup by idempotency key and replay the stored result
 //!
 //! Store-and-replay request deduplication, backed by `wasi:keyvalue`.
 //! State per key: `id_{key}` -> one line, two shapes:

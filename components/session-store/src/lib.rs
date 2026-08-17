@@ -1,4 +1,4 @@
-//! `session-store` — reference implementation of `session:store`.
+//! `session-store` — hold a server-side session — mint an opaque id, attach data, refresh a sliding expiry, revoke it
 //!
 //! Generic server-side session + CSRF capability, backed by `wasi:keyvalue`.
 //! The client only ever carries the opaque session id (a cookie); the payload

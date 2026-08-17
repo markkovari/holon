@@ -1,4 +1,4 @@
-//! `slug` — reference implementation of `slug:generate`.
+//! `slug` — turn a title into a clean URL slug, transliterating accents and suffixing on collision
 //!
 //! Pure-compute URL slug generation: no host imports, no state.
 //!

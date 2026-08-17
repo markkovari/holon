@@ -1,4 +1,4 @@
-//! `event-bus` — reference implementation of `event:bus`.
+//! `event-bus` — publish an event and let several unrelated things react — in-app publish/subscribe over topics
 //!
 //! A durable topic log with per-consumer-group offsets, backed by
 //! `wasi:keyvalue`. Producers `publish` to a topic; independent consumer groups

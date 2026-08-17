@@ -20,7 +20,7 @@
 //! equally well while one ships in twenty apps and the other in none; the first is
 //! the answer, and only the graph knows which is which.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::plug::Catalog;
@@ -154,9 +154,21 @@ fn wit_prose(repo_root: &Path) -> BTreeMap<String, String> {
 }
 
 /// Words worth matching on. Everything else is noise in a one-line description.
+/// Words that carry no capability in them.
+///
+/// The list grew after a real query embarrassed it: "two workers must not do the
+/// same job" matched 57 of 152 capabilities and ranked `outbox` first, scoring on
+/// "two", "not" and "same" — three words that say nothing about what anything
+/// does. Terms shorter than three characters are dropped separately, which is why
+/// "do", "be" and "no" are not here.
 const STOPWORDS: &[&str] = &[
     "a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "is", "it", "of", "on", "or",
     "that", "the", "to", "with", "need", "needs", "want", "i", "we", "my", "this",
+    // Function words, added after the query above.
+    "not", "two", "same", "must", "does", "doing", "when", "what", "which", "than", "then", "them",
+    "they", "you", "your", "its", "has", "have", "had", "will", "would", "could", "should", "are",
+    "was", "were", "been", "but", "also", "just", "only", "very", "much", "more", "most", "such",
+    "each", "both", "either", "neither",
 ];
 
 fn terms(s: &str) -> Vec<String> {
@@ -321,4 +333,79 @@ mod tests {
             hits.iter().map(|m| (&m.capability.name, m.score)).collect::<Vec<_>>()
         );
     }
+}
+
+/// Two components exporting the same interface.
+///
+/// ADR-0089's last unbuilt gap, in its cheapest form. Prevention is the real
+/// answer — a `capsearch` consulted before writing means the duplicate never
+/// exists — but prevention has no feedback loop: a working search and a broken one
+/// look identical from the outside. This counts what got through.
+///
+/// Structural, not semantic, and deliberately so. "Exports the same interface" is
+/// a fact the catalogue already holds; it needs no model, no descriptions (which
+/// are 52% tautological) and no embedding. It is also the fact `comp-plug` is
+/// already deciding on, and silently: `exporters` uses `or_insert_with`, so when
+/// two components export one interface the one that sorts first wins and nobody is
+/// told. Whatever else this finds, it makes that visible.
+///
+/// A pair is NOT necessarily a mistake. `record-store` and a mock both export
+/// `records:store/store` on purpose. So this reports pairs and says how alike they
+/// are; deciding is a person's job, and a deliberate pair is a `superseded-by`-
+/// shaped fact about the graph rather than a bug.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Twins {
+    /// The interface both of them export.
+    pub interface: String,
+    /// Every component exporting it, in name order. Always two or more.
+    pub components: Vec<String>,
+    /// Interfaces exported by all of them — the overlap, not just this one.
+    ///
+    /// The signal that separates a duplicate from an alternative: two components
+    /// that agree on ONE interface may be a reference and its mock, while two that
+    /// agree on their whole surface are the same component written twice.
+    pub shared: Vec<String>,
+    /// How much of the smaller component's surface the overlap covers, 0.0–1.0.
+    pub overlap: f64,
+}
+
+/// Every interface exported by more than one component in the catalogue.
+///
+/// Sorted by overlap, because a pair that agrees on its entire surface is worth
+/// more attention than one that happens to share a types module.
+pub fn twins(catalog: &Catalog) -> Vec<Twins> {
+    let mut by_interface: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for name in catalog.names() {
+        let Some(surface) = catalog.surface(name) else { continue };
+        for export in &surface.exports {
+            by_interface.entry(export.clone()).or_default().push(name.to_string());
+        }
+    }
+
+    let mut out: Vec<Twins> = Vec::new();
+    for (interface, components) in by_interface {
+        if components.len() < 2 {
+            continue;
+        }
+        let surfaces: Vec<&BTreeSet<String>> =
+            components.iter().filter_map(|c| catalog.surface(c)).map(|s| &s.exports).collect();
+        let Some(first) = surfaces.first() else { continue };
+        let shared: BTreeSet<String> = first
+            .iter()
+            .filter(|e| surfaces.iter().all(|s| s.contains(*e)))
+            .cloned()
+            .collect();
+        // Against the SMALLEST surface: a tiny component fully contained in a
+        // large one is entirely duplicated, and dividing by the larger would hide
+        // that behind the larger one's unrelated exports.
+        let smallest = surfaces.iter().map(|s| s.len()).min().unwrap_or(1).max(1);
+        out.push(Twins {
+            interface,
+            components,
+            shared: shared.iter().cloned().collect(),
+            overlap: shared.len() as f64 / smallest as f64,
+        });
+    }
+    out.sort_by(|a, b| b.overlap.total_cmp(&a.overlap).then(a.interface.cmp(&b.interface)));
+    out
 }

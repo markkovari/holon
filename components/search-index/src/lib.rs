@@ -1,4 +1,4 @@
-//! `search-index` — reference implementation of `search:index`.
+//! `search-index` — let users search their own data — a full-text inverted index with ranked results
 //!
 //! A small, app-agnostic full-text inverted index that lives entirely in a
 //! `wasi:keyvalue` store. No external search engine, no network. The app owns

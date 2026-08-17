@@ -1,4 +1,4 @@
-//! `email-render` — reference implementation of `email:template`.
+//! `email-render` — render a transactional email from a named template and a set of variables
 //!
 //! Transactional email template storage + rendering, backed by `wasi:keyvalue`.
 //! A template has three fields (subject, text, html), each with `{name}`

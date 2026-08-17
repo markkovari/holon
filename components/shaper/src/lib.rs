@@ -1,4 +1,4 @@
-//! `shaper` — reference implementation of `shaper:limit/limiter`.
+//! `shaper` — the arithmetic behind rate limiting — token bucket and GCRA, as pure functions whose state the caller holds
 //!
 //! The math behind rate limiting and smoothing, as pure functions. The caller
 //! owns the per-key state and passes it in; each function returns the allow/deny

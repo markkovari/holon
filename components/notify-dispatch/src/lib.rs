@@ -1,4 +1,4 @@
-//! `notify-dispatch` — reference implementation of `notify:dispatch`.
+//! `notify-dispatch` — send an outbound notification — a webhook POST, or email/SMS through a configured gateway
 //!
 //! Synchronous outbound sender over `wasi:http/outgoing-handler`. The HTTP idiom
 //! (build OutgoingRequest -> write body -> handle -> block -> read response) is

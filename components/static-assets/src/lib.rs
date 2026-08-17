@@ -1,4 +1,4 @@
-//! `static-assets` — reference implementation of `static:assets`.
+//! `static-assets` — serve an embedded static bundle — an SPA in a component of its own, so the domain artifact stays slim
 //!
 //! The built React SPA embedded at build time (build.rs walks `static/` and
 //! `include_bytes!`s every file). Exists so the HTTP-facing domain component

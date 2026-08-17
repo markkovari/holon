@@ -1,4 +1,4 @@
-//! proxy:route — reference implementation. Route table from wasi:config
+//! `proxy-route` — forward a request to an upstream by path prefix — a config-driven reverse proxy
 //! (`routes`, `prefix=upstream` comma-separated, longest prefix wins;
 //! upstream ending in `/` strips the matched prefix), forwarding over the
 //! host's wasi:http outgoing handler.

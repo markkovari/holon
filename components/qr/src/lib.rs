@@ -1,4 +1,4 @@
-//! `qr` — reference implementation of `qr:encode`.
+//! `qr` — turn a URL or a string into a scannable QR code, as SVG
 //!
 //! The `qrcode` crate does the hard part (segment encoding, Reed-Solomon error
 //! correction, mask selection); we take its module grid and render it three

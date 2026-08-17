@@ -1,4 +1,4 @@
-//! `svg-chart` — reference implementation of `svg:chart/charts`.
+//! `svg-chart` — render a chart to SVG on the server — bar, line, donut and sparkline
 //!
 //! A dependency-free renderer: one data series in, a standalone `<svg>` out —
 //! bar, line, donut, or sparkline. Axes and labels are drawn in `currentColor`

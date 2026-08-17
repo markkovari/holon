@@ -1,4 +1,4 @@
-//! `i18n-catalog` — reference implementation of `i18n:catalog`.
+//! `i18n-catalog` — translate a message for a locale — placeholder interpolation, plural rules and locale negotiation
 //!
 //! Message catalog with `{name}` placeholder interpolation, English-style
 //! plural selection, and Accept-Language-style locale negotiation, backed by

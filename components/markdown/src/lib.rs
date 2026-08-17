@@ -1,4 +1,4 @@
-//! `markdown` — reference implementation of `md:render`.
+//! `markdown` — render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it
 //!
 //! Safe Markdown -> HTML for a practical CommonMark *subset*. Pure compute:
 //! Markdown in, sanitized HTML out. No state, no host imports.

@@ -1,4 +1,4 @@
-//! `ledger` — reference implementation of `ledger:doubleentry/ledger`.
+//! `ledger` — double-entry bookkeeping — validate that debits equal credits, and roll entries into balances
 //!
 //! The double-entry invariant, as pure functions over integer minor units (no
 //! float rounding): `validate` enforces that an entry has >= 2 lines, positive

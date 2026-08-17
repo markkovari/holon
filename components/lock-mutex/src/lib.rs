@@ -1,4 +1,4 @@
-//! `lock-mutex` — reference implementation of `lock:mutex`.
+//! `lock-mutex` — stop two workers doing the same job — a distributed mutex / advisory lease with an expiry
 //!
 //! Lease-based advisory mutual exclusion, backed by `wasi:keyvalue`. A holder
 //! claims `key` for a TTL and gets a secret `token` + a monotonic `fence`;

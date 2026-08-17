@@ -1,4 +1,4 @@
-//! `jsonpatch` — reference implementation of `json:patch`.
+//! `jsonpatch` — apply a partial change to a JSON document — RFC 6902 JSON Patch and RFC 7386 merge patch
 //!
 //! Pure-compute JSON document patching over three IETF standards:
 //!   - RFC 6902 (JSON Patch): an ordered list of ops — add/remove/replace/

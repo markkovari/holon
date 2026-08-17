@@ -1,4 +1,4 @@
-//! `config-store` — reference implementation of `config:store`.
+//! `config-store` — runtime application config — timeouts, limits, URLs and tunables ops can change without a redeploy
 //!
 //! The *writable, versioned* sibling of the two config-shaped capabilities:
 //!   * `wasi:config` is host-injected, read-only, fixed at deploy time — the

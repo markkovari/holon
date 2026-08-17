@@ -1,4 +1,4 @@
-//! `geo` — reference implementation of `geo:resolve`.
+//! `geo` — distance between two lat/lon points, a bounding box for a within-N-km filter, and IP address classing
 //!
 //! Pure coordinate math + IP literal classification. This is NOT a GeoIP
 //! database: IP -> country/city lookup needs a licensed dataset the host

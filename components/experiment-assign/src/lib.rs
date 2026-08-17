@@ -1,4 +1,4 @@
-//! `experiment-assign` — reference implementation of `experiment:assign`.
+//! `experiment-assign` — split subjects across named A/B/n variants by weight, stickily — a subject stays in its arm
 //!
 //! Weighted, sticky, named-variant assignment backed by `wasi:keyvalue`.
 //!

@@ -1,4 +1,4 @@
-//! event:push — reference implementation. One handler invocation per
+//! `event-pusher` — push delivery for the pull-based event bus — drives consumer polls on hosts with a messaging plugin
 //! `$KV.<bucket>.eb.seq.<topic>` change notification; each one POSTs the
 //! configured drain paths through proxy:route. Consumers' drains are
 //! idempotent and cheap when empty, so no debounce.

@@ -1,4 +1,4 @@
-//! `webauthn` — reference implementation of `webauthn:verify/verifier`.
+//! `webauthn` — the server half of passkey login — verify a WebAuthn registration and an assertion
 //!
 //! The relying-party half of a passkey ceremony: decode the authenticator's CBOR,
 //! check every binding the spec requires, and verify the signature. Stateless —

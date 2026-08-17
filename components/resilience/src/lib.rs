@@ -1,4 +1,4 @@
-//! `resilience` — reference implementation of `resilience:breaker/breaker`.
+//! `resilience` — stop hammering a failing service — a circuit breaker and exponential backoff, as pure functions
 //!
 //! A circuit breaker and a backoff schedule, as pure functions. The caller owns
 //! the state and passes it in; every function returns the state to persist. No

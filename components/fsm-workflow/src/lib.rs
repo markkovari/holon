@@ -1,4 +1,4 @@
-//! `fsm-workflow` — reference implementation of `fsm:workflow/engine`.
+//! `fsm-workflow` — enforce a lifecycle — declare the legal state transitions and refuse the illegal ones
 //!
 //! A declarative finite-state-machine / workflow engine. Many app entities
 //! have a lifecycle with *legal* transitions: an appointment goes

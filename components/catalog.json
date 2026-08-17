@@ -13,8 +13,71 @@
       "metrics:collect/collector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 163407,
-    "wasm_sha256_12": "d8e5126f9068",
+    "wasm_size_bytes": 152163,
+    "wasm_sha256_12": "dcd866759cf7",
+    "reusable_as_is": true
+  },
+  {
+    "name": "adversary",
+    "package": "probe:adversary@0.1.0",
+    "description": "`adversary` \u2014 the component ADR-0023 asks for",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "wasi:http/outgoing-handler",
+      "wasi:keyvalue/batch",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 75330,
+    "wasm_sha256_12": "ac96c5ee1780",
+    "reusable_as_is": true
+  },
+  {
+    "name": "agent-driver",
+    "package": "driver:agent@0.1.0",
+    "description": "`agent-driver` \u2014 the loop that joins the writer to the gate",
+    "exports": [
+      "graph:run/driver@0.1.0"
+    ],
+    "capability_deps": [
+      "graph:agent/writer",
+      "graph:fitness/evaluator"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 71942,
+    "wasm_sha256_12": "fbcf092baa0c",
+    "reusable_as_is": true
+  },
+  {
+    "name": "agent-probe",
+    "package": "comp:agentprobe@0.1.0",
+    "description": "`agent-probe` \u2014 an instrument for `graph:agent` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "graph:agent/writer"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 115642,
+    "wasm_sha256_12": "ddda506db81a",
+    "reusable_as_is": true
+  },
+  {
+    "name": "agent-writer",
+    "package": "writer:agent@0.1.0",
+    "description": "`agent-writer` \u2014 a goal and a tree in, a candidate out",
+    "exports": [
+      "graph:agent/writer@0.1.0"
+    ],
+    "capability_deps": [
+      "llm:inference/inference"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 85975,
+    "wasm_sha256_12": "1dd5e0697429",
     "reusable_as_is": true
   },
   {
@@ -28,8 +91,42 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 127792,
-    "wasm_sha256_12": "175bd81f3366",
+    "wasm_size_bytes": 117711,
+    "wasm_sha256_12": "490bd9332c7b",
+    "reusable_as_is": true
+  },
+  {
+    "name": "anthropic-provider",
+    "package": "anthropic:provider@0.1.0",
+    "description": "`anthropic-provider` \u2014 `llm:inference` over Anthropic's Messages API",
+    "exports": [
+      "llm:inference/inference@0.1.0"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "temperature",
+        "description": ""
+      },
+      {
+        "name": "seed",
+        "description": ""
+      },
+      {
+        "name": "cache_control",
+        "description": ""
+      },
+      {
+        "name": "anthropic-api-key",
+        "description": "the x-api-key value, granted by reference in the"
+      }
+    ],
+    "wasm_size_bytes": 177925,
+    "wasm_sha256_12": "9d27cf3539a5",
     "reusable_as_is": true
   },
   {
@@ -44,14 +141,56 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 177648,
-    "wasm_sha256_12": "f6e69748df96",
+    "wasm_size_bytes": 166363,
+    "wasm_sha256_12": "a5c61216ba9b",
+    "reusable_as_is": true
+  },
+  {
+    "name": "artifact-cache",
+    "package": "artifact:cache@0.1.0",
+    "description": "`artifact-cache` \u2014 derived work, computed once and handed over",
+    "exports": [
+      "store"
+    ],
+    "capability_deps": [
+      "blob:store/blobstore",
+      "comp:store/cas",
+      "wasi:config/store",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [
+      {
+        "name": "artifact-container",
+        "description": ""
+      },
+      {
+        "name": "artifact-claim-secs",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 85987,
+    "wasm_sha256_12": "e376666781ee",
+    "reusable_as_is": true
+  },
+  {
+    "name": "artifact-probe",
+    "package": "comp:artifactprobe@0.1.0",
+    "description": "`artifact-probe` \u2014 an instrument for `artifact:cache` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "artifact:cache/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 101128,
+    "wasm_sha256_12": "30e1236a454e",
     "reusable_as_is": true
   },
   {
     "name": "audit-log",
     "package": "audit:log@0.1.0",
-    "description": "`audit-log` \u2014 reference implementation of `audit:log`",
+    "description": "`audit-log` \u2014 record who did what and when \u2014 an append-only audit trail any component can write decisions to",
     "exports": [
       "recorder",
       "query"
@@ -60,8 +199,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 132755,
-    "wasm_sha256_12": "bf5783a1dd71",
+    "wasm_size_bytes": 121781,
+    "wasm_sha256_12": "e9984c2c3daa",
     "reusable_as_is": true
   },
   {
@@ -76,8 +215,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 136729,
-    "wasm_sha256_12": "c9bc68a86f73",
+    "wasm_size_bytes": 126058,
+    "wasm_sha256_12": "747b62068f2e",
     "reusable_as_is": false
   },
   {
@@ -96,6 +235,17 @@
     "reusable_as_is": true
   },
   {
+    "name": "bigadd",
+    "package": "demo:bigadd@0.1.0",
+    "description": "",
+    "exports": [],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 52049,
+    "wasm_sha256_12": "c95a82ff462e",
+    "reusable_as_is": true
+  },
+  {
     "name": "billing-ledger",
     "package": "ledger:app@0.1.0",
     "description": "ledger:app \u2014 billing ledger over composed capability contracts",
@@ -111,14 +261,14 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 193844,
-    "wasm_sha256_12": "f1146d198645",
+    "wasm_size_bytes": 183205,
+    "wasm_sha256_12": "d325858cedd4",
     "reusable_as_is": false
   },
   {
     "name": "blob-store",
     "package": "blob:store@0.1.0",
-    "description": "`blob-store` \u2014 reference implementation of `blob:store`",
+    "description": "`blob-store` \u2014 store and fetch large binary objects \u2014 uploads, exports, attachments \u2014 in named containers",
     "exports": [
       "blobstore"
     ],
@@ -126,8 +276,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 75609,
-    "wasm_sha256_12": "ed3b259aed4c",
+    "wasm_size_bytes": 75976,
+    "wasm_sha256_12": "da9c917fe7dc",
     "reusable_as_is": true
   },
   {
@@ -150,8 +300,8 @@
       "rrule:recur/recur"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 227069,
-    "wasm_sha256_12": "f970524a75e6",
+    "wasm_size_bytes": 216206,
+    "wasm_sha256_12": "9ab12ec2e17a",
     "reusable_as_is": true
   },
   {
@@ -172,8 +322,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 221438,
-    "wasm_sha256_12": "41c773f79ced",
+    "wasm_size_bytes": 210249,
+    "wasm_sha256_12": "950d52656ee5",
     "reusable_as_is": true
   },
   {
@@ -192,14 +342,14 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 217380,
-    "wasm_sha256_12": "bb4937428a2f",
+    "wasm_size_bytes": 206251,
+    "wasm_sha256_12": "f5366c665846",
     "reusable_as_is": true
   },
   {
     "name": "cache",
     "package": "cache:store@0.1.0",
-    "description": "`cache` \u2014 reference implementation of `cache:store`",
+    "description": "`cache` \u2014 a TTL-aware key/value cache with read-through, write-through, write-behind and refresh-ahead",
     "exports": [
       "cache"
     ],
@@ -209,8 +359,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 77334,
-    "wasm_sha256_12": "8599b0f5ca12",
+    "wasm_size_bytes": 77698,
+    "wasm_sha256_12": "fda95c11f339",
     "reusable_as_is": true
   },
   {
@@ -225,8 +375,61 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 63194,
-    "wasm_sha256_12": "966e5ab43c21",
+    "wasm_size_bytes": 63462,
+    "wasm_sha256_12": "51efec066f2f",
+    "reusable_as_is": true
+  },
+  {
+    "name": "calc",
+    "package": "demo:calc@0.1.0",
+    "description": "",
+    "exports": [],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 48305,
+    "wasm_sha256_12": "b3a8735eb10c",
+    "reusable_as_is": true
+  },
+  {
+    "name": "checks-runner",
+    "package": "checks:runner@0.1.0",
+    "description": "`checks-runner` \u2014 `graph:fitness` over the native check runner",
+    "exports": [
+      "graph:fitness/evaluator@0.1.0"
+    ],
+    "capability_deps": [
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "checks-url",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 146146,
+    "wasm_sha256_12": "8e4a5f2e6a53",
+    "reusable_as_is": true
+  },
+  {
+    "name": "clinic-domain",
+    "package": "clinic:domain@0.1.0",
+    "description": "`clinic-domain` \u2014 owners, pets and visits, as one component",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/session",
+      "auth:identity/types",
+      "csv:codec/codec",
+      "id:generate/generator",
+      "records:store/store",
+      "search:index/index"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 168988,
+    "wasm_sha256_12": "52ac9dd12ea6",
     "reusable_as_is": true
   },
   {
@@ -244,14 +447,14 @@
       "slug:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 235682,
-    "wasm_sha256_12": "bbea840641e1",
+    "wasm_size_bytes": 232206,
+    "wasm_sha256_12": "1bd194ba8fcf",
     "reusable_as_is": true
   },
   {
     "name": "config-store",
     "package": "config:store@0.1.0",
-    "description": "`config-store` \u2014 reference implementation of `config:store`",
+    "description": "`config-store` \u2014 runtime application config \u2014 timeouts, limits, URLs and tunables ops can change without a redeploy",
     "exports": [
       "store"
     ],
@@ -259,47 +462,118 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 123752,
-    "wasm_sha256_12": "a3bd7587bd59",
+    "wasm_size_bytes": 124453,
+    "wasm_sha256_12": "da33707dc862",
+    "reusable_as_is": true
+  },
+  {
+    "name": "console-assets",
+    "package": "ui:assets@0.1.0",
+    "description": "`track-assets` \u2014 the track (project tracker) SPA embedded as `ui:assets`",
+    "exports": [
+      "files"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 408537,
+    "wasm_sha256_12": "b786fe80e555",
+    "reusable_as_is": true
+  },
+  {
+    "name": "console-domain",
+    "package": "console:app@0.1.0",
+    "description": "`console-domain` \u2014 the Holon console (see `wit/console.wit` for why it is a",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "git:forge/repo",
+      "knowledge:graph/store",
+      "ui:assets/files",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "platform-url",
+        "description": ""
+      },
+      {
+        "name": "goals-dir",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 180416,
+    "wasm_sha256_12": "294f24034dcf",
+    "reusable_as_is": true
+  },
+  {
+    "name": "contract-probe",
+    "package": "comp:contractprobe@0.1.0",
+    "description": "`contract-probe` \u2014 the door onto `contract:registry` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "contract:registry/registry"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 76064,
+    "wasm_sha256_12": "78c6ce8262e1",
+    "reusable_as_is": true
+  },
+  {
+    "name": "contract-registry",
+    "package": "contract:registry@0.1.0",
+    "description": "`contract-registry` \u2014 what two parts of a decomposed goal build against",
+    "exports": [
+      "registry"
+    ],
+    "capability_deps": [
+      "knowledge:graph/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 127954,
+    "wasm_sha256_12": "a217d41064bb",
     "reusable_as_is": true
   },
   {
     "name": "crdt",
     "package": "crdt:merge@0.1.0",
-    "description": "`crdt` \u2014 reference implementation of `crdt:merge`",
+    "description": "`crdt` \u2014 merge concurrent replicas with no lock \u2014 state-based CRDTs that converge whatever order updates arrive in",
     "exports": [
       "merger"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 224740,
-    "wasm_sha256_12": "d15a1dc61398",
+    "wasm_size_bytes": 214578,
+    "wasm_sha256_12": "6b279bf45bc1",
     "reusable_as_is": true
   },
   {
     "name": "cron",
     "package": "cron:expr@0.1.0",
-    "description": "`cron` \u2014 reference implementation of `cron:expr`",
+    "description": "`cron` \u2014 parse a cron expression like `0 */6 * * *` and compute when it next fires",
     "exports": [
       "parser"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 61214,
-    "wasm_sha256_12": "4ff1241a2b22",
+    "wasm_size_bytes": 61253,
+    "wasm_sha256_12": "23a20226019a",
     "reusable_as_is": true
   },
   {
     "name": "csv",
     "package": "csv:codec@0.1.0",
-    "description": "`csv` \u2014 reference implementation of `csv:stream/codec`",
+    "description": "`csv` \u2014 parse and format CSV \u2014 RFC 4180, with quoted fields, embedded commas, newlines and custom delimiters",
     "exports": [
       "codec"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56524,
-    "wasm_sha256_12": "d80b041c00cc",
+    "wasm_size_bytes": 56816,
+    "wasm_sha256_12": "570172fe01c7",
     "reusable_as_is": true
   },
   {
@@ -316,8 +590,8 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 182413,
-    "wasm_sha256_12": "2f9c809a7cb0",
+    "wasm_size_bytes": 171901,
+    "wasm_sha256_12": "1c5a61b38030",
     "reusable_as_is": true
   },
   {
@@ -337,8 +611,36 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 205270,
-    "wasm_sha256_12": "3cb7edd12160",
+    "wasm_size_bytes": 194196,
+    "wasm_sha256_12": "de46450bd90c",
+    "reusable_as_is": true
+  },
+  {
+    "name": "demo",
+    "package": "demo:shape@0.1.0",
+    "description": "`demo` \u2014 paging, as a component. One half of a two-part goal (ADR-0086)",
+    "exports": [
+      "pager"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 56317,
+    "wasm_sha256_12": "8a8adc180695",
+    "reusable_as_is": true
+  },
+  {
+    "name": "demo-probe",
+    "package": "demo:probe@0.1.0",
+    "description": "`demo-probe` \u2014 the other half: it calls `demo:shape/pager` and nothing else",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "demo:shape/pager"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 60944,
+    "wasm_sha256_12": "f475de561d80",
     "reusable_as_is": true
   },
   {
@@ -363,14 +665,29 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 229657,
-    "wasm_sha256_12": "6aff84b49797",
+    "wasm_size_bytes": 219325,
+    "wasm_sha256_12": "852bc5e5ae4d",
     "reusable_as_is": false
+  },
+  {
+    "name": "driver-probe",
+    "package": "comp:driverprobe@0.1.0",
+    "description": "`driver-probe` \u2014 an instrument for `graph:run` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "graph:run/driver"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 123536,
+    "wasm_sha256_12": "1f371fc553f6",
+    "reusable_as_is": true
   },
   {
     "name": "email-render",
     "package": "email:template@0.1.0",
-    "description": "`email-render` \u2014 reference implementation of `email:template`",
+    "description": "`email-render` \u2014 render a transactional email from a named template and a set of variables",
     "exports": [
       "renderer"
     ],
@@ -378,8 +695,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 81264,
-    "wasm_sha256_12": "29a0cd86b784",
+    "wasm_size_bytes": 82133,
+    "wasm_sha256_12": "411232af0f68",
     "reusable_as_is": true
   },
   {
@@ -396,8 +713,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 183790,
-    "wasm_sha256_12": "5c9434a2f846",
+    "wasm_size_bytes": 172911,
+    "wasm_sha256_12": "c815e22e70c9",
     "reusable_as_is": true
   },
   {
@@ -413,8 +730,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 183325,
-    "wasm_sha256_12": "aae84e922ddc",
+    "wasm_size_bytes": 172511,
+    "wasm_sha256_12": "834854dca14e",
     "reusable_as_is": true
   },
   {
@@ -428,8 +745,8 @@
       "proxy:route/router"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 79378,
-    "wasm_sha256_12": "dfc5bd4fcf8e",
+    "wasm_size_bytes": 79678,
+    "wasm_sha256_12": "a9bb3855f37f",
     "reusable_as_is": true
   },
   {
@@ -454,8 +771,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 203718,
-    "wasm_sha256_12": "280473629fdf",
+    "wasm_size_bytes": 192738,
+    "wasm_sha256_12": "34b795b6620f",
     "reusable_as_is": true
   },
   {
@@ -475,14 +792,14 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 120549,
-    "wasm_sha256_12": "b915bb6f338c",
+    "wasm_size_bytes": 109728,
+    "wasm_sha256_12": "cec4926f0e8f",
     "reusable_as_is": true
   },
   {
     "name": "event-bus",
     "package": "event:bus@0.1.0",
-    "description": "`event-bus` \u2014 reference implementation of `event:bus`",
+    "description": "`event-bus` \u2014 publish an event and let several unrelated things react \u2014 in-app publish/subscribe over topics",
     "exports": [
       "bus"
     ],
@@ -491,14 +808,14 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 88198,
-    "wasm_sha256_12": "5fc31f38495e",
+    "wasm_size_bytes": 88943,
+    "wasm_sha256_12": "61cd7b477944",
     "reusable_as_is": true
   },
   {
     "name": "event-pusher",
     "package": "event:push@0.1.0",
-    "description": "event:push \u2014 reference implementation. One handler invocation per",
+    "description": "`event-pusher` \u2014 push delivery for the pull-based event bus \u2014 drives consumer polls on hosts with a messaging plugin",
     "exports": [
       "wasmcloud:messaging/handler@0.2.0"
     ],
@@ -512,14 +829,14 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 51766,
-    "wasm_sha256_12": "67e2ba325c26",
+    "wasm_size_bytes": 51805,
+    "wasm_sha256_12": "4fe16388f253",
     "reusable_as_is": true
   },
   {
     "name": "experiment-assign",
     "package": "experiment:assign@0.1.0",
-    "description": "`experiment-assign` \u2014 reference implementation of `experiment:assign`",
+    "description": "`experiment-assign` \u2014 split subjects across named A/B/n variants by weight, stickily \u2014 a subject stays in its arm",
     "exports": [
       "assigner"
     ],
@@ -527,14 +844,25 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 75836,
-    "wasm_sha256_12": "7e85bbcb734e",
+    "wasm_size_bytes": 76193,
+    "wasm_sha256_12": "1edccf41e866",
+    "reusable_as_is": true
+  },
+  {
+    "name": "expr",
+    "package": "demo:expr@0.1.0",
+    "description": "",
+    "exports": [],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 50053,
+    "wasm_sha256_12": "a829edd1cf00",
     "reusable_as_is": true
   },
   {
     "name": "feature-flags",
     "package": "featureflags:guard@0.1.0",
-    "description": "`feature-flags` \u2014 reference implementation of `featureflags:guard`",
+    "description": "`feature-flags` \u2014 is this feature on for this user? \u2014 flag evaluation with percentage rollouts and kill switches",
     "exports": [
       "evaluator"
     ],
@@ -543,8 +871,23 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 77069,
-    "wasm_sha256_12": "d51bae06cd0b",
+    "wasm_size_bytes": 77430,
+    "wasm_sha256_12": "783b549ddcb6",
+    "reusable_as_is": true
+  },
+  {
+    "name": "fitness-probe",
+    "package": "comp:fitnessprobe@0.1.0",
+    "description": "`fitness-probe` \u2014 an instrument for `graph:fitness` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "graph:fitness/evaluator"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 116651,
+    "wasm_sha256_12": "38273b2013bf",
     "reusable_as_is": true
   },
   {
@@ -560,14 +903,29 @@
       "id:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 156532,
-    "wasm_sha256_12": "695d790bb900",
+    "wasm_size_bytes": 145239,
+    "wasm_sha256_12": "552d4a613a16",
+    "reusable_as_is": true
+  },
+  {
+    "name": "forge-probe",
+    "package": "comp:forgeprobe@0.1.0",
+    "description": "`forge-probe` \u2014 an instrument for `git:forge` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "git:forge/repo"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 114868,
+    "wasm_sha256_12": "4d0febf96146",
     "reusable_as_is": true
   },
   {
     "name": "fsm-workflow",
     "package": "fsm:workflow@0.1.0",
-    "description": "`fsm-workflow` \u2014 reference implementation of `fsm:workflow/engine`",
+    "description": "`fsm-workflow` \u2014 enforce a lifecycle \u2014 declare the legal state transitions and refuse the illegal ones",
     "exports": [
       "engine"
     ],
@@ -575,8 +933,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 148249,
-    "wasm_sha256_12": "c7139c7c4da2",
+    "wasm_size_bytes": 137174,
+    "wasm_sha256_12": "1a3a721b3a03",
     "reusable_as_is": true
   },
   {
@@ -587,25 +945,72 @@
       "wasi:http/incoming-handler@0.2.0"
     ],
     "capability_deps": [
+      "comp:store/cas",
       "records:store/store",
-      "shaper:limit/limiter"
+      "shaper:limit/limiter",
+      "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 165594,
-    "wasm_sha256_12": "4d54b81f4a37",
+    "wasm_size_bytes": 159729,
+    "wasm_sha256_12": "1e9a5a912d6b",
     "reusable_as_is": true
   },
   {
     "name": "geo",
     "package": "geo:resolve@0.1.0",
-    "description": "`geo` \u2014 reference implementation of `geo:resolve`",
+    "description": "`geo` \u2014 distance between two lat/lon points, a bounding box for a within-N-km filter, and IP address classing",
     "exports": [
       "coords"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 61439,
-    "wasm_sha256_12": "54e0bcc2bc7d",
+    "wasm_size_bytes": 61470,
+    "wasm_sha256_12": "9a2b0211d025",
+    "reusable_as_is": true
+  },
+  {
+    "name": "github-forge",
+    "package": "github:forge@0.1.0",
+    "description": "`github-forge` \u2014 `git:forge` over GitHub's REST API",
+    "exports": [
+      "git:forge/repo@0.1.0"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "forge-repo",
+        "description": ""
+      },
+      {
+        "name": "forge-api",
+        "description": ""
+      },
+      {
+        "name": "forge-token",
+        "description": ""
+      },
+      {
+        "name": "forge-base",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 162413,
+    "wasm_sha256_12": "ba4f183343bd",
+    "reusable_as_is": true
+  },
+  {
+    "name": "glob",
+    "package": "demo:glob@0.1.0",
+    "description": "",
+    "exports": [],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 47695,
+    "wasm_sha256_12": "a959f7757583",
     "reusable_as_is": true
   },
   {
@@ -633,8 +1038,38 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 98409,
-    "wasm_sha256_12": "ae1b6acec140",
+    "wasm_size_bytes": 98833,
+    "wasm_sha256_12": "a747c162b960",
+    "reusable_as_is": true
+  },
+  {
+    "name": "graph-probe",
+    "package": "comp:graphprobe@0.1.0",
+    "description": "`graph-probe` \u2014 an instrument for `knowledge:graph/store` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "knowledge:graph/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 68190,
+    "wasm_sha256_12": "377edb76d8a9",
+    "reusable_as_is": true
+  },
+  {
+    "name": "graph-selector",
+    "package": "selector:graph@0.1.0",
+    "description": "`graph-selector` \u2014 which branch won, and the only path to a pull request",
+    "exports": [
+      "graph:select/selector@0.1.0"
+    ],
+    "capability_deps": [
+      "git:forge/repo"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 70737,
+    "wasm_sha256_12": "f9310961c719",
     "reusable_as_is": true
   },
   {
@@ -656,14 +1091,14 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 214066,
-    "wasm_sha256_12": "d0771fcdb4e3",
+    "wasm_size_bytes": 203369,
+    "wasm_sha256_12": "67d5d4c303fd",
     "reusable_as_is": true
   },
   {
     "name": "i18n-catalog",
     "package": "i18n:catalog@0.1.0",
-    "description": "`i18n-catalog` \u2014 reference implementation of `i18n:catalog`",
+    "description": "`i18n-catalog` \u2014 translate a message for a locale \u2014 placeholder interpolation, plural rules and locale negotiation",
     "exports": [
       "catalog"
     ],
@@ -677,53 +1112,53 @@
         "description": "fallback locale tag (default \"en\")."
       }
     ],
-    "wasm_size_bytes": 77763,
-    "wasm_sha256_12": "7cb8475518b2",
+    "wasm_size_bytes": 78004,
+    "wasm_sha256_12": "5017a88f7410",
     "reusable_as_is": true
   },
   {
     "name": "iban",
     "package": "iban:validate@0.1.0",
-    "description": "`iban` \u2014 reference implementation of `iban:validate/validator`",
+    "description": "`iban` \u2014 validate a bank account number \u2014 IBAN mod-97 checksum and the per-country length",
     "exports": [
       "validator"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 60574,
-    "wasm_sha256_12": "cb17add6a599",
+    "wasm_size_bytes": 60918,
+    "wasm_sha256_12": "69033e4be622",
     "reusable_as_is": true
   },
   {
     "name": "ical",
     "package": "ical:codec@0.1.0",
-    "description": "`ical` \u2014 reference implementation of `ical:codec/codec`",
+    "description": "`ical` \u2014 write an .ics calendar file \u2014 RFC 5545, with the line folding, escaping and UTC timestamps it requires",
     "exports": [
       "codec"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 57810,
-    "wasm_sha256_12": "957c03dc0a85",
+    "wasm_size_bytes": 58127,
+    "wasm_sha256_12": "e4b998b50b6c",
     "reusable_as_is": true
   },
   {
     "name": "id-generate",
     "package": "id:generate@0.1.0",
-    "description": "`id-generate` \u2014 reference implementation of `id:generate/generator`",
+    "description": "`id-generate` \u2014 mint a unique identifier \u2014 sortable ULIDs and random ids that do not collide across processes",
     "exports": [
       "generator"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 55915,
-    "wasm_sha256_12": "0388fa77e2f1",
+    "wasm_size_bytes": 56233,
+    "wasm_sha256_12": "f4ba6a752d2a",
     "reusable_as_is": true
   },
   {
     "name": "idempotency-guard",
     "package": "idempotency:guard@0.1.0",
-    "description": "`idempotency-guard` \u2014 reference implementation of `idempotency:guard`",
+    "description": "`idempotency-guard` \u2014 make a mutating request safe to retry \u2014 dedup by idempotency key and replay the stored result",
     "exports": [
       "store"
     ],
@@ -737,8 +1172,8 @@
         "description": "reservation / record lifetime, seconds (default 86400)"
       }
     ],
-    "wasm_size_bytes": 82573,
-    "wasm_sha256_12": "5d25a9d3b7ec",
+    "wasm_size_bytes": 83458,
+    "wasm_sha256_12": "31af92fbdb22",
     "reusable_as_is": true
   },
   {
@@ -750,8 +1185,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 78025,
-    "wasm_sha256_12": "ceb31a20161c",
+    "wasm_size_bytes": 78396,
+    "wasm_sha256_12": "268976c999e0",
     "reusable_as_is": true
   },
   {
@@ -769,21 +1204,77 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 187625,
-    "wasm_sha256_12": "cfbe7fb951e5",
+    "wasm_size_bytes": 176170,
+    "wasm_sha256_12": "30630a1b3807",
     "reusable_as_is": true
   },
   {
     "name": "jsonpatch",
     "package": "json:patch@0.1.0",
-    "description": "`jsonpatch` \u2014 reference implementation of `json:patch`",
+    "description": "`jsonpatch` \u2014 apply a partial change to a JSON document \u2014 RFC 6902 JSON Patch and RFC 7386 merge patch",
     "exports": [
       "patcher"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 132185,
-    "wasm_sha256_12": "6619d360bcf9",
+    "wasm_size_bytes": 121079,
+    "wasm_sha256_12": "768768020cee",
+    "reusable_as_is": true
+  },
+  {
+    "name": "knowledge-graph",
+    "package": "knowledge:graph@0.1.0",
+    "description": "`knowledge-graph` \u2014 nodes, edges and traversal over SurrealDB's HTTP API",
+    "exports": [
+      "store"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "surreal-url",
+        "description": ""
+      },
+      {
+        "name": "surreal-user",
+        "description": ""
+      },
+      {
+        "name": "surreal-password",
+        "description": ""
+      },
+      {
+        "name": "surreal-ns",
+        "description": ""
+      },
+      {
+        "name": "surreal-db",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 166476,
+    "wasm_sha256_12": "2a3f70f2100a",
+    "reusable_as_is": true
+  },
+  {
+    "name": "knowledge-memory",
+    "package": "knowledge:memory@0.1.0",
+    "description": "`knowledge-memory` \u2014 the policy layer over the stores that already exist",
+    "exports": [
+      "memory",
+      "promotion"
+    ],
+    "capability_deps": [
+      "knowledge:graph/store",
+      "llm:inference/inference",
+      "search:index/index"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 161819,
+    "wasm_sha256_12": "079c27e84cff",
     "reusable_as_is": true
   },
   {
@@ -798,21 +1289,21 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 75753,
-    "wasm_sha256_12": "0b7ea51aa13c",
+    "wasm_size_bytes": 75819,
+    "wasm_sha256_12": "06129e11b576",
     "reusable_as_is": true
   },
   {
     "name": "ledger",
     "package": "ledger:doubleentry@0.1.0",
-    "description": "`ledger` \u2014 reference implementation of `ledger:doubleentry/ledger`",
+    "description": "`ledger` \u2014 double-entry bookkeeping \u2014 validate that debits equal credits, and roll entries into balances",
     "exports": [
       "ledger"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 55212,
-    "wasm_sha256_12": "7413fc184703",
+    "wasm_size_bytes": 55671,
+    "wasm_sha256_12": "d8857e674e5c",
     "reusable_as_is": true
   },
   {
@@ -832,8 +1323,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 167385,
-    "wasm_sha256_12": "0b823f6e2acc",
+    "wasm_size_bytes": 156720,
+    "wasm_sha256_12": "cf1169e68e54",
     "reusable_as_is": false
   },
   {
@@ -845,8 +1336,23 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 73661,
-    "wasm_sha256_12": "f283efb21cf4",
+    "wasm_size_bytes": 73930,
+    "wasm_sha256_12": "2f1c7a1c4a93",
+    "reusable_as_is": true
+  },
+  {
+    "name": "llm-probe",
+    "package": "comp:llmprobe@0.1.0",
+    "description": "`llm-probe` \u2014 an instrument for `llm:inference` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "llm:inference/inference"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 64086,
+    "wasm_sha256_12": "82aaca45bc42",
     "reusable_as_is": true
   },
   {
@@ -868,14 +1374,14 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 242283,
-    "wasm_sha256_12": "583c40ed8263",
+    "wasm_size_bytes": 231612,
+    "wasm_sha256_12": "6380c5a389eb",
     "reusable_as_is": true
   },
   {
     "name": "lock-mutex",
     "package": "lock:mutex@0.1.0",
-    "description": "`lock-mutex` \u2014 reference implementation of `lock:mutex`",
+    "description": "`lock-mutex` \u2014 stop two workers doing the same job \u2014 a distributed mutex / advisory lease with an expiry",
     "exports": [
       "mutex"
     ],
@@ -884,8 +1390,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 76747,
-    "wasm_sha256_12": "07241f2741b8",
+    "wasm_size_bytes": 76485,
+    "wasm_sha256_12": "8ce4a5904a31",
     "reusable_as_is": true
   },
   {
@@ -901,21 +1407,37 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 67881,
-    "wasm_sha256_12": "dcd7f9d99672",
+    "wasm_size_bytes": 68319,
+    "wasm_sha256_12": "c1ffcae4b242",
     "reusable_as_is": false
   },
   {
     "name": "markdown",
     "package": "md:render@0.1.0",
-    "description": "`markdown` \u2014 reference implementation of `md:render`",
+    "description": "`markdown` \u2014 render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it",
     "exports": [
       "renderer"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 82253,
-    "wasm_sha256_12": "5f18983c2919",
+    "wasm_size_bytes": 82499,
+    "wasm_sha256_12": "75cbce75fae1",
+    "reusable_as_is": true
+  },
+  {
+    "name": "memory-probe",
+    "package": "comp:memoryprobe@0.1.0",
+    "description": "`memory-probe` \u2014 an instrument for `knowledge:memory` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "knowledge:memory/memory",
+      "knowledge:memory/promotion"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 114936,
+    "wasm_sha256_12": "dae431e1f66a",
     "reusable_as_is": true
   },
   {
@@ -931,14 +1453,14 @@
       "resilience:breaker/breaker"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 173403,
-    "wasm_sha256_12": "bd61efd8c6ef",
+    "wasm_size_bytes": 162340,
+    "wasm_sha256_12": "6e9ccc830658",
     "reusable_as_is": true
   },
   {
     "name": "metrics-collect",
     "package": "metrics:collect@0.1.0",
-    "description": "`metrics-collect` \u2014 reference implementation of `metrics:collect`",
+    "description": "`metrics-collect` \u2014 count named events, read a family by prefix, and compute the rate between two counters",
     "exports": [
       "collector"
     ],
@@ -947,8 +1469,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 71464,
-    "wasm_sha256_12": "0dfaf691cc98",
+    "wasm_size_bytes": 71841,
+    "wasm_sha256_12": "fd751203e2c8",
     "reusable_as_is": true
   },
   {
@@ -966,27 +1488,75 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 181206,
-    "wasm_sha256_12": "df8752618b99",
+    "wasm_size_bytes": 170942,
+    "wasm_sha256_12": "e9303ac565f3",
+    "reusable_as_is": true
+  },
+  {
+    "name": "mock-fitness",
+    "package": "mockgate:fitness@0.1.0",
+    "description": "`mock-fitness` \u2014 `graph:fitness`, scored by a scripted rule (see wit/fitness.wit)",
+    "exports": [
+      "graph:fitness/evaluator@0.1.0"
+    ],
+    "capability_deps": [
+      "wasi:config/store"
+    ],
+    "config_keys": [
+      {
+        "name": "gate-script",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 78405,
+    "wasm_sha256_12": "ee2e147e9256",
+    "reusable_as_is": true
+  },
+  {
+    "name": "mock-provider",
+    "package": "mock:provider@0.1.0",
+    "description": "`mock-provider` \u2014 `llm:inference`, scripted",
+    "exports": [
+      "llm:inference/inference@0.1.0"
+    ],
+    "capability_deps": [
+      "wasi:config/store"
+    ],
+    "config_keys": [
+      {
+        "name": "mock-model",
+        "description": ""
+      },
+      {
+        "name": "mock-embeddings",
+        "description": ""
+      },
+      {
+        "name": "mock-script",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 118067,
+    "wasm_sha256_12": "5f79e81cd848",
     "reusable_as_is": true
   },
   {
     "name": "money",
     "package": "money:amount@0.1.0",
-    "description": "`money` \u2014 reference implementation of `money:amount`",
+    "description": "`money` \u2014 exact money arithmetic in integer minor units tagged with an ISO-4217 currency \u2014 never a float",
     "exports": [
       "arithmetic"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 58044,
-    "wasm_sha256_12": "e35746e36e6c",
+    "wasm_size_bytes": 58245,
+    "wasm_sha256_12": "fb42f9fe9fd1",
     "reusable_as_is": true
   },
   {
     "name": "notify-dispatch",
     "package": "notify:dispatch@0.1.0",
-    "description": "`notify-dispatch` \u2014 reference implementation of `notify:dispatch`",
+    "description": "`notify-dispatch` \u2014 send an outbound notification \u2014 a webhook POST, or email/SMS through a configured gateway",
     "exports": [
       "dispatcher"
     ],
@@ -995,18 +1565,19 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 93901,
-    "wasm_sha256_12": "9196136c492a",
+    "wasm_size_bytes": 92416,
+    "wasm_sha256_12": "09019530282d",
     "reusable_as_is": true
   },
   {
     "name": "openai-provider",
     "package": "openai:provider@0.1.0",
-    "description": "`openai-provider` \u2014 reference implementation of `llm:inference` over an",
+    "description": "`openai-provider` \u2014 the OpenAI side of the LLM contract \u2014 chat, completion and embeddings over an OpenAI-compatible API",
     "exports": [
       "llm:inference/inference@0.1.0"
     ],
     "capability_deps": [
+      "comp:secrets/reader",
       "wasi:config/store",
       "wasi:http/outgoing-handler"
     ],
@@ -1022,29 +1593,44 @@
       {
         "name": "seed",
         "description": ""
+      },
+      {
+        "name": "openai-api-key",
+        "description": "bearer token, granted by reference in the manifest"
       }
     ],
-    "wasm_size_bytes": 184895,
-    "wasm_sha256_12": "02473006a543",
+    "wasm_size_bytes": 175041,
+    "wasm_sha256_12": "3fe4bd3a00ab",
+    "reusable_as_is": true
+  },
+  {
+    "name": "ordinal",
+    "package": "demo:ordinal@0.1.0",
+    "description": "",
+    "exports": [],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 47389,
+    "wasm_sha256_12": "5ef49a24e25e",
     "reusable_as_is": true
   },
   {
     "name": "otp",
     "package": "otp:totp@0.1.0",
-    "description": "`otp` \u2014 reference implementation of `otp:totp` (RFC 4226 HOTP / RFC 6238 TOTP)",
+    "description": "`otp` \u2014 generate and verify a one-time password for two-factor login \u2014 TOTP and HOTP, RFC 6238 and 4226",
     "exports": [
       "authenticator"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 83934,
-    "wasm_sha256_12": "cf6324c488de",
+    "wasm_size_bytes": 84582,
+    "wasm_sha256_12": "6e97ce6bf03a",
     "reusable_as_is": true
   },
   {
     "name": "outbox",
     "package": "outbox:dispatch@0.1.0",
-    "description": "`outbox` \u2014 reference implementation of `outbox:dispatch`",
+    "description": "`outbox` \u2014 emit an event reliably after a state change \u2014 the transactional outbox, so a crash neither loses nor double-fires it",
     "exports": [
       "queue"
     ],
@@ -1063,14 +1649,14 @@
         "description": "backoff base seconds, doubled per attempt (default 5)"
       }
     ],
-    "wasm_size_bytes": 94619,
-    "wasm_sha256_12": "b4b813b30753",
+    "wasm_size_bytes": 95402,
+    "wasm_sha256_12": "a9725e6e85c0",
     "reusable_as_is": true
   },
   {
     "name": "pagination",
     "package": "paginate:cursor@0.1.0",
-    "description": "`pagination` \u2014 reference implementation of `paginate:cursor`",
+    "description": "`pagination` \u2014 paginate a long list without drift \u2014 encode a sort position into an opaque cursor",
     "exports": [
       "cursors"
     ],
@@ -1087,8 +1673,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 75604,
-    "wasm_sha256_12": "c0f81f9460ce",
+    "wasm_size_bytes": 76436,
+    "wasm_sha256_12": "26ffee88c9a6",
     "reusable_as_is": true
   },
   {
@@ -1119,8 +1705,8 @@
         "description": "demand the UV flag (biometric/PIN), not just user presence (default false)"
       }
     ],
-    "wasm_size_bytes": 209350,
-    "wasm_sha256_12": "00e5bb38dda3",
+    "wasm_size_bytes": 199682,
+    "wasm_sha256_12": "bd31ceb68737",
     "reusable_as_is": true
   },
   {
@@ -1138,8 +1724,8 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 160273,
-    "wasm_sha256_12": "cdd0f94b950a",
+    "wasm_size_bytes": 149578,
+    "wasm_sha256_12": "308a4572a16e",
     "reusable_as_is": true
   },
   {
@@ -1159,34 +1745,56 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 179455,
-    "wasm_sha256_12": "3477b18b1fab",
+    "wasm_size_bytes": 168650,
+    "wasm_sha256_12": "b2c25d75c89c",
     "reusable_as_is": true
   },
   {
     "name": "pdf",
     "package": "pdf:codec@0.1.0",
-    "description": "`pdf` \u2014 reference implementation of `pdf:codec/codec`",
+    "description": "`pdf` \u2014 write a PDF document \u2014 text laid onto pages, with no native library and no headless browser",
     "exports": [
       "codec"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 55841,
-    "wasm_sha256_12": "80c4a528470a",
+    "wasm_size_bytes": 56160,
+    "wasm_sha256_12": "2fc15fc05ab1",
+    "reusable_as_is": true
+  },
+  {
+    "name": "photo-critic",
+    "package": "demo:photocritic@0.1.0",
+    "description": "`photo-critic` \u2014 a photo-critique app that runs on the lattice",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "anthropic-api-key",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 136258,
+    "wasm_sha256_12": "3fa11bb6dd94",
     "reusable_as_is": true
   },
   {
     "name": "pii-redact",
     "package": "pii:redact@0.1.0",
-    "description": "`pii-redact` \u2014 reference implementation of `pii:redact`",
+    "description": "`pii-redact` \u2014 find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink",
     "exports": [
       "redactor"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 75081,
-    "wasm_sha256_12": "44f7e706a428",
+    "wasm_size_bytes": 75412,
+    "wasm_sha256_12": "9e68d29b82a7",
     "reusable_as_is": true
   },
   {
@@ -1202,8 +1810,8 @@
       "outbox:dispatch/queue"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 155184,
-    "wasm_sha256_12": "aa7a8e5736a2",
+    "wasm_size_bytes": 143985,
+    "wasm_sha256_12": "924e2476a38a",
     "reusable_as_is": true
   },
   {
@@ -1218,53 +1826,44 @@
       "auth:identity/authorizer",
       "auth:identity/types",
       "blob:store/blobstore",
+      "comp:store/cas",
       "policy:guard/guard",
       "quota:meter/meter",
       "records:store/store",
+      "secrets:vault/vault",
       "wasi:config/store",
       "wasi:http/outgoing-handler",
+      "wasi:keyvalue/store",
       "wit:reflect/composer",
       "wit:reflect/inspector"
     ],
     "config_keys": [
       {
-        "name": "applier-url",
-        "description": "where the applier listens, e.g. http://127.0.0.1:8088"
-      },
-      {
         "name": "applier-secret",
-        "description": "shared secret; the applier rejects requests without it"
+        "description": "shared secret the reconciler presents on `/api/internal/*`"
       },
       {
-        "name": "registry",
-        "description": "OCI prefix images are pushed to and pinned from"
+        "name": "ingress-suffix",
+        "description": "DNS suffix an app is reachable on, e.g. `apps.local`;"
       },
       {
-        "name": "cluster-suffix",
-        "description": "DNS suffix for the operator's Host routing"
-      },
-      {
-        "name": "scheduler-nats",
-        "description": "the platform's control-plane NATS, which each app's host dials"
-      },
-      {
-        "name": "host-image",
-        "description": "`wash` image for the per-application host pod (ADR-0014)"
-      },
-      {
-        "name": "nats-image",
-        "description": "NATS image for that pod's private data-plane sidecar"
-      },
-      {
-        "name": "platform-namespace",
-        "description": "where the registry lives"
-      },
-      {
-        "name": "control-plane-namespace",
-        "description": "where the operator + scheduler NATS live (defaults to"
+        "name": "config",
+        "description": ""
       },
       {
         "name": "id",
+        "description": ""
+      },
+      {
+        "name": "tag",
+        "description": ""
+      },
+      {
+        "name": "ref",
+        "description": ""
+      },
+      {
+        "name": "probe",
         "description": ""
       },
       {
@@ -1272,18 +1871,58 @@
         "description": ""
       },
       {
+        "name": "collection",
+        "description": ""
+      },
+      {
+        "name": "env",
+        "description": ""
+      },
+      {
+        "name": "app",
+        "description": ""
+      },
+      {
+        "name": "force",
+        "description": ""
+      },
+      {
         "name": "confirm",
+        "description": ""
+      },
+      {
+        "name": "state",
+        "description": ""
+      },
+      {
+        "name": "max-placement-lag-per-node",
+        "description": ""
+      },
+      {
+        "name": "max-placement-lag",
+        "description": ""
+      },
+      {
+        "name": "status-max-age",
+        "description": ""
+      },
+      {
+        "name": "org",
+        "description": ""
+      },
+      {
+        "name": "token",
         "description": ""
       }
     ],
-    "wasm_size_bytes": 310174,
-    "wasm_sha256_12": "5e2b76450ba2",
+    "wasm_size_bytes": 576977,
+    "wasm_sha256_12": "a57f47f4cb48",
     "reusable_as_is": true
   },
   {
     "name": "policy-guard",
     "package": "policy:guard@0.1.0",
-    "description": "`policy-guard` \u2014 reference implementation of `policy:guard`",
+    "description": "`policy-guard` \u2014 does this principal own THIS row? \u2014 attribute-based, row-level authorization beyond roles",
     "exports": [
       "guard"
     ],
@@ -1291,14 +1930,14 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 165230,
-    "wasm_sha256_12": "534ba5de6888",
+    "wasm_size_bytes": 154194,
+    "wasm_sha256_12": "3ac1f48f7f8a",
     "reusable_as_is": true
   },
   {
     "name": "proxy-route",
     "package": "proxy:route@0.1.0",
-    "description": "proxy:route \u2014 reference implementation. Route table from wasi:config",
+    "description": "`proxy-route` \u2014 forward a request to an upstream by path prefix \u2014 a config-driven reverse proxy",
     "exports": [
       "router"
     ],
@@ -1312,8 +1951,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 104109,
-    "wasm_sha256_12": "6f704453d9bf",
+    "wasm_size_bytes": 104569,
+    "wasm_sha256_12": "d2f9af00cb66",
     "reusable_as_is": true
   },
   {
@@ -1329,40 +1968,40 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 167360,
-    "wasm_sha256_12": "11cdf0e62030",
+    "wasm_size_bytes": 156132,
+    "wasm_sha256_12": "9a3b69342c23",
     "reusable_as_is": true
   },
   {
     "name": "qr",
     "package": "qr:encode@0.1.0",
-    "description": "`qr` \u2014 reference implementation of `qr:encode`",
+    "description": "`qr` \u2014 turn a URL or a string into a scannable QR code, as SVG",
     "exports": [
       "encoder"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 78261,
-    "wasm_sha256_12": "ee4e52bacdda",
+    "wasm_size_bytes": 78447,
+    "wasm_sha256_12": "27f2f0a1de37",
     "reusable_as_is": true
   },
   {
     "name": "quiz-grade",
     "package": "quiz:grade@0.1.0",
-    "description": "`quiz-grade` \u2014 reference implementation of `quiz:grade/grader`",
+    "description": "`quiz-grade` \u2014 grade answers against an answer key, and roll a cohort's scores into statistics",
     "exports": [
       "grader"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 51972,
-    "wasm_sha256_12": "8f7a4c12215a",
+    "wasm_size_bytes": 52282,
+    "wasm_sha256_12": "afc9c382dee0",
     "reusable_as_is": true
   },
   {
     "name": "quota",
     "package": "quota:meter@0.1.0",
-    "description": "`quota` \u2014 reference implementation of `quota:meter`",
+    "description": "`quota` \u2014 meter cumulative usage against a budget over a billing period \u2014 reserve, consume, refund",
     "exports": [
       "meter"
     ],
@@ -1371,14 +2010,14 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 68626,
-    "wasm_sha256_12": "2304fa0183fe",
+    "wasm_size_bytes": 69010,
+    "wasm_sha256_12": "7551ea0cc25b",
     "reusable_as_is": true
   },
   {
     "name": "rate-limiter",
     "package": "ratelimit:guard@0.1.0",
-    "description": "`rate-limiter` \u2014 reference implementation of `ratelimit:guard`",
+    "description": "`rate-limiter` \u2014 stop a caller making too many requests \u2014 count attempts against a key and lock it out after too many",
     "exports": [
       "limiter"
     ],
@@ -1397,50 +2036,73 @@
         "description": "window / lockout duration, seconds          (default 300)"
       }
     ],
-    "wasm_size_bytes": 68598,
-    "wasm_sha256_12": "f65b1ef7de96",
+    "wasm_size_bytes": 68982,
+    "wasm_sha256_12": "35ae9377476e",
     "reusable_as_is": true
   },
   {
     "name": "record-store",
     "package": "records:store@0.1.0",
-    "description": "`record-store` \u2014 reference implementation of `record:store`",
+    "description": "`record-store` \u2014 store JSON records in named collections, query them by field, and index them",
     "exports": [
       "store"
     ],
     "capability_deps": [
+      "comp:store/cas",
       "wasi:keyvalue/batch",
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 186028,
-    "wasm_sha256_12": "10904bf08dc4",
+    "wasm_size_bytes": 210648,
+    "wasm_sha256_12": "bf7f78436315",
     "reusable_as_is": true
   },
   {
     "name": "resilience",
     "package": "resilience:breaker@0.1.0",
-    "description": "`resilience` \u2014 reference implementation of `resilience:breaker/breaker`",
+    "description": "`resilience` \u2014 stop hammering a failing service \u2014 a circuit breaker and exponential backoff, as pure functions",
     "exports": [
       "breaker"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 16671,
-    "wasm_sha256_12": "ddbef85a2da3",
+    "wasm_size_bytes": 16584,
+    "wasm_sha256_12": "7c28bc4bb44a",
+    "reusable_as_is": true
+  },
+  {
+    "name": "roman",
+    "package": "demo:roman@0.1.0",
+    "description": "",
+    "exports": [],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 47651,
+    "wasm_sha256_12": "afb7c88b2242",
+    "reusable_as_is": true
+  },
+  {
+    "name": "rot13",
+    "package": "demo:rot13@0.1.0",
+    "description": "",
+    "exports": [],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 47001,
+    "wasm_sha256_12": "8dbc9dea69ac",
     "reusable_as_is": true
   },
   {
     "name": "rrule",
     "package": "rrule:recur@0.1.0",
-    "description": "`rrule` \u2014 reference implementation of `rrule:recur/recur`",
+    "description": "`rrule` \u2014 expand a repeating or recurring event into concrete dates \u2014 every weekday, every 2 weeks on Mon and Wed",
     "exports": [
       "recur"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 58117,
-    "wasm_sha256_12": "705ab736c9d9",
+    "wasm_size_bytes": 58245,
+    "wasm_sha256_12": "7ae2ec92f972",
     "reusable_as_is": true
   },
   {
@@ -1460,14 +2122,14 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 201722,
-    "wasm_sha256_12": "f35bb9ab620c",
+    "wasm_size_bytes": 191184,
+    "wasm_sha256_12": "05f246bddee9",
     "reusable_as_is": true
   },
   {
     "name": "scheduler-timer",
     "package": "sched:timer@0.1.0",
-    "description": "`scheduler-timer` \u2014 reference implementation of `sched:timer`",
+    "description": "`scheduler-timer` \u2014 do this later \u2014 durable timers for reminders, payment retries and nightly sweeps",
     "exports": [
       "timer"
     ],
@@ -1476,8 +2138,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 93444,
-    "wasm_sha256_12": "dac8c493412a",
+    "wasm_size_bytes": 94124,
+    "wasm_sha256_12": "f231cb31a1dd",
     "reusable_as_is": true
   },
   {
@@ -1494,8 +2156,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 187713,
-    "wasm_sha256_12": "11f538f57b99",
+    "wasm_size_bytes": 176236,
+    "wasm_sha256_12": "ebe6666141da",
     "reusable_as_is": true
   },
   {
@@ -1514,14 +2176,14 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 164297,
-    "wasm_sha256_12": "294d41ffd4da",
+    "wasm_size_bytes": 153530,
+    "wasm_sha256_12": "2fe756115cae",
     "reusable_as_is": true
   },
   {
     "name": "search-index",
     "package": "search:index@0.1.0",
-    "description": "`search-index` \u2014 reference implementation of `search:index`",
+    "description": "`search-index` \u2014 let users search their own data \u2014 a full-text inverted index with ranked results",
     "exports": [
       "index"
     ],
@@ -1529,14 +2191,29 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 98276,
-    "wasm_sha256_12": "6479629c6fee",
+    "wasm_size_bytes": 98629,
+    "wasm_sha256_12": "96e1eee7b521",
+    "reusable_as_is": true
+  },
+  {
+    "name": "secret-probe",
+    "package": "comp:secretprobe@0.1.0",
+    "description": "`secret-probe` \u2014 an instrument for `comp:secrets/reader` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 72423,
+    "wasm_sha256_12": "b5244d71a6ec",
     "reusable_as_is": true
   },
   {
     "name": "secrets-vault",
     "package": "secrets:vault@0.1.0",
-    "description": "`secrets-vault` \u2014 reference implementation of `secrets:vault`",
+    "description": "`secrets-vault` \u2014 store secrets envelope-encrypted, so an API key never sits in plaintext beside ordinary data",
     "exports": [
       "vault"
     ],
@@ -1550,14 +2227,29 @@
         "description": "base64 STANDARD, MUST decode to exactly 32 bytes \u2014 required."
       }
     ],
-    "wasm_size_bytes": 98534,
-    "wasm_sha256_12": "8ca961de0f56",
+    "wasm_size_bytes": 99205,
+    "wasm_sha256_12": "5310ed571c9f",
+    "reusable_as_is": true
+  },
+  {
+    "name": "select-probe",
+    "package": "comp:selectprobe@0.1.0",
+    "description": "`select-probe` \u2014 an instrument for `graph:select` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "graph:select/selector"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 119485,
+    "wasm_sha256_12": "8f0689d0cb99",
     "reusable_as_is": true
   },
   {
     "name": "session-store",
     "package": "session:store@0.1.0",
-    "description": "`session-store` \u2014 reference implementation of `session:store`",
+    "description": "`session-store` \u2014 hold a server-side session \u2014 mint an opaque id, attach data, refresh a sliding expiry, revoke it",
     "exports": [
       "store"
     ],
@@ -1571,34 +2263,49 @@
         "description": "session lifetime, seconds (default 86400). The per-call"
       }
     ],
-    "wasm_size_bytes": 85524,
-    "wasm_sha256_12": "786f482cc20e",
+    "wasm_size_bytes": 86377,
+    "wasm_sha256_12": "fa13f3c7c7f2",
     "reusable_as_is": true
   },
   {
     "name": "shaper",
     "package": "shaper:limit@0.1.0",
-    "description": "`shaper` \u2014 reference implementation of `shaper:limit/limiter`",
+    "description": "`shaper` \u2014 the arithmetic behind rate limiting \u2014 token bucket and GCRA, as pure functions whose state the caller holds",
     "exports": [
       "limiter"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 15004,
-    "wasm_sha256_12": "788c50948853",
+    "wasm_size_bytes": 14917,
+    "wasm_sha256_12": "ef8a80f57f9d",
     "reusable_as_is": true
   },
   {
     "name": "slug",
     "package": "slug:generate@0.1.0",
-    "description": "`slug` \u2014 reference implementation of `slug:generate`",
+    "description": "`slug` \u2014 turn a title into a clean URL slug, transliterating accents and suffixing on collision",
     "exports": [
       "generator"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 77236,
-    "wasm_sha256_12": "62861a2d10cd",
+    "wasm_size_bytes": 72728,
+    "wasm_sha256_12": "98df1320fbf9",
+    "reusable_as_is": true
+  },
+  {
+    "name": "slug-probe",
+    "package": "comp:slugprobe@0.1.0",
+    "description": "Front the `slug` capability over HTTP: `GET /slugify?text=<pct-encoded>` calls",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "slug:generate/generator"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 64547,
+    "wasm_sha256_12": "caafa24b70ce",
     "reusable_as_is": true
   },
   {
@@ -1619,21 +2326,21 @@
       "zip:archive/archiver"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 191948,
-    "wasm_sha256_12": "0dd5e89850cb",
+    "wasm_size_bytes": 181096,
+    "wasm_sha256_12": "fb676427c1e9",
     "reusable_as_is": true
   },
   {
     "name": "static-assets",
     "package": "ui:assets@0.1.0",
-    "description": "`static-assets` \u2014 reference implementation of `static:assets`",
+    "description": "`static-assets` \u2014 serve an embedded static bundle \u2014 an SPA in a component of its own, so the domain artifact stays slim",
     "exports": [
       "files"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 659258,
-    "wasm_sha256_12": "20c660fdda5d",
+    "wasm_size_bytes": 659568,
+    "wasm_sha256_12": "cfa41a5c0e58",
     "reusable_as_is": true
   },
   {
@@ -1652,8 +2359,8 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 197755,
-    "wasm_sha256_12": "f56894c19778",
+    "wasm_size_bytes": 186988,
+    "wasm_sha256_12": "168b755460c3",
     "reusable_as_is": false
   },
   {
@@ -1670,21 +2377,21 @@
       "wit:reflect/inspector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 207536,
-    "wasm_sha256_12": "3e622d16c544",
+    "wasm_size_bytes": 196451,
+    "wasm_sha256_12": "77b9cba87dac",
     "reusable_as_is": true
   },
   {
     "name": "svg-chart",
     "package": "svg:chart@0.1.0",
-    "description": "`svg-chart` \u2014 reference implementation of `svg:chart/charts`",
+    "description": "`svg-chart` \u2014 render a chart to SVG on the server \u2014 bar, line, donut and sparkline",
     "exports": [
       "charts"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 84883,
-    "wasm_sha256_12": "2ac4b5b52062",
+    "wasm_size_bytes": 85232,
+    "wasm_sha256_12": "042185f91ac1",
     "reusable_as_is": true
   },
   {
@@ -1704,21 +2411,21 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 265664,
-    "wasm_sha256_12": "64119be57338",
+    "wasm_size_bytes": 255131,
+    "wasm_sha256_12": "299c0004b9b2",
     "reusable_as_is": true
   },
   {
     "name": "textdiff",
     "package": "diff:text@0.1.0",
-    "description": "`textdiff` \u2014 reference implementation of `diff:text`",
+    "description": "`textdiff` \u2014 what changed between two texts \u2014 a structured edit script, a unified diff, and apply",
     "exports": [
       "differ"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 70179,
-    "wasm_sha256_12": "a145d9f67f1d",
+    "wasm_size_bytes": 70218,
+    "wasm_sha256_12": "0abeb01a8849",
     "reusable_as_is": true
   },
   {
@@ -1735,8 +2442,8 @@
       "ratelimit:guard/limiter"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 158050,
-    "wasm_sha256_12": "e6ed37fc709d",
+    "wasm_size_bytes": 146685,
+    "wasm_sha256_12": "17015578f976",
     "reusable_as_is": true
   },
   {
@@ -1748,8 +2455,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 59969,
-    "wasm_sha256_12": "d573d0f34fab",
+    "wasm_size_bytes": 60279,
+    "wasm_sha256_12": "21c718c1bcbe",
     "reusable_as_is": true
   },
   {
@@ -1778,8 +2485,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 263974,
-    "wasm_sha256_12": "6e08d4a7c265",
+    "wasm_size_bytes": 252828,
+    "wasm_sha256_12": "aefadce18596",
     "reusable_as_is": true
   },
   {
@@ -1799,8 +2506,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 200716,
-    "wasm_sha256_12": "1607ec8c0c01",
+    "wasm_size_bytes": 189808,
+    "wasm_sha256_12": "06ef6082f39c",
     "reusable_as_is": true
   },
   {
@@ -1817,14 +2524,14 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 160579,
-    "wasm_sha256_12": "505bdf714c26",
+    "wasm_size_bytes": 149767,
+    "wasm_sha256_12": "6d8f4d1e7e3e",
     "reusable_as_is": true
   },
   {
     "name": "upload-policy",
     "package": "upload:policy@0.1.0",
-    "description": "`upload-policy` \u2014 reference implementation of `upload:policy`",
+    "description": "`upload-policy` \u2014 validate a file upload against a size and content-type policy, then mint a signed upload ticket",
     "exports": [
       "gate"
     ],
@@ -1849,21 +2556,41 @@
         "description": "HMAC key; default \"upload-default-secret\""
       }
     ],
-    "wasm_size_bytes": 78333,
-    "wasm_sha256_12": "f35340f75ecd",
+    "wasm_size_bytes": 79187,
+    "wasm_sha256_12": "a58c2403d56b",
     "reusable_as_is": true
   },
   {
     "name": "validate",
     "package": "validate:schema@0.1.0",
-    "description": "`validate` \u2014 reference implementation of `validate:schema`",
+    "description": "`validate` \u2014 validate input against declared per-field rules and return structured errors",
     "exports": [
       "validator"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 113565,
-    "wasm_sha256_12": "c4ae6c3bd95d",
+    "wasm_size_bytes": 102664,
+    "wasm_sha256_12": "b69e13805a4e",
+    "reusable_as_is": true
+  },
+  {
+    "name": "version-probe",
+    "package": "comp:versionprobe@0.1.0",
+    "description": "`version-probe` \u2014 answers with the tag it was BUILT with",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "wasi:config/store"
+    ],
+    "config_keys": [
+      {
+        "name": "capabilities",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 57030,
+    "wasm_sha256_12": "deafc15766a5",
     "reusable_as_is": true
   },
   {
@@ -1903,27 +2630,68 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 308617,
-    "wasm_sha256_12": "7a80cf48fd9f",
+    "wasm_size_bytes": 297881,
+    "wasm_sha256_12": "62eb1eeb1ade",
     "reusable_as_is": false
+  },
+  {
+    "name": "vgit-probe",
+    "package": "comp:vgitprobe@0.1.0",
+    "description": "`vgit-probe` \u2014 an instrument for `vgit:store` (see wit/probe.wit)",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "vgit:store/objects",
+      "vgit:store/refs",
+      "vgit:store/worktree"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 128762,
+    "wasm_sha256_12": "abc14a4796ed",
+    "reusable_as_is": true
+  },
+  {
+    "name": "virt-git",
+    "package": "vgit:store@0.1.0",
+    "description": "`virt-git` \u2014 git's object model over `blob:store`. No disk, no working copy",
+    "exports": [
+      "objects",
+      "refs",
+      "worktree"
+    ],
+    "capability_deps": [
+      "blob:store/blobstore",
+      "comp:store/cas",
+      "wasi:config/store"
+    ],
+    "config_keys": [
+      {
+        "name": "git-container",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 136508,
+    "wasm_sha256_12": "22064b9eb046",
+    "reusable_as_is": true
   },
   {
     "name": "webauthn",
     "package": "webauthn:verify@0.1.0",
-    "description": "`webauthn` \u2014 reference implementation of `webauthn:verify/verifier`",
+    "description": "`webauthn` \u2014 the server half of passkey login \u2014 verify a WebAuthn registration and an assertion",
     "exports": [
       "verifier"
     ],
     "capability_deps": [],
     "config_keys": [],
     "wasm_size_bytes": 196753,
-    "wasm_sha256_12": "7796ad5224a3",
+    "wasm_sha256_12": "768538147ddd",
     "reusable_as_is": true
   },
   {
     "name": "webhook-ingest",
     "package": "webhook:ingest@0.1.0",
-    "description": "`webhook-ingest` \u2014 reference implementation of `webhook:ingest`",
+    "description": "`webhook-ingest` \u2014 verify an inbound webhook's HMAC signature, then dedup a redelivery",
     "exports": [
       "verifier"
     ],
@@ -1932,8 +2700,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 69320,
-    "wasm_sha256_12": "9b845a8ff507",
+    "wasm_size_bytes": 69746,
+    "wasm_sha256_12": "37900bbf973a",
     "reusable_as_is": true
   },
   {
@@ -1957,48 +2725,48 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 191860,
-    "wasm_sha256_12": "2f1c6d64040b",
+    "wasm_size_bytes": 181223,
+    "wasm_sha256_12": "3a8febd11124",
     "reusable_as_is": false
   },
   {
     "name": "webhook-sign",
     "package": "webhook:sign@0.1.0",
-    "description": "`webhook-sign` \u2014 reference implementation of `webhook:sign`",
+    "description": "`webhook-sign` \u2014 sign an outbound webhook the way the major providers do \u2014 HMAC-SHA256 over a timestamped payload",
     "exports": [
       "signer"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 60318,
-    "wasm_sha256_12": "9beb24f8ea4c",
+    "wasm_size_bytes": 60719,
+    "wasm_sha256_12": "4afd30d6b490",
     "reusable_as_is": true
   },
   {
     "name": "wit-reflect",
     "package": "wit:reflect@0.1.0",
-    "description": "`wit-reflect` \u2014 reference implementation of `wit:reflect`",
+    "description": "`wit-reflect` \u2014 read a component's real imports and exports out of the binary, and compose components from them",
     "exports": [
       "inspector",
       "composer"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 1104224,
-    "wasm_sha256_12": "0e14b0a7c1de",
+    "wasm_size_bytes": 1100987,
+    "wasm_sha256_12": "eb6a4b7c29ea",
     "reusable_as_is": true
   },
   {
     "name": "zip",
     "package": "zip:archive@0.1.0",
-    "description": "`zip` \u2014 reference implementation of `zip:archive/archiver`",
+    "description": "`zip` \u2014 write a .zip archive from a list of named byte blobs",
     "exports": [
       "archiver"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 48546,
-    "wasm_sha256_12": "82dcff8d132c",
+    "wasm_size_bytes": 48860,
+    "wasm_sha256_12": "56448caec836",
     "reusable_as_is": true
   }
 ]

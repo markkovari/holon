@@ -1,4 +1,4 @@
-//! `metrics-collect` — reference implementation of `metrics:collect`.
+//! `metrics-collect` — count named events, read a family by prefix, and compute the rate between two counters
 //!
 //! Atomic named counters backed by `wasi:keyvalue`. Each counter is two kv keys:
 //!   `m/{key}`     — the count, mutated only via `atomics::increment` (race-free)

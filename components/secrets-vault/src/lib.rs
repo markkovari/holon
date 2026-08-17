@@ -1,4 +1,4 @@
-//! `secrets-vault` — reference implementation of `secrets:vault`.
+//! `secrets-vault` — store secrets envelope-encrypted, so an API key never sits in plaintext beside ordinary data
 //!
 //! A minimal envelope-encryption vault backed by `wasi:keyvalue`. Every secret
 //! *value version* is sealed with AEAD (ChaCha20-Poly1305) under a single

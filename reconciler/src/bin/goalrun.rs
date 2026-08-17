@@ -1153,6 +1153,89 @@ fn main() -> Result<()> {
         t.run_started(&run, &goal.text, seed, &base_commit, args.branches.into());
     }
 
+    // "Do we already have something for this?" — asked of the pool, before a
+    // single token is spent, whatever the answer turns out to be.
+    //
+    // ADR-0089 made reuse ENFORCED (a gate fails a part that reimplements
+    // `auth-guard`) but never DISCOVERED: a human wrote the interfaces into the
+    // goal's WIT and the branch then had no choice. That does not compound — every
+    // new goal needed somebody who already knew what 150 components contained.
+    //
+    // Asking is mandatory rather than advisory because the ANSWER is the point,
+    // in both directions. A hit is reuse a branch would otherwise have missed. A
+    // miss is the graph naming a capability the pool lacks, which is the only
+    // corpus in this system that answers "what should we build next" — and it only
+    // accumulates if the question is asked on every run, including the ones where
+    // nobody expected an answer.
+    //
+    // No model, and nothing is blocked on the result. This is one millisecond of
+    // term overlap over the catalogue, and a run whose search found nothing is a
+    // run that proceeds — with a row recorded saying so.
+    let reuse: Vec<comp_reconciler::capsearch::Capability> = {
+        let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(
+            &repo_root(),
+        ));
+        let mut apps_of: std::collections::BTreeMap<String, usize> = Default::default();
+        for name in catalog.names().map(String::from).collect::<Vec<_>>() {
+            for part in catalog.closure(&name) {
+                *apps_of.entry(part).or_default() += 1;
+            }
+        }
+        let pool = comp_reconciler::capsearch::capabilities(&repo_root(), &catalog, &apps_of);
+        let hits = comp_reconciler::capsearch::find(&goal.text, &pool);
+        if let Some(t) = &trace {
+            t.capsearch(&run, &goal.text, hits.len());
+        }
+        if hits.is_empty() {
+            println!(
+                "capability search: nothing in the pool answers this goal — if the work \
+                 generalises, it is a candidate for promotion (ADR-0089)\n"
+            );
+        } else {
+            println!("capability search: {} candidate(s) the pool already has:", hits.len());
+            for m in hits.iter().take(5) {
+                println!(
+                    "  {:<22} {} app(s)  {}",
+                    m.capability.name,
+                    m.capability.apps,
+                    m.capability.description.chars().take(88).collect::<String>()
+                );
+            }
+            println!();
+        }
+        hits.into_iter().take(5).map(|m| m.capability.clone()).collect()
+    };
+
+    // What was found goes into every branch's context, as prose rather than as an
+    // instruction: the gate decides whether reuse happened, and a branch told to
+    // reuse something that does not fit would do it badly.
+    let mut plan = plan;
+    if !reuse.is_empty() {
+        let listed = reuse
+            .iter()
+            .map(|c| {
+                format!(
+                    "- `{}` (in {} app(s)) exports {} — {}",
+                    c.name,
+                    c.apps,
+                    c.exports.iter().cloned().collect::<Vec<_>>().join(", "),
+                    c.description
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        plan["context"].as_array_mut().map(|ctx| {
+            ctx.push(json!({
+                "path": "POOL.md",
+                "content": format!(
+                    "# Capabilities this repository already has\n\n\
+                     Searched for this goal. Composing one of these is cheaper than \
+                     writing it, and the gate reads what a candidate actually called.\n\n{listed}\n"
+                ),
+            }))
+        });
+    }
+
     let found = generation_mod::search_with(
         &driver_url,
         "goalrun.acme.test",

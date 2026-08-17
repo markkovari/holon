@@ -1,4 +1,4 @@
-//! `id-generate` — reference implementation of `id:generate/generator`.
+//! `id-generate` — mint a unique identifier — sortable ULIDs and random ids that do not collide across processes
 //!
 //! Every app mints identifiers, and most do it badly: `Date.now() + counter`
 //! (not portable, not sortable, collides across processes) or a bare random
