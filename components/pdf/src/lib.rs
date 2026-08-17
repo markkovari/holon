@@ -1,4 +1,4 @@
-//! `pdf` — reference implementation of `pdf:codec/codec`.
+//! `pdf` — write a PDF document — text laid onto pages, with no native library and no headless browser
 //!
 //! A dependency-free PDF 1.4 writer. It flows a list of text blocks down
 //! US-Letter pages (612×792 pt, 54 pt margins), starting a new page when the

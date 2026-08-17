@@ -1,4 +1,4 @@
-//! `pagination` — reference implementation of `paginate:cursor`.
+//! `pagination` — paginate a long list without drift — encode a sort position into an opaque cursor
 //!
 //! ## Keyset pagination
 //! Offset/`LIMIT … OFFSET` paging silently skips or repeats rows when the

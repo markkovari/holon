@@ -1,9 +1,9 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [93 ADRs](adr/); this page is the map.
+in [94 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0093.
+Last revised after ADR-0094.
 
 ## Shape
 
@@ -265,6 +265,14 @@ claim about a distributed system without one is a hope.
 - **The loop elects a leader**, so a standby takes over within the lease TTL plus
   one interval. It does not shard, on purpose (ADR-0072): the pass after a fleet
   change is **1.23 s at 1000 nodes × 10 000 apps**, 12% of one 10 s interval.
+- **A branch is told what the pool already has** (ADR-0094). `comp-goalrun`
+  searches the catalogue with the goal's text before a branch spawns, prints the
+  candidates, records `capsearch-hit` or `capsearch-miss`, and puts up to five into
+  every branch's context. Mandatory rather than advisory because the answer matters
+  both ways: a hit is reuse that would have been missed, a miss is the graph naming
+  something to build. It searches a corpus that finally contains sentences — 58
+  components described themselves as "reference implementation of `x:y`", including
+  `auth-guard`, which 19 things import.
 - **A lesson is reached through the interface it is about** (ADR-0093). The
   projection writes `lesson -about-> interface`, so an app walks
   `app -carries-> artifact -imports-> interface <-about<- memory` to reach what
@@ -361,6 +369,10 @@ worklist in [`.comp/goals/`](../.comp/goals/).
   interface an agent cannot reach. Every run sweeps the pool on
   its way out, so it stays bounded without a daemon, and a decomposed run's PARTS
   do all of it too — each on its own goal. → goal 08, ADR-0084
+- **Decomposed runs leave no trace at all.** `decomposed()` never constructs a
+  `Trace`, so a multi-part run (ADR-0086) records no `run-started`, no attempts, no
+  verdicts and no capability search — the console cannot show one, and ADR-0092's
+  vocabulary covers a class of run that does not use it. → ADR-0094
 - **Nothing measures herding or churn.** The diversity knobs exist (a lens per
   branch, one branch that reads nothing); no run reports that its generation
   converged. A negotiation was observed climbing v3 → v7 while no score moved, and

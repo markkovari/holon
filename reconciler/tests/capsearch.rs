@@ -26,24 +26,46 @@ const SHOULD_FIND: &[(&str, &str)] = &[
     ("store records and find them by a field", "record-store"),
     ("format some rows as CSV", "csv"),
     ("generate a unique identifier", "id-generate"),
+    // Added when the 57 tautological descriptions were replaced with sentences a
+    // CALLER would write. Every one of these failed beforehand, and none of them
+    // needed a change to the searcher — only to what it was searching.
+    ("stop a caller making too many requests", "rate-limiter"),
+    ("record who did what and when", "audit-log"),
+    ("make a mutating request safe to retry", "idempotency-guard"),
+    ("mask personal data before it reaches a log", "pii-redact"),
+    ("turn a title into a url", "slug"),
+    ("do this later, on a timer", "scheduler-timer"),
+    ("the books have to balance", "ledger"),
+    ("render an email from a template", "email-render"),
+    // In the top 3 rather than first: `event-bus` still wins on "event" matching
+    // its name. Kept as a positive because "reachable" is the thing a branch
+    // needs, and the ranking flaw is recorded in KNOWN_MISSES below.
+    ("expand a repeating event", "rrule"),
 ];
 
 /// Questions this searcher gets WRONG, kept here on purpose.
 ///
-/// Each is a vocabulary mismatch: the asker's words and the contract's words mean
-/// the same thing and share no characters, which is the one thing term overlap
-/// cannot do. `rate-limiter` ships in 22 applications and its WIT opens "a small,
-/// generic rate-limit / lockout capability … counts failures against an opaque key"
-/// — nothing in there is "too many requests".
+/// The original entry — "stop a caller making too many requests" — is gone,
+/// because it now passes. Nothing about the searcher changed; `rate-limiter`'s
+/// description stopped being "reference implementation of `ratelimit:guard`" and
+/// started being a sentence about what a caller wants. 57 descriptions were like
+/// that, and this list is what survived fixing them.
 ///
-/// This is the trigger for the embedding path, not a bug to paper over with
-/// synonyms: a hand-written thesaurus is a second corpus to maintain and it would
-/// be wrong in a different way. `knowledge-memory` already embeds and does KNN in
-/// SurrealDB, so the fix is to make this its first caller (ADR-0089 slice 1).
+/// Both survivors have the SAME cause, and it is not vocabulary: a match on a
+/// component's NAME or interface scores 3, a match on its description scores 1 —
+/// so any query using a word that happens to appear in some component's name
+/// outranks a component that actually does the thing.
 ///
-/// If one of these starts passing, delete it from here — the searcher got better
-/// and the list should say so.
-const KNOWN_MISSES: &[(&str, &str)] = &[("stop a caller making too many requests", "rate-limiter")];
+/// It bites hardest because the pool contains 33 DOMAIN APPS. Nobody reuses
+/// `jobs-domain`; they reuse `lock-mutex`. An application is not a capability, and
+/// having them in the same pool is what lets "job" reach a showcase before it
+/// reaches the mutex. The fix is the app-local tier — apps are not in the
+/// catalogue at all — not a synonym list and not a weight somebody tuned until
+/// these two passed.
+const KNOWN_MISSES: &[(&str, &str)] = &[
+    // `jobs-domain` wins on "job" matching its name.
+    ("two workers must not do the same job", "lock-mutex"),
+];
 
 fn pool() -> Option<Vec<Capability>> {
     let root = repo_root();
@@ -195,4 +217,55 @@ fn the_same_capability_was_not_built_twice() {
          them silently wins every composition.",
         undeclared.join("\n")
     );
+}
+
+/// A capability describes itself in a caller's words, not its own.
+///
+/// 57 of 109 catalogue entries once read "`x` — reference implementation of
+/// `x:y`", which is true, tautological, and matches nothing anybody would type.
+/// `rate-limiter` shipped in 22 applications and could not be found by "stop a
+/// caller making too many requests", because the words it used were "counts
+/// failures against an opaque key".
+///
+/// The description is generated from the FIRST `//!` line of `src/lib.rs`
+/// (`tools/gen-catalog.py`), so that line is what this checks — the place a person
+/// writes, rather than the generated file they would have to remember to rebuild.
+///
+/// Deliberately blunt. It does not judge whether a description is *good*; it
+/// refuses the one form that is known to be useless. A rule that tried to score
+/// prose would be argued with, and this one cannot be: restating your own name is
+/// not a description.
+#[test]
+fn a_capability_does_not_describe_itself_as_its_own_reference_implementation() {
+    let root = repo_root();
+    let Ok(dirs) = std::fs::read_dir(root.join("components")) else {
+        panic!("no components/ directory");
+    };
+    let mut tautological = Vec::new();
+    let mut checked = 0usize;
+
+    for entry in dirs.flatten() {
+        let lib = entry.path().join("src/lib.rs");
+        let Ok(text) = std::fs::read_to_string(&lib) else { continue };
+        let Some(first) = text.lines().find(|l| l.starts_with("//!")) else { continue };
+        checked += 1;
+        let name = entry.file_name().to_string_lossy().to_string();
+        let lower = first.to_lowercase();
+        if lower.contains("reference implementation") {
+            tautological.push(format!("  {name}: {}", first.trim()));
+        }
+    }
+
+    assert!(checked > 100, "only read {checked} descriptions — the walk is wrong");
+    assert!(
+        tautological.is_empty(),
+        "{} component(s) describe themselves as a reference implementation of their own \
+         interface, which is a sentence nobody searching would type:\n{}\n\nWrite what a \
+         CALLER wants — \"stop a caller making too many requests\", not \"reference \
+         implementation of `ratelimit:guard`\". The WIT header below it can stay technical; \
+         this one line is the searchable one.",
+        tautological.len(),
+        tautological.join("\n")
+    );
+    println!("  {checked} component descriptions, none tautological");
 }

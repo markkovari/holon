@@ -731,52 +731,105 @@ mod tests {
 
     /// The projection must not be able to touch the accumulated half.
     ///
-    /// This is the check ADR-0091 rests on. Both halves now share one database,
-    /// and the only thing standing between a rebuild and the one table in the
-    /// system that cannot be recomputed is that this function never names it. A
-    /// reviewer can see that by reading; this fails the build if it stops being
-    /// true — including from a table added later whose name happens to be
-    /// accumulated.
+    /// This is the check ADR-0091 rests on. Both halves share one database, and the
+    /// only thing between a rebuild and the one table that cannot be recomputed is
+    /// this function.
+    ///
+    /// It used to assert that the projection never NAMED `memory`. That was the
+    /// right instinct and the wrong rule, and ADR-0093 broke it for a good reason:
+    /// indexing lessons by interface means reading `memory` and defining it, since
+    /// `SELECT` on a table that does not exist is an error on every fresh install.
+    /// Reading cannot lose a lesson. Neither can a table definition.
+    ///
+    /// So the rule is now what it always meant: **no statement WRITES OR DELETES an
+    /// accumulated table.** That is strictly stronger than the old one, because the
+    /// old one only inspected the second whitespace token and would have waved
+    /// through any statement shape it had not anticipated — which is exactly what
+    /// happened when the first `LET`/`FOR` block was added.
     #[test]
-    fn projection_never_names_the_accumulated_tables() {
+    fn the_projection_never_writes_or_deletes_an_accumulated_table() {
         let root = comp_reconciler::fleet::repo_root();
         let catalog = Catalog::scan(&default_dirs(&root));
         if catalog.is_empty() {
-            // Nothing built. The statement-shape check below has nothing to read,
-            // and a green test on an empty catalogue would be a lie.
             eprintln!("skipped: nothing built — run `just build`");
             return;
         }
         let out = surql(&catalog, &apps(&root), 42);
 
+        /// Tables a rebuild is allowed to create rows in and delete rows from.
+        /// `about` is here and `memory` is not: the edge is an index over a tag,
+        /// recomputed every build, and the lesson is the thing it indexes.
+        const DERIVED: &[&str] =
+            &["interface", "artifact", "app", "imports", "exports", "carries", "about"];
+
+        let mut mutations = 0usize;
         for statement in out.lines().filter(|l| !l.trim_start().starts_with("--")) {
-            let target = statement
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or_default()
-                .split([':', '-'])
-                .next()
-                .unwrap_or_default();
+            let mut words = statement.split_whitespace();
+            let Some(verb) = words.next() else { continue };
+            // Only the verbs that can change a row. `DEFINE`, `LET`, `FOR`, `IF`
+            // and `SELECT` cannot, whatever they name.
+            if !["UPSERT", "CREATE", "UPDATE", "DELETE", "REMOVE", "RELATE"].contains(&verb) {
+                continue;
+            }
+            let Some(rest) = words.next() else { continue };
+            // `RELATE a->edge->b` writes to the EDGE table in the middle; every
+            // other verb writes to the table it names first.
+            let target = if verb == "RELATE" {
+                rest.split("->").nth(1).unwrap_or_default()
+            } else {
+                rest
+            };
+            let table = target.split([':', '⟨']).next().unwrap_or_default().trim_start_matches('$');
+            mutations += 1;
             assert!(
-                [
-                    "interface",
-                    "artifact",
-                    "app",
-                    "imports",
-                    "exports",
-                    "carries"
-                ]
-                .contains(&target),
-                "projection statement targets {target:?}, which is not a derived table:\n  \
-                 {statement}"
+                DERIVED.contains(&table),
+                "a {verb} targets {table:?}, which is not a derived table — a rebuild must \
+                 never change a row it cannot recompute:\n  {statement}"
             );
         }
-        // No denylist of `memory` and `task` here on purpose. A substring search
-        // for them matches `artifact:⟨knowledge-memory⟩`, which is a component in
-        // this repository and a perfectly legal thing for the projection to write.
-        // The allowlist above is the stronger check anyway: it passes only tables
-        // named here, so an accumulated table added next year is caught without
-        // anybody remembering to add it to a list.
+        assert!(mutations > 100, "only {mutations} mutating statements — the parser is wrong");
+
+        // And the reads, separately: naming `memory` is legal now, so state exactly
+        // what may be done to it rather than leaving it open.
+        //
+        // Record IDS are stripped first. `artifact:⟨memory-probe⟩` and
+        // `artifact:⟨knowledge-memory⟩` are components in this repository whose
+        // NAMES contain the word, and a substring search over the raw line flags
+        // both — which is the mistake the previous version of this test warned
+        // about in a comment and this version made anyway.
+        for line in out.lines() {
+            let t = line.trim();
+            if t.starts_with("--") {
+                continue;
+            }
+            // Everything that is DATA rather than syntax comes out: record ids in
+            // `⟨…⟩` and string literals in `"…"`. `interface:⟨knowledge:memory/…⟩`
+            // and `SET exporter = "knowledge-memory"` both contain the word and
+            // neither is a reference to the table.
+            let mut outside = String::new();
+            let mut depth = 0usize;
+            let mut quoted = false;
+            for c in t.chars() {
+                match c {
+                    '"' => quoted = !quoted,
+                    _ if quoted => {}
+                    '⟨' => depth += 1,
+                    '⟩' => depth = depth.saturating_sub(1),
+                    _ if depth == 0 => outside.push(c),
+                    _ => {}
+                }
+            }
+            if !outside.contains("memory") {
+                continue;
+            }
+            let permitted = outside.starts_with("DEFINE TABLE IF NOT EXISTS memory")
+                || (outside.starts_with("LET") && outside.contains("FROM memory"));
+            assert!(
+                permitted,
+                "this statement names the `memory` TABLE in a way nothing has justified — \
+                 the projection may define it and read it, and nothing else:\n  {t}"
+            );
+        }
     }
 
     /// Every generation mints its own edge ids, or the second rebuild fails on a

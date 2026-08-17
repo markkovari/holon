@@ -1,4 +1,4 @@
-//! `openai-provider` — reference implementation of `llm:inference` over an
+//! `openai-provider` — the OpenAI side of the LLM contract — chat, completion and embeddings over an OpenAI-compatible API
 //! OpenAI-compatible HTTP API.
 //!
 //! Implements the vendor-agnostic `llm:inference/inference` by POSTing to

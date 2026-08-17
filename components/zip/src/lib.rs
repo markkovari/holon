@@ -1,4 +1,4 @@
-//! `zip` — reference implementation of `zip:archive/archiver`.
+//! `zip` — write a .zip archive from a list of named byte blobs
 //!
 //! A dependency-free ZIP writer using the STORE method (no compression): for
 //! each file a local header + its raw bytes, then a central directory and the

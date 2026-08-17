@@ -1,4 +1,4 @@
-//! Reference implementation of the `auth:identity` contract (`authority` world).
+//! `auth-guard` — register and log a user in, hash their password, issue and introspect a session token, and check whether their role grants an action
 //!
 //! # Exports / imports
 //! Exports: types, jwt, oidc, session, accounts, rbac, authorizer.

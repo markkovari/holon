@@ -1,4 +1,4 @@
-//! `money` — reference implementation of `money:amount`.
+//! `money` — exact money arithmetic in integer minor units tagged with an ISO-4217 currency — never a float
 //!
 //! Exact money arithmetic over integer minor units. The classic bug is storing
 //! money as a float (`0.1 + 0.2 != 0.3`); the fix as a capability is to never

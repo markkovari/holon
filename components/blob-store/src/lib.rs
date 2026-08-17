@@ -1,4 +1,4 @@
-//! `blob-store` — reference implementation of `blob:store`.
+//! `blob-store` — store and fetch large binary objects — uploads, exports, attachments — in named containers
 //!
 //! Large-object storage backed by `wasi:keyvalue`. Per object, two keys:
 //!   `bo_{container}/{name}`  -> the raw bytes

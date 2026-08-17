@@ -1,4 +1,4 @@
-//! `audit-log` — reference implementation of `audit:log`.
+//! `audit-log` — record who did what and when — an append-only audit trail any component can write decisions to
 //!
 //! Append-only audit trail, backed by `wasi:keyvalue` AND echoed to stderr (so
 //! an existing OTel/log-scrape pipeline keeps working while the trail also

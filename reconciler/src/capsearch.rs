@@ -154,9 +154,21 @@ fn wit_prose(repo_root: &Path) -> BTreeMap<String, String> {
 }
 
 /// Words worth matching on. Everything else is noise in a one-line description.
+/// Words that carry no capability in them.
+///
+/// The list grew after a real query embarrassed it: "two workers must not do the
+/// same job" matched 57 of 152 capabilities and ranked `outbox` first, scoring on
+/// "two", "not" and "same" — three words that say nothing about what anything
+/// does. Terms shorter than three characters are dropped separately, which is why
+/// "do", "be" and "no" are not here.
 const STOPWORDS: &[&str] = &[
     "a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "is", "it", "of", "on", "or",
     "that", "the", "to", "with", "need", "needs", "want", "i", "we", "my", "this",
+    // Function words, added after the query above.
+    "not", "two", "same", "must", "does", "doing", "when", "what", "which", "than", "then", "them",
+    "they", "you", "your", "its", "has", "have", "had", "will", "would", "could", "should", "are",
+    "was", "were", "been", "but", "also", "just", "only", "very", "much", "more", "most", "such",
+    "each", "both", "either", "neither",
 ];
 
 fn terms(s: &str) -> Vec<String> {

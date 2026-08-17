@@ -1,4 +1,4 @@
-//! `validate` — reference implementation of `validate:schema`.
+//! `validate` — validate input against declared per-field rules and return structured errors
 //!
 //! Declarative input validation: pure compute, no host imports. The caller
 //! hands over a JSON object string plus a list of field `rule`s; we parse the
