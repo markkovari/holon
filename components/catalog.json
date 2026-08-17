@@ -13,8 +13,8 @@
       "metrics:collect/collector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 152163,
-    "wasm_sha256_12": "dcd866759cf7",
+    "wasm_size_bytes": 152228,
+    "wasm_sha256_12": "1e2e6f253bb5",
     "reusable_as_is": true
   },
   {
@@ -30,8 +30,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 75330,
-    "wasm_sha256_12": "ac96c5ee1780",
+    "wasm_size_bytes": 75411,
+    "wasm_sha256_12": "66d917e32c31",
     "reusable_as_is": true
   },
   {
@@ -46,8 +46,8 @@
       "graph:fitness/evaluator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 71942,
-    "wasm_sha256_12": "fbcf092baa0c",
+    "wasm_size_bytes": 72023,
+    "wasm_sha256_12": "c2f7a92c3b30",
     "reusable_as_is": true
   },
   {
@@ -61,8 +61,8 @@
       "graph:agent/writer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 115642,
-    "wasm_sha256_12": "ddda506db81a",
+    "wasm_size_bytes": 115723,
+    "wasm_sha256_12": "83a110f0abcb",
     "reusable_as_is": true
   },
   {
@@ -76,8 +76,8 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 85975,
-    "wasm_sha256_12": "1dd5e0697429",
+    "wasm_size_bytes": 86064,
+    "wasm_sha256_12": "7bb6c0e40739",
     "reusable_as_is": true
   },
   {
@@ -91,8 +91,8 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 117711,
-    "wasm_sha256_12": "490bd9332c7b",
+    "wasm_size_bytes": 117784,
+    "wasm_sha256_12": "1d975b3402ae",
     "reusable_as_is": true
   },
   {
@@ -125,8 +125,8 @@
         "description": "the x-api-key value, granted by reference in the"
       }
     ],
-    "wasm_size_bytes": 177925,
-    "wasm_sha256_12": "9d27cf3539a5",
+    "wasm_size_bytes": 179218,
+    "wasm_sha256_12": "e0eeeabab53d",
     "reusable_as_is": true
   },
   {
@@ -141,8 +141,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 166363,
-    "wasm_sha256_12": "a5c61216ba9b",
+    "wasm_size_bytes": 166444,
+    "wasm_sha256_12": "33c374dbf950",
     "reusable_as_is": true
   },
   {
@@ -168,8 +168,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 85987,
-    "wasm_sha256_12": "e376666781ee",
+    "wasm_size_bytes": 86060,
+    "wasm_sha256_12": "4b16b2819f96",
     "reusable_as_is": true
   },
   {
@@ -183,8 +183,8 @@
       "artifact:cache/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 101128,
-    "wasm_sha256_12": "30e1236a454e",
+    "wasm_size_bytes": 101193,
+    "wasm_sha256_12": "b99a859a9e5b",
     "reusable_as_is": true
   },
   {
@@ -199,8 +199,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 121781,
-    "wasm_sha256_12": "e9984c2c3daa",
+    "wasm_size_bytes": 121870,
+    "wasm_sha256_12": "a7cd98727a81",
     "reusable_as_is": true
   },
   {
@@ -215,8 +215,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 126058,
-    "wasm_sha256_12": "747b62068f2e",
+    "wasm_size_bytes": 126147,
+    "wasm_sha256_12": "11501bac3072",
     "reusable_as_is": false
   },
   {
@@ -241,8 +241,8 @@
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 52049,
-    "wasm_sha256_12": "c95a82ff462e",
+    "wasm_size_bytes": 52130,
+    "wasm_sha256_12": "58ab8c024ea3",
     "reusable_as_is": true
   },
   {
@@ -261,8 +261,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 183205,
-    "wasm_sha256_12": "d325858cedd4",
+    "wasm_size_bytes": 183278,
+    "wasm_sha256_12": "01b335abc544",
     "reusable_as_is": false
   },
   {
@@ -276,8 +276,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 75976,
-    "wasm_sha256_12": "da9c917fe7dc",
+    "wasm_size_bytes": 76065,
+    "wasm_sha256_12": "a0898a6d39a8",
     "reusable_as_is": true
   },
   {
@@ -300,8 +300,8 @@
       "rrule:recur/recur"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 216206,
-    "wasm_sha256_12": "9ab12ec2e17a",
+    "wasm_size_bytes": 216287,
+    "wasm_sha256_12": "cef135311066",
     "reusable_as_is": true
   },
   {
@@ -322,8 +322,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 210249,
-    "wasm_sha256_12": "950d52656ee5",
+    "wasm_size_bytes": 210330,
+    "wasm_sha256_12": "49ec48467e9c",
     "reusable_as_is": true
   },
   {
@@ -342,8 +342,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 206251,
-    "wasm_sha256_12": "f5366c665846",
+    "wasm_size_bytes": 206340,
+    "wasm_sha256_12": "1280c1c79508",
     "reusable_as_is": true
   },
   {
@@ -359,8 +359,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 77698,
-    "wasm_sha256_12": "fda95c11f339",
+    "wasm_size_bytes": 77763,
+    "wasm_sha256_12": "a0dfe97affb3",
     "reusable_as_is": true
   },
   {
@@ -375,8 +375,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 63462,
-    "wasm_sha256_12": "51efec066f2f",
+    "wasm_size_bytes": 63527,
+    "wasm_sha256_12": "85d91186cf38",
     "reusable_as_is": true
   },
   {
@@ -386,8 +386,8 @@
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 48305,
-    "wasm_sha256_12": "b3a8735eb10c",
+    "wasm_size_bytes": 48370,
+    "wasm_sha256_12": "b1faa6c7ea35",
     "reusable_as_is": true
   },
   {
@@ -407,8 +407,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 146146,
-    "wasm_sha256_12": "8e4a5f2e6a53",
+    "wasm_size_bytes": 146219,
+    "wasm_sha256_12": "93a94bf8c49d",
     "reusable_as_is": true
   },
   {
@@ -428,8 +428,8 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 168988,
-    "wasm_sha256_12": "52ac9dd12ea6",
+    "wasm_size_bytes": 201318,
+    "wasm_sha256_12": "d17aab7655be",
     "reusable_as_is": true
   },
   {
@@ -447,8 +447,8 @@
       "slug:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 232206,
-    "wasm_sha256_12": "1bd194ba8fcf",
+    "wasm_size_bytes": 232295,
+    "wasm_sha256_12": "fcc770113dbf",
     "reusable_as_is": true
   },
   {
@@ -462,8 +462,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 124453,
-    "wasm_sha256_12": "da33707dc862",
+    "wasm_size_bytes": 124518,
+    "wasm_sha256_12": "94639f050c6e",
     "reusable_as_is": true
   },
   {
@@ -475,8 +475,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 408537,
-    "wasm_sha256_12": "b786fe80e555",
+    "wasm_size_bytes": 408618,
+    "wasm_sha256_12": "fc39b068b4ca",
     "reusable_as_is": true
   },
   {
@@ -503,8 +503,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 180416,
-    "wasm_sha256_12": "294f24034dcf",
+    "wasm_size_bytes": 180481,
+    "wasm_sha256_12": "40261d53bc9a",
     "reusable_as_is": true
   },
   {
@@ -518,8 +518,8 @@
       "contract:registry/registry"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 76064,
-    "wasm_sha256_12": "78c6ce8262e1",
+    "wasm_size_bytes": 76129,
+    "wasm_sha256_12": "14853fbb15b2",
     "reusable_as_is": true
   },
   {
@@ -533,8 +533,30 @@
       "knowledge:graph/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 127954,
-    "wasm_sha256_12": "a217d41064bb",
+    "wasm_size_bytes": 128027,
+    "wasm_sha256_12": "86c2d8d2ed65",
+    "reusable_as_is": true
+  },
+  {
+    "name": "contrast-audit",
+    "package": "demo:contrastaudit@0.1.0",
+    "description": "`contrast-audit` \u2014 a WCAG contrast auditor that runs on the lattice",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "anthropic-api-key",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 175455,
+    "wasm_sha256_12": "637eed3a010d",
     "reusable_as_is": true
   },
   {
@@ -546,8 +568,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 214578,
-    "wasm_sha256_12": "6b279bf45bc1",
+    "wasm_size_bytes": 214643,
+    "wasm_sha256_12": "4195689e7b74",
     "reusable_as_is": true
   },
   {
@@ -559,8 +581,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 61253,
-    "wasm_sha256_12": "23a20226019a",
+    "wasm_size_bytes": 61342,
+    "wasm_sha256_12": "cc6fa2c32463",
     "reusable_as_is": true
   },
   {
@@ -572,8 +594,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56816,
-    "wasm_sha256_12": "570172fe01c7",
+    "wasm_size_bytes": 56881,
+    "wasm_sha256_12": "2b71bb698a4f",
     "reusable_as_is": true
   },
   {
@@ -590,8 +612,8 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 171901,
-    "wasm_sha256_12": "1c5a61b38030",
+    "wasm_size_bytes": 171982,
+    "wasm_sha256_12": "518e1f9fd919",
     "reusable_as_is": true
   },
   {
@@ -611,8 +633,8 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 194196,
-    "wasm_sha256_12": "de46450bd90c",
+    "wasm_size_bytes": 194269,
+    "wasm_sha256_12": "ed83896dd2bb",
     "reusable_as_is": true
   },
   {
@@ -624,8 +646,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56317,
-    "wasm_sha256_12": "8a8adc180695",
+    "wasm_size_bytes": 56319,
+    "wasm_sha256_12": "1114af43da82",
     "reusable_as_is": true
   },
   {
@@ -639,8 +661,8 @@
       "demo:shape/pager"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 60944,
-    "wasm_sha256_12": "f475de561d80",
+    "wasm_size_bytes": 61025,
+    "wasm_sha256_12": "0e35d55e8b25",
     "reusable_as_is": true
   },
   {
@@ -665,8 +687,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 219325,
-    "wasm_sha256_12": "852bc5e5ae4d",
+    "wasm_size_bytes": 219414,
+    "wasm_sha256_12": "0b8f3f988d89",
     "reusable_as_is": false
   },
   {
@@ -680,8 +702,8 @@
       "graph:run/driver"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 123536,
-    "wasm_sha256_12": "1f371fc553f6",
+    "wasm_size_bytes": 123617,
+    "wasm_sha256_12": "d718c51a8fca",
     "reusable_as_is": true
   },
   {
@@ -695,8 +717,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 82133,
-    "wasm_sha256_12": "411232af0f68",
+    "wasm_size_bytes": 82222,
+    "wasm_sha256_12": "8b78831278c0",
     "reusable_as_is": true
   },
   {
@@ -713,8 +735,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 172911,
-    "wasm_sha256_12": "c815e22e70c9",
+    "wasm_size_bytes": 172984,
+    "wasm_sha256_12": "8010870157c6",
     "reusable_as_is": true
   },
   {
@@ -730,8 +752,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 172511,
-    "wasm_sha256_12": "834854dca14e",
+    "wasm_size_bytes": 172600,
+    "wasm_sha256_12": "228d74660a98",
     "reusable_as_is": true
   },
   {
@@ -745,8 +767,8 @@
       "proxy:route/router"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 79678,
-    "wasm_sha256_12": "a9bb3855f37f",
+    "wasm_size_bytes": 79759,
+    "wasm_sha256_12": "e1b5d45e5e20",
     "reusable_as_is": true
   },
   {
@@ -771,8 +793,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 192738,
-    "wasm_sha256_12": "34b795b6620f",
+    "wasm_size_bytes": 192827,
+    "wasm_sha256_12": "71152023db87",
     "reusable_as_is": true
   },
   {
@@ -792,8 +814,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 109728,
-    "wasm_sha256_12": "cec4926f0e8f",
+    "wasm_size_bytes": 109817,
+    "wasm_sha256_12": "e846992ecaec",
     "reusable_as_is": true
   },
   {
@@ -808,8 +830,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 88943,
-    "wasm_sha256_12": "61cd7b477944",
+    "wasm_size_bytes": 89032,
+    "wasm_sha256_12": "244a82b1a6ae",
     "reusable_as_is": true
   },
   {
@@ -829,8 +851,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 51805,
-    "wasm_sha256_12": "4fe16388f253",
+    "wasm_size_bytes": 51878,
+    "wasm_sha256_12": "ec6a4907e6f5",
     "reusable_as_is": true
   },
   {
@@ -844,8 +866,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 76193,
-    "wasm_sha256_12": "1edccf41e866",
+    "wasm_size_bytes": 76266,
+    "wasm_sha256_12": "42e4cbad8004",
     "reusable_as_is": true
   },
   {
@@ -855,8 +877,8 @@
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 50053,
-    "wasm_sha256_12": "a829edd1cf00",
+    "wasm_size_bytes": 50134,
+    "wasm_sha256_12": "468770b0b907",
     "reusable_as_is": true
   },
   {
@@ -871,8 +893,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 77430,
-    "wasm_sha256_12": "783b549ddcb6",
+    "wasm_size_bytes": 77511,
+    "wasm_sha256_12": "e05ceeff9359",
     "reusable_as_is": true
   },
   {
@@ -886,8 +908,8 @@
       "graph:fitness/evaluator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 116651,
-    "wasm_sha256_12": "38273b2013bf",
+    "wasm_size_bytes": 116732,
+    "wasm_sha256_12": "cbfba28e164f",
     "reusable_as_is": true
   },
   {
@@ -903,8 +925,8 @@
       "id:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 145239,
-    "wasm_sha256_12": "552d4a613a16",
+    "wasm_size_bytes": 145312,
+    "wasm_sha256_12": "b71c9c5d4e96",
     "reusable_as_is": true
   },
   {
@@ -918,8 +940,8 @@
       "git:forge/repo"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 114868,
-    "wasm_sha256_12": "4d0febf96146",
+    "wasm_size_bytes": 114934,
+    "wasm_sha256_12": "23111652ffc3",
     "reusable_as_is": true
   },
   {
@@ -933,8 +955,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 137174,
-    "wasm_sha256_12": "1a3a721b3a03",
+    "wasm_size_bytes": 137239,
+    "wasm_sha256_12": "9c3eac52349f",
     "reusable_as_is": true
   },
   {
@@ -951,8 +973,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 159729,
-    "wasm_sha256_12": "1e9a5a912d6b",
+    "wasm_size_bytes": 159794,
+    "wasm_sha256_12": "bcac16967aeb",
     "reusable_as_is": true
   },
   {
@@ -964,8 +986,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 61470,
-    "wasm_sha256_12": "9a2b0211d025",
+    "wasm_size_bytes": 61551,
+    "wasm_sha256_12": "d5569efc3c5c",
     "reusable_as_is": true
   },
   {
@@ -998,8 +1020,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 162413,
-    "wasm_sha256_12": "ba4f183343bd",
+    "wasm_size_bytes": 162582,
+    "wasm_sha256_12": "d444c2b58cf5",
     "reusable_as_is": true
   },
   {
@@ -1009,8 +1031,8 @@
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47695,
-    "wasm_sha256_12": "a959f7757583",
+    "wasm_size_bytes": 47776,
+    "wasm_sha256_12": "42fa951624ca",
     "reusable_as_is": true
   },
   {
@@ -1038,8 +1060,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 98833,
-    "wasm_sha256_12": "a747c162b960",
+    "wasm_size_bytes": 98906,
+    "wasm_sha256_12": "3278023091ea",
     "reusable_as_is": true
   },
   {
@@ -1053,8 +1075,8 @@
       "knowledge:graph/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 68190,
-    "wasm_sha256_12": "377edb76d8a9",
+    "wasm_size_bytes": 68255,
+    "wasm_sha256_12": "4d02eba36983",
     "reusable_as_is": true
   },
   {
@@ -1068,8 +1090,8 @@
       "git:forge/repo"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 70737,
-    "wasm_sha256_12": "f9310961c719",
+    "wasm_size_bytes": 70803,
+    "wasm_sha256_12": "4ec3521ddafd",
     "reusable_as_is": true
   },
   {
@@ -1091,8 +1113,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 203369,
-    "wasm_sha256_12": "67d5d4c303fd",
+    "wasm_size_bytes": 203450,
+    "wasm_sha256_12": "fb093b41db46",
     "reusable_as_is": true
   },
   {
@@ -1112,8 +1134,8 @@
         "description": "fallback locale tag (default \"en\")."
       }
     ],
-    "wasm_size_bytes": 78004,
-    "wasm_sha256_12": "5017a88f7410",
+    "wasm_size_bytes": 78069,
+    "wasm_sha256_12": "b52123a34aea",
     "reusable_as_is": true
   },
   {
@@ -1125,8 +1147,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 60918,
-    "wasm_sha256_12": "69033e4be622",
+    "wasm_size_bytes": 60983,
+    "wasm_sha256_12": "a253f0d29910",
     "reusable_as_is": true
   },
   {
@@ -1138,8 +1160,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 58127,
-    "wasm_sha256_12": "e4b998b50b6c",
+    "wasm_size_bytes": 58192,
+    "wasm_sha256_12": "dd8085a17e65",
     "reusable_as_is": true
   },
   {
@@ -1151,8 +1173,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56233,
-    "wasm_sha256_12": "f4ba6a752d2a",
+    "wasm_size_bytes": 56298,
+    "wasm_sha256_12": "e330c4f5bb7c",
     "reusable_as_is": true
   },
   {
@@ -1172,8 +1194,8 @@
         "description": "reservation / record lifetime, seconds (default 86400)"
       }
     ],
-    "wasm_size_bytes": 83458,
-    "wasm_sha256_12": "31af92fbdb22",
+    "wasm_size_bytes": 83523,
+    "wasm_sha256_12": "790a355da0c0",
     "reusable_as_is": true
   },
   {
@@ -1185,8 +1207,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 78396,
-    "wasm_sha256_12": "268976c999e0",
+    "wasm_size_bytes": 78461,
+    "wasm_sha256_12": "8b296d64a5b6",
     "reusable_as_is": true
   },
   {
@@ -1204,8 +1226,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 176170,
-    "wasm_sha256_12": "30630a1b3807",
+    "wasm_size_bytes": 176259,
+    "wasm_sha256_12": "5bfeb10b36b5",
     "reusable_as_is": true
   },
   {
@@ -1217,8 +1239,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 121079,
-    "wasm_sha256_12": "768768020cee",
+    "wasm_size_bytes": 121160,
+    "wasm_sha256_12": "2ce2b6b8a077",
     "reusable_as_is": true
   },
   {
@@ -1255,8 +1277,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 166476,
-    "wasm_sha256_12": "2a3f70f2100a",
+    "wasm_size_bytes": 166645,
+    "wasm_sha256_12": "3840611044d0",
     "reusable_as_is": true
   },
   {
@@ -1273,8 +1295,8 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 161819,
-    "wasm_sha256_12": "079c27e84cff",
+    "wasm_size_bytes": 161900,
+    "wasm_sha256_12": "365c4ba18208",
     "reusable_as_is": true
   },
   {
@@ -1289,8 +1311,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 75819,
-    "wasm_sha256_12": "06129e11b576",
+    "wasm_size_bytes": 75908,
+    "wasm_sha256_12": "e344a8a5ae36",
     "reusable_as_is": true
   },
   {
@@ -1302,8 +1324,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 55671,
-    "wasm_sha256_12": "d8857e674e5c",
+    "wasm_size_bytes": 55736,
+    "wasm_sha256_12": "cabfc7cbef4e",
     "reusable_as_is": true
   },
   {
@@ -1323,8 +1345,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 156720,
-    "wasm_sha256_12": "cf1169e68e54",
+    "wasm_size_bytes": 156785,
+    "wasm_sha256_12": "7c8f6babe6a1",
     "reusable_as_is": false
   },
   {
@@ -1336,8 +1358,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 73930,
-    "wasm_sha256_12": "2f1c7a1c4a93",
+    "wasm_size_bytes": 73995,
+    "wasm_sha256_12": "0892b4796f04",
     "reusable_as_is": true
   },
   {
@@ -1351,8 +1373,8 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 64086,
-    "wasm_sha256_12": "82aaca45bc42",
+    "wasm_size_bytes": 64151,
+    "wasm_sha256_12": "0a733aa83a13",
     "reusable_as_is": true
   },
   {
@@ -1374,8 +1396,8 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 231612,
-    "wasm_sha256_12": "6380c5a389eb",
+    "wasm_size_bytes": 231701,
+    "wasm_sha256_12": "ead4b9b7803f",
     "reusable_as_is": true
   },
   {
@@ -1390,8 +1412,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 76485,
-    "wasm_sha256_12": "8ce4a5904a31",
+    "wasm_size_bytes": 76550,
+    "wasm_sha256_12": "a241ce9c9c03",
     "reusable_as_is": true
   },
   {
@@ -1407,8 +1429,8 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 68319,
-    "wasm_sha256_12": "c1ffcae4b242",
+    "wasm_size_bytes": 68392,
+    "wasm_sha256_12": "a5d9e590d26f",
     "reusable_as_is": false
   },
   {
@@ -1420,8 +1442,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 82499,
-    "wasm_sha256_12": "75cbce75fae1",
+    "wasm_size_bytes": 82564,
+    "wasm_sha256_12": "6694f39fb4fa",
     "reusable_as_is": true
   },
   {
@@ -1436,8 +1458,8 @@
       "knowledge:memory/promotion"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 114936,
-    "wasm_sha256_12": "dae431e1f66a",
+    "wasm_size_bytes": 115025,
+    "wasm_sha256_12": "ecaf0a41ea67",
     "reusable_as_is": true
   },
   {
@@ -1453,8 +1475,8 @@
       "resilience:breaker/breaker"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 162340,
-    "wasm_sha256_12": "6e9ccc830658",
+    "wasm_size_bytes": 162429,
+    "wasm_sha256_12": "50e31ba308f9",
     "reusable_as_is": true
   },
   {
@@ -1469,8 +1491,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 71841,
-    "wasm_sha256_12": "fd751203e2c8",
+    "wasm_size_bytes": 71930,
+    "wasm_sha256_12": "d4f44803fb46",
     "reusable_as_is": true
   },
   {
@@ -1488,8 +1510,8 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 170942,
-    "wasm_sha256_12": "e9303ac565f3",
+    "wasm_size_bytes": 171015,
+    "wasm_sha256_12": "3592c10b067e",
     "reusable_as_is": true
   },
   {
@@ -1508,8 +1530,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 78405,
-    "wasm_sha256_12": "ee2e147e9256",
+    "wasm_size_bytes": 78494,
+    "wasm_sha256_12": "2b7a9cd02ac9",
     "reusable_as_is": true
   },
   {
@@ -1536,8 +1558,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 118067,
-    "wasm_sha256_12": "5f79e81cd848",
+    "wasm_size_bytes": 118140,
+    "wasm_sha256_12": "5a0b8e63f400",
     "reusable_as_is": true
   },
   {
@@ -1549,8 +1571,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 58245,
-    "wasm_sha256_12": "fb42f9fe9fd1",
+    "wasm_size_bytes": 58326,
+    "wasm_sha256_12": "4cc158304a34",
     "reusable_as_is": true
   },
   {
@@ -1565,8 +1587,8 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 92416,
-    "wasm_sha256_12": "09019530282d",
+    "wasm_size_bytes": 92489,
+    "wasm_sha256_12": "f9b508d9b9c3",
     "reusable_as_is": true
   },
   {
@@ -1599,8 +1621,8 @@
         "description": "bearer token, granted by reference in the manifest"
       }
     ],
-    "wasm_size_bytes": 175041,
-    "wasm_sha256_12": "3fe4bd3a00ab",
+    "wasm_size_bytes": 175106,
+    "wasm_sha256_12": "487c0328bdb1",
     "reusable_as_is": true
   },
   {
@@ -1610,8 +1632,8 @@
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47389,
-    "wasm_sha256_12": "5ef49a24e25e",
+    "wasm_size_bytes": 47470,
+    "wasm_sha256_12": "2633ec3f9d2a",
     "reusable_as_is": true
   },
   {
@@ -1623,8 +1645,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 84582,
-    "wasm_sha256_12": "6e97ce6bf03a",
+    "wasm_size_bytes": 84663,
+    "wasm_sha256_12": "d7815dedd09b",
     "reusable_as_is": true
   },
   {
@@ -1649,8 +1671,8 @@
         "description": "backoff base seconds, doubled per attempt (default 5)"
       }
     ],
-    "wasm_size_bytes": 95402,
-    "wasm_sha256_12": "a9725e6e85c0",
+    "wasm_size_bytes": 95475,
+    "wasm_sha256_12": "cf6229424ab9",
     "reusable_as_is": true
   },
   {
@@ -1673,8 +1695,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 76436,
-    "wasm_sha256_12": "26ffee88c9a6",
+    "wasm_size_bytes": 76509,
+    "wasm_sha256_12": "f43731f54df8",
     "reusable_as_is": true
   },
   {
@@ -1705,8 +1727,8 @@
         "description": "demand the UV flag (biometric/PIN), not just user presence (default false)"
       }
     ],
-    "wasm_size_bytes": 199682,
-    "wasm_sha256_12": "bd31ceb68737",
+    "wasm_size_bytes": 199763,
+    "wasm_sha256_12": "960f86c82c2a",
     "reusable_as_is": true
   },
   {
@@ -1724,8 +1746,8 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149578,
-    "wasm_sha256_12": "308a4572a16e",
+    "wasm_size_bytes": 149651,
+    "wasm_sha256_12": "3b5178b031a5",
     "reusable_as_is": true
   },
   {
@@ -1745,8 +1767,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 168650,
-    "wasm_sha256_12": "b2c25d75c89c",
+    "wasm_size_bytes": 168723,
+    "wasm_sha256_12": "369ea3652ca4",
     "reusable_as_is": true
   },
   {
@@ -1758,8 +1780,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56160,
-    "wasm_sha256_12": "2fc15fc05ab1",
+    "wasm_size_bytes": 56241,
+    "wasm_sha256_12": "b31f5cfadfdc",
     "reusable_as_is": true
   },
   {
@@ -1780,8 +1802,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 136258,
-    "wasm_sha256_12": "3fa11bb6dd94",
+    "wasm_size_bytes": 136323,
+    "wasm_sha256_12": "7e05409a0a1b",
     "reusable_as_is": true
   },
   {
@@ -1793,8 +1815,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 75412,
-    "wasm_sha256_12": "9e68d29b82a7",
+    "wasm_size_bytes": 75493,
+    "wasm_sha256_12": "60895eb41f5d",
     "reusable_as_is": true
   },
   {
@@ -1810,8 +1832,8 @@
       "outbox:dispatch/queue"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 143985,
-    "wasm_sha256_12": "924e2476a38a",
+    "wasm_size_bytes": 144074,
+    "wasm_sha256_12": "e4135939fac9",
     "reusable_as_is": true
   },
   {
@@ -1915,8 +1937,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 576977,
-    "wasm_sha256_12": "a57f47f4cb48",
+    "wasm_size_bytes": 577107,
+    "wasm_sha256_12": "d3d9211e2ff1",
     "reusable_as_is": true
   },
   {
@@ -1930,8 +1952,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 154194,
-    "wasm_sha256_12": "3ac1f48f7f8a",
+    "wasm_size_bytes": 154267,
+    "wasm_sha256_12": "b7437e500496",
     "reusable_as_is": true
   },
   {
@@ -1951,8 +1973,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 104569,
-    "wasm_sha256_12": "d2f9af00cb66",
+    "wasm_size_bytes": 104642,
+    "wasm_sha256_12": "773c0174fcf9",
     "reusable_as_is": true
   },
   {
@@ -1968,8 +1990,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 156132,
-    "wasm_sha256_12": "9a3b69342c23",
+    "wasm_size_bytes": 156221,
+    "wasm_sha256_12": "ca2c4210b41e",
     "reusable_as_is": true
   },
   {
@@ -1981,8 +2003,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 78447,
-    "wasm_sha256_12": "27f2f0a1de37",
+    "wasm_size_bytes": 78442,
+    "wasm_sha256_12": "fd59dda47d2b",
     "reusable_as_is": true
   },
   {
@@ -1994,8 +2016,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 52282,
-    "wasm_sha256_12": "afc9c382dee0",
+    "wasm_size_bytes": 52347,
+    "wasm_sha256_12": "d7f5ed972ca7",
     "reusable_as_is": true
   },
   {
@@ -2010,8 +2032,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 69010,
-    "wasm_sha256_12": "7551ea0cc25b",
+    "wasm_size_bytes": 69083,
+    "wasm_sha256_12": "59dd4e9204d3",
     "reusable_as_is": true
   },
   {
@@ -2036,8 +2058,8 @@
         "description": "window / lockout duration, seconds          (default 300)"
       }
     ],
-    "wasm_size_bytes": 68982,
-    "wasm_sha256_12": "35ae9377476e",
+    "wasm_size_bytes": 69047,
+    "wasm_sha256_12": "ad18981f1fa2",
     "reusable_as_is": true
   },
   {
@@ -2053,8 +2075,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 210648,
-    "wasm_sha256_12": "bf7f78436315",
+    "wasm_size_bytes": 210737,
+    "wasm_sha256_12": "2188c7e853b0",
     "reusable_as_is": true
   },
   {
@@ -2066,8 +2088,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 16584,
-    "wasm_sha256_12": "7c28bc4bb44a",
+    "wasm_size_bytes": 16585,
+    "wasm_sha256_12": "7b66d7e583e9",
     "reusable_as_is": true
   },
   {
@@ -2077,8 +2099,8 @@
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47651,
-    "wasm_sha256_12": "afb7c88b2242",
+    "wasm_size_bytes": 47732,
+    "wasm_sha256_12": "d37e5f9e1d6c",
     "reusable_as_is": true
   },
   {
@@ -2088,8 +2110,8 @@
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47001,
-    "wasm_sha256_12": "8dbc9dea69ac",
+    "wasm_size_bytes": 47082,
+    "wasm_sha256_12": "8f7e914807c6",
     "reusable_as_is": true
   },
   {
@@ -2101,8 +2123,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 58245,
-    "wasm_sha256_12": "7ae2ec92f972",
+    "wasm_size_bytes": 58310,
+    "wasm_sha256_12": "0fdc93fa641f",
     "reusable_as_is": true
   },
   {
@@ -2122,8 +2144,8 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 191184,
-    "wasm_sha256_12": "05f246bddee9",
+    "wasm_size_bytes": 191257,
+    "wasm_sha256_12": "f4bfc2eb416a",
     "reusable_as_is": true
   },
   {
@@ -2138,8 +2160,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 94124,
-    "wasm_sha256_12": "f231cb31a1dd",
+    "wasm_size_bytes": 94213,
+    "wasm_sha256_12": "2c2b1ff3ae86",
     "reusable_as_is": true
   },
   {
@@ -2156,8 +2178,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 176236,
-    "wasm_sha256_12": "ebe6666141da",
+    "wasm_size_bytes": 176301,
+    "wasm_sha256_12": "3a9b33da5b72",
     "reusable_as_is": true
   },
   {
@@ -2176,8 +2198,8 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 153530,
-    "wasm_sha256_12": "2fe756115cae",
+    "wasm_size_bytes": 153611,
+    "wasm_sha256_12": "e756c8a0c147",
     "reusable_as_is": true
   },
   {
@@ -2191,8 +2213,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 98629,
-    "wasm_sha256_12": "96e1eee7b521",
+    "wasm_size_bytes": 98710,
+    "wasm_sha256_12": "fa2d7e54d3d0",
     "reusable_as_is": true
   },
   {
@@ -2206,8 +2228,8 @@
       "comp:secrets/reader"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 72423,
-    "wasm_sha256_12": "b5244d71a6ec",
+    "wasm_size_bytes": 72504,
+    "wasm_sha256_12": "e7026a39e51c",
     "reusable_as_is": true
   },
   {
@@ -2227,8 +2249,8 @@
         "description": "base64 STANDARD, MUST decode to exactly 32 bytes \u2014 required."
       }
     ],
-    "wasm_size_bytes": 99205,
-    "wasm_sha256_12": "5310ed571c9f",
+    "wasm_size_bytes": 98869,
+    "wasm_sha256_12": "c91bad627a6d",
     "reusable_as_is": true
   },
   {
@@ -2242,8 +2264,8 @@
       "graph:select/selector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 119485,
-    "wasm_sha256_12": "8f0689d0cb99",
+    "wasm_size_bytes": 119566,
+    "wasm_sha256_12": "7268ce0dc66d",
     "reusable_as_is": true
   },
   {
@@ -2263,8 +2285,8 @@
         "description": "session lifetime, seconds (default 86400). The per-call"
       }
     ],
-    "wasm_size_bytes": 86377,
-    "wasm_sha256_12": "fa13f3c7c7f2",
+    "wasm_size_bytes": 86458,
+    "wasm_sha256_12": "53059197b6c4",
     "reusable_as_is": true
   },
   {
@@ -2276,8 +2298,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 14917,
-    "wasm_sha256_12": "ef8a80f57f9d",
+    "wasm_size_bytes": 14918,
+    "wasm_sha256_12": "702837af4542",
     "reusable_as_is": true
   },
   {
@@ -2289,8 +2311,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 72728,
-    "wasm_sha256_12": "98df1320fbf9",
+    "wasm_size_bytes": 78050,
+    "wasm_sha256_12": "456f8f5af2f7",
     "reusable_as_is": true
   },
   {
@@ -2304,8 +2326,8 @@
       "slug:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 64547,
-    "wasm_sha256_12": "caafa24b70ce",
+    "wasm_size_bytes": 68152,
+    "wasm_sha256_12": "f93198f0e5d5",
     "reusable_as_is": true
   },
   {
@@ -2326,8 +2348,8 @@
       "zip:archive/archiver"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 181096,
-    "wasm_sha256_12": "fb676427c1e9",
+    "wasm_size_bytes": 181177,
+    "wasm_sha256_12": "bcda3c915f41",
     "reusable_as_is": true
   },
   {
@@ -2339,8 +2361,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 659568,
-    "wasm_sha256_12": "cfa41a5c0e58",
+    "wasm_size_bytes": 659649,
+    "wasm_sha256_12": "920df1fd690d",
     "reusable_as_is": true
   },
   {
@@ -2359,8 +2381,8 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 186988,
-    "wasm_sha256_12": "168b755460c3",
+    "wasm_size_bytes": 187069,
+    "wasm_sha256_12": "2a61f399f8c9",
     "reusable_as_is": false
   },
   {
@@ -2377,8 +2399,8 @@
       "wit:reflect/inspector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 196451,
-    "wasm_sha256_12": "77b9cba87dac",
+    "wasm_size_bytes": 196532,
+    "wasm_sha256_12": "bf94026a3a23",
     "reusable_as_is": true
   },
   {
@@ -2390,8 +2412,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 85232,
-    "wasm_sha256_12": "042185f91ac1",
+    "wasm_size_bytes": 85313,
+    "wasm_sha256_12": "47027b4d91b1",
     "reusable_as_is": true
   },
   {
@@ -2411,8 +2433,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 255131,
-    "wasm_sha256_12": "299c0004b9b2",
+    "wasm_size_bytes": 255204,
+    "wasm_sha256_12": "4baa74e1b047",
     "reusable_as_is": true
   },
   {
@@ -2424,8 +2446,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 70218,
-    "wasm_sha256_12": "0abeb01a8849",
+    "wasm_size_bytes": 70299,
+    "wasm_sha256_12": "7ebc09fa138b",
     "reusable_as_is": true
   },
   {
@@ -2442,8 +2464,8 @@
       "ratelimit:guard/limiter"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 146685,
-    "wasm_sha256_12": "17015578f976",
+    "wasm_size_bytes": 146750,
+    "wasm_sha256_12": "3c98f8119d1e",
     "reusable_as_is": true
   },
   {
@@ -2455,8 +2477,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 60279,
-    "wasm_sha256_12": "21c718c1bcbe",
+    "wasm_size_bytes": 60344,
+    "wasm_sha256_12": "321e6211b0ed",
     "reusable_as_is": true
   },
   {
@@ -2485,8 +2507,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 252828,
-    "wasm_sha256_12": "aefadce18596",
+    "wasm_size_bytes": 252909,
+    "wasm_sha256_12": "c6516f47301e",
     "reusable_as_is": true
   },
   {
@@ -2506,8 +2528,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 189808,
-    "wasm_sha256_12": "06ef6082f39c",
+    "wasm_size_bytes": 189881,
+    "wasm_sha256_12": "79b9e3e21309",
     "reusable_as_is": true
   },
   {
@@ -2524,8 +2546,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149767,
-    "wasm_sha256_12": "6d8f4d1e7e3e",
+    "wasm_size_bytes": 149848,
+    "wasm_sha256_12": "270d4d388b14",
     "reusable_as_is": true
   },
   {
@@ -2556,8 +2578,8 @@
         "description": "HMAC key; default \"upload-default-secret\""
       }
     ],
-    "wasm_size_bytes": 79187,
-    "wasm_sha256_12": "a58c2403d56b",
+    "wasm_size_bytes": 79260,
+    "wasm_sha256_12": "d21694ffc82b",
     "reusable_as_is": true
   },
   {
@@ -2569,8 +2591,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 102664,
-    "wasm_sha256_12": "b69e13805a4e",
+    "wasm_size_bytes": 102745,
+    "wasm_sha256_12": "21925b258215",
     "reusable_as_is": true
   },
   {
@@ -2589,8 +2611,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 57030,
-    "wasm_sha256_12": "deafc15766a5",
+    "wasm_size_bytes": 60802,
+    "wasm_sha256_12": "2cfc6d6dcf56",
     "reusable_as_is": true
   },
   {
@@ -2630,8 +2652,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 297881,
-    "wasm_sha256_12": "62eb1eeb1ade",
+    "wasm_size_bytes": 297954,
+    "wasm_sha256_12": "20e3bee690b7",
     "reusable_as_is": false
   },
   {
@@ -2647,8 +2669,8 @@
       "vgit:store/worktree"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 128762,
-    "wasm_sha256_12": "abc14a4796ed",
+    "wasm_size_bytes": 128827,
+    "wasm_sha256_12": "d5e204be68a5",
     "reusable_as_is": true
   },
   {
@@ -2671,8 +2693,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 136508,
-    "wasm_sha256_12": "22064b9eb046",
+    "wasm_size_bytes": 136573,
+    "wasm_sha256_12": "941c0741a0fc",
     "reusable_as_is": true
   },
   {
@@ -2684,8 +2706,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 196753,
-    "wasm_sha256_12": "768538147ddd",
+    "wasm_size_bytes": 197083,
+    "wasm_sha256_12": "1559a1b7a1be",
     "reusable_as_is": true
   },
   {
@@ -2700,8 +2722,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 69746,
-    "wasm_sha256_12": "37900bbf973a",
+    "wasm_size_bytes": 69827,
+    "wasm_sha256_12": "25b0f910befd",
     "reusable_as_is": true
   },
   {
@@ -2725,8 +2747,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 181223,
-    "wasm_sha256_12": "3a8febd11124",
+    "wasm_size_bytes": 181304,
+    "wasm_sha256_12": "9a2911c097ca",
     "reusable_as_is": false
   },
   {
@@ -2738,8 +2760,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 60719,
-    "wasm_sha256_12": "4afd30d6b490",
+    "wasm_size_bytes": 60808,
+    "wasm_sha256_12": "740590e91457",
     "reusable_as_is": true
   },
   {
@@ -2752,8 +2774,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 1100987,
-    "wasm_sha256_12": "eb6a4b7c29ea",
+    "wasm_size_bytes": 1100382,
+    "wasm_sha256_12": "0523f8f7b802",
     "reusable_as_is": true
   },
   {
@@ -2765,8 +2787,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 48860,
-    "wasm_sha256_12": "56448caec836",
+    "wasm_size_bytes": 48941,
+    "wasm_sha256_12": "dd06f28555d5",
     "reusable_as_is": true
   }
 ]
