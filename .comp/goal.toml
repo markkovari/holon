@@ -1,5 +1,31 @@
 # The goal, versioned in the repo it acts on (ADR-0082).
 #
+# WHAT THIS GOAL TELLS A PART, AND WHAT IT DELIBERATELY DOES NOT
+#
+# The first version of this goal wrote down every trap the author hit while building
+# the reference. Twelve branches then passed on the first attempt at score 1000 —
+# selection had nothing to choose between, eleven candidates were discarded, and the
+# search had stopped being a search. A goal specified to that depth does not need
+# four branches; it needs one.
+#
+# So the line is drawn at DISCOVERABILITY, not difficulty:
+#
+#   KEPT   — facts a part cannot find from what it is shown, and that fail SILENTLY
+#            or opaquely: `find_by` wanting a JSON-encoded value (it returns
+#            `Ok(vec![])` for a wrong query, indistinguishable from an empty
+#            collection), and serde built without std (a bare E0277 on a HashMap).
+#            Removing these does not test skill, it tests luck.
+#
+#   CUT    — decisions the contract and the files in `context` already imply: that a
+#            transition has to move the document as well as the fsm instance (the
+#            contract says the document is the readable copy and `digest` reads it),
+#            which `Reply` arm answers a CSV (src/lib.rs documents it), and what
+#            `create_instance` does to an existing instance (fsm.wit says).
+#
+# A part that cannot work those out from its own contract and its own imports is
+# telling us something worth knowing, which is the entire point of running a search
+# rather than writing the code.
+#
 # THREE parts, which is the point. The clinic proved two halves can negotiate a
 # contract; three is where agreement stops being a handshake and becomes a protocol —
 # one version every part must land on, and a join that fails if any one of them
@@ -160,16 +186,9 @@ contract's 409 body has to report, so you do not need to look it up yourself.
     pub struct Status { pub machine: String, pub instance: String,
                         pub state: String, pub done: bool, pub steps: u32 }
 
-`define` is idempotent, so calling it before you need it is the simplest way to be
-sure the machine exists on a cold store. `create_instance` RESETS an existing
-instance to initial — so a report that is already in the machine must not be
-re-created, or every transition starts from `open` again.
+Read `fsm.wit` for how `define` and `create_instance` behave on a store that already
+has the machine or the instance — it says, and the difference matters.
 
-THE TRAP: the fsm holds the state, and so does the report document. A transition has
-to update BOTH — the fsm instance and the `state` field in `records:store` — because
-`digest` reads the document and must not have to ask the fsm. Updating only the fsm
-passes nothing; updating only the document passes your own gate and fails the
-composition.
 """
 writable = ["components/triage-domain/src/workflow.rs", "CONTRACT-REQUEST.md"]
 context = [
@@ -206,11 +225,8 @@ formatting it by hand fails even if you get the quoting right.
 A file is `Vec<Row>` — the header is just the first `Row` — and `format` returns the
 whole document as one `String`.
 
-Answer the CSV with `Reply::raw(200, "text/csv", document.into_bytes())`, NOT
-`Reply::json`. The router serialises a JSON body with `to_string()`, and a
-`Value::String` serialises to a JSON string literal — quotes and escapes included —
-so a correct CSV document would arrive as one quoted blob and a CSV reader would see
-a single column. The gate checks the content type too.
+The gate checks the content type as well as the columns, so look at what `Reply` in
+src/lib.rs can actually answer with before you build the response.
 
 `by_state` and `by_component` include only the states and components that OCCUR: no
 zero-filled keys. A day with nothing in it is a digest of zero, not a 404.
