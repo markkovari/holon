@@ -21,5 +21,5 @@ line in the "honestly missing" column of one of them.
 To run one, copy its `writable` and `checks` into a `.comp/goal.toml` and:
 
 ```bash
-bash goal-demo.sh real         # against this very repo — Holon working on Holon
+CHECKOUT=$PWD REPO=<owner>/<name> bash goal-demo.sh real   # Holon working on Holon
 ```

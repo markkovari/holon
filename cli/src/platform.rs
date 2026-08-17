@@ -36,7 +36,7 @@ pub fn load() -> Result<Session> {
     let p = creds_path();
     let raw = std::fs::read(&p)
         .with_context(|| format!("no session at {} — run `comp login` first", p.display()))?;
-    Ok(serde_json::from_slice(&raw).context("credentials file is not readable JSON")?)
+    serde_json::from_slice(&raw).context("credentials file is not readable JSON")
 }
 
 fn save(s: &Session) -> Result<()> {

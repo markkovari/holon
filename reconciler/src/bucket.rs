@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_refill_capped_at_capacity() {
-        let mut bucket = TokenBucket::new(100, 10);
+        let bucket = TokenBucket::new(100, 10);
         assert_eq!(bucket.available(10000), 100); // Would be 200, but capped at 100
     }
 
