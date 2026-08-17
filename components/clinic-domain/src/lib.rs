@@ -61,19 +61,36 @@ fn write_all(stream: &bindings::wasi::io::streams::OutputStream, mut bytes: &[u8
 
 struct Component;
 
-/// What a handler answers with: a status and a JSON body.
-pub struct Reply(pub u16, pub Value);
+/// What a handler answers with: a status, and a body that is JSON unless the
+/// handler says otherwise.
+pub struct Reply {
+    pub status: u16,
+    /// The JSON body. `Value::Null` means no body at all — see `no_content`.
+    pub json: Value,
+    /// A body the router must NOT serialise as JSON, with its content type.
+    ///
+    /// `text/csv` cannot be expressed as a `Value`: `Value::String` serialises
+    /// to a JSON string *literal*, surrounding quotes and `\"` escapes included,
+    /// so a CSV parser reads one quoted blob instead of six columns. Both parts
+    /// of the run that needed this asked for it in the same words before the
+    /// scaffold had it.
+    pub raw: Option<(String, Vec<u8>)>,
+}
 
 impl Reply {
     pub fn json(status: u16, body: Value) -> Self {
-        Reply(status, body)
+        Reply { status, json: body, raw: None }
     }
     pub fn err(status: u16, code: &str) -> Self {
-        Reply(status, json!({ "error": code }))
+        Reply::json(status, json!({ "error": code }))
     }
     /// 204 carries no body, and a JSON `null` is not "no body".
     pub fn no_content() -> Self {
-        Reply(204, Value::Null)
+        Reply::json(204, Value::Null)
+    }
+    /// A body sent through byte-for-byte, under the content type you name.
+    pub fn raw(status: u16, content_type: &str, bytes: Vec<u8>) -> Self {
+        Reply { status, json: Value::Null, raw: Some((content_type.to_string(), bytes)) }
     }
 }
 
@@ -225,7 +242,7 @@ impl Guest for Component {
 
         // The router: `/health` here, everything else to the half that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
-        let Reply(status, payload) = match seg.as_slice() {
+        let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             // A fixture, not a feature. The `visits` half cannot book anything
             // without a pet, and pets belong to the OTHER half — so a gate that
@@ -245,14 +262,26 @@ impl Guest for Component {
         };
 
         let headers = Fields::new();
-        let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+        let content_type = match &raw {
+            Some((ct, _)) => ct.as_str(),
+            None => "application/json",
+        };
+        let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
         let resp = OutgoingResponse::new(headers);
         let _ = resp.set_status_code(status);
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            if !payload.is_null() {
-                let _ = write_all(&stream, payload.to_string().as_bytes());
+            match &raw {
+                // Byte-for-byte. `to_string()` here is what turned a CSV
+                // document into a JSON string literal.
+                Some((_, bytes)) => {
+                    let _ = write_all(&stream, bytes);
+                }
+                None if !payload.is_null() => {
+                    let _ = write_all(&stream, payload.to_string().as_bytes());
+                }
+                None => {}
             }
             drop(stream);
         }
