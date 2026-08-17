@@ -112,6 +112,7 @@ capabilities, so anything marked reusable drops into another app via
 | **pipeline-domain** | `pipeline:app@0.1.0` | event:bus/bus, id:generate/generator, outbox:dispatch/queue | — | 140 KiB | ✓ |
 | **platform-domain** | `platform:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, blob:store/blobstore, comp:store/cas, policy:guard/guard, quota:meter/meter, records:store/store, secrets:vault/vault, config/store, http/outgoing-handler, kv:store, wit:reflect/composer, wit:reflect/inspector | `applier-secret`, `ingress-suffix`, `config`, `id`, `tag`, `ref`, `probe`, `key`, `collection`, `env`, `app`, `force`, `confirm`, `state`, `max-placement-lag-per-node`, `max-placement-lag`, `status-max-age`, `org`, `token` | 563 KiB | ✓ |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 150 KiB | ✓ |
+| **poll-domain** | `poll:domain@0.1.0` | id:generate/generator, qr:encode/encoder, records:store/store, svg:chart/charts | — | 139 KiB | ✓ |
 | **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes` | 102 KiB | ✓ |
 | **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 152 KiB | ✓ |
 | **qr** | `qr:encode@0.1.0` | pure compute | — | 76 KiB | ✓ |
@@ -146,7 +147,7 @@ capabilities, so anything marked reusable drops into another app via
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 58 KiB | ✓ |
 | **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 246 KiB | ✓ |
 | **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 185 KiB | ✓ |
-| **triage-domain** | `triage:domain@0.1.0` | csv:codec/codec, fsm:workflow/engine, id:generate/generator, pii:redact/redactor, records:store/store | — | 91 KiB | ✓ |
+| **triage-domain** | `triage:domain@0.1.0` | csv:codec/codec, fsm:workflow/engine, id:generate/generator, pii:redact/redactor, records:store/store | — | 187 KiB | ✓ |
 | **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 146 KiB | ✓ |
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 77 KiB | ✓ |
 | **validate** | `validate:schema@0.1.0` | pure compute | — | 100 KiB | ✓ |
@@ -262,6 +263,7 @@ capabilities, so anything marked reusable drops into another app via
 - **pipeline-domain** — pipeline:app — a reliable event pipeline over composed contracts
 - **platform-domain** — `platform-domain` — the platform control plane (docs/adr/) as ONE composed wasm
 - **policy-guard** — `policy-guard` — does this principal own THIS row? — attribute-based, row-level authorization beyond roles
+- **poll-domain** — `poll-domain` — a live poll, as one component
 - **proxy-route** — `proxy-route` — forward a request to an upstream by path prefix — a config-driven reverse proxy
 - **pulse-domain** — pulse:app — a realtime chat room over composed contracts
 - **qr** — `qr` — turn a URL or a string into a scannable QR code, as SVG

@@ -1957,6 +1957,24 @@
     "reusable_as_is": true
   },
   {
+    "name": "poll-domain",
+    "package": "poll:domain@0.1.0",
+    "description": "`poll-domain` \u2014 a live poll, as one component",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "id:generate/generator",
+      "qr:encode/encoder",
+      "records:store/store",
+      "svg:chart/charts"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 143083,
+    "wasm_sha256_12": "f0ecce172a95",
+    "reusable_as_is": true
+  },
+  {
     "name": "proxy-route",
     "package": "proxy:route@0.1.0",
     "description": "`proxy-route` \u2014 forward a request to an upstream by path prefix \u2014 a config-driven reverse proxy",
@@ -2547,8 +2565,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 93554,
-    "wasm_sha256_12": "10aa9ce39344",
+    "wasm_size_bytes": 192317,
+    "wasm_sha256_12": "280115519cea",
     "reusable_as_is": true
   },
   {

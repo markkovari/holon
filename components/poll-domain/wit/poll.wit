@@ -1,0 +1,27 @@
+// poll:domain — a live poll, as one component.
+//
+// Ask a question, share a link, watch the answers arrive. Chosen as an example
+// because it is the smallest thing here whose correctness is genuinely about the
+// BROWSER: one vote per person is a cookie rule, a result that updates is a poll
+// of an endpoint, and a chart is a document the page embeds. An API test can assert
+// all three and still ship a page that does not work.
+//
+// Everything hard is imported. The chart is not drawn in JavaScript and the QR is
+// not drawn at all — both are components that already exist, returning documents
+// the page embeds. That is the point worth demonstrating: server-rendered SVG means
+// the same chart works in a browser, an email, or a screenshot, with no client-side
+// charting code and no build step.
+package poll:domain@0.1.0;
+
+world poll-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Polls and votes are records.
+    import records:store/store@0.1.0;
+    /// Poll codes and voter ids.
+    import id:generate/generator@0.1.0;
+    /// The results, as an SVG document the page embeds — `svg-chart` satisfies it.
+    import svg:chart/charts@0.1.0;
+    /// The share link, as a QR nobody had to draw — `qr-encode` satisfies it.
+    import qr:encode/encoder@0.1.0;
+}
