@@ -27,8 +27,11 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use comp_reconciler::fleet::{repo_root, Fleet};
+use comp_reconciler::fleet::Fleet;
 use serde_json::{json, Value};
+
+mod harness;
+use harness::composed_gate;
 
 /// Branches per generation, and how many generations. The tree is `WIDTH^DEPTH`
 /// leaves, so this grows fast on purpose — the point is to find where it stops
@@ -211,16 +214,6 @@ struct Sample {
 /// stops at the first failing test binary, each such suite hid the next one. This
 /// is the same rule `Fleet::start` follows: honour the hand-made artifact when it
 /// is there, derive it from gate-domain's own imports when it is not.
-fn composed_gate() -> Vec<u8> {
-    let root = repo_root();
-    let legacy = root.join("components/target/gate_domain.composed.wasm");
-    if let Ok(bytes) = std::fs::read(&legacy) {
-        return bytes;
-    }
-    let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
-    comp_reconciler::plug::compose("gate-domain", &catalog)
-        .expect("gate-domain composes with what it imports — `just build` first")
-}
 
 #[test]
 #[ignore = "10-20 minutes; run with --ignored --nocapture"]

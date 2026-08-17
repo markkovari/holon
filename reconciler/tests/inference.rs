@@ -21,6 +21,9 @@ use std::time::Duration;
 use comp_reconciler::fleet::{free_port, repo_root, Fleet};
 use serde_json::Value;
 
+mod harness;
+use harness::read_chunked;
+
 /// The token the vault holds. It appears in no manifest and no config map, and
 /// the test asserts the provider sent exactly this — so a key smuggled in
 /// through config could not produce a pass.
@@ -33,27 +36,6 @@ struct Seen {
 }
 
 /// `size\r\n<bytes>\r\n` until a zero-length chunk.
-fn read_chunked(reader: &mut BufReader<std::net::TcpStream>) -> Vec<u8> {
-    let mut out = Vec::new();
-    loop {
-        let mut size_line = String::new();
-        if reader.read_line(&mut size_line).unwrap_or(0) == 0 {
-            break;
-        }
-        let size = usize::from_str_radix(size_line.trim(), 16).unwrap_or(0);
-        if size == 0 {
-            break;
-        }
-        let mut chunk = vec![0u8; size];
-        if std::io::Read::read_exact(reader, &mut chunk).is_err() {
-            break;
-        }
-        out.extend_from_slice(&chunk);
-        let mut crlf = String::new();
-        let _ = reader.read_line(&mut crlf);
-    }
-    out
-}
 
 /// An OpenAI-compatible endpoint that answers one request and reports it.
 ///

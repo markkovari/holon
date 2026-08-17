@@ -245,7 +245,7 @@ impl KvBackend for RedisKv {
         let bucket = bucket.as_str();
         use redis::Commands;
         let mut c = crate::sync::held(&self.conn);
-        Ok(c.exists(Self::k(bucket, key)).context("redis exists")?)
+        c.exists(Self::k(bucket, key)).context("redis exists")
     }
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         let bucket = bucket.as_str();
@@ -497,6 +497,13 @@ impl KvBackend for NatsKv {
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         use futures::StreamExt;
         let s = self.store_for(bucket.as_str())?;
+        // The listing's failure is REPORTED, not turned into an empty list.
+        //
+        // This was `Err(_) => {}` returning `Ok(vec![])`, so a bucket that could not
+        // be listed and a bucket with nothing in it were the same answer. Nine
+        // components list keys, and every one of them would have read "empty" and
+        // acted on it — the same silent-truncation shape `guestio.rs` lints for on
+        // the guest side of the wire, on the host side of it.
         let keys = self.block(async move {
             let mut out = Vec::new();
             match s.keys().await {
@@ -524,11 +531,11 @@ impl KvBackend for NatsKv {
                         }
                     }
                 }
-                Err(_) => {}
+                Err(e) => return Err(e),
             }
-            out
+            Ok(out)
         });
-        Ok(keys)
+        keys.context("nats kv list-keys")
     }
 
     /// Genuinely atomic ACROSS NODES, which no other backend here manages.

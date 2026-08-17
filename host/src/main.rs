@@ -1283,11 +1283,11 @@ fn resolve(
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    let routes = crate::sync::reading(&routes);
+    let routes = crate::sync::reading(routes);
     let id = routes.get(&host).or_else(|| routes.get(CATCH_ALL))?;
     // A plug is in the instance table but has no HTTP world, so it can never be
     // reached through the door even if something routed to it by mistake.
-    crate::sync::reading(&instances).get(id).filter(|i| i.pre.is_some()).cloned()
+    crate::sync::reading(instances).get(id).filter(|i| i.pre.is_some()).cloned()
 }
 
 fn not_found() -> hyper::Response<HyperOutgoingBody> {

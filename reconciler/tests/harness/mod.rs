@@ -349,3 +349,49 @@ impl Store {
         (at.elapsed(), out)
     }
 }
+
+/// Read an HTTP chunked-transfer body off a raw socket.
+///
+/// Four suites had a byte-identical copy of this. It exists at all because the
+/// tests that need it are the ones talking HTTP by hand — a stand-in forge, a
+/// stand-in model provider — where a client library would hide the framing that
+/// is the thing under test.
+pub fn read_chunked(reader: &mut std::io::BufReader<std::net::TcpStream>) -> Vec<u8> {
+    use std::io::BufRead;
+    let mut out = Vec::new();
+    loop {
+        let mut size_line = String::new();
+        if reader.read_line(&mut size_line).unwrap_or(0) == 0 {
+            break;
+        }
+        let size = usize::from_str_radix(size_line.trim(), 16).unwrap_or(0);
+        if size == 0 {
+            break;
+        }
+        let mut chunk = vec![0u8; size];
+        if std::io::Read::read_exact(reader, &mut chunk).is_err() {
+            break;
+        }
+        out.extend_from_slice(&chunk);
+        let mut crlf = String::new();
+        let _ = reader.read_line(&mut crlf);
+    }
+    out
+}
+
+/// The composed `gate-domain` artifact, however it was built.
+///
+/// Prefers a hand-composed `gate_domain.composed.wasm` when one is there, and
+/// otherwise derives the composition from the component's own imports — the same
+/// fallback `Fleet::start` uses, so a fresh checkout that ran `just build` but not
+/// `just compose-gate` still works.
+pub fn composed_gate() -> Vec<u8> {
+    let root = repo_root();
+    let legacy = root.join("components/target/gate_domain.composed.wasm");
+    if let Ok(bytes) = std::fs::read(&legacy) {
+        return bytes;
+    }
+    let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
+    comp_reconciler::plug::compose("gate-domain", &catalog)
+        .expect("gate-domain composes with what it imports — `just build` first")
+}

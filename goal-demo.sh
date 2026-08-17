@@ -9,8 +9,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export CHECKOUT="/Users/markkovari/DEV/markkovari/agentic-graph-loop-prompt-engineering-playground-generative-ai"
-export REPO="markkovari/agentic-graph-loop-prompt-engineering-playground-generative-ai"
+# The repository the loop WORKS ON — deliberately not this one, and deliberately
+# not hardcoded. `README.md` offers `bash goal-demo.sh real` as the one command
+# that takes a goal to a pull request, and it named one person's home directory,
+# so it was one command that worked for exactly one person.
+: "${CHECKOUT:?set CHECKOUT to a checkout of the repo the loop should work on}"
+: "${REPO:?set REPO to that checkout on the forge as owner/name, e.g. acme/widgets}"
+export CHECKOUT REPO
 export ANTHROPIC_KEY="$HOME/.comp-secrets/anthropic"
 export GITHUB_TOKEN="$HOME/.comp-secrets/ghpat"
 

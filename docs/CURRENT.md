@@ -122,7 +122,13 @@ fast a dead machine is noticed), `max_inflight` (where the ingress starts sheddi
 
 ## Tests
 
-173 across four crates, `cargo nextest`. No Python anywhere in `bench/` or `e2e/`.
+374 across four workspaces — 303 in `reconciler`, 43 in `host`, 19 in `cli`, 9 in
+`lattice`. No Python anywhere in `bench/` or `e2e/`.
+
+Not guarded by a test, deliberately: an exact count is a number that has to be
+edited every time somebody adds a test, which is how it came to say 173 while
+another line of this same file said 356. Count them with
+`cargo test --manifest-path <workspace>/Cargo.toml -- --list | grep -c ': test$'`.
 
 ```
 cargo build --release --manifest-path host/Cargo.toml   # tests spawn this
@@ -294,9 +300,9 @@ claim about a distributed system without one is a hope.
   second CLIENT of the platform API rather than a second control plane, and it
   polls while a run is unresolved plus a grace period, because the resolution and
   the last events are separate writes.
-- **`just test` compiles every test target first, then runs them** — 356 tests, a
-  number nobody could state before, because a workspace whose tests had never
-  compiled hid 34 of them and no suite complained.
+- **`just test` compiles every test target first, then runs them** — a number
+  nobody could state before, because a workspace whose tests had never compiled hid
+  34 of them and no suite complained.
 
 ## Known behaviours, not gaps
 
@@ -369,6 +375,11 @@ worklist in [`.comp/goals/`](../.comp/goals/).
   interface an agent cannot reach. Every run sweeps the pool on
   its way out, so it stays bounded without a daemon, and a decomposed run's PARTS
   do all of it too — each on its own goal. → goal 08, ADR-0084
+- **`redis 0.27` will stop compiling.** cargo reports it as containing code a
+  future Rust will reject, and it is the only such dependency in the tree. The fix
+  is a jump to 1.x, which is a major-version API migration of a KV BACKEND against
+  which nothing here runs an integration test — so it is named rather than
+  attempted. `--kv sqlite` and `--kv nats` are the tested paths.
 - **Decomposed runs leave no trace at all.** `decomposed()` never constructs a
   `Trace`, so a multi-part run (ADR-0086) records no `run-started`, no attempts, no
   verdicts and no capability search — the console cannot show one, and ADR-0092's

@@ -518,6 +518,483 @@ fn wait_serving(port: u16, host: &str, within: Duration) -> Result<()> {
     bail!("{host} never served within {within:?} — last: {last}");
 }
 
+/// Can this gate judge anything at all?
+///
+/// A check that already passes on the base tree cannot judge a candidate: one that
+/// changes nothing satisfies it. The first real decomposed run on this repository
+/// scored 1000 on two candidates that had deleted their own component exports,
+/// because `cargo component check` passes on a crate implementing none of its
+/// world (goal 07). This is the cheapest possible place to find that out — before
+/// a generation buys the wrong answer.
+///
+/// `Ok(false)` means the run should stop, having spent nothing. A critic that
+/// cannot RUN is reported and ignored: a guard that fails must not stop work a
+/// person asked for.
+fn gate_can_judge(
+    goal: &GoalSpec,
+    checks: &[Value],
+    gate_port: u16,
+    base_commit: &str,
+    tree: &[Value],
+    timeout: u64,
+) -> bool {
+    let excused: Vec<String> = goal
+        .checks
+        .iter()
+        .chain(goal.parts.iter().flat_map(|p| p.checks.iter()))
+        .filter(|c| c.may_pass_base)
+        .map(|c| c.id.clone())
+        .collect();
+    let mut every_check: Vec<Value> = checks.to_vec();
+    for p in &goal.parts {
+        every_check.extend(p.checks.iter().map(|c| {
+            json!({ "id": c.id, "required": c.required, "weight": c.weight, "command": c.command })
+        }));
+    }
+    match compose::criticise(
+        &format!("http://127.0.0.1:{gate_port}/check"),
+        base_commit,
+        &json!(tree),
+        &json!(every_check),
+        &excused,
+        Duration::from_secs(timeout),
+    ) {
+        Ok(vacuous) => {
+            for v in vacuous.iter().filter(|v| v.excused) {
+                println!("gate: `{}` passes on the base, and says it is meant to", v.id);
+            }
+            let refusals = compose::refusal(&vacuous);
+            if !refusals.is_empty() {
+                println!("\nREFUSED — this gate cannot judge anything:\n");
+                for r in &refusals {
+                    println!("  · {r}");
+                }
+                println!(
+                    "\nNothing was spent. A gate that passes on the code as it stands \n\
+                     accepts a candidate that changes nothing."
+                );
+                return false;
+            }
+            println!("gate: every check fails on the base tree, so every check can judge");
+            true
+        }
+        // Reported, not fatal: the critic is a guard, and a guard that cannot run
+        // must not stop a run a person asked for.
+        Err(e) => {
+            println!("gate: could not be criticised ({e}) — running anyway");
+            true
+        }
+    }
+}
+
+/// Prove the whole rig without spending anything.
+///
+/// Both apps serving already proves a lot: an app whose secret cannot be granted,
+/// or whose egress is malformed, fails to START and never serves (`select.rs` saw
+/// exactly this). So reaching here means links resolve, egress allow-lists parsed,
+/// and every secret was granted.
+///
+/// A `max_attempts: 0` run is refused by the driver BEFORE any model call, so the
+/// last round trip proves probe→driver for free.
+#[allow(clippy::too_many_arguments)]
+fn smoke(
+    args: &Args,
+    goal: &GoalSpec,
+    port: u16,
+    context: &[Value],
+    checks: &[Value],
+    base_commit: &str,
+    tree: &[Value],
+    allow: &[&str],
+) -> Result<()> {
+    // Both apps serving already proves a lot: an app whose secret cannot be
+    // granted, or whose egress is malformed, fails to START and never serves
+    // (select.rs saw exactly this). So reaching here means links resolve,
+    // egress allow-lists parsed, and BOTH secrets were granted.
+    //
+    // A max_attempts:0 run is refused by the driver BEFORE any model call, so
+    // this last round-trip proves probe→driver without spending anything.
+    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build()?;
+    let probe = http
+        .post(format!("http://127.0.0.1:{port}/run"))
+        .header("host", "goalrun.acme.test")
+        .body(json!({
+            "text": goal.text, "writable": goal.writable, "context": context,
+            "previous": [], "checks": checks, "base_commit": base_commit,
+            "base_tree": tree, "max_attempts": 0, "seed": 1,
+        }).to_string())
+        .send()?;
+    let body: Value = serde_json::from_str(&probe.text().unwrap_or_default()).unwrap_or(Value::Null);
+    println!("\nSMOKE OK:");
+    println!("  · both graphs started and serve → links, egress and secret GRANTS are correct");
+    println!("  · driver reachable → {body}");
+
+    // A decomposed goal brings up two more apps and a database, and every one
+    // of them can be proved for FREE: an app whose secret cannot be granted or
+    // whose egress is malformed never serves, publishing the contract exercises
+    // the registry through the graph to a real SurrealDB, and `describe` asks
+    // the provider what it is without asking it to think.
+    if !goal.parts.is_empty() {
+        wait_serving(port, "goalcontract.acme.test", Duration::from_secs(180))?;
+        wait_serving(port, "goalanswer.acme.test", Duration::from_secs(180))?;
+        println!("  · the contract registry and the answer door serve");
+
+        let registry = Registry {
+            url: format!("http://127.0.0.1:{port}"),
+            host: "goalcontract.acme.test".into(),
+            timeout: Duration::from_secs(60),
+        };
+        let contract_path = goal.contract.clone().unwrap_or_default();
+        let contract = std::fs::read_to_string(args.checkout.join(&contract_path))
+            .with_context(|| format!("reading the contract at {contract_path}"))?;
+        match registry.publish(&contract) {
+            Ok(v) => println!(
+                "  · contract v{v} published from {contract_path} → registry → graph → \
+                 SurrealDB, and the database's secret was granted"
+            ),
+            // A second smoke run against the same database finds the contract
+            // already there, which proves the same chain and is not a failure.
+            Err(e) if e.contains("already published") => match registry.current() {
+                Ok(c) => println!(
+                    "  · contract v{} already in the registry, and readable → the whole \
+                     chain to SurrealDB works",
+                    c.number
+                ),
+                Err(e) => bail!("the registry has a contract it cannot read back: {e}"),
+            },
+            Err(e) => bail!("the contract registry is not usable: {e}"),
+        }
+        let http = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()?;
+        let describe = http
+            .get(format!("http://127.0.0.1:{port}/describe"))
+            .header("host", "goalanswer.acme.test")
+            .send()?;
+        let d: Value =
+            serde_json::from_str(&describe.text().unwrap_or_default()).unwrap_or(Value::Null);
+        println!("  · the answering model is reachable and says it is → {d}");
+        println!(
+            "  · parts: {}",
+            goal.parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    }
+
+    println!("\nWhat smoke does NOT check (needs a real call, costs money):");
+    println!("  · that the Anthropic key VALUE is accepted");
+    println!("  · that the GitHub token VALUE can open a PR");
+    println!("  · that `{}` actually runs under the gate", allow.join(" "));
+    if !goal.parts.is_empty() {
+        println!("  · that the parts negotiate — the first request costs one small call");
+    }
+    println!("\nRun for real by dropping --smoke.");
+    return Ok(());
+}
+
+/// Has this goal already been done?
+///
+/// Asked ONCE per goal, before anything is spawned — the call that saves a whole
+/// generation. Its failure mode had to be decided rather than defaulted: an
+/// unreachable pool answers "no", because redoing work costs money and skipping
+/// work that was never done is a silent wrong answer.
+///
+/// `false` means stop.
+fn worth_running(memory: Option<&Memory>, goal: &GoalSpec, skip_above: f64) -> bool {
+    let Some(m) = memory else { return true };
+    match m.already_done(&goal.text, skip_above) {
+        Ok(Some(prior)) => {
+            println!("\nALREADY DONE — {}", prior.summary());
+            println!(
+                "\n  no branches spawned. Lower --skip-above (now {skip_above:.2}) or clear the \
+                 pool if this is not the same work."
+            );
+            false
+        }
+        Ok(None) => {
+            println!("nothing on record for this goal; running it");
+            true
+        }
+        Err(e) => {
+            println!("could not ask the knowledge pool ({e}) — doing the work");
+            true
+        }
+    }
+}
+
+/// "Do we already have something for this?" — asked of the pool, before a single
+/// token is spent, whatever the answer turns out to be.
+///
+/// ADR-0089 made reuse ENFORCED (a gate fails a part that reimplements
+/// `auth-guard`) but never DISCOVERED: a human wrote the interfaces into the
+/// goal's WIT and the branch then had no choice. That does not compound — every
+/// new goal needed somebody who already knew what 150 components contained.
+///
+/// Mandatory rather than advisory because the ANSWER is the point in both
+/// directions. A hit is reuse a branch would otherwise have missed. A miss is the
+/// graph naming a capability the pool lacks — the only corpus in this system that
+/// answers "what should we build next" — and it accumulates only if the question
+/// is asked on every run, including the ones where nobody expected an answer.
+///
+/// No model, and nothing is blocked on the result: one millisecond of term overlap
+/// over the catalogue, and a run whose search found nothing proceeds, with a row
+/// recorded saying so (ADR-0094).
+fn search_the_pool(
+    goal_text: &str,
+    run: &str,
+    trace: Option<&Trace>,
+) -> Vec<comp_reconciler::capsearch::Capability> {
+    let catalog =
+        comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&repo_root()));
+    let mut apps_of: std::collections::BTreeMap<String, usize> = Default::default();
+    for name in catalog.names().map(String::from).collect::<Vec<_>>() {
+        for part in catalog.closure(&name) {
+            *apps_of.entry(part).or_default() += 1;
+        }
+    }
+    let pool = comp_reconciler::capsearch::capabilities(&repo_root(), &catalog, &apps_of);
+    let hits = comp_reconciler::capsearch::find(goal_text, &pool);
+    if let Some(t) = trace {
+        t.capsearch(run, goal_text, hits.len());
+    }
+    if hits.is_empty() {
+        println!(
+            "capability search: nothing in the pool answers this goal — if the work \
+             generalises, it is a candidate for promotion (ADR-0089)\n"
+        );
+    } else {
+        println!("capability search: {} candidate(s) the pool already has:", hits.len());
+        for m in hits.iter().take(5) {
+            println!(
+                "  {:<22} {} app(s)  {}",
+                m.capability.name,
+                m.capability.apps,
+                m.capability.description.chars().take(88).collect::<String>()
+            );
+        }
+        println!();
+    }
+    hits.into_iter().take(5).map(|m| m.capability.clone()).collect()
+}
+
+/// What the pool already has, as prose in every branch's context.
+///
+/// Prose rather than an instruction: the gate decides whether reuse happened, and
+/// a branch TOLD to reuse something that does not fit would do it badly.
+fn pool_context(reuse: &[comp_reconciler::capsearch::Capability]) -> Option<Value> {
+    if reuse.is_empty() {
+        return None;
+    }
+    let listed = reuse
+        .iter()
+        .map(|c| {
+            format!(
+                "- `{}` (in {} app(s)) exports {} — {}",
+                c.name,
+                c.apps,
+                c.exports.iter().cloned().collect::<Vec<_>>().join(", "),
+                c.description
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(json!({
+        "path": "POOL.md",
+        "content": format!(
+            "# Capabilities this repository already has\n\nSearched for this goal. Composing \
+             one of these is cheaper than writing it, and the gate reads what a candidate \
+             actually called.\n\n{listed}\n"
+        ),
+    }))
+}
+
+/// Distil what the winner taught, and keep the pool bounded.
+///
+/// An agent may record what it OBSERVED; only a passing gate may promote
+/// (ADR-0084). So this runs after the verdict, through the `promotion` interface an
+/// agent's world does not contain — and it costs one cheap call that most
+/// candidates answer with NOTHING, which is the correct answer for a candidate
+/// that taught nobody anything.
+///
+/// The sweep is last on purpose: one that ran first could delete a lesson this run
+/// was about to read.
+fn promote_and_sweep(
+    memory: Option<&Memory>,
+    args: &Args,
+    goal: &GoalSpec,
+    port: u16,
+    best: Option<&Entry>,
+    winner_ref: &str,
+) {
+    let Some(m) = memory else { return };
+    if let Some(best) = best.filter(|b| b.accepted) {
+        let door = Answerer {
+            url: format!("http://127.0.0.1:{port}"),
+            host: "goalanswer.acme.test".into(),
+            timeout: Duration::from_secs(180),
+        };
+        let prompt = memory::distil_prompt(&goal.text, &best.files, best.score);
+        match door.reply_to(&prompt).map(|r| memory::distilled(&r)) {
+            Ok(Some(lesson)) => {
+                match m.promote(&goal.text, &best.branch, winner_ref, &lesson, best.score) {
+                    Ok(h) => println!("\npromoted to patterns: {h}\n  {lesson}"),
+                    Err(e) => println!("\n(nothing promoted: {e})"),
+                }
+            }
+            Ok(None) => println!("\nthe winner taught nothing transferable, and said so"),
+            Err(e) => println!("\n(the distiller could not be reached: {e})"),
+        }
+    }
+
+    if args.forget_after_days > 0 {
+        match m.decay(args.forget_after_days, 2) {
+            Ok(0) => {}
+            Ok(n) => println!(
+                "knowledge: forgot {n} entr{} nothing had read in {} days",
+                if n == 1 { "y" } else { "ies" },
+                args.forget_after_days
+            ),
+            Err(e) => println!("knowledge: could not sweep the pool ({e})"),
+        }
+    }
+}
+
+/// Run each check once in the checkout, with the caches the gate will use.
+///
+/// The toolchain download and the dependency compile happen once, outside any
+/// request deadline, before a candidate is ever judged. The RESULT does not matter
+/// — only the cache it leaves behind, which is why nothing here is checked.
+fn warm_the_gate_cache(goal: &GoalSpec, args: &Args, caches: &GateCaches) {
+    for c in &goal.checks {
+        let tool = c.command.first().map(String::as_str);
+        if !matches!(tool, Some("uv") | Some("cargo")) {
+            continue;
+        }
+        println!("warming the gate cache ({}) …", c.command.join(" "));
+        let _ = Command::new(&c.command[0])
+            .args(&c.command[1..])
+            .current_dir(&args.checkout)
+            .env("UV_CACHE_DIR", &caches.uv_cache)
+            .env("UV_PYTHON_INSTALL_DIR", &caches.uv_python)
+            .env("CARGO_HOME", &caches.cargo_home)
+            .env("CARGO_TARGET_DIR", &caches.cargo_target)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// Where the gate's toolchains live, so a warm-up and a judged candidate share
+/// them. Four paths that always travel together.
+struct GateCaches {
+    uv_cache: String,
+    uv_python: String,
+    cargo_home: String,
+    cargo_target: String,
+}
+
+/// The timeouts a real agentic run needs, set on the environment the fleet reads.
+///
+/// One guest request does a model call AND a test suite. The ingress's 30s default
+/// backend timeout kills that as "n1 timed out", and the host's 30s wrpc budget
+/// kills the nested call as "data receipt timed out" — both of which read as fleet
+/// problems and are not.
+///
+/// 240s was not enough either: a thinking model takes minutes on a real task, and
+/// branches died mid-answer. So the floor is 600s and the rest is scaled from the
+/// caller's own per-branch timeout, because that is the number they already chose.
+fn set_fleet_timeouts(args: &Args) {
+    std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
+    let backend_timeout = args.timeout.max(600).to_string();
+    std::env::set_var("COMP_FLEET_BACKEND_TIMEOUT", &backend_timeout);
+    // Inherited by the hosts the fleet spawns.
+    std::env::set_var("COMP_RPC_TIMEOUT_SECS", &backend_timeout);
+    // Trace outbound dials, so a stalled model call shows whether the host got a
+    // response back at all.
+    std::env::set_var("COMP_TRACE_EGRESS", "1");
+}
+
+/// What each branch is allowed to read, and what it actually read.
+///
+/// Varied ACROSS branches on purpose: a generation whose branches all read the
+/// same top-k is an expensive way to run one branch (ADR-0081's herding), and the
+/// branch that reads nothing is the only way to tell whether the pool helps at
+/// all. `default_strategies` already keeps one branch from reading the previous
+/// winner; that same branch reads no lessons either.
+///
+/// Returns the strategies and, per branch, the keys it read — which is the other
+/// half of attribution when the run ends.
+fn reading_per_branch(
+    args: &Args,
+    goal: &GoalSpec,
+    memory: Option<&Memory>,
+) -> (Vec<generation_mod::Strategy>, Vec<Vec<String>>) {
+    let mut strategies = generation_mod::default_strategies(args.branches);
+    let mut read_by_branch: Vec<Vec<String>> = vec![Vec::new(); strategies.len()];
+    // What this goal's work touches, so what it learns is findable by the next
+    // goal that builds against the same interfaces rather than only by the next
+    // goal worded like this one (ADR-0090).
+    let tags = comp_reconciler::plug::tags_for(
+        &goal.writable,
+        &comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&repo_root())),
+    );
+    if let Some(m) = &memory {
+        for (i, s) in strategies.iter_mut().enumerate() {
+            if !s.reads_prior {
+                continue; // the control arm reads nothing, and that is the point
+            }
+            let reading = memory::Reading {
+                // Deliberately unequal: 3, 4, 5 … so two branches do not arrive at
+                // the same prompt by arriving at the same advice.
+                k: 3 + (i as u32 % 3),
+                budget: 1200,
+                tags: tags.clone(),
+                min_similarity: 0.0,
+                pools: match i % 3 {
+                    0 => vec![],                                   // everything
+                    1 => vec!["errors".into()],                    // only what failed
+                    _ => vec!["patterns".into(), "solutions".into()], // only what worked
+                },
+            };
+            match m.recall(&goal.text, &reading) {
+                Ok(lessons) if lessons.is_empty() => {}
+                Ok(lessons) => {
+                    println!(
+                        "  branch-{i} reads {} lesson(s) [{}]",
+                        lessons.len(),
+                        lessons.iter().map(|l| l.ns.as_str()).collect::<Vec<_>>().join(", ")
+                    );
+                    read_by_branch[i] = lessons.iter().map(|l| l.key.clone()).collect();
+                    s.knowledge = memory::render(&lessons);
+                }
+                // A pool that is down costs a branch its advice and nothing else.
+                Err(e) => println!("  branch-{i} runs cold: {e}"),
+            }
+        }
+        // Herding is branches reading the SAME thing, not branches reading
+        // nothing: an empty pool makes every reading identical and that is a cold
+        // start, not convergence. Saying otherwise would cry wolf on every first
+        // run, and a warning that fires when it should not is a warning people
+        // learn to skip.
+        let readers = read_by_branch.iter().filter(|r| !r.is_empty()).count();
+        if readers > 1 {
+            let distinct: std::collections::BTreeSet<&Vec<String>> =
+                read_by_branch.iter().filter(|r| !r.is_empty()).collect();
+            println!(
+                "  knowledge: {} distinct reading(s) across {readers} reading branches{}",
+                distinct.len(),
+                if distinct.len() == 1 {
+                    " — every one read the same thing, which is herding"
+                } else {
+                    ""
+                }
+            );
+        } else if readers == 0 {
+            println!("  knowledge: the pool had nothing for this goal; every branch runs cold");
+        }
+    }
+    (strategies, read_by_branch)
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
@@ -666,46 +1143,21 @@ fn main() -> Result<()> {
     check_env.push(format!("RUSTUP_HOME={rustup_home}"));
     check_env.push(format!("RUSTUP_TOOLCHAIN={toolchain}"));
 
-    // Pre-warm: run each check once IN THE CHECKOUT with the same caches, so the
-    // toolchain download and the dependency compile happen once, outside any
-    // request deadline, before a candidate is ever judged. The result does not
-    // matter here — only the cache it leaves behind.
-    for c in &goal.checks {
-        let tool = c.command.first().map(String::as_str);
-        if matches!(tool, Some("uv") | Some("cargo")) {
-            println!("warming the gate cache ({}) …", c.command.join(" "));
-            let _ = Command::new(&c.command[0])
-                .args(&c.command[1..])
-                .current_dir(&args.checkout)
-                .env("UV_CACHE_DIR", &uv_cache)
-                .env("UV_PYTHON_INSTALL_DIR", &uv_python)
-                .env("CARGO_HOME", &cargo_home)
-                .env("CARGO_TARGET_DIR", &cargo_target)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
-    }
+    warm_the_gate_cache(
+        &goal,
+        &args,
+        &GateCaches {
+            uv_cache: uv_cache.clone(),
+            uv_python: uv_python.clone(),
+            cargo_home: cargo_home.clone(),
+            cargo_target: cargo_target.clone(),
+        },
+    );
 
     // Bring the gate up first, so the driver fixture can point at it.
     let gate = Checks::start(&allow, &check_env)?;
 
-    std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
-    // One guest request does a model call plus a test suite; the ingress's 30s
-    // default backend timeout kills that as "n1 timed out". Give it room.
-    // A thinking model takes minutes on a real task: 240s killed branches mid-
-    // answer and the ingress reported "n1 timed out", which reads as a fleet
-    // problem and is not one. Scaled from the caller's own per-branch timeout,
-    // because that is the number they were already choosing.
-    let backend_timeout = args.timeout.max(600).to_string();
-    std::env::set_var("COMP_FLEET_BACKEND_TIMEOUT", &backend_timeout);
-    // And the wrpc budget between components: the same nested model+gate call
-    // blows the host's 30s default ("data receipt timed out"). Inherited by the
-    // hosts the fleet spawns.
-    std::env::set_var("COMP_RPC_TIMEOUT_SECS", &backend_timeout);
-    // Trace outbound dials, so a stalled model call shows whether the host got a
-    // response back at all.
-    std::env::set_var("COMP_TRACE_EGRESS", "1");
+    set_fleet_timeouts(&args);
     let driver_spec = render(
         "goalrun-driver.yaml",
         &[
@@ -855,162 +1307,20 @@ fn main() -> Result<()> {
     };
 
     // --- criticise the gate, before the money -------------------------------
-    //
-    // A check that already passes on the base tree cannot judge a candidate: one
-    // that changes nothing satisfies it. The first real decomposed run on this
-    // repository scored 1000 on two candidates that had deleted their own
-    // component exports, because `cargo component check` passes on a crate that
-    // implements none of its world (goal 07). This is the cheapest possible place
-    // to find that out — before a generation buys the wrong answer.
-    let excused: Vec<String> = goal
-        .checks
-        .iter()
-        .chain(goal.parts.iter().flat_map(|p| p.checks.iter()))
-        .filter(|c| c.may_pass_base)
-        .map(|c| c.id.clone())
-        .collect();
-    let mut every_check: Vec<Value> = checks.clone();
-    for p in &goal.parts {
-        every_check.extend(p.checks.iter().map(|c| json!({
-            "id": c.id, "required": c.required, "weight": c.weight, "command": c.command,
-        })));
-    }
-    match compose::criticise(
-        &format!("http://127.0.0.1:{}/check", gate.port),
-        &base_commit,
-        &json!(tree),
-        &json!(every_check),
-        &excused,
-        Duration::from_secs(args.timeout),
-    ) {
-        Ok(vacuous) => {
-            for v in vacuous.iter().filter(|v| v.excused) {
-                println!("gate: `{}` passes on the base, and says it is meant to", v.id);
-            }
-            let refusals = compose::refusal(&vacuous);
-            if !refusals.is_empty() {
-                println!("\nREFUSED — this gate cannot judge anything:\n");
-                for r in &refusals {
-                    println!("  · {r}");
-                }
-                println!(
-                    "\nNothing was spent. A gate that passes on the code as it stands \n\
-                     accepts a candidate that changes nothing."
-                );
-                return Ok(());
-            }
-            println!("gate: every check fails on the base tree, so every check can judge");
-        }
-        // Reported, not fatal: the critic is a guard, and a guard that cannot run
-        // must not stop a run a person asked for.
-        Err(e) => println!("gate: could not be criticised ({e}) — running anyway"),
-    }
-
-    if args.smoke {
-        // Both apps serving already proves a lot: an app whose secret cannot be
-        // granted, or whose egress is malformed, fails to START and never serves
-        // (select.rs saw exactly this). So reaching here means links resolve,
-        // egress allow-lists parsed, and BOTH secrets were granted.
-        //
-        // A max_attempts:0 run is refused by the driver BEFORE any model call, so
-        // this last round-trip proves probe→driver without spending anything.
-        let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build()?;
-        let probe = http
-            .post(format!("http://127.0.0.1:{port}/run"))
-            .header("host", "goalrun.acme.test")
-            .body(json!({
-                "text": goal.text, "writable": goal.writable, "context": context,
-                "previous": [], "checks": checks, "base_commit": base_commit,
-                "base_tree": tree, "max_attempts": 0, "seed": 1,
-            }).to_string())
-            .send()?;
-        let body: Value = serde_json::from_str(&probe.text().unwrap_or_default()).unwrap_or(Value::Null);
-        println!("\nSMOKE OK:");
-        println!("  · both graphs started and serve → links, egress and secret GRANTS are correct");
-        println!("  · driver reachable → {body}");
-
-        // A decomposed goal brings up two more apps and a database, and every one
-        // of them can be proved for FREE: an app whose secret cannot be granted or
-        // whose egress is malformed never serves, publishing the contract exercises
-        // the registry through the graph to a real SurrealDB, and `describe` asks
-        // the provider what it is without asking it to think.
-        if !goal.parts.is_empty() {
-            wait_serving(port, "goalcontract.acme.test", Duration::from_secs(180))?;
-            wait_serving(port, "goalanswer.acme.test", Duration::from_secs(180))?;
-            println!("  · the contract registry and the answer door serve");
-
-            let registry = Registry {
-                url: format!("http://127.0.0.1:{port}"),
-                host: "goalcontract.acme.test".into(),
-                timeout: Duration::from_secs(60),
-            };
-            let contract_path = goal.contract.clone().unwrap_or_default();
-            let contract = std::fs::read_to_string(args.checkout.join(&contract_path))
-                .with_context(|| format!("reading the contract at {contract_path}"))?;
-            match registry.publish(&contract) {
-                Ok(v) => println!(
-                    "  · contract v{v} published from {contract_path} → registry → graph → \
-                     SurrealDB, and the database's secret was granted"
-                ),
-                // A second smoke run against the same database finds the contract
-                // already there, which proves the same chain and is not a failure.
-                Err(e) if e.contains("already published") => match registry.current() {
-                    Ok(c) => println!(
-                        "  · contract v{} already in the registry, and readable → the whole \
-                         chain to SurrealDB works",
-                        c.number
-                    ),
-                    Err(e) => bail!("the registry has a contract it cannot read back: {e}"),
-                },
-                Err(e) => bail!("the contract registry is not usable: {e}"),
-            }
-            let http = reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()?;
-            let describe = http
-                .get(format!("http://127.0.0.1:{port}/describe"))
-                .header("host", "goalanswer.acme.test")
-                .send()?;
-            let d: Value =
-                serde_json::from_str(&describe.text().unwrap_or_default()).unwrap_or(Value::Null);
-            println!("  · the answering model is reachable and says it is → {d}");
-            println!(
-                "  · parts: {}",
-                goal.parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
-            );
-        }
-
-        println!("\nWhat smoke does NOT check (needs a real call, costs money):");
-        println!("  · that the Anthropic key VALUE is accepted");
-        println!("  · that the GitHub token VALUE can open a PR");
-        println!("  · that `{}` actually runs under the gate", allow.join(" "));
-        if !goal.parts.is_empty() {
-            println!("  · that the parts negotiate — the first request costs one small call");
-        }
-        println!("\nRun for real by dropping --smoke.");
+    if !gate_can_judge(&goal, &checks, gate.port, &base_commit, &tree, args.timeout) {
         return Ok(());
     }
-    // --- has this already been done? -------------------------------------
-    //
-    // ONCE per goal, before anything is spawned. This is the call that saves a
-    // whole generation, and it is the only one whose failure mode had to be
-    // decided rather than defaulted: an unreachable pool answers "no", because
-    // redoing work costs money and skipping work that was never done is a silent
-    // wrong answer.
-    if let Some(m) = &memory {
-        match m.already_done(&goal.text, args.skip_above) {
-            Ok(Some(prior)) => {
-                println!("\nALREADY DONE — {}", prior.summary());
-                println!(
-                    "\n  no branches spawned. Lower --skip-above (now {:.2}) or clear the pool \n                       if this is not the same work.",
-                    args.skip_above
-                );
-                return Ok(());
-            }
-            Ok(None) => println!("nothing on record for this goal; running it"),
-            Err(e) => println!("could not ask the knowledge pool ({e}) — doing the work"),
-        }
+
+
+    if args.smoke {
+        return smoke(&args, &goal, port, &context, &checks, &base_commit, &tree, &allow);
     }
+
+    // --- has this already been done? ----------------------------------------
+    if !worth_running(memory.as_ref(), &goal, args.skip_above) {
+        return Ok(());
+    }
+
 
     // --- a DECOMPOSED goal ---------------------------------------------------
     //
@@ -1047,76 +1357,7 @@ fn main() -> Result<()> {
     });
 
     // --- what each branch is allowed to read --------------------------------
-    //
-    // Varied ACROSS branches on purpose: a generation whose branches all read the
-    // same top-k is an expensive way to run one branch (ADR-0081's herding), and
-    // the branch that reads nothing is the only way to tell whether the pool helps
-    // at all. `default_strategies` already keeps one branch from reading the
-    // previous winner; that same branch reads no lessons either.
-    let mut strategies = generation_mod::default_strategies(args.branches);
-    let mut read_by_branch: Vec<Vec<String>> = vec![Vec::new(); strategies.len()];
-    // What this goal's work touches, so what it learns is findable by the next
-    // goal that builds against the same interfaces rather than only by the next
-    // goal worded like this one (ADR-0090).
-    let tags = comp_reconciler::plug::tags_for(
-        &goal.writable,
-        &comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&repo_root())),
-    );
-    if let Some(m) = &memory {
-        for (i, s) in strategies.iter_mut().enumerate() {
-            if !s.reads_prior {
-                continue; // the control arm reads nothing, and that is the point
-            }
-            let reading = memory::Reading {
-                // Deliberately unequal: 3, 4, 5 … so two branches do not arrive at
-                // the same prompt by arriving at the same advice.
-                k: 3 + (i as u32 % 3),
-                budget: 1200,
-                tags: tags.clone(),
-                min_similarity: 0.0,
-                pools: match i % 3 {
-                    0 => vec![],                                   // everything
-                    1 => vec!["errors".into()],                    // only what failed
-                    _ => vec!["patterns".into(), "solutions".into()], // only what worked
-                },
-            };
-            match m.recall(&goal.text, &reading) {
-                Ok(lessons) if lessons.is_empty() => {}
-                Ok(lessons) => {
-                    println!(
-                        "  branch-{i} reads {} lesson(s) [{}]",
-                        lessons.len(),
-                        lessons.iter().map(|l| l.ns.as_str()).collect::<Vec<_>>().join(", ")
-                    );
-                    read_by_branch[i] = lessons.iter().map(|l| l.key.clone()).collect();
-                    s.knowledge = memory::render(&lessons);
-                }
-                // A pool that is down costs a branch its advice and nothing else.
-                Err(e) => println!("  branch-{i} runs cold: {e}"),
-            }
-        }
-        // Herding is branches reading the SAME thing, not branches reading
-        // nothing: an empty pool makes every reading identical and that is a cold
-        // start, not convergence. Saying otherwise would cry wolf on every first
-        // run, and a warning that fires when it should not is a warning people
-        // learn to skip.
-        let readers = read_by_branch.iter().filter(|r| !r.is_empty()).count();
-        if readers > 1 {
-            let distinct: std::collections::BTreeSet<&Vec<String>> =
-                read_by_branch.iter().filter(|r| !r.is_empty()).collect();
-            println!(
-                "  knowledge: {} distinct reading(s) across {readers} reading branches{}",
-                distinct.len(),
-                if distinct.len() == 1 {
-                    " — every one read the same thing, which is herding"
-                } else {
-                    ""
-                }
-            );
-        } else if readers == 0 {
-            println!("  knowledge: the pool had nothing for this goal; every branch runs cold");
-        }
-    }
+    let (strategies, read_by_branch) = reading_per_branch(&args, &goal, memory.as_ref());
 
     let driver_url = format!("http://127.0.0.1:{port}/run");
     let timeout = Duration::from_secs(args.timeout);
@@ -1153,87 +1394,13 @@ fn main() -> Result<()> {
         t.run_started(&run, &goal.text, seed, &base_commit, args.branches.into());
     }
 
-    // "Do we already have something for this?" — asked of the pool, before a
-    // single token is spent, whatever the answer turns out to be.
-    //
-    // ADR-0089 made reuse ENFORCED (a gate fails a part that reimplements
-    // `auth-guard`) but never DISCOVERED: a human wrote the interfaces into the
-    // goal's WIT and the branch then had no choice. That does not compound — every
-    // new goal needed somebody who already knew what 150 components contained.
-    //
-    // Asking is mandatory rather than advisory because the ANSWER is the point,
-    // in both directions. A hit is reuse a branch would otherwise have missed. A
-    // miss is the graph naming a capability the pool lacks, which is the only
-    // corpus in this system that answers "what should we build next" — and it only
-    // accumulates if the question is asked on every run, including the ones where
-    // nobody expected an answer.
-    //
-    // No model, and nothing is blocked on the result. This is one millisecond of
-    // term overlap over the catalogue, and a run whose search found nothing is a
-    // run that proceeds — with a row recorded saying so.
-    let reuse: Vec<comp_reconciler::capsearch::Capability> = {
-        let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(
-            &repo_root(),
-        ));
-        let mut apps_of: std::collections::BTreeMap<String, usize> = Default::default();
-        for name in catalog.names().map(String::from).collect::<Vec<_>>() {
-            for part in catalog.closure(&name) {
-                *apps_of.entry(part).or_default() += 1;
-            }
-        }
-        let pool = comp_reconciler::capsearch::capabilities(&repo_root(), &catalog, &apps_of);
-        let hits = comp_reconciler::capsearch::find(&goal.text, &pool);
-        if let Some(t) = &trace {
-            t.capsearch(&run, &goal.text, hits.len());
-        }
-        if hits.is_empty() {
-            println!(
-                "capability search: nothing in the pool answers this goal — if the work \
-                 generalises, it is a candidate for promotion (ADR-0089)\n"
-            );
-        } else {
-            println!("capability search: {} candidate(s) the pool already has:", hits.len());
-            for m in hits.iter().take(5) {
-                println!(
-                    "  {:<22} {} app(s)  {}",
-                    m.capability.name,
-                    m.capability.apps,
-                    m.capability.description.chars().take(88).collect::<String>()
-                );
-            }
-            println!();
-        }
-        hits.into_iter().take(5).map(|m| m.capability.clone()).collect()
-    };
+    let reuse = search_the_pool(&goal.text, &run, trace.as_ref());
 
-    // What was found goes into every branch's context, as prose rather than as an
-    // instruction: the gate decides whether reuse happened, and a branch told to
-    // reuse something that does not fit would do it badly.
     let mut plan = plan;
-    if !reuse.is_empty() {
-        let listed = reuse
-            .iter()
-            .map(|c| {
-                format!(
-                    "- `{}` (in {} app(s)) exports {} — {}",
-                    c.name,
-                    c.apps,
-                    c.exports.iter().cloned().collect::<Vec<_>>().join(", "),
-                    c.description
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        plan["context"].as_array_mut().map(|ctx| {
-            ctx.push(json!({
-                "path": "POOL.md",
-                "content": format!(
-                    "# Capabilities this repository already has\n\n\
-                     Searched for this goal. Composing one of these is cheaper than \
-                     writing it, and the gate reads what a candidate actually called.\n\n{listed}\n"
-                ),
-            }))
-        });
+    if let Some(entry) = pool_context(&reuse) {
+        if let Some(ctx) = plan["context"].as_array_mut() {
+            ctx.push(entry);
+        }
     }
 
     let found = generation_mod::search_with(
@@ -1352,47 +1519,14 @@ fn main() -> Result<()> {
     }
 
     // --- promote what the gate proved ----------------------------------------
-    //
-    // An agent may record what it observed; only a passing gate may promote
-    // (ADR-0084). So this runs here, after the verdict, through the `promotion`
-    // interface an agent's world does not contain — and it costs one cheap call
-    // that most candidates answer with NOTHING, which is the correct answer for a
-    // candidate that taught nobody anything.
-    if let (Some(m), Some(best)) = (&memory, found.best.as_ref().filter(|b| b.accepted)) {
-        let door = Answerer {
-            url: format!("http://127.0.0.1:{port}"),
-            host: "goalanswer.acme.test".into(),
-            timeout: Duration::from_secs(180),
-        };
-        let prompt = memory::distil_prompt(&goal.text, &best.files, best.score);
-        match door.reply_to(&prompt).map(|r| memory::distilled(&r)) {
-            Ok(Some(lesson)) => {
-                match m.promote(&goal.text, &best.branch, &winner.as_ref().map(|(r, _)| r.clone()).unwrap_or_default(), &lesson, best.score) {
-                    Ok(h) => println!("\npromoted to patterns: {h}\n  {lesson}"),
-                    Err(e) => println!("\n(nothing promoted: {e})"),
-                }
-            }
-            Ok(None) => println!("\nthe winner taught nothing transferable, and said so"),
-            Err(e) => println!("\n(the distiller could not be reached: {e})"),
-        }
-    }
-
-    // Keep the pool bounded, at the end, when the run has already got what it came
-    // for — a sweep that ran first could delete a lesson this run was about to read.
-    if let Some(m) = &memory {
-        if args.forget_after_days > 0 {
-            match m.decay(args.forget_after_days, 2) {
-                Ok(0) => {}
-                Ok(n) => println!(
-                    "knowledge: forgot {n} entr{} nothing had read in {} days",
-                    if n == 1 { "y" } else { "ies" },
-                    args.forget_after_days
-                ),
-                Err(e) => println!("knowledge: could not sweep the pool ({e})"),
-            }
-        }
-    }
-
+    promote_and_sweep(
+        memory.as_ref(),
+        &args,
+        &goal,
+        port,
+        found.best.as_ref(),
+        &winner.as_ref().map(|(r, _)| r.clone()).unwrap_or_default(),
+    );
     // What the pool gained (ADR-0089). Derived from the WINNER's paths, because a
     // capability the swarm can reuse is one that passed a gate — a component from
     // a branch that failed is a directory, not a capability.
