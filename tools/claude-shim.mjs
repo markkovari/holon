@@ -41,6 +41,38 @@ const HOST = process.env.HOST || '127.0.0.1'
 const MODEL = process.env.CLAUDE_MODEL || ''
 /** A generated file on a real task takes a while; the provider waits 10 minutes. */
 const TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS || 540_000)
+/**
+ * How many `claude -p` processes may run at once.
+ *
+ * Six branches per generation, each with a gate that makes its own inference call,
+ * is a dozen CLI processes reaching for one subscription. Unqueued, the ones that
+ * lose come back as errors — and the loop cannot tell a throttled call from a branch
+ * that failed, so a rate limit would be recorded as an agent failure. Queueing makes
+ * the same pressure show up as WAITING, which is what it is, and the wait is logged
+ * separately from the work so neither hides in the other's number.
+ */
+const LIMIT = Number(process.env.CLAUDE_CONCURRENCY || 4)
+let active = 0
+/** Resolvers for calls that arrived while every slot was busy. FIFO. */
+const waiting = []
+
+const acquire = () => {
+  if (active < LIMIT) {
+    active++
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => waiting.push(resolve))
+}
+
+// The slot is handed straight to the next waiter rather than freed and re-taken:
+// `active` is unchanged in that case, which is what keeps LIMIT a ceiling under a
+// burst of arrivals.
+const release = () => {
+  const next = waiting.shift()
+  if (next) next()
+  else active--
+}
+
 /** Everything that lets the CLI act instead of answer. See `runClaude`. */
 const ACTING_TOOLS =
   'Bash,Read,Write,Edit,Glob,Grep,Task,WebFetch,WebSearch,NotebookEdit,TodoWrite'
@@ -156,13 +188,16 @@ const server = createServer((req, res) => {
       return
     }
 
+    const arrived = Date.now()
+    await acquire()
     const started = Date.now()
     try {
       const text = await runClaude(render(body))
       const model = MODEL || body.model || 'claude-code'
       console.error(
         `[shim] ${model} ${Date.now() - started}ms ${text.length}B` +
-          ` <- ${(body.messages || []).length} turn(s)`,
+          ` <- ${(body.messages || []).length} turn(s)` +
+          ` [queued ${started - arrived}ms, ${active}/${LIMIT} busy, ${waiting.length} waiting]`,
       )
       send(
         200,
@@ -180,10 +215,18 @@ const server = createServer((req, res) => {
         }),
       )
     } catch (e) {
-      console.error(`[shim] FAILED after ${Date.now() - started}ms: ${e.message}`)
+      console.error(
+        `[shim] FAILED after ${Date.now() - started}ms` +
+          ` [queued ${started - arrived}ms]: ${e.message}`,
+      )
       // 529 -> ProviderUnavailable, which the driver retries. A crashed or
       // timed-out CLI is a transient local failure, not a rejected request.
       send(529, apiError('overloaded_error', e.message))
+    } finally {
+      // In `finally`, because a slot leaked on the failure path would shrink the
+      // ceiling call by call until nothing ran at all — and every timeout takes
+      // nine minutes to prove it.
+      release()
     }
   })
 })
