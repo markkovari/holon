@@ -1,0 +1,255 @@
+# The goal, versioned in the repo it acts on (ADR-0082).
+#
+# WHAT THIS GOAL TELLS A PART, AND WHAT IT DELIBERATELY DOES NOT
+#
+# The first version of this goal wrote down every trap the author hit while building
+# the reference. Twelve branches then passed on the first attempt at score 1000 —
+# selection had nothing to choose between, eleven candidates were discarded, and the
+# search had stopped being a search. A goal specified to that depth does not need
+# four branches; it needs one.
+#
+# So the line is drawn at DISCOVERABILITY, not difficulty:
+#
+#   KEPT   — facts a part cannot find from what it is shown, and that fail SILENTLY
+#            or opaquely: `find_by` wanting a JSON-encoded value (it returns
+#            `Ok(vec![])` for a wrong query, indistinguishable from an empty
+#            collection), and serde built without std (a bare E0277 on a HashMap).
+#            Removing these does not test skill, it tests luck.
+#
+#   CUT    — decisions the contract and the files in `context` already imply: that a
+#            transition has to move the document as well as the fsm instance (the
+#            contract says the document is the readable copy and `digest` reads it),
+#            which `Reply` arm answers a CSV (src/lib.rs documents it), and what
+#            `create_instance` does to an existing instance (fsm.wit says).
+#
+# A part that cannot work those out from its own contract and its own imports is
+# telling us something worth knowing, which is the entire point of running a search
+# rather than writing the code.
+#
+# THREE parts, which is the point. The clinic proved two halves can negotiate a
+# contract; three is where agreement stops being a handshake and becomes a protocol —
+# one version every part must land on, and a join that fails if any one of them
+# drifts. It is also the first goal whose parts form a CHAIN rather than a pair:
+# `digest` can only be right if `intake` and `workflow` both wrote what the contract
+# says, which is a failure mode two independent halves cannot produce.
+
+text = """
+Finish the defect triage API in components/triage-domain. Nothing is implemented
+yet: three parts are written at the same time, by three agents, against one
+contract.
+
+`CONTRACT.md` in that crate is the specification — every route, every status code,
+every rule, and the shape of the report document all three parts share. Read it
+first. You may not edit it: if it is wrong or missing something you need, write
+CONTRACT-REQUEST.md (first line the subject, the rest why) and the other parts will
+answer between generations.
+
+The router in src/lib.rs already exists and is not yours to change. It dispatches to
+the three parts, answers /health, and seeds a fixture at POST /test/seed so your
+part can be judged before the part upstream of it exists. Your part is one file.
+
+You are judged by real HTTP requests against the running component — not by whether
+it compiles. `cargo component check` passes happily on code that does nothing.
+
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as
+components, bound at compose time. Look at wit/triage.wit. What is imported there is
+implemented, tested and composed for you — you call it, you do not write it. Writing
+your own PII scanner, your own transition table or your own CSV quoting is the one
+way to fail a gate while answering every request correctly, because the gate reads
+which capabilities the compiled component actually calls.
+
+The store, as wit-bindgen generates it in Rust — this is the exact surface, and
+guessing it wrong is how earlier runs of other goals died:
+
+    use crate::bindings::records::store::store as records;
+
+    records::create(collection: &str, data: &str, index_fields: &[String]) -> Result<Entry, StoreError>
+    records::get(collection: &str, id: &str)                               -> Result<Entry, StoreError>
+    records::update(collection: &str, id: &str, data: &str, expected_revision: u64) -> Result<Entry, StoreError>
+    records::delete(collection: &str, id: &str)                            -> Result<(), StoreError>
+    records::list_records(collection: &str, limit: u32, after: &str)       -> Result<Page, StoreError>
+    records::find_by(collection: &str, field: &str, value: &str)           -> Result<Vec<Entry>, StoreError>
+    records::count(collection: &str)                                       -> Result<u64, StoreError>
+
+    struct Entry { id: String, data: String, revision: u64, … }   // `data` is your JSON
+    struct Page  { entries: Vec<Entry>, next: String }
+
+`find_by` only works on a field that was passed in `index_fields` when the record was
+created. The router's fixture indexes `component` and `state`; anything else means
+listing and filtering. The collection is `reports`, and src/lib.rs's `seed` shows
+exactly how a report document is written.
+
+AND `find_by` WANTS THE JSON ENCODING OF THE VALUE, NOT THE VALUE. `record-store`
+indexes the serialised form, so a string field `billing` is indexed under
+`"billing"` — quotes included:
+
+    records::find_by("reports", "component", "billing")     // matches NOTHING
+    records::find_by("reports", "component", "\"billing\"")  // matches
+
+It returns `Ok(vec![])` either way, so a wrong query and an empty collection are
+indistinguishable from the caller — this was found by writing the thing once, and it
+cost an hour. Use `serde_json::to_string(&value)` and pass that.
+
+One more thing about this workspace, because it cannot be guessed: serde is built
+WITHOUT std here —
+
+    serde = { default-features = false, features = ["derive", "alloc"] }
+
+so `HashMap` has no `Serialize` impl and `json!({ "by_state": my_hashmap })` fails
+with E0277. Use `BTreeMap<String, u32>`, which serde's alloc feature does cover and
+which also gives a report the deterministic key order it wants.
+"""
+title = "the triage API's intake, lifecycle and digest"
+contract = "components/triage-domain/CONTRACT.md"
+writable = []
+base_paths = [
+  "components/triage-domain/",
+  "components/record-store/",
+  "components/id-generate/",
+  # The capabilities these parts compose against.
+  "components/pii-redact/",
+  "components/fsm-workflow/",
+  "components/csv/",
+  "components/Cargo.toml",
+  "wit/deps/",
+  "host/wit/deps/",
+]
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "triage-domain",
+  "record-store",
+  "id-generate",
+  "pii-redact",
+  "fsm-workflow",
+  "csv",
+]
+
+[[part]]
+name = "intake"
+text = """
+Implement components/triage-domain/src/intake.rs: taking a defect report in, reading
+one back, listing them with filters, and refusing a duplicate.
+
+The rule that is not obvious: what you STORE is masked. A reporter pastes their email
+and phone number into a bug report constantly, and that body goes on to a digest
+anyone can read — so `pii:redact` masks it before it reaches the store, and the raw
+text is never written. The gate posts a body containing `ada@example.test` and fails
+you if it can read that address back.
+
+    use crate::bindings::pii::redact::redactor as pii;
+
+    pii::redact(text: &str, opts: pii::Options) -> String
+    pii::detect(text: &str, opts: pii::Options) -> Vec<pii::Finding>
+
+    pub struct Options { pub kinds: Vec<Kind> }   // EMPTY kinds = every kind
+    pub enum Kind { Email, CreditCard, Ssn, Phone, Ip }
+
+The duplicate rule is the other one worth reading twice: same `component` AND same
+`title` as an existing report that is NOT closed is a 409 naming the existing id. A
+closed report does not block a new one — the bug came back.
+"""
+writable = ["components/triage-domain/src/intake.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/triage-domain/src/lib.rs",
+  "components/triage-domain/wit/triage.wit",
+  "components/pii-redact/wit/pii.wit",
+  "components/record-store/wit/records.wit",
+]
+[[part.check]]
+id = "intake-half-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "components/triage-domain/e2e-intake.sh"]
+
+[[part]]
+name = "workflow"
+text = """
+Implement components/triage-domain/src/workflow.rs: moving a report through its
+lifecycle, and the queue that ranks what is still open.
+
+The lifecycle is a DEFINITION, not a ladder of `if state == "open"`. Register it once
+with `fsm:workflow` under the machine name `report`, then drive each report as an
+instance whose id is the report id. An illegal move comes back as
+`IllegalTransition(String)` carrying the CURRENT state — which is exactly what the
+contract's 409 body has to report, so you do not need to look it up yourself.
+
+    use crate::bindings::fsm::workflow::engine as fsm;
+
+    fsm::define(name: &str, def: &fsm::Definition)            -> Result<(), fsm::FsmError>
+    fsm::create_instance(machine: &str, instance: &str)       -> Result<fsm::Status, fsm::FsmError>
+    fsm::get_status(machine: &str, instance: &str)            -> Result<fsm::Status, fsm::FsmError>
+    fsm::fire(machine: &str, instance: &str, event: &str)     -> Result<fsm::Status, fsm::FsmError>
+
+    pub struct Definition { pub states: Vec<String>, pub initial: String,
+                            pub transitions: Vec<Transition>, pub terminal: Vec<String> }
+    pub struct Transition { pub event: String, pub source: String, pub target: String }
+    pub struct Status { pub machine: String, pub instance: String,
+                        pub state: String, pub done: bool, pub steps: u32 }
+
+Read `fsm.wit` for how `define` and `create_instance` behave on a store that already
+has the machine or the instance — it says, and the difference matters.
+
+"""
+writable = ["components/triage-domain/src/workflow.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/triage-domain/src/lib.rs",
+  "components/triage-domain/wit/triage.wit",
+  "components/fsm-workflow/wit/fsm.wit",
+  "components/record-store/wit/records.wit",
+]
+[[part.check]]
+id = "workflow-half-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "components/triage-domain/e2e-workflow.sh"]
+
+[[part]]
+name = "digest"
+text = """
+Implement components/triage-domain/src/digest.rs: the day's reports as a JSON summary
+and as a CSV.
+
+The counting is yours; the CSV is not. Use `csv:codec`'s `format`, because one seeded
+report is titled `Login fails, silently` and a field with a comma in it has to come
+back quoted or the row stops having five columns. The gate parses the CSV with a real
+parser and counts columns, and it also reads the compiled component's imports — so
+formatting it by hand fails even if you get the quoting right.
+
+    use crate::bindings::csv::codec::codec as csv;
+
+    pub struct Row { pub fields: Vec<String> }
+    pub struct Dialect { pub delimiter: String,   // a STRING, not a char: ",".to_string()
+                         pub has_header: bool, pub trim: bool }
+    csv::format(rows: &[Row], opts: &Dialect) -> String
+
+A file is `Vec<Row>` — the header is just the first `Row` — and `format` returns the
+whole document as one `String`.
+
+The gate checks the content type as well as the columns, so look at what `Reply` in
+src/lib.rs can actually answer with before you build the response.
+
+`by_state` and `by_component` include only the states and components that OCCUR: no
+zero-filled keys. A day with nothing in it is a digest of zero, not a 404.
+"""
+writable = ["components/triage-domain/src/digest.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/triage-domain/src/lib.rs",
+  "components/triage-domain/wit/triage.wit",
+  "components/csv/wit/csv.wit",
+  "components/record-store/wit/records.wit",
+]
+[[part.check]]
+id = "digest-half-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "components/triage-domain/e2e-digest.sh"]
+
+# The COMPOSITION gate: the one no single part can pass. It drives one report the
+# whole way through all three — intake writes it, workflow moves it and assigns a
+# severity, digest counts it — so a part that stored its own shape passes its own
+# gate and fails here.
+[[check]]
+id = "the-whole-triage-api-works"
+required = true
+weight = 1
+command = ["bash", "components/triage-domain/e2e.sh"]
