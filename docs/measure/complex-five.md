@@ -295,3 +295,76 @@ That is the effectiveness answer, and it is not "the graph is useless". It is th
 multi-part goals the graph is running at roughly half its design: the read path works,
 the write path only records failures, and the promotion path — the one that turns a
 win into something reusable — is not wired in.
+
+## App 2 — `docsearch:agent`
+
+**Outcome: [PR #91](https://github.com/markkovari/holon/pull/91) on the first run.**
+Composition passed at 1000; 366 lines across three files.
+
+| measurement | app 1 (run 3) | app 2 |
+|---|---|---|
+| parts accepted | 3/3 | 3/3 |
+| branch pass rate, first try | 15/18 = 83% | **17/18 = 94%** |
+| median attempt | 322 s | 273 s |
+| median by part | 90 / 307 / 391 s | library 58 / answer 273 / stepup 325 s |
+| total attempt time | 82 min | 69 min |
+| capability-import failures | 0 | 0 |
+| join | passed | passed |
+| lessons written | 1 (an error) | **0 — the `memory` table was never created** |
+
+### The finding: writing a reference first makes the goal too easy
+
+94% first-try is far outside the pre-registered 25–75% band, and the cause is now
+visible as a *practice* rather than an accident. `tools/goal-rehearse.sh` requires a
+reference implementation to prove the gates are passable — and writing one means hitting
+every trap in the interfaces personally, which means writing every one of them into the
+contract. App 2's contract went into its first run already naming the `Exceeded`-is-not-a-duration
+trap, the JSON-encoded `find_by` value, the title-not-in-a-hit problem and the order of
+the five checks.
+
+This repository already knew the shape of that mistake. `.comp/goal.toml`'s own header
+records it: *"The first version of this goal wrote down every trap the author hit while
+building the reference. Twelve branches then passed on the first attempt at score 1000 —
+selection had nothing to choose between … the search had stopped being a search."*
+
+So the two practices are in direct tension, and both are correct:
+
+* **rehearse with a reference**, or a harness bug fails every branch identically and
+  costs a whole run (app 1, run 1: 36 model calls on a missing directory);
+* **do not write the reference's lessons into the goal**, or every branch passes and
+  selection has nothing to choose between (app 1 run 3 at 83%, app 2 at 94%).
+
+The way to hold both, and what apps 3–5 will do: **write the reference, then delete from
+the goal every hint that the reference taught, keeping only what fails SILENTLY.** That
+is the line ADR-0082 already drew; the discipline it needs is to apply it *after* the
+reference exists, not before, because until then an author cannot tell which traps are
+silent and which are loud. A goal is over-specified by exactly the traps that would have
+announced themselves.
+
+### The graph, measured across four runs
+
+App 2's database ends the run with **no `memory` table at all**. Tables present:
+`attempt`, `event`, `run`. Nothing was ever written for it to create.
+
+Across every run so far:
+
+| run | outcome | lessons written |
+|---|---|---|
+| app 1, run 1 | broken sandbox, every branch failed | 3 (all `does not compile`) |
+| app 1, run 2 | 3 winners, join rejected | 3 (errors) |
+| app 1, run 3 | **PR opened** | 1 (an error, from the one branch that never recovered) |
+| app 2 | **PR opened, first try** | **0** |
+
+Reading `compose.rs:505`, the mechanism is exact: a failure lesson is written only for an
+entry that is **not accepted in the last round of a part's outcome**. A branch that fails
+once and is repaired teaches nothing, because by the end its entry is accepted. And
+promotion — the only path that records what WORKED — is never called on the decomposed
+path at all. Put together:
+
+> On a multi-part goal, the knowledge graph accumulates nothing from success, and
+> accumulates from failure only when a branch never recovers. The cleaner the run, the
+> less the pool learns. App 2 is the limit case: a perfect run taught it nothing.
+
+That is not a small gap and it is not "the graph is broken" either — the read path works,
+the control arm exists, attribution works. What is missing is that on this path there is
+no writer for the one kind of knowledge worth keeping.
