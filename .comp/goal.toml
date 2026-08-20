@@ -1,74 +1,71 @@
-# App 3 of five (docs/measure/complex-five.md). Its hard interaction is PRECEDENCE: a
-# deterministic policy overrules a model, and the decision has to record what overruled
-# what.
+# App 4 of five (docs/measure/complex-five.md). Its hard interaction is DELIVERY: what a
+# model wrote has to reach the customer at least once, across a far end that refuses, and
+# never twice from one enqueue.
 #
-# WHAT IS TOLD AND WHAT IS NOT — and app 2 is why this section is stricter than app 1's.
-# Writing a reference implementation first is what proves the gates are passable, and it is
-# also what tempts an author to write down every trap they personally hit: app 2 went into
-# its run naming all of them and 17 of 18 branches passed first try, which is a search that
-# has stopped searching. So the rule here is to keep ONLY what fails silently, and to delete
-# every hint whose absence produces a loud failure the branch can read for itself.
+# WHAT IS TOLD AND WHAT IS NOT, on app 2's rule — keep only what fails silently:
 #
-#   KEPT — three facts, each invisible until something is quietly wrong forever:
+#   KEPT — three facts, each invisible until a reply is quietly lost:
 #
-#     * `policy:guard` resolves an operand as an ATTRIBUTE only when it starts with
-#       `resource.` or `principal.`; anything else is a literal string. A condition on a
-#       bare `has_link` compares the text "has_link" with "true", is false forever, and
-#       raises nothing at write time or evaluation time. The rule simply never fires.
-#     * the engine's default is DENY, so no match answers `allowed: false` with an EMPTY
-#       `rule_id`. A part branching on `allowed` blocks everything and passes every test
-#       that has a matching rule in it.
-#     * `ratelimit:guard` counts only what `record_failure` tells it to; `check` alone
-#       counts nothing, so a limiter with no second call never limits and never errors.
+#     * a non-2xx from `notify:dispatch` is the far end REFUSING. `send` returns
+#       `Ok(status)` for it, so a courier that treats `Ok` as success acks an undelivered
+#       reply and it is gone with no trace in any log.
+#     * `quota`'s `Exceeded` payload is the units still available — 0 when one unit is
+#       refused — and not a duration. Passed through as `retry_after` it tells every caller
+#       to retry immediately, forever.
+#     * `find_by` wants the value JSON-encoded, and a wrong query is `Ok(vec![])`, which
+#       reads exactly like a desk with nothing waiting.
 #
-#   CUT — everything that announces itself. The `quota`/`classify` milli-unit shapes are
-#   not used here. `Method` has no `PartialEq`: a compile error. `find_by` wanting a
-#   JSON-encoded value is in the contract already because a queue that reads empty is the
-#   route's whole subject, not a trap. And nothing here restates a status code table the
-#   contract sets out — a part that cannot read the contract is telling us something worth
-#   knowing.
-title = "moderation:queue — the model proposes and the policy decides"
-contract = "components/moderation-domain/CONTRACT.md"
+#   CUT — everything loud. Which status each refusal gets is in the contract's tables. That
+#   `Method` has no `PartialEq`, that `quota:meter`'s binding path is `quota::meter::meter`,
+#   that `outbox::fail` returns the new state: all compile errors or one line of the WIT.
+#   And the 202-not-200 rule is in the contract, stated once, where a part that reads its
+#   contract will find it.
+title = "support:desk — a model writes the reply, and the reply gets there"
+contract = "components/support-desk-domain/CONTRACT.md"
 
 text = """
-Finish the moderation:queue API in components/moderation-domain. Nothing is implemented
-yet: three parts are written at the same time, by three agents, against one contract.
+Finish the support:desk API in components/support-desk-domain. Nothing is implemented yet:
+three parts are written at the same time, by three agents, against one contract.
 
 `CONTRACT.md` in that crate is the specification — every route, every status code, every
-rule, and the shape of the item all three parts share. Read it first. You may not edit it:
-if it is wrong or missing something you need, write CONTRACT-REQUEST.md (first line the
-subject, the rest why) and the other parts will answer between generations.
+rule, and the shape of the ticket and the outbox payload the parts share. Read it first. You
+may not edit it: if it is wrong or missing something you need, write CONTRACT-REQUEST.md
+(first line the subject, the rest why) and the other parts will answer between generations.
 
 The router in src/lib.rs already exists and is not yours to change. It dispatches to the
-three parts, answers /health, mints a token at POST /test/token, seeds two pending items at
-POST /test/seed, writes one policy rule at POST /test/rules, shows a stored item at GET
-/test/item/{id}, reads the bus at GET /test/events, and gives you `crate::cfg(key,
-default)`. Those fixtures exist so your part can be judged before the parts around it
-exist. Your part is one file.
+three parts, answers /health, mints a token at POST /test/token, opens a session with its
+CSRF token at POST /test/session, seeds two open tickets at POST /test/seed, puts one reply
+straight into the outbox at POST /test/enqueue, shows a stored ticket at GET
+/test/ticket/{id}, and gives you `crate::cfg_u64(key, default)`. Those fixtures exist so
+your part can be judged before the parts around it exist. Your part is one file.
 
 You are judged by real HTTP requests against the running component, not by whether it
-compiles: `cargo component check` passes happily on code that does nothing.
+compiles: `cargo component check` passes happily on code that does nothing. Your gate also
+runs a webhook receiver it can BREAK ON PURPOSE, because everything interesting about
+delivery happens when the far end refuses.
 
 THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as components,
-bound at compose time. Look at wit/moderation.wit. The limiter, the model, the policy
-engine and the bus are each implemented, tested and composed for you. You call them; you do
-not write them. An `if text.contains("://")` where a rule belongs, a counter of your own
-where the limiter belongs, or a decision written but never published will each answer
-correctly on the one path you try by hand, and each fails its gate — because the gate reads
-which capabilities the compiled component actually calls.
+bound at compose time. Look at wit/support.wit. The session and its CSRF token, the meter,
+the model, the outbox and the sender are each implemented, tested and composed for you. You
+call them; you do not write them. A list of pending replies in the record store, an HTTP
+client of your own, or a CSRF comparison done by hand will each answer correctly on the one
+path you try, and each fails its gate — because the gate reads which capabilities the
+compiled component actually calls.
 """
 
 writable = []
 base_paths = [
-  "components/moderation-domain/",
+  "components/support-desk-domain/",
   # The capabilities these parts compose against. Readable, none of them writable.
   "components/auth-guard/",
   # auth.wit's own world imports these two, so the manifest names them and the build reads
   # them. Nothing here calls audit:log.
   "components/rate-limiter/",
   "components/audit-log/",
-  "components/policy-guard/",
-  "components/event-bus/",
+  "components/session-store/",
+  "components/quota/",
+  "components/outbox/",
+  "components/notify-dispatch/",
   "components/ai-inference/",
   # ai-inference's own import: absent, `cargo component` cannot build a target world at all
   # and every branch fails before a line of Rust is compiled (app 1, run 1).
@@ -82,12 +79,14 @@ base_paths = [
 ]
 workspace_manifest = "components/Cargo.toml"
 keep_members = [
-  "moderation-domain",
+  "support-desk-domain",
   "auth-guard",
   "rate-limiter",
   "audit-log",
-  "policy-guard",
-  "event-bus",
+  "session-store",
+  "quota",
+  "outbox",
+  "notify-dispatch",
   "ai-inference",
   "llm-inference",
   "anthropic-provider",
@@ -95,126 +94,122 @@ keep_members = [
 ]
 
 [[part]]
-name = "intake"
+name = "tickets"
 text = """
-Implement components/moderation-domain/src/intake.rs: what gets into the queue at all, and
-what does not.
+Implement components/support-desk-domain/src/tickets.rs: what can be answered at all.
 
-THE THROTTLE TAKES TWO CALLS, and this is the one fact you cannot find from the signature.
-`ratelimit:guard` is a fixed-window FAILURE COUNTER, not a throughput meter: it counts what
-you tell it to count. `check` asks whether the key is locked; nothing is counted until you
-`record_failure`. A part that only calls `check` has a limiter that never limits, every
-request succeeds, and no error is ever raised.
+The one rule with its own check: a delivery address nothing can deliver to is refused HERE.
+Accepted, it becomes a ticket that drafts a reply, spends the budget, enqueues, and
+dead-letters days later for a reason nobody upstream can act on.
 
-    use crate::bindings::ratelimit::guard::limiter as rl;
-
-    rl::check(key: &str)          -> Result<u32, LimitError>  // remaining, or Locked(secs)
-    rl::record_failure(key: &str) -> Result<(), LimitError>
-
-The key is `principal.subject`, and your gate submits as two different subjects to see
-whether you keyed it on anything else.
+The list route is an index lookup, and `records::find_by` wants the value JSON-ENCODED
+(`"\\"open\\""`, not `open`). A wrong query returns `Ok(vec![])`, which reads exactly like a
+desk with nothing waiting on it.
 """
-writable = ["components/moderation-domain/src/intake.rs", "CONTRACT-REQUEST.md"]
+writable = ["components/support-desk-domain/src/tickets.rs", "CONTRACT-REQUEST.md"]
 context = [
-  "components/moderation-domain/src/lib.rs",
-  "components/moderation-domain/wit/moderation.wit",
-  "components/rate-limiter/wit/ratelimit.wit",
+  "components/support-desk-domain/src/lib.rs",
+  "components/support-desk-domain/wit/support.wit",
   "components/record-store/wit/record.wit",
   "wit/auth.wit",
 ]
 [[part.check]]
-id = "intake-throttles-what-it-queues"
+id = "tickets-refuses-what-cannot-be-delivered"
 required = true
 weight = 1
-command = ["bash", "components/moderation-domain/e2e-intake.sh"]
+command = ["bash", "components/support-desk-domain/e2e-tickets.sh"]
 
 [[part]]
-name = "verdict"
+name = "reply"
 text = """
-Implement components/moderation-domain/src/verdict.rs: the model's opinion, and what the
-policy does to it.
+Implement components/support-desk-domain/src/reply.rs: the model drafts it, and the outbox
+owns it.
 
-PRECEDENCE IS THE WHOLE OF THIS PART, and there is a trap in it that raises nothing.
+YOU MUST NOT SEND ANYTHING. A drafted reply is enqueued and the courier part delivers it.
+Your gate runs a webhook receiver and asserts nothing arrives at it while you are judged —
+because a part that sends inline answers correctly on every path in that gate and loses the
+reply the first time the far end is down, after the budget was already spent on it.
 
-    use crate::bindings::policy::guard::guard as policy;
+    use crate::bindings::outbox::dispatch::queue as outbox;
+    outbox::enqueue(topic: &str, payload: &[u8], delay_seconds: u64)
+        -> Result<String, OutboxError>
 
-    policy::can(domain, action, principal: &[Attr], target_attrs: &[Attr])
-        -> Result<Decision, PolicyError>
-    pub struct Decision { pub allowed: bool, pub rule_id: String, pub reason: String }
+One fact you cannot get from a signature, and it fails silently:
 
-The engine's default is DENY. When no rule matches it answers `allowed: false` with an
-EMPTY `rule_id` and the reason "no matching rule (default deny)". So a part that branches on
-`allowed` blocks every item, passes every test that has a matching rule in it, and makes the
-model's opinion irrelevant in the one case it was meant to decide. `rule_id` is what you
-branch on: non-empty means a rule matched and it decides; empty means nothing matched and
-the model's label decides.
+    use crate::bindings::quota::meter::meter;
+    meter::reserve(subject, amount, limit, period_seconds) -> Result<Balance, QuotaError>
+    meter::peek(subject, limit, period_seconds)            -> Result<Balance, QuotaError>
 
-Your gate reviews two items — one a rule matches and one it does not — and asserts both
-directions, because a part that always defers to the policy passes the first and fails the
-second.
+`QuotaError::Exceeded`'s payload is the units STILL AVAILABLE — always 0 when a request for
+one unit is refused. It is not a duration. Pass it through as `retry_after` and every refusal
+tells the caller to retry immediately, forever, with nothing reporting an error. The seconds
+come from `peek`: `resets_at - now`.
 
-A model that is unavailable leaves the item exactly as it was: pending, with no decision.
+The budget is per TENANT, not per subject: `authorize` returns both.
 """
-writable = ["components/moderation-domain/src/verdict.rs", "CONTRACT-REQUEST.md"]
+writable = ["components/support-desk-domain/src/reply.rs", "CONTRACT-REQUEST.md"]
 context = [
-  "components/moderation-domain/src/lib.rs",
-  "components/moderation-domain/wit/moderation.wit",
-  "components/policy-guard/wit/policy.wit",
+  "components/support-desk-domain/src/lib.rs",
+  "components/support-desk-domain/wit/support.wit",
+  "components/quota/wit/quota.wit",
+  "components/outbox/wit/outbox.wit",
+  "components/session-store/wit/session.wit",
   "components/ai-inference/wit/inference.wit",
-  "components/event-bus/wit/eventbus.wit",
   "components/record-store/wit/record.wit",
   "wit/auth.wit",
 ]
 [[part.check]]
-id = "verdict-lets-the-policy-decide"
+id = "reply-queues-and-does-not-send"
 required = true
 weight = 1
-command = ["bash", "components/moderation-domain/e2e-verdict.sh"]
+command = ["bash", "components/support-desk-domain/e2e-reply.sh"]
 
 [[part]]
-name = "queue"
+name = "courier"
 text = """
-Implement components/moderation-domain/src/queue.rs: the rules, what is waiting, and what
-has left.
+Implement components/support-desk-domain/src/courier.rs: the only part that talks to the far
+end.
 
-The rules live in `policy:guard` and are read back out of it. A copy of your own answers
-both routes correctly and drifts the moment anything else writes a rule — which your gate
-does, on purpose, in the middle of the run.
+WHAT HAPPENS WHEN A SEND FAILS IS THE WHOLE OF THIS PART, and there is a trap in it that
+raises nothing:
 
-    policy::set_rules(domain: &str, rules: &[Rule]) -> Result<(), PolicyError>
-    policy::get_rules(domain: &str) -> Result<Vec<Rule>, PolicyError>
+    use crate::bindings::notify::dispatch::dispatcher as notify;
+    notify::send(msg: &notify::Message) -> Result<u16, notify::NotifyError>
 
-ONE THING ABOUT A RULE THAT FAILS SILENTLY FOREVER: an operand is an attribute reference
-only when it starts with `resource.` or `principal.`. Anything else is a literal string, so
-a condition written on a bare `has_link` compares the text "has_link" with "true", is false
-always, and raises nothing when the rules are written or when they are evaluated. The rule
-just never fires. The attributes `verdict` supplies are listed in CONTRACT.md; a rule
-referring to them needs the prefix.
+`send` answers `Ok(status)` for a status the far end actually returned — including a 500.
+`Ok` is not delivery. A courier that acks on `Ok` acks replies the customer never received,
+they leave the outbox, and there is no trace of them in any log. Only a 2xx is delivery;
+anything else, and any `Err`, is a `fail`.
 
-`GET /api/events` reads the bus and does not `ack` it: a read that consumes is not a read,
-and your gate reads twice.
+    outbox::claim(max, lease_seconds) -> Result<Vec<Event>, OutboxError>
+    outbox::ack(id) -> Result<(), OutboxError>
+    outbox::fail(id) -> Result<State, OutboxError>
+
+Never ack an event you did not deliver, and never fail one you did: the first loses replies,
+the second sends them twice. Your gate runs a webhook receiver, breaks it on purpose, counts
+arrivals, and exhausts `max-attempts` to see the dead letter — a reply that cannot be
+recovered is simply gone, which is why the replay route is not optional.
 """
-writable = ["components/moderation-domain/src/queue.rs", "CONTRACT-REQUEST.md"]
+writable = ["components/support-desk-domain/src/courier.rs", "CONTRACT-REQUEST.md"]
 context = [
-  "components/moderation-domain/src/lib.rs",
-  "components/moderation-domain/wit/moderation.wit",
-  "components/policy-guard/wit/policy.wit",
-  "components/event-bus/wit/eventbus.wit",
-  "components/record-store/wit/record.wit",
+  "components/support-desk-domain/src/lib.rs",
+  "components/support-desk-domain/wit/support.wit",
+  "components/outbox/wit/outbox.wit",
+  "components/notify-dispatch/wit/notify.wit",
   "wit/auth.wit",
 ]
 [[part.check]]
-id = "queue-reads-the-engine-not-a-copy"
+id = "courier-delivers-at-least-once"
 required = true
 weight = 1
-command = ["bash", "components/moderation-domain/e2e-queue.sh"]
+command = ["bash", "components/support-desk-domain/e2e-courier.sh"]
 
-# The join, and it uses no fixture: the rule is written through `queue`'s route, the item is
-# submitted through `intake`'s, the review goes through `verdict`'s, and the decision is read
-# back off the bus through `queue`'s. A part that invented its own shape passes alone and
-# fails here.
+# The join, and it uses no fixture: the ticket is opened through `tickets`, drafted through
+# `reply`, delivered through `courier`, to a sink the gate runs. What only this gate sees is
+# the outbox payload passing between two parts that never call each other — nothing else in
+# the app would notice if they disagreed about a field name.
 [[check]]
-id = "the-whole-moderation-api-works"
+id = "the-whole-support-desk-api-works"
 required = true
 weight = 1
-command = ["bash", "components/moderation-domain/e2e.sh"]
+command = ["bash", "components/support-desk-domain/e2e.sh"]
