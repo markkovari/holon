@@ -40,7 +40,9 @@ GOT=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: applicati
 # --- what is waiting ------------------------------------------------------------
 python3 - "$(curl -s -H "$AUTH" "$B/api/queue")" "$IDS" <<'PY' || fail "GET /api/queue did not answer what is pending"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 items = d.get("items")
 assert isinstance(items, list) and len(items) >= 2, f"two items were seeded and the queue shows {d}"
 ids = [i.get("id") for i in items]
@@ -104,7 +106,9 @@ GOT=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: applicati
 # that reading twice gives the same answer, which an `ack` would not.
 python3 - "$(curl -s -H "$AUTH" "$B/api/events")" <<'PY' || fail "GET /api/events did not answer an empty bus cleanly"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("events") == [], f"nothing has been published and this route answered {d}"
 PY
 ONE=$(curl -s -H "$AUTH" "$B/api/events")

@@ -81,7 +81,9 @@ CODE=$(curl -s -w '%{http_code}' -X POST -H "$AUTH" -H "x-session: $SID" \
 R=$(cat /tmp/gate-reply-body)
 python3 - "$R" <<'PY' || fail "POST /api/tickets/{id}/reply did not answer a usable draft"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("event"), f"the answer must name the outbox event the reply is waiting in: {d}"
 assert d.get("remaining") == 0, f"one draft out of a budget of one leaves 0 remaining: {d}"
 PY
@@ -91,7 +93,9 @@ CODE=$(reply_code "$TWO")
 # The stored ticket, and the draft that the model actually wrote.
 python3 - "$(get "/test/ticket/$ONE")" <<'PY' || fail "the draft was answered but not stored on the ticket"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("state") == "answered", f"a ticket with a draft is answered: {d}"
 r = d.get("reply")
 assert isinstance(r, dict), f"the ticket has no reply block: {d}"

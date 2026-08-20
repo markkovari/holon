@@ -40,7 +40,9 @@ ID=$(new "$W" "$INV" | field id)
 [ -n "$ID" ] || fail "POST /api/invoices returned no id"
 python3 - "$(get "/test/invoice/$ID")" <<'PY' || fail "the stored invoice is not what the contract describes"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("state") == "draft", f"a new invoice is a draft: {d}"
 assert d.get("lines") == [], f"a new invoice has no lines: {d}"
 assert d.get("total_units") == 0, f"a new invoice totals zero, as an integer: {d}"
@@ -49,7 +51,9 @@ assert str(d.get("created_at", "")).endswith("Z"), f"created_at must be RFC3339 
 PY
 python3 - "$(curl -s -H "authorization: Bearer $W" "$B/api/invoices/$ID")" "$ID" <<'PY' || fail "GET /api/invoices/{id} did not answer the stored invoice"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("id") == sys.argv[2], f"an invoice must carry its id: {d}"
 assert d.get("currency") == "EUR", d
 PY
@@ -65,7 +69,9 @@ done
 LOCKED=$(new "$BURST" "$INV")
 python3 - "$LOCKED" <<'PY' || fail "past the limit the part must refuse and say how long to wait"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("error") == "rate_limited", d
 assert isinstance(d.get("retry_after"), int) and d["retry_after"] > 0, f"retry_after must be the limiter's seconds: {d}"
 PY

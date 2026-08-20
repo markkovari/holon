@@ -44,7 +44,9 @@ ENROL=$(curl -s -X POST -H "authorization: Bearer $T" "$B/api/mfa/enroll")
 SECRET=$(printf '%s' "$ENROL" | field secret)
 python3 - "$ENROL" <<'PY' || fail "enrolling did not return a usable secret and uri"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 s = d.get("secret") or ""
 assert len(s) >= 16, f"a TOTP secret is base32 and not short: {d}"
 uri = d.get("uri") or ""
@@ -53,7 +55,9 @@ assert "docsearch" in uri, f"the issuer belongs in the uri: {uri!r}"
 PY
 python3 - "$(mfa)" <<'PY' || fail "after enrolling, the part must report enrolled and NOT verified"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("enrolled") is True, f"enrolled must be true after enrolling: {d}"
 assert d.get("verified") is False, f"enrolling is not verifying: {d}"
 PY
@@ -72,7 +76,9 @@ CODE=$(totp_now "$SECRET")
 OK=$(verify "$CODE")
 python3 - "$OK" <<'PY' || fail "a correct TOTP code was refused — the code was computed from the secret this part provisioned"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("verified") is True, f"a correct code must verify: {d}"
 PY
 python3 - "$(mfa)" <<'PY' || fail "after a correct code the part must report the session verified"
@@ -92,7 +98,9 @@ PY
 curl -s -o /dev/null -X POST -H "authorization: Bearer $T" "$B/api/mfa/enroll"
 python3 - "$(mfa)" <<'PY' || fail "re-enrolling left the old verification standing"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("enrolled") is True and d.get("verified") is False, \
     f"a new secret has not been used yet, so verified must go back to false: {d}"
 PY

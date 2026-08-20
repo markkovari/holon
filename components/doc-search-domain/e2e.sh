@@ -64,7 +64,9 @@ PY
 ANS=$(curl -s -X POST -H 'content-type: application/json' -H "$AUTH" -d "{\"question\":\"$Q\"}" "$B/api/answer")
 python3 - "$ANS" "$ID" <<'PY' || fail "the three parts do not agree — see which of the three claims below failed"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 doc_id = sys.argv[2]
 assert "error" not in d, (
     "the composed API refused a question from a session that verified through the real "
@@ -87,7 +89,9 @@ PY
 # The step-up part's own read of the state agrees with what the answer part did.
 python3 - "$(curl -s -H "$AUTH" "$B/api/mfa")" <<'PY' || fail "the step-up part reports a state the answer part did not act on"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("verified") is True, \
     f"the answer part accepted the session but the step-up part reports it unverified: {d} — the two parts read the same state differently"
 PY

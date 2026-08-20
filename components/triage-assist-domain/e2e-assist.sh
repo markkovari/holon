@@ -82,7 +82,9 @@ PY
 STORED=$(get "/test/report/$ID")
 python3 - "$STORED" "$ASSIST" <<'PY' || fail "the assist was answered but not written to the report"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 answered = json.loads(sys.argv[2] or "{}")
 a = d.get("assist")
 assert isinstance(a, dict), f"the report has no assist block: {d}"
@@ -106,7 +108,9 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer 
 [ "$CODE" = 409 ] || fail "assisting an already-assisted report must be 409, got $CODE"
 python3 - "$AGAIN" <<'PY' || fail "a 409 must name the severity already on record"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("error") == "already_assisted", d
 assert d.get("severity") in ("critical", "major", "minor"), f"the 409 must carry the stored severity: {d}"
 PY
@@ -136,7 +140,9 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer 
 
 python3 - "$(get "/test/report/$DOWN_ID")" <<'PY' || fail "a failed model call left something behind on the report"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert "assist" not in d, \
     f"the provider was down and the report was written anyway — a report with an empty opinion attached: {d}"
 PY

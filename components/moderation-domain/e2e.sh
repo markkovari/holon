@@ -53,7 +53,9 @@ ID=$(curl -s -X POST -H 'content-type: application/json' -H "$AUTH" \
 D=$(curl -s -X POST -H "$AUTH" "$B/api/items/$ID/review")
 python3 - "$D" <<'PY' || fail "the three parts do not agree — see which claim below failed"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert "error" not in d, (
     "the composed API refused a review of an item submitted through the real route. If "
     "this is not_found, `intake` (src/intake.rs) and `verdict` (src/verdict.rs) disagree "

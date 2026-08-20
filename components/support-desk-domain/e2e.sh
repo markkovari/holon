@@ -51,7 +51,9 @@ EVENT=$(printf '%s' "$R" | field event)
 # --- delivered, through the part that sends ------------------------------------
 python3 - "$(curl -s -X POST -H "$AUTH" "$B/api/deliver")" <<'PY' || fail "the courier part could not deliver what the reply part enqueued"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("claimed") == 1, (
     "the courier claimed nothing. If the reply part enqueued under a different topic than "
     f"the contract's support.reply, the two never meet: {d}"
@@ -64,8 +66,15 @@ PY
 # parts agreed on every field of a payload neither of them shows anyone.
 python3 - "$(cat "$SINK_LOG")" "$(get "/test/ticket/$ID")" <<'PY' || fail "the parts disagree about the payload — see which field below failed"
 import json, sys
-arrival = json.loads((sys.argv[1] or "").strip().split("\n")[0])
-body = json.loads(arrival["body"])
+raw = (sys.argv[1] or "").strip()
+assert raw, "nothing arrived at the far end at all"
+arrival = json.loads(raw.split("\n")[0])
+arrived = (arrival.get("body") or "").strip()
+assert arrived, "a request arrived at the far end with an EMPTY body — the reply never left"
+try:
+    body = json.loads(arrived)
+except json.JSONDecodeError as e:
+    raise AssertionError(f"what arrived at the far end is not JSON ({e}): {arrived[:200]!r}")
 ticket = json.loads(sys.argv[2] or "{}")
 drafted = ((ticket.get("reply") or {}).get("text") or "").strip()
 assert drafted, f"the ticket has no stored draft to compare against: {ticket}"

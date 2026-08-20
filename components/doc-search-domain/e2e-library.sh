@@ -43,7 +43,9 @@ ID=$(curl -s -X POST -H 'content-type: application/json' -H "authorization: Bear
 
 python3 - "$(get "/test/doc/$ID")" <<'PY' || fail "the stored document is not what was filed"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("title") == "Rotating the signing key", d
 assert d.get("tag") == "security", d
 assert "overlap window" in d.get("text", ""), d
@@ -53,7 +55,9 @@ PY
 HITS=$(curl -s -H "authorization: Bearer $W" "$B/api/search?q=overlap")
 python3 - "$HITS" "$ID" <<'PY' || fail "searching for a word from the document's BODY did not find it"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 hits = d.get("hits")
 assert isinstance(hits, list) and hits, f"no hits for a word that is in the indexed text: {d}"
 ids = [h.get("id") for h in hits]
@@ -70,7 +74,9 @@ PY
 python3 - "$(curl -s -H "authorization: Bearer $W" "$B/api/search?q=overlap&tag=ops")" <<'PY' \
   || fail "the tag filter did not exclude a document tagged something else"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("hits") == [], f"tag=ops must not match a security document: {d}"
 PY
 

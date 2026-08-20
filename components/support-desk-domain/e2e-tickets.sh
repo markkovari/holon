@@ -40,7 +40,9 @@ ID=$(open_ticket "$W" "$TICKET" | field id)
 [ -n "$ID" ] || fail "POST /api/tickets returned no id"
 python3 - "$(get "/test/ticket/$ID")" <<'PY' || fail "the stored ticket is not what the contract describes"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("state") == "open", f"a new ticket is open: {d}"
 assert d.get("customer") == "webhook:https://acme.test/hooks/ada", d
 assert "reply" not in d, "tickets must not invent a reply — that is the reply part's job"
@@ -49,7 +51,9 @@ PY
 READ=$(curl -s -H "authorization: Bearer $W" "$B/api/tickets/$ID")
 python3 - "$READ" "$ID" <<'PY' || fail "GET /api/tickets/{id} did not answer the stored ticket"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("subject") == "Cannot export my data", d
 assert d.get("id") == sys.argv[2], f"a ticket must carry its id: {d}"
 PY

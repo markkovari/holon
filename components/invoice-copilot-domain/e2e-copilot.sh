@@ -55,7 +55,9 @@ GOT=$(suggest_code "$DRAFT" "{\"prose\":\"$PROSE\",\"total\":\"not money\",\"sha
 S=$(suggest "$DRAFT" "$BODY")
 python3 - "$S" "$PROSE" <<'PY' || fail "the suggestion is not what an allocated split looks like"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 lines = d.get("lines")
 assert isinstance(lines, list) and len(lines) == 3, f"three shares means three lines: {d}"
 units = [l.get("units") for l in lines]
@@ -87,7 +89,9 @@ PY
 
 python3 - "$(get "/test/invoice/$DRAFT")" <<'PY' || fail "the suggestion was answered but not stored"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert len(d.get("lines") or []) == 3, f"the lines must be stored on the invoice: {d}"
 assert d.get("total_units") == 10000, f"the stored total must be the allocated sum: {d}"
 assert d.get("state") == "draft", f"suggesting does not post an invoice: {d}"
@@ -97,7 +101,9 @@ PY
 S2=$(suggest "$DRAFT" "{\"prose\":\"A single day of pair programming.\",\"total\":\"50.00\",\"shares\":2}")
 python3 - "$S2" <<'PY' || fail "a second suggestion must replace the lines rather than append to them"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 units = [l.get("units") for l in d.get("lines") or []]
 assert len(units) == 2, f"two shares means two lines, not five: {d}"
 assert sum(units) == 5000, f"the new total must be the new amount: {units}"
