@@ -46,11 +46,8 @@ world triage-assist-domain {
     import audit:log/query@0.1.0;
     import audit:log/types@0.1.0;
 
-    /// Reports and their assists.
+    /// Reports and their assists. `create` mints the id, so nothing here generates one.
     import records:store/store@0.1.0;
-    /// Their ids.
-    import id:generate/generator@0.1.0;
-
     /// Timestamps for what is stored.
     import wasi:clocks/wall-clock@0.2.0;
 }

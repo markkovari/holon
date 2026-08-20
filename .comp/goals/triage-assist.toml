@@ -26,6 +26,34 @@
 #            measured here).
 title = "triage:assist — authenticated, throttled, redacted, assisted, audited"
 contract = "components/triage-assist-domain/CONTRACT.md"
+
+text = """
+Finish the triage:assist API in components/triage-assist-domain. Nothing is
+implemented yet: three parts are written at the same time, by three agents, against
+one contract.
+
+`CONTRACT.md` in that crate is the specification — every route, every status code,
+every rule, and the document shape all three parts share. Read it first. You may not
+edit it: if it is wrong or missing something you need, write CONTRACT-REQUEST.md
+(first line the subject, the rest why) and the other parts will answer between
+generations.
+
+The router in src/lib.rs already exists and is not yours to change. It dispatches to
+the three parts, answers /health, mints a token at POST /test/token, seeds a fixture
+at POST /test/seed and exposes the raw stored document at GET /test/report/{id} — so
+your part can be judged before the parts around it exist. Your part is one file.
+
+You are judged by real HTTP requests against the running component, not by whether it
+compiles: `cargo component check` passes happily on code that does nothing.
+
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as
+components, bound at compose time. Look at wit/assist.wit. Authentication, the rate
+limit, PII masking, the model, the audit trail — every one of them is implemented,
+tested and composed for you. You call them; you do not write them. Writing your own
+token parser, your own attempt counter, your own email scanner or your own HTTP client
+for a model is the one way to fail a gate while answering every request correctly,
+because the gate reads which capabilities the compiled component actually calls.
+"""
 writable = []
 base_paths = [
   "components/triage-assist-domain/",
@@ -35,10 +63,13 @@ base_paths = [
   "components/rate-limiter/",
   "components/pii-redact/",
   "components/ai-inference/",
+  # ai-inference's own import. Absent, `cargo component` cannot build a target world
+  # at all and every branch fails before a line of Rust is compiled — see
+  # docs/measure/complex-five.md, run 1.
+  "components/llm-inference/",
   "components/anthropic-provider/",
   "components/audit-log/",
   "components/record-store/",
-  "components/id-generate/",
   "components/gate-lib.sh",
   "components/Cargo.toml",
   "wit/",
@@ -54,7 +85,6 @@ keep_members = [
   "anthropic-provider",
   "audit-log",
   "record-store",
-  "id-generate",
 ]
 
 [[part]]
@@ -209,3 +239,14 @@ id = "ledger-records-and-can-be-asked"
 required = true
 weight = 1
 command = ["bash", "components/triage-assist-domain/e2e-ledger.sh"]
+
+# The join. Each part's gate judges it with the other two stubbed — which is what makes
+# three agents possible, and exactly why something has to judge them together. The trail
+# is what makes the chain checkable: `ledger` cannot show `reports.create ok` unless
+# `intake` noted it under the contract's name, and `assist` cannot answer at all unless
+# `intake` stored the shape the contract describes.
+[[check]]
+id = "the-whole-triage-assist-api-works"
+required = true
+weight = 1
+command = ["bash", "components/triage-assist-domain/e2e.sh"]
