@@ -191,6 +191,13 @@ already did. It
 returns nothing and must never fail a request: an audit backend that is down is a
 `note` that did nothing, not a 500 on the caller's report.
 
+`subject` is **`principal.subject`** — the value `authorize` RETURNED — for every
+event a part writes. Not the bearer token, not the tenant, not the route. A token in
+that field is both the wrong value and a credential written into a durable audit
+trail, and no part's own gate can see it: with `ledger` stubbed there is no trail to
+inspect, so the mistake survives every per-part check and surfaces only when the three
+are composed.
+
 The events the other parts write, and they are named exactly this:
 
 | what happened | `event` | `outcome` |

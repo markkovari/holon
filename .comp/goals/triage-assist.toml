@@ -178,6 +178,12 @@ no severity, no `assisted_at`. The gate runs a second host with the provider poi
 a closed port to check precisely that, so a 503 path that writes something first fails
 there and nowhere else.
 
+Every event you note carries `principal.subject` — what `authorize` returned — as its
+subject. Not the token you were given. Your own gate cannot catch that mistake, because
+`ledger` is a stub while you are judged and there is no trail to read; it surfaces only
+when all three parts are composed, and a bearer token in an audit trail is a credential
+in a durable log.
+
 Assisting a report that already has an assist is a 409 naming the stored severity, not
 a second model call. Every model call costs money and time, and a part that re-assists
 on every POST spends them forever.
@@ -223,6 +229,10 @@ request turns the trail into a dependency of the API.
 Then the two reads: `?limit=N` over `recent`, and `?trace=T` over `by_trace`. A
 `by_trace` that answers the whole log looks like a working filter right up to the first
 incident, so the gate asks for a trace nobody used and expects an empty list.
+
+`subject` is whatever your caller passed, and the contract binds them to pass
+`principal.subject`. You do not need to validate it — but do not substitute anything
+for it either.
 
 You are judged with both other parts still stubbed, which is fine and intended: the
 router notes every `/api/*` request it dispatches, so there is always traffic to show.

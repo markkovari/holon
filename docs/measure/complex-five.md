@@ -149,3 +149,82 @@ original plan had it: five.
 
 <!-- One table per app, appended as each run completes. Do not edit anything above
      this line once the first run has started. -->
+
+### App 1, run 2 — three winners, no PR, and the real bottleneck
+
+**Outcome: no PR. All three parts accepted at score 1000; the join rejected them.**
+
+```
+intake  accepted=true  score=1000  generations=1
+assist  accepted=true  score=1000  generations=1
+ledger  accepted=true  score=1000  generations=1
+No PR opened: the halves pass alone and not together (score 0)
+  the-whole-triage-assist-api-works:
+    assist (src/assist.rs) wrote subject=['sess_2718e26dbce03e629e5c67a968bd6039']
+```
+
+One part wrote the **bearer token** into the audit trail where `principal.subject`
+belongs — the wrong value, and a credential in a durable log. It passed its own gate,
+because with `ledger` stubbed there is no trail for a per-part gate to read. Three
+parts each correct alone, wrong together: the failure only a chain can produce, caught
+by the only check that sees all three.
+
+| measurement | value |
+|---|---|
+| parts accepted | 3/3 at 1000 |
+| attempts recorded | 18 (3 parts × 6 branches) |
+| branch pass rate, **first try** | 13/18 = **72%** — inside the 25–75% band |
+| branch pass rate, final | 18/18 = **100%** — above it |
+| attempts needing a repair try | 5 |
+| median attempt, end to end | **311 s** |
+| median by part | intake 90 s · assist 354 s · ledger 375 s |
+| total attempt time | 85 min |
+| shim timeouts | 0 |
+| lessons written | **0** |
+
+**Where the time goes.** The median attempt is 311 s and the spread is by part, not by
+branch: `intake` at 90 s has a model-free gate, `assist` at 354 s makes two real model
+calls in its gate, `ledger` at 375 s makes none and is still slow — so the cost is the
+WRITER call, not the gate. Gate model calls measured 9–13 s each. The shim's documented
+130 s median is a fact about long code-writing prompts, and it is the whole wall-clock
+budget: nothing else in the loop is within an order of magnitude of it.
+
+**Three findings, and the third is the answer to "where does it bind".**
+
+1. **My per-part gates were too easy and the join carried all the discrimination.** A
+   100% final pass rate is the over-specification signal this document pre-registered,
+   and here it has a specific cause: an invariant that spans parts cannot be checked
+   inside one. That is not a goal-writing mistake to be fixed by adding hints; it is a
+   property of decomposing work into independently-judged parts. The band still did its
+   job — it flagged the gates, not the agents.
+
+2. **The lesson pool is populated backwards.** Run 1 — a broken sandbox — wrote three
+   lessons, all `scored 0; … does not compile`, with `uses = 24` before anything read
+   them usefully. Run 2 — three winners at 1000 — wrote **none**, because promotion
+   only runs when a goal fully resolves, and the join failure ended the run first. So
+   the graph currently learns from harness bugs and forgets successful work. Nothing in
+   the store distinguishes "the candidate was wrong" from "the tree it was handed could
+   not build".
+
+3. **A join failure is terminal, and its verdict is addressed to nobody.** `CONTEXT.md`
+   says a verdict is "addressed to a future attempt, not to a person". The join's
+   verdict is addressed to neither: no part owns it, no repair round is spawned (rounds
+   remained unused — the parts were already accepted), no lesson records it, and the run
+   ends. Everything needed to fix it was known — the offending value, the event, the
+   part — and none of it reached anything that could act. **This is the bottleneck for
+   holon working properly on complex apps:** not the model, not the pool, not the
+   graph, but that cross-part failure is discovered exactly once, at the last possible
+   moment, and then discarded.
+
+Two smaller ones worth recording: `goalrun` refuses to run when the registered
+contract differs from `CONTRACT.md` (correct — an amendment belongs in ask/answer), but
+`SURREAL_DB` is hardcoded to `goalmemory`, so a contract fix found BY a failed run makes
+that run's database unusable and there is no per-experiment namespace. And the gate
+verdict that caught this originally named no part at all; it now names the file, which
+is the difference between a finding and a repair instruction.
+
+**Taxonomy for this run:** 5 `behaviour` (first-try failures, all repaired), 1
+`contract-drift` (the join). Zero `compose-or-host`, zero `shim-timeout`, zero
+`wrong-or-missing-capability` — **every branch used the pooled capabilities rather than
+reimplementing them**, which is the first real evidence in this experiment that the
+import assertions do their job and that the pool is being reached for.
