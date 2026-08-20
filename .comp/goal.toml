@@ -6,9 +6,9 @@
 #
 #   KEPT — three facts, each invisible until a reply is quietly lost:
 #
-#     * a non-2xx from `notify:dispatch` is the far end REFUSING. `send` returns
-#       `Ok(status)` for it, so a courier that treats `Ok` as success acks an undelivered
-#       reply and it is gone with no trace in any log.
+#     * `outbox::fail` RETURNS the event's new state, and `dead` is the only signal that a
+#       reply has been abandoned for good. Ignoring it raises nothing, logs nothing, and
+#       leaves a customer who never hears back.
 #     * `quota`'s `Exceeded` payload is the units still available — 0 when one unit is
 #       refused — and not a duration. Passed through as `retry_after` it tells every caller
 #       to retry immediately, forever.
@@ -170,16 +170,19 @@ text = """
 Implement components/support-desk-domain/src/courier.rs: the only part that talks to the far
 end.
 
-WHAT HAPPENS WHEN A SEND FAILS IS THE WHOLE OF THIS PART, and there is a trap in it that
-raises nothing:
+WHAT HAPPENS WHEN A SEND FAILS IS THE WHOLE OF THIS PART, and the trap raises nothing:
 
     use crate::bindings::notify::dispatch::dispatcher as notify;
     notify::send(msg: &notify::Message) -> Result<u16, notify::NotifyError>
 
-`send` answers `Ok(status)` for a status the far end actually returned — including a 500.
-`Ok` is not delivery. A courier that acks on `Ok` acks replies the customer never received,
-they leave the outbox, and there is no trace of them in any log. Only a 2xx is delivery;
-anything else, and any `Err`, is a `fail`.
+Every `Err` is a failure to deliver and every one of them is a `fail` — a refusal and an
+unreachable host arrive identically, and a courier that tries to tell them apart drops
+replies over outages that lasted a minute.
+
+The silent part is what `fail` RETURNS: the event's new state. `pending` means it will come
+back after backoff; `dead` means `max-attempts` is spent and nothing will retry it ever
+again. Ignore that value and a reply is abandoned with no error raised, nothing logged, and
+a customer who simply never hears back.
 
     outbox::claim(max, lease_seconds) -> Result<Vec<Event>, OutboxError>
     outbox::ack(id) -> Result<(), OutboxError>

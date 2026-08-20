@@ -1,8 +1,11 @@
 # support:desk's gates, named. Everything they do lives in `components/gate-lib.sh`.
 GATE_CRATE=support-desk-domain
 GATE_APP=support
-GATE_PKGS="-p support-desk-domain -p auth-guard -p session-store -p quota -p outbox \
--p notify-dispatch -p ai-inference -p anthropic-provider -p record-store"
+# ratelimit:guard and audit:log are auth-guard's imports, not this app's, and the
+# composition needs them built regardless.
+GATE_PKGS="-p support-desk-domain -p auth-guard -p rate-limiter -p audit-log \
+-p session-store -p quota -p outbox -p notify-dispatch -p ai-inference \
+-p anthropic-provider -p record-store"
 
 # shellcheck source=components/gate-lib.sh
 . components/gate-lib.sh

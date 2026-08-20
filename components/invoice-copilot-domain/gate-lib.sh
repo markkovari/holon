@@ -1,8 +1,10 @@
 # invoice:copilot's gates, named. Everything they do lives in `components/gate-lib.sh`.
 GATE_CRATE=invoice-copilot-domain
 GATE_APP=invoice
-GATE_PKGS="-p invoice-copilot-domain -p auth-guard -p rate-limiter -p money -p ledger \
--p idempotency-guard -p ai-inference -p anthropic-provider -p record-store"
+# audit:log is auth-guard's import, not this app's, and the composition still needs it.
+GATE_PKGS="-p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log \
+-p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider \
+-p record-store"
 
 # shellcheck source=components/gate-lib.sh
 . components/gate-lib.sh

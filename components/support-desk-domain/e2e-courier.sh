@@ -126,10 +126,26 @@ PY
 # --- enough refusals dead-letter it, and a dead letter can be replayed --------
 sink_break
 E3=$(enqueue "the third reply")
+# The pass that exhausts `max-attempts` must SAY so. The outbox dead-letters on its own
+# whatever the courier reads, so the dead-letter list below would pass a part that never
+# looks at `fail`'s return value — and then nothing in the app ever reports that a reply was
+# abandoned. This is the only place that distinguishes the two.
+LAST=""
 for _ in 1 2 3; do
-  deliver >/dev/null
+  LAST=$(deliver)
   sleep 2
 done
+python3 - "$LAST" <<'PY' || fail "the pass that abandoned a reply did not report it"
+import json, sys
+raw = (sys.argv[1] or "").strip()
+assert raw, "POST /api/deliver answered with an empty body"
+d = json.loads(raw)
+assert d.get("dead", 0) >= 1, (
+    "max-attempts is spent and this pass reported dead=0. `fail` RETURNS the event's new "
+    "state and `dead` is the only signal that a reply has been abandoned for good — a part "
+    f"that discards it leaves nothing anywhere to report the loss: {d}"
+)
+PY
 python3 - "$(curl -s -H "$AUTH" "$B/api/dead-letters")" <<'PY' || fail "past max-attempts the reply must be dead-lettered, not retried forever"
 import json, sys
 events = json.loads(sys.argv[1] or "{}").get("events")
@@ -142,7 +158,16 @@ assert e.get("id"), f"a dead letter without its id cannot be replayed: {e}"
 assert isinstance(e.get("attempts"), int) and e["attempts"] >= 2, f"attempts must be carried: {e}"
 assert isinstance(e.get("payload"), dict), f"the payload must come back parsed, not as bytes: {e}"
 PY
-DEAD=$(curl -s -H "$AUTH" "$B/api/dead-letters" | python3 -c "import sys,json;print(json.load(sys.stdin)['events'][0]['id'])")
+DEAD=$(curl -s -H "$AUTH" "$B/api/dead-letters" | python3 -c "
+import json, sys
+raw = sys.stdin.read().strip()
+if not raw:
+    sys.exit('GET /api/dead-letters answered an empty body')
+events = json.loads(raw).get('events') or []
+if not events:
+    sys.exit('GET /api/dead-letters answered no events')
+print(events[0]['id'])
+") || fail "the dead letter could not be read back, so replay cannot be judged"
 sink_repair
 GOT=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" "$B/api/dead-letters/$DEAD/replay")
 [ "$GOT" = 204 ] || fail "replaying a dead letter must be 204, got $GOT"

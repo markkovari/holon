@@ -21,6 +21,24 @@
 #                unimplemented — not a build error
 #   with REF     every check must pass, which is the only evidence the gates are
 #                passable at all in that environment
+#
+# And a third direction, which is the one that matters most:
+#
+#   VIOLATORS=<dir>   every subdirectory of <dir> is an implementation that BREAKS one
+#                     stated rule on purpose, and the check named in its `must-fail` file
+#                     must reject it.
+#
+# WHY THAT THIRD DIRECTION EXISTS. App 4's contract claimed `notify::send` answers
+# `Ok(500)` when the far end refuses, and built the courier's central rule on it. The
+# component does the opposite (`Err(DeliveryFailed)`, notify-dispatch/src/lib.rs:142), so
+# the rule described a component that does not exist — and neither the stub direction nor
+# the reference direction could tell: the reference was correct under EITHER reading, so
+# the gate never distinguished anything. Four rehearsals passed. One run of six agents read
+# the component's own doc comment and filed a contract request.
+#
+# A violator is how a rule becomes falsifiable. If a violator passes, the rule it breaks is
+# either untestable by this gate or not true of the components involved, and both of those
+# are worth knowing before a run rather than after it.
 set -uo pipefail
 GOAL="${1:?usage: goal-rehearse.sh <goal.toml> (REF=<dir with the part files> to rehearse a passing tree)}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -98,7 +116,11 @@ if [ -n "${REF:-}" ]; then
   echo "reference applied from $REF"
 fi
 
-# What `comp-checks` passes a check, and nothing else. `HOME` is the sandbox, so a
+# What `comp-checks` passes a check, and nothing else — with ONE deliberate difference: a
+# target directory of its own. A live run builds the same crate name into
+# `comp-goalrun/cargo-target`, and two processes writing one artifact means each is testing
+# whatever the other wrote last. `CARGO_HOME` is still shared, because a package registry is
+# read-only to both. `HOME` is the sandbox, so a
 # check that reaches into the real home is a check that will not work in the loop.
 TOOLCHAIN=$(rustup show active-toolchain 2>/dev/null | cut -d' ' -f1)
 failed=0
@@ -109,7 +131,7 @@ while read -r cmd; do
   env -i PATH="$PATH" HOME="$WORK" CARGO_TERM_COLOR=never \
     RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
     CARGO_HOME="$HOME/.cache/comp-goalrun/cargo-home" \
-    CARGO_TARGET_DIR="$HOME/.cache/comp-goalrun/cargo-target" \
+    CARGO_TARGET_DIR="$HOME/.cache/goal-rehearse/cargo-target" \
     COMP_HOST="$ROOT/host/target/release/comp-host" \
     COMP_PLUG="$ROOT/reconciler/target/release/comp-plug" \
     bash -c "$cmd" 2>&1 | tail -3
@@ -118,9 +140,58 @@ while read -r cmd; do
   echo "    exit $status"
 done < .rehearse-checks
 
+# --- violators: rules that must be enforceable ------------------------------------
+if [ -n "${VIOLATORS:-}" ]; then
+  echo
+  broken=0
+  for dir in "$VIOLATORS"/*/; do
+    [ -d "$dir" ] || continue
+    name=$(basename "$dir")
+    want="$dir/must-fail"
+    if [ ! -f "$want" ]; then
+      echo "SKIP $name — no \`must-fail\` file naming the check that should reject it"
+      continue
+    fi
+    # A violator is the reference with one rule broken, so it is applied ON TOP of REF.
+    tree="$(mktemp -d -t goal-violator-XXXX)"
+    cp -R "$WORK"/. "$tree"/
+    dest=$(find "$tree" -type d -name src -path '*-domain*' | head -1)
+    for f in "$dir"*.rs; do
+      [ -e "$f" ] || continue
+      cp "$f" "$dest/$(basename "$f")"
+    done
+    check=$(head -1 "$want")
+    echo "--- violator $name  (must be rejected by: $check)"
+    (
+      cd "$tree" || exit 1
+      env -i PATH="$PATH" HOME="$tree" CARGO_TERM_COLOR=never \
+        RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
+        CARGO_HOME="$HOME/.cache/comp-goalrun/cargo-home" \
+        CARGO_TARGET_DIR="$HOME/.cache/goal-rehearse/cargo-target" \
+        COMP_HOST="$ROOT/host/target/release/comp-host" \
+        COMP_PLUG="$ROOT/reconciler/target/release/comp-plug" \
+        bash -c "$check" >/dev/null 2>&1
+    )
+    if [ $? -eq 0 ]; then
+      echo "    SURVIVED — the gate accepted an implementation that breaks this rule."
+      echo "    The rule is either untestable by that check or not true of the components"
+      echo "    involved. Read $dir and decide which."
+      broken=$((broken + 1))
+    else
+      echo "    rejected, as it must be"
+    fi
+    rm -rf "$tree"
+  done
+  if [ "$broken" -gt 0 ]; then
+    echo
+    echo "VIOLATORS SURVIVED: $broken rule(s) are stated and not enforced."
+    exit 1
+  fi
+fi
+
 echo
 if [ -n "${REF:-}" ]; then
-  [ "$failed" = 0 ] && echo "REHEARSAL OK — every check passes on a reference tree" && exit 0
+  [ "$failed" = 0 ] && echo "REHEARSAL OK — every check passes on a reference tree${VIOLATORS:+, and every violator was rejected}" && exit 0
   echo "REHEARSAL FAILED — $failed check(s) cannot pass even with the reference: the gates are not passable in the sandbox"
   exit 1
 fi

@@ -1,8 +1,11 @@
 # docsearch:agent's gates, named. Everything they do lives in `components/gate-lib.sh`.
 GATE_CRATE=doc-search-domain
 GATE_APP=docsearch
-GATE_PKGS="-p doc-search-domain -p auth-guard -p otp -p quota -p search-index -p cache \
--p ai-inference -p anthropic-provider -p record-store"
+# auth-guard's own world imports ratelimit:guard and audit:log, so the composition needs
+# them built even though nothing here calls either. Omit them and the artifact composes
+# with an unimplemented import and traps at the first request.
+GATE_PKGS="-p doc-search-domain -p auth-guard -p rate-limiter -p audit-log -p otp \
+-p quota -p search-index -p cache -p ai-inference -p anthropic-provider -p record-store"
 
 # shellcheck source=components/gate-lib.sh
 . components/gate-lib.sh

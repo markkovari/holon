@@ -1,8 +1,9 @@
 # moderation:queue's gates, named. Everything they do lives in `components/gate-lib.sh`.
 GATE_CRATE=moderation-domain
 GATE_APP=moderation
-GATE_PKGS="-p moderation-domain -p auth-guard -p rate-limiter -p policy-guard \
--p event-bus -p ai-inference -p anthropic-provider -p record-store"
+# audit:log is auth-guard's import, not this app's, and the composition still needs it.
+GATE_PKGS="-p moderation-domain -p auth-guard -p rate-limiter -p audit-log \
+-p policy-guard -p event-bus -p ai-inference -p anthropic-provider -p record-store"
 
 # shellcheck source=components/gate-lib.sh
 . components/gate-lib.sh
