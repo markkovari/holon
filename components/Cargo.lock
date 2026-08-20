@@ -1928,6 +1928,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "treasury-ledger-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "triage-assist-domain"
 version = "0.1.0"
 dependencies = [

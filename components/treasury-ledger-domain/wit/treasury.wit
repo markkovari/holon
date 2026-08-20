@@ -1,0 +1,56 @@
+// treasury:ledger — concurrent transfers that never lose money.
+//
+// App 6 of docs/measure/complex-five.md, and the first one authored to be UNREACHABLE in a
+// single generation. The five before it were: every part but one passed on its first attempt,
+// which means the search had nothing to search. The properties here are the ones a first
+// attempt gets wrong even when the code looks right — not because the contract hides
+// anything, but because concurrency does.
+//
+//   * a read-modify-write on a shared record loses updates unless the revision conflict is
+//     read and retried, and the naive version passes every single-request test there is;
+//   * two accounts cannot be moved atomically by moving them one at a time, and the window is
+//     invisible until something else is moving them too — and a lease does not close it:
+//     `lock:mutex/acquire` is a load-then-store, so two concurrent acquires both succeed
+//     (measured: 2 of 12 transfers of a whole balance settled with the lease as the only
+//     guard). The revision is the guarantee;
+//   * "enough balance" checked before a write is not "enough balance" when the write lands,
+//     which is the oldest double-spend there is;
+//   * and none of that can be trusted on the word of the code that did it, which is why a
+//     third part recomputes every balance from the journal and reports the drift.
+//
+// Every import is already implemented, tested and composed in this repository.
+package treasury:ledger@0.1.0;
+
+world treasury-ledger-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Who the caller is, and whether they may.
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+    /// Minting a token for a test caller — the ROUTER's, never a part's.
+    import auth:identity/session@0.1.0;
+
+    /// Accounts, transfers and the journal. `update` takes the revision it expects, and
+    /// what it does when that revision is stale is the whole of part one.
+    import records:store/store@0.1.0;
+
+    /// Every number. Minor units, exact, and never divided by hand.
+    import money:amount/arithmetic@0.1.0;
+
+    /// Double entry, and the refusal when the two sides disagree.
+    import ledger:doubleentry/ledger@0.1.0;
+
+    /// The transfer lifecycle as a definition rather than a ladder of string comparisons.
+    import fsm:workflow/engine@0.1.0;
+
+    /// Exactly once per idempotency key, and exactly once per settlement period.
+    import idempotency:guard/store@0.1.0;
+
+    /// Compensations, for a transfer that cannot be completed.
+    import outbox:dispatch/queue@0.1.0;
+
+    /// Deployment knobs.
+    import wasi:config/store@0.2.0-rc.1;
+    /// Timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}
