@@ -211,6 +211,40 @@ fn seed_journal(body: &str) -> Reply {
     }
 }
 
+/// Every journal line, straight out of the store.
+///
+/// Scaffold. `transfers` ends in a journal write and the route that READS the journal belongs to
+/// `reconcile` — a stub while `transfers` is judged. Without this, the one thing that proves a
+/// transfer was written down is unobservable exactly when it matters, and the part is
+/// unpassable. That is not a hypothetical: it cost app 6 its first run, three generations of six
+/// branches each, on a check no implementation could satisfy.
+fn peek_journal() -> Reply {
+    let mut lines = Vec::new();
+    let mut after = String::new();
+    loop {
+        let Ok(page) = records::list_records("journal", 200, &after) else { break };
+        let empty = page.entries.is_empty();
+        for e in &page.entries {
+            if let Ok(mut v) = serde_json::from_str::<Value>(&e.data) {
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("id".into(), json!(e.id));
+                }
+                lines.push(v);
+            }
+        }
+        if empty || page.next.is_empty() {
+            break;
+        }
+        after = page.next;
+    }
+    lines.sort_by(|a, b| {
+        a.get("at").and_then(Value::as_str).unwrap_or("").cmp(
+            b.get("at").and_then(Value::as_str).unwrap_or(""),
+        )
+    });
+    Reply::json(200, json!({ "lines": lines }))
+}
+
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 fn read_body(request: &IncomingRequest) -> String {
@@ -269,7 +303,8 @@ impl Guest for Component {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "token"] => mint(&body),
             ["test", "seed"] => seed(&body),
-            ["test", "journal"] => seed_journal(&body),
+            ["test", "journal"] if matches!(method, Method::Post) => seed_journal(&body),
+            ["test", "journal"] => peek_journal(),
             // The stored record, straight out of the store, so a part is judgeable on what it
             // WROTE without depending on the part that owns the read route.
             ["test", "account", id] => match records::get("accounts", id) {

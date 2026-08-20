@@ -89,10 +89,13 @@ d = json.loads(raw)
 assert d.get("state") == "settled", f"a completed transfer is settled: {d}"
 assert d.get("units") == 2500, f"the recorded amount must be the amount moved: {d}"
 PY
-python3 - "$(curl -s -H "$AUTH" "$B/api/journal")" "$L" "$R" <<'PY' || fail "a settled transfer left no journal line, so reconciliation can never see it"
+# Read through the ROUTER's fixture: `/api/journal` belongs to `reconcile`, which is a stub while
+# this part is judged. Asking it would make this check unsatisfiable by any implementation — and
+# it did, for a whole run.
+python3 - "$(get /test/journal)" "$L" "$R" <<'PY' || fail "a settled transfer left no journal line, so reconciliation can never see it"
 import json, sys
 raw = (sys.argv[1] or "").strip()
-assert raw, "GET /api/journal answered nothing"
+assert raw, "GET /test/journal answered nothing"
 lines = json.loads(raw).get("lines")
 assert isinstance(lines, list) and lines, f"the journal is empty after a settled transfer: {lines}"
 mine = [l for l in lines if l.get("from") == sys.argv[2] and l.get("to") == sys.argv[3]]
@@ -146,17 +149,27 @@ assert settled == 1, (
     f"request decides against a balance that is already gone. Codes: [{codes}]"
 )
 assert a == 0 and z == 12000, f"round {rnd}: after the one settlement the source is empty and the destination holds both: from={a} to={z}"
-refused = counts.get("409", 0)
-assert refused >= 12, (
-    f"round {rnd}: only {refused} of the fifteen losers were refused with 409 "
-    f"insufficient_funds. The rest failed some other way, and a caller cannot tell 'no money' "
-    f"from 'try again': [{codes}]"
+# The losers may answer either way, and both are correct: 409 for "there is no money", 503
+# for "I could not get a clean read in the attempts I allow myself" — the contract permits a
+# bounded retry that gives up. What must NOT appear is any other status, because a caller
+# cannot act on one, and at least one 409 has to be there or nobody actually checked a
+# balance. Demanding 409 from all fifteen made this gate fail CORRECT work under load, which
+# is worse than missing something.
+allowed = {"201", "409", "503"}
+strange = {c: n for c, n in counts.items() if c not in allowed}
+assert not strange, (
+    f"round {rnd}: {strange} — a loser must be refused for no money (409) or for contention "
+    f"(503), and a caller cannot tell what to do with anything else: [{codes}]"
+)
+assert counts.get("409", 0) >= 1, (
+    f"round {rnd}: not one request was refused with 409 insufficient_funds, so nothing "
+    f"actually compared a balance: [{codes}]"
 )
 PY
 done
 
 # A refusal is a state, not a silence: the refused transfers are on record.
-python3 - "$(curl -s -H "$AUTH" "$B/api/journal?limit=500")" <<'PY' || fail "the journal grew by more than the one settled transfer"
+python3 - "$(get /test/journal)" <<'PY' || fail "the journal grew by more than the one settled transfer"
 import json, sys
 lines = json.loads((sys.argv[1] or "{}")).get("lines") or []
 storm = [l for l in lines if l.get("units") == 6000]
