@@ -1,0 +1,227 @@
+# App 6, and the first one authored to be UNREACHABLE in a single generation.
+#
+# The five before it all landed with every part passing on its first attempt but one — 67% to
+# 94% first-try — which means the search had almost nothing to search. That is a property of the
+# GOALS, not of the loop: each part was a single file whose every rule could be satisfied by
+# reading the contract carefully once.
+#
+# This one cannot. Not because anything is hidden — the contract is more explicit than any of
+# the five — but because the properties are about CONCURRENCY, and the obvious implementation of
+# each route is wrong in a way that no sequential test can see. The numbers below were measured
+# on this host before the goal was written:
+#
+#   * twenty-four concurrent credits, written the obvious way, leave the account at 23.00 and
+#     once at 21.00 out of 24.00. Nothing errors;
+#   * twelve concurrent transfers of an entire balance, guarded by `lock:mutex` and otherwise
+#     correct, settle TWICE — because `acquire` is a load-then-store and two callers both find
+#     the pair free.
+#
+#   KEPT — the three facts above are in the contract in full, with the measurements, because
+#   none of them is discoverable from a signature and each fails silently. A part cannot deduce
+#   that a lease is not mutual exclusion by reading `lock:mutex`'s WIT; it has to read the
+#   component or lose money.
+#
+#   CUT — nothing about how to write a retry loop, nothing about which status each refusal gets
+#   beyond the tables, and no worked code. The contract states the PROPERTY and the mechanism
+#   (the check and the write must be one CAS); turning that into a loop that terminates is the
+#   work, and it is the work a first attempt gets wrong.
+#
+# Expect more than one round. That is the point of running it.
+title = "treasury:ledger — concurrent transfers that never lose money"
+contract = "components/treasury-ledger-domain/CONTRACT.md"
+
+text = """
+Finish the treasury:ledger API in components/treasury-ledger-domain. Nothing is implemented
+yet: three parts are written at the same time, by three agents, against one contract.
+
+`CONTRACT.md` in that crate is the specification. Read the section called "The one thing this
+whole app is about" before you write anything, because it is the difference between this goal
+and an ordinary one: every route here is easy to write correctly for one request at a time, and
+the gates do not send one request at a time. They send twenty-four at once and then check that
+the money adds up.
+
+You may not edit the contract: if it is wrong or missing something you need, write
+CONTRACT-REQUEST.md (first line the subject, the rest why) and the other parts will answer
+between generations.
+
+The router in src/lib.rs already exists and is not yours to change. It answers /health, mints a
+token at POST /test/token, opens two accounts at POST /test/seed, writes a single journal line
+at POST /test/journal, shows a stored account with its revision at GET /test/account/{id}, and
+gives you `crate::cfg(key, default)`. Those fixtures exist so your part can be judged before the
+parts around it exist. Your part is one file.
+
+You are judged by CONCURRENT HTTP requests against the running component, and by arithmetic
+afterwards. A part that answers every single request correctly and loses one credit in
+twenty-four fails, and so does one that lets two callers spend the same balance.
+
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as components, bound
+at compose time. Look at wit/treasury.wit. The arithmetic, the double-entry check, the lifecycle
+and the exactly-once guard are implemented, tested and composed for you. What is NOT provided is
+a way to make two writes atomic, because this substrate does not have one — `records:store`
+gives you a revision, and using it correctly is the goal.
+"""
+
+writable = []
+base_paths = [
+  "components/treasury-ledger-domain/",
+  "components/auth-guard/",
+  # auth.wit's own world imports these two, so the manifest names them and the build reads them.
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/money/",
+  "components/ledger/",
+  "components/idempotency-guard/",
+  "components/fsm-workflow/",
+  "components/outbox/",
+  "components/record-store/",
+  # Not in the world, and READABLE on purpose: the contract makes a claim about what
+  # `acquire` does, and a part that wants to check that claim should be able to.
+  "components/lock-mutex/",
+  "components/gate-lib.sh",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "treasury-ledger-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "money",
+  "ledger",
+  "idempotency-guard",
+  "fsm-workflow",
+  "outbox",
+  "record-store",
+]
+
+[[part]]
+name = "accounts"
+text = """
+Implement components/treasury-ledger-domain/src/accounts.rs: opening an account, and adding
+money to one.
+
+ONE PROPERTY MATTERS HERE AND IT CANNOT BE TESTED ONE REQUEST AT A TIME. `records:store` is
+optimistic: `update` takes the revision you believe the record is at and refuses when that is no
+longer true. Two credits that read the same revision and both write will see one refused — and
+the obvious implementation reports that refusal to the caller as a 409 and drops the money.
+
+    records::update(collection, id, data, expected_revision) -> Result<Entry, StoreError>
+    StoreError::RevisionConflict(u64)   // the revision it is ACTUALLY at, now
+
+Measured on this host, twenty-four concurrent credits of 1.00 written that way: the account
+ended at 23.00, and on a second run at 21.00. Nothing errored. Your gate fires twenty-four at
+once and requires exactly 2400 minor units, twice, and it will tell you how many vanished.
+
+A conflict is the store saying "read again", not a refusal to hand back to a caller who never
+asked about revisions. `409` is never a correct answer to a credit.
+"""
+writable = ["components/treasury-ledger-domain/src/accounts.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/treasury-ledger-domain/src/lib.rs",
+  "components/treasury-ledger-domain/wit/treasury.wit",
+  "components/record-store/wit/record.wit",
+  "components/money/wit/money.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "accounts-lose-nothing-under-contention"
+required = true
+weight = 1
+command = ["bash", "components/treasury-ledger-domain/e2e-accounts.sh"]
+
+[[part]]
+name = "transfers"
+text = """
+Implement components/treasury-ledger-domain/src/transfers.rs: moving money between two accounts.
+
+TWO WRONG ANSWERS COME BEFORE THE RIGHT ONE, and the second is the one that looks careful.
+
+The first is to check the balance and then write it. Twelve callers all see enough money, all
+write, and the account goes negative — and every sequential test passes.
+
+The second is to reach for a lock. This repository has `lock:mutex` and it is deliberately NOT
+in your world: `acquire` is a load-then-store, so two callers arriving together both find the
+pair free and both take it. Measured, with the lease as the only guard and everything else
+correct: 2 of 12 transfers of an entire balance settled. Read
+components/lock-mutex/src/lib.rs:157 if you want to see why — it is in your base tree for
+exactly that reason. The `fence` field on a lease exists because of this.
+
+What is left is the revision, and CONTRACT.md says what to do with it: the comparison and the
+write are one CAS. Of two callers who both saw enough money, exactly one commits; the other is
+told the revision moved, goes round again, and this time the comparison refuses it.
+
+The two sides are not symmetric, and noticing that is most of the work. A debit can legitimately
+fail — there may not be enough — so it is a conditional write that can refuse. A credit cannot
+fail on its merits, so it retries until it lands. And once the debit has committed the money is
+out of the source and has to arrive somewhere.
+
+Your gate fires twelve transfers of the entire balance at once. Exactly one may settle, eleven
+must be refused with insufficient_funds, no account may go negative, and the two balances must
+still add up to what they did before.
+"""
+writable = ["components/treasury-ledger-domain/src/transfers.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/treasury-ledger-domain/src/lib.rs",
+  "components/treasury-ledger-domain/wit/treasury.wit",
+  "components/record-store/wit/record.wit",
+  "components/money/wit/money.wit",
+  "components/ledger/wit/ledger.wit",
+  "components/fsm-workflow/wit/fsm.wit",
+  "components/idempotency-guard/wit/idempotency.wit",
+  "components/lock-mutex/wit/lock.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "transfers-let-exactly-one-through"
+required = true
+weight = 1
+command = ["bash", "components/treasury-ledger-domain/e2e-transfers.sh"]
+
+[[part]]
+name = "reconcile"
+text = """
+Implement components/treasury-ledger-domain/src/reconcile.rs: the auditor.
+
+You may not believe the balances. You recompute them: for each account you are given an opening
+figure, and everything after that comes from the `journal` collection — every line where the
+account is the destination adds, every line where it is the source subtracts. Then you compare
+with what the account actually holds and report the difference.
+
+A part that answers `balanced: true` by comparing the stored balance with itself passes every
+test where the books happen to be right, which is most of them. Your gate writes a journal that
+DISAGREES with the balances on purpose and requires the exact delta, on the right account, with
+the right sign.
+
+Two things that are quietly easy to get wrong: `records::list_records` PAGES, and a
+reconciliation that reads the first page agrees with the books right up to the point where they
+stop agreeing. And the arithmetic is `money:amount`'s, not yours.
+
+The same idempotency key must answer the same report twice — a report is a report, and two
+people reading one run must not see two different truths.
+"""
+writable = ["components/treasury-ledger-domain/src/reconcile.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/treasury-ledger-domain/src/lib.rs",
+  "components/treasury-ledger-domain/wit/treasury.wit",
+  "components/record-store/wit/record.wit",
+  "components/money/wit/money.wit",
+  "components/idempotency-guard/wit/idempotency.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "reconcile-reads-the-journal"
+required = true
+weight = 1
+command = ["bash", "components/treasury-ledger-domain/e2e-reconcile.sh"]
+
+# The join, and it is the only gate that can prove what this app is for: after a storm of
+# concurrent credits and a storm of concurrent transfers, an INDEPENDENT recomputation from the
+# journal agrees with every stored balance to the minor unit. Nothing in it is a fixture, and
+# the part doing the checking was written by an agent that never saw the parts doing the moving.
+[[check]]
+id = "the-whole-treasury-api-balances"
+required = true
+weight = 1
+command = ["bash", "components/treasury-ledger-domain/e2e.sh"]
