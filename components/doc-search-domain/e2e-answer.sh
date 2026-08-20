@@ -59,7 +59,9 @@ Q="How long does the reconciler wait between inventory polls?"
 FIRST=$(ask "$Q")
 python3 - "$FIRST" <<'PY' || fail "the first answer is not usable"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 a = (d.get("answer") or "").strip()
 assert 5 <= len(a) <= 2000, f"no usable answer, got {len(a)} chars: {a!r}"
 assert d.get("cached") is False, f"the first answer to a question cannot be cached: {d}"
@@ -79,7 +81,9 @@ SECOND=$(ask "$Q")
 ELAPSED=$(python3 -c "import time,sys;print(round(time.time()-float(sys.argv[1]),1))" "$START")
 python3 - "$SECOND" "$FIRST" "$ELAPSED" <<'PY' || fail "the same question a second time did not come from the cache"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 first = json.loads(sys.argv[2] or "{}")
 elapsed = float(sys.argv[3])
 assert d.get("cached") is True, f"the second identical question must be served from the cache: {d}"
@@ -97,7 +101,9 @@ GOT=$(ask_code "What temperature should I proof sourdough at?")
 NEW=$(ask "Why does raising the per-instance memory ceiling cost address space?")
 python3 - "$NEW" <<'PY' || fail "past the budget the part must refuse and say when"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("error") == "budget_exhausted", f"a second distinct question on a budget of one must be refused: {d}"
 assert isinstance(d.get("retry_after"), int) and d["retry_after"] > 0, f"a refusal must say how long to wait: {d}"
 PY
@@ -109,7 +115,9 @@ GOT=$(ask_code "Why does raising the per-instance memory ceiling cost address sp
 AGAIN=$(ask "$Q")
 python3 - "$AGAIN" <<'PY' || fail "an answer already paid for stopped being served once the budget ran out — the cache must be checked BEFORE the meter"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("cached") is True and d.get("answer"), \
     f"the cached answer must still be served when the budget is exhausted: {d}"
 PY

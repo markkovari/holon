@@ -51,7 +51,9 @@ review_code() { curl -s -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" "$B/ap
 D=$(review "$LINKED")
 python3 - "$D" <<'PY' || fail "a matching deny rule did not decide the outcome"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("policy_rule") == "no-links", (
     "the fixture's rule matches this item (its text carries a link) and the decision does "
     f"not name it. A decision that cannot say what overruled what cannot be audited: {d}"
@@ -67,7 +69,9 @@ assert str(d.get("decided_at", "")).endswith("Z"), f"decided_at must be RFC3339 
 PY
 python3 - "$(get "/test/item/$LINKED")" <<'PY' || fail "the decision was answered but not stored"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("state") == "blocked", f"the item's state must become the decision's final: {d}"
 assert (d.get("decision") or {}).get("policy_rule") == "no-links", f"the stored decision is incomplete: {d}"
 PY
@@ -76,7 +80,9 @@ PY
 D=$(review "$CLEAN")
 python3 - "$D" <<'PY' || fail "with no rule matching, the model's label must decide exactly"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert not d.get("policy_rule"), (
     "no rule in the fixture matches an item with no link, so policy_rule must be empty. "
     f"A part that reports a rule here is inventing one: {d}"
@@ -96,7 +102,9 @@ CODE=$(review_code "$CLEAN")
 [ "$CODE" = 409 ] || fail "reviewing an already-decided item must be 409, got $CODE"
 python3 - "$AGAIN" <<'PY' || fail "a 409 must name the decision already on record"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("error") == "already_decided", d
 assert d.get("final") in ("allowed", "flagged", "blocked"), f"the 409 must carry the stored final: {d}"
 PY

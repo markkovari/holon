@@ -46,7 +46,9 @@ EVENTS=$(curl -s -H "authorization: Bearer $T" -H "traceparent: 00-$OTHER-000000
   "$B/api/audit?trace=$TRACE")
 python3 - "$EVENTS" "$TRACE" <<'PY' || fail "GET /api/audit?trace= did not answer the three requests made under that trace"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 trace = sys.argv[2]
 evs = d.get("events")
 assert isinstance(evs, list), f"the answer has no events list: {d}"
@@ -66,7 +68,9 @@ PY
 python3 - "$(curl -s -H "authorization: Bearer $T" "$B/api/audit?trace=$(printf 'c%.0s' $(seq 32))")" <<'PY' \
   || fail "a trace with no events must answer an empty list"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("events") == [], f"an unused trace answered {len(d.get('events', []))} events"
 PY
 
