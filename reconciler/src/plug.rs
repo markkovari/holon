@@ -445,10 +445,15 @@ pub fn tags_for(writable: &[String], catalog: &Catalog) -> Vec<String> {
 
 /// The directories built components normally live in.
 pub fn default_dirs(repo_root: &Path) -> Vec<PathBuf> {
-    ["wasm32-wasip2/release", "wasm32-wasip2/debug", "wasm32-wasip1/debug"]
-        .iter()
-        .map(|d| repo_root.join("components/target").join(d))
-        .collect()
+    [
+        "wasm32-wasip2/release",
+        "wasm32-wasip2/debug",
+        "wasm32-wasip1/release",
+        "wasm32-wasip1/debug",
+    ]
+    .iter()
+    .map(|d| repo_root.join("components/target").join(d))
+    .collect()
 }
 
 #[cfg(test)]
