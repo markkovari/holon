@@ -431,3 +431,88 @@ lines — that a person wrote, not the run. Counted as authored code the ratios 
 85.0%, 84.2% and 80.6%; counted as what it is, harness rather than product, they are the
 numbers above. Both readings are in the table's data; neither changes the capability
 column.
+
+## App 4 — `support:desk`, and six runs to get there
+
+**Outcome: [PR #93](https://github.com/markkovari/holon/pull/93) on the sixth run.** Five
+runs produced nothing, and not one of them failed because an agent could not write the code.
+
+| run | outcome | why |
+|---|---|---|
+| 1 | no PR | my contract described a component that does not exist; a branch found it, the amendment was granted, and it un-accepted a part that had already passed at 1000 |
+| 2 | no PR | a gate crashed with `JSONDecodeError` instead of failing; branches were handed a stack trace and answered, correctly, that nothing in their file was wrong |
+| 3 | no PR | another unguarded parse, same shape, same result |
+| 4 | no PR | all three parts accepted at 1000; the JOIN failed because my check compared a stored string against `json.dumps(arrived)`, and the em dash the model wrote became `\u2014` |
+| 5 | no PR | the provider was down — `claude -p exited 1` on every branch, a hard account limit rather than contention |
+| 6 | **PR #93** | 3/3 parts at 1000, join passed |
+
+### The run that landed
+
+| measurement | value |
+|---|---|
+| branch pass rate, first try | **12/18 = 67%** — the first app inside the pre-registered 25–75% band |
+| by part, first try | tickets 6/6 · reply 6/6 · **courier 0/6** |
+| median attempt | 279 s (tickets 64 · reply 279 · courier 412) |
+| total attempt time | 78 min |
+| capability-import failures | 0 |
+| lessons written | 0 |
+
+`courier` needed a repair attempt on **every single branch** and all six then passed. That is
+the gate working as designed rather than the part being impossible: at-least-once delivery
+has four separate ways to be wrong, the gate breaks a real webhook sink to find them, and no
+branch got it right first time. It is also the clearest calibration signal in the five apps —
+a part nobody passes cold and everybody passes on the second look.
+
+### What the five failed runs are actually evidence of
+
+Not fragility of the loop. Every one was a defect in the harness a person wrote, and the
+agents were the ones who found two of them:
+
+* a branch filed *"notify:dispatch's delivery-failed doc comment contradicts CONTRACT.md's
+  courier spec"* — and was right. `send` returns `Ok(status)` only for a 2xx and
+  `Err(DeliveryFailed)` otherwise, so the rule my contract was built on described nothing.
+* a branch filed *"courier gate returns empty HTTP body (JSONDecodeError on the test side)"*
+  — also right, and by then I had already patched two crash sites one at a time instead of
+  auditing them.
+
+**The measurement that matters here is the ratio: six runs, five harness faults, zero cases
+of an agent unable to do the work.** On a goal whose contract and gates are correct, three
+parts written by three agents against one contract passed on the first generation every time
+it was tried — app 2, app 3, and app 4's run 6.
+
+### What the failures changed
+
+`tools/goal-rehearse.sh` gained the direction that would have caught the fictional rule:
+**VIOLATORS**. Each is the reference with one stated rule broken and a `must-fail` file naming
+the check that must reject it, and a violator that survives means the rule is either
+untestable or untrue of the components. App 4 has five, and one survived on the first try —
+the contract said "read what `outbox::fail` returned and report abandoned replies" while the
+gate asserted the dead-letter list, which the outbox fills whatever the courier reads.
+
+A **crash is now its own verdict** in all three directions: a check may fail, it may not
+raise. That detector took two corrections, both instructive. `assert` is the intended failure
+mechanism and python prints a traceback for it, so "contains a traceback" flagged every clean
+rejection; and a guard that catches a parse error and re-raises `AssertionError` with
+something readable prints BOTH exceptions chained, so only the one that TERMINATED the process
+tells you whether the gate judged or broke.
+
+Two more, from giving the rehearsal its own build directory: a rehearsal must never share
+`cargo-target` with a live run (same crate name, so each tests whatever the other wrote last),
+and four of the five apps' gate build lists omitted `audit-log` — an import of `auth-guard`'s
+own world — passing only because a warm shared cache held it from another app.
+
+## Reuse across four landed apps
+
+| app | components wired | reused sloc | written sloc | ratio | capabilities offered → imported |
+|---|---|---|---|---|---|
+| `triage:assist` | 6 | 2901 | 309 | 90.4% | 11 → **11** |
+| `docsearch:agent` | 7 | 3055 | 301 | 91.0% | 11 → **11** |
+| `moderation:queue` | 6 | 2765 | 379 | 87.9% | 10 → **10** |
+| `support:desk` | 7 | 2931 | 304 | 90.6% | 11 → **11** |
+| **all four** | — | **11652** | **1293** | **90.0%** | 43 → **43** |
+
+Forty-three capabilities offered across four worlds, forty-three actually imported by the
+compiled artifacts. Across 72 attempts, no accepted part reimplemented a pooled capability.
+The ratio is a floor — `--wiring` lists a component's own providers and not their transitive
+ones — and the routers a person wrote (268–287 lines each) are the honest asterisk: counted as
+authored code the ratios fall to 80–85%, and the capability column does not move either way.
