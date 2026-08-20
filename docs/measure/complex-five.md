@@ -351,7 +351,7 @@ Across every run so far:
 | run | outcome | lessons written |
 |---|---|---|
 | app 1, run 1 | broken sandbox, every branch failed | 3 (all `does not compile`) |
-| app 1, run 2 | 3 winners, join rejected | 3 (errors) |
+| app 1, run 2 | 3 winners, join rejected | **0 — its database has no `memory` table** |
 | app 1, run 3 | **PR opened** | 1 (an error, from the one branch that never recovered) |
 | app 2 | **PR opened, first try** | **0** |
 
@@ -516,3 +516,130 @@ compiled artifacts. Across 72 attempts, no accepted part reimplemented a pooled 
 The ratio is a floor — `--wiring` lists a component's own providers and not their transitive
 ones — and the routers a person wrote (268–287 lines each) are the honest asterisk: counted as
 authored code the ratios fall to 80–85%, and the capability column does not move either way.
+
+## App 5 — `invoice:copilot`
+
+**Outcome: [PR #94](https://github.com/markkovari/holon/pull/94) on the first run.** 3/3 parts
+at 1000, join passed, 327 lines across three files.
+
+| measurement | value |
+|---|---|
+| branch pass rate, first try | 14/18 = 78% |
+| by part, first try | invoices 5/6 · **copilot 3/6** · posting 6/6 |
+| median attempt | 340 s (invoices 72 · copilot 349 · posting 350) |
+| total attempt time | 82 min |
+| capability-import failures | 0 |
+| lessons written | 0 |
+
+`copilot` at 3/6 is the arithmetic: the gate requires the split of 100.00 into three shares
+to be exactly `[3334, 3333, 3333]`, which neither hand division nor a model produces. Half the
+branches reached for `money::allocate` first time; half had to be told by a failing gate. That
+is the goal's one kept trap doing its work.
+
+# The five, together
+
+| # | app | PR | runs | first-try | reuse | capabilities |
+|---|---|---|---|---|---|---|
+| 1 | `triage:assist` | [#90](https://github.com/markkovari/holon/pull/90) | 3 | 83% | 90.4% | 11/11 |
+| 2 | `docsearch:agent` | [#91](https://github.com/markkovari/holon/pull/91) | 1 | 94% | 91.0% | 11/11 |
+| 3 | `moderation:queue` | [#92](https://github.com/markkovari/holon/pull/92) | 1 | 83% | 87.9% | 10/10 |
+| 4 | `support:desk` | [#93](https://github.com/markkovari/holon/pull/93) | 6 | 67% | 90.6% | 11/11 |
+| 5 | `invoice:copilot` | [#94](https://github.com/markkovari/holon/pull/94) | 1 | 78% | 89.1% | 11/11 |
+
+**Run-level: 5/5.** Every app reached a merge-ready pull request against this repository, each
+one three parts written simultaneously by three agents against a single contract.
+
+**Reuse: 14318 existing lines against 1620 authored, 89.8%.** Across five worlds, **54
+capabilities offered and 54 imported** by the compiled artifacts — in 216 attempts, no
+accepted part reimplemented a pooled capability. The ratio is a floor (transitive providers
+uncounted) and the five routers a person wrote (266–287 lines) are the asterisk: counted as
+authored code, 80–85%.
+
+## Where it binds
+
+Twelve runs produced five pull requests. What consumed the other seven:
+
+| cause | runs | whose fault |
+|---|---|---|
+| a base path missing from the goal, so no branch could build | 1 | the harness (mine) |
+| a contract rule describing a component that does not exist | 1 | the harness (mine) |
+| a gate crashing on a parse instead of failing with a sentence | 2 | the harness (mine) |
+| a gate comparing a stored string against `json.dumps` output | 1 | the harness (mine) |
+| the join rejecting three individually-correct parts, terminally | 1 | the loop's design |
+| the provider unavailable — a hard account limit | 1 | outside everything |
+
+**Zero runs failed because an agent could not write the code.** Six of the seven were defects
+in the scaffolding a person wrote, and the agents diagnosed two of them themselves, in
+contract requests, before I did:
+
+* *"notify:dispatch's delivery-failed doc comment contradicts CONTRACT.md's courier spec"* —
+  correct. `send` returns `Ok` only for a 2xx.
+* *"courier gate returns empty HTTP body (JSONDecodeError on the test side)"* — also correct,
+  while I was still patching individual crash sites.
+
+That is the answer to where the bottleneck is on complex apps. It is not the model, the
+capability pool, or the fan-out. **It is the human-authored scaffolding around the loop: the
+goal's dependency list, the contract's claims about components it does not own, and the gates'
+own correctness.** The loop is more reliable than the harness a person writes for it, and it
+fails loudly and cheaply when the harness is wrong — as long as somebody reads the failures,
+which is exactly what the branches were doing while the author was not.
+
+## What the pool and the graph actually contributed
+
+Two different answers, and only one of them is good.
+
+**The component pool: total, and not through the graph.** 54 of 54 capabilities imported, 216
+attempts, no reimplementation. What produced that is the WIT world plus a contract sentence —
+*"you call them; you do not write them"* — enforced by a gate that reads the compiled
+artifact's imports. `search_the_pool` and `pool_context` never ran once in this experiment:
+they sit after `goalrun.rs:1392`, which returns into the decomposed path before either is
+reached. Reuse came from the interface, which is the cheaper and more reliable of the two
+mechanisms.
+
+**The knowledge graph: it cannot learn from success on this path.** Every run database, read
+with a liveness check so that "not running" is never mistaken for "empty":
+
+| run | lessons written | promoted |
+|---|---|---|
+| app 1 run 1 (broken sandbox) | 3, all `errors` | 0 |
+| app 1 run 2 (join rejected) | **no `memory` table** | 0 |
+| app 1 run 3 (**PR**) | 1, `errors` | 0 |
+| app 2 (**PR**) | **no `memory` table** | 0 |
+| app 3 (**PR**) | 1, `errors` | 0 |
+| app 4 runs 1–4 | 1, 1, 1, 2 — all `errors` | 0 |
+| app 4 run 5 (provider down) | **no `memory` table** | 0 |
+| app 4 run 6 (**PR**) | **no `memory` table** | 0 |
+| app 5 (**PR**) | **no `memory` table** | 0 |
+
+**Ten lessons across twelve runs, every one of them an error, and not a single promotion — ever.**
+Three of the five successful runs wrote nothing at all. `compose.rs:505` writes a failure
+lesson only for an entry still unaccepted in a part's last round, so a branch that fails and
+is repaired teaches nothing; and `Memory::promote` — the only writer of the `patterns` pool —
+is called at `goalrun.rs:1561`, on the single-part path, which a multi-part goal never reaches.
+
+So on the class of goal that complex apps require, the graph has a working read path, a
+failure-only write path, and no way at all to record what worked. **The cleaner the run, the
+less it learns; a perfect run teaches it nothing.** That is a wiring gap, not a design flaw:
+the machinery exists, is tested, and is reachable from the other path.
+
+## What to change, in the order it pays
+
+1. **Wire `promote` into the decomposed path.** One call site, and it turns the graph from a
+   record of failures into a record of what worked. Everything else about the graph already
+   functions.
+2. **Make the join's verdict addressable.** Today a join failure is terminal: no part owns it,
+   no repair round spawns (app 1's second round went unused because the parts had already
+   passed), no lesson records it. Everything needed to fix it was known — the value, the
+   event, the part — and none of it reached anything that could act.
+3. **Keep the third rehearsal direction.** `VIOLATORS` is what catches a rule that is fiction,
+   because the two obvious directions cannot: a stub fails a fictional rule too, and a
+   reference written by the contract's author shares its wrong beliefs. Five violators for app
+   4 found one unenforced rule immediately.
+4. **A gate may fail; it may not raise.** Two runs died to a traceback delivered as feedback.
+   The rehearsal now treats a crash as its own verdict, keyed on the exception that terminated
+   the process — `AssertionError` is a judgement, anything else is a bug in the check.
+5. **`--surreal-db`.** A contract correction found BY a failed run makes that run's database
+   unusable, and the name is hardcoded, so every fix needs a new database on a new port.
+6. **A pre-run contract critic.** One cheap agent per part, before the search, asked only to
+   find contradictions between the contract and the components it cites. It is precisely what
+   the branches did unprompted, twice, and it would cost one call instead of a generation.
