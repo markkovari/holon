@@ -368,3 +368,66 @@ path at all. Put together:
 That is not a small gap and it is not "the graph is broken" either — the read path works,
 the control arm exists, attribution works. What is missing is that on this path there is
 no writer for the one kind of knowledge worth keeping.
+
+## App 3 — `moderation:queue`
+
+**Outcome: [PR #92](https://github.com/markkovari/holon/pull/92) on the first run.**
+Composition passed at 1000; 379 lines across three files.
+
+| measurement | app 1 (run 3) | app 2 | app 3 |
+|---|---|---|---|
+| branch pass rate, first try | 15/18 = 83% | 17/18 = 94% | **15/18 = 83%** |
+| median attempt | 322 s | 273 s | 331 s |
+| median by part | 90 / 307 / 391 s | 58 / 273 / 325 s | intake 47 / verdict 331 / queue 382 s |
+| total attempt time | 82 min | 69 min | 75 min |
+| capability-import failures | 0 | 0 | **0** |
+| lessons written | 1 (an error) | 0 | 1 (an error) |
+
+### Stripping the loud hints moved the rate, by about as much as it should have
+
+App 3's goal is the first written under app 2's lesson: keep only what fails silently,
+delete every hint whose absence produces a loud failure a branch can read for itself. Its
+header records which hints were cut and why, before the run.
+
+The first-try rate went 94% → 83%, back to the top of the pre-registered band rather than
+far outside it. Three branches failed their first attempt and repaired; `verdict` — the
+part carrying the precedence trap — was the hardest, with only 4 of 6 passing first try.
+That is what a search with something to choose between looks like, and it cost nothing:
+the same three parts, the same one round, a pull request either way.
+
+The discipline is cheap and specific enough to state as a rule: **an author cannot tell a
+silent trap from a loud one until they have written the reference, so the goal must be
+edited down after the reference exists, never before.**
+
+### Reuse, measured three ways
+
+`tools/reuse-ratio.py` reports from three independent sources: the components `comp-plug`
+wires in (derived from the compiled artifact's imports), non-comment Rust lines on each
+side, and the interfaces the artifact IMPORTS against the ones its world offers. Generated
+`bindings.rs` is excluded from both sides — including it would flatter reuse by tens of
+thousands of lines and measure `wit-bindgen` rather than reuse. Measured on the landed
+pull requests, not on the repository's stub tree:
+
+| app | components wired | reused sloc | written sloc | ratio | capabilities offered → imported |
+|---|---|---|---|---|---|
+| `triage:assist` | 6 | 2901 | 309 | 90.4% | 11 → **11** |
+| `docsearch:agent` | 7 | 3055 | 301 | 91.0% | 11 → **11** |
+| `moderation:queue` | 6 | 2765 | 379 | 87.9% | 10 → **10** |
+| **all three** | — | **8721** | **989** | **89.8%** | 32 → **32** |
+
+Three things worth saying about that number.
+
+**It is a floor.** `--wiring` lists a component's own providers, not their transitive ones
+— `anthropic-provider` behind `ai-inference` is real code in the deployed graph and is not
+counted here.
+
+**The capability column is the stronger claim.** 32 capabilities offered across three
+apps, 32 actually imported by the compiled artifacts: not one part reimplemented a pooled
+capability in any accepted candidate. That is the property the gates assert directly, and
+it held across 54 attempts.
+
+**The scaffold is the honest asterisk.** Each app also carries a router — 268, 271 and 286
+lines — that a person wrote, not the run. Counted as authored code the ratios become
+85.0%, 84.2% and 80.6%; counted as what it is, harness rather than product, they are the
+numbers above. Both readings are in the table's data; neither changes the capability
+column.
