@@ -228,3 +228,70 @@ is the difference between a finding and a repair instruction.
 `wrong-or-missing-capability` — **every branch used the pooled capabilities rather than
 reimplementing them**, which is the first real evidence in this experiment that the
 import assertions do their job and that the pool is being reached for.
+
+### App 1, run 3 — a pull request, and what the graph actually did
+
+**Outcome: [PR #90](https://github.com/markkovari/holon/pull/90). Composition passed at
+score 1000.** 385 lines across three files, each part calling the capabilities its
+world hands it: `intake` → authorizer + limiter + redactor + store, `assist` →
+authorizer + ai:inference + store, `ledger` → authorizer + audit:log. No
+reimplementation of any pooled capability in any accepted part.
+
+| measurement | run 2 | run 3 |
+|---|---|---|
+| parts accepted | 3/3 | 3/3 |
+| branch pass rate, first try | 13/18 = 72% | 15/18 = **83%** |
+| median attempt | 311 s | 322 s |
+| median by part | 90 / 354 / 375 s | 90 / 307 / 391 s |
+| total attempt time | 85 min | 82 min |
+| capability-import failures | 0 | 0 |
+| join | rejected | **passed** |
+| lessons promoted | 0 | **0** |
+
+83% first-try is **above** the pre-registered 25–75% band, and the cause is known and
+self-inflicted: run 2 discovered a cross-part invariant and I wrote it into the
+contract before run 3. That is the over-specification signal working as designed —
+recorded as such, not as a win. The honest reading of app 1 is: 72% on the version of
+the goal that had not yet been sharpened, 83% after one hint.
+
+#### What the knowledge graph does, and does not, do for a multi-part goal
+
+This is the question the experiment exists to answer, and the answer is specific.
+
+`goalrun.rs:1392` returns into `decomposed()` **before** the lesson and capability
+machinery of the ordinary path is reached. What each path gets:
+
+| mechanism | single-part goal | multi-part goal (every complex app) |
+|---|---|---|
+| recall lessons per branch (`Memory::recall`) | yes | **yes** — `compose.rs:546`, per PART, on that part's own goal, with a control arm that reads nothing |
+| write failure lessons (`observe_failure`) | yes | **yes** — `compose.rs:515` |
+| attribute a reading to an outcome (`attribute`) | yes | **yes** — `compose.rs:526` |
+| **promote a winner into `patterns`** (`Memory::promote`) | yes — `goalrun.rs:1561` | **NO — nothing calls it** |
+| capability search over the built pool (`search_the_pool`) | yes | **NO — after the early return** |
+| pool context injected into the prompt (`pool_context`) | yes | **NO — after the early return** |
+| operator visibility (`branch-i reads N lesson(s)`, distinct-reading tally) | printed | **not printed** |
+
+Measured consequence, after three runs of app 1: the pool contains **only `errors`
+rows**. Run 3's, in full — `ns: errors, goal: ledger, score: -1, promoted: false,
+uses: 0`. A run that produced three winners and a merge-ready pull request promoted
+nothing, because in the decomposed path there is no code that could.
+
+So for the class of app this experiment is about:
+
+* **Capability reuse is real and total — and it does not come from the graph.** Zero
+  import-assertion failures across 36 attempts in runs 2 and 3. What drove it was the
+  WIT world plus a contract saying "you call them; you do not write them", enforced by
+  a gate that reads the artifact's imports. The capability search never ran and the
+  pool context was never in a prompt. The component pool is being exploited through
+  the *interface*, which is the cheaper and more reliable of the two paths.
+* **The knowledge graph contributes failure memory and nothing else.** It can tell a
+  later branch what went wrong; it is structurally incapable of telling one what
+  worked, because `promote` is unreachable from the only code path a complex app takes.
+* **And it is invisible.** Neither run printed a single line about what any branch read,
+  so "did the lessons help" cannot be answered from a run's own output — only by
+  querying SurrealDB directly, as this document had to.
+
+That is the effectiveness answer, and it is not "the graph is useless". It is that on
+multi-part goals the graph is running at roughly half its design: the read path works,
+the write path only records failures, and the promotion path — the one that turns a
+win into something reusable — is not wired in.
