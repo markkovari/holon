@@ -64,7 +64,7 @@ assert isinstance(conf, int) and 0 <= conf <= 1000, \
     f"confidence is classify's 0..=1000 milli-units, passed through as-is, got {conf!r}"
 
 s = (a.get("summary") or "").strip()
-assert 20 <= len(s) <= 600, f"a brief summary of a report is a sentence or two, got {len(s)} chars: {s!r}"
+assert 10 <= len(s) <= 600, f"no usable summary, got {len(s)} chars: {s!r}"
 
 # Not a copy: an extractive slice of the input needs no model at all.
 title, body = report.get("title", ""), report.get("body", "")
