@@ -520,6 +520,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc-search-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "driver-probe"
 version = "0.1.0"
 dependencies = [

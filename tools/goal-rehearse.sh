@@ -49,6 +49,35 @@ if manifest and keep:
     text = open(path).read()
     members = ', '.join(f'"{k}"' for k in keep)
     open(path, 'w').write(re.sub(r'members = \[[^\]]*\]', f'members = [{members}]', text, count=1))
+# Every WIT dependency path named by a crate the workspace keeps must exist in the
+# sandbox. This is the omission that cost app 1 its first run — `cargo component` cannot
+# build a target world without them, so every branch fails identically, and the message
+# names the manifest rather than the missing directory. Checked here statically, by
+# reading the manifests rather than by discovering it in a build.
+missing_dep = []
+for member in keep or []:
+    manifest = os.path.join('components', member, 'Cargo.toml')
+    if not os.path.exists(manifest):
+        continue
+    try:
+        m = tomllib.load(open(manifest, 'rb'))
+        deps = m['package']['metadata']['component']['target']['dependencies']
+    except (KeyError, tomllib.TOMLDecodeError):
+        continue
+    for pkg, spec in deps.items():
+        path = spec.get('path') if isinstance(spec, dict) else None
+        if not path:
+            continue
+        rel = os.path.normpath(os.path.join('components', member, path))
+        if not os.path.exists(os.path.join(dst, rel)):
+            missing_dep.append(f"    {member} needs {pkg} at {rel}")
+if missing_dep:
+    print("base_paths does not cover every WIT dependency these crates name:")
+    print('\n'.join(sorted(set(missing_dep))))
+    print("  Every branch would fail with `failed to create a target world`, which names")
+    print("  the manifest and not the missing directory. Add the directories to base_paths.")
+    sys.exit(1)
+
 checks = [c['command'] for c in d.get('check', [])]
 for part in d.get('part', []):
     checks += [c['command'] for c in part.get('check', [])]
