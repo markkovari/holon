@@ -1,0 +1,49 @@
+// support:desk — a model writes the reply, and the reply gets there.
+//
+// App 4 of the five in docs/measure/complex-five.md. Its hard interaction is DELIVERY:
+// what a model wrote has to reach the customer at least once, across a failing sender,
+// without ever being sent twice from one enqueue and without a failure being mistaken for
+// a success. None of that is visible in a request that succeeds — it appears only when the
+// far end refuses, which is why the gate runs a sink it can break on purpose.
+//
+// Every import is already implemented, tested and composed in this repository. A part that
+// reimplements one is doing the wrong work, and each gate reads which capabilities the
+// compiled component actually calls.
+package support:desk@0.1.0;
+
+world support-desk-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Who the caller is, and whether they may.
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+    /// Minting a token for a test caller — the ROUTER's, never a part's.
+    import auth:identity/session@0.1.0;
+
+    /// An agent's working session, and the CSRF token that comes with it. A desk is a
+    /// browser app: a POST that nobody checked came from the page is the oldest hole
+    /// there is.
+    import session:store/store@0.1.0;
+
+    /// What a tenant may spend on drafted replies in a period.
+    import quota:meter/meter@0.1.0;
+
+    /// The model that drafts the reply.
+    import ai:inference/inference@0.1.0;
+
+    /// Where a drafted reply waits until it is delivered. Claim, ack, fail, dead-letter,
+    /// replay: at-least-once is this component's whole subject, and an app that sends
+    /// inline has thrown it away.
+    import outbox:dispatch/queue@0.1.0;
+
+    /// The thing that actually sends. It can fail, and what happens then is the point.
+    import notify:dispatch/dispatcher@0.1.0;
+
+    /// Tickets and their replies.
+    import records:store/store@0.1.0;
+
+    /// Deployment knobs: the budget, and where a webhook goes.
+    import wasi:config/store@0.2.0-rc.1;
+    /// Timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

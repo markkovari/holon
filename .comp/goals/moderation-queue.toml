@@ -1,0 +1,220 @@
+# App 3 of five (docs/measure/complex-five.md). Its hard interaction is PRECEDENCE: a
+# deterministic policy overrules a model, and the decision has to record what overruled
+# what.
+#
+# WHAT IS TOLD AND WHAT IS NOT — and app 2 is why this section is stricter than app 1's.
+# Writing a reference implementation first is what proves the gates are passable, and it is
+# also what tempts an author to write down every trap they personally hit: app 2 went into
+# its run naming all of them and 17 of 18 branches passed first try, which is a search that
+# has stopped searching. So the rule here is to keep ONLY what fails silently, and to delete
+# every hint whose absence produces a loud failure the branch can read for itself.
+#
+#   KEPT — three facts, each invisible until something is quietly wrong forever:
+#
+#     * `policy:guard` resolves an operand as an ATTRIBUTE only when it starts with
+#       `resource.` or `principal.`; anything else is a literal string. A condition on a
+#       bare `has_link` compares the text "has_link" with "true", is false forever, and
+#       raises nothing at write time or evaluation time. The rule simply never fires.
+#     * the engine's default is DENY, so no match answers `allowed: false` with an EMPTY
+#       `rule_id`. A part branching on `allowed` blocks everything and passes every test
+#       that has a matching rule in it.
+#     * `ratelimit:guard` counts only what `record_failure` tells it to; `check` alone
+#       counts nothing, so a limiter with no second call never limits and never errors.
+#
+#   CUT — everything that announces itself. The `quota`/`classify` milli-unit shapes are
+#   not used here. `Method` has no `PartialEq`: a compile error. `find_by` wanting a
+#   JSON-encoded value is in the contract already because a queue that reads empty is the
+#   route's whole subject, not a trap. And nothing here restates a status code table the
+#   contract sets out — a part that cannot read the contract is telling us something worth
+#   knowing.
+title = "moderation:queue — the model proposes and the policy decides"
+contract = "components/moderation-domain/CONTRACT.md"
+
+text = """
+Finish the moderation:queue API in components/moderation-domain. Nothing is implemented
+yet: three parts are written at the same time, by three agents, against one contract.
+
+`CONTRACT.md` in that crate is the specification — every route, every status code, every
+rule, and the shape of the item all three parts share. Read it first. You may not edit it:
+if it is wrong or missing something you need, write CONTRACT-REQUEST.md (first line the
+subject, the rest why) and the other parts will answer between generations.
+
+The router in src/lib.rs already exists and is not yours to change. It dispatches to the
+three parts, answers /health, mints a token at POST /test/token, seeds two pending items at
+POST /test/seed, writes one policy rule at POST /test/rules, shows a stored item at GET
+/test/item/{id}, reads the bus at GET /test/events, and gives you `crate::cfg(key,
+default)`. Those fixtures exist so your part can be judged before the parts around it
+exist. Your part is one file.
+
+You are judged by real HTTP requests against the running component, not by whether it
+compiles: `cargo component check` passes happily on code that does nothing.
+
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as components,
+bound at compose time. Look at wit/moderation.wit. The limiter, the model, the policy
+engine and the bus are each implemented, tested and composed for you. You call them; you do
+not write them. An `if text.contains("://")` where a rule belongs, a counter of your own
+where the limiter belongs, or a decision written but never published will each answer
+correctly on the one path you try by hand, and each fails its gate — because the gate reads
+which capabilities the compiled component actually calls.
+"""
+
+writable = []
+base_paths = [
+  "components/moderation-domain/",
+  # The capabilities these parts compose against. Readable, none of them writable.
+  "components/auth-guard/",
+  # auth.wit's own world imports these two, so the manifest names them and the build reads
+  # them. Nothing here calls audit:log.
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/event-bus/",
+  "components/ai-inference/",
+  # ai-inference's own import: absent, `cargo component` cannot build a target world at all
+  # and every branch fails before a line of Rust is compiled (app 1, run 1).
+  "components/llm-inference/",
+  "components/anthropic-provider/",
+  "components/record-store/",
+  "components/gate-lib.sh",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "moderation-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "event-bus",
+  "ai-inference",
+  "llm-inference",
+  "anthropic-provider",
+  "record-store",
+]
+
+[[part]]
+name = "intake"
+text = """
+Implement components/moderation-domain/src/intake.rs: what gets into the queue at all, and
+what does not.
+
+THE THROTTLE TAKES TWO CALLS, and this is the one fact you cannot find from the signature.
+`ratelimit:guard` is a fixed-window FAILURE COUNTER, not a throughput meter: it counts what
+you tell it to count. `check` asks whether the key is locked; nothing is counted until you
+`record_failure`. A part that only calls `check` has a limiter that never limits, every
+request succeeds, and no error is ever raised.
+
+    use crate::bindings::ratelimit::guard::limiter as rl;
+
+    rl::check(key: &str)          -> Result<u32, LimitError>  // remaining, or Locked(secs)
+    rl::record_failure(key: &str) -> Result<(), LimitError>
+
+The key is `principal.subject`, and your gate submits as two different subjects to see
+whether you keyed it on anything else.
+"""
+writable = ["components/moderation-domain/src/intake.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/moderation-domain/src/lib.rs",
+  "components/moderation-domain/wit/moderation.wit",
+  "components/rate-limiter/wit/ratelimit.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "intake-throttles-what-it-queues"
+required = true
+weight = 1
+command = ["bash", "components/moderation-domain/e2e-intake.sh"]
+
+[[part]]
+name = "verdict"
+text = """
+Implement components/moderation-domain/src/verdict.rs: the model's opinion, and what the
+policy does to it.
+
+PRECEDENCE IS THE WHOLE OF THIS PART, and there is a trap in it that raises nothing.
+
+    use crate::bindings::policy::guard::guard as policy;
+
+    policy::can(domain, action, principal: &[Attr], target_attrs: &[Attr])
+        -> Result<Decision, PolicyError>
+    pub struct Decision { pub allowed: bool, pub rule_id: String, pub reason: String }
+
+The engine's default is DENY. When no rule matches it answers `allowed: false` with an
+EMPTY `rule_id` and the reason "no matching rule (default deny)". So a part that branches on
+`allowed` blocks every item, passes every test that has a matching rule in it, and makes the
+model's opinion irrelevant in the one case it was meant to decide. `rule_id` is what you
+branch on: non-empty means a rule matched and it decides; empty means nothing matched and
+the model's label decides.
+
+Your gate reviews two items — one a rule matches and one it does not — and asserts both
+directions, because a part that always defers to the policy passes the first and fails the
+second.
+
+A model that is unavailable leaves the item exactly as it was: pending, with no decision.
+"""
+writable = ["components/moderation-domain/src/verdict.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/moderation-domain/src/lib.rs",
+  "components/moderation-domain/wit/moderation.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/ai-inference/wit/inference.wit",
+  "components/event-bus/wit/eventbus.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "verdict-lets-the-policy-decide"
+required = true
+weight = 1
+command = ["bash", "components/moderation-domain/e2e-verdict.sh"]
+
+[[part]]
+name = "queue"
+text = """
+Implement components/moderation-domain/src/queue.rs: the rules, what is waiting, and what
+has left.
+
+The rules live in `policy:guard` and are read back out of it. A copy of your own answers
+both routes correctly and drifts the moment anything else writes a rule — which your gate
+does, on purpose, in the middle of the run.
+
+    policy::set_rules(domain: &str, rules: &[Rule]) -> Result<(), PolicyError>
+    policy::get_rules(domain: &str) -> Result<Vec<Rule>, PolicyError>
+
+ONE THING ABOUT A RULE THAT FAILS SILENTLY FOREVER: an operand is an attribute reference
+only when it starts with `resource.` or `principal.`. Anything else is a literal string, so
+a condition written on a bare `has_link` compares the text "has_link" with "true", is false
+always, and raises nothing when the rules are written or when they are evaluated. The rule
+just never fires. The attributes `verdict` supplies are listed in CONTRACT.md; a rule
+referring to them needs the prefix.
+
+`GET /api/events` reads the bus and does not `ack` it: a read that consumes is not a read,
+and your gate reads twice.
+"""
+writable = ["components/moderation-domain/src/queue.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/moderation-domain/src/lib.rs",
+  "components/moderation-domain/wit/moderation.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/event-bus/wit/eventbus.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "queue-reads-the-engine-not-a-copy"
+required = true
+weight = 1
+command = ["bash", "components/moderation-domain/e2e-queue.sh"]
+
+# The join, and it uses no fixture: the rule is written through `queue`'s route, the item is
+# submitted through `intake`'s, the review goes through `verdict`'s, and the decision is read
+# back off the bus through `queue`'s. A part that invented its own shape passes alone and
+# fails here.
+[[check]]
+id = "the-whole-moderation-api-works"
+required = true
+weight = 1
+command = ["bash", "components/moderation-domain/e2e.sh"]
