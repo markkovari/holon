@@ -94,10 +94,58 @@ not about the agents.
 
 ## Results
 
-Nothing yet. App 1's harness is validated (its three gates pass against a throwaway
-reference implementation, each part in isolation with its siblings stubbed, and all
-three fail on the stub tree with an actionable reason); the first run has not been
-made.
+### App 1, run 1 — a harness failure, and the most useful one available
+
+**Outcome: no PR. 0/3 parts accepted, 0 branches passed, 36 model calls spent, and not
+one of them was about the goal.**
+
+Every branch was told the same thing:
+
+```
+error: failed to create a target world for package `triage-assist-domain`
+Caused by: No such file or directory (os error 2)
+```
+
+`components/triage-assist-domain/Cargo.toml` names `../llm-inference/wit` among its
+WIT target dependencies — `ai-inference` is orchestration over `llm:inference`, so the
+manifest must see that package. `components/llm-inference/` was not in the goal's
+`base_paths`, so it did not exist in the sandbox, so `cargo component` could not build
+a target world, so nothing compiled. In the repository every gate passed; in the tree
+the loop actually hands a branch, every gate failed identically.
+
+What that one missing line cost, and what each piece of it teaches:
+
+| observation | what it means |
+|---|---|
+| all 4 checks failed on the base tree, and the loop reported *"every check fails on the base tree, so every check can judge"* | the precheck only asks **whether** a check fails, never **why**. A tree that cannot build is indistinguishable here from work not yet done — and it reads as healthy |
+| branches spent generation 1 filing `CONTRACT-REQUEST`s titled *"Cargo.toml is missing from the repo"*, *"Build failure appears environmental, not a contract gap"* | the agents diagnosed it **correctly**. The negotiation channel worked; there was simply nothing a part could do, because no part may write a manifest |
+| several answers contained no file blocks at all — *"the logic is already correct"*, *"I traced this carefully rather than guessing a code fix"* | shown an unimplemented file and an impossible build, a branch reviews instead of writing. Not laziness: there is no edit that fixes a missing directory |
+| repeated *"the same candidate an earlier attempt already produced"* | with no new information between attempts, the search collapses to one point. Rounds cost real time and bought nothing |
+| 1 branch died on `claude -p exceeded 540000ms` | the shim's timeout is real and does fire. 1 in 36 |
+| 2 parts asked, unprompted, for `id:generate`'s exact signature | a genuine contract gap, on a capability nothing needed: `audit-log` mints event ids when `id` is empty and `records:store` mints report ids. Written down now, and the import removed |
+
+**Taxonomy for this run:** 36/36 `compose-or-host` (a sandbox that could not build). Zero
+`behaviour`. A run that says nothing about the agents, the pool, or the graph.
+
+**The finding worth keeping** is not "add the directory". It is that a goal's
+`base_paths` is a **dependency declaration with no checker**, whose failure mode is to
+fail every branch at once with a message that points at the wrong culprit, while the
+loop's own precheck calls the gate ready. Two things now exist because of it:
+
+* `tools/goal-rehearse.sh` — reconstructs the sandbox from `base_paths` +
+  `keep_members` and runs the goal's checks under the same cleared environment
+  `comp-checks` uses, in both directions: every check must FAIL on the base tree for a
+  reason that is not a build error, and every check must PASS with a reference
+  implementation applied. App 1 now does both. This is a required step before any of
+  the remaining four runs.
+* `compose::criticise` carries the base-tree failure **reasons** out, and `goalrun`
+  prints them. It does not refuse on a heuristic — "compile" appearing in a gate's
+  own prose is not proof of anything — but an operator can now see that all four
+  checks failed for the same non-judgeable reason, in the second before the money is
+  spent.
+
+Cost of the lesson: one run. Cost had app 2 through 5 been authored first, as the
+original plan had it: five.
 
 <!-- One table per app, appended as each run completes. Do not edit anything above
      this line once the first run has started. -->

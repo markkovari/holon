@@ -2115,6 +2115,9 @@ goal-run:
     [ -n "${SURREAL_PASSWORD:-}" ] && args+=(--surreal-password "${SURREAL_PASSWORD/#\~/$HOME}")
     # Through the shim a call is a whole `claude -p`, so the default 300s is short.
     [ -n "${TIMEOUT:-}" ] && args+=(--timeout "$TIMEOUT")
+    # A measured run pins this to 1.0 — never skip. At the default 0.9 a re-run after
+    # a HARNESS failure is skipped as work already done, which reads as a pass.
+    [ -n "${SKIP_ABOVE:-}" ] && args+=(--skip-above "$SKIP_ABOVE")
     [ "${DRY_RUN:-0}" = "1" ] && args+=(--dry-run)
     [ "${SMOKE:-0}" = "1" ] && args+=(--smoke)
     ./reconciler/target/release/comp-goalrun "${args[@]}"

@@ -112,7 +112,8 @@ and nothing is stored — then `record_failure` once the report is accepted. The
 `503 {"error":"rate_limit_unavailable"}`: a limiter that is down must not silently
 become no limiter.
 
-Success is `201 {"id": "<report id>"}`, id from `id:generate`.
+Success is `201 {"id": "<report id>"}`. The id is the one `records:store` minted —
+`create` returns an `Entry` whose `id` is a fresh ULID, so nothing here generates one.
 
 ### `GET /api/reports/{id}` — requires `reports:read`
 
@@ -180,8 +181,13 @@ pub fn note(trace: &str, event: &str, outcome: &str, subject: &str, detail: &str
 ```
 
 It writes one `audit:log/recorder.record_event`, filling the record from its
-arguments: `id` from `id:generate`, `timestamp` from `wasi:clocks/wall-clock` (unix
-seconds), `tenant` `"triage-assist"`, `span_id` `""`, and `trace_id` from `trace`. It
+arguments: `tenant` `"triage-assist"`, `span_id` `""`, and `trace_id` from `trace`.
+
+**`id` and `timestamp` are not yours to invent.** `audit-log` mints the event id when
+`id` is empty and stamps `now()` when `timestamp` is zero — so pass `String::new()`
+and `0` and let it. That is not documented in the signature, only in the interface's
+own comments, and a part that generates its own id here is doing work the capability
+already did. It
 returns nothing and must never fail a request: an audit backend that is down is a
 `note` that did nothing, not a 500 on the caller's report.
 

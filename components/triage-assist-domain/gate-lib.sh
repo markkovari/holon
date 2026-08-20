@@ -9,7 +9,7 @@
 GATE_CRATE=triage-assist-domain
 GATE_APP=triage-assist
 GATE_PKGS="-p triage-assist-domain -p auth-guard -p rate-limiter -p pii-redact \
--p ai-inference -p anthropic-provider -p audit-log -p record-store -p id-generate"
+-p ai-inference -p anthropic-provider -p audit-log -p record-store"
 
 # shellcheck source=components/gate-lib.sh
 . components/gate-lib.sh
