@@ -38,7 +38,9 @@ ID=$(submit "$W" "$ITEM" | field id)
 [ -n "$ID" ] || fail "POST /api/items returned no id"
 python3 - "$(get "/test/item/$ID")" <<'PY' || fail "the stored item is not what the contract describes"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("state") == "pending", f"a new item is pending: {d}"
 assert d.get("author") == "ada", f"author must be the principal's subject, not {d.get('author')!r}"
 assert "decision" not in d, "intake must not invent a decision — that is the verdict part's job"
@@ -47,7 +49,9 @@ PY
 READ=$(curl -s -H "authorization: Bearer $W" "$B/api/items/$ID")
 python3 - "$READ" <<'PY' || fail "GET /api/items/{id} did not answer the stored item"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("text") == "has anyone tried the new deploy flow?", d
 PY
 GOT=$(curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $W" "$B/api/items/nope")
@@ -62,7 +66,9 @@ done
 LOCKED=$(submit "$BURST" '{"text":"burst 4"}')
 python3 - "$LOCKED" <<'PY' || fail "past the limit the part must refuse and say how long to wait"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("error") == "rate_limited", d
 assert isinstance(d.get("retry_after"), int) and d["retry_after"] > 0, f"retry_after must be the limiter's seconds: {d}"
 PY

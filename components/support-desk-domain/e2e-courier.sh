@@ -76,7 +76,12 @@ import json, sys
 raw = (sys.argv[1] or "").strip()
 assert raw, "nothing arrived at the far end at all, so there is nothing to compare"
 line = json.loads(raw.split("\n")[0])
-body = json.loads(line["body"])
+arrived = (line.get("body") or "").strip()
+assert arrived, "a request arrived at the far end with an EMPTY body — the reply itself never left"
+try:
+    body = json.loads(arrived)
+except json.JSONDecodeError as e:
+    raise AssertionError(f"what arrived at the far end is not JSON ({e}): {arrived[:200]!r}")
 assert "the first reply" in json.dumps(body), f"the reply's text did not reach the far end: {body}"
 PY
 

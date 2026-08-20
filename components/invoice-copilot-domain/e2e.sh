@@ -46,7 +46,9 @@ S=$(curl -s -X POST -H 'content-type: application/json' -H "$AUTH" \
   "$B/api/invoices/$ID/lines/suggest")
 python3 - "$S" <<'PY' || fail "the copilot part could not produce an allocated split"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 units = [l.get("units") for l in d.get("lines") or []]
 assert len(units) == 3, f"three shares means three lines: {d}"
 assert sum(units) == 1000, f"10.00 into three shares still totals 1000 minor units, got {sum(units)}: {units}"

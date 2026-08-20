@@ -122,20 +122,39 @@ fi
 # whatever the other wrote last. `CARGO_HOME` is still shared, because a package registry is
 # read-only to both. `HOME` is the sandbox, so a
 # check that reaches into the real home is a check that will not work in the loop.
+crashed_check() { # crashed_check <output-file>
+  grep -q "Traceback (most recent call last)" "$1" || return 1
+  # An AssertionError is this gate's verdict. Any other exception type is the check itself
+  # failing, and a branch would receive that stack trace as its only feedback.
+  grep -oE "^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception):" "$1" | grep -qv "^AssertionError:"
+}
+
 TOOLCHAIN=$(rustup show active-toolchain 2>/dev/null | cut -d' ' -f1)
 failed=0
+crashed=0
 cd "$WORK" || exit 1
 while read -r cmd; do
   [ -n "$cmd" ] || continue
   echo "--- $cmd"
+  out="$(mktemp -t goal-rehearse-out-XXXX)"
   env -i PATH="$PATH" HOME="$WORK" CARGO_TERM_COLOR=never \
     RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
     CARGO_HOME="$HOME/.cache/comp-goalrun/cargo-home" \
     CARGO_TARGET_DIR="$HOME/.cache/goal-rehearse/cargo-target" \
     COMP_HOST="$ROOT/host/target/release/comp-host" \
     COMP_PLUG="$ROOT/reconciler/target/release/comp-plug" \
-    bash -c "$cmd" 2>&1 | tail -3
-  status=${PIPESTATUS[0]}
+    bash -c "$cmd" >"$out" 2>&1
+  status=$?
+  tail -3 "$out"
+  # A gate that raises is a gate that did not judge, whichever direction we are in: the
+  # branch is handed a stack trace and told its work failed.
+  if crashed_check "$out"; then
+    echo "    CRASHED — this check raised instead of failing with a sentence."
+    echo "    Whatever a branch did, the feedback it gets is a stack trace. Guard the parse"
+    echo "    and say what was wrong with what the component answered."
+    crashed=$((crashed + 1))
+  fi
+  rm -f "$out"
   [ "$status" = 0 ] || failed=$((failed + 1))
   echo "    exit $status"
 done < .rehearse-checks
@@ -161,6 +180,7 @@ if [ -n "${VIOLATORS:-}" ]; then
       cp "$f" "$dest/$(basename "$f")"
     done
     check=$(head -1 "$want")
+    vout="$(mktemp -t goal-violator-out-XXXX)"
     echo "--- violator $name  (must be rejected by: $check)"
     (
       cd "$tree" || exit 1
@@ -170,16 +190,22 @@ if [ -n "${VIOLATORS:-}" ]; then
         CARGO_TARGET_DIR="$HOME/.cache/goal-rehearse/cargo-target" \
         COMP_HOST="$ROOT/host/target/release/comp-host" \
         COMP_PLUG="$ROOT/reconciler/target/release/comp-plug" \
-        bash -c "$check" >/dev/null 2>&1
+        bash -c "$check" >"$vout" 2>&1
     )
-    if [ $? -eq 0 ]; then
+    vstatus=$?
+    if [ "$vstatus" -eq 0 ]; then
       echo "    SURVIVED — the gate accepted an implementation that breaks this rule."
       echo "    The rule is either untestable by that check or not true of the components"
       echo "    involved. Read $dir and decide which."
       broken=$((broken + 1))
+    elif crashed_check "$vout"; then
+      echo "    CRASHED — the check raised rather than rejecting it, so it did not judge"
+      echo "    this violation; it only happened to exit non-zero. Guard the parse first."
+      broken=$((broken + 1))
     else
       echo "    rejected, as it must be"
     fi
+    rm -f "$vout"
     rm -rf "$tree"
   done
   if [ "$broken" -gt 0 ]; then
@@ -191,12 +217,21 @@ fi
 
 echo
 if [ -n "${REF:-}" ]; then
+  if [ "$crashed" -gt 0 ]; then
+    echo "REHEARSAL FAILED — $crashed check(s) crashed rather than judging"
+    exit 1
+  fi
   [ "$failed" = 0 ] && echo "REHEARSAL OK — every check passes on a reference tree${VIOLATORS:+, and every violator was rejected}" && exit 0
   echo "REHEARSAL FAILED — $failed check(s) cannot pass even with the reference: the gates are not passable in the sandbox"
   exit 1
 fi
 # A build error here is the failure this script exists for: it fails every branch
 # identically, and the loop cannot tell it apart from an unimplemented part.
+if [ "$crashed" -gt 0 ]; then
+  echo "REHEARSAL FAILED — $crashed check(s) crashed rather than failing cleanly on the base"
+  echo "tree. A branch would receive that stack trace as its only feedback."
+  exit 1
+fi
 echo "$failed check(s) failed on the base tree, which is what should happen."
 echo "Read the reasons above: a compile or compose error is a BROKEN SANDBOX, not a"
 echo "judgeable check. Only 'never calls …' / behavioural failures mean the tree is right."

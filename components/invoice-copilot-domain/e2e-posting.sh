@@ -57,13 +57,17 @@ GOT=$(curl -s -o /dev/null -w '%{http_code}' -H "$AUTH" "$B/api/invoices/$FILLED
 FIRST=$(post_it "$FILLED" key-abc)
 python3 - "$FIRST" "$FILLED" <<'PY' || fail "the first posting did not answer what the contract describes"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("total_units") == 10000, f"the posted total must be the invoice's: {d}"
 assert str(d.get("posted_at", "")).endswith("Z"), f"posted_at must be RFC3339 UTC: {d}"
 PY
 python3 - "$(get "/test/invoice/$FILLED")" <<'PY' || fail "the posting was answered but the entry was not stored, or it does not balance"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "the route answered an empty body — it is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("state") == "posted", f"a posted invoice is not a draft any more: {d}"
 e = d.get("entry")
 assert isinstance(e, dict), f"the invoice has no entry: {d}"
