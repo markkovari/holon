@@ -81,6 +81,16 @@ struct Args {
     /// gap ADR-0081 caught elsewhere and naming it does not close it.
     #[arg(long, default_value = "30")]
     forget_after_days: u32,
+    /// Seconds any single gate check may take before it is killed.
+    ///
+    /// 120 is right for a check that runs a test suite against a warm target
+    /// directory. It is NOT right for one that builds a composition out of nine
+    /// crates and then makes a real model call — and a check killed on time is
+    /// reported to the branch as a failure it did not cause, which poisons the
+    /// feedback the next attempt reads. Raise it for goals whose gates do real work;
+    /// `CHECK_TIMEOUT` in the environment sets it for a whole run.
+    #[arg(long, env = "CHECK_TIMEOUT", default_value = "120")]
+    check_timeout: u64,
     /// Skip the whole search when a past passing run of a goal this similar is on
     /// record. Cosine; 0.9 is alpha-swarm2's and is high on purpose — redoing work
     /// costs money, skipping work that was never done is a wrong answer.
@@ -360,14 +370,14 @@ impl Drop for Checks {
     }
 }
 impl Checks {
-    fn start(allow: &[&str], check_env: &[String]) -> Result<Self> {
+    fn start(allow: &[&str], check_env: &[String], timeout: u64) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let port = free_port();
         let mut cmd = Command::new(bin_path("comp-checks"));
         cmd.args(["--addr", &format!("127.0.0.1:{port}")])
             .arg("--work-dir")
             .arg(dir.path())
-            .args(["--timeout", "120"]);
+            .args(["--timeout", &timeout.to_string()]);
         for a in allow {
             cmd.args(["--allow", a]);
         }
@@ -559,11 +569,12 @@ fn gate_can_judge(
         &excused,
         Duration::from_secs(timeout),
     ) {
-        Ok(vacuous) => {
+        Ok(base) => {
+            let vacuous = &base.vacuous;
             for v in vacuous.iter().filter(|v| v.excused) {
                 println!("gate: `{}` passes on the base, and says it is meant to", v.id);
             }
-            let refusals = compose::refusal(&vacuous);
+            let refusals = compose::refusal(vacuous);
             if !refusals.is_empty() {
                 println!("\nREFUSED — this gate cannot judge anything:\n");
                 for r in &refusals {
@@ -576,6 +587,16 @@ fn gate_can_judge(
                 return false;
             }
             println!("gate: every check fails on the base tree, so every check can judge");
+            // WHY each one failed, because "it failed" is two states wearing one face:
+            // work not done yet (a gate that can judge) and a tree that cannot build (a
+            // gate that will fail every branch identically, for the operator's reason).
+            // Printed rather than guessed at: a heuristic on the word "compile" would
+            // refuse legitimate goals, and `tools/goal-rehearse.sh` is where this is
+            // actually caught before anything is spent.
+            for r in &base.reasons {
+                let first = r.lines().next().unwrap_or(r).trim();
+                println!("  · {}", &first[..first.len().min(160)]);
+            }
             true
         }
         // Reported, not fatal: the critic is a guard, and a guard that cannot run
@@ -1155,7 +1176,7 @@ fn main() -> Result<()> {
     );
 
     // Bring the gate up first, so the driver fixture can point at it.
-    let gate = Checks::start(&allow, &check_env)?;
+    let gate = Checks::start(&allow, &check_env, args.check_timeout)?;
 
     set_fleet_timeouts(&args);
     let driver_spec = render(

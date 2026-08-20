@@ -1,0 +1,49 @@
+// invoice:copilot — the model writes the words and the money component does the arithmetic.
+//
+// App 5 of the five in docs/measure/complex-five.md, and the only one where being wrong
+// costs money. Its hard interaction is TRUST: a model is a fine way to describe three lines
+// of an invoice and a terrible way to divide 100.00 by three — it will answer 33.33 three
+// times, lose a cent, and be confident about it. So the model supplies text and nothing
+// else, `money:amount` supplies every number, `ledger:doubleentry` refuses an entry that
+// does not balance, and `idempotency:guard` makes posting twice impossible rather than
+// unlikely.
+//
+// Every import is already implemented, tested and composed in this repository. A part that
+// reimplements one is doing the wrong work, and each gate reads which capabilities the
+// compiled component actually calls.
+package invoice:copilot@0.1.0;
+
+world invoice-copilot-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Who the caller is, and whether they may.
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+    /// Minting a token for a test caller — the ROUTER's, never a part's.
+    import auth:identity/session@0.1.0;
+
+    /// Too many invoices from one subject.
+    import ratelimit:guard/limiter@0.1.0;
+
+    /// The model, which is allowed to write prose and nothing else.
+    import ai:inference/inference@0.1.0;
+
+    /// Every number in this app. Parsing a decimal, adding two amounts, and splitting a
+    /// total into shares that still sum to it — the last one is why a copilot cannot do
+    /// its own arithmetic.
+    import money:amount/arithmetic@0.1.0;
+
+    /// Double entry, and the refusal when the two sides disagree.
+    import ledger:doubleentry/ledger@0.1.0;
+
+    /// Posting once. Not "usually once".
+    import idempotency:guard/store@0.1.0;
+
+    /// Invoices and their posted entries.
+    import records:store/store@0.1.0;
+
+    /// Deployment knobs.
+    import wasi:config/store@0.2.0-rc.1;
+    /// Timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}

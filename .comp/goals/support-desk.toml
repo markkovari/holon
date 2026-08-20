@@ -1,0 +1,218 @@
+# App 4 of five (docs/measure/complex-five.md). Its hard interaction is DELIVERY: what a
+# model wrote has to reach the customer at least once, across a far end that refuses, and
+# never twice from one enqueue.
+#
+# WHAT IS TOLD AND WHAT IS NOT, on app 2's rule — keep only what fails silently:
+#
+#   KEPT — three facts, each invisible until a reply is quietly lost:
+#
+#     * `outbox::fail` RETURNS the event's new state, and `dead` is the only signal that a
+#       reply has been abandoned for good. Ignoring it raises nothing, logs nothing, and
+#       leaves a customer who never hears back.
+#     * `quota`'s `Exceeded` payload is the units still available — 0 when one unit is
+#       refused — and not a duration. Passed through as `retry_after` it tells every caller
+#       to retry immediately, forever.
+#     * `find_by` wants the value JSON-encoded, and a wrong query is `Ok(vec![])`, which
+#       reads exactly like a desk with nothing waiting.
+#
+#   CUT — everything loud. Which status each refusal gets is in the contract's tables. That
+#   `Method` has no `PartialEq`, that `quota:meter`'s binding path is `quota::meter::meter`,
+#   that `outbox::fail` returns the new state: all compile errors or one line of the WIT.
+#   And the 202-not-200 rule is in the contract, stated once, where a part that reads its
+#   contract will find it.
+title = "support:desk — a model writes the reply, and the reply gets there"
+contract = "components/support-desk-domain/CONTRACT.md"
+
+text = """
+Finish the support:desk API in components/support-desk-domain. Nothing is implemented yet:
+three parts are written at the same time, by three agents, against one contract.
+
+`CONTRACT.md` in that crate is the specification — every route, every status code, every
+rule, and the shape of the ticket and the outbox payload the parts share. Read it first. You
+may not edit it: if it is wrong or missing something you need, write CONTRACT-REQUEST.md
+(first line the subject, the rest why) and the other parts will answer between generations.
+
+The router in src/lib.rs already exists and is not yours to change. It dispatches to the
+three parts, answers /health, mints a token at POST /test/token, opens a session with its
+CSRF token at POST /test/session, seeds two open tickets at POST /test/seed, puts one reply
+straight into the outbox at POST /test/enqueue, shows a stored ticket at GET
+/test/ticket/{id}, and gives you `crate::cfg_u64(key, default)`. Those fixtures exist so
+your part can be judged before the parts around it exist. Your part is one file.
+
+You are judged by real HTTP requests against the running component, not by whether it
+compiles: `cargo component check` passes happily on code that does nothing. Your gate also
+runs a webhook receiver it can BREAK ON PURPOSE, because everything interesting about
+delivery happens when the far end refuses.
+
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as components,
+bound at compose time. Look at wit/support.wit. The session and its CSRF token, the meter,
+the model, the outbox and the sender are each implemented, tested and composed for you. You
+call them; you do not write them. A list of pending replies in the record store, an HTTP
+client of your own, or a CSRF comparison done by hand will each answer correctly on the one
+path you try, and each fails its gate — because the gate reads which capabilities the
+compiled component actually calls.
+"""
+
+writable = []
+base_paths = [
+  "components/support-desk-domain/",
+  # The capabilities these parts compose against. Readable, none of them writable.
+  "components/auth-guard/",
+  # auth.wit's own world imports these two, so the manifest names them and the build reads
+  # them. Nothing here calls audit:log.
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/session-store/",
+  "components/quota/",
+  "components/outbox/",
+  "components/notify-dispatch/",
+  "components/ai-inference/",
+  # ai-inference's own import: absent, `cargo component` cannot build a target world at all
+  # and every branch fails before a line of Rust is compiled (app 1, run 1).
+  "components/llm-inference/",
+  "components/anthropic-provider/",
+  "components/record-store/",
+  "components/gate-lib.sh",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "support-desk-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "session-store",
+  "quota",
+  "outbox",
+  "notify-dispatch",
+  "ai-inference",
+  "llm-inference",
+  "anthropic-provider",
+  "record-store",
+]
+
+[[part]]
+name = "tickets"
+text = """
+Implement components/support-desk-domain/src/tickets.rs: what can be answered at all.
+
+The one rule with its own check: a delivery address nothing can deliver to is refused HERE.
+Accepted, it becomes a ticket that drafts a reply, spends the budget, enqueues, and
+dead-letters days later for a reason nobody upstream can act on.
+
+The list route is an index lookup, and `records::find_by` wants the value JSON-ENCODED
+(`"\\"open\\""`, not `open`). A wrong query returns `Ok(vec![])`, which reads exactly like a
+desk with nothing waiting on it.
+"""
+writable = ["components/support-desk-domain/src/tickets.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/support-desk-domain/src/lib.rs",
+  "components/support-desk-domain/wit/support.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "tickets-refuses-what-cannot-be-delivered"
+required = true
+weight = 1
+command = ["bash", "components/support-desk-domain/e2e-tickets.sh"]
+
+[[part]]
+name = "reply"
+text = """
+Implement components/support-desk-domain/src/reply.rs: the model drafts it, and the outbox
+owns it.
+
+YOU MUST NOT SEND ANYTHING. A drafted reply is enqueued and the courier part delivers it.
+Your gate runs a webhook receiver and asserts nothing arrives at it while you are judged —
+because a part that sends inline answers correctly on every path in that gate and loses the
+reply the first time the far end is down, after the budget was already spent on it.
+
+    use crate::bindings::outbox::dispatch::queue as outbox;
+    outbox::enqueue(topic: &str, payload: &[u8], delay_seconds: u64)
+        -> Result<String, OutboxError>
+
+One fact you cannot get from a signature, and it fails silently:
+
+    use crate::bindings::quota::meter::meter;
+    meter::reserve(subject, amount, limit, period_seconds) -> Result<Balance, QuotaError>
+    meter::peek(subject, limit, period_seconds)            -> Result<Balance, QuotaError>
+
+`QuotaError::Exceeded`'s payload is the units STILL AVAILABLE — always 0 when a request for
+one unit is refused. It is not a duration. Pass it through as `retry_after` and every refusal
+tells the caller to retry immediately, forever, with nothing reporting an error. The seconds
+come from `peek`: `resets_at - now`.
+
+The budget is per TENANT, not per subject: `authorize` returns both.
+"""
+writable = ["components/support-desk-domain/src/reply.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/support-desk-domain/src/lib.rs",
+  "components/support-desk-domain/wit/support.wit",
+  "components/quota/wit/quota.wit",
+  "components/outbox/wit/outbox.wit",
+  "components/session-store/wit/session.wit",
+  "components/ai-inference/wit/inference.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "reply-queues-and-does-not-send"
+required = true
+weight = 1
+command = ["bash", "components/support-desk-domain/e2e-reply.sh"]
+
+[[part]]
+name = "courier"
+text = """
+Implement components/support-desk-domain/src/courier.rs: the only part that talks to the far
+end.
+
+WHAT HAPPENS WHEN A SEND FAILS IS THE WHOLE OF THIS PART, and the trap raises nothing:
+
+    use crate::bindings::notify::dispatch::dispatcher as notify;
+    notify::send(msg: &notify::Message) -> Result<u16, notify::NotifyError>
+
+Every `Err` is a failure to deliver and every one of them is a `fail` — a refusal and an
+unreachable host arrive identically, and a courier that tries to tell them apart drops
+replies over outages that lasted a minute.
+
+The silent part is what `fail` RETURNS: the event's new state. `pending` means it will come
+back after backoff; `dead` means `max-attempts` is spent and nothing will retry it ever
+again. Ignore that value and a reply is abandoned with no error raised, nothing logged, and
+a customer who simply never hears back.
+
+    outbox::claim(max, lease_seconds) -> Result<Vec<Event>, OutboxError>
+    outbox::ack(id) -> Result<(), OutboxError>
+    outbox::fail(id) -> Result<State, OutboxError>
+
+Never ack an event you did not deliver, and never fail one you did: the first loses replies,
+the second sends them twice. Your gate runs a webhook receiver, breaks it on purpose, counts
+arrivals, and exhausts `max-attempts` to see the dead letter — a reply that cannot be
+recovered is simply gone, which is why the replay route is not optional.
+"""
+writable = ["components/support-desk-domain/src/courier.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/support-desk-domain/src/lib.rs",
+  "components/support-desk-domain/wit/support.wit",
+  "components/outbox/wit/outbox.wit",
+  "components/notify-dispatch/wit/notify.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "courier-delivers-at-least-once"
+required = true
+weight = 1
+command = ["bash", "components/support-desk-domain/e2e-courier.sh"]
+
+# The join, and it uses no fixture: the ticket is opened through `tickets`, drafted through
+# `reply`, delivered through `courier`, to a sink the gate runs. What only this gate sees is
+# the outbox payload passing between two parts that never call each other — nothing else in
+# the app would notice if they disagreed about a field name.
+[[check]]
+id = "the-whole-support-desk-api-works"
+required = true
+weight = 1
+command = ["bash", "components/support-desk-domain/e2e.sh"]

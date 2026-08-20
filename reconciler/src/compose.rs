@@ -716,6 +716,23 @@ pub struct Vacuous {
     pub excused: bool,
 }
 
+/// What the base tree looked like to the gate: which checks were vacuous, and WHY the
+/// others failed.
+///
+/// The reasons are carried out rather than dropped because "every check fails" is two
+/// very different states wearing one face. A check failing because the work is not
+/// done is a gate that can judge. A check failing because the tree it was handed
+/// cannot even build is a gate that will fail every candidate identically — and it
+/// reads as healthy here. That cost run 1 of docs/measure/complex-five.md its entire
+/// budget: one directory missing from the goal's `base_paths`, thirty-six model calls,
+/// and a precheck that said the gate was ready.
+#[derive(Debug)]
+pub struct BaseVerdict {
+    pub vacuous: Vec<Vacuous>,
+    /// One entry per failing check, as the runner reported it: `id: reason`.
+    pub reasons: Vec<String>,
+}
+
 /// Run the checks against the base tree alone and report the ones that pass.
 ///
 /// `excuse` names the checks a caller has declared may legitimately pass on the
@@ -729,7 +746,7 @@ pub fn criticise(
     checks: &Value,
     excuse: &[String],
     timeout: Duration,
-) -> Result<Vec<Vacuous>, String> {
+) -> Result<BaseVerdict, String> {
     let list = checks.as_array().cloned().unwrap_or_default();
     if list.is_empty() {
         return Err("no checks to criticise — an empty gate accepts everything".into());
@@ -738,12 +755,15 @@ pub fn criticise(
     // for a candidate that did nothing.
     let report = gate(checks_url, base_commit, base_tree, &json!([]), checks, timeout)?;
     let failed: Vec<&str> = report.failures.iter().filter_map(|f| f.split(':').next()).collect();
-    Ok(list
-        .iter()
-        .filter_map(|c| c["id"].as_str())
-        .filter(|id| !failed.contains(id))
-        .map(|id| Vacuous { id: id.to_string(), excused: excuse.iter().any(|e| e == id) })
-        .collect())
+    Ok(BaseVerdict {
+        vacuous: list
+            .iter()
+            .filter_map(|c| c["id"].as_str())
+            .filter(|id| !failed.contains(id))
+            .map(|id| Vacuous { id: id.to_string(), excused: excuse.iter().any(|e| e == id) })
+            .collect(),
+        reasons: report.failures.clone(),
+    })
 }
 
 /// One line per unexcused vacuous check, or nothing.
