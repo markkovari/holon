@@ -78,9 +78,23 @@ assert ("reports.create", "ok") in pairs, \
     f"no reports.create/ok in the trail: the intake part did not note an accepted report under the contract's name. Got {sorted(pairs)}"
 assert ("reports.assist", "ok") in pairs, \
     f"no reports.assist/ok in the trail: the assist part did not note the model's answer. Got {sorted(pairs)}"
-subjects = {e.get("subject") for e in evs if e.get("event") != "http.request"}
-assert subjects == {"ada"}, \
-    f"the parts' own events must carry the principal's subject, not {subjects} — an audit trail that cannot say WHO is not one"
+# Named per part, because a verdict addressed to nobody cannot be repaired. The event
+# name says which file is at fault: reports.create is intake's, reports.assist is
+# assist's.
+owner = {"reports.create": "intake (src/intake.rs)", "reports.assist": "assist (src/assist.rs)"}
+wrong = {}
+for e in evs:
+    name = e.get("event")
+    if name == "http.request":
+        continue
+    if e.get("subject") != "ada":
+        wrong.setdefault(owner.get(name, name), set()).add(e.get("subject"))
+assert not wrong, (
+    "an audit event carries something other than the principal's subject ('ada'):\n"
+    + "\n".join(f"    {part} wrote subject={sorted(v)}" for part, v in sorted(wrong.items()))
+    + "\n  The subject is principal.subject — what `authorize` RETURNED. A bearer token"
+      " there is both the wrong value and a credential written into an audit trail."
+)
 PY
 
 # --- and the limit is still a limit once everything is wired together ---------
