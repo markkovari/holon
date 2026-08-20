@@ -126,7 +126,14 @@ crashed_check() { # crashed_check <output-file>
   grep -q "Traceback (most recent call last)" "$1" || return 1
   # An AssertionError is this gate's verdict. Any other exception type is the check itself
   # failing, and a branch would receive that stack trace as its only feedback.
-  grep -oE "^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception):" "$1" | grep -qv "^AssertionError:"
+  #
+  # The LAST exception line, not any of them: a guard that catches a parse error and raises
+  # AssertionError with something readable prints BOTH — python chains them, oldest first —
+  # and that is a gate doing exactly the right thing. Only what terminated the process
+  # decides whether it judged or broke.
+  local last
+  last=$(grep -oE "^[A-Za-z_][A-Za-z0-9_.]*(Error|Exception):" "$1" | tail -1)
+  [ -n "$last" ] && [ "$last" != "AssertionError:" ]
 }
 
 TOOLCHAIN=$(rustup show active-toolchain 2>/dev/null | cut -d' ' -f1)
