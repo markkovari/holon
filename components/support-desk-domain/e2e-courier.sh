@@ -51,7 +51,9 @@ GOT=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $
 # --- nothing to do is not an error ---------------------------------------------
 python3 - "$(deliver)" <<'PY' || fail "a pass with an empty outbox must answer zeroes, not an error"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "POST /api/deliver answered with an empty body — the route is not implemented, or it trapped"
+d = json.loads(raw)
 for k in ("claimed", "delivered", "failed", "dead"):
     assert d.get(k) == 0, f"an empty outbox is a pass that did nothing: {d}"
 PY
@@ -61,7 +63,9 @@ E1=$(enqueue "the first reply")
 [ -n "$E1" ] || fail "the fixture could not enqueue — the scaffold is broken, not the part"
 python3 - "$(deliver)" <<'PY' || fail "a reply the far end accepted was not counted as delivered"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "POST /api/deliver answered with an empty body — the route is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("claimed") == 1, f"one event was waiting: {d}"
 assert d.get("delivered") == 1, f"the sink answered 200 and this pass did not count a delivery: {d}"
 assert d.get("failed") == 0, d
@@ -69,7 +73,9 @@ PY
 [ "$(sink_deliveries)" = 1 ] || fail "the sink saw $(sink_deliveries) arrivals, wanted exactly 1"
 python3 - "$(cat "$SINK_LOG")" <<'PY' || fail "what arrived at the far end is not what was enqueued"
 import json, sys
-line = json.loads((sys.argv[1] or "").strip().split("\n")[0])
+raw = (sys.argv[1] or "").strip()
+assert raw, "nothing arrived at the far end at all, so there is nothing to compare"
+line = json.loads(raw.split("\n")[0])
 body = json.loads(line["body"])
 assert "the first reply" in json.dumps(body), f"the reply's text did not reach the far end: {body}"
 PY
@@ -77,7 +83,9 @@ PY
 # A second pass must not deliver it again: an acked event is gone from the outbox.
 python3 - "$(deliver)" <<'PY' || fail "an acked event was claimed a second time"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "POST /api/deliver answered with an empty body — the route is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("claimed") == 0, f"a delivered event must not be claimable again: {d}"
 PY
 [ "$(sink_deliveries)" = 1 ] || fail "the reply was delivered twice — the first pass did not ack it"
@@ -87,7 +95,9 @@ sink_break
 E2=$(enqueue "the second reply")
 python3 - "$(deliver)" <<'PY' || fail "a refusal from the far end was counted as a delivery"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "POST /api/deliver answered with an empty body — the route is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("claimed") == 1, f"one event was waiting: {d}"
 assert d.get("delivered") == 0, (
     "the far end answered 500 and this pass counted it as delivered. A courier that acks a "
@@ -102,7 +112,9 @@ sink_repair
 sleep 2
 python3 - "$(deliver)" <<'PY' || fail "a refused reply was never retried — it is lost"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "POST /api/deliver answered with an empty body — the route is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("claimed") == 1, (
     "the refused event did not come back after its backoff. If `fail` was never called it "
     f"is still leased and nothing will ever deliver it: {d}"
@@ -137,7 +149,9 @@ GOT=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" "$B/api/dead-let
 sleep 1
 python3 - "$(deliver)" <<'PY' || fail "a replayed dead letter was not delivered"
 import json, sys
-d = json.loads(sys.argv[1] or "{}")
+raw = (sys.argv[1] or "").strip()
+assert raw, "POST /api/deliver answered with an empty body — the route is not implemented, or it trapped"
+d = json.loads(raw)
 assert d.get("delivered") == 1, f"a replayed reply must be deliverable again: {d}"
 PY
 GOT=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "$AUTH" "$B/api/dead-letters/nope/replay")
