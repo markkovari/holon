@@ -1,0 +1,44 @@
+// moderation:queue — content in, a decision out, and the model does not have the last word.
+//
+// App 3 of the five in docs/measure/complex-five.md. Its hard interaction is neither
+// ordering (app 1) nor cost (app 2) but PRECEDENCE: a deterministic policy overrides a
+// model, and the decision has to record both what the model said and what the policy did
+// to it. An app that only reports the outcome cannot be audited, and an app that lets the
+// model win cannot be governed.
+//
+// Every import is already implemented, tested and composed in this repository. A part
+// that reimplements one is doing the wrong work, and each gate reads which capabilities
+// the compiled component actually calls.
+package moderation:queue@0.1.0;
+
+world moderation-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Who the caller is, and whether they may.
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+    /// Minting a token for a test caller — the ROUTER's, never a part's.
+    import auth:identity/session@0.1.0;
+
+    /// Too much submitted content from one subject. A failure counter with lockout: two
+    /// calls, and the second one is the one everybody forgets.
+    import ratelimit:guard/limiter@0.1.0;
+
+    /// The model's opinion, one interface away.
+    import ai:inference/inference@0.1.0;
+
+    /// The rules that overrule it. Attribute-based, priority-ordered, and stored — a
+    /// ladder of `if` statements in a part is how this app becomes ungovernable.
+    import policy:guard/guard@0.1.0;
+
+    /// Where a decision goes once it is made, so something downstream can act on it.
+    import event:bus/bus@0.1.0;
+
+    /// The queue itself.
+    import records:store/store@0.1.0;
+
+    /// Deployment knobs: the submission limit and the labels the model chooses from.
+    import wasi:config/store@0.2.0-rc.1;
+    /// Timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}
