@@ -1,0 +1,218 @@
+# App 5 of five (docs/measure/complex-five.md), and the only one where being wrong costs
+# money. Its hard interaction is TRUST: a model is a fine way to describe three lines of an
+# invoice and a terrible way to divide 100.00 by three.
+#
+# WHAT IS TOLD AND WHAT IS NOT, on app 2's rule — keep only what fails silently:
+#
+#   KEPT — three facts, each of which produces a plausible wrong number or a second charge:
+#
+#     * `money::parse` wants EXACTLY the currency's decimal places and reports anything else
+#       as `UnknownCurrency` — so "100" in EUR fails with an error naming the currency, and a
+#       part debugging "unknown currency EUR" will look everywhere except at the digits.
+#     * `allocate` exists because dividing is wrong: 100.00 into 3 is 33.34 + 33.33 + 33.33,
+#       and a part that divides by hand is a cent short on every odd split. Nothing errors.
+#     * `ratelimit:guard` counts only what `record_failure` tells it to; `check` alone counts
+#       nothing, so a limiter with no second call never limits and never complains.
+#
+#   CUT — everything loud. The `Method` PartialEq, the `&Amount` references in the money
+#   signatures, the binding paths: all compile errors. The status tables are in the contract
+#   once. And the idempotency behaviour is described in the contract as the property it is
+#   ("a retry gets the same answer"), not as a recipe.
+title = "invoice:copilot — the model writes the words and money does the arithmetic"
+contract = "components/invoice-copilot-domain/CONTRACT.md"
+
+text = """
+Finish the invoice:copilot API in components/invoice-copilot-domain. Nothing is implemented
+yet: three parts are written at the same time, by three agents, against one contract.
+
+`CONTRACT.md` in that crate is the specification — every route, every status code, every
+rule, and the shape of the invoice all three parts share. Read it first. You may not edit it:
+if it is wrong or missing something you need, write CONTRACT-REQUEST.md (first line the
+subject, the rest why) and the other parts will answer between generations.
+
+The router in src/lib.rs already exists and is not yours to change. It dispatches to the
+three parts, answers /health, mints a token at POST /test/token, seeds one empty draft and
+one invoice with three allocated lines at POST /test/seed, shows a stored invoice at GET
+/test/invoice/{id}, and gives you `crate::cfg(key, default)`. Those fixtures exist so your
+part can be judged before the parts around it exist. Your part is one file.
+
+You are judged by real HTTP requests against the running component, not by whether it
+compiles: `cargo component check` passes happily on code that does nothing. This app's gates
+count cents.
+
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as components,
+bound at compose time. Look at wit/invoice.wit. The limiter, the model, the arithmetic, the
+double-entry ledger and the idempotency guard are each implemented, tested and composed for
+you. You call them; you do not write them. Dividing a total by hand, rounding a cent,
+trusting a number the model produced, or posting without the guard will each answer plausibly
+on the one path you try — and each fails its gate, because the gate reads which capabilities
+the compiled component actually calls, and then it counts.
+"""
+
+writable = []
+base_paths = [
+  "components/invoice-copilot-domain/",
+  # The capabilities these parts compose against. Readable, none of them writable.
+  "components/auth-guard/",
+  # auth.wit's own world imports these two, so the manifest names them and the build reads
+  # them. Nothing here calls audit:log.
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/money/",
+  "components/ledger/",
+  "components/idempotency-guard/",
+  "components/ai-inference/",
+  # ai-inference's own import: absent, `cargo component` cannot build a target world at all
+  # and every branch fails before a line of Rust is compiled (app 1, run 1).
+  "components/llm-inference/",
+  "components/anthropic-provider/",
+  "components/record-store/",
+  "components/gate-lib.sh",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "invoice-copilot-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "money",
+  "ledger",
+  "idempotency-guard",
+  "ai-inference",
+  "llm-inference",
+  "anthropic-provider",
+  "record-store",
+]
+
+[[part]]
+name = "invoices"
+text = """
+Implement components/invoice-copilot-domain/src/invoices.rs: opening an invoice, and deciding
+what currency its arithmetic will be done in.
+
+Whether a currency can be added up at all is `money:amount`'s answer and not a list of
+three-letter codes written here. Ask it, and refuse what it refuses: an invoice in a currency
+nobody can total is not a draft, it is a trap that springs at posting time.
+
+ONE THING ABOUT `parse` THAT READS AS A DIFFERENT PROBLEM THAN IT IS: it wants exactly the
+currency's number of decimal places, and reports anything else as `UnknownCurrency`. In EUR,
+"100.00" parses and "100", "100.0" and "100.000" are all refused — each with an error naming
+the CURRENCY. Someone debugging "unknown currency EUR" will look at everything except the
+number of digits.
+
+THE THROTTLE TAKES TWO CALLS, which is the other fact you cannot get from a signature.
+`ratelimit:guard` is a fixed-window FAILURE COUNTER: `check` asks whether the key is locked
+and counts nothing; `record_failure` is what counts. A part that only calls `check` has a
+limiter that never limits, every request succeeds, and no error is ever raised.
+
+    use crate::bindings::ratelimit::guard::limiter as rl;
+    rl::check(key: &str)          -> Result<u32, LimitError>  // remaining, or Locked(secs)
+    rl::record_failure(key: &str) -> Result<(), LimitError>
+
+The key is `principal.subject`, and your gate opens invoices as two different subjects to see
+whether you keyed it on something else.
+"""
+writable = ["components/invoice-copilot-domain/src/invoices.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/invoice-copilot-domain/src/lib.rs",
+  "components/invoice-copilot-domain/wit/invoice.wit",
+  "components/money/wit/money.wit",
+  "components/rate-limiter/wit/ratelimit.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "invoices-refuses-money-it-cannot-add"
+required = true
+weight = 1
+command = ["bash", "components/invoice-copilot-domain/e2e-invoices.sh"]
+
+[[part]]
+name = "copilot"
+text = """
+Implement components/invoice-copilot-domain/src/copilot.rs: the model names the lines, and
+does not touch a number.
+
+    use crate::bindings::money::amount::arithmetic as money;
+    money::allocate(total: &Amount, shares: u32) -> Result<Vec<Amount>, MoneyError>
+
+ALLOCATE EXISTS BECAUSE DIVIDING IS WRONG. 100.00 into three shares is 33.34 + 33.33 + 33.33.
+A model asked to do it answers 33.33 three times, loses a cent, and is confident about it; a
+part that divides by hand does the same thing and rounds it away silently. Your gate counts
+the cents, and it counts them on an odd split for exactly that reason.
+
+What the model is for is words: ask it for as many short line descriptions as there are
+shares, and use them as text. If it returns fewer than you asked for, pad them — a part that
+turns three shares into two lines has an invoice whose total is no longer its total.
+
+`money::parse` wants exactly the currency's decimal places and calls anything else an unknown
+currency, so parse the caller's total before spending a model call on the request.
+"""
+writable = ["components/invoice-copilot-domain/src/copilot.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/invoice-copilot-domain/src/lib.rs",
+  "components/invoice-copilot-domain/wit/invoice.wit",
+  "components/money/wit/money.wit",
+  "components/ai-inference/wit/inference.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "copilot-lets-money-do-the-arithmetic"
+required = true
+weight = 1
+command = ["bash", "components/invoice-copilot-domain/e2e-copilot.sh"]
+
+[[part]]
+name = "posting"
+text = """
+Implement components/invoice-copilot-domain/src/posting.rs: the only irreversible thing this
+app does, and it happens once.
+
+    use crate::bindings::idempotency::guard::store as idem;
+    idem::begin(key: &str, ttl_seconds: u64) -> Result<Option<CachedResponse>, IdemError>
+    idem::complete(key: &str, status: u16, body: &[u8]) -> Result<(), IdemError>
+
+Every HTTP client retries. A caller whose request timed out sends it again, and it must
+receive what the first call answered — not a fresh posting, and not a refusal that tells it
+its request never happened when it did. Your gate posts twice with the same key and compares
+the two answers byte for byte, then posts with a DIFFERENT key and requires a refusal,
+because that is a second charge rather than a retry.
+
+    use crate::bindings::ledger::doubleentry::ledger;
+    ledger::validate(e: &Entry) -> Result<(), LedgerError>
+
+The ledger is what knows whether two sides balance. Build the entry, let it refuse, and do
+not post an entry it refused: an unbalanced entry posted anyway is how a ledger stops being
+one.
+
+A `complete` that never happens is a posting that will happen again, and an idempotency guard
+that is unavailable is not permission to post twice.
+"""
+writable = ["components/invoice-copilot-domain/src/posting.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/invoice-copilot-domain/src/lib.rs",
+  "components/invoice-copilot-domain/wit/invoice.wit",
+  "components/idempotency-guard/wit/idempotency.wit",
+  "components/ledger/wit/ledger.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "posting-happens-exactly-once"
+required = true
+weight = 1
+command = ["bash", "components/invoice-copilot-domain/e2e-posting.sh"]
+
+# The join, and it uses no fixture: the invoice is opened through `invoices`, its lines
+# suggested through `copilot`, and it is posted through `posting` — 10.00 into three shares,
+# so a cent lost anywhere makes the ledger refuse the entry two steps later. Three parts that
+# never call each other and share nothing but a stored document.
+[[check]]
+id = "the-whole-invoice-copilot-api-works"
+required = true
+weight = 1
+command = ["bash", "components/invoice-copilot-domain/e2e.sh"]

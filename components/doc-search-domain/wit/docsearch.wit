@@ -1,0 +1,50 @@
+// docsearch:agent — answers a question out of an indexed library, and is careful
+// about what that costs.
+//
+// App 2 of the five in docs/measure/complex-five.md. Its hard interaction is not
+// ordering (app 1's) but AGREEMENT BETWEEN A CACHE AND A METER: an answer served from
+// the cache must not spend the caller's budget or reach a model, and a refusal must
+// not be cached as though it were an answer. Both halves of that are invisible in a
+// single request and only appear when the same question is asked twice.
+//
+// Every import is already implemented, tested and composed in this repository. A part
+// that reimplements one is doing the wrong work, and each gate reads which
+// capabilities the compiled component actually calls.
+package docsearch:agent@0.1.0;
+
+world doc-search-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Who the caller is, and whether they may. One call does verification and the
+    /// permission check together.
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+    /// Minting a token for a test caller — the ROUTER's, never a part's.
+    import auth:identity/session@0.1.0;
+
+    /// The second factor for the expensive route. Provisioning a secret, and checking
+    /// a code against it with a skew window — both solved, neither reimplementable in
+    /// a part without failing its gate.
+    import otp:totp/authenticator@0.1.0;
+
+    /// What a subject may spend in a period. `reserve` before the work, and the
+    /// distinction between reserving and recording is the whole of it.
+    import quota:meter/meter@0.1.0;
+
+    /// The library, and how a question finds it.
+    import search:index/index@0.1.0;
+    /// The documents themselves, and the step-up marks.
+    import records:store/store@0.1.0;
+
+    /// Answers already paid for. A cache hit is the difference between an app that
+    /// costs money per question and one that costs money per DISTINCT question.
+    import cache:store/cache@0.1.0;
+
+    /// The model, one interface away.
+    import ai:inference/inference@0.1.0;
+
+    /// Deployment knobs: the budget and how long an answer stays fresh.
+    import wasi:config/store@0.2.0-rc.1;
+    /// Timestamps, and the clock a TOTP code is checked against.
+    import wasi:clocks/wall-clock@0.2.0;
+}
