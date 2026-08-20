@@ -1,0 +1,56 @@
+// triage:assist — defect intake that authenticates, throttles, redacts, asks a
+// model, and can prove afterwards what it did.
+//
+// The first of five goals authored to answer one question: does a pool of built
+// capabilities and a graph of past lessons let the loop assemble a whole it has
+// never seen? Every import below is already implemented, tested and composed in
+// this repository. A part that reimplements one is doing the wrong work, and each
+// gate is written so the only cheap way to pass is to call it.
+//
+// The parts form a chain rather than a set. `intake` decides who the caller is and
+// what may be stored; `assist` reads what intake STORED — never what the request
+// said — and asks a model about it; `ledger` is where all three write down what
+// happened, through a signature they must all agree on. Redaction that happens
+// after the model call is a leak nobody notices in the response, so the ordering is
+// the property, and only a chain can express it.
+package triage:assist@0.1.0;
+
+world triage-assist-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Who the caller is, and whether they may. `authorize` does verification and
+    /// the scope check in one call — an `intake` that parses a JWT by hand is how
+    /// that part fails.
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+    /// Minting a token for a test caller. The ROUTER's, not a part's: a gate that
+    /// had to log in through a part it is not judging would fail for the wrong
+    /// reason.
+    import auth:identity/session@0.1.0;
+
+    /// Too many requests from one subject. A fixed-window counter with lockout —
+    /// see CONTRACT.md for the two calls it takes, which is the part everybody
+    /// gets wrong.
+    import ratelimit:guard/limiter@0.1.0;
+
+    /// Masking the reporter's details out of a report body BEFORE it is stored.
+    import pii:redact/redactor@0.1.0;
+
+    /// The model, one interface away. `classify` and `summarize` are the two verbs
+    /// `assist` needs; both go on to `llm:inference` and a real provider.
+    import ai:inference/inference@0.1.0;
+
+    /// What happened, durably and queryably. All three parts write here; `ledger`
+    /// owns the shape.
+    import audit:log/recorder@0.1.0;
+    import audit:log/query@0.1.0;
+    import audit:log/types@0.1.0;
+
+    /// Reports and their assists.
+    import records:store/store@0.1.0;
+    /// Their ids.
+    import id:generate/generator@0.1.0;
+
+    /// Timestamps for what is stored.
+    import wasi:clocks/wall-clock@0.2.0;
+}
