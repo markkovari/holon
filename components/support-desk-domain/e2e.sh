@@ -78,13 +78,22 @@ except json.JSONDecodeError as e:
 ticket = json.loads(sys.argv[2] or "{}")
 drafted = ((ticket.get("reply") or {}).get("text") or "").strip()
 assert drafted, f"the ticket has no stored draft to compare against: {ticket}"
-blob = json.dumps(body)
-assert drafted[:40] in blob, (
+
+# Compare FIELDS, not a re-serialised blob. `json.dumps` escapes non-ASCII by default, so a
+# draft containing an em dash — which a model writes constantly — appears as \u2014 in the
+# dump and no substring of the original is found in it. That is a bug in the check, and it
+# failed a run in which all three parts were correct.
+assert isinstance(body, dict), f"what arrived is not a JSON object: {body!r}"
+arrived_body = (body.get("body") or "").strip()
+assert arrived_body == drafted, (
     "what arrived at the customer's endpoint is not the draft that was stored. `reply` "
-    "writes the payload and `courier` reads it, and nothing else in the app would notice "
-    f"if they disagreed about a field name. Arrived: {blob[:300]}"
+    "writes the payload and `courier` reads it, and nothing else in the app would notice if "
+    f"they disagreed about a field name.\n  stored:  {drafted[:160]!r}\n  arrived: {arrived_body[:160]!r}"
 )
-assert "Charged twice" in blob, f"the subject did not survive the trip: {blob[:300]}"
+assert "Charged twice" in (body.get("subject") or ""), (
+    f"the subject did not survive the trip: {body.get('subject')!r}"
+)
+assert body.get("ticket"), f"the payload must carry the ticket it answers: {body}"
 PY
 
 echo "support:desk — the whole API: passed"
