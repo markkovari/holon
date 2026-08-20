@@ -520,6 +520,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc-search-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "driver-probe"
 version = "0.1.0"
 dependencies = [
@@ -873,6 +882,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "invoice-copilot-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1069,6 +1087,15 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "moderation-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
@@ -1793,6 +1820,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "support-desk-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "svg-chart"
 version = "0.1.0"
 dependencies = [
@@ -1884,6 +1920,24 @@ dependencies = [
 
 [[package]]
 name = "transit-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "treasury-ledger-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "triage-assist-domain"
 version = "0.1.0"
 dependencies = [
  "serde",
