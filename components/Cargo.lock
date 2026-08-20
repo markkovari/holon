@@ -1082,6 +1082,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "moderation-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "money"
 version = "0.1.0"
 dependencies = [
