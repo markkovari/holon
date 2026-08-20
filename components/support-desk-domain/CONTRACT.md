@@ -158,8 +158,11 @@ the next:
    with no reply: a draft nothing will deliver is worse than no draft, because the budget
    was already spent on it and nobody will ever know it existed.
 
-   **This part must not call `notify:dispatch` at all.** Sending inline is the failure this
-   whole app is about, and its gate asserts the artifact does not import that interface.
+   **This part must not send.** Sending inline is the failure this whole app is about, and
+   the gate checks it the only way that works: it runs a webhook receiver, grants the
+   component egress to it, and requires that nothing arrives while this part is judged. (Not
+   an import check — all three parts compile into one component, so the artifact's imports
+   say what the COMPONENT calls and never which part called it.)
 
 Then the ticket is updated — `state` `"answered"`, `reply` per Storage, `event` the id
 `enqueue` returned — and the answer is `202 {"event":"<outbox event id>","remaining":<n>}`.
@@ -194,15 +197,24 @@ pub struct Message { pub channel: Channel, pub target: String,
 
 **What happens on failure is the whole part:**
 
-* `Ok(status)` with `status` in 200..300 → `ack`. Delivered.
-* `Ok(status)` outside that range → `fail`. The far end answered and refused; that is not
-  delivery, and acking it loses the reply silently. This is the case that separates a
-  courier from a loop that calls `send` and moves on.
-* `Err(_)` → `fail`.
+* `Ok(status)` → `ack`. `send` answers `Ok` only for a 2xx; the status is there to be
+  recorded, not to be re-checked.
+* `Err(DeliveryFailed(reason))` → `fail`. The far end refused — `reason` carries its status.
+* `Err(_)` (unreachable, unsupported channel, backend down) → `fail`.
 
-`fail` returns the event's new state: `pending` means it will be retried after backoff,
-`dead` means it exhausted `max-attempts`. Never `ack` an event you did not deliver, and
-never `fail` one you did — the first loses replies, the second sends them twice.
+**`Err` does not say whether the failure was transient**, and a courier must not guess: a
+refusal and an unreachable host arrive the same way, and treating one as permanent is how a
+reply is dropped for an outage that lasted a minute. Every `Err` is a `fail`, and the outbox
+decides what happens next.
+
+**What `fail` RETURNS is the part nobody reads.** It answers the event's new state:
+`pending` means it will be retried after backoff, `dead` means it has exhausted
+`max-attempts` and nothing will ever retry it again. A courier that ignores that return
+value never knows a reply was abandoned — it is not an error, nothing is logged, and the
+customer simply never hears back. Count the dead ones and report them.
+
+Never `ack` an event you did not deliver, and never `fail` one you did: the first loses
+replies, the second sends them twice.
 
 Answer `200`:
 
