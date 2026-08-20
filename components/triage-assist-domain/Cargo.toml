@@ -30,7 +30,6 @@ world = "triage-assist-domain"
 "llm:inference" = { path = "../llm-inference/wit" }
 "pii:redact" = { path = "../pii-redact/wit" }
 "records:store" = { path = "../record-store/wit" }
-"id:generate" = { path = "../id-generate/wit" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
