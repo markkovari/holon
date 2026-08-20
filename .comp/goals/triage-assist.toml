@@ -1,0 +1,262 @@
+# App 1 of five, and the first goal in this repository authored to MEASURE the loop
+# rather than to land a feature.
+#
+# The question the five are asked: does a pool of built capabilities and a graph of
+# past lessons let the loop assemble a whole it has never seen? So every capability
+# here already exists — auth, the limiter, the redactor, the model, the audit trail —
+# and nothing about this composition does. A branch that reimplements one of them is
+# the measurement failing, which is why each gate reads the artifact's IMPORTS as
+# well as its answers.
+#
+# WHAT IS TOLD AND WHAT IS NOT, on the line ADR-0082's triage goal drew:
+#
+#   KEPT   — facts a part cannot find from what it is shown and that fail SILENTLY:
+#            that `ratelimit:guard` is a failure COUNTER needing two calls rather
+#            than a throughput meter (a part that only calls `check` never limits
+#            anything and every request succeeds), that `find_by` wants a
+#            JSON-encoded value (a wrong query is `Ok(vec![])`, indistinguishable
+#            from an empty collection), and that `classify`'s confidence is
+#            0..=1000 milli-units (a part that assumes a percentage answers 78 for
+#            780 and nothing complains).
+#
+#   CUT    — everything the contract and the imports already imply: which status a
+#            missing bearer gets (the table says), that `assist` reads the store
+#            rather than the request (the contract says, twice), that a `Method` has
+#            no `PartialEq` (a LOUD compile error, and luck is not what is being
+#            measured here).
+title = "triage:assist — authenticated, throttled, redacted, assisted, audited"
+contract = "components/triage-assist-domain/CONTRACT.md"
+
+text = """
+Finish the triage:assist API in components/triage-assist-domain. Nothing is
+implemented yet: three parts are written at the same time, by three agents, against
+one contract.
+
+`CONTRACT.md` in that crate is the specification — every route, every status code,
+every rule, and the document shape all three parts share. Read it first. You may not
+edit it: if it is wrong or missing something you need, write CONTRACT-REQUEST.md
+(first line the subject, the rest why) and the other parts will answer between
+generations.
+
+The router in src/lib.rs already exists and is not yours to change. It dispatches to
+the three parts, answers /health, mints a token at POST /test/token, seeds a fixture
+at POST /test/seed and exposes the raw stored document at GET /test/report/{id} — so
+your part can be judged before the parts around it exist. Your part is one file.
+
+You are judged by real HTTP requests against the running component, not by whether it
+compiles: `cargo component check` passes happily on code that does nothing.
+
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as
+components, bound at compose time. Look at wit/assist.wit. Authentication, the rate
+limit, PII masking, the model, the audit trail — every one of them is implemented,
+tested and composed for you. You call them; you do not write them. Writing your own
+token parser, your own attempt counter, your own email scanner or your own HTTP client
+for a model is the one way to fail a gate while answering every request correctly,
+because the gate reads which capabilities the compiled component actually calls.
+"""
+writable = []
+base_paths = [
+  "components/triage-assist-domain/",
+  # The capabilities these parts compose against. Present so a part can READ the
+  # interface it is calling; none of them is writable.
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/pii-redact/",
+  "components/ai-inference/",
+  # ai-inference's own import. Absent, `cargo component` cannot build a target world
+  # at all and every branch fails before a line of Rust is compiled — see
+  # docs/measure/complex-five.md, run 1.
+  "components/llm-inference/",
+  "components/anthropic-provider/",
+  "components/audit-log/",
+  "components/record-store/",
+  "components/gate-lib.sh",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "triage-assist-domain",
+  "auth-guard",
+  "rate-limiter",
+  "pii-redact",
+  "ai-inference",
+  "anthropic-provider",
+  "audit-log",
+  "record-store",
+]
+
+[[part]]
+name = "intake"
+text = """
+Implement components/triage-assist-domain/src/intake.rs: taking a defect report in
+from an authenticated caller, refusing the ones that must be refused, and never
+storing what a reporter should not have pasted.
+
+Three refusals, three different answers, and collapsing them is how this part looks
+finished and is not — a caller cannot tell "log in" from "ask for access" from
+"wait", and neither can an operator. CONTRACT.md has the table.
+
+    use crate::bindings::auth::identity::authorizer as authz;
+
+    authz::authorize(token: &str, required: &Permission) -> Result<Principal, AuthError>
+    pub struct Permission { pub target: String, pub action: String }
+
+A scope named "reports:write" grants Permission { target: "reports", action: "write" }.
+
+THE RATE LIMIT TAKES TWO CALLS, and this is the one fact you cannot find from the
+signature. `ratelimit:guard` is a fixed-window FAILURE COUNTER, not a throughput
+meter: it counts what you tell it to count. `check` asks whether the key is locked;
+nothing is counted until you `record_failure`. A part that only calls `check` has a
+limiter that never limits, every request succeeds, and no error is ever raised.
+
+    use crate::bindings::ratelimit::guard::limiter as rl;
+
+    rl::check(key: &str)          -> Result<u32, LimitError>  // remaining, or Locked(secs)
+    rl::record_failure(key: &str) -> Result<(), LimitError>
+
+So: `check` first — `Err(Locked(secs))` is the 429 and nothing is stored — then
+`record_failure` once the report is accepted. The key is `principal.subject`, and the
+gate files reports as two different subjects to see whether you keyed it on anything
+else.
+
+What you STORE is masked. A reporter pastes their email into a bug report constantly,
+and that body goes on to a model and into an audit trail. `pii:redact` masks it
+BEFORE it reaches the store, and the raw text is never written.
+
+    use crate::bindings::pii::redact::redactor as pii;
+
+    pii::redact(text: &str, opts: &pii::Options) -> String
+    pub struct Options { pub kinds: Vec<Kind> }   // EMPTY kinds = every kind
+
+One more thing that fails silently: `records::find_by` wants the value JSON-ENCODED
+(`"\\"auth\\""`, not `auth`), and a wrong query returns `Ok(vec![])` — which reads
+exactly like a collection with nothing in it.
+"""
+writable = ["components/triage-assist-domain/src/intake.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/triage-assist-domain/src/lib.rs",
+  "components/triage-assist-domain/wit/assist.wit",
+  "wit/auth.wit",
+  "components/rate-limiter/wit/ratelimit.wit",
+  "components/pii-redact/wit/pii.wit",
+  "components/record-store/wit/record.wit",
+]
+[[part.check]]
+id = "intake-authenticates-throttles-and-masks"
+required = true
+weight = 1
+command = ["bash", "components/triage-assist-domain/e2e-intake.sh"]
+
+[[part]]
+name = "assist"
+text = """
+Implement components/triage-assist-domain/src/assist.rs: asking a model what is wrong
+with a report and how badly, and writing the answer onto the report.
+
+You are the only part that calls a model, and it is one interface away. Two calls,
+both on `ai:inference/inference` — `classify` for the severity from the three labels
+the contract names, `summarize` with `Length::Brief` for the sentence:
+
+    use crate::bindings::ai::inference::inference as ai;
+
+    ai::classify(text: &str, labels: &[String]) -> Result<LabelScore, AssistError>
+    ai::summarize(text: &str, len: ai::Length, focus: &str) -> Result<String, AssistError>
+    pub struct LabelScore { pub label: String, pub confidence: u32 }
+
+`confidence` is 0..=1000 MILLI-units, not a percentage. Store and answer it exactly as
+returned; scaling it to look like a percentage loses the only precision the interface
+offers and makes the field mean two different things.
+
+Read the report FROM THE STORE. The request body of your route is empty, and the
+stored body is the masked one — a model call on the raw text is a leak that nothing in
+the response reveals, and it is the reason the parts are ordered this way.
+
+A provider that is down leaves the report EXACTLY as it was: no half-written assist,
+no severity, no `assisted_at`. The gate runs a second host with the provider pointed at
+a closed port to check precisely that, so a 503 path that writes something first fails
+there and nowhere else.
+
+Every event you note carries `principal.subject` — what `authorize` returned — as its
+subject. Not the token you were given. Your own gate cannot catch that mistake, because
+`ledger` is a stub while you are judged and there is no trail to read; it surfaces only
+when all three parts are composed, and a bearer token in an audit trail is a credential
+in a durable log.
+
+Assisting a report that already has an assist is a 409 naming the stored severity, not
+a second model call. Every model call costs money and time, and a part that re-assists
+on every POST spends them forever.
+"""
+writable = ["components/triage-assist-domain/src/assist.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/triage-assist-domain/src/lib.rs",
+  "components/triage-assist-domain/wit/assist.wit",
+  "components/ai-inference/wit/inference.wit",
+  "components/record-store/wit/record.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "assist-asks-a-real-model-and-survives-it-being-down"
+required = true
+weight = 1
+command = ["bash", "components/triage-assist-domain/e2e-assist.sh"]
+
+[[part]]
+name = "ledger"
+text = """
+Implement components/triage-assist-domain/src/ledger.rs: the audit trail, and the one
+function the other two parts and the router all call.
+
+`note` is the PROTOCOL, not a helper. Its signature is fixed — the router compiles
+against it and so do both other parts — and only its body is yours:
+
+    pub fn note(trace: &str, event: &str, outcome: &str, subject: &str, detail: &str)
+
+It writes one `audit:log/recorder.record_event`, filling the record from its arguments,
+and it returns nothing. That is deliberate: an audit backend that is down is a `note`
+that did nothing, never a 500 on somebody else's report. A `note` that can fail a
+request turns the trail into a dependency of the API.
+
+    use crate::bindings::audit::log::recorder as audit;
+    use crate::bindings::audit::log::query as audit_query;
+    use crate::bindings::audit::log::types::Event;
+
+    audit::record_event(e: &Event) -> Result<(), AuditError>
+    audit_query::recent(limit: u32) -> Result<Vec<Event>, AuditError>
+    audit_query::by_trace(trace_id: &str) -> Result<Vec<Event>, AuditError>
+
+Then the two reads: `?limit=N` over `recent`, and `?trace=T` over `by_trace`. A
+`by_trace` that answers the whole log looks like a working filter right up to the first
+incident, so the gate asks for a trace nobody used and expects an empty list.
+
+`subject` is whatever your caller passed, and the contract binds them to pass
+`principal.subject`. You do not need to validate it — but do not substitute anything
+for it either.
+
+You are judged with both other parts still stubbed, which is fine and intended: the
+router notes every `/api/*` request it dispatches, so there is always traffic to show.
+"""
+writable = ["components/triage-assist-domain/src/ledger.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/triage-assist-domain/src/lib.rs",
+  "components/triage-assist-domain/wit/assist.wit",
+  "components/audit-log/wit/audit.wit",
+  "wit/auth.wit",
+]
+[[part.check]]
+id = "ledger-records-and-can-be-asked"
+required = true
+weight = 1
+command = ["bash", "components/triage-assist-domain/e2e-ledger.sh"]
+
+# The join. Each part's gate judges it with the other two stubbed — which is what makes
+# three agents possible, and exactly why something has to judge them together. The trail
+# is what makes the chain checkable: `ledger` cannot show `reports.create ok` unless
+# `intake` noted it under the contract's name, and `assist` cannot answer at all unless
+# `intake` stored the shape the contract describes.
+[[check]]
+id = "the-whole-triage-assist-api-works"
+required = true
+weight = 1
+command = ["bash", "components/triage-assist-domain/e2e.sh"]
