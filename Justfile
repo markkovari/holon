@@ -2041,6 +2041,30 @@ restore:
     done
     echo "restored $n bucket(s) from $DIR to $URL"
 
+# Put one of the repository's authored goals in place for `goal-run`.
+#
+# `goalrun` reads `.comp/goal.toml` and only that path (ADR-0082 wants the goal
+# versioned in the repo it acts on). Several goals therefore live side by side in
+# `.comp/goals/` and one is copied into place — visible in the run's own diff, which
+# is the point: which goal a run answered is not a shell variable that scrolled away.
+#
+#   just goal-use triage-assist && CHECKOUT=. REPO=owner/name … just goal-run
+goal-use app="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src=".comp/goals/{{app}}.toml"
+    if [ -z "{{app}}" ] || [ ! -f "$src" ]; then
+      [ -n "{{app}}" ] && echo "no goal at $src. Authored goals:" || echo "which goal? Authored:"
+      for f in .comp/goals/*.toml; do
+        [ -e "$f" ] || continue
+        printf '  %s\n' "$(basename "$f" .toml)"
+      done
+      exit 1
+    fi
+    cp "$src" .comp/goal.toml
+    echo "goal: $(python3 -c "import re,sys;t=open('.comp/goal.toml').read();m=re.search(r'^title = \"(.*)\"',t,re.M);print(m.group(1) if m else '{{app}}')")"
+    echo "  .comp/goals/{{app}}.toml -> .comp/goal.toml"
+
 # ---- graph-engineering: run a goal to a pull request -----------------------
 #
 # The one command behind the showcase. Builds the components and the native
@@ -2091,6 +2115,9 @@ goal-run:
     [ -n "${SURREAL_PASSWORD:-}" ] && args+=(--surreal-password "${SURREAL_PASSWORD/#\~/$HOME}")
     # Through the shim a call is a whole `claude -p`, so the default 300s is short.
     [ -n "${TIMEOUT:-}" ] && args+=(--timeout "$TIMEOUT")
+    # A measured run pins this to 1.0 — never skip. At the default 0.9 a re-run after
+    # a HARNESS failure is skipped as work already done, which reads as a pass.
+    [ -n "${SKIP_ABOVE:-}" ] && args+=(--skip-above "$SKIP_ABOVE")
     [ "${DRY_RUN:-0}" = "1" ] && args+=(--dry-run)
     [ "${SMOKE:-0}" = "1" ] && args+=(--smoke)
     ./reconciler/target/release/comp-goalrun "${args[@]}"
