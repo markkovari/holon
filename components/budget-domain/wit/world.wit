@@ -1,7 +1,10 @@
 package holon:budget;
 
 world budget {
-    export add-transaction: func(amount: f64, category: string, is-income: bool);
-    export get-balance: func() -> f64;
-    export get-category-budget: func(category: string) -> f64;
+    import auth:identity/authorizer@0.1.0;
+    import wasi:keyvalue/store@0.2.0-draft;
+
+    export add-transaction: func(token: string, amount: f64, category: string, is-income: bool);
+    export get-balance: func(token: string) -> f64;
+    export get-category-budget: func(token: string, category: string) -> f64;
 }
