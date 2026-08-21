@@ -479,6 +479,9 @@ e2e-console: compose-console
 claude-shim port="8787" model="":
     @CLAUDE_MODEL="{{model}}" PORT="{{port}}" node tools/claude-shim.mjs
 
+gemini-shim port="8788" model="gemini-2.5-flash":
+    @GEMINI_MODEL="{{model}}" PORT="{{port}}" node tools/gemini-shim.mjs
+
 # Push the capability graph into the store the knowledge pool lives in (ADR-0091).
 #
 # The graph stops being a report a person reads and becomes rows a query can join
