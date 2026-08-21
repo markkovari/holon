@@ -29,7 +29,6 @@ world = "treasury-ledger-domain"
 "ledger:doubleentry" = { path = "../ledger/wit" }
 "idempotency:guard" = { path = "../idempotency-guard/wit" }
 "fsm:workflow" = { path = "../fsm-workflow/wit" }
-"outbox:dispatch" = { path = "../outbox/wit" }
 "records:store" = { path = "../record-store/wit" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }

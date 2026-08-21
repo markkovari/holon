@@ -2,7 +2,7 @@
 GATE_CRATE=treasury-ledger-domain
 GATE_APP=treasury
 GATE_PKGS="-p treasury-ledger-domain -p auth-guard -p rate-limiter -p audit-log \
--p money -p ledger -p idempotency-guard -p fsm-workflow -p outbox \
+-p money -p ledger -p idempotency-guard -p fsm-workflow \
 -p record-store"
 
 # shellcheck source=components/gate-lib.sh
