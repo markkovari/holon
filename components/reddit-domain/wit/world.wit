@@ -1,6 +1,8 @@
 package local:reddit;
 
 world reddit-domain {
+    import auth:identity/authorizer@0.1.0;
+    import wasi:keyvalue/store@0.2.0-draft;
     export reddit;
 }
 
@@ -25,14 +27,14 @@ interface reddit {
         upvotes: s32,
     }
 
-    create-subreddit: func(name: string) -> string;
+    create-subreddit: func(name: string, token: string) -> string;
     get-subreddits: func() -> list<subreddit>;
-    create-thread: func(subreddit-id: string, title: string, content: string) -> string;
+    create-thread: func(subreddit-id: string, title: string, content: string, token: string) -> string;
     get-threads: func(subreddit-id: string) -> list<thread>;
-    upvote-thread: func(thread-id: string);
-    downvote-thread: func(thread-id: string);
-    create-comment: func(thread-id: string, content: string) -> string;
+    upvote-thread: func(thread-id: string, token: string);
+    downvote-thread: func(thread-id: string, token: string);
+    create-comment: func(thread-id: string, content: string, token: string) -> string;
     get-comments: func(thread-id: string) -> list<comment>;
-    upvote-comment: func(comment-id: string);
-    downvote-comment: func(comment-id: string);
+    upvote-comment: func(comment-id: string, token: string);
+    downvote-comment: func(comment-id: string, token: string);
 }
