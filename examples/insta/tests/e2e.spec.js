@@ -10,7 +10,7 @@ test('create post and like it in feed', async ({ page }) => {
           id: 'post_123',
           author_id: 'test_user',
           image_url: 'https://via.placeholder.com/150',
-          caption: 'A cool post!',
+          caption: 'Loving this new clone! 🚀 #insta',
           likes: []
         }
       });
@@ -23,15 +23,21 @@ test('create post and like it in feed', async ({ page }) => {
         id: 'post_123',
         author_id: 'test_user',
         image_url: 'https://via.placeholder.com/150',
-        caption: 'A cool post!',
-        likes: ['mock_user']
+        caption: 'Loving this new clone! 🚀 #insta',
+        likes: ['test_user']
       }
     });
   });
 
   await page.goto('http://localhost:5173');
   
-  await expect(page.locator('h1')).toHaveText('Insta Clone Feed');
+  // Login
+  await expect(page.locator('h2')).toHaveText('Instaclone');
+  await page.locator('input[name="username"]').fill('test_user');
+  await page.locator('button[type="submit"]').click();
+  
+  // Feed view
+  await expect(page.locator('nav span.font-serif')).toHaveText('Instaclone');
   
   await page.getByTestId('create-post-btn').click();
   
