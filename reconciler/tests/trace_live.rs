@@ -88,9 +88,9 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
         trace.lesson_read(run, attempt, &["mem:paginate".to_string()]);
     }
     trace.gate_verdict(run, "77/g1/risk-first", 40, false, &serde_json::json!({"failing": ["test_pages"]}));
-    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40, &serde_json::json!([{"path": "apps/search/a.rs"}]), 18_400, 94_000);
+    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40, &serde_json::json!([{"path": "apps/search/a.rs"}]), 18_400, 94_000, 1);
     trace.gate_verdict(run, "77/g1/mvp", 100, true, &serde_json::json!({"failing": []}));
-    trace.attempt_finished(run, "77/g1/mvp", "passed", 100, &serde_json::json!([{"path": "components/paginate/src/lib.rs"}]), 31_200, 156_000);
+    trace.attempt_finished(run, "77/g1/mvp", "passed", 100, &serde_json::json!([{"path": "components/paginate/src/lib.rs"}]), 31_200, 156_000, 1);
     trace.run_resolved(run, "merged", Some("mvp"), "https://example.test/pull/1");
 
     assert!(trace.report().is_none(), "writes were dropped against a live database: {:?}", trace.report());
@@ -161,7 +161,7 @@ fn a_dead_database_costs_a_line_of_output_and_nothing_else() {
 
     trace.run_started("dead/g1", "a goal", 1, "abc", 1);
     trace.branch_spawned("dead/g1", "dead/g1/a", "a", 1);
-    trace.attempt_finished("dead/g1", "dead/g1/a", "errored", 0, &serde_json::json!([]), 0, 0);
+    trace.attempt_finished("dead/g1", "dead/g1/a", "errored", 0, &serde_json::json!([]), 0, 0, 0);
     trace.run_resolved("dead/g1", "failed", None, "");
 
     let report = trace.report().expect("dropped writes must be reported");
@@ -270,7 +270,7 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
         for branch in ["risk-first", "mvp"] {
             let attempt = comp_reconciler::memory::run_id(seed, round, branch);
             trace.branch_spawned(&run, &attempt, branch, round);
-            trace.attempt_finished(&run, &attempt, "failed", 10, &serde_json::json!([]), 100, 1_000);
+            trace.attempt_finished(&run, &attempt, "failed", 10, &serde_json::json!([]), 100, 1_000, 1);
         }
     }
     trace.run_resolved(&run, "exhausted", None, "");

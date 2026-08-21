@@ -335,7 +335,21 @@ fn json(
             apps_using.len()
         ));
     }
-    out.push_str("\n  ]\n}");
+    out.push_str("\n  ],\n  \"stats\": {\n");
+    let total_import_edges: usize = by_iface.values().map(|(_, c)| c.len()).sum();
+    out.push_str(&format!(
+        "    \"total_components\": {},\n    \
+             \"total_interfaces\": {},\n    \
+             \"total_import_edges\": {},\n    \
+             \"unconsumed_exports\": {},\n    \
+             \"total_apps\": {}\n  \
+         }}\n}}",
+        catalog.len(),
+        by_iface.len(),
+        total_import_edges,
+        orphans.len(),
+        apps.len()
+    ));
     out
 }
 
