@@ -34,6 +34,7 @@ built out of, ask the component rather than this table — `just plug-wiring
 | [MESH](MESH.md) | `mesh` | resilient upstream calls (the breaker trips, the app stays up) |
 | [PASSKEY](PASSKEY.md) | `passkey` | passwordless sign-in (the phishing-resistant one) |
 | [PASTE](PASTE.md) | `bin` | a paste / gist bin over a pure-compute pipeline |
+| [PHOTOSOCIAL](PHOTOSOCIAL.md) | `photosocial` | social photo sharing with AI critique & RBAC-gated attribute ratings |
 | [PAYEES](PAYEES.md) | `payees` | a payee book with IBAN-validated bank details |
 | [PIPELINE](PIPELINE.md) | `pipeline` | a reliable event pipeline (outbox → dispatch → DLQ → replay) |
 | [RATELIMIT](RATELIMIT.md) | `ratelimit` | a live throttle wall (lockout + quota, watched) |

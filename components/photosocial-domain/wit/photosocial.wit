@@ -1,0 +1,34 @@
+// photosocial:app — a social photo-sharing app with AI critique, upvotes/downvotes,
+// and RBAC-gated attribute ratings (perspective, lighting, creativity, etc.).
+//
+// Features:
+//   - Users upload photos (with optional description / prompt).
+//   - AI automatically generates an artistic critique, narrative, and semantic tags.
+//   - Community users upvote / downvote photos with user deduplication.
+//   - Admins define custom evaluation attributes (e.g. perspective, lighting, creativity).
+//   - Users score photos along these admin-defined attributes (1..=10).
+//   - Role-based access control (RBAC) enforces admin controls over attribute definitions
+//     and photo moderation.
+package photosocial:app@0.1.0;
+
+/// The photo-social application world. Composed from standard capability contracts.
+world photosocial-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // auth: Accounts, session, rbac for admin / creator / voter roles
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // Data layer: Photos, attributes, votes, attribute ratings
+    import records:store/store@0.1.0;
+
+    // AI inference: Automatic description, critique, and tag generation
+    import llm:inference/inference@0.1.0;
+
+    // Timestamps and random ID generation
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+}
