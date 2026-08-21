@@ -797,6 +797,29 @@ fn search_the_pool(
     hits.into_iter().take(5).map(|m| m.capability.clone()).collect()
 }
 
+/// Context content as a part should see it, trimmed for a small window.
+///
+/// A `.wit` shown as context is 68–79% comment (measured across this repository's interfaces),
+/// and every load-bearing fact those comments carry is already in the contract — that is the
+/// "KEPT" discipline the goals are written to. So the comments are redundant for a part and pure
+/// cost for its context window: stripping them takes a WIT from ~700 tokens to ~200 and lets a
+/// self-hosted model spend its window on the signatures it will call rather than on prose it can
+/// read in the canonical file.
+///
+/// Only `.wit`, and only read-only context — a part's own writable `.rs` stub keeps every
+/// comment, because there the comments ARE the brief. The canonical files are never touched;
+/// this transforms the copy that goes into the prompt.
+fn lean_context(path: &str, content: String) -> String {
+    if !path.ends_with(".wit") {
+        return content;
+    }
+    content
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// What the pool already has, as prose in every branch's context.
 ///
 /// Prose rather than an instruction: the gate decides whether reuse happened, and
@@ -875,6 +898,40 @@ fn promote_and_sweep(
                 args.forget_after_days
             ),
             Err(e) => println!("knowledge: could not sweep the pool ({e})"),
+        }
+    }
+}
+
+/// Promote what each part's winner taught, on a composed run.
+///
+/// The single-part path promotes through `promote_and_sweep`; the decomposed path never did,
+/// which is why — measured across twelve runs of this experiment — the pool held only `errors`
+/// rows and not one promotion, even from runs that opened a pull request. A perfect run taught
+/// the graph nothing.
+///
+/// Each part is promoted keyed on the PART's own text, exactly as `compose.rs` RECALLS it: a
+/// lesson keyed on the whole-goal wording would be invisible to the next part that recalls on
+/// its own. Only a part whose gate accepted is promoted (ADR-0084), and the distiller answers
+/// most of them with nothing, which is the right answer for a part that taught nobody anything.
+fn promote_parts(memory: Option<&Memory>, goal: &GoalSpec, port: u16, parts: &[generation_mod::PartOutcome]) {
+    let Some(m) = memory else { return };
+    let door = Answerer {
+        url: format!("http://127.0.0.1:{port}"),
+        host: "goalanswer.acme.test".into(),
+        timeout: Duration::from_secs(180),
+    };
+    for outcome in parts {
+        let Some(best) = outcome.best.as_ref().filter(|b| b.accepted) else { continue };
+        // The part's own text is the key recall uses; the part name is its env.
+        let Some(spec) = goal.parts.iter().find(|p| p.name == outcome.part) else { continue };
+        let prompt = memory::distil_prompt(&spec.text, &best.files, best.score);
+        match door.reply_to(&prompt).map(|r| memory::distilled(&r)) {
+            Ok(Some(lesson)) => match m.promote(&spec.text, &outcome.part, &best.branch, &lesson, best.score) {
+                Ok(h) => println!("  promoted {}: {h}\n    {lesson}", outcome.part),
+                Err(e) => println!("  {} promoted nothing: {e}", outcome.part),
+            },
+            Ok(None) => println!("  {} taught nothing transferable, and said so", outcome.part),
+            Err(e) => println!("  {} — the distiller could not be reached: {e}", outcome.part),
         }
     }
 }
@@ -1063,7 +1120,7 @@ fn main() -> Result<()> {
         .filter_map(|w| {
             std::fs::read_to_string(args.checkout.join(w))
                 .ok()
-                .map(|c| json!({ "path": w, "content": c }))
+                .map(|c| json!({ "path": w, "content": lean_context(w, c) }))
         })
         .collect();
 
@@ -1770,10 +1827,13 @@ fn decomposed(
                 // it is shown and may not write. Not the goal's top-level context:
                 // for a decomposed goal that is usually empty, and a part handed
                 // nothing writes blind.
-                "context": p.writable.iter().chain(p.context.iter())
-                    .filter_map(|f| std::fs::read_to_string(args.checkout.join(f))
+                // Writable files (the part's own stub) keep every comment — there the comments
+                // are the brief. Read-only `.wit` context is trimmed by `lean_context`.
+                "context": p.writable.iter().map(|f| (f, false))
+                    .chain(p.context.iter().map(|f| (f, true)))
+                    .filter_map(|(f, strip)| std::fs::read_to_string(args.checkout.join(f))
                         .ok()
-                        .map(|c| json!({ "path": f, "content": c })))
+                        .map(|c| json!({ "path": f, "content": if strip { lean_context(f, c) } else { c } })))
                     .collect::<Vec<_>>(),
                 "previous": [],
                 "checks": p.checks.iter().map(|c| json!({
@@ -1942,6 +2002,11 @@ fn decomposed(
     let report = run.report.as_ref().expect("landable means the gate ran");
     let changes = run.changes.clone().expect("landable means there is a tree");
     println!("  composition PASSED at score {}", report.score);
+
+    // The gate accepted, so this is where the graph is allowed to learn from success — the one
+    // thing the decomposed path never did. Before the PR, because promotion is earned by the
+    // verdict, not by the forge accepting the branch.
+    promote_parts(memory_for_parts.as_ref(), goal, port, &run.composition.parts);
 
     if args.dry_run {
         println!("\n[dry run] the join passed; not opening a PR.");

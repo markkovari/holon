@@ -28,6 +28,13 @@
 #                     stated rule on purpose, and the check named in its `must-fail` file
 #                     must reject it.
 #
+# And with REF set, one more, run automatically because it is the condition the loop itself
+# creates: ISOLATION. Each part is applied ALONE, with its siblings left as stubs, and that
+# part's own check must pass. A part gate that reads a route a sibling owns cannot be satisfied
+# by any implementation — and `REF`, which applies every part at once, is blind to it. App 6's
+# `transfers` gate asked `/api/journal`, a route `reconcile` owns; the reference direction was
+# green and the run spent three generations of six branches on an impossible check.
+#
 # WHY THAT THIRD DIRECTION EXISTS. App 4's contract claimed `notify::send` answers
 # `Ok(500)` when the far end refuses, and built the courier's central rule on it. The
 # component does the opposite (`Err(DeliveryFailed)`, notify-dispatch/src/lib.rs:142), so
@@ -41,6 +48,10 @@
 # are worth knowing before a run rather than after it.
 set -uo pipefail
 GOAL="${1:?usage: goal-rehearse.sh <goal.toml> (REF=<dir with the part files> to rehearse a passing tree)}"
+# Absolute before anything cds anywhere: the checks run from inside the sandbox, and a relative
+# goal path silently stopped resolving there — which made the isolation step below print a
+# traceback and pass anyway.
+case "$GOAL" in /*) ;; *) GOAL="$PWD/$GOAL" ;; esac
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d -t goal-rehearse-XXXX)"
 trap 'rm -rf "$WORK"' EXIT
@@ -106,6 +117,12 @@ open(os.path.join(dst, '.rehearse-checks'), 'w').write(
 print(f"sandbox: {len(d.get('base_paths', []))} base path(s), {len(checks)} check(s)")
 PY
 
+# A pristine copy of the base tree, kept before anything is applied: the isolation direction
+# needs "every part a stub" to start from, and by then $WORK has the reference in it.
+BASE="$(mktemp -d -t goal-base-XXXX)"
+cp -R "$WORK"/. "$BASE"/
+trap 'rm -rf "$WORK" "$BASE"' EXIT
+
 # The part files a branch would have written. Without them the tree is the base tree.
 if [ -n "${REF:-}" ]; then
   for f in "$REF"/*.rs; do
@@ -165,6 +182,67 @@ while read -r cmd; do
   [ "$status" = 0 ] || failed=$((failed + 1))
   echo "    exit $status"
 done < .rehearse-checks
+
+# --- isolation: each part alone, which is how the loop judges it -------------------
+if [ -n "${REF:-}" ]; then
+  echo
+  lonely=0
+  # Which reference file belongs to which part, and which check judges it, straight from the
+  # goal: `writable` names the file, `[[part.check]]` names the command.
+  python3 - "$GOAL" "$WORK/.rehearse-parts" <<'PY'
+import sys, tomllib
+goal = tomllib.load(open(sys.argv[1], 'rb'))
+rows = []
+for part in goal.get('part', []):
+    files = [w for w in part.get('writable', []) if w.endswith('.rs')]
+    checks = [' '.join(c['command']) for c in part.get('check', [])]
+    if files and checks:
+        rows.append('\t'.join([part['name'], ','.join(files), checks[0]]))
+open(sys.argv[2], 'w').write(''.join(r + '\n' for r in rows))
+PY
+  if [ ! -s "$WORK/.rehearse-parts" ]; then
+    echo "could not work out which reference file belongs to which part — the goal's"
+    echo "\`writable\` and \`[[part.check]]\` entries are what this reads, and isolation is the"
+    echo "direction that catches a part gate depending on a route a sibling owns. Not skipping it."
+    exit 1
+  fi
+  while IFS=$'\t' read -r name files check; do
+    [ -n "$name" ] || continue
+    tree="$(mktemp -d -t goal-isolate-XXXX)"
+    cp -R "$BASE"/. "$tree"/          # the base tree: every part still a stub
+    dest=$(find "$tree" -type d -name src -path '*-domain*' | head -1)
+    for f in ${files//,/ }; do
+      base=$(basename "$f")
+      [ -f "$REF/$base" ] && cp "$REF/$base" "$dest/$base"
+    done
+    echo "--- $name alone (siblings stubbed): $check"
+    iout="$(mktemp -t goal-isolate-out-XXXX)"
+    (
+      cd "$tree" || exit 1
+      env -i PATH="$PATH" HOME="$tree" CARGO_TERM_COLOR=never \
+        RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" RUSTUP_TOOLCHAIN="$TOOLCHAIN" \
+        CARGO_HOME="$HOME/.cache/comp-goalrun/cargo-home" \
+        CARGO_TARGET_DIR="$HOME/.cache/goal-rehearse/cargo-target" \
+        COMP_HOST="$ROOT/host/target/release/comp-host" \
+        COMP_PLUG="$ROOT/reconciler/target/release/comp-plug" \
+        bash -c "$check" >"$iout" 2>&1
+    )
+    if [ $? -eq 0 ]; then
+      echo "    passes alone, as it must"
+    else
+      tail -2 "$iout"
+      echo "    CANNOT PASS ALONE — this part is judged with its siblings stubbed, so a check"
+      echo "    that needs a route another part owns is unsatisfiable by any implementation."
+      lonely=$((lonely + 1))
+    fi
+    rm -rf "$tree" "$iout"
+  done < "$WORK/.rehearse-parts"
+  if [ "$lonely" -gt 0 ]; then
+    echo
+    echo "REHEARSAL FAILED — $lonely part(s) cannot pass their own check in isolation."
+    exit 1
+  fi
+fi
 
 # --- violators: rules that must be enforceable ------------------------------------
 if [ -n "${VIOLATORS:-}" ]; then
