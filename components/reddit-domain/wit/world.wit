@@ -1,0 +1,38 @@
+package local:reddit;
+
+world reddit-domain {
+    export reddit;
+}
+
+interface reddit {
+    record subreddit {
+        id: string,
+        name: string,
+    }
+
+    record thread {
+        id: string,
+        subreddit-id: string,
+        title: string,
+        content: string,
+        upvotes: s32,
+    }
+
+    record comment {
+        id: string,
+        thread-id: string,
+        content: string,
+        upvotes: s32,
+    }
+
+    create-subreddit: func(name: string) -> string;
+    get-subreddits: func() -> list<subreddit>;
+    create-thread: func(subreddit-id: string, title: string, content: string) -> string;
+    get-threads: func(subreddit-id: string) -> list<thread>;
+    upvote-thread: func(thread-id: string);
+    downvote-thread: func(thread-id: string);
+    create-comment: func(thread-id: string, content: string) -> string;
+    get-comments: func(thread-id: string) -> list<comment>;
+    upvote-comment: func(comment-id: string);
+    downvote-comment: func(comment-id: string);
+}
