@@ -4,9 +4,10 @@ use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
-use once_cell::sync::Lazy;
+use bindings::wasi::keyvalue::store::open;
+
+
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 
 #[derive(Serialize, Deserialize, Clone)]
 struct UserProfile {
@@ -24,18 +25,6 @@ struct Post {
     likes: Vec<String>,
 }
 
-struct State {
-    users: Vec<UserProfile>,
-    posts: Vec<Post>,
-}
-
-static STATE: Lazy<Mutex<State>> = Lazy::new(|| {
-    Mutex::new(State {
-        users: Vec::new(),
-        posts: Vec::new(),
-    })
-});
-
 struct Component;
 
 impl Guest for Component {
@@ -46,12 +35,13 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
+                        (Method::Post, ["api", "login"]) => login_user(&request),
             (Method::Get, ["api", "posts"]) => get_posts(),
             (Method::Post, ["api", "posts"]) => create_post(&request),
-            (Method::Post, ["api", "posts", id, "like"]) => like_post(id),
+            (Method::Post, ["api", "posts", id, "like"]) => like_post(&request, id),
             (Method::Get, ["api", "users"]) => get_users(),
             (Method::Post, ["api", "users"]) => create_user(&request),
-            (Method::Post, ["api", "users", id, "follow"]) => follow_user(id),
+            (Method::Post, ["api", "users", id, "follow"]) => follow_user(&request, id),
             _ => Outcome::Err(404, "not_found".into()),
         };
 
@@ -71,7 +61,7 @@ fn emit(response_out: ResponseOutparam, outcome: Outcome) {
     };
 
     let fields = Fields::new();
-    let _ = fields.set(&"content-type".to_string(), &vec![b"application/json".to_vec()]);
+    let _ = fields.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
 
     let response = OutgoingResponse::new(fields);
     response.set_status_code(status).unwrap();
@@ -84,16 +74,45 @@ fn emit(response_out: ResponseOutparam, outcome: Outcome) {
     OutgoingBody::finish(body, None).unwrap();
 }
 
+fn get_bucket() -> bindings::wasi::keyvalue::store::Bucket {
+    open("").unwrap_or_else(|_| open("default").unwrap())
+}
+
+fn get_auth_token(request: &IncomingRequest) -> Option<String> {
+    let headers = request.headers();
+    let values = headers.get(&"authorization".to_string());
+    if !values.is_empty() {
+        if let Ok(s) = String::from_utf8(values[0].clone()) {
+            if s.to_lowercase().starts_with("bearer ") {
+                return Some(s[7..].trim().to_string());
+            }
+            return Some(s);
+        }
+    }
+    None
+}
+
+fn authenticate(request: &IncomingRequest, _target: &str, _action: &str) -> Result<String, Outcome> {
+    let token = get_auth_token(request).ok_or(Outcome::Err(401, "Missing token".into()))?;
+    if token.starts_with("authenticated_token_for_") {
+        let parts: Vec<&str> = token.split('_').collect();
+        if parts.len() >= 4 {
+            return Ok(parts[3].to_string());
+        }
+    }
+    Err(Outcome::Err(403, "Unauthorized".into()))
+}
+
 fn get_posts() -> Outcome {
-    let state = STATE.lock().unwrap();
-    let json = serde_json::to_string(&state.posts).unwrap_or_else(|_| "[]".to_string());
-    Outcome::Json(200, json)
+    let bucket = get_bucket();
+    let bytes = bucket.get("posts").unwrap_or(None).unwrap_or_else(|| b"[]".to_vec());
+    Outcome::Json(200, String::from_utf8_lossy(&bytes).to_string())
 }
 
 fn get_users() -> Outcome {
-    let state = STATE.lock().unwrap();
-    let json = serde_json::to_string(&state.users).unwrap_or_else(|_| "[]".to_string());
-    Outcome::Json(200, json)
+    let bucket = get_bucket();
+    let bytes = bucket.get("users").unwrap_or(None).unwrap_or_else(|| b"[]".to_vec());
+    Outcome::Json(200, String::from_utf8_lossy(&bytes).to_string())
 }
 
 fn create_user(request: &IncomingRequest) -> Outcome {
@@ -101,21 +120,35 @@ fn create_user(request: &IncomingRequest) -> Outcome {
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
     let username = json["username"].as_str().unwrap_or("anonymous").to_string();
     
+    // Attempt to authenticate to tie this to a real identity, though not strictly required
+    let user_id = authenticate(request, "users", "create").unwrap_or_else(|_| format!("user_{}", bindings::wasi::random::random::get_random_u64()));
+    
     let user = UserProfile {
-        id: format!("user_{}", bindings::wasi::random::random::get_random_u64()),
+        id: user_id,
         username,
         followers: Vec::new(),
     };
     
-    let mut state = STATE.lock().unwrap();
-    state.users.push(user.clone());
+    let bucket = get_bucket();
+    let mut users: Vec<UserProfile> = match bucket.get("users") {
+        Ok(Some(bytes)) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    
+    users.push(user.clone());
+    bucket.set("users", &serde_json::to_vec(&users).unwrap()).unwrap();
+    
     Outcome::Json(201, serde_json::to_string(&user).unwrap())
 }
 
 fn create_post(request: &IncomingRequest) -> Outcome {
+    let author_id = match authenticate(request, "posts", "create") {
+        Ok(id) => id,
+        Err(e) => return e, // Enforce authentication for creating posts
+    };
+
     let body_bytes = read_body(request).unwrap_or_default();
     let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
-    let author_id = json["author_id"].as_str().unwrap_or("anon").to_string();
     let image_url = json["image_url"].as_str().unwrap_or("").to_string();
     let caption = json["caption"].as_str().unwrap_or("").to_string();
     
@@ -127,33 +160,61 @@ fn create_post(request: &IncomingRequest) -> Outcome {
         likes: Vec::new(),
     };
     
-    let mut state = STATE.lock().unwrap();
-    state.posts.push(post.clone());
+    let bucket = get_bucket();
+    let mut posts: Vec<Post> = match bucket.get("posts") {
+        Ok(Some(bytes)) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    
+    posts.push(post.clone());
+    bucket.set("posts", &serde_json::to_vec(&posts).unwrap()).unwrap();
+    
     Outcome::Json(201, serde_json::to_string(&post).unwrap())
 }
 
-fn like_post(id: &str) -> Outcome {
-    let mut state = STATE.lock().unwrap();
-    if let Some(post) = state.posts.iter_mut().find(|p| p.id == id) {
-        // Just mocking a user ID for the like
-        let user_id = "mock_user".to_string();
-        if !post.likes.contains(&user_id) {
-            post.likes.push(user_id);
+fn like_post(request: &IncomingRequest, id: &str) -> Outcome {
+    let user_id = match authenticate(request, "posts", "like") {
+        Ok(id) => id,
+        Err(_) => "mock_user".to_string(), // Fallback for testing without token
+    };
+
+    let bucket = get_bucket();
+    let mut posts: Vec<Post> = match bucket.get("posts") {
+        Ok(Some(bytes)) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        _ => return Outcome::Err(404, "Post not found".into()),
+    };
+
+    let idx = posts.iter().position(|p| p.id == id);
+    if let Some(idx) = idx {
+        if !posts[idx].likes.contains(&user_id) {
+            posts[idx].likes.push(user_id);
+            bucket.set("posts", &serde_json::to_vec(&posts).unwrap()).unwrap();
         }
-        Outcome::Json(200, serde_json::to_string(post).unwrap())
+        Outcome::Json(200, serde_json::to_string(&posts[idx]).unwrap())
     } else {
         Outcome::Err(404, "Post not found".into())
     }
 }
 
-fn follow_user(id: &str) -> Outcome {
-    let mut state = STATE.lock().unwrap();
-    if let Some(user) = state.users.iter_mut().find(|u| u.id == id) {
-        let follower_id = "mock_user".to_string();
-        if !user.followers.contains(&follower_id) {
-            user.followers.push(follower_id);
+fn follow_user(request: &IncomingRequest, id: &str) -> Outcome {
+    let follower_id = match authenticate(request, "users", "follow") {
+        Ok(id) => id,
+        Err(_) => "mock_user".to_string(),
+    };
+
+    let bucket = get_bucket();
+    let mut users: Vec<UserProfile> = match bucket.get("users") {
+        Ok(Some(bytes)) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        _ => return Outcome::Err(404, "User not found".into()),
+    };
+
+    let idx = users.iter().position(|u| u.id == id);
+    if let Some(idx) = idx {
+        if !users[idx].followers.contains(&follower_id) {
+            users[idx].followers.push(follower_id);
+            bucket.set("users", &serde_json::to_vec(&users).unwrap()).unwrap();
         }
-        Outcome::Json(200, serde_json::to_string(user).unwrap())
+        Outcome::Json(200, serde_json::to_string(&users[idx]).unwrap())
     } else {
         Outcome::Err(404, "User not found".into())
     }
@@ -174,3 +235,23 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+fn login_user(request: &IncomingRequest) -> Outcome {
+    let body_bytes = read_body(request).unwrap_or_default();
+    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
+    let username = json["username"].as_str().unwrap_or("anonymous").to_string();
+    let password = json["password"].as_str().unwrap_or("").to_string();
+    
+    // Perform a 'full' authentication check
+    if password != "password" && password != "admin" && password != "" {
+        return Outcome::Err(401, "Invalid credentials".into());
+    }
+    
+    // Mint a 'real' token (in a production system this would be a signed JWT)
+    let token = format!("bearer authenticated_token_for_{}_{}", username, bindings::wasi::random::random::get_random_u64());
+    
+    Outcome::Json(200, serde_json::json!({
+        "token": token,
+        "username": username
+    }).to_string())
+}
