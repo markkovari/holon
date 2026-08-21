@@ -54,6 +54,8 @@ fn serve_ui() -> Outcome {
     <meta charset="UTF-8">
     <title>Holon Graph Visualizer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+    <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+    <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         header { background: #1e293b; padding: 1rem 1.5rem; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; z-index: 10; }
@@ -69,21 +71,40 @@ fn serve_ui() -> Outcome {
         .panel-title { font-weight: 700; color: #f8fafc; margin-bottom: 0.5rem; font-size: 1.1rem; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; }
         .panel-prop { font-size: 0.85rem; margin-bottom: 0.4rem; word-break: break-all; }
         .panel-prop strong { color: #94a3b8; }
-        .auto-refresh { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: #cbd5e1; }
-        pre { background: #0f172a; padding: 0.5rem; border-radius: 4px; border: 1px solid #334155; white-space: pre-wrap; font-size: 0.75rem; color: #a5b4fc; }
+        .legend { position: absolute; bottom: 20px; left: 20px; background: rgba(30, 41, 59, 0.9); padding: 1rem; border-radius: 8px; border: 1px solid #475569; z-index: 10; font-size: 0.85rem; backdrop-filter: blur(4px); }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+        .legend-item:last-child { margin-bottom: 0; }
+        .legend-color { width: 16px; height: 16px; border-radius: 4px; }
+        .shape-star { clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
+        .shape-diamond { clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); border-radius: 0; }
+        .shape-round-rect { border-radius: 6px; }
     </style>
 </head>
 <body>
     <header>
-        <h1>Holon <span>Graph Visualizer</span></h1>
+        <h1>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z"></path></svg>
+            Holon <span>Graph Visualizer</span>
+        </h1>
         <div class="controls">
             <label class="auto-refresh">
                 <input type="checkbox" id="autoRefresh" checked> Auto-refresh (5s)
             </label>
-            <button onclick="refreshGraph()" class="btn-primary">Force Refresh</button>
+            <button class="btn-primary" onclick="refreshGraph()">Force Refresh</button>
         </div>
     </header>
+    
     <div id="cy"></div>
+    
+    <div class="legend">
+        <div class="panel-title" style="font-size:0.95rem;">Legend</div>
+        <div class="legend-item"><div class="legend-color shape-star" style="background:#0ea5e9;"></div> App (Star)</div>
+        <div class="legend-item"><div class="legend-color shape-round-rect" style="background:#10b981;"></div> Component (Round Rect)</div>
+        <div class="legend-item"><div class="legend-color shape-diamond" style="background:#8b5cf6;"></div> Interface (Diamond)</div>
+        <div class="legend-item"><div class="legend-color" style="background:#f59e0b; border-radius:50%"></div> Goal</div>
+        <div class="legend-item"><div class="legend-color" style="background:#3b82f6; border-radius:50%"></div> Generation</div>
+        <div class="legend-item"><div class="legend-color" style="background:#ef4444; border-radius:50%"></div> Verdict</div>
+    </div>
     <div id="node-panel">
         <div class="panel-title" id="panelTitle">Node Details</div>
         <div id="panelContent"></div>
@@ -157,12 +178,21 @@ fn serve_ui() -> Outcome {
                 'generation': '#3b82f6',
                 'verdict': '#ef4444',
                 'evaluation': '#8b5cf6',
-                'component': '#10b981',
-                'app': '#06b6d4',
+                'artifact': '#10b981', // Components
+                'app': '#0ea5e9',      // Apps
+                'interface': '#8b5cf6',
                 'knowledge': '#f472b6',
                 'file': '#94a3b8'
             };
             return colors[kind] || '#64748b';
+        }
+
+        function getShapeForKind(kind) {
+            if (kind === 'app') return 'star';
+            if (kind === 'interface') return 'diamond';
+            if (kind === 'artifact') return 'round-rectangle';
+            if (kind === 'goal') return 'hexagon';
+            return 'ellipse';
         }
 
         async function refreshGraph() {
@@ -179,40 +209,52 @@ fn serve_ui() -> Outcome {
                                 style: {
                                     'label': 'data(label)',
                                     'background-color': function(ele) { return getColorForKind(ele.data('kind')); },
-                                    'color': '#fff',
-                                    'text-valign': 'center',
+                                    'shape': function(ele) { return getShapeForKind(ele.data('kind')); },
+                                    'color': '#e2e8f0',
+                                    'text-valign': 'bottom',
                                     'text-halign': 'center',
-                                    'font-size': '10px',
-                                    'width': '60px',
-                                    'height': '60px',
+                                    'text-margin-y': 6,
+                                    'font-size': '12px',
+                                    'font-weight': 'bold',
+                                    'text-outline-color': '#0f172a',
+                                    'text-outline-width': 2,
+                                    'width': function(ele) { return ele.data('kind') === 'app' ? '60px' : '40px'; },
+                                    'height': function(ele) { return ele.data('kind') === 'app' ? '60px' : '40px'; },
                                     'text-wrap': 'ellipsis',
-                                    'text-max-width': '50px'
+                                    'text-max-width': '120px'
+                                }
+                            },
+                            {
+                                selector: 'node[kind="interface"]',
+                                style: {
+                                    'width': '30px',
+                                    'height': '30px'
                                 }
                             },
                             {
                                 selector: 'edge',
                                 style: {
-                                    'width': 2,
-                                    'line-color': '#475569',
-                                    'target-arrow-color': '#475569',
+                                    'width': 1.5,
+                                    'line-color': '#334155',
+                                    'target-arrow-color': '#334155',
                                     'target-arrow-shape': 'triangle',
                                     'curve-style': 'bezier',
-                                    'label': 'data(label)',
-                                    'font-size': '8px',
+                                    'font-size': '10px',
                                     'color': '#94a3b8',
-                                    'text-rotation': 'autorotate'
+                                    'text-rotation': 'autorotate',
+                                    'text-outline-width': 2,
+                                    'text-outline-color': '#0f172a',
+                                    'arrow-scale': 1.2
                                 }
                             }
                         ],
                         layout: {
-                            name: 'cose',
-                            padding: 100,
-                            nodeRepulsion: 1000000,
-                            idealEdgeLength: 200,
-                            edgeElasticity: 50,
-                            gravity: 0.1,
-                            numIter: 1000,
-                            initialTemp: 200
+                            name: 'dagre',
+                            rankDir: 'TB',
+                            nodeSep: 60,
+                            edgeSep: 30,
+                            rankSep: 100,
+                            animate: true
                         }
                     });
 
@@ -260,15 +302,13 @@ fn serve_ui() -> Outcome {
 
                     if (changed) {
                         cy.layout({
-                            name: 'cose',
+                            name: 'dagre',
+                            rankDir: 'TB',
+                            nodeSep: 60,
+                            edgeSep: 30,
+                            rankSep: 100,
                             animate: true,
-                            randomize: false,
-                            fit: false,
-                            padding: 100,
-                            nodeRepulsion: 1000000,
-                            idealEdgeLength: 200,
-                            edgeElasticity: 50,
-                            gravity: 0.1
+                            fit: false
                         }).run();
                     }
                 }
