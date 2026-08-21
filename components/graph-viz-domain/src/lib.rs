@@ -78,6 +78,8 @@ fn serve_ui() -> Outcome {
         .shape-star { clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
         .shape-diamond { clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); border-radius: 0; }
         .shape-round-rect { border-radius: 6px; }
+        #searchInput { background: #1e293b; border: 1px solid #475569; color: #f8fafc; padding: 0.4rem 0.8rem; border-radius: 4px; font-size: 0.85rem; width: 200px; transition: border-color 0.2s; }
+        #searchInput:focus { outline: none; border-color: #3b82f6; }
     </style>
 </head>
 <body>
@@ -87,6 +89,7 @@ fn serve_ui() -> Outcome {
             Holon <span>Graph Visualizer</span>
         </h1>
         <div class="controls">
+            <input type="text" id="searchInput" placeholder="Search nodes..." autocomplete="off">
             <label class="auto-refresh">
                 <input type="checkbox" id="autoRefresh" checked> Auto-refresh (5s)
             </label>
@@ -294,6 +297,9 @@ fn serve_ui() -> Outcome {
                     cy.on('tap', 'node', function(evt){
                         const node = evt.target;
                         
+                        // Clear search field when a node is clicked
+                        document.getElementById('searchInput').value = '';
+                        
                         // Highlight logic
                         cy.elements().removeClass('highlighted faded');
                         
@@ -445,6 +451,37 @@ fn serve_ui() -> Outcome {
                         });
                     });
                 }
+            });
+        });
+
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            if (!cy) return;
+            const query = e.target.value.toLowerCase().trim();
+            document.getElementById('node-panel').style.display = 'none';
+            
+            cy.batch(() => {
+                cy.elements().removeClass('highlighted faded');
+                
+                if (!query) {
+                    // Re-apply legend hidden state
+                    cy.nodes().forEach(node => {
+                        if (hiddenKinds.has(node.data('kind'))) {
+                            node.addClass('hidden-node');
+                        }
+                    });
+                    return;
+                }
+                
+                cy.elements().addClass('faded');
+                
+                const matches = cy.nodes().filter(node => {
+                    if (hiddenKinds.has(node.data('kind'))) return false;
+                    const label = (node.data('label') || '').toLowerCase();
+                    const id = (node.data('id') || '').toLowerCase();
+                    return label.includes(query) || id.includes(query);
+                });
+                
+                matches.removeClass('faded hidden-node').addClass('highlighted');
             });
         });
 
