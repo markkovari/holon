@@ -138,7 +138,7 @@ writable = ["components/triage-assist-domain/src/intake.rs", "CONTRACT-REQUEST.m
 context = [
   "components/triage-assist-domain/src/lib.rs",
   "components/triage-assist-domain/wit/assist.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
   "components/rate-limiter/wit/ratelimit.wit",
   "components/pii-redact/wit/pii.wit",
   "components/record-store/wit/record.wit",
@@ -194,7 +194,7 @@ context = [
   "components/triage-assist-domain/wit/assist.wit",
   "components/ai-inference/wit/inference.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "assist-asks-a-real-model-and-survives-it-being-down"
@@ -242,7 +242,7 @@ context = [
   "components/triage-assist-domain/src/lib.rs",
   "components/triage-assist-domain/wit/assist.wit",
   "components/audit-log/wit/audit.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "ledger-records-and-can-be-asked"

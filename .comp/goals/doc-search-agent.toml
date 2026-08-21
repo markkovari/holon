@@ -117,7 +117,7 @@ context = [
   "components/doc-search-domain/wit/docsearch.wit",
   "components/search-index/wit/search.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "library-indexes-what-it-stores"
@@ -166,7 +166,7 @@ context = [
   "components/search-index/wit/search.wit",
   "components/ai-inference/wit/inference.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "answer-pays-once-and-refuses-well"
@@ -206,7 +206,7 @@ context = [
   "components/doc-search-domain/wit/docsearch.wit",
   "components/otp/wit/otp.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "stepup-checks-a-real-code"
