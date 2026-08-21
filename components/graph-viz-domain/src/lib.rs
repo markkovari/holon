@@ -70,7 +70,9 @@ fn serve_ui() -> Outcome {
         .panel-prop { font-size: 0.85rem; margin-bottom: 0.4rem; word-break: break-all; }
         .panel-prop strong { color: #94a3b8; }
         .legend { position: absolute; bottom: 20px; left: 20px; background: rgba(30, 41, 59, 0.9); padding: 1rem; border-radius: 8px; border: 1px solid #475569; z-index: 10; font-size: 0.85rem; backdrop-filter: blur(4px); }
-        .legend-item { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+        .legend-item { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; cursor: pointer; user-select: none; transition: opacity 0.2s; }
+        .legend-item:hover { opacity: 0.8; }
+        .legend-item.disabled { opacity: 0.3; }
         .legend-item:last-child { margin-bottom: 0; }
         .legend-color { width: 16px; height: 16px; border-radius: 4px; }
         .shape-star { clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%); }
@@ -96,12 +98,12 @@ fn serve_ui() -> Outcome {
     
     <div class="legend">
         <div class="panel-title" style="font-size:0.95rem;">Legend</div>
-        <div class="legend-item"><div class="legend-color shape-star" style="background:#0ea5e9;"></div> App (Star)</div>
-        <div class="legend-item"><div class="legend-color shape-round-rect" style="background:#10b981;"></div> Component (Round Rect)</div>
-        <div class="legend-item"><div class="legend-color shape-diamond" style="background:#8b5cf6;"></div> Interface (Diamond)</div>
-        <div class="legend-item"><div class="legend-color" style="background:#f59e0b; border-radius:50%"></div> Goal</div>
-        <div class="legend-item"><div class="legend-color" style="background:#3b82f6; border-radius:50%"></div> Generation</div>
-        <div class="legend-item"><div class="legend-color" style="background:#ef4444; border-radius:50%"></div> Verdict</div>
+        <div class="legend-item" data-kind="app"><div class="legend-color shape-star" style="background:#0ea5e9;"></div> App (Star)</div>
+        <div class="legend-item" data-kind="artifact"><div class="legend-color shape-round-rect" style="background:#10b981;"></div> Component (Round Rect)</div>
+        <div class="legend-item" data-kind="interface"><div class="legend-color shape-diamond" style="background:#8b5cf6;"></div> Interface (Diamond)</div>
+        <div class="legend-item" data-kind="goal"><div class="legend-color" style="background:#f59e0b; border-radius:50%"></div> Goal</div>
+        <div class="legend-item" data-kind="generation"><div class="legend-color" style="background:#3b82f6; border-radius:50%"></div> Generation</div>
+        <div class="legend-item" data-kind="verdict"><div class="legend-color" style="background:#ef4444; border-radius:50%"></div> Verdict</div>
     </div>
     <div id="node-panel">
         <div class="panel-title" id="panelTitle">Node Details</div>
@@ -270,6 +272,12 @@ fn serve_ui() -> Outcome {
                                     'opacity': 1,
                                     'z-index': 9999
                                 }
+                            },
+                            {
+                                selector: '.hidden-node',
+                                style: {
+                                    'display': 'none'
+                                }
                             }
                         ],
                         layout: {
@@ -330,7 +338,12 @@ fn serve_ui() -> Outcome {
                         changed = true;
                     }
                     if (toAdd.length > 0) {
-                        cy.add(toAdd);
+                        const newEles = cy.add(toAdd);
+                        newEles.forEach(ele => {
+                            if (ele.isNode() && hiddenKinds.has(ele.data('kind'))) {
+                                ele.addClass('hidden-node');
+                            }
+                        });
                         changed = true;
                     }
 
@@ -404,6 +417,34 @@ fn serve_ui() -> Outcome {
             } else {
                 clearInterval(refreshInterval);
             }
+        });
+
+        let hiddenKinds = new Set();
+        document.querySelectorAll('.legend-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const kind = item.getAttribute('data-kind');
+                if (!kind) return;
+                
+                if (hiddenKinds.has(kind)) {
+                    hiddenKinds.delete(kind);
+                    item.classList.remove('disabled');
+                } else {
+                    hiddenKinds.add(kind);
+                    item.classList.add('disabled');
+                }
+                
+                if (cy) {
+                    cy.batch(() => {
+                        cy.nodes().forEach(node => {
+                            if (hiddenKinds.has(node.data('kind'))) {
+                                node.addClass('hidden-node');
+                            } else {
+                                node.removeClass('hidden-node');
+                            }
+                        });
+                    });
+                }
+            });
         });
 
         // Initial load
