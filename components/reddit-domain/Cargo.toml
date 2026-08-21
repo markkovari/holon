@@ -1,4 +1,3 @@
-
 [package]
 name = "reddit-domain"
 version = "0.1.0"
@@ -6,10 +5,21 @@ edition = "2021"
 
 [dependencies]
 wit-bindgen-rt = { workspace = true }
-wit-bindgen-rt = { workspace = true }
 once_cell = "1.18.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
 [lib]
 crate-type = ["cdylib"]
+
+[package.metadata.component.target.dependencies]
+"auth:identity" = { path = "../../wit" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+"ratelimit:guard" = { path = "../../wit/deps/ratelimit-guard" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"audit:log" = { path = "../../components/audit-log/wit" }
