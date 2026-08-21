@@ -54,8 +54,6 @@ fn serve_ui() -> Outcome {
     <meta charset="UTF-8">
     <title>Holon Graph Visualizer</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
-    <script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
-    <script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #e2e8f0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         header { background: #1e293b; padding: 1rem 1.5rem; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; z-index: 10; }
@@ -249,11 +247,10 @@ fn serve_ui() -> Outcome {
                             }
                         ],
                         layout: {
-                            name: 'dagre',
-                            rankDir: 'TB',
-                            nodeSep: 60,
-                            edgeSep: 30,
-                            rankSep: 100,
+                            name: 'breadthfirst',
+                            directed: true,
+                            padding: 50,
+                            spacingFactor: 1.5,
                             animate: true
                         }
                     });
@@ -302,11 +299,10 @@ fn serve_ui() -> Outcome {
 
                     if (changed) {
                         cy.layout({
-                            name: 'dagre',
-                            rankDir: 'TB',
-                            nodeSep: 60,
-                            edgeSep: 30,
-                            rankSep: 100,
+                            name: 'breadthfirst',
+                            directed: true,
+                            padding: 50,
+                            spacingFactor: 1.5,
                             animate: true,
                             fit: false
                         }).run();
