@@ -2,6 +2,8 @@ package local:power-domain;
 
 world power {
     import wasi:http/outgoing-handler@0.2.0;
+    import auth:identity/authorizer@0.1.0;
+    import wasi:keyvalue/store@0.2.0-draft;
 
-    export calculate-cost: func(wattage: f32, hours: f32) -> f32;
+    export calculate-cost: func(wattage: f32, hours: f32, token: string) -> result<f32, string>;
 }
