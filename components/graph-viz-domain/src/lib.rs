@@ -203,6 +203,7 @@ fn serve_ui() -> Outcome {
                     cy = cytoscape({
                         container: document.getElementById('cy'),
                         elements: data,
+                        autoungrabify: true,
                         style: [
                             {
                                 selector: 'node',
