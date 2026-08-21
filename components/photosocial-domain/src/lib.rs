@@ -420,11 +420,15 @@ fn create_photo(request: &IncomingRequest) -> Outcome {
     };
 
     let title = body["title"].as_str().unwrap_or("Untitled Photo").trim().to_string();
-    let image_url = body["image_url"]
-        .as_str()
-        .unwrap_or("https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800")
-        .to_string();
+    let mut image_url = body["image_url"].as_str().unwrap_or("").to_string();
     let image_data = body["image_data"].as_str().unwrap_or("").to_string();
+    if image_url.is_empty() {
+        if !image_data.is_empty() {
+            image_url = image_data.clone();
+        } else {
+            image_url = "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800".to_string();
+        }
+    }
     let user_desc = body["description"].as_str().unwrap_or("").to_string();
     let raw_tags: Vec<String> = body["tags"]
         .as_array()
@@ -1213,6 +1217,58 @@ fn serve_spa() -> Outcome {
       font-family: inherit;
     }
     .form-input:focus { outline: none; border-color: var(--accent); }
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 1.5rem 1rem;
+      text-align: center;
+      background: rgba(18, 22, 32, 0.5);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--accent);
+      background: rgba(99, 102, 241, 0.08);
+    }
+    .dropzone-icon { font-size: 2rem; }
+    .dropzone-text { font-size: 0.85rem; color: #cbd5e1; font-weight: 600; }
+    .dropzone-hint { font-size: 0.72rem; color: var(--text-muted); }
+    .file-preview {
+      display: none;
+      position: relative;
+      border-radius: 8px;
+      overflow: hidden;
+      max-height: 180px;
+      margin-top: 0.5rem;
+      border: 1px solid var(--border);
+    }
+    .file-preview img {
+      width: 100%;
+      height: 180px;
+      object-fit: cover;
+      display: block;
+    }
+    .file-remove-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0,0,0,0.7);
+      color: #fff;
+      border-radius: 50%;
+      width: 26px;
+      height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
   </style>
 </head>
 <body>
@@ -1288,18 +1344,33 @@ fn serve_spa() -> Outcome {
       </div>
       <div class="modal-body">
         <div class="form-group">
+          <label class="form-label">Select Photo File or Image Preset</label>
+          <div class="dropzone" id="dropzone" onclick="document.getElementById('uploadFileInput').click()">
+            <div class="dropzone-icon">📁</div>
+            <div class="dropzone-text">Click or Drag & Drop Image File Here</div>
+            <div class="dropzone-hint">Supports JPEG, PNG, WebP, AVIF up to 10MB</div>
+            <input type="file" id="uploadFileInput" accept="image/*" style="display: none;" onchange="handleFileSelected(event)">
+          </div>
+          <div class="file-preview" id="filePreview">
+            <img id="previewImg" src="" alt="Preview">
+            <button class="file-remove-btn" onclick="clearSelectedFile(event)">&times;</button>
+          </div>
+        </div>
+
+        <div class="form-group" id="urlInputGroup" style="margin-top: 0.25rem;">
+          <label class="form-label">Or Image URL / Preset</label>
+          <input class="form-input" id="uploadImgUrl" value="https://images.unsplash.com/photo-1514565131-fce0801e5785?w=800" oninput="handleUrlInput()">
+        </div>
+
+        <div class="form-group">
           <label class="form-label">Photo Title</label>
           <input class="form-input" id="uploadTitle" placeholder="e.g. Midnight in Kyoto" value="Midnight Reflections">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Image URL / Preset</label>
-          <input class="form-input" id="uploadImgUrl" value="https://images.unsplash.com/photo-1514565131-fce0801e5785?w=800">
         </div>
         <div class="form-group">
           <label class="form-label">Artist Notes & Intent</label>
           <textarea class="form-input" id="uploadDesc" rows="3" placeholder="Describe the scene, lighting, camera settings...">Captured with a prime 50mm f/1.4 lens under neon rain. Focused on reflection symmetry.</textarea>
         </div>
-        <button class="btn-primary" style="width: 100%; justify-content: center;" onclick="submitPhoto()">Upload & Request AI Critique</button>
+        <button class="btn-primary" style="width: 100%; justify-content: center;" id="uploadSubmitBtn" onclick="submitPhoto()">Upload & Request AI Critique</button>
       </div>
     </div>
   </div>
@@ -1369,6 +1440,7 @@ fn serve_spa() -> Outcome {
     let currentUser = JSON.parse(localStorage.getItem('ps_user') || 'null');
     let activeAttributes = [];
     let currentPhotoId = null;
+    let uploadedFileDataUrl = '';
 
     async function api(path, method = 'GET', body = null) {
       const headers = { 'content-type': 'application/json' };
@@ -1382,9 +1454,83 @@ fn serve_spa() -> Outcome {
     }
 
     async function init() {
+      setupDropzone();
       await refreshMe();
       await loadAttributes();
       await loadPhotos();
+    }
+
+    function setupDropzone() {
+      const dz = document.getElementById('dropzone');
+      if (!dz) return;
+      ['dragenter', 'dragover'].forEach(name => {
+        dz.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dz.classList.add('dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach(name => {
+        dz.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dz.classList.remove('dragover');
+        });
+      });
+      dz.addEventListener('drop', (e) => {
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+          processImageFile(files[0]);
+        }
+      });
+    }
+
+    function handleFileSelected(event) {
+      const file = event.target.files && event.target.files[0];
+      if (file) {
+        processImageFile(file);
+      }
+    }
+
+    function processImageFile(file) {
+      if (!file.type.startsWith('image/')) {
+        return alert('Please select a valid image file (JPEG, PNG, WebP, etc.)');
+      }
+      if (file.size > 12 * 1024 * 1024) {
+        return alert('Image file exceeds 12MB limit.');
+      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        uploadedFileDataUrl = e.target.result;
+        document.getElementById('previewImg').src = uploadedFileDataUrl;
+        document.getElementById('filePreview').style.display = 'block';
+        document.getElementById('dropzone').style.display = 'none';
+        // Auto-fill title if empty
+        const titleInput = document.getElementById('uploadTitle');
+        if (!titleInput.value || titleInput.value === 'Midnight Reflections') {
+          const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+          titleInput.value = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function clearSelectedFile(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      uploadedFileDataUrl = '';
+      document.getElementById('uploadFileInput').value = '';
+      document.getElementById('previewImg').src = '';
+      document.getElementById('filePreview').style.display = 'none';
+      document.getElementById('dropzone').style.display = 'flex';
+    }
+
+    function handleUrlInput() {
+      if (uploadedFileDataUrl) {
+        clearSelectedFile();
+      }
     }
 
     async function refreshMe() {
@@ -1488,10 +1634,12 @@ fn serve_spa() -> Outcome {
           </div>
         `).join('');
 
+        const imgSrc = p.image_data || p.image_url;
+
         return `
           <div class="photo-card" id="card_${p.id}">
             <div class="photo-img-wrapper" onclick="openPhotoModal('${p.id}')">
-              <img src="${p.image_url}" alt="${p.title}">
+              <img src="${imgSrc}" alt="${p.title}">
               <div class="ai-badge">✨ AI Critiqued</div>
             </div>
             <div class="card-body">
@@ -1530,7 +1678,7 @@ fn serve_spa() -> Outcome {
       const myRatings = await api(`/api/photos/${id}/my-ratings`);
       
       document.getElementById('modalTitle').innerText = photo.title;
-      document.getElementById('modalImg').src = photo.image_url;
+      document.getElementById('modalImg').src = photo.image_data || photo.image_url;
       document.getElementById('modalAiNarrative').innerText = photo.ai_narrative || '';
       document.getElementById('modalAiCritique').innerText = photo.ai_critique || 'AI critique in progress...';
 
@@ -1566,13 +1714,28 @@ fn serve_spa() -> Outcome {
 
     async function submitPhoto() {
       const title = document.getElementById('uploadTitle').value.trim();
-      const image_url = document.getElementById('uploadImgUrl').value.trim();
+      const image_url = uploadedFileDataUrl ? '' : document.getElementById('uploadImgUrl').value.trim();
+      const image_data = uploadedFileDataUrl || '';
       const description = document.getElementById('uploadDesc').value.trim();
 
-      const res = await api('/api/photos', 'POST', { title, image_url, description });
-      if (res.error) return alert(res.error);
-      closeModal('uploadModal');
-      await loadPhotos();
+      if (!title) return alert('Please enter a photo title');
+      if (!image_data && !image_url) return alert('Please select a photo file or enter an image URL');
+
+      const submitBtn = document.getElementById('uploadSubmitBtn');
+      const originalText = submitBtn.innerText;
+      submitBtn.innerText = 'Analyzing & Uploading...';
+      submitBtn.disabled = true;
+
+      try {
+        const res = await api('/api/photos', 'POST', { title, image_url, image_data, description });
+        if (res.error) return alert(res.error);
+        clearSelectedFile();
+        closeModal('uploadModal');
+        await loadPhotos();
+      } finally {
+        submitBtn.innerText = originalText;
+        submitBtn.disabled = false;
+      }
     }
 
     function toggleAuthModal() { document.getElementById('authModal').style.display = 'flex'; }
