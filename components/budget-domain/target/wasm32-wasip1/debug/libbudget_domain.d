@@ -1,0 +1,1 @@
+/Users/markkovari/DEV/markkovari/holon/components/budget-domain/target/wasm32-wasip1/debug/libbudget_domain.rlib: /Users/markkovari/DEV/markkovari/holon/components/budget-domain/src/bindings.rs /Users/markkovari/DEV/markkovari/holon/components/budget-domain/src/lib.rs
