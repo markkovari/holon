@@ -1,0 +1,9 @@
+[package]
+name = "photosocial-showcase"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dev-dependencies]
+ureq = { version = "2.12", features = ["json"] }
+serde_json = "1"
