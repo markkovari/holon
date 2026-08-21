@@ -1496,21 +1496,45 @@ fn serve_spa() -> Outcome {
       if (!file.type.startsWith('image/')) {
         return alert('Please select a valid image file (JPEG, PNG, WebP, etc.)');
       }
-      if (file.size > 12 * 1024 * 1024) {
-        return alert('Image file exceeds 12MB limit.');
+      
+      const titleInput = document.getElementById('uploadTitle');
+      if (!titleInput.value || titleInput.value === 'Midnight Reflections') {
+        const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+        titleInput.value = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
       }
+
       const reader = new FileReader();
       reader.onload = (e) => {
-        uploadedFileDataUrl = e.target.result;
-        document.getElementById('previewImg').src = uploadedFileDataUrl;
-        document.getElementById('filePreview').style.display = 'block';
-        document.getElementById('dropzone').style.display = 'none';
-        // Auto-fill title if empty
-        const titleInput = document.getElementById('uploadTitle');
-        if (!titleInput.value || titleInput.value === 'Midnight Reflections') {
-          const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-          titleInput.value = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
-        }
+        const img = new Image();
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          const maxDim = 1920;
+          
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // Downscale to JPEG (quality 0.82)
+          uploadedFileDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+          
+          document.getElementById('previewImg').src = uploadedFileDataUrl;
+          document.getElementById('filePreview').style.display = 'block';
+          document.getElementById('dropzone').style.display = 'none';
+        };
+        img.src = e.target.result;
       };
       reader.readAsDataURL(file);
     }
