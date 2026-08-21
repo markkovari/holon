@@ -206,10 +206,13 @@ fn serve_ui() -> Outcome {
                         ],
                         layout: {
                             name: 'cose',
-                            padding: 50,
-                            nodeRepulsion: 400000,
-                            idealEdgeLength: 100,
-                            gravity: 0.8
+                            padding: 100,
+                            nodeRepulsion: 1000000,
+                            idealEdgeLength: 200,
+                            edgeElasticity: 50,
+                            gravity: 0.1,
+                            numIter: 1000,
+                            initialTemp: 200
                         }
                     });
 
@@ -225,15 +228,49 @@ fn serve_ui() -> Outcome {
                     });
 
                 } else {
-                    // Update existing graph without losing positions if possible
-                    cy.elements().remove();
-                    cy.add(data);
-                    cy.layout({
-                        name: 'cose',
-                        animate: true,
-                        randomize: false,
-                        fit: false
-                    }).run();
+                    // Differential update
+                    const existingIds = new Set(cy.elements().map(e => e.id()));
+                    const incomingIds = new Set();
+                    const toAdd = [];
+                    
+                    for (const node of data.nodes) {
+                        incomingIds.add(node.data.id);
+                        if (!existingIds.has(node.data.id)) {
+                            toAdd.push(node);
+                        }
+                    }
+                    for (const edge of data.edges) {
+                        incomingIds.add(edge.data.id);
+                        if (!existingIds.has(edge.data.id)) {
+                            toAdd.push(edge);
+                        }
+                    }
+                    
+                    const toRemove = cy.elements().filter(ele => !incomingIds.has(ele.id()));
+                    
+                    let changed = false;
+                    if (toRemove.length > 0) {
+                        cy.remove(toRemove);
+                        changed = true;
+                    }
+                    if (toAdd.length > 0) {
+                        cy.add(toAdd);
+                        changed = true;
+                    }
+
+                    if (changed) {
+                        cy.layout({
+                            name: 'cose',
+                            animate: true,
+                            randomize: false,
+                            fit: false,
+                            padding: 100,
+                            nodeRepulsion: 1000000,
+                            idealEdgeLength: 200,
+                            edgeElasticity: 50,
+                            gravity: 0.1
+                        }).run();
+                    }
                 }
             } catch (err) {
                 console.error("Failed to fetch graph data", err);
