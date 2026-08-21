@@ -2143,3 +2143,13 @@ goal-run:
     [ "${DRY_RUN:-0}" = "1" ] && args+=(--dry-run)
     [ "${SMOKE:-0}" = "1" ] && args+=(--smoke)
     ./reconciler/target/release/comp-goalrun "${args[@]}"
+
+graphviz_composed := "components/target/graphviz_domain.composed.wasm"
+
+compose-graphviz: build
+    @just _derive graph-viz-domain {{graphviz_composed}}
+
+host-graphviz: compose-graphviz
+    cd host && cargo run --release --bin comp-host -- \
+      --app graphviz --config-file ../examples/defaults.conf --config default-tenant=graphviz \
+      --component ../{{graphviz_composed}} --addr 0.0.0.0:3056
