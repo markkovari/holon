@@ -46,9 +46,6 @@ world treasury-ledger-domain {
     /// Exactly once per idempotency key, and exactly once per settlement period.
     import idempotency:guard/store@0.1.0;
 
-    /// Compensations, for a transfer that cannot be completed.
-    import outbox:dispatch/queue@0.1.0;
-
     /// Deployment knobs.
     import wasi:config/store@0.2.0-rc.1;
     /// Timestamps.

@@ -1,0 +1,182 @@
+// auth:identity — the consumer's view.
+//
+// A trimmed excerpt of wit/auth.wit for a part that CALLS auth, holding only the two interfaces
+// a consumer uses: `types` (the records and the error) and `authorizer` (verify + permission
+// check in one call). The full package also exports jwt, oidc, session, accounts and rbac —
+// those belong to the auth-guard component, not to anything that consumes it, and a part that
+// wants them can read wit/auth.wit. This exists so a smaller model spends its context on what
+// it will actually call: ~700 tokens here versus ~5600 for the whole package.
+package is split so an implementation can compose the pieces:
+//   jwt      — stateless signature/claims verification
+//   oidc     — IdP-agnostic discovery + JWKS + code exchange (no vendor APIs)
+//   session  — stateful, server-side sessions (refresh + revoke)
+//   rbac     — roles -> permissions, scoped per tenant
+//   authorizer — the verify-token guard that orchestrates the above
+//
+// The contract is storage- and IdP-agnostic: it never names a persistence
+// backend or a vendor IdP. How sessions/roles are stored, and which IdP issues
+// tokens, are choices an implementation makes — not part of this interface.
+//
+// Design is wasip2-stable but shaped to survive a wasip3 async refactor: every
+// fallible boundary returns `result<_, auth-error>`, no streaming-bound shapes.
+//
+// ── Quick start (consumer) ────────────────────────────────────────────────
+//   world my-app { import auth:identity/authorizer;
+
+interface types {
+    /// A unix timestamp in seconds since the Unix epoch (UTC).
+    type timestamp = u64;
+
+    /// A single permission, expressed as a `(target, action)` pair.
+    ///
+    /// - `target` — the protected resource name, e.g. `"orders"`, `"users"`.
+    ///   (Named `target` rather than `resource` because `resource` is a WIT
+    ///   keyword.) The wildcard `"*"` matches any target.
+    /// - `action` — the verb, e.g. `"read"`, `"write"`, `"delete"`. The
+    ///   wildcard `"*"` matches any action.
+    ///
+    /// A granted permission satisfies a required one when each field either
+    /// matches exactly or the grant holds `"*"`. Examples:
+    ///   grant {target:"orders", action:"*"}  satisfies  {target:"orders", action:"read"}
+    ///   grant {target:"*",      action:"read"} satisfies {target:"orders", action:"read"}
+    record permission {
+        target: string,
+        action: string,
+    }
+
+    /// A verified caller — the end product of `authorize` / `introspect`.
+    /// Everything here has already been validated; consumers can trust it.
+    record principal {
+        /// Stable subject id. From the token's `sub` claim, the session owner,
+        /// or a locally-registered account's generated id (`usr_<hex>`).
+        subject: string,
+        /// Tenant / organization the principal belongs to. Resolved per the
+        /// claim-conventions table above; `""` for single-tenant deployments.
+        tenant: string,
+        /// Roles held within `tenant`. Resolved from the RBAC store by
+        /// (tenant, subject) — NOT read from the token. Empty = no roles.
+        roles: list<string>,
+        /// Granted scopes (OAuth scopes / fine-grained grants), e.g.
+        /// `["orders:read", "profile"]`. A scope formatted `"target:action"`
+        /// (or `"*"`) is honored directly by an RBAC check, bypassing roles.
+        scopes: list<string>,
+        /// When the underlying credential expires (unix seconds). `0` means
+        /// "no expiry encoded" (the implementation may still impose one).
+        expires-at: timestamp,
+    }
+
+    /// Decoded, signature-verified token claims (the `jwt`/`oidc` output).
+    ///
+    /// The named fields are the registered JWT claims this contract relies on
+    /// (RFC 7519). Everything else from the token — custom/private claims — is
+    /// carried in `raw` as stringified key/value pairs, so callers can read
+    /// claims the contract does not enumerate (e.g. `email`, `groups`) without
+    /// the WIT having to know about them. Non-string JSON values in `raw` are
+    /// rendered as their JSON text.
+    record claims {
+        /// `iss` — token issuer (the IdP). Validated against `expected-issuer`.
+        iss: string,
+        /// `sub` — subject (stable user id).
+        sub: string,
+        /// `aud` — audience(s). Validated against `expected-audience`. A token
+        /// with a single string audience is normalized to a one-element list.
+        aud: list<string>,
+        /// `exp` — expiry (unix seconds). Checked with clock-skew tolerance.
+        exp: timestamp,
+        /// `iat` — issued-at (unix seconds). `0` if absent.
+        iat: timestamp,
+        /// Scopes, normalized from `scope` (space-delimited) or `scp` (array).
+        scopes: list<string>,
+        /// All remaining claims as `(name, value)` pairs. Values are strings;
+        /// objects/arrays/numbers are their JSON serialization.
+        raw: list<tuple<string, string>>,
+    }
+
+    /// An issued credential pair.
+    ///
+    /// - `access-token` — the bearer token to present on requests. For
+    ///   session-backed issuance this is an opaque id with a `sess_` prefix;
+    ///   the implementation routes such tokens to a stateful lookup.
+    /// - `refresh-token` — exchangeable for a new pair via `session.refresh`.
+    ///   Absent for purely stateless (jwt-only) issuance. Rotated on every
+    ///   refresh; reusing a rotated one is treated as a breach (see `session`).
+    /// - `expires-in` — seconds until `access-token` expires.
+    /// - `session-id` — the server-side session id when token-backed; the same
+    ///   value as `access-token` for session tokens.
+    record token-pair {
+        access-token: string,
+        refresh-token: option<string>,
+        expires-in: u64,
+        session-id: option<string>,
+    }
+
+    /// The single error type for the whole contract. Implementations map their
+    /// internal failures onto these variants; the suggested HTTP status for
+    /// each is given below so every consumer maps them the same way.
+    variant auth-error {
+        /// Token failed signature/structure validation, or used a disallowed
+        /// algorithm, or failed an `iss`/`aud`/`nbf` check. The string detail
+        /// is safe to log (no secrets). HTTP 401.
+        invalid-token(string),
+        /// Token parsed but is past its `exp` (beyond clock-skew). HTTP 401.
+        expired,
+        /// Caller is authenticated but lacks the required permission; the unmet
+        /// permission is attached. HTTP 403.
+        insufficient-scope(permission),
+        /// Tenant referenced by the token/principal is unknown. HTTP 403.
+        unknown-tenant,
+        /// A backing dependency (IdP, storage, JWKS endpoint) was unreachable.
+        /// HTTP 503.
+        backend-unavailable(string),
+        /// Input was structurally malformed before any verification (bad email,
+        /// too-short password, non-JWT string, …). HTTP 400.
+        malformed(string),
+        /// Login failed: no such account, or wrong password. Deliberately does
+        /// NOT distinguish the two (no user enumeration). HTTP 401.
+        invalid-credentials,
+        /// Register failed: an account with that (tenant, email) already
+        /// exists. HTTP 409.
+        already-exists,
+        /// Too many failed attempts for this identifier; temporarily locked
+        /// out. HTTP 429. Carries the retry-after hint in SECONDS (0 if the
+        /// backend didn't report one) so the caller can set `Retry-After`.
+        rate-limited(u32),
+        /// Catch-all for unexpected internal failures. HTTP 500.
+        internal(string),
+    }
+}
+
+interface authorizer {
+    use types.{principal, permission, auth-error};
+
+    /// Verify `token` and require `required`. Returns the principal on success,
+    /// `insufficient-scope` if authenticated-but-unauthorized, or an auth/expiry
+    /// error otherwise.
+    authorize: func(
+        token: string,
+        required: permission,
+    ) -> result<principal, auth-error>;
+
+    /// Like `authorize` but succeeds if the principal satisfies ANY of the
+    /// required permissions.
+    authorize-any: func(
+        token: string,
+        required: list<permission>,
+    ) -> result<principal, auth-error>;
+
+    /// Verify `token` and return the principal WITHOUT any permission check.
+    /// For components that do their own authorization logic.
+    introspect: func(token: string) -> result<principal, auth-error>;
+
+    /// Like `authorize`, but the caller passes its W3C `traceparent`
+    /// (`00-<32hex trace-id>-<16hex span-id>-<2hex flags>`). The decision's
+    /// audit event is emitted with that trace-id + a fresh child span-id, so an
+    /// authz decision can be correlated to the originating request across the
+    /// component boundary. An empty/malformed traceparent behaves like
+    /// `authorize` (a new trace id is minted for the audit line).
+    authorize-traced: func(
+        token: string,
+        required: permission,
+        traceparent: string,
+    ) -> result<principal, auth-error>;
+}

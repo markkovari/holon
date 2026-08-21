@@ -120,7 +120,7 @@ context = [
   "components/moderation-domain/wit/moderation.wit",
   "components/rate-limiter/wit/ratelimit.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "intake-throttles-what-it-queues"
@@ -163,7 +163,7 @@ context = [
   "components/ai-inference/wit/inference.wit",
   "components/event-bus/wit/eventbus.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "verdict-lets-the-policy-decide"
@@ -201,7 +201,7 @@ context = [
   "components/policy-guard/wit/policy.wit",
   "components/event-bus/wit/eventbus.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "queue-reads-the-engine-not-a-copy"
