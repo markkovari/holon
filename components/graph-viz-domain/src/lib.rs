@@ -273,10 +273,11 @@ fn serve_ui() -> Outcome {
                             }
                         ],
                         layout: {
-                            name: 'breadthfirst',
-                            directed: true,
+                            name: 'concentric',
+                            concentric: function(node) { return node.degree(); },
+                            levelWidth: function(nodes) { return 3; },
                             padding: 50,
-                            spacingFactor: 1.5,
+                            spacingFactor: 1.2,
                             animate: true
                         }
                     });
@@ -335,12 +336,12 @@ fn serve_ui() -> Outcome {
 
                     if (changed) {
                         cy.layout({
-                            name: 'breadthfirst',
-                            directed: true,
+                            name: 'concentric',
+                            concentric: function(node) { return node.degree(); },
+                            levelWidth: function(nodes) { return 3; },
                             padding: 50,
-                            spacingFactor: 1.5,
-                            animate: true,
-                            fit: false
+                            spacingFactor: 1.2,
+                            animate: true
                         }).run();
                     }
                 }
