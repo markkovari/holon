@@ -223,17 +223,21 @@ pub fn find<'a>(query: &str, pool: &'a [Capability]) -> Vec<Match<'a>> {
             let hit_desc = desc_terms.iter().any(|t| t.starts_with(term) || term.starts_with(t));
             if hit_name || hit_iface {
                 score += 3.0;
-                because.push(term.clone());
+                if !because.contains(term) {
+                    because.push(term.clone());
+                }
             } else if hit_desc {
                 score += 1.0;
-                because.push(term.clone());
+                if !because.contains(term) {
+                    because.push(term.clone());
+                }
             }
         }
         if score == 0.0 {
             continue;
         }
-        // A small nudge, never a decider: log-ish so that 39 apps beats 20 without
-        // burying a better-matching capability that nothing has used yet.
+        // Graph centrality multiplier: log-ish adoption score so that foundational, widely composed
+        // capabilities (high in-degree in the capability graph) break ties towards vetted infrastructure.
         score += (cap.apps as f64 + 1.0).ln() * 0.5;
         out.push(Match { capability: cap, score, because });
     }
