@@ -99,6 +99,8 @@ lms_wasm := rel / "lms_domain.wasm"
 lms_composed := "components/target/lms_domain.composed.wasm"
 buzz_wasm := rel / "buzz_domain.wasm"
 buzz_composed := "components/target/buzz_domain.composed.wasm"
+photosocial_wasm := rel / "photosocial_domain.wasm"
+photosocial_composed := "components/target/photosocial_domain.composed.wasm"
 mesh_wasm := rel / "mesh_domain.wasm"
 mesh_composed := "components/target/mesh_domain.composed.wasm"
 passkey_wasm := rel / "passkey_domain.wasm"
@@ -476,6 +478,9 @@ e2e-console: compose-console
 #   … TIMEOUT=3000 just goal-run                        # 50 min per branch
 claude-shim port="8787" model="":
     @CLAUDE_MODEL="{{model}}" PORT="{{port}}" node tools/claude-shim.mjs
+
+gemini-shim port="8788" model="gemini-2.5-flash":
+    @GEMINI_MODEL="{{model}}" PORT="{{port}}" node tools/gemini-shim.mjs
 
 # Push the capability graph into the store the knowledge pool lives in (ADR-0091).
 #
@@ -964,6 +969,23 @@ host-buzz: compose-buzz build-buzz-ui
 e2e-buzz: compose-buzz
     cd host && cargo build --release --bin comp-host
     cd examples/buzz && cargo test --release
+
+# Compose photosocial-domain (docs/apps/PHOTOSOCIAL.md — social photo sharing with AI critique & RBAC attributes)
+compose-photosocial: compose
+    @just _derive photosocial-domain {{photosocial_composed}}
+
+host-photosocial: compose-photosocial
+    cd host && cargo run --release --bin comp-host -- \
+      --app photosocial --config-file ../examples/defaults.conf --config default-tenant=photosocial \
+      --component ../{{photosocial_composed}} --addr 0.0.0.0:3055
+
+e2e-photosocial: compose-photosocial
+    cd host && cargo build --release --bin comp-host
+    cd examples/photosocial && cargo test --release
+
+screencast-photosocial: compose-photosocial
+    node tools/screencast/photosocial.mjs
+    bash tools/screencast/to-gif.sh tools/screencast/videos/photosocial/*.webm docs/media/photosocial.gif 820 10
 
 # Compose mesh-domain (docs/apps/MESH.md — resilient upstream calls) with records (the
 # durable per-key circuit state) + resilience (the breaker state machine and the
