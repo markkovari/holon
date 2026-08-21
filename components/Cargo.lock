@@ -1284,6 +1284,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "photosocial-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "pii-redact"
 version = "0.1.0"
 dependencies = [
