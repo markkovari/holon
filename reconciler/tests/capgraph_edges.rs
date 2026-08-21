@@ -278,3 +278,25 @@ fn json_omits_an_apps_own_root_while_surql_includes_it() {
          tie-breaker in `just capability` has changed behaviour"
     );
 }
+
+#[test]
+fn graph_json_emits_valid_stats_summary() {
+    let Some(graph) = graph_json() else { return };
+    let stats = &graph["stats"];
+    assert!(
+        stats["total_components"].as_u64().unwrap_or(0) > 50,
+        "expected >50 components in stats"
+    );
+    assert!(
+        stats["total_interfaces"].as_u64().unwrap_or(0) > 30,
+        "expected >30 interfaces in stats"
+    );
+    assert!(
+        stats["total_import_edges"].as_u64().unwrap_or(0) > 50,
+        "expected >50 import edges in stats"
+    );
+    assert!(
+        stats["total_apps"].as_u64().unwrap_or(0) >= 10,
+        "expected >=10 apps in stats"
+    );
+}

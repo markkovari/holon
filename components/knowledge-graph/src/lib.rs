@@ -415,6 +415,28 @@ fn node_of(row: &serde_json::Value) -> Option<Node> {
     })
 }
 
+/// Format a compound atomic relate statement: upserts both endpoint nodes and creates the edge
+/// in a single SurrealQL script. Eliminates 3 separate HTTP roundtrips across the WASI boundary.
+fn relate_statement(
+    from_node: &Node,
+    edge: &str,
+    to_node: &Node,
+    properties: &str,
+) -> Result<String, GraphError> {
+    let from_rid = record_id(&from_node.kind, &from_node.id)?;
+    let from_obj = object(&from_node.properties)?;
+    let to_rid = record_id(&to_node.kind, &to_node.id)?;
+    let to_obj = object(&to_node.properties)?;
+    let e = edge_name(edge)?;
+    let edge_obj = object(properties)?;
+
+    Ok(format!(
+        "UPSERT {from_rid} CONTENT {from_obj}; \
+         UPSERT {to_rid} CONTENT {to_obj}; \
+         RELATE {from_rid}->{e}->{to_rid} CONTENT {edge_obj};"
+    ))
+}
+
 impl Guest for Component {
     fn upsert(n: Node) -> Result<(), GraphError> {
         let conn = Conn::open()?;
@@ -431,18 +453,11 @@ impl Guest for Component {
 
     fn relate(from_node: Node, edge: String, to_node: Node, properties: String) -> Result<(), GraphError> {
         let conn = Conn::open()?;
-        // Both ends are upserted first. A graph that refuses an edge because a
-        // node is not there yet forces every caller to order its writes, and an
-        // agent exploring a graph does not know the order in advance.
-        Self::upsert(from_node.clone())?;
-        Self::upsert(to_node.clone())?;
-        let stmt = format!(
-            "RELATE {}->{}->{} CONTENT {};",
-            record_id(&from_node.kind, &from_node.id)?,
-            edge_name(&edge)?,
-            record_id(&to_node.kind, &to_node.id)?,
-            object(&properties)?
-        );
+        // Both ends and the edge are submitted in ONE compound statement.
+        // A graph that refuses an edge because a node is not there yet forces every
+        // caller to order its writes; batching them into one statement ensures idempotency
+        // and cuts HTTP round trips from 3 to 1 across the WASI boundary.
+        let stmt = relate_statement(&from_node, &edge, &to_node, &properties)?;
         run(&conn, &stmt).map(|_| ())
     }
 
@@ -527,6 +542,24 @@ mod tests {
             Err(GraphError::Rejected(m)) => assert!(m.contains("table does not exist")),
             other => panic!("a failed statement must not read as success: {other:?}"),
         }
+    }
+
+    #[test]
+    fn relate_statement_batches_upserts_and_relate() {
+        let from = Node {
+            kind: "file".into(),
+            id: "src/main.rs".into(),
+            properties: r#"{"lines":100}"#.into(),
+        };
+        let to = Node {
+            kind: "symbol".into(),
+            id: "main".into(),
+            properties: r#"{"pub":true}"#.into(),
+        };
+        let stmt = relate_statement(&from, "defines", &to, r#"{"exported":true}"#).unwrap();
+        assert!(stmt.contains("UPSERT file:⟨src/main.rs⟩ CONTENT {\"lines\":100};"));
+        assert!(stmt.contains("UPSERT symbol:⟨main⟩ CONTENT {\"pub\":true};"));
+        assert!(stmt.contains("RELATE file:⟨src/main.rs⟩->defines->symbol:⟨main⟩ CONTENT {\"exported\":true};"));
     }
 }
 
