@@ -104,7 +104,7 @@ fn serve_ui() -> Outcome {
         async function fetchGraphData() {
             // First, get all tables to see what exists
             const infoRes = await query('INFO FOR DB;');
-            const tables = Object.keys(infoRes[0]?.tables || {});
+            const tables = Object.keys(infoRes[0]?.result?.tables || {});
             
             if (tables.length === 0) return { nodes: [], edges: [] };
 
@@ -117,9 +117,10 @@ fn serve_ui() -> Outcome {
             
             // SurrealDB returns an array of results, one for each statement
             (Array.isArray(results) ? results : [results]).forEach(resultSet => {
-                if (!Array.isArray(resultSet)) return;
+                const records = resultSet.result;
+                if (!Array.isArray(records)) return;
                 
-                resultSet.forEach(record => {
+                records.forEach(record => {
                     if (!record.id) return;
                     
                     // Edges in surrealdb have 'in' and 'out' properties
