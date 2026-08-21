@@ -1,0 +1,10 @@
+package insta:app@0.1.0;
+
+world insta-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+    
+    import wasi:keyvalue/store@0.2.0-draft;
+}
