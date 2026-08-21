@@ -1,0 +1,12 @@
+{
+  "name": "reddit-tests",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.36.0",
+    "@types/node": "^20.0.0"
+  }
+}
