@@ -210,7 +210,15 @@ journal write that fails after the balances moved is `500 {"error":"journal_lost
 rather than hiding it; `reconcile` is what finds it otherwise, and that is far too late to be
 the first anyone hears of it. **Only a settled transfer is journalled**: a refusal moved nothing.
 
-**Idempotency.** `begin` the key before anything, `complete` it with the answer:
+**Idempotency.**
+
+```rust
+use crate::bindings::idempotency::guard::store as idem;
+idem::begin(key: &str, ttl_seconds: u64) -> Result<Option<CachedResponse>, IdemError>
+idem::complete(key: &str, status: u16, body: &[u8]) -> Result<(), IdemError>
+```
+
+`begin` the key before anything, `complete` it with the answer:
 `Ok(Some(cached))` is answered verbatim, `Err(InProgress)` is `409 {"error":"in_progress"}`,
 and a guard that is unavailable is `503` and never permission to move money twice.
 

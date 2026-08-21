@@ -111,7 +111,7 @@ context = [
   "components/support-desk-domain/src/lib.rs",
   "components/support-desk-domain/wit/support.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "tickets-refuses-what-cannot-be-delivered"
@@ -156,7 +156,7 @@ context = [
   "components/session-store/wit/session.wit",
   "components/ai-inference/wit/inference.wit",
   "components/record-store/wit/record.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "reply-queues-and-does-not-send"
@@ -199,7 +199,7 @@ context = [
   "components/support-desk-domain/wit/support.wit",
   "components/outbox/wit/outbox.wit",
   "components/notify-dispatch/wit/notify.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "courier-delivers-at-least-once"

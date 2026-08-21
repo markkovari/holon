@@ -153,7 +153,7 @@ context = [
   "components/triage-domain/src/lib.rs",
   "components/triage-domain/wit/triage.wit",
   "components/pii-redact/wit/pii.wit",
-  "components/record-store/wit/records.wit",
+  "components/record-store/wit/record.wit",
 ]
 [[part.check]]
 id = "intake-half-answers-real-requests"
@@ -195,7 +195,7 @@ context = [
   "components/triage-domain/src/lib.rs",
   "components/triage-domain/wit/triage.wit",
   "components/fsm-workflow/wit/fsm.wit",
-  "components/record-store/wit/records.wit",
+  "components/record-store/wit/record.wit",
 ]
 [[part.check]]
 id = "workflow-half-answers-real-requests"
@@ -236,7 +236,7 @@ context = [
   "components/triage-domain/src/lib.rs",
   "components/triage-domain/wit/triage.wit",
   "components/csv/wit/csv.wit",
-  "components/record-store/wit/records.wit",
+  "components/record-store/wit/record.wit",
 ]
 [[part.check]]
 id = "digest-half-answers-real-requests"

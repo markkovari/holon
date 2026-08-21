@@ -72,7 +72,6 @@ base_paths = [
   "components/ledger/",
   "components/idempotency-guard/",
   "components/fsm-workflow/",
-  "components/outbox/",
   "components/record-store/",
   # Not in the world, and READABLE on purpose: the contract makes a claim about what
   # `acquire` does, and a part that wants to check that claim should be able to.
@@ -92,7 +91,6 @@ keep_members = [
   "ledger",
   "idempotency-guard",
   "fsm-workflow",
-  "outbox",
   "record-store",
 ]
 
@@ -123,7 +121,7 @@ context = [
   "components/treasury-ledger-domain/wit/treasury.wit",
   "components/record-store/wit/record.wit",
   "components/money/wit/money.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "accounts-lose-nothing-under-contention"
@@ -171,7 +169,7 @@ context = [
   "components/fsm-workflow/wit/fsm.wit",
   "components/idempotency-guard/wit/idempotency.wit",
   "components/lock-mutex/wit/lock.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "transfers-let-exactly-one-through"
@@ -208,7 +206,7 @@ context = [
   "components/record-store/wit/record.wit",
   "components/money/wit/money.wit",
   "components/idempotency-guard/wit/idempotency.wit",
-  "wit/auth.wit",
+  ".comp/context/auth-consumer.wit",
 ]
 [[part.check]]
 id = "reconcile-reads-the-journal"
