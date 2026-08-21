@@ -48,7 +48,7 @@ fn handle_query(req: IncomingRequest) -> Outcome {
 }
 
 fn serve_ui() -> Outcome {
-    let html = r#"<!DOCTYPE html>
+    let html = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -244,6 +244,32 @@ fn serve_ui() -> Outcome {
                                     'text-outline-color': '#0f172a',
                                     'arrow-scale': 1.2
                                 }
+                            },
+                            {
+                                selector: '.faded',
+                                style: {
+                                    'opacity': 0.1,
+                                    'text-opacity': 0
+                                }
+                            },
+                            {
+                                selector: 'node.highlighted',
+                                style: {
+                                    'border-width': 4,
+                                    'border-color': '#f8fafc',
+                                    'opacity': 1,
+                                    'z-index': 9999
+                                }
+                            },
+                            {
+                                selector: 'edge.highlighted',
+                                style: {
+                                    'width': 3,
+                                    'line-color': '#94a3b8',
+                                    'target-arrow-color': '#94a3b8',
+                                    'opacity': 1,
+                                    'z-index': 9999
+                                }
                             }
                         ],
                         layout: {
@@ -257,12 +283,22 @@ fn serve_ui() -> Outcome {
 
                     cy.on('tap', 'node', function(evt){
                         const node = evt.target;
-                        showNodePanel(node.data());
+                        
+                        // Highlight logic
+                        cy.elements().removeClass('highlighted faded');
+                        
+                        const neighborhood = node.neighborhood();
+                        cy.elements().addClass('faded');
+                        node.removeClass('faded').addClass('highlighted');
+                        neighborhood.removeClass('faded').addClass('highlighted');
+
+                        showNodePanel(node);
                     });
                     
                     cy.on('tap', function(evt){
                         if(evt.target === cy){
                             document.getElementById('node-panel').style.display = 'none';
+                            cy.elements().removeClass('highlighted faded');
                         }
                     });
 
@@ -313,8 +349,12 @@ fn serve_ui() -> Outcome {
             }
         }
 
-        function showNodePanel(data) {
+        function showNodePanel(node) {
+            const data = node.data();
+            const panel = document.getElementById('node-panel');
+            panel.style.display = 'block';
             document.getElementById('panelTitle').innerText = data.label || data.id;
+            
             let html = '';
             for (const [key, value] of Object.entries(data)) {
                 if (key === 'id' || key === 'label' || key === 'kind') continue;
@@ -324,8 +364,37 @@ fn serve_ui() -> Outcome {
                     html += `<div class="panel-prop"><strong>${key}:</strong> ${value}</div>`;
                 }
             }
+
+            // List connected elements
+            const connectedNodes = node.neighborhood('node');
+            if (connectedNodes.length > 0) {
+                html += `<div class="panel-prop" style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #334155;"><strong>Connected Elements:</strong></div>`;
+                html += `<ul style="padding-left: 20px; margin-top: 5px; font-size: 0.85rem;">`;
+                
+                connectedNodes.forEach(n => {
+                    const nData = n.data();
+                    const label = nData.label || nData.id;
+                    const kind = nData.kind || '';
+                    html += `<li style="margin-bottom: 4px;"><a href="#" class="connected-link" data-id="${nData.id}" style="color: #60a5fa; text-decoration: none;">[${kind}] ${label}</a></li>`;
+                });
+                
+                html += `</ul>`;
+            }
+
             document.getElementById('panelContent').innerHTML = html;
-            document.getElementById('node-panel').style.display = 'block';
+
+            // Add click listeners to links
+            document.querySelectorAll('.connected-link').forEach(link => {
+                link.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const targetId = e.currentTarget.getAttribute('data-id');
+                    const targetNode = cy.getElementById(targetId);
+                    if (targetNode.length > 0) {
+                        targetNode.emit('tap');
+                        cy.center(targetNode);
+                    }
+                });
+            });
         }
 
         document.getElementById('autoRefresh').addEventListener('change', (e) => {
@@ -341,7 +410,7 @@ fn serve_ui() -> Outcome {
         refreshInterval = setInterval(refreshGraph, 5000);
     </script>
 </body>
-</html>"#;
+</html>"##;
     Outcome::Html(html.to_string())
 }
 
