@@ -1,30 +1,37 @@
 #!/usr/bin/env node
-// A local `/v1/messages` and `/v1/chat/completions` endpoint backed by Google Gemini.
+// A local `/v1/messages` and `/v1/chat/completions` endpoint backed by `gemini -p` CLI
+// instead of direct API HTTP calls — mirroring `tools/claude-shim.mjs`.
 //
-// Point `anthropic:base-url` (or `openai:base-url`) at this to route holon's
-// `llm:inference` component calls through Google Gemini using your Gemini API key
-// or machine tokens on picur.
+// Point `anthropic:base-url` or `openai:base-url` at this and the loop's inference
+// runs through the Gemini CLI on your subscription/credentials.
 //
 //   node tools/gemini-shim.mjs                     # 127.0.0.1:8788
-//   GEMINI_API_KEY=... just gemini-shim
 //   PORT=9000 GEMINI_MODEL=gemini-2.5-pro node tools/gemini-shim.mjs
 //
-// Features:
-// - Supports Anthropic `/v1/messages` contract (for `anthropic-provider`).
-// - Supports OpenAI `/v1/chat/completions` contract (for `openai-provider`).
-// - Converts chat history and system prompts to Gemini's `contents` and `systemInstruction`.
-// - Handles concurrency limits and graceful request queueing.
+// ## One CLI process per request (Snapshot & Branch Isolation)
+//
+// Every incoming request spawns a fresh `gemini -p` (or `node tools/gemini-cli.mjs -p`)
+// subprocess. This ensures isolation across swarm branches and generation tasks.
 
+import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8788);
 const HOST = process.env.HOST || '127.0.0.1';
-const API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
-const TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 120_000);
-const LIMIT = Number(process.env.GEMINI_CONCURRENCY || 8);
+const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+const TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 240_000);
+const LIMIT = Number(process.env.GEMINI_CONCURRENCY || 4);
+
+// Determine CLI binary: system `gemini`, or `tools/gemini-cli.mjs`
+const GEMINI_BIN = process.env.GEMINI_CLI_BIN || 'gemini';
+const FALLBACK_CLI = join(__dirname, 'gemini-cli.mjs');
 
 let active = 0;
+/** Resolvers for calls that arrived while every slot was busy. FIFO. */
 const waiting = [];
 
 const acquire = () => {
@@ -41,122 +48,97 @@ const release = () => {
   else active--;
 };
 
-/** Anthropic's error envelope */
-const anthropicError = (type, message) =>
-  JSON.stringify({ type: 'error', error: { type, message } });
+/** Anthropic's error envelope — `codec.rs` keys on `type == "error"`. */
+const apiError = (type, message) => JSON.stringify({ type: 'error', error: { type, message } });
 
-/** OpenAI's error envelope */
+/** OpenAI error envelope */
 const openAiError = (message) =>
   JSON.stringify({ error: { message, type: 'invalid_request_error', code: null } });
 
-/** Convert Anthropic / OpenAI body to Gemini generateContent format */
-function toGeminiPayload(body) {
-  let systemText = '';
-  let turns = [];
-
-  // 1. Anthropic format
-  if (body.system) {
-    if (Array.isArray(body.system)) {
-      systemText = body.system
-        .filter((b) => b?.type === 'text')
-        .map((b) => b.text)
-        .join('\n\n');
-    } else if (typeof body.system === 'string') {
-      systemText = body.system;
-    }
+/**
+ * Flatten a request into one prompt plus a system string.
+ */
+function render(body) {
+  let system = '';
+  if (Array.isArray(body.system)) {
+    system = body.system
+      .filter((b) => b?.type === 'text')
+      .map((b) => b.text)
+      .join('\n\n');
+  } else if (typeof body.system === 'string') {
+    system = body.system;
   }
 
   const messages = body.messages || [];
+  const turns = [];
+
   for (const m of messages) {
     if (m.role === 'system') {
       const txt = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-      systemText = systemText ? `${systemText}\n\n${txt}` : txt;
+      system = system ? `${system}\n\n${txt}` : txt;
       continue;
     }
-
-    const role = m.role === 'assistant' ? 'model' : 'user';
-    let text = '';
-    if (typeof m.content === 'string') {
-      text = m.content;
-    } else if (Array.isArray(m.content)) {
-      text = m.content
-        .filter((b) => b?.type === 'text')
-        .map((b) => b.text)
-        .join('');
-    }
-
-    turns.push({
-      role,
-      parts: [{ text }],
-    });
+    const text = typeof m.content === 'string'
+      ? m.content
+      : (Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text).join('') : '');
+    turns.push({ role: m.role === 'assistant' ? 'assistant' : 'user', text });
   }
 
-  // Ensure turns alternate correctly for Gemini API
-  const contents = [];
-  for (const turn of turns) {
-    if (contents.length > 0 && contents[contents.length - 1].role === turn.role) {
-      contents[contents.length - 1].parts.push(...turn.parts);
-    } else {
-      contents.push(turn);
-    }
-  }
+  const prompt =
+    turns.length === 1
+      ? turns[0].text
+      : turns.map((t) => `[${t.role}]\n${t.text}`).join('\n\n');
 
-  const payload = {
-    contents,
-    generationConfig: {
-      temperature: body.temperature !== undefined ? body.temperature : 0.7,
-      maxOutputTokens: body.max_tokens || 4096,
-    },
-  };
-
-  if (systemText) {
-    payload.systemInstruction = {
-      parts: [{ text: systemText }],
-    };
-  }
-
-  if (body.stop_sequences || body.stop) {
-    payload.generationConfig.stopSequences = body.stop_sequences || body.stop;
-  }
-
-  return payload;
+  return { system, prompt };
 }
 
-async function callGemini(model, payload, apiKeyHeader) {
-  const key = apiKeyHeader || API_KEY;
-  const targetModel = model || DEFAULT_MODEL;
-  const cleanModel = targetModel.replace(/^models\//, '').replace(/^claude-[^/]+/, DEFAULT_MODEL).replace(/^gpt-[^/]+/, DEFAULT_MODEL);
+/** Run one `gemini -p` CLI subprocess and resolve with its stdout. */
+function runGeminiCli({ system, prompt, model }) {
+  return new Promise((resolve, reject) => {
+    const args = ['-p'];
+    const targetModel = model || MODEL;
+    if (targetModel) args.push('--model', targetModel);
+    if (system) args.push('--system-prompt', system);
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${key}`;
+    // If global `gemini` executable exists in PATH, spawn it; else spawn node gemini-cli.mjs
+    let cmd = GEMINI_BIN;
+    let cmdArgs = args;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-
-    const json = await res.json();
-    if (!res.ok) {
-      throw new Error(`Gemini API error (${res.status}): ${JSON.stringify(json.error || json)}`);
+    // Check if `gemini` is in PATH or use our node CLI runner
+    const isNodeScript = cmd.endsWith('.mjs') || cmd.endsWith('.js') || !existsSync(cmd);
+    if (isNodeScript && existsSync(FALLBACK_CLI)) {
+      cmd = process.execPath;
+      cmdArgs = [FALLBACK_CLI, ...args];
     }
 
-    const candidate = json.candidates?.[0];
-    const text = candidate?.content?.parts?.map((p) => p.text || '').join('') || '';
-    const finishReason = candidate?.finishReason || 'STOP';
-    const usage = {
-      input_tokens: json.usageMetadata?.promptTokenCount || 0,
-      output_tokens: json.usageMetadata?.candidatesTokenCount || 0,
-    };
+    const child = spawn(cmd, cmdArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
 
-    return { text, finishReason, usage, model: cleanModel };
-  } finally {
-    clearTimeout(timer);
-  }
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`gemini -p exceeded ${TIMEOUT_MS}ms`));
+    }, TIMEOUT_MS);
+
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      reject(new Error(`could not spawn \`${cmd}\`: ${e.message}`));
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`gemini -p exited ${code}: ${err.trim().slice(0, 300)}`));
+        return;
+      }
+      resolve(out);
+    });
+
+    child.stdin.end(prompt);
+  });
 }
 
 const server = createServer((req, res) => {
@@ -179,7 +161,7 @@ const server = createServer((req, res) => {
   const isOpenAi = req.url.startsWith('/v1/chat/completions');
 
   if (req.method !== 'POST' || (!isAnthropic && !isOpenAi)) {
-    send(404, anthropicError('not_found_error', `no route for ${req.method} ${req.url}`));
+    send(404, apiError('not_found_error', `no route for ${req.method} ${req.url}`));
     return;
   }
 
@@ -190,24 +172,27 @@ const server = createServer((req, res) => {
     try {
       body = JSON.parse(raw);
     } catch (e) {
-      send(400, isAnthropic ? anthropicError('invalid_request_error', `bad json: ${e.message}`) : openAiError(e.message));
+      send(400, isAnthropic ? apiError('invalid_request_error', `bad json: ${e.message}`) : openAiError(e.message));
       return;
     }
-
-    const apiKeyHeader = req.headers['x-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/, '') || '';
 
     const arrived = Date.now();
     await acquire();
     const started = Date.now();
 
     try {
-      const geminiPayload = toGeminiPayload(body);
-      const result = await callGemini(body.model, geminiPayload, apiKeyHeader);
+      const rendered = render(body);
+      const text = await runGeminiCli({
+        system: rendered.system,
+        prompt: rendered.prompt,
+        model: body.model,
+      });
 
+      const model = MODEL || body.model || 'gemini-cli';
       console.error(
-        `[gemini-shim] ${result.model} ${Date.now() - started}ms ${result.text.length}B` +
+        `[gemini-shim (cli)] ${model} ${Date.now() - started}ms ${text.length}B` +
           ` <- ${(body.messages || []).length} turn(s)` +
-          ` [queued ${started - arrived}ms, ${active}/${LIMIT} busy]`,
+          ` [queued ${started - arrived}ms, ${active}/${LIMIT} busy, ${waiting.length} waiting]`,
       );
 
       if (isAnthropic) {
@@ -216,10 +201,10 @@ const server = createServer((req, res) => {
           JSON.stringify({
             type: 'message',
             role: 'assistant',
-            model: result.model,
-            content: [{ type: 'text', text: result.text }],
-            stop_reason: result.finishReason === 'STOP' ? 'end_turn' : 'max_tokens',
-            usage: result.usage,
+            model,
+            content: [{ type: 'text', text }],
+            stop_reason: 'end_turn',
+            usage: { input_tokens: 0, output_tokens: 0 },
           }),
         );
       } else {
@@ -229,25 +214,29 @@ const server = createServer((req, res) => {
             id: `chatcmpl-${Date.now()}`,
             object: 'chat.completion',
             created: Math.floor(Date.now() / 1000),
-            model: result.model,
+            model,
             choices: [
               {
                 index: 0,
-                message: { role: 'assistant', content: result.text },
-                finish_reason: result.finishReason.toLowerCase(),
+                message: { role: 'assistant', content: text },
+                finish_reason: 'stop',
               },
             ],
             usage: {
-              prompt_tokens: result.usage.input_tokens,
-              completion_tokens: result.usage.output_tokens,
-              total_tokens: result.usage.input_tokens + result.usage.output_tokens,
+              prompt_tokens: 0,
+              completion_tokens: 0,
+              total_tokens: 0,
             },
           }),
         );
       }
     } catch (e) {
-      console.error(`[gemini-shim] FAILED after ${Date.now() - started}ms: ${e.message}`);
-      send(500, isAnthropic ? anthropicError('api_error', e.message) : openAiError(e.message));
+      console.error(
+        `[gemini-shim (cli)] FAILED after ${Date.now() - started}ms` +
+          ` [queued ${started - arrived}ms]: ${e.message}`,
+      );
+      // 529 / 500 retryable error
+      send(529, isAnthropic ? apiError('overloaded_error', e.message) : openAiError(e.message));
     } finally {
       release();
     }
@@ -255,8 +244,5 @@ const server = createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.error(`[gemini-shim] listening on http://${HOST}:${PORT}`);
-  console.error(`  - Anthropic endpoint: http://${HOST}:${PORT}/v1/messages`);
-  console.error(`  - OpenAI endpoint:    http://${HOST}:${PORT}/v1/chat/completions`);
-  console.error(`  - Default model:      ${DEFAULT_MODEL}`);
+  console.error(`[gemini-shim] /v1/messages & /v1/chat/completions on http://${HOST}:${PORT} -> gemini -p CLI`);
 });
