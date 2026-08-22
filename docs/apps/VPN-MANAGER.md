@@ -3,4 +3,4 @@
 This is a showcase application that utilizes the `vpn-manager` capability.
 It bridges the WebAssembly sandbox to the host environment natively.
 
-![VPN Manager Demo](../../docs/assets/vpn-manager.gif)
+![VPN Manager Demo](../media/vpn-manager.gif)
