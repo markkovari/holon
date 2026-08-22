@@ -16,6 +16,10 @@
 //!   openai:model        default chat model (default "gpt-4o-mini")
 //!   openai:embed-model  default embedding model (default
 //!                       "text-embedding-3-small")
+//!   openai:timeout      seconds to wait for the first response byte, and
+//!                       between bytes after it (default 600)
+//!   openai:max-tokens   the cap to send when the caller sets none (default
+//!                       4096)
 //!
 //! Secret (comp:secrets/reader):
 //!   openai-api-key      bearer token, granted by reference in the manifest
@@ -46,6 +50,29 @@ struct Component;
 const DEFAULT_BASE: &str = "https://api.openai.com/v1";
 const DEFAULT_MODEL: &str = "gpt-4o-mini";
 const DEFAULT_EMBED_MODEL: &str = "text-embedding-3-small";
+/// How long to wait for a token, when nobody says.
+///
+/// Ten minutes, which is far past anything a hosted API does and exactly right
+/// for the case this exists to serve: a self-hosted server generating on one
+/// machine. Benchmarked on an M2 Max serving Qwen3-Coder-30B-A3B-4bit
+/// (`mlx_lm.benchmark`, single stream): decode runs at 72 tok/s on a 1k prompt,
+/// 47 at 8k and 34 at 16k, while prefill holds ~350 tok/s. So a 12000-token
+/// answer at a realistic context length is roughly six minutes, and a budget
+/// picked for a cloud endpoint kills it mid-sentence. The caller reads that as
+/// `provider-unavailable`, which is a server that was working fine and a
+/// stopwatch that was not.
+///
+/// Decode falls with context because attention reads the whole KV cache per
+/// token, so the number to size against is the one at the context you actually
+/// send, not the headline.
+const DEFAULT_TIMEOUT_SECS: u64 = 600;
+/// The `max_tokens` to send when the caller asked for none.
+///
+/// The codec OMITS the field at zero, which is not the same as unlimited: the
+/// server then applies its own default, and mlx_lm's is small enough to cut a
+/// generated file in half. `agent-writer` deliberately sends 0 and expects the
+/// deployment to decide the budget, so this is where that decision lives.
+const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 // ---- config -------------------------------------------------------------
 
@@ -59,6 +86,22 @@ fn base_url() -> String {
 
 fn default_model() -> String {
     cfg("openai:model").unwrap_or_else(|| DEFAULT_MODEL.to_string())
+}
+
+/// The read budget, in nanoseconds, from `openai:timeout`.
+///
+/// A zero or unparseable value falls back rather than disabling the timeout: a
+/// misconfigured budget that hangs forever is worse than one that is wrong.
+fn default_max_tokens() -> u32 {
+    cfg("openai:max-tokens").and_then(|s| s.trim().parse().ok()).filter(|&n| n > 0).unwrap_or(DEFAULT_MAX_TOKENS)
+}
+
+fn timeout_ns() -> u64 {
+    cfg("openai:timeout")
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .unwrap_or(DEFAULT_TIMEOUT_SECS)
+        .saturating_mul(1_000_000_000)
 }
 
 fn default_embed_model() -> String {
@@ -104,10 +147,10 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     let (scheme, authority, full_path) = parse_url(&url)?;
 
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     if let Some(key) = api_key() {
         let _ = headers.set(
-            &"authorization".to_string(),
+            "authorization",
             &[format!("Bearer {key}").into_bytes()],
         );
     }
@@ -133,7 +176,17 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
         OutgoingBody::finish(out, None).map_err(|_| net("finish body"))?;
     }
 
-    let future = outgoing_handler::handle(req, Some(RequestOptions::new()))
+    // Unset before this, which meant whatever the host defaults to — and a host
+    // default is picked for an API that answers in seconds, not for a local model
+    // that spends twenty minutes decoding. Connect stays short because a refused
+    // connection is immediate; the READ budget is the one that has to be generous.
+    let opts = RequestOptions::new();
+    let read_ns = timeout_ns();
+    let _ = opts.set_connect_timeout(Some(30_000_000_000)); // 30s
+    let _ = opts.set_first_byte_timeout(Some(read_ns));
+    let _ = opts.set_between_bytes_timeout(Some(read_ns));
+
+    let future = outgoing_handler::handle(req, Some(opts))
         .map_err(|e| InferError::ProviderUnavailable(format!("http handle: {e:?}")))?;
     future.subscribe().block();
     let resp = future
@@ -204,7 +257,7 @@ impl Guest for Component {
         let copts = codec::Opts {
             model: &model,
             temperature: opts.temperature,
-            max_tokens: opts.max_tokens,
+            max_tokens: if opts.max_tokens > 0 { opts.max_tokens } else { default_max_tokens() },
             stop: opts.stop.clone(),
             seed: opts.seed,
         };

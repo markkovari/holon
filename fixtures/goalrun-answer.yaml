@@ -20,19 +20,19 @@ components:
 
   - id: allm
     config:
-      anthropic:model: ANSWER_MODEL
-      anthropic:base-url: ANTHROPIC_BASE_URL
-      anthropic:timeout: "ANTHROPIC_TIMEOUT"
-      anthropic:max-tokens: "2048"
+      PROVIDER:model: ANSWER_MODEL
+      PROVIDER:max-tokens: "2048"
+      PROVIDER:base-url: LLM_BASE_URL
+      PROVIDER:timeout: "LLM_TIMEOUT"
     secrets:
-      - key: anthropic-api-key
-        ref: vault://acme/anthropic
+      - key: PROVIDER-api-key
+        ref: vault://acme/llmkey
     host_needs:
       - wasi:http/outgoing-handler
       - wasi:config/store
       - comp:secrets/reader
     egress:
-      - ANTHROPIC_HOST
+      - LLM_HOST
 
 links:
   - from: lprobe

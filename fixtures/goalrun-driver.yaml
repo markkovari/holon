@@ -1,15 +1,15 @@
-# The real driver graph for a live run: probe → driver → writer → anthropic,
+# The real driver graph for a live run: probe → driver → writer → the model,
 # and driver → gate (checks-runner → comp-checks).
 #
-# The model is REAL (anthropic-provider, egress to api.anthropic.com, key from
-# the vault) and the gate is REAL (checks-runner dials comp-checks over loopback,
+# The model is REAL (openai-provider against whatever `--llm-base-url` names —
+# api.openai.com, vLLM, or a self-hosted mlx server — key from the vault) and the gate is REAL (checks-runner dials comp-checks over loopback,
 # which runs `uv run pytest`). This is the whole agent, unmocked.
 #
 # Egress is declared per component here because a fixture writes it directly —
-# api.anthropic.com for the writer's provider, the loopback checks port for the
+# the model host for the writer's provider, the loopback checks port for the
 # gate. The key is a secret by reference, never config (ADR-0051).
 #
-# ANTHROPIC_MODEL and CHECKS_PORT are rewritten by the runner before start.
+# LLM_MODEL and CHECKS_PORT are rewritten by the runner before start.
 
 version: comp/v1
 app: goalrun
@@ -29,19 +29,19 @@ components:
 
   - id: llm
     config:
-      anthropic:model: ANTHROPIC_MODEL
-      anthropic:max-tokens: "MAX_TOKENS"
-      anthropic:base-url: ANTHROPIC_BASE_URL
-      anthropic:timeout: "ANTHROPIC_TIMEOUT"
+      PROVIDER:model: LLM_MODEL
+      PROVIDER:max-tokens: "MAX_TOKENS"
+      PROVIDER:base-url: LLM_BASE_URL
+      PROVIDER:timeout: "LLM_TIMEOUT"
     secrets:
-      - key: anthropic-api-key
-        ref: vault://acme/anthropic
+      - key: PROVIDER-api-key
+        ref: vault://acme/llmkey
     host_needs:
       - wasi:http/outgoing-handler
       - wasi:config/store
       - comp:secrets/reader
     egress:
-      - ANTHROPIC_HOST
+      - LLM_HOST
 
   - id: gate
     config:

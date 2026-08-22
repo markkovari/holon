@@ -52,21 +52,49 @@ const S_MARK: &str = "<<<<<<< SEARCH";
 const DIV: &str = "=======";
 const R_MARK: &str = ">>>>>>> REPLACE";
 
+/// What the model is told about the answer FORMAT.
+///
+/// A worked example, not a schematic — and that is a measured choice, not a
+/// stylistic one. The schematic this replaced (`the exact existing lines to
+/// replace`) was followed by Claude and NOT by Qwen3-Coder-30B, which answered a
+/// real goal with `=== EDIT: path` followed by a ```rust fence and no conflict
+/// markers at all. The parser found no `SEARCH` and discarded the whole answer,
+/// and the branch was recorded as "no edit or file blocks" — a format failure
+/// wearing the costume of a model that cannot code.
+///
+/// Three things fixed it, verified against that model on the same prompt: an
+/// example with real code in it, naming the four marker lines as mandatory, and
+/// saying explicitly that markdown fences are not allowed. A model that has spent
+/// its life emitting ```rust needs to be told this file is not a chat window.
 fn system_prompt() -> String {
     format!(
-        "You change code to satisfy a goal.\n\
+        "You change code to satisfy a goal. You answer ONLY with blocks.\n\
          \n\
-         PREFER edit blocks — emit ONLY the lines that change, never a whole file:\n\
-         {EDIT_OPEN} path/to/file\n\
+         An edit block looks EXACTLY like this, with all four marker lines\n\
+         present:\n\
+         \n\
+         {EDIT_OPEN} src/example.rs\n\
          {S_MARK}\n\
-         the exact existing lines to replace\n\
+         fn greet() -> &'static str {{\n\
+             \"hi\"\n\
+         }}\n\
          {DIV}\n\
-         the new lines\n\
+         fn greet() -> &'static str {{\n\
+             \"hello\"\n\
+         }}\n\
          {R_MARK}\n\
          \n\
-         - the SEARCH text must be copied EXACTLY from the current file, and be\n\
-         \x20 long enough (a few lines) to occur only once\n\
-         - use several edit blocks for several changes\n\
+         The four marker lines are mandatory and must appear in this order:\n\
+           \"{EDIT_OPEN} <path>\", then \"{S_MARK}\", then \"{DIV}\", then\n\
+           \"{R_MARK}\". An answer missing any of them is discarded unread.\n\
+         \n\
+         - NEVER use markdown code fences. No ```rust, no ```. The code goes\n\
+           bare between the marker lines.\n\
+         - the SEARCH text must be copied character-for-character from the file\n\
+           shown to you, and be several lines long so it occurs exactly once\n\
+         - use one edit block per change; emit as many as you need\n\
+         - PREFER edit blocks: emit only the lines that change, never a whole\n\
+           file\n\
          \n\
          To CREATE a new file, or when the change is most of a file, give the\n\
          whole contents instead:\n\
@@ -77,7 +105,7 @@ fn system_prompt() -> String {
          Rules:\n\
          - only write files you were told you may write\n\
          - if a file needs no change, leave it out entirely\n\
-         - no prose before, between or after the blocks"
+         - write no prose. Your entire answer is blocks."
     )
 }
 
