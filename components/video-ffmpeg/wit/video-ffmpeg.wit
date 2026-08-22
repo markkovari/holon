@@ -1,0 +1,7 @@
+package media:video@0.1.0;
+interface ffmpeg {
+    transcode: func(input: string) -> string;
+}
+world component {
+    export ffmpeg;
+}

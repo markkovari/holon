@@ -1,0 +1,15 @@
+[package]
+name = "system-cron"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+[lib]
+crate-type = ["cdylib"]
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+[package.metadata.component]
+package = "os:system"
+[package.metadata.component.target]
+path = "wit"
+world = "component"

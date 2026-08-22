@@ -1,0 +1,7 @@
+package os:desktop@0.1.0;
+interface clipboard {
+    read: func() -> string;
+}
+world component {
+    export clipboard;
+}

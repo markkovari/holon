@@ -1,0 +1,10 @@
+package local:desktop-notifier;
+world domain {
+    import wasi:keyvalue/store@0.2.0-draft;
+    import records:store/store@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/accounts@0.1.0;
+    import os:ui/notifications@0.1.0;
+    export wasi:http/incoming-handler@0.2.0;
+}
