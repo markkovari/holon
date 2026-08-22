@@ -333,6 +333,26 @@ rediscover.
 One line each, and where the work lives. Anything with a goal number is on the
 worklist in [`.comp/goals/`](../.comp/goals/).
 
+**Twelve capabilities are contracts with nothing behind them**
+
+`browser-automation`, `container-docker`, `desktop-clipboard`, `fs-watcher`,
+`image-optimizer`, `lan-scanner`, `llm-local`, `mdns-discovery`, `system-cron`,
+`ui-notifier`, `video-ffmpeg`, `vpn-wireguard`. Every export returns an
+`UNIMPLEMENTED:` marker, and `CATALOG.md` lists them as **contract only**.
+
+None of them can be finished where they live: watching a filesystem needs a
+watch syscall, scanning a LAN needs raw sockets, transcoding needs a
+subprocess, and a `wasm32-wasip2` component has none of those. What each one
+DOES give is the interface a host-side implementation has to satisfy, which is
+the same shape as `wasi:keyvalue` — a contract the host answers.
+
+Each shipped returning a plausible constant instead: `"mocked_clipboard_text_123"`,
+`"192.168.1.1, 192.168.1.10"`, `"wg0 is UP, 2 peers connected"`. That is worse
+than returning nothing, because no caller and no reader of the catalogue could
+tell them apart from components that work. The `-domain` apps in front of them
+are real — auth, records, keyvalue, HTTP — and now report the marker instead of
+the fiction.
+
 **The loop's judgement**
 
 - **The pool is a closed loop now**: a failed branch writes what it failed on, each
