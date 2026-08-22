@@ -30,6 +30,10 @@ mod secrets;
 mod sync;
 mod rpc;
 mod tenant;
+// The gate for `--kv surreal`, kept out of `kv.rs` on purpose: the file that
+// implements a backend must not be the file that judges it.
+#[cfg(test)]
+mod surrealkv_test;
 use kv::KvBackend;
 use tenant::{BucketId, InstanceId, Limits, SharedScope, StartCommand};
 
