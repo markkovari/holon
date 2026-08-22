@@ -1,0 +1,14 @@
+/Users/markkovari/DEV/markkovari/holon/tools/scan-daemon/target/release/deps/serde-b52d605e26dee543.d: /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/markkovari/DEV/markkovari/holon/tools/scan-daemon/target/release/build/serde-cf983305d3e1b233/out/private.rs
+
+/Users/markkovari/DEV/markkovari/holon/tools/scan-daemon/target/release/deps/libserde-b52d605e26dee543.rlib: /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/markkovari/DEV/markkovari/holon/tools/scan-daemon/target/release/build/serde-cf983305d3e1b233/out/private.rs
+
+/Users/markkovari/DEV/markkovari/holon/tools/scan-daemon/target/release/deps/libserde-b52d605e26dee543.rmeta: /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/markkovari/DEV/markkovari/holon/tools/scan-daemon/target/release/build/serde-cf983305d3e1b233/out/private.rs
+
+/Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/Users/markkovari/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/Users/markkovari/DEV/markkovari/holon/tools/scan-daemon/target/release/build/serde-cf983305d3e1b233/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/markkovari/DEV/markkovari/holon/tools/scan-daemon/target/release/build/serde-cf983305d3e1b233/out

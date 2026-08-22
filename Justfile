@@ -8,6 +8,13 @@ set dotenv-load := true
 wit_dir := "wit"
 components := "components"
 rel := components / "target/wasm32-wasip2/release"
+iot_scanner_composed := "components/target/iot-scanner.composed.wasm"
+device_radar_composed := "components/target/device-radar.composed.wasm"
+health_records_composed := "components/target/health-records.composed.wasm"
+freight_tracker_composed := "components/target/freight-tracker.composed.wasm"
+smart_home_composed := "components/target/smart-home.composed.wasm"
+academic_review_composed := "components/target/academic-review.composed.wasm"
+real_estate_escrow_composed := "components/target/real-estate-escrow.composed.wasm"
 guard_wasm := rel / "auth_guard.wasm"
 consumer_wasm := rel / "sample_consumer.wasm"
 ratelimit_wasm := rel / "rate_limiter.wasm"
@@ -2153,3 +2160,102 @@ host-graphviz: compose-graphviz
     cd host && cargo run --release --bin comp-host -- \
       --app graphviz --config-file ../examples/defaults.conf --config default-tenant=graphviz \
       --component ../{{graphviz_composed}} --addr 0.0.0.0:3056
+
+compose-health-records: compose
+	@just _derive health-records-domain {{health_records_composed}}
+
+host-health-records: compose-health-records
+	cd host && cargo run --release --bin comp-host -- \
+	  --app health-records --config-file ../examples/defaults.conf --config default-tenant=health-records \
+	  --component ../{{health_records_composed}} --addr 0.0.0.0:3055
+
+e2e-health-records: compose-health-records
+	cd host && cargo build --release --bin comp-host
+	cd examples/health-records && cargo test --release
+
+screencast-health-records: compose-health-records
+	node tools/screencast/health-records.mjs
+	bash tools/screencast/to-gif.sh tools/screencast/videos/health-records/*.webm docs/media/health-records.gif 820 10
+
+compose-freight-tracker: compose
+	@just _derive freight-tracker-domain {{freight_tracker_composed}}
+
+host-freight-tracker: compose-freight-tracker
+	cd host && cargo run --release --bin comp-host -- \
+	  --app freight-tracker --config-file ../examples/defaults.conf --config default-tenant=freight-tracker \
+	  --component ../{{freight_tracker_composed}} --addr 0.0.0.0:3055
+
+e2e-freight-tracker: compose-freight-tracker
+	cd host && cargo build --release --bin comp-host
+	cd examples/freight-tracker && cargo test --release
+
+screencast-freight-tracker: compose-freight-tracker
+	node tools/screencast/freight-tracker.mjs
+	bash tools/screencast/to-gif.sh tools/screencast/videos/freight-tracker/*.webm docs/media/freight-tracker.gif 820 10
+
+compose-smart-home: compose
+	@just _derive smart-home-domain {{smart_home_composed}}
+
+host-smart-home: compose-smart-home
+	cd host && cargo run --release --bin comp-host -- \
+	  --app smart-home --config-file ../examples/defaults.conf --config default-tenant=smart-home \
+	  --component ../{{smart_home_composed}} --addr 0.0.0.0:3055
+
+e2e-smart-home: compose-smart-home
+	cd host && cargo build --release --bin comp-host
+	cd examples/smart-home && cargo test --release
+
+screencast-smart-home: compose-smart-home
+	node tools/screencast/smart-home.mjs
+	bash tools/screencast/to-gif.sh tools/screencast/videos/smart-home/*.webm docs/media/smart-home.gif 820 10
+
+compose-academic-review: compose
+	@just _derive academic-review-domain {{academic_review_composed}}
+
+host-academic-review: compose-academic-review
+	cd host && cargo run --release --bin comp-host -- \
+	  --app academic-review --config-file ../examples/defaults.conf --config default-tenant=academic-review \
+	  --component ../{{academic_review_composed}} --addr 0.0.0.0:3055
+
+e2e-academic-review: compose-academic-review
+	cd host && cargo build --release --bin comp-host
+	cd examples/academic-review && cargo test --release
+
+screencast-academic-review: compose-academic-review
+	node tools/screencast/academic-review.mjs
+	bash tools/screencast/to-gif.sh tools/screencast/videos/academic-review/*.webm docs/media/academic-review.gif 820 10
+
+compose-real-estate-escrow: compose
+	@just _derive real-estate-escrow-domain {{real_estate_escrow_composed}}
+
+host-real-estate-escrow: compose-real-estate-escrow
+	cd host && cargo run --release --bin comp-host -- \
+	  --app real-estate-escrow --config-file ../examples/defaults.conf --config default-tenant=real-estate-escrow \
+	  --component ../{{real_estate_escrow_composed}} --addr 0.0.0.0:3055
+
+e2e-real-estate-escrow: compose-real-estate-escrow
+	cd host && cargo build --release --bin comp-host
+	cd examples/real-estate-escrow && cargo test --release
+
+screencast-real-estate-escrow: compose-real-estate-escrow
+	node tools/screencast/real-estate-escrow.mjs
+	bash tools/screencast/to-gif.sh tools/screencast/videos/real-estate-escrow/*.webm docs/media/real-estate-escrow.gif 820 10
+
+compose-iot-scanner: compose
+	@just _derive iot-scanner {{iot_scanner_composed}}
+
+compose-device-radar: compose-iot-scanner
+	@just _derive device-radar-domain {{device_radar_composed}}
+
+host-device-radar: compose-device-radar
+	cd host && cargo run --release --bin comp-host -- \
+	  --app device-radar --config-file ../examples/defaults.conf --config default-tenant=device-radar \
+	  --component ../{{device_radar_composed}} --addr 0.0.0.0:3055
+
+e2e-device-radar: compose-device-radar
+	cd host && cargo build --release --bin comp-host
+	cd examples/device-radar && cargo test --release
+
+screencast-device-radar: compose-device-radar
+	node tools/screencast/device-radar.mjs
+	bash tools/screencast/to-gif.sh tools/screencast/videos/device-radar/*.webm docs/media/device-radar.gif 820 10
