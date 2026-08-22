@@ -1,0 +1,27 @@
+package iot:scanner@0.1.0;
+
+interface scanner {
+    enum protocol {
+        bluetooth,
+        wifi,
+        zigbee,
+        thread,
+        matter
+    }
+
+    record device {
+        id: string,
+        name: string,
+        protocol: protocol,
+        rssi: s32,
+        connected: bool
+    }
+
+    scan: func() -> list<device>;
+}
+
+world component {
+    import wasi:http/outgoing-handler@0.2.0;
+
+    export scanner;
+}
