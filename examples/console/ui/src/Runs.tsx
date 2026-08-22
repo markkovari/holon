@@ -34,6 +34,9 @@ const GRACE_POLLS = 3;
 export type Run = {
   id_text: string;
   goal?: string;
+  /// The goal FILE this run was driven from. What joins a run back to the queue
+  /// entry that started it — `goal` is prose and two goals can share a sentence.
+  spec?: string;
   outcome?: string;
   winner?: string;
   url?: string;
