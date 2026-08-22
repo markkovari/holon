@@ -2262,7 +2262,7 @@ screencast-device-radar: compose-device-radar
 
 compose-desktop-notifier:
     @echo "Linking desktop-notifier..."
-    @wac plug components/target/wasm32-wasip2/release/desktop-notifier_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/desktop_notifier_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/desktop_ui_notifier.wasm \
@@ -2274,7 +2274,7 @@ host-desktop-notifier:
 
 compose-clipboard-sync:
     @echo "Linking clipboard-sync..."
-    @wac plug components/target/wasm32-wasip2/release/clipboard-sync_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/clipboard_sync_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/desktop_clipboard.wasm \
@@ -2286,7 +2286,7 @@ host-clipboard-sync:
 
 compose-pdf-generator:
     @echo "Linking pdf-generator..."
-    @wac plug components/target/wasm32-wasip2/release/pdf-generator_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/pdf_generator_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/browser_automation.wasm \
@@ -2298,7 +2298,7 @@ host-pdf-generator:
 
 compose-local-ai:
     @echo "Linking local-ai..."
-    @wac plug components/target/wasm32-wasip2/release/local-ai_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/local_ai_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/llm_local.wasm \
@@ -2310,7 +2310,7 @@ host-local-ai:
 
 compose-docker-manager:
     @echo "Linking docker-manager..."
-    @wac plug components/target/wasm32-wasip2/release/docker-manager_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/docker_manager_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/container_docker.wasm \
@@ -2322,7 +2322,7 @@ host-docker-manager:
 
 compose-video-transcoder:
     @echo "Linking video-transcoder..."
-    @wac plug components/target/wasm32-wasip2/release/video-transcoder_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/video_transcoder_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/video_ffmpeg.wasm \
@@ -2334,7 +2334,7 @@ host-video-transcoder:
 
 compose-lan-scanner:
     @echo "Linking lan-scanner..."
-    @wac plug components/target/wasm32-wasip2/release/lan-scanner_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/lan_scanner_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/lan_scanner.wasm \
@@ -2346,7 +2346,7 @@ host-lan-scanner:
 
 compose-mdns-discoverer:
     @echo "Linking mdns-discoverer..."
-    @wac plug components/target/wasm32-wasip2/release/mdns-discoverer_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/mdns_discoverer_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/mdns_discovery.wasm \
@@ -2358,7 +2358,7 @@ host-mdns-discoverer:
 
 compose-fs-watcher:
     @echo "Linking fs-watcher..."
-    @wac plug components/target/wasm32-wasip2/release/fs-watcher_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/fs_watcher_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/fs_watcher.wasm \
@@ -2370,7 +2370,7 @@ host-fs-watcher:
 
 compose-vpn-manager:
     @echo "Linking vpn-manager..."
-    @wac plug components/target/wasm32-wasip2/release/vpn-manager_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/vpn_manager_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/vpn_wireguard.wasm \
@@ -2382,7 +2382,7 @@ host-vpn-manager:
 
 compose-image-optimizer:
     @echo "Linking image-optimizer..."
-    @wac plug components/target/wasm32-wasip2/release/image-optimizer_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/image_optimizer_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/image_optimizer.wasm \
@@ -2394,7 +2394,7 @@ host-image-optimizer:
 
 compose-cron-scheduler:
     @echo "Linking cron-scheduler..."
-    @wac plug components/target/wasm32-wasip2/release/cron-scheduler_domain.wasm \
+    @wac plug components/target/wasm32-wasip2/release/cron_scheduler_domain.wasm \
         --plug components/target/auth_guard.composed.wasm \
         --plug components/target/wasm32-wasip2/release/record_store.wasm \
         --plug components/target/wasm32-wasip2/release/system_cron.wasm \
