@@ -1,0 +1,145 @@
+# Verify a push. Nothing did, until now.
+#
+# The repository has 202 component crates, four Cargo workspaces and a Playwright
+# suite, and the only workflow that has ever run here is Dependabot's. Every claim
+# about the tree being green has been somebody running a command locally and
+# remembering the answer.
+#
+# ## What this is allowed to do, and what it is not
+#
+# It BUILDS and it TESTS. It does not deploy, it does not publish, and it does not
+# touch the lattice or a model provider — every job here runs offline apart from
+# fetching crates, so nothing in CI can spend money or open a pull request.
+#
+# ## Why the exclusions are named rather than hidden
+#
+# Two jobs carry an exclusion with a PR number on it. That is deliberate: a
+# suppression whose removal condition is written down is a TODO, and one without
+# is a permanent lie. Both come out as their PRs land.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first one's answer irrelevant, and
+# a 200-crate wasm build is not cheap enough to run for an answer nobody wants.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # A failure is worth more than a backtrace-less panic, and this costs nothing.
+  RUST_BACKTRACE: 1
+
+jobs:
+  components:
+    name: components (wasm32-wasip2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the wasm target
+        run: rustup target add wasm32-wasip2
+
+      # Pinned to the version this tree is developed against. `cargo-component`
+      # generates every `bindings.rs`, which are gitignored — so without this step
+      # nothing in components/ even parses, and the failure looks like missing
+      # modules rather than a missing tool.
+      - name: Install cargo-component
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-component@0.21.1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: components -> target
+
+      - name: Generate bindings
+        working-directory: components
+        run: cargo component check --release
+
+      - name: Build
+        working-directory: components
+        run: cargo build --release --target wasm32-wasip2
+
+      - name: Test
+        working-directory: components
+        # `browser-automation` needs bindings that only exist after a component
+        # build of its own; `semver-range` fails 7 held-out spec tests on main.
+        # Both exclusions come out when #115 lands.
+        run: cargo test --workspace --exclude browser-automation --exclude semver-range
+
+  native:
+    name: native workspaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One red workspace should not hide the state of the other two.
+      fail-fast: false
+      matrix:
+        workspace: [reconciler, host, cli]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ matrix.workspace }} -> target
+      - name: Build
+        working-directory: ${{ matrix.workspace }}
+        run: cargo build --release
+      - name: Test
+        working-directory: ${{ matrix.workspace }}
+        # The reconciler's integration tests want NATS, SurrealDB and a model.
+        # `--lib --bins` keeps CI to what it can honestly run; the rest stay a
+        # local and deliberate act.
+        run: cargo test --release --lib --bins
+
+  lint:
+    name: clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add wasm32-wasip2
+      - run: rustup component add clippy
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-component@0.21.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: components -> target
+      - name: Generate bindings
+        working-directory: components
+        run: cargo component check --release
+      - name: Clippy
+        working-directory: components
+        # NOT `-D warnings` yet: main carries 334 of them. #112 clears the
+        # backlog to 22, and this line becomes `-- -D warnings` the day it
+        # lands. Until then the job reports without blocking, which is worth
+        # more than a check nobody can turn green.
+        run: cargo clippy --workspace --exclude browser-automation --target wasm32-wasip2
+
+  console:
+    name: console SPA
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/console/ui/package-lock.json
+      - working-directory: examples/console/ui
+        run: npm ci
+      - name: Typecheck
+        working-directory: examples/console/ui
+        run: npx tsc --noEmit -p tsconfig.json
+      - name: Build
+        working-directory: examples/console/ui
+        run: npm run build
