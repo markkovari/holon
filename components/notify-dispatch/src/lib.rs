@@ -96,7 +96,7 @@ fn parse_url(url: &str) -> Result<(Scheme, String, String), NotifyError> {
 fn post(url: &str, body: &[u8]) -> Result<u16, NotifyError> {
     let (scheme, authority, path) = parse_url(url)?;
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
 
     let req = OutgoingRequest::new(headers);
     req.set_method(&Method::Post).map_err(|_| net_err("set method"))?;

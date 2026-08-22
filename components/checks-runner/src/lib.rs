@@ -78,7 +78,7 @@ fn files_json(files: &[bindings::exports::graph::fitness::evaluator::File]) -> s
 fn post(body: &str) -> Result<(u16, String), EvalError> {
     let (scheme, authority, path) = endpoint()?;
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
 
     let req = OutgoingRequest::new(headers);
     let net = |m: String| EvalError::Unavailable(m);

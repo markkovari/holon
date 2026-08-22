@@ -312,7 +312,7 @@ impl Guest for Component {
             // slot. A later attempt that merely ties has not improved on it, and
             // preferring the newer one would make a run's answer depend on how
             // many times it happened to tie.
-            if best.as_ref().map_or(true, |(s, _, _)| v.score > *s) {
+            if best.as_ref().is_none_or(|(s, _, _)| v.score > *s) {
                 best = Some((v.score, files, failures.clone()));
                 stale = 0;
             } else {

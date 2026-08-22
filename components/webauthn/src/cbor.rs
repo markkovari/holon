@@ -117,7 +117,7 @@ fn head(buf: &[u8]) -> Result<(u8, u64, usize), String> {
     let info = b0 & 0x1f;
     let (arg, used) = match info {
         0..=23 => (info as u64, 1),
-        24 | 25 | 26 | 27 => {
+        24..=27 => {
             let n = 1usize << (info - 24); // 1, 2, 4, 8 bytes
             if buf.len() < 1 + n {
                 return Err("truncated cbor length".into());

@@ -116,7 +116,7 @@ fn api_info() -> Outcome {
 
 fn bearer(request: &IncomingRequest) -> Option<String> {
     let headers = request.headers();
-    let vals = headers.get(&"authorization".to_string());
+    let vals = headers.get("authorization");
     let raw = vals.first()?;
     let s = String::from_utf8(raw.clone()).ok()?;
     s.strip_prefix("Bearer ").map(|t| t.to_string())
@@ -444,7 +444,7 @@ fn create_photo(request: &IncomingRequest) -> Outcome {
         "image_url": image_url,
         "image_data": image_data,
         "author": principal.subject,
-        "author_name": principal.subject.split(':').last().unwrap_or(&principal.subject),
+        "author_name": principal.subject.split(':').next_back().unwrap_or(&principal.subject),
         "description": user_desc,
         "ai_narrative": ai_narrative,
         "ai_critique": ai_critique,
@@ -822,10 +822,10 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     };
 
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
-    let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
-    let _ = headers.set(&"access-control-allow-headers".to_string(), &[b"content-type, authorization".to_vec()]);
-    let _ = headers.set(&"access-control-allow-methods".to_string(), &[b"GET, POST, DELETE, OPTIONS".to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
+    let _ = headers.set("access-control-allow-headers", &[b"content-type, authorization".to_vec()]);
+    let _ = headers.set("access-control-allow-methods", &[b"GET, POST, DELETE, OPTIONS".to_vec()]);
 
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(code);

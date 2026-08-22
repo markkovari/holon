@@ -98,7 +98,7 @@ impl Api {
 fn call(api: &Api, method: Method, path: &str, body: Option<String>) -> Result<(u16, String), ForgeError> {
     let headers = Fields::new();
     let set = |k: &str, v: &str| {
-        let _ = headers.set(&k.to_string(), &[v.as_bytes().to_vec()]);
+        let _ = headers.set(k, &[v.as_bytes().to_vec()]);
     };
     set("accept", "application/vnd.github+json");
     set("authorization", &format!("Bearer {}", api.token));
@@ -115,7 +115,7 @@ fn call(api: &Api, method: Method, path: &str, body: Option<String>) -> Result<(
     req.set_method(&method).map_err(|_| net("set method".into()))?;
     req.set_scheme(Some(&api.scheme)).map_err(|_| net("set scheme".into()))?;
     req.set_authority(Some(&api.authority)).map_err(|_| net("set authority".into()))?;
-    req.set_path_with_query(Some(&path.to_string())).map_err(|_| net("set path".into()))?;
+    req.set_path_with_query(Some(path)).map_err(|_| net("set path".into()))?;
 
     let out = req.body().map_err(|_| net("no request body".into()))?;
     {

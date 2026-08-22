@@ -81,10 +81,10 @@ impl Guest for Component {
             (Method::Get, "/sse") => {
                 let headers = Fields::new();
                 let _ = headers.set(
-                    &"content-type".to_string(),
+                    "content-type",
                     &[b"text/event-stream".to_vec()],
                 );
-                let _ = headers.set(&"cache-control".to_string(), &[b"no-cache".to_vec()]);
+                let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
                 let response = OutgoingResponse::new(headers);
                 let _ = response.set_status_code(200);
                 let out = response.body().expect("outgoing body");
@@ -155,7 +155,7 @@ impl Guest for Component {
             // 6. + blobstore read (blob seeded by /blob-rw).
             (Method::Post, "/blob-read") => match parse_pet(&request) {
                 Some(_) => match container() {
-                    Ok(c) => match c.get_data(&BLOB_KEY.to_string(), 0, u64::MAX) {
+                    Ok(c) => match c.get_data(BLOB_KEY, 0, u64::MAX) {
                         Ok(incoming) => {
                             let n = read_incoming(incoming);
                             let body = format!("{{\"bytes\":{n}}}");
@@ -175,7 +175,7 @@ impl Guest for Component {
                         let payload = vec![0x42u8; 1024];
                         let out = OutgoingValue::new_outgoing_value();
                         // register the sink FIRST, then stream the body into it.
-                        if c.write_data(&BLOB_KEY.to_string(), &out).is_err() {
+                        if c.write_data(BLOB_KEY, &out).is_err() {
                             return respond(response_out, 500, "text/plain", b"blob write");
                         }
                         let Ok(stream) = out.outgoing_value_write_body() else {
@@ -195,7 +195,7 @@ impl Guest for Component {
                         if OutgoingValue::finish(out).is_err() {
                             return respond(response_out, 500, "text/plain", b"blob finish");
                         }
-                        match c.get_data(&BLOB_KEY.to_string(), 0, u64::MAX) {
+                        match c.get_data(BLOB_KEY, 0, u64::MAX) {
                             Ok(incoming) => {
                                 let n = read_incoming(incoming);
                                 let body = format!("{{\"bytes\":{n}}}");
@@ -235,8 +235,8 @@ fn read_incoming(incoming: bindings::wasi::blobstore::types::IncomingValue) -> u
 }
 
 fn container() -> Result<bindings::wasi::blobstore::container::Container, String> {
-    blobstore::get_container(&CONTAINER.to_string())
-        .or_else(|_| blobstore::create_container(&CONTAINER.to_string()))
+    blobstore::get_container(CONTAINER)
+        .or_else(|_| blobstore::create_container(CONTAINER))
         .map_err(|e| format!("blobstore: {e}"))
 }
 
@@ -291,7 +291,7 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 
 fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

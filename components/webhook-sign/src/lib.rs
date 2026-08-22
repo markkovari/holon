@@ -113,7 +113,7 @@ impl Guest for Component {
                 // optional replay window check.
                 if tolerance_seconds > 0 {
                     let now = now();
-                    let delta = if now >= t { now - t } else { t - now };
+                    let delta = now.abs_diff(t);
                     if delta > tolerance_seconds {
                         return Err(SignError::TimestampOutOfTolerance);
                     }

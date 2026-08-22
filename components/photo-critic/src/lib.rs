@@ -62,19 +62,19 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// POST a JSON body to Anthropic and return (status, response-bytes).
 fn post_anthropic(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
-    let _ = headers.set(&"content-length".to_string(), &[body.len().to_string().into_bytes()]);
-    let _ = headers.set(&"connection".to_string(), &[b"close".to_vec()]);
-    let _ = headers.set(&"anthropic-version".to_string(), &[b"2023-06-01".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+    let _ = headers.set("content-length", &[body.len().to_string().into_bytes()]);
+    let _ = headers.set("connection", &[b"close".to_vec()]);
+    let _ = headers.set("anthropic-version", &[b"2023-06-01".to_vec()]);
     if let Some(k) = api_key() {
-        let _ = headers.set(&"x-api-key".to_string(), &[k.into_bytes()]);
+        let _ = headers.set("x-api-key", &[k.into_bytes()]);
     }
     let req = OutgoingRequest::new(headers);
     let e = |m: &str| m.to_string();
     req.set_method(&Method::Post).map_err(|_| e("method"))?;
     req.set_scheme(Some(&Scheme::Https)).map_err(|_| e("scheme"))?;
-    req.set_authority(Some(&"api.anthropic.com".to_string())).map_err(|_| e("authority"))?;
-    req.set_path_with_query(Some(&"/v1/messages".to_string())).map_err(|_| e("path"))?;
+    req.set_authority(Some("api.anthropic.com")).map_err(|_| e("authority"))?;
+    req.set_path_with_query(Some("/v1/messages")).map_err(|_| e("path"))?;
     {
         let out = req.body().map_err(|_| e("body"))?;
         {
@@ -185,7 +185,7 @@ fn evaluate(request: &IncomingRequest) -> Result<String, String> {
 
 fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[ctype.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     let resp = OutgoingResponse::new(headers);
     let _ = resp.set_status_code(status);
     let out = resp.body().expect("body");

@@ -361,7 +361,7 @@ fn golem_book(url: &str, host: &str, workflow: &str) -> Result<String, String> {
     // resolves to loopback locally and yields the right `Host` automatically.
     let authority = if host.is_empty() { url_authority } else { host.to_string() };
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let req = OutgoingRequest::new(headers);
     req.set_method(&Method::Post).map_err(|_| "set method".to_string())?;
     req.set_scheme(Some(&scheme)).map_err(|_| "set scheme".to_string())?;
@@ -568,7 +568,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 
 fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");
