@@ -1,0 +1,98 @@
+title = "a SurrealDB kv backend for the host"
+
+# The whole host crate, on purpose.
+#
+# `kv.rs` alone is 50 KB and would fit in any window, but a backend is not
+# written against its own file: `BucketId` lives in tenant.rs, the `--kv` flag and
+# the runtime that `block_in_place` needs live in main.rs, and the gate is a test
+# module that only exists because main.rs declares it. A goal scoped to the file
+# it writes hands the model a trait to implement and hides everything the
+# implementation has to agree with.
+#
+# ~91k tokens as tracked, which is why this goal is also the context measurement:
+# it does not fit in Qwen2.5-Coder-32B's 32768 and does fit, four times over, in
+# Qwen3-Coder-30B-A3B's 262144.
+# `lattice/` is here because `host/Cargo.toml` has `comp-lattice = { path =
+# "../lattice" }`, and cargo cannot load a manifest whose path dependency is not
+# in the tree. The first run of this goal died on exactly that — a gate error
+# that reads as a broken check and is really a base tree missing one directory.
+base_paths = ["host/", "lattice/"]
+
+# The ONLY writable path. Everything else in the tree is readable context, and
+# the gate in particular is not writable — a test that lives where the code can
+# reach it is a test the code can rewrite.
+writable = ["host/src/kv.rs"]
+
+text = """
+Add a SurrealDB-backed key-value store to the host, selected by `--kv surreal`.
+
+## What already exists
+
+`host/src/kv.rs` defines `trait KvBackend` and four implementations of it —
+`MemoryKv`, `RedisKv`, `SqliteKv`, `NatsKv` — and a `build(kind, redis_url,
+nats_url, sqlite_path, replicas)` that maps a backend NAME to one of them. Read
+all four before writing a fifth: they are the specification, and each one answers
+the same questions in a way that suits its store.
+
+## What to add
+
+A `SurrealKv` that implements every method of `KvBackend`, and a `"surreal"` arm
+in `build` that constructs it. The connection URL arrives in the `sqlite_path`
+parameter — that parameter is already the "one string this backend needs" slot,
+and adding a sixth parameter would mean editing every caller for one backend.
+Update the error message in the fallback arm so it lists `surreal` alongside the
+others.
+
+Talk to SurrealDB over its HTTP `/sql` endpoint with `reqwest`, which is already
+a dependency. Authenticate as `root`/`root` with HTTP basic auth, and send the
+`surreal-ns` and `surreal-db` headers — namespace `comp`, database `kv` — the way
+`components/knowledge-graph` already does against the same server.
+
+## The things that are easy to get wrong
+
+- **`KvBackend` is a SYNC trait and `reqwest` is async.** `NatsKv` solves exactly
+  this a few hundred lines above you: it holds a `tokio::runtime::Handle` captured
+  at construction and bridges each call with
+  `tokio::task::block_in_place(|| handle.block_on(fut))`. Do the same. A
+  `Runtime::new()` per call would build a runtime inside a runtime and panic.
+
+- **`shared()` must return `true`.** A SurrealDB reached over the network is
+  visible to every replica, which is the entire reason to add this backend rather
+  than use `SqliteKv`. Getting this wrong does not fail a test in an obvious
+  place; it silently changes where the platform is willing to schedule an app.
+
+- **Every write bumps the revision, `set` included.** ADR-0065 measured a lost
+  update caused by a revision that only moved for guarded writes. `get_revision`
+  returns `(revision, value)`, and `set_if_revision(.., expected)` must compare
+  *at the store* — a read-then-write in Rust is not a guard, because another
+  process can land between the two. Use a single SurrealQL statement with the
+  revision in its `WHERE`, and decide `Committed` vs `Conflict` from whether it
+  matched a row. `expected == 0` means "must not exist yet", so create and update
+  are the same call.
+
+- **`increment` is atomic and starts at zero.** An absent counter incremented by
+  1 is 1, not an error, and the value is stored as a decimal string so `get`
+  returns `b"5"`.
+
+- **Buckets are namespaced.** `BucketId` (see `host/src/tenant.rs`) is already a
+  tenant-scoped name. Keep it as a field on the row or in the table name, but do
+  not flatten it — two tenants writing the same key must not see each other's
+  value.
+
+- **A missing key is `Ok(None)`, not an error.** So is deleting one that is not
+  there. Every other backend here is idempotent about it.
+
+## What judges this
+
+`host/src/surrealkv_test.rs`, which is NOT writable, against a real SurrealDB on
+127.0.0.1:8000. Read it — it is the specification in executable form, and it is
+what the gate runs.
+"""
+
+[[check]]
+id = "surreal-kv"
+required = true
+weight = 1
+# `bash -c` because the gate's allow-list is the first word of the command, and
+# the build has to happen inside `host/` where its own workspace manifest is.
+command = ["bash", "-c", "cd host && cargo test --bin comp-host surrealkv_test -- --test-threads=1"]
