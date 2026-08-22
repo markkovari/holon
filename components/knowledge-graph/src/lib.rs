@@ -180,7 +180,7 @@ fn write_all(stream: &OutputStream, mut bytes: &[u8]) -> Result<(), String> {
 fn sql(conn: &Conn, statement: &str) -> Result<String, GraphError> {
     let headers = Fields::new();
     let set = |k: &str, v: &str| {
-        let _ = headers.set(&k.to_string(), &[v.as_bytes().to_vec()]);
+        let _ = headers.set(k, &[v.as_bytes().to_vec()]);
     };
     set("accept", "application/json");
     set("content-type", "text/plain");

@@ -395,8 +395,8 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 
 fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
-    let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

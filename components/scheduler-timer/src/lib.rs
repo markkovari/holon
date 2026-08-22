@@ -24,7 +24,7 @@
 //! Recurrence catch-up: a recurring job whose run_at is far in the past
 //! advances to the next slot STRICTLY AFTER `now` (run_at += period*k until
 //! > now), so a relay that was down for a day fires the job once, not a burst
-//! of a day's backlog.
+//! > of a day's backlog.
 //!
 //! Idempotent keying: `schedule-*` REPLACES any existing job with the same key,
 //! so "nightly-sweep" scheduled on every boot never accumulates duplicates.

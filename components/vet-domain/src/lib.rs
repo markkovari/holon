@@ -82,7 +82,7 @@ impl Guest for Component {
         let method = request.method();
         let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
-        let query = path.splitn(2, '?').nth(1).unwrap_or("").to_string();
+        let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
 
         // segment helpers for /appointments/{id}/... and /pets/{id}/... routes.
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
@@ -183,8 +183,8 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
             if let AuthError::RateLimited(secs) = e {
                 let body = format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}");
                 let headers = Fields::new();
-                let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
-                let _ = headers.set(&"retry-after".to_string(), &[secs.to_string().into_bytes()]);
+                let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+                let _ = headers.set("retry-after", &[secs.to_string().into_bytes()]);
                 respond_built(response_out, 429, headers, body.as_bytes());
             } else {
                 let (code, msg) = auth_error(&e);
@@ -1555,7 +1555,7 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 /// First value of a request header as a UTF-8 string.
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
     let headers = request.headers();
-    for v in headers.get(&name.to_string()) {
+    for v in headers.get(name) {
         if let Ok(s) = String::from_utf8(v) {
             return Some(s);
         }
@@ -1775,7 +1775,7 @@ fn respond_built(response_out: ResponseOutparam, status: u16, headers: Fields, b
 
 fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

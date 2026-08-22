@@ -230,7 +230,7 @@ impl Guest for Component {
         };
 
         let headers = Fields::new();
-        let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
         let response = OutgoingResponse::new(headers);
         let _ = response.set_status_code(200);
         let out_body = response.body().expect("outgoing body");
