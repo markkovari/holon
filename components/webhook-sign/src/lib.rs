@@ -145,3 +145,44 @@ impl Guest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The comparison a signature check hangs on.
+    ///
+    /// It must be constant-time in the CONTENT — no early return on the first
+    /// differing byte — because an attacker who can time the check otherwise
+    /// recovers a valid signature one byte at a time. Timing cannot be asserted
+    /// here; what can be asserted is the shape that makes it possible: every
+    /// byte is folded into one accumulator, so equal-length inputs always do
+    /// the same amount of work.
+    #[test]
+    fn ct_eq_agrees_with_equality_on_every_edge() {
+        assert!(ct_eq("", ""));
+        assert!(ct_eq("abc", "abc"));
+        assert!(!ct_eq("abc", "abd"), "a difference in the LAST byte");
+        assert!(!ct_eq("abc", "bbc"), "a difference in the FIRST byte");
+        assert!(!ct_eq("abc", "abcd"), "a prefix is not a match");
+        assert!(!ct_eq("abcd", "abc"), "nor is a superset");
+        assert!(!ct_eq("", "a"));
+        // Case matters: hex signatures are compared as written.
+        assert!(!ct_eq("ABC", "abc"));
+    }
+
+    /// A signature is hex of a fixed width, and the width is what a caller
+    /// checks a truncated header against.
+    #[test]
+    fn hmac_hex_is_lowercase_hex_of_a_fixed_width() {
+        let sig = hmac_hex("key", b"payload");
+        assert_eq!(sig.len(), 64, "sha256 is 32 bytes, 64 hex chars");
+        assert!(sig.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        // Deterministic, and sensitive to both inputs.
+        assert_eq!(sig, hmac_hex("key", b"payload"));
+        assert_ne!(sig, hmac_hex("key2", b"payload"));
+        assert_ne!(sig, hmac_hex("key", b"payload2"));
+        // A one-bit change in the body changes the signature.
+        assert_ne!(hmac_hex("k", b"a"), hmac_hex("k", b"b"));
+    }
+}

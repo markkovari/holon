@@ -528,3 +528,70 @@ impl Guest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Everything that can start a tag or break an attribute must not survive.
+    ///
+    /// Both quote forms matter: this output goes into `href="..."` and a bare
+    /// `'` is enough to escape a single-quoted attribute on the day someone
+    /// changes the emitter to use them.
+    #[test]
+    fn escape_covers_every_character_that_can_start_markup() {
+        assert_eq!(escape("<script>"), "&lt;script&gt;");
+        assert_eq!(escape("a & b"), "a &amp; b");
+        assert_eq!(escape("\"quoted\""), "&quot;quoted&quot;");
+        assert_eq!(escape("it's"), "it&#x27;s");
+        // The ampersand goes FIRST or the other entities get double-escaped.
+        assert_eq!(escape("&lt;"), "&amp;lt;");
+        assert_eq!(escape("plain text 123"), "plain text 123");
+    }
+
+    /// The allow-list is the point: anything not named is rejected, so a scheme
+    /// nobody thought of cannot become an `href`.
+    #[test]
+    fn only_allow_listed_schemes_can_become_an_href() {
+        assert!(sanitize_url("https://example.com").is_some());
+        assert!(sanitize_url("http://example.com").is_some());
+        assert!(sanitize_url("mailto:a@b.com").is_some());
+        assert!(sanitize_url("/relative/path").is_some());
+        assert!(sanitize_url("#anchor").is_some());
+
+        assert!(sanitize_url("javascript:alert(1)").is_none());
+        assert!(sanitize_url("data:text/html,<script>").is_none());
+        assert!(sanitize_url("vbscript:msgbox").is_none());
+        assert!(sanitize_url("file:///etc/passwd").is_none());
+        // Not on the list, so not allowed — the default is refusal.
+        assert!(sanitize_url("ftp://example.com").is_none());
+    }
+
+    /// The evasions this function exists for.
+    ///
+    /// Case folding and hidden control characters are how `javascript:` gets
+    /// past a naive prefix check: `JaVaScRiPt:` reads differently to a string
+    /// compare, and `java\tscript:` and `java\nscript:` are both parsed as the
+    /// scheme by browsers while failing a literal match.
+    #[test]
+    fn scheme_checks_survive_case_and_control_character_evasion() {
+        assert!(sanitize_url("JaVaScRiPt:alert(1)").is_none());
+        assert!(sanitize_url("JAVASCRIPT:alert(1)").is_none());
+        assert!(sanitize_url("java\tscript:alert(1)").is_none());
+        assert!(sanitize_url("java\nscript:alert(1)").is_none());
+        assert!(sanitize_url("java\u{0}script:alert(1)").is_none());
+        // A control character ANYWHERE is a rejection, not a strip-and-continue:
+        // stripping would hand back a URL the caller never wrote.
+        assert!(sanitize_url("https://exa\tmple.com").is_none());
+        // Case folding must not break the legitimate side.
+        assert!(sanitize_url("HTTPS://EXAMPLE.COM").is_some());
+    }
+
+    /// Leading and trailing whitespace is trimmed, and trimming happens BEFORE
+    /// the scheme check — otherwise a leading space defeats it.
+    #[test]
+    fn surrounding_whitespace_does_not_defeat_the_scheme_check() {
+        assert_eq!(sanitize_url("  https://example.com  ").as_deref(), Some("https://example.com"));
+        assert!(sanitize_url("   javascript:alert(1)   ").is_none());
+    }
+}

@@ -343,3 +343,45 @@ impl Guest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// RFC 6901 §4: `~1` is unescaped BEFORE `~0`, and the order is the whole
+    /// rule.
+    ///
+    /// Reversed, `~01` decodes to `/` instead of the literal `~1`: the `~0`
+    /// pass turns it into `~1`, and the `~1` pass then eats what it just
+    /// produced. That points an edit at a different member of the document,
+    /// which for a patch is a silently wrong write rather than an error.
+    #[test]
+    fn pointer_tokens_unescape_in_the_order_the_rfc_specifies() {
+        assert_eq!(unescape_token("~1"), "/");
+        assert_eq!(unescape_token("~0"), "~");
+        assert_eq!(unescape_token("~01"), "~1", "NOT '/' — this is the ordering trap");
+        assert_eq!(unescape_token("~10"), "/0");
+        assert_eq!(unescape_token("a~1b~0c"), "a/b~c");
+        assert_eq!(unescape_token("plain"), "plain");
+    }
+
+    /// The empty pointer is the whole document, and `/` is a one-element path
+    /// to the member named by the empty string — which is a legal JSON key and
+    /// the case people delete by accident.
+    #[test]
+    fn the_empty_pointer_and_the_empty_key_are_different_things() {
+        assert_eq!(parse_pointer("").unwrap(), Vec::<String>::new(), "the whole document");
+        assert_eq!(parse_pointer("/").unwrap(), vec![""], "one member, named \"\"");
+        assert_eq!(parse_pointer("/a/b").unwrap(), vec!["a", "b"]);
+        assert_eq!(parse_pointer("/a//b").unwrap(), vec!["a", "", "b"]);
+    }
+
+    /// A pointer that does not start with `/` is rejected rather than guessed
+    /// at. Treating `a/b` as `/a/b` would let a typo address a real member.
+    #[test]
+    fn a_pointer_must_be_empty_or_absolute() {
+        assert!(parse_pointer("a/b").is_err());
+        assert!(parse_pointer("~0").is_err());
+        assert!(parse_pointer(" /a").is_err(), "no leading-space tolerance");
+    }
+}
