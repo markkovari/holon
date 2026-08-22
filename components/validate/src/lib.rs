@@ -124,17 +124,16 @@ fn check_present(rule: &Rule, value: &Value, out: &mut Vec<FieldError>) {
                         ));
                     }
                 }
-                Kind::Uuid => {
-                    if !is_uuid_shape(s) {
+                Kind::Uuid
+                    if !is_uuid_shape(s) => {
                         out.push(err(field, "format", "not a valid UUID"));
                     }
-                }
                 _ => {}
             }
         }
         Kind::Integer => {
             let is_int = match value {
-                Value::Number(n) => n.is_i64() || n.is_u64() || n.as_f64().map_or(false, |f| f.fract() == 0.0),
+                Value::Number(n) => n.is_i64() || n.is_u64() || n.as_f64().is_some_and(|f| f.fract() == 0.0),
                 _ => false,
             };
             if !is_int {

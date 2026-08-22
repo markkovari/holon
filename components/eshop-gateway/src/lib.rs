@@ -86,7 +86,7 @@ fn method_str(m: &Method) -> String {
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
     request
         .headers()
-        .get(&name.to_string())
+        .get(name)
         .into_iter()
         .next()
         .and_then(|v| String::from_utf8(v).ok())
@@ -125,7 +125,7 @@ fn read_body(request: &IncomingRequest) -> Vec<u8> {
 
 fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

@@ -40,7 +40,7 @@ impl Guest for Component {
         let method = request.method();
         let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
-        let query = path.splitn(2, '?').nth(1).unwrap_or("").to_string();
+        let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, seg.as_slice()) {
@@ -476,7 +476,7 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
     request
         .headers()
-        .get(&name.to_string())
+        .get(name)
         .into_iter()
         .find_map(|v| String::from_utf8(v).ok())
 }
@@ -536,9 +536,9 @@ fn respond(
     content_type: &str,
 ) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     for (k, v) in extra {
-        let _ = headers.set(&k.to_string(), &[v.as_bytes().to_vec()]);
+        let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
     }
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);

@@ -226,7 +226,7 @@ impl Guest for Component {
         }
         // Normalise by the max possible per-bucket sum so values land in 0..=1.
         // Each bucket holds ceil(len / DIMS) bytes, each at most 255.
-        let per_bucket = (bytes.len() + EMBED_DIMS - 1) / EMBED_DIMS;
+        let per_bucket = bytes.len().div_ceil(EMBED_DIMS);
         let denom = (per_bucket as u64 * 255).max(1) as f32;
         let vec = sums.iter().map(|&s| s as f32 / denom).collect();
         Ok(vec)

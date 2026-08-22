@@ -351,7 +351,7 @@ fn pump() -> Outcome {
                             advanced += 1;
                         }
                     }
-                    let _ = bus::ack(&ev.topic, GROUP, &[ev.id.clone()]);
+                    let _ = bus::ack(&ev.topic, GROUP, std::slice::from_ref(&ev.id));
                 }
             }
             Err(e) => return bus_err(e),
@@ -480,7 +480,7 @@ fn auth_error(e: &AuthError) -> (u16, &'static str) {
 fn bearer(request: &IncomingRequest) -> Option<String> {
     request
         .headers()
-        .get(&"authorization".to_string())
+        .get("authorization")
         .into_iter()
         .find_map(|v| String::from_utf8(v).ok())
         .and_then(|s| s.strip_prefix("Bearer ").map(|tok| tok.trim().to_string()))
@@ -510,7 +510,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 
 fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

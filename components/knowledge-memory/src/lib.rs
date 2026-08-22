@@ -480,7 +480,7 @@ impl Guest for Component {
             // exactly the case they exist for — the clinic lesson that a payroll
             // exporter needs scores 0.42 against it, and any threshold worth
             // setting is higher than that (ADR-0090).
-            let matched_by_tag = by_tag.iter().any(|h| *h == s.handle);
+            let matched_by_tag = by_tag.contains(&s.handle);
             if !matched_by_tag
                 && s.similarity.is_some()
                 && opts.min_similarity > 0.0

@@ -84,7 +84,7 @@ fn guard(request: &IncomingRequest) -> Result<Principal, AuthError> {
 /// Pull the bearer token out of the `Authorization` header.
 fn bearer_token(request: &IncomingRequest) -> Option<String> {
     let headers = request.headers();
-    let values = headers.get(&"authorization".to_string());
+    let values = headers.get("authorization");
     for v in values {
         if let Ok(s) = String::from_utf8(v) {
             if let Some(tok) = s.strip_prefix("Bearer ") {
@@ -113,7 +113,7 @@ fn error_response(e: &AuthError) -> (u16, &'static str) {
 
 fn respond(response_out: ResponseOutparam, status: u16, body: &str) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out_body = response.body().expect("outgoing body");

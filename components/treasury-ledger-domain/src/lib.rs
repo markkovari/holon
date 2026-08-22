@@ -270,7 +270,7 @@ fn read_body(request: &IncomingRequest) -> String {
 fn header(request: &IncomingRequest, name: &str) -> String {
     request
         .headers()
-        .get(&name.to_string())
+        .get(name)
         .first()
         .map(|v| String::from_utf8_lossy(v).into_owned())
         .unwrap_or_default()
@@ -327,7 +327,7 @@ impl Guest for Component {
         };
 
         let headers = Fields::new();
-        let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
         let resp = OutgoingResponse::new(headers);
         let _ = resp.set_status_code(status);
         let out = resp.body().expect("body");
