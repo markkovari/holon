@@ -1,0 +1,7 @@
+package ai:inference@0.1.0;
+interface local {
+    infer: func(prompt: string) -> string;
+}
+world component {
+    export local;
+}
