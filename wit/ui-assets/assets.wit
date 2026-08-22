@@ -1,12 +1,12 @@
 // ui:assets — embedded static-file serving as a capability.
 //
-// The built SPA (or any static bundle) embedded in a component of its own, so
-// the HTTP-facing domain component stays slim: it links this capability and
-// forwards non-API GETs here, instead of carrying the bytes in its own
-// artifact (which inflates per-request instantiation on hosts that
-// instantiate per request).
+// THE one definition. `console-assets`, `track-assets` and `static-assets` all
+// point `[package.metadata.component.target]` at this directory, so the three
+// components that implement this contract cannot drift from each other.
 //
-// Pure compute: the bytes are baked in at build time (build.rs), no imports.
+// They were three byte-identical copies before. Identical is the good case:
+// nothing had gone wrong yet, and the next edit to one of them was the bug.
+
 package ui:assets@0.1.0;
 
 /// Exact-path lookup over the embedded bundle.
