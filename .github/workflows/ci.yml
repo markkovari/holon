@@ -51,22 +51,25 @@ jobs:
       # generates every `bindings.rs`, which are gitignored — so without this step
       # nothing in components/ even parses, and the failure looks like missing
       # modules rather than a missing tool.
-      - name: Install cargo-component
+      # `just` and `wasm-tools` are not conveniences here: `just build` runs a
+      # `wasm-tools metadata add` pass that stamps each artifact's name back on,
+      # because wasm32-wasip2 components come out anonymous. `wit-reflect`
+      # asserts that name, so a raw `cargo build` produces a tree that fails its
+      # own tests — which is exactly what this workflow's first run did.
+      - name: Install cargo-component, wasm-tools and just
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-component@0.21.1
+          tool: cargo-component@0.21.1,wasm-tools,just
 
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: components -> target
 
-      - name: Generate bindings
-        working-directory: components
-        run: cargo component check --release
-
+      # The project's own entry point, not an approximation of it. CI that
+      # builds differently from the repo is CI that answers a question nobody
+      # asked.
       - name: Build
-        working-directory: components
-        run: cargo build --release --target wasm32-wasip2
+        run: just build
 
       - name: Test
         working-directory: components
@@ -127,6 +130,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: components -> target
+      # Clippy needs the generated bindings but not the metadata pass, so this
+      # one stays a bare `cargo component check`.
       - name: Generate bindings
         working-directory: components
         run: cargo component check --release
