@@ -83,7 +83,21 @@ jobs:
       # One red workspace should not hide the state of the other two.
       fail-fast: false
       matrix:
-        workspace: [reconciler, host, cli]
+        include:
+          # `--lib` is only legal where a lib target exists: `host` and `cli`
+          # are bin-only and cargo errors rather than skipping. Found by this
+          # workflow's own first run, which is the argument for having it.
+          - workspace: reconciler
+            test-args: --lib --bins
+          # `surrealkv_test` is a goal's GATE, committed deliberately red: it
+          # describes a `--kv surreal` backend that does not exist yet, and it
+          # dials a real SurrealDB on :8000. The loop runs it through
+          # `comp-checks`; CI has no database and no business grading an
+          # unstarted goal. It comes back the moment the backend lands.
+          - workspace: host
+            test-args: --bins -- --skip surrealkv_test
+          - workspace: cli
+            test-args: --bins
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -97,7 +111,7 @@ jobs:
         # The reconciler's integration tests want NATS, SurrealDB and a model.
         # `--lib --bins` keeps CI to what it can honestly run; the rest stay a
         # local and deliberate act.
-        run: cargo test --release --lib --bins
+        run: cargo test --release ${{ matrix.test-args }}
 
   lint:
     name: clippy
