@@ -1,0 +1,7 @@
+package web:browser@0.1.0;
+interface automation {
+    snapshot: func(url: string) -> string;
+}
+world component {
+    export automation;
+}

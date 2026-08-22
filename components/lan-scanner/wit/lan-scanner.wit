@@ -1,0 +1,7 @@
+package net:lan@0.1.0;
+interface scanner {
+    scan: func() -> string;
+}
+world component {
+    export scanner;
+}

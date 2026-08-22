@@ -1,0 +1,7 @@
+package net:mdns@0.1.0;
+interface discovery {
+    discover: func() -> string;
+}
+world component {
+    export discovery;
+}

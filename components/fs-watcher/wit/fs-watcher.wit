@@ -1,0 +1,7 @@
+package os:fs@0.1.0;
+interface watcher {
+    watch: func(dir: string) -> string;
+}
+world component {
+    export watcher;
+}
