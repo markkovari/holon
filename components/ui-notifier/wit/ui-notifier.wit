@@ -1,0 +1,7 @@
+package os:ui@0.1.0;
+interface notifications {
+    notify: func(msg: string) -> string;
+}
+world component {
+    export notifications;
+}

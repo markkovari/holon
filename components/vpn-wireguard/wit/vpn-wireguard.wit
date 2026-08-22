@@ -1,0 +1,7 @@
+package net:vpn@0.1.0;
+interface wireguard {
+    status: func() -> string;
+}
+world component {
+    export wireguard;
+}

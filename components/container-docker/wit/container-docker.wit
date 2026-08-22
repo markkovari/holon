@@ -1,0 +1,7 @@
+package os:container@0.1.0;
+interface docker {
+    ps: func() -> string;
+}
+world component {
+    export docker;
+}
