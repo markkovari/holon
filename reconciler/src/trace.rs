@@ -92,13 +92,26 @@ impl Trace {
 
     /// A run began. Carries what makes the run replayable (ADR-0078): the seed,
     /// and the base every branch is judged against.
-    pub fn run_started(&self, run: &str, goal: &str, seed: u64, base_commit: &str, branches: u32) {
+    /// `spec` is the goal FILE this run was driven from, relative to the checkout.
+    /// It is what joins a run back to the queue entry that started it: `goal` is
+    /// prose and two goals can open with the same sentence, so a UI matching on it
+    /// hangs a run under whichever entry it happened to find first.
+    pub fn run_started(
+        &self,
+        run: &str,
+        goal: &str,
+        spec: &str,
+        seed: u64,
+        base_commit: &str,
+        branches: u32,
+    ) {
         self.send(&format!(
-            "UPSERT {} SET id_text = {}, goal = {}, seed = {seed}, base_commit = {}, \
+            "UPSERT {} SET id_text = {}, goal = {}, spec = {}, seed = {seed}, base_commit = {}, \
              branches = {branches}, started_at = time::now(), resolved_at = NONE;",
             rid(RUN, run),
             lit(run),
             lit(goal),
+            lit(spec),
             lit(base_commit),
         ));
         self.event(run, None, "run-started", json!({ "goal": goal, "seed": seed }));
