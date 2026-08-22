@@ -27,4 +27,4 @@ world = "domain"
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
-"ai:inference" = { path = "../llm-local/wit" }
+"ai:local" = { path = "../llm-local/wit" }

@@ -12,7 +12,7 @@
 //! is mocked on the path to a landed change"; this is that rule, applied here.
 
 #[allow(warnings)] mod bindings;
-use bindings::exports::ai::inference::local::Guest;
+use bindings::exports::ai::local::local::Guest;
 struct Component;
 impl Guest for Component { fn infer(prompt: String) -> String { format!("UNIMPLEMENTED: llm-local cannot run a local model from wasm ({})", prompt) } }
 bindings::export!(Component with_types_in bindings);
