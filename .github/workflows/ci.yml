@@ -90,8 +90,27 @@ jobs:
           # `--lib` is only legal where a lib target exists: `host` and `cli`
           # are bin-only and cargo errors rather than skipping. Found by this
           # workflow's own first run, which is the argument for having it.
+          # `--lib --bins` used to be the whole story here, and it hid four red
+          # test suites on main: `capsearch`, `contracts`, `docs` and `guestio`
+          # need no NATS, no SurrealDB and no model, and none of them had run in
+          # CI once. `guestio` alone was recording 20 components that trap
+          # mid-response on any payload over 4 KiB.
+          #
+          # So the exclusion is a NAMED LIST of the suites that genuinely want
+          # infrastructure, and everything else runs. A blanket skip is a
+          # suppression with no removal condition, which is the one thing every
+          # other suppression in this file is careful not to be.
           - workspace: reconciler
-            test-args: --lib --bins
+            test-args: >-
+              --lib --bins
+              --test agent --test artifacts --test capsearch --test console_session
+              --test contracts --test docs --test driver --test envbranch
+              --test environments --test fitness --test fixtures --test forge
+              --test gendeploy --test generation --test guestio --test ha
+              --test inference --test leader --test mockllm --test newversion
+              --test projects --test publish --test reveal --test scaling
+              --test search --test secretcli --test secrets --test select
+              --test stress_env --test stress_tree --test uideps --test vgit
           # `surrealkv_test` is a goal's GATE, committed deliberately red: it
           # describes a `--kv surreal` backend that does not exist yet, and it
           # dials a real SurrealDB on :8000. The loop runs it through
