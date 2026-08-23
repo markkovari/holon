@@ -79,8 +79,8 @@ capabilities, so anything marked reusable drops into another app via
 | **flags-domain** | `rollout:app@0.1.0` | event:bus/bus, featureflags:guard/evaluator, id:generate/generator | — | 141 KiB | app/demo |
 | **forge-probe** | `comp:forgeprobe@0.1.0` | git:forge/repo | — | 112 KiB | ✓ |
 | **freight-tracker-domain** | `freight-tracker:freight-tracker` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | app/demo |
-| **fs-watcher** | `os:fs@0.1.0` | pure compute | — | 46 KiB | contract only |
-| **fs-watcher-domain** | `local:fs-watcher` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:fs/watcher, records:store/store, kv:store | — | 89 KiB | app/demo |
+| **fs-watcher** | `os:fs@0.1.0` | config/store, http/outgoing-handler | `fswatch-url` | 103 KiB | ✓ |
+| **fs-watcher-domain** | `local:fs-watcher` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:fs/watcher, records:store/store, kv:store | — | 99 KiB | app/demo |
 | **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 134 KiB | ✓ |
 | **gate-domain** | `gate:app@0.1.0` | comp:store/cas, records:store/store, shaper:limit/limiter, kv:store | — | 155 KiB | app/demo |
 | **geo** | `geo:resolve@0.1.0` | pure compute | — | 60 KiB | ✓ |
@@ -281,7 +281,7 @@ capabilities, so anything marked reusable drops into another app via
 - **flags-domain** — flags:app — a live feature-rollout console over composed contracts
 - **forge-probe** — `forge-probe` — an instrument for `git:forge` (see wit/probe.wit)
 - **freight-tracker-domain** — `freight-tracker-domain` — track shipments behind a login, with per-account access to their history
-- **fs-watcher** — `fs-watcher` — watch a directory and report file changes as they happen
+- **fs-watcher** — `fs-watcher` — report what changed in a directory, since a cursor
 - **fs-watcher-domain** — `fs-watcher-domain` — watch a directory for changes and report them over HTTP
 - **fsm-workflow** — `fsm-workflow` — enforce a lifecycle — declare the legal state transitions and refuse the illegal ones
 - **gate-domain** — `gate-domain` — a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed

@@ -34,6 +34,13 @@ path = "src/bin/plug.rs"
 name = "comp-trace-seed"
 path = "src/bin/traceseed.rs"
 
+# Reports directory changes to `components/fs-watcher`, which cannot look at a
+# filesystem itself. The first of the twelve host capabilities to get a daemon
+# (ADR-0095).
+[[bin]]
+name = "comp-fswatch"
+path = "src/bin/fswatch.rs"
+
 # Drains a project's goal queue, N runs at a time (ADR-0082's missing loop).
 [[bin]]
 name = "comp-goald"
