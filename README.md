@@ -73,7 +73,7 @@ pointed at itself. (The original capability-library README is kept at
 | what runs today, measured, and honestly missing | [`docs/CURRENT.md`](docs/CURRENT.md) |
 | the fifty-two showcase apps, one file each | [`docs/apps/`](docs/apps/README.md) |
 | how a run succeeds, and every way it fails | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) |
-| the reasoning — 94 decisions, 10 of them superseded and kept | [`docs/adr/`](docs/adr/) |
+| the reasoning — 95 decisions, 10 of them superseded and kept | [`docs/adr/`](docs/adr/) |
 | the worklist — goals a person has written | [`.comp/goals/`](.comp/goals/) |
 | the browser surface: author a goal, read a run as a graph | [`docs/apps/CONSOLE.md`](docs/apps/CONSOLE.md) — `just host-console` |
 | the agentic core | `components/{agent-writer,agent-driver,graph-selector}`, `reconciler/src/generation.rs`, `reconciler/src/bin/goalrun.rs` |
