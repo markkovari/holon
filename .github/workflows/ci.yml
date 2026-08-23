@@ -96,10 +96,12 @@ jobs:
         run: >-
           cargo test --release
           --test agent --test artifacts --test capsearch --test contracts
-          --test driver --test envbranch --test fitness --test forge
-          --test gendeploy --test generation --test inference --test mockllm
-          --test newversion --test publish --test reveal --test search
-          --test select --test vgit
+          --test driver --test envbranch --test environments --test fitness
+          --test forge --test gendeploy --test generation --test ha
+          --test inference --test leader --test mockllm --test newversion
+          --test projects --test publish --test reveal --test scaling
+          --test search --test secretcli --test secrets --test select
+          --test vgit
 
   native:
     name: native workspaces
@@ -119,9 +121,16 @@ jobs:
           # components that trap mid-response on any payload over 4 KiB.
           #
           # The split below was VERIFIED by deleting all 196 built `.wasm` files
-          # and re-running: these pass, and `capsearch`/`contracts` do not — they
-          # read the artifacts, so they live in the `components` job. Guessing
-          # from a grep put them here first and CI caught it.
+          # AND `host/target/release/comp-host`, then re-running. Only these six
+          # pass with nothing built; everything else drives a fleet through
+          # `reconciler/src/fleet.rs`, which spawns the host, and belongs in the
+          # `components` job that builds both.
+          #
+          # Three earlier attempts classified these by READING them — grepping
+          # for `components/target`, then for `comp-host`. All three were wrong,
+          # because this machine had the artifacts lying around and could not
+          # tell. Removing what they depend on is the only method that has
+          # answered correctly.
           #
           # So the exclusion is a NAMED LIST rather than a blanket skip. The
           # suites listed here need NOTHING; the ones that read built wasm run in
@@ -133,10 +142,8 @@ jobs:
           - workspace: reconciler
             test-args: >-
               --lib --bins
-              --test docs --test environments --test fixtures --test guestio
-              --test ha --test leader --test projects --test scaling
-              --test secretcli --test secrets --test stress_env
-              --test stress_tree --test uideps
+              --test docs --test fixtures --test guestio
+              --test stress_env --test stress_tree --test uideps
           # `surrealkv_test` is a goal's GATE, committed deliberately red: it
           # describes a `--kv surreal` backend that does not exist yet, and it
           # dials a real SurrealDB on :8000. The loop runs it through
