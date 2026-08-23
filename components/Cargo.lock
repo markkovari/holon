@@ -72,6 +72,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai-inference"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "anthropic-provider"
 version = "0.1.0"
 dependencies = [

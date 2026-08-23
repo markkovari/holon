@@ -33,8 +33,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149793,
-    "wasm_sha256_12": "d588731589a8",
+    "wasm_size_bytes": 149518,
+    "wasm_sha256_12": "926013fc6efe",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -637,8 +637,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91832,
-    "wasm_sha256_12": "09c319b9a1d0",
+    "wasm_size_bytes": 91551,
+    "wasm_sha256_12": "b40d8d79f762",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -834,8 +834,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91775,
-    "wasm_sha256_12": "b31b26a43909",
+    "wasm_size_bytes": 91494,
+    "wasm_sha256_12": "b1007f8db883",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -954,8 +954,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91926,
-    "wasm_sha256_12": "61c21474ed2e",
+    "wasm_size_bytes": 91645,
+    "wasm_sha256_12": "4bc9d1ce7284",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1002,8 +1002,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 137484,
-    "wasm_sha256_12": "d837962757cf",
+    "wasm_size_bytes": 137209,
+    "wasm_sha256_12": "e9ab15a2cecd",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1113,8 +1113,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91807,
-    "wasm_sha256_12": "85120f142ce3",
+    "wasm_size_bytes": 91526,
+    "wasm_sha256_12": "79e71c62c03a",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1405,8 +1405,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149809,
-    "wasm_sha256_12": "fac12f6e5057",
+    "wasm_size_bytes": 149534,
+    "wasm_sha256_12": "7068b167ef96",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1440,8 +1440,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91811,
-    "wasm_sha256_12": "ca363c976777",
+    "wasm_size_bytes": 91530,
+    "wasm_sha256_12": "30c8907dc437",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1614,8 +1614,8 @@
       "knowledge:graph/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 107316,
-    "wasm_sha256_12": "0b1cb953c95b",
+    "wasm_size_bytes": 107065,
+    "wasm_sha256_12": "455ef0838668",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1634,8 +1634,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149792,
-    "wasm_sha256_12": "2f9e84199d79",
+    "wasm_size_bytes": 149517,
+    "wasm_sha256_12": "3ea9402434c0",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1779,8 +1779,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91915,
-    "wasm_sha256_12": "804cdf2c2227",
+    "wasm_size_bytes": 91634,
+    "wasm_sha256_12": "b62589977035",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1809,8 +1809,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 173588,
-    "wasm_sha256_12": "1df42c4920dc",
+    "wasm_size_bytes": 171666,
+    "wasm_sha256_12": "2a020be7b9d4",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1912,7 +1912,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 83246,
-    "wasm_sha256_12": "6850beb903fb",
+    "wasm_sha256_12": "73e8b3517f6f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2055,8 +2055,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91768,
-    "wasm_sha256_12": "c76c83b8a573",
+    "wasm_size_bytes": 91487,
+    "wasm_sha256_12": "31e9e4553b98",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2180,8 +2180,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91820,
-    "wasm_sha256_12": "9758490658eb",
+    "wasm_size_bytes": 91539,
+    "wasm_sha256_12": "0a9dfd868d78",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2250,8 +2250,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91831,
-    "wasm_sha256_12": "84198573b739",
+    "wasm_size_bytes": 91550,
+    "wasm_sha256_12": "3f44afaba76f",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2733,8 +2733,8 @@
       "web:browser/automation"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91922,
-    "wasm_sha256_12": "4c109cc7ea11",
+    "wasm_size_bytes": 91641,
+    "wasm_sha256_12": "3985d966f29a",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3117,8 +3117,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149828,
-    "wasm_sha256_12": "09587c1ccfba",
+    "wasm_size_bytes": 149553,
+    "wasm_sha256_12": "5c209c225d3d",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3153,7 +3153,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 133785,
-    "wasm_sha256_12": "d27f730c0bb0",
+    "wasm_sha256_12": "7058a94aee8e",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3477,8 +3477,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149772,
-    "wasm_sha256_12": "481682a750a8",
+    "wasm_size_bytes": 149497,
+    "wasm_sha256_12": "1576087b5d90",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4100,8 +4100,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91924,
-    "wasm_sha256_12": "3ad1b9c916b8",
+    "wasm_size_bytes": 91643,
+    "wasm_sha256_12": "985392dfa739",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4146,8 +4146,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91831,
-    "wasm_sha256_12": "b3cece76e013",
+    "wasm_size_bytes": 91550,
+    "wasm_sha256_12": "3f08f761a1d7",
     "reusable_as_is": false,
     "unimplemented": false
   },
