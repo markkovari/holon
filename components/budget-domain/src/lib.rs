@@ -1,3 +1,5 @@
+//! `budget-domain` — record spending against per-category budgets and report the balance
+
 #[allow(warnings)]
 mod bindings;
 

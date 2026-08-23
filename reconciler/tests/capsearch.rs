@@ -269,3 +269,62 @@ fn a_capability_does_not_describe_itself_as_its_own_reference_implementation() {
     );
     println!("  {checked} component descriptions, none tautological");
 }
+
+/// A component with NO description is invisible to a caller's words.
+///
+/// ADR-0094 made the first `//!` line the searchable one and lints the one form
+/// known to be useless — describing yourself as a reference implementation of
+/// your own interface. It could not catch the other useless form, because the
+/// walk `continue`s on a crate with no `//!` line at all: a component that says
+/// nothing was skipped rather than failed.
+///
+/// 31 of them had accumulated that way. `capsearch` still had them in the pool
+/// via artifact reflection, so the loop knew they EXISTED and had no prose to
+/// match a goal against — which is the same as not having them, for the one
+/// question the pool is asked.
+///
+/// Blunt in the same way as its sibling, and for the same reason: this does not
+/// judge whether a description is good. "You wrote none" is not a rule anybody
+/// can argue with.
+#[test]
+fn every_component_has_a_description() {
+    let root = repo_root();
+    let Ok(dirs) = std::fs::read_dir(root.join("components")) else {
+        panic!("no components/ directory");
+    };
+    let mut silent = Vec::new();
+    let mut checked = 0usize;
+
+    for entry in dirs.flatten() {
+        let manifest = entry.path().join("Cargo.toml");
+        let Ok(toml) = std::fs::read_to_string(&manifest) else { continue };
+        // Only components. A plain library crate — `semver-range`, `capman` —
+        // is not in the pool and has nothing to be findable by.
+        if !toml.contains("[package.metadata.component]") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(entry.path().join("src/lib.rs")) else { continue };
+        checked += 1;
+        let has_prose = text
+            .lines()
+            .find(|l| l.starts_with("//!"))
+            .map(|l| !l[3..].trim().is_empty())
+            .unwrap_or(false);
+        if !has_prose {
+            silent.push(format!("  {}", entry.file_name().to_string_lossy()));
+        }
+    }
+
+    assert!(checked > 100, "only read {checked} components — the walk is wrong");
+    assert!(
+        silent.is_empty(),
+        "{} component(s) have no `//!` description, so nothing a caller types can \
+         reach them:\n{}\n\nWrite one line saying what a CALLER wants from it. \
+         `tools/gen-catalog.py` lifts that line into `catalog.json`, and \
+         `capsearch` matches a goal against it.",
+        silent.len(),
+        silent.join("\n")
+    );
+    println!("  {checked} components, all described");
+}
+
