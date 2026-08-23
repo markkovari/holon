@@ -1,7 +1,26 @@
-package ai:inference@0.1.0;
+// ai:local — a single-shot local-model call, as a contract.
+//
+// NOT `ai:inference`. That package name belongs to `components/ai-inference`,
+// which defines summarize/classify/extract/generate/rewrite/embed over a
+// provider-agnostic LLM. This file used to declare `ai:inference@0.1.0` too,
+// with a completely different interface behind it — the same package identity
+// resolving to two shapes depending on which crate you happened to be in.
+//
+// A package name is a GLOBAL identifier in the component model. Two definitions
+// of one name is not a duplicate, it is a collision: `moderation-domain`,
+// `triage-assist-domain` and `doc-search-domain` point `ai:inference` at
+// ../ai-inference/wit, `local-ai-domain` pointed it at ../llm-local/wit, and
+// nothing in the manifest says which a composer should believe.
+package ai:local@0.1.0;
+
 interface local {
+    /// One prompt in, one completion out.
+    ///
+    /// There is no implementation behind this — see the crate docs. The contract
+    /// states what a host-side runtime would have to satisfy.
     infer: func(prompt: string) -> string;
 }
+
 world component {
     export local;
 }
