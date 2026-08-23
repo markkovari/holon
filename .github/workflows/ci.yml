@@ -77,6 +77,14 @@ jobs:
         # build of its own.
         run: cargo test --workspace --exclude browser-automation
 
+      # `publish` spawns `comp-host` through `tests/harness/mod.rs`, so the host
+      # has to exist before the step below. Dropped once already when this
+      # section was rewritten, and CI failed on
+      # `missing …/comp-host — cargo build --release in host/`.
+      - name: Build the host that `publish` spawns
+        working-directory: host
+        run: cargo build --release --bin comp-host
+
       # Four reconciler suites need the BUILT artifacts and nothing else.
       #
       # They live here because `components/target/wasm32-wasip2/release/*.wasm`
