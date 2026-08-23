@@ -1,3 +1,5 @@
+//! `device-radar-domain` — show which nearby devices a scan found, behind a login
+
 #[allow(warnings)]
 mod bindings;
 

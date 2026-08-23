@@ -1,3 +1,5 @@
+//! `glob` — test whether a path matches a shell-style wildcard pattern
+
 #[allow(warnings)]
 mod bindings;
 pub mod matcher;

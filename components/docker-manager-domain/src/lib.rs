@@ -1,3 +1,5 @@
+//! `docker-manager-domain` — list running containers and their state over HTTP
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

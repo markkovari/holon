@@ -1,3 +1,5 @@
+//! `real-estate-escrow-domain` — hold property transactions behind a login, with per-account access
+
 #[allow(warnings)]
 mod bindings;
 

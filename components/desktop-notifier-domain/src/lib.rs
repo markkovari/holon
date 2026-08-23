@@ -1,3 +1,5 @@
+//! `desktop-notifier-domain` — raise a desktop notification from an HTTP call
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

@@ -49,6 +49,15 @@ pub struct Capability {
     pub doc: String,
     /// What it can satisfy.
     pub exports: Vec<String>,
+    /// An application, not a capability.
+    ///
+    /// Nobody reuses `jobs-domain`; they reuse `lock-mutex`. Keeping both in one
+    /// pool is what lets "job" reach a showcase before it reaches the mutex, and
+    /// the ranking cannot fix it — an app's name is as good a match as anything.
+    /// So apps rank BELOW every capability that matched, rather than being
+    /// deleted: an app is still evidence that a composition exists, and ADR-0089
+    /// wants that visible once the capabilities are exhausted.
+    pub is_app: bool,
     /// How many applications carry it today. The tie-breaker that matters: a
     /// capability twenty apps already compose is a safer answer than one nothing
     /// uses, whatever the descriptions say.
@@ -66,6 +75,19 @@ pub fn capabilities(
     catalog: &Catalog,
     apps_of: &BTreeMap<String, usize>,
 ) -> Vec<Capability> {
+    // `reusable_as_is: false` is the catalogue's own word for "this is an
+    // application", derived there rather than re-guessed from the name here.
+    let app_only: BTreeSet<String> =
+        std::fs::read_to_string(repo_root.join("components/catalog.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter(|e| e["reusable_as_is"].as_bool() == Some(false))
+            .filter_map(|e| e["name"].as_str().map(String::from))
+            .collect();
+
     let described: BTreeMap<String, String> =
         std::fs::read_to_string(repo_root.join("components/catalog.json"))
             .ok()
@@ -104,6 +126,7 @@ pub fn capabilities(
             doc,
             exports: surface.exports.iter().cloned().collect(),
             apps: apps_of.get(&name).copied().unwrap_or(0),
+            is_app: app_only.contains(&name),
             name,
         });
     }
@@ -235,7 +258,17 @@ pub fn find<'a>(query: &str, pool: &'a [Capability]) -> Vec<Match<'a>> {
                 }
             }
         }
-        if score == 0.0 {
+        // ONE shared word is a coincidence, not an answer.
+        //
+        // "diagnose a patient from radiology imagery" reached `image-optimizer`
+        // because "imagery" prefix-matches "image" in its name, and a name match
+        // scores 3. The matcher is not wrong — those words ARE related — but one
+        // term out of four is the whole of the evidence, and a searcher that
+        // answers everything answers nothing. Two distinct terms is the bar.
+        //
+        // A single-term query is exempt: "slugify" is a whole question, and
+        // holding it to two terms would refuse to answer anything short.
+        if score == 0.0 || (wanted.len() > 1 && because.len() < 2) {
             continue;
         }
         // Graph centrality multiplier: log-ish adoption score so that foundational, widely composed
@@ -243,7 +276,15 @@ pub fn find<'a>(query: &str, pool: &'a [Capability]) -> Vec<Match<'a>> {
         score += (cap.apps as f64 + 1.0).ln() * 0.5;
         out.push(Match { capability: cap, score, because });
     }
-    out.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.capability.name.cmp(&b.capability.name)));
+    // Capabilities first, applications after — a showcase never outranks the
+    // thing it is built from, however well its name happens to match.
+    out.sort_by(|a, b| {
+        a.capability
+            .is_app
+            .cmp(&b.capability.is_app)
+            .then(b.score.total_cmp(&a.score))
+            .then(a.capability.name.cmp(&b.capability.name))
+    });
     out
 }
 
@@ -259,6 +300,7 @@ mod tests {
                 doc: String::new(),
                 exports: vec!["csv:codec/codec@0.1.0".into()],
                 apps: 3,
+                is_app: false,
             },
             Capability {
                 name: "auth-guard".into(),
@@ -266,6 +308,7 @@ mod tests {
                 doc: "issue a session, verify a password".into(),
                 exports: vec!["auth:identity/accounts@0.1.0".into()],
                 apps: 18,
+                is_app: false,
             },
             Capability {
                 name: "search-index".into(),
@@ -274,6 +317,7 @@ mod tests {
                 doc: String::new(),
                 exports: vec!["search:index/index@0.1.0".into()],
                 apps: 4,
+                is_app: false,
             },
             Capability {
                 name: "lonely".into(),
@@ -281,6 +325,7 @@ mod tests {
                 doc: String::new(),
                 exports: vec!["lonely:thing/x@0.1.0".into()],
                 apps: 0,
+                is_app: false,
             },
         ]
     }
@@ -329,6 +374,7 @@ mod tests {
             doc: String::new(),
             exports: vec!["csv:pretty/render@0.1.0".into()],
             apps: 0,
+            is_app: false,
         });
         let hits = find("csv", &p);
         assert!(

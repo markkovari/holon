@@ -1,3 +1,5 @@
+//! `lan-scanner-domain` — find which hosts are reachable on the local network
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

@@ -1,3 +1,5 @@
+//! `health-records-domain` — keep patient records behind a login, with per-account access control
+
 #[allow(warnings)]
 mod bindings;
 

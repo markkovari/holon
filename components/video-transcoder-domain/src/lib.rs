@@ -1,3 +1,5 @@
+//! `video-transcoder-domain` — re-encode an uploaded video into another format
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

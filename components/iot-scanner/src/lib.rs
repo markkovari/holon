@@ -1,3 +1,5 @@
+//! `iot-scanner` — list nearby wireless devices with their signal strength and connection state
+
 #[allow(warnings)]
 mod bindings;
 

@@ -1,3 +1,5 @@
+//! `image-optimizer-domain` — shrink an uploaded picture and hand back the smaller one
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

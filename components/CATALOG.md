@@ -11,62 +11,64 @@ capabilities, so anything marked reusable drops into another app via
 
 | component | package | deps | config knobs | size | reusable as-is |
 |---|---|---|---|--:|:--:|
-| **abtest-domain** | `abtest:app@0.1.0` | event:bus/bus, experiment:assign/assigner, id:generate/generator, metrics:collect/collector | — | 148 KiB | ✓ |
-| **academic-review-domain** | `academic-review:academic-review` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | ✓ |
+| **abtest-domain** | `abtest:app@0.1.0` | event:bus/bus, experiment:assign/assigner, id:generate/generator, metrics:collect/collector | — | 148 KiB | app/demo |
+| **academic-review-domain** | `academic-review:academic-review` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | app/demo |
+| **accounts-app** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `authorization` | 129 KiB | app/demo |
 | **adversary** | `probe:adversary@0.1.0` | http/outgoing-handler, kv:batch, kv:store | — | 73 KiB | ✓ |
 | **agent-driver** | `driver:agent@0.1.0` | graph:agent/writer, graph:fitness/evaluator | — | 70 KiB | ✓ |
 | **agent-probe** | `comp:agentprobe@0.1.0` | graph:agent/writer | — | 112 KiB | ✓ |
 | **agent-writer** | `writer:agent@0.1.0` | llm:inference/inference | — | 84 KiB | ✓ |
 | **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 115 KiB | ✓ |
 | **anthropic-provider** | `anthropic:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `seed`, `cache_control`, `anthropic-api-key` | 174 KiB | ✓ |
-| **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 162 KiB | ✓ |
-| **artifact-cache** | `artifact:cache@0.1.0` | blob:store/blobstore, comp:store/cas, config/store, kv:store | `artifact-container`, `artifact-claim-secs` | 83 KiB | ✓ |
+| **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 162 KiB | app/demo |
+| **artifact-cache** | `artifact:cache@0.1.0` | blob:store/blobstore, comp:store/cas, config/store, kv:store | `artifact-container`, `artifact-claim-secs` | 84 KiB | ✓ |
 | **artifact-probe** | `comp:artifactprobe@0.1.0` | artifact:cache/store | — | 98 KiB | ✓ |
-| **audit-log** | `audit:log@0.1.0` | kv:store | — | 118 KiB | ✓ |
-| **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 123 KiB | app/demo |
+| **audit-log** | `audit:log@0.1.0` | kv:store | — | 119 KiB | ✓ |
+| **auth-guard** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `session-ttl`, `password-min-len`, `jwks-cache-ttl`, `default-tenant`, `expected-issuer`, `expected-audience`, `allowed-algs`, `clock-skew`, `audit-enabled`, `hs256-secret` | 443 KiB | ✓ |
+| **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 122 KiB | app/demo |
 | **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — | ✓ |
 | **bigadd** | `demo:bigadd@0.1.0` | pure compute | — | 50 KiB | ✓ |
 | **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 178 KiB | app/demo |
 | **blob-store** | `blob:store@0.1.0` | kv:store | — | 74 KiB | ✓ |
-| **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 211 KiB | ✓ |
-| **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 205 KiB | ✓ |
+| **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 210 KiB | app/demo |
+| **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 205 KiB | app/demo |
 | **browser-automation** | `web:browser@0.1.0` | pure compute | — | 46 KiB | contract only |
-| **budget-domain** | `holon:budget` | auth:identity/authorizer, kv:store | — | — | ✓ |
-| **buzz-domain** | `buzz:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 201 KiB | ✓ |
+| **budget-domain** | `holon:budget` | auth:identity/authorizer, kv:store | — | — | app/demo |
+| **buzz-domain** | `buzz:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 201 KiB | app/demo |
 | **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 75 KiB | ✓ |
-| **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 61 KiB | ✓ |
+| **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 62 KiB | ✓ |
 | **calc** | `demo:calc@0.1.0` | pure compute | — | 47 KiB | ✓ |
 | **checks-runner** | `checks:runner@0.1.0` | config/store, http/outgoing-handler | `checks-url` | 142 KiB | ✓ |
-| **clinic-domain** | `clinic:domain@0.1.0` | auth:identity/accounts, auth:identity/session, auth:identity/types, csv:codec/codec, id:generate/generator, records:store/store, search:index/index | — | 198 KiB | ✓ |
-| **clipboard-sync-domain** | `local:clipboard-sync` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:desktop/clipboard, records:store/store, kv:store | — | 89 KiB | ✓ |
-| **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 226 KiB | ✓ |
+| **clinic-domain** | `clinic:domain@0.1.0` | auth:identity/accounts, auth:identity/session, auth:identity/types, csv:codec/codec, id:generate/generator, records:store/store, search:index/index | — | 198 KiB | app/demo |
+| **clipboard-sync-domain** | `local:clipboard-sync` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:desktop/clipboard, records:store/store, kv:store | — | 89 KiB | app/demo |
+| **conduit-domain** | `conduit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, records:store/store, slug:generate/generator | — | 226 KiB | app/demo |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB | ✓ |
-| **console-assets** | `ui:assets@0.1.0` | pure compute | — | 398 KiB | ✓ |
-| **console-domain** | `console:app@0.1.0` | git:forge/repo, knowledge:graph/store, ui:assets/files, config/store, http/outgoing-handler | `platform-url`, `goals-dir` | 176 KiB | ✓ |
+| **console-assets** | `ui:assets@0.1.0` | pure compute | — | 408 KiB | ✓ |
+| **console-domain** | `console:app@0.1.0` | git:forge/repo, knowledge:graph/store, ui:assets/files, config/store, http/outgoing-handler | `platform-url`, `goals-dir` | 176 KiB | app/demo |
 | **container-docker** | `os:container@0.1.0` | pure compute | — | 44 KiB | contract only |
 | **contract-probe** | `comp:contractprobe@0.1.0` | contract:registry/registry | — | 74 KiB | ✓ |
-| **contract-registry** | `contract:registry@0.1.0` | knowledge:graph/store | — | 124 KiB | ✓ |
+| **contract-registry** | `contract:registry@0.1.0` | knowledge:graph/store | — | 125 KiB | ✓ |
 | **contrast-audit** | `demo:contrastaudit@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `anthropic-api-key` | 172 KiB | ✓ |
 | **crdt** | `crdt:merge@0.1.0` | pure compute | — | 209 KiB | ✓ |
 | **cron** | `cron:expr@0.1.0` | pure compute | — | 59 KiB | ✓ |
-| **cron-scheduler-domain** | `local:cron-scheduler` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:system/cron, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **cron-scheduler-domain** | `local:cron-scheduler` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:system/cron, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **csv** | `csv:codec@0.1.0` | pure compute | — | 55 KiB | ✓ |
 | **csv-report** | `report:app@0.1.0` | csv:codec/codec, paginate:cursor/cursors, records:store/store, validate:schema/validator | — | 167 KiB | ✓ |
-| **dashboards-domain** | `dashboards:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store, svg:chart/charts | — | 189 KiB | ✓ |
+| **dashboards-domain** | `dashboards:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store, svg:chart/charts | — | 189 KiB | app/demo |
 | **demo** | `demo:shape@0.1.0` | pure compute | — | 54 KiB | ✓ |
 | **demo-probe** | `demo:probe@0.1.0` | demo:shape/pager | — | 59 KiB | ✓ |
 | **desktop-clipboard** | `os:desktop@0.1.0` | pure compute | — | 44 KiB | contract only |
-| **desktop-notifier-domain** | `local:desktop-notifier` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:ui/notifications, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **desktop-notifier-domain** | `local:desktop-notifier` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:ui/notifications, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 214 KiB | app/demo |
-| **device-radar-domain** | `device-radar:device-radar` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, iot:scanner/scanner, records:store/store, kv:store | — | 134 KiB | ✓ |
-| **doc-search-domain** | `docsearch:agent@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, cache:store/cache, otp:totp/authenticator, quota:meter/meter, records:store/store, search:index/index, config/store | `question`, `verified_at`, `stepup-ttl-secs`, `answer-budget`, `answer-period-secs`, `answer`, `sources`, `docs`, `title`, `text`, `answer-cache-ttl-secs`, `subject`, `scopes`, `tag`, `code`, `secret` | 166 KiB | ✓ |
-| **docker-manager-domain** | `local:docker-manager` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:container/docker, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **device-radar-domain** | `device-radar:device-radar` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, iot:scanner/scanner, records:store/store, kv:store | — | 134 KiB | app/demo |
+| **doc-search-domain** | `docsearch:agent@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, cache:store/cache, otp:totp/authenticator, quota:meter/meter, records:store/store, search:index/index, config/store | `question`, `verified_at`, `stepup-ttl-secs`, `answer-budget`, `answer-period-secs`, `answer`, `sources`, `docs`, `title`, `text`, `answer-cache-ttl-secs`, `subject`, `scopes`, `tag`, `code`, `secret` | 166 KiB | app/demo |
+| **docker-manager-domain** | `local:docker-manager` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:container/docker, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **driver-probe** | `comp:driverprobe@0.1.0` | graph:run/driver | — | 120 KiB | ✓ |
 | **email-render** | `email:template@0.1.0` | kv:store | — | 80 KiB | ✓ |
 | **eshop-basket** | `eshop:basket@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, records:store/store | — | 168 KiB | ✓ |
 | **eshop-catalog** | `eshop:catalog@0.1.0` | event:bus/bus, idempotency:guard/store, records:store/store | — | 168 KiB | ✓ |
 | **eshop-gateway** | `eshop:gateway@0.1.0` | proxy:route/router | — | 77 KiB | ✓ |
-| **eshop-ordering** | `eshop:ordering@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, fsm:workflow/engine, idempotency:guard/store, records:store/store, config/store | `grace-period-secs` | 188 KiB | ✓ |
+| **eshop-ordering** | `eshop:ordering@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, fsm:workflow/engine, idempotency:guard/store, records:store/store, config/store | `grace-period-secs`, `authorization` | 188 KiB | ✓ |
 | **eshop-payment** | `eshop:payment@0.1.0` | event:bus/bus, config/store | `payment-succeeds` | 107 KiB | ✓ |
 | **event-bus** | `event:bus@0.1.0` | kv:atomics, kv:store | — | 86 KiB | ✓ |
 | **event-pusher** | `event:push@0.1.0` | proxy:route/router, config/store | `push-targets` | 50 KiB | ✓ |
@@ -74,96 +76,97 @@ capabilities, so anything marked reusable drops into another app via
 | **expr** | `demo:expr@0.1.0` | pure compute | — | 48 KiB | ✓ |
 | **feature-flags** | `featureflags:guard@0.1.0` | config/store, kv:store | — | 75 KiB | ✓ |
 | **fitness-probe** | `comp:fitnessprobe@0.1.0` | graph:fitness/evaluator | — | 113 KiB | ✓ |
-| **flags-domain** | `rollout:app@0.1.0` | event:bus/bus, featureflags:guard/evaluator, id:generate/generator | — | 141 KiB | ✓ |
+| **flags-domain** | `rollout:app@0.1.0` | event:bus/bus, featureflags:guard/evaluator, id:generate/generator | — | 141 KiB | app/demo |
 | **forge-probe** | `comp:forgeprobe@0.1.0` | git:forge/repo | — | 112 KiB | ✓ |
-| **freight-tracker-domain** | `freight-tracker:freight-tracker` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | ✓ |
+| **freight-tracker-domain** | `freight-tracker:freight-tracker` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | app/demo |
 | **fs-watcher** | `os:fs@0.1.0` | pure compute | — | 46 KiB | contract only |
-| **fs-watcher-domain** | `local:fs-watcher` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:fs/watcher, records:store/store, kv:store | — | 89 KiB | ✓ |
-| **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 133 KiB | ✓ |
-| **gate-domain** | `gate:app@0.1.0` | comp:store/cas, records:store/store, shaper:limit/limiter, kv:store | — | 156 KiB | ✓ |
+| **fs-watcher-domain** | `local:fs-watcher` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:fs/watcher, records:store/store, kv:store | — | 89 KiB | app/demo |
+| **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 134 KiB | ✓ |
+| **gate-domain** | `gate:app@0.1.0` | comp:store/cas, records:store/store, shaper:limit/limiter, kv:store | — | 155 KiB | app/demo |
 | **geo** | `geo:resolve@0.1.0` | pure compute | — | 60 KiB | ✓ |
 | **github-forge** | `github:forge@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `forge-repo`, `forge-api`, `forge-token`, `forge-base` | 158 KiB | ✓ |
 | **glob** | `demo:glob@0.1.0` | pure compute | — | 46 KiB | ✓ |
 | **golem-bridge** | `golem:bridge@0.1.0` | config/store, http/outgoing-handler | `golem-url`, `golem-host`, `golem-path-template` | 96 KiB | ✓ |
 | **graph-probe** | `comp:graphprobe@0.1.0` | knowledge:graph/store | — | 66 KiB | ✓ |
 | **graph-selector** | `selector:graph@0.1.0` | git:forge/repo | — | 69 KiB | ✓ |
-| **graph-viz-domain** | `comp:graphvizdomain@0.1.0` | knowledge:graph/store | — | 104 KiB | ✓ |
-| **health-records-domain** | `health-records:health-records` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | ✓ |
-| **helpdesk-domain** | `helpdesk:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, fsm:workflow/engine, id:generate/generator, md:render/renderer, records:store/store | — | 198 KiB | ✓ |
+| **graph-viz-domain** | `comp:graphvizdomain@0.1.0` | knowledge:graph/store | — | 104 KiB | app/demo |
+| **health-records-domain** | `health-records:health-records` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | app/demo |
+| **helpdesk-domain** | `helpdesk:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, fsm:workflow/engine, id:generate/generator, md:render/renderer, records:store/store | — | 198 KiB | app/demo |
 | **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 76 KiB | ✓ |
 | **iban** | `iban:validate@0.1.0` | pure compute | — | 59 KiB | ✓ |
 | **ical** | `ical:codec@0.1.0` | pure compute | — | 56 KiB | ✓ |
 | **id-generate** | `id:generate@0.1.0` | pure compute | — | 54 KiB | ✓ |
 | **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 81 KiB | ✓ |
 | **image-optimizer** | `media:image@0.1.0` | pure compute | — | 46 KiB | contract only |
-| **image-optimizer-domain** | `local:image-optimizer` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, media:image/optimizer, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **image-optimizer-domain** | `local:image-optimizer` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, media:image/optimizer, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 76 KiB | ✓ |
-| **insta-domain** | `insta:app@0.1.0` | kv:store | — | 169 KiB | ✓ |
-| **invoice-copilot-domain** | `invoice:copilot@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, idempotency:guard/store, ledger:doubleentry/ledger, money:amount/arithmetic, ratelimit:guard/limiter, records:store/store, config/store | `prose`, `total`, `shares`, `invoices`, `state`, `currency`, `customer`, `subject`, `scopes`, `idempotency-ttl-secs`, `lines`, `total_units`, `receivable-account`, `revenue-account`, `entry` | 165 KiB | ✓ |
+| **insta-domain** | `insta:app@0.1.0` | kv:store | — | 169 KiB | app/demo |
+| **invoice-copilot-domain** | `invoice:copilot@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, idempotency:guard/store, ledger:doubleentry/ledger, money:amount/arithmetic, ratelimit:guard/limiter, records:store/store, config/store | `prose`, `total`, `shares`, `invoices`, `state`, `currency`, `customer`, `subject`, `scopes`, `idempotency-ttl-secs`, `lines`, `total_units`, `receivable-account`, `revenue-account`, `entry` | 165 KiB | app/demo |
 | **iot-scanner** | `iot:scanner@0.1.0` | http/outgoing-handler | — | 81 KiB | ✓ |
-| **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 172 KiB | ✓ |
+| **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 171 KiB | app/demo |
 | **jsonpatch** | `json:patch@0.1.0` | pure compute | — | 118 KiB | ✓ |
 | **knowledge-graph** | `knowledge:graph@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `surreal-url`, `surreal-user`, `surreal-password`, `surreal-ns`, `surreal-db` | 162 KiB | ✓ |
 | **knowledge-memory** | `knowledge:memory@0.1.0` | knowledge:graph/store, llm:inference/inference, search:index/index | — | 158 KiB | ✓ |
-| **kv-probe** | `kv:probe@0.1.0` | kv:batch, kv:store | — | 74 KiB | ✓ |
+| **kv-probe** | `kv:probe@0.1.0` | kv:batch, kv:store | — | 73 KiB | ✓ |
 | **lan-scanner** | `net:lan@0.1.0` | pure compute | — | 44 KiB | contract only |
-| **lan-scanner-domain** | `local:lan-scanner` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, net:lan/scanner, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **lan-scanner-domain** | `local:lan-scanner` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, net:lan/scanner, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **ledger** | `ledger:doubleentry@0.1.0` | pure compute | — | 54 KiB | ✓ |
-| **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 153 KiB | app/demo |
+| **link-shortener** | `shortlink:app@0.1.0` | cache:store/cache, id:generate/generator, ratelimit:guard/limiter, records:store/store, slug:generate/generator, kv:atomics, kv:store | — | 152 KiB | app/demo |
 | **llm-inference** | `llm:inference@0.1.0` | pure compute | — | 72 KiB | ✓ |
-| **llm-local** | `ai:inference@0.1.0` | pure compute | — | 46 KiB | contract only |
+| **llm-local** | `ai:local@0.1.0` | pure compute | — | 46 KiB | contract only |
 | **llm-probe** | `comp:llmprobe@0.1.0` | llm:inference/inference | — | 62 KiB | ✓ |
-| **lms-domain** | `lms:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, quiz:grade/grader, records:store/store, svg:chart/charts | — | 226 KiB | ✓ |
-| **local-ai-domain** | `local:local-ai` | ai:inference/local, auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **lms-domain** | `lms:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, quiz:grade/grader, records:store/store, svg:chart/charts | — | 226 KiB | app/demo |
+| **local-ai-domain** | `local:local-ai` | ai:local/local, auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **lock-mutex** | `lock:mutex@0.1.0` | kv:atomics, kv:store | — | 74 KiB | ✓ |
 | **login-app** | `login:app@0.1.0` | config:store/store, secrets:vault/vault, session:store/store | — | 66 KiB | app/demo |
 | **markdown** | `md:render@0.1.0` | pure compute | — | 80 KiB | ✓ |
-| **mdns-discoverer-domain** | `local:mdns-discoverer` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, net:mdns/discovery, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **mdns-discoverer-domain** | `local:mdns-discoverer` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, net:mdns/discovery, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **mdns-discovery** | `net:mdns@0.1.0` | pure compute | — | 44 KiB | contract only |
 | **memory-probe** | `comp:memoryprobe@0.1.0` | knowledge:memory/memory, knowledge:memory/promotion | — | 112 KiB | ✓ |
-| **mesh-domain** | `mesh:app@0.1.0` | proxy:route/router, records:store/store, resilience:breaker/breaker | — | 158 KiB | ✓ |
+| **mesh-domain** | `mesh:app@0.1.0` | proxy:route/router, records:store/store, resilience:breaker/breaker | — | 158 KiB | app/demo |
 | **metrics-collect** | `metrics:collect@0.1.0` | kv:atomics, kv:store | — | 70 KiB | ✓ |
 | **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 166 KiB | ✓ |
 | **mock-fitness** | `mockgate:fitness@0.1.0` | config/store | `gate-script` | 76 KiB | ✓ |
 | **mock-provider** | `mock:provider@0.1.0` | config/store | `mock-model`, `mock-embeddings`, `mock-script` | 115 KiB | ✓ |
-| **moderation-domain** | `moderation:queue@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, event:bus/bus, policy:guard/guard, ratelimit:guard/limiter, records:store/store, config/store | `text`, `items`, `subject`, `scopes`, `policy-domain`, `rules`, `id`, `action`, `effect`, `priority`, `conditions`, `left`, `right`, `op`, `state`, `author` | 176 KiB | ✓ |
+| **moderation-domain** | `moderation:queue@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, event:bus/bus, policy:guard/guard, ratelimit:guard/limiter, records:store/store, config/store | `text`, `items`, `subject`, `scopes`, `policy-domain`, `rules`, `id`, `action`, `effect`, `priority`, `conditions`, `left`, `right`, `op`, `state`, `author` | 176 KiB | app/demo |
 | **money** | `money:amount@0.1.0` | pure compute | — | 56 KiB | ✓ |
 | **notify-dispatch** | `notify:dispatch@0.1.0` | config/store, http/outgoing-handler | — | 90 KiB | ✓ |
-| **openai-provider** | `openai:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed`, `openai-api-key` | 170 KiB | ✓ |
+| **openai-provider** | `openai:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `max_tokens`, `seed`, `openai-api-key` | 173 KiB | ✓ |
 | **ordinal** | `demo:ordinal@0.1.0` | pure compute | — | 46 KiB | ✓ |
 | **otp** | `otp:totp@0.1.0` | pure compute | — | 82 KiB | ✓ |
 | **outbox** | `outbox:dispatch@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `base-backoff` | 93 KiB | ✓ |
 | **pagination** | `paginate:cursor@0.1.0` | config/store | `cursor-secret`, `max-page-size` | 74 KiB | ✓ |
-| **passkey-domain** | `passkey:app@0.1.0` | cache:store/cache, records:store/store, session:store/store, config/store, webauthn:verify/verifier | `rp-id`, `origin`, `require-uv` | 195 KiB | ✓ |
+| **passkey-domain** | `passkey:app@0.1.0` | cache:store/cache, records:store/store, session:store/store, config/store, webauthn:verify/verifier | `rp-id`, `origin`, `require-uv`, `authorization` | 194 KiB | app/demo |
 | **paste-bin** | `bin:app@0.1.0` | md:render/renderer, pii:redact/redactor, records:store/store, slug:generate/generator, validate:schema/validator | — | 146 KiB | ✓ |
-| **payees-domain** | `payees:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, iban:validate/validator, records:store/store | — | 164 KiB | ✓ |
+| **payees-domain** | `payees:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, iban:validate/validator, records:store/store | — | 164 KiB | app/demo |
 | **pdf** | `pdf:codec@0.1.0` | pure compute | — | 54 KiB | ✓ |
-| **pdf-generator-domain** | `local:pdf-generator` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store, web:browser/automation | — | 89 KiB | ✓ |
-| **photo-critic** | `demo:photocritic@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `anthropic-api-key` | 133 KiB | ✓ |
-| **photosocial-domain** | `photosocial:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, llm:inference/inference, records:store/store | — | 261 KiB | ✓ |
+| **pdf-generator-domain** | `local:pdf-generator` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store, web:browser/automation | — | 89 KiB | app/demo |
+| **photo-critic** | `demo:photocritic@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `anthropic-api-key` | 132 KiB | ✓ |
+| **photosocial-domain** | `photosocial:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, llm:inference/inference, records:store/store | — | 262 KiB | app/demo |
 | **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 73 KiB | ✓ |
-| **pipeline-domain** | `pipeline:app@0.1.0` | event:bus/bus, id:generate/generator, outbox:dispatch/queue | — | 140 KiB | ✓ |
-| **platform-domain** | `platform:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, blob:store/blobstore, comp:store/cas, policy:guard/guard, quota:meter/meter, records:store/store, secrets:vault/vault, config/store, http/outgoing-handler, kv:store, wit:reflect/composer, wit:reflect/inspector | `applier-secret`, `ingress-suffix`, `config`, `id`, `tag`, `ref`, `probe`, `key`, `collection`, `env`, `app`, `force`, `confirm`, `state`, `max-placement-lag-per-node`, `max-placement-lag`, `status-max-age`, `org`, `token` | 563 KiB | ✓ |
+| **pipeline-domain** | `pipeline:app@0.1.0` | event:bus/bus, id:generate/generator, outbox:dispatch/queue | — | 140 KiB | app/demo |
+| **platform-domain** | `platform:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, blob:store/blobstore, comp:store/cas, policy:guard/guard, quota:meter/meter, records:store/store, secrets:vault/vault, config/store, http/outgoing-handler, kv:store, wit:reflect/composer, wit:reflect/inspector | `applier-secret`, `ingress-suffix`, `authorization`, `config`, `id`, `tag`, `x-fetch-token`, `ref`, `probe`, `key`, `collection`, `env`, `app`, `x-platform-secret`, `force`, `confirm`, `state`, `max-placement-lag-per-node`, `max-placement-lag`, `status-max-age`, `org`, `token` | 563 KiB | app/demo |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 150 KiB | ✓ |
-| **poll-domain** | `poll:domain@0.1.0` | id:generate/generator, qr:encode/encoder, records:store/store, svg:chart/charts | — | 139 KiB | ✓ |
-| **power-domain** | `local:power-domain` | auth:identity/authorizer, http/outgoing-handler, kv:store | — | 83 KiB | ✓ |
-| **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes` | 102 KiB | ✓ |
-| **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 152 KiB | ✓ |
+| **poll-domain** | `poll:domain@0.1.0` | id:generate/generator, qr:encode/encoder, records:store/store, svg:chart/charts | — | 139 KiB | app/demo |
+| **power-domain** | `local:power-domain` | auth:identity/authorizer, http/outgoing-handler, kv:store | — | 83 KiB | app/demo |
+| **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes`, `content-type` | 102 KiB | ✓ |
+| **pulse-domain** | `pulse:app@0.1.0` | event:bus/bus, id:generate/generator, records:store/store | — | 152 KiB | app/demo |
 | **qr** | `qr:encode@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **quiz-grade** | `quiz:grade@0.1.0` | pure compute | — | 51 KiB | ✓ |
 | **quota** | `quota:meter@0.1.0` | kv:atomics, kv:store | — | 67 KiB | ✓ |
 | **rate-limiter** | `ratelimit:guard@0.1.0` | config/store, kv:atomics, kv:store | `max-attempts`, `lockout-window` | 67 KiB | ✓ |
-| **real-estate-escrow-domain** | `real-estate-escrow:real-estate-escrow` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | ✓ |
+| **real-estate-escrow-domain** | `real-estate-escrow:real-estate-escrow` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | app/demo |
 | **record-store** | `records:store@0.1.0` | comp:store/cas, kv:batch, kv:store | — | 205 KiB | ✓ |
-| **reddit-domain** | `local:reddit` | auth:identity/authorizer, kv:store | — | 130 KiB | ✓ |
+| **reddit-domain** | `local:reddit` | auth:identity/authorizer, kv:store | — | 130 KiB | app/demo |
 | **resilience** | `resilience:breaker@0.1.0` | pure compute | — | 16 KiB | ✓ |
 | **roman** | `demo:roman@0.1.0` | pure compute | — | 46 KiB | ✓ |
 | **rot13** | `demo:rot13@0.1.0` | pure compute | — | 45 KiB | ✓ |
 | **rrule** | `rrule:recur@0.1.0` | pure compute | — | 56 KiB | ✓ |
-| **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | ✓ |
-| **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 91 KiB | ✓ |
-| **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 172 KiB | ✓ |
-| **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 149 KiB | ✓ |
+| **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB | app/demo |
+| **sample-consumer** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `authorization` | 82 KiB | app/demo |
+| **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 92 KiB | ✓ |
+| **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 171 KiB | app/demo |
+| **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 149 KiB | app/demo |
 | **search-index** | `search:index@0.1.0` | kv:store | — | 96 KiB | ✓ |
 | **secret-probe** | `comp:secretprobe@0.1.0` | comp:secrets/reader | — | 70 KiB | ✓ |
 | **secrets-vault** | `secrets:vault@0.1.0` | config/store, kv:store | `master-key` | 96 KiB | ✓ |
@@ -172,23 +175,23 @@ capabilities, so anything marked reusable drops into another app via
 | **shaper** | `shaper:limit@0.1.0` | pure compute | — | 14 KiB | ✓ |
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **slug-probe** | `comp:slugprobe@0.1.0` | slug:generate/generator | — | 66 KiB | ✓ |
-| **smart-home-domain** | `smart-home:smart-home` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | ✓ |
-| **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 176 KiB | ✓ |
+| **smart-home-domain** | `smart-home:smart-home` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | app/demo |
+| **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 176 KiB | app/demo |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 644 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 182 KiB | app/demo |
-| **studio-domain** | `studio:app@0.1.0` | blob:store/blobstore, records:store/store, wit:reflect/composer, wit:reflect/inspector | — | 191 KiB | ✓ |
-| **support-desk-domain** | `support:desk@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, notify:dispatch/dispatcher, outbox:dispatch/queue, quota:meter/meter, records:store/store, session:store/store, config/store | `target`, `subject`, `tenant`, `scopes`, `ticket`, `body`, `tickets`, `state`, `customer`, `reply-budget`, `reply-period-secs` | 170 KiB | ✓ |
+| **studio-domain** | `studio:app@0.1.0` | blob:store/blobstore, records:store/store, wit:reflect/composer, wit:reflect/inspector | — | 191 KiB | app/demo |
+| **support-desk-domain** | `support:desk@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, notify:dispatch/dispatcher, outbox:dispatch/queue, quota:meter/meter, records:store/store, session:store/store, config/store | `target`, `subject`, `tenant`, `scopes`, `ticket`, `body`, `tickets`, `state`, `customer`, `reply-budget`, `reply-period-secs` | 170 KiB | app/demo |
 | **svg-chart** | `svg:chart@0.1.0` | pure compute | — | 83 KiB | ✓ |
 | **system-cron** | `os:system@0.1.0` | pure compute | — | 44 KiB | contract only |
-| **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, records:store/store | — | 249 KiB | ✓ |
+| **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, records:store/store | — | 248 KiB | app/demo |
 | **textdiff** | `diff:text@0.1.0` | pure compute | — | 68 KiB | ✓ |
-| **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 143 KiB | ✓ |
+| **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 142 KiB | app/demo |
 | **track-assets** | `ui:assets@0.1.0` | pure compute | — | 58 KiB | ✓ |
-| **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 246 KiB | ✓ |
-| **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 185 KiB | ✓ |
-| **treasury-ledger-domain** | `treasury:ledger@0.1.0` | auth:identity/authorizer, auth:identity/session, auth:identity/types, fsm:workflow/engine, idempotency:guard/store, ledger:doubleentry/ledger, money:amount/arithmetic, records:store/store, config/store | `name`, `currency`, `start`, `accounts`, `amount`, `units`, `subject`, `scopes`, `transfer`, `at`, `opened`, `account`, `to`, `from`, `transfers` | 192 KiB | ✓ |
-| **triage-assist-domain** | `triage:assist@0.1.0` | ai:inference/inference, audit:log/query, audit:log/recorder, audit:log/types, auth:identity/authorizer, auth:identity/session, auth:identity/types, pii:redact/redactor, ratelimit:guard/limiter, records:store/store | — | 156 KiB | ✓ |
-| **triage-domain** | `triage:domain@0.1.0` | csv:codec/codec, fsm:workflow/engine, id:generate/generator, pii:redact/redactor, records:store/store | — | 187 KiB | ✓ |
+| **track-domain** | `track:app@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, event:bus/bus, fsm:workflow/engine, md:render/renderer, notify:dispatch/dispatcher, paginate:cursor/cursors, policy:guard/guard, records:store/store, search:index/index, ui:assets/files, webhook:sign/signer | — | 246 KiB | app/demo |
+| **transit-domain** | `transit:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, qr:encode/encoder, records:store/store | — | 185 KiB | app/demo |
+| **treasury-ledger-domain** | `treasury:ledger@0.1.0` | auth:identity/authorizer, auth:identity/session, auth:identity/types, fsm:workflow/engine, idempotency:guard/store, ledger:doubleentry/ledger, money:amount/arithmetic, records:store/store, config/store | `name`, `currency`, `start`, `accounts`, `amount`, `units`, `subject`, `scopes`, `transfer`, `at`, `opened`, `account`, `to`, `from`, `transfers` | 192 KiB | app/demo |
+| **triage-assist-domain** | `triage:assist@0.1.0` | ai:inference/inference, audit:log/query, audit:log/recorder, audit:log/types, auth:identity/authorizer, auth:identity/session, auth:identity/types, pii:redact/redactor, ratelimit:guard/limiter, records:store/store | — | 156 KiB | app/demo |
+| **triage-domain** | `triage:domain@0.1.0` | csv:codec/codec, fsm:workflow/engine, id:generate/generator, pii:redact/redactor, records:store/store | — | 187 KiB | app/demo |
 | **ui-notifier** | `os:ui@0.1.0` | pure compute | — | 46 KiB | contract only |
 | **upload-drop** | `drop:app@0.1.0` | blob:store/blobstore, records:store/store, upload:policy/gate, webhook:sign/signer | — | 146 KiB | ✓ |
 | **upload-policy** | `upload:policy@0.1.0` | config/store | `allowed-types`, `max-size`, `ticket-ttl`, `ticket-secret` | 77 KiB | ✓ |
@@ -197,13 +200,13 @@ capabilities, so anything marked reusable drops into another app via
 | **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — | 290 KiB | app/demo |
 | **vgit-probe** | `comp:vgitprobe@0.1.0` | vgit:store/objects, vgit:store/refs, vgit:store/worktree | — | 125 KiB | ✓ |
 | **video-ffmpeg** | `media:video@0.1.0` | pure compute | — | 46 KiB | contract only |
-| **video-transcoder-domain** | `local:video-transcoder` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, media:video/ffmpeg, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **video-transcoder-domain** | `local:video-transcoder` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, media:video/ffmpeg, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **virt-git** | `vgit:store@0.1.0` | blob:store/blobstore, comp:store/cas, config/store | `git-container` | 133 KiB | ✓ |
-| **vpn-manager-domain** | `local:vpn-manager` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, net:vpn/wireguard, records:store/store, kv:store | — | 89 KiB | ✓ |
+| **vpn-manager-domain** | `local:vpn-manager` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, net:vpn/wireguard, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **vpn-wireguard** | `net:vpn@0.1.0` | pure compute | — | 44 KiB | contract only |
 | **webauthn** | `webauthn:verify@0.1.0` | pure compute | — | 192 KiB | ✓ |
 | **webhook-ingest** | `webhook:ingest@0.1.0` | idempotency:guard/store, kv:store | — | 68 KiB | ✓ |
-| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 177 KiB | app/demo |
+| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — | 176 KiB | app/demo |
 | **webhook-sign** | `webhook:sign@0.1.0` | pure compute | — | 59 KiB | ✓ |
 | **wit-reflect** | `wit:reflect@0.1.0` | pure compute | — | 1074 KiB | ✓ |
 | **zip** | `zip:archive@0.1.0` | pure compute | — | 47 KiB | ✓ |
@@ -211,6 +214,8 @@ capabilities, so anything marked reusable drops into another app via
 ## Descriptions
 
 - **abtest-domain** — abtest:app — an A/B/n experiment console over composed contracts
+- **academic-review-domain** — `academic-review-domain` — keep submitted papers behind a login, with peer review and per-account access
+- **accounts-app** — HTTP JSON register/login app. Owns NO auth logic — it maps HTTP onto the
 - **adversary** — `adversary` — the component ADR-0023 asks for
 - **agent-driver** — `agent-driver` — the loop that joins the writer to the gate
 - **agent-probe** — `agent-probe` — an instrument for `graph:agent` (see wit/probe.wit)
@@ -221,36 +226,45 @@ capabilities, so anything marked reusable drops into another app via
 - **artifact-cache** — `artifact-cache` — derived work, computed once and handed over
 - **artifact-probe** — `artifact-probe` — an instrument for `artifact:cache` (see wit/probe.wit)
 - **audit-log** — `audit-log` — record who did what and when — an append-only audit trail any component can write decisions to
+- **auth-guard** — `auth-guard` — register and log a user in, hash their password, issue and introspect a session token, and check whether their role grants an action
 - **bench-suite** — `bench-suite` — the HTTP overhead ladder (see wit/bench.wit)
 - **bench-suite-p3** — `bench-suite-p3` — the compute rungs of the HTTP overhead ladder on WASI p3
+- **bigadd** — `bigadd` — add two integers too large for a machine word, given as decimal strings
 - **billing-ledger** — ledger:app — billing ledger over composed capability contracts
 - **blob-store** — `blob-store` — store and fetch large binary objects — uploads, exports, attachments — in named containers
 - **booked-domain** — `booked-domain` — a Calendly-lite booking service (docs/apps/BOOKED.md) as ONE composed
 - **books-domain** — `books-domain` — a double-entry bookkeeping service (docs/apps/BOOKS.md) as ONE composed
-- **browser-automation** — `browser-automation` — a WIT contract with NO implementation behind it
+- **browser-automation** — `browser-automation` — drive a headless browser and capture a page as PDF or image
+- **budget-domain** — `budget-domain` — record spending against per-category budgets and report the balance
 - **buzz-domain** — `buzz-domain` — a live multiplayer quiz game (docs/apps/BUZZ.md) as ONE composed wasm
 - **cache** — `cache` — a TTL-aware key/value cache with read-through, write-through, write-behind and refresh-ahead
 - **cache-backing** — `cache-backing` — exports cache:store's `source` + `sink` over wasi:keyvalue
+- **calc** — `calc` — evaluate the four arithmetic operations on a pair of numbers
 - **checks-runner** — `checks-runner` — `graph:fitness` over the native check runner
 - **clinic-domain** — `clinic-domain` — owners, pets and visits, as one component
+- **clipboard-sync-domain** — `clipboard-sync-domain` — read and share the desktop clipboard over HTTP, keeping a usage count
 - **conduit-domain** — conduit:app — the RealWorld ("Conduit") spec over composed contracts
 - **config-store** — `config-store` — runtime application config — timeouts, limits, URLs and tunables ops can change without a redeploy
 - **console-assets** — `track-assets` — the track (project tracker) SPA embedded as `ui:assets`
 - **console-domain** — `console-domain` — the Holon console (see `wit/console.wit` for why it is a
-- **container-docker** — `container-docker` — a WIT contract with NO implementation behind it
+- **container-docker** — `container-docker` — list and control containers running on the machine
 - **contract-probe** — `contract-probe` — the door onto `contract:registry` (see wit/probe.wit)
 - **contract-registry** — `contract-registry` — what two parts of a decomposed goal build against
 - **contrast-audit** — `contrast-audit` — a WCAG contrast auditor that runs on the lattice
 - **crdt** — `crdt` — merge concurrent replicas with no lock — state-based CRDTs that converge whatever order updates arrive in
 - **cron** — `cron` — parse a cron expression like `0 */6 * * *` and compute when it next fires
+- **cron-scheduler-domain** — `cron-scheduler-domain` — list and inspect the machine's scheduled jobs over HTTP
 - **csv** — `csv` — parse and format CSV — RFC 4180, with quoted fields, embedded commas, newlines and custom delimiters
 - **csv-report** — report:app — batch CSV import -> typed validate -> store -> paged report ->
 - **dashboards-domain** — `dashboards-domain` — personal metric dashboards (docs/apps/DASHBOARDS.md) as ONE
 - **demo** — `demo` — paging, as a component. One half of a two-part goal (ADR-0086)
 - **demo-probe** — `demo-probe` — the other half: it calls `demo:shape/pager` and nothing else
-- **desktop-clipboard** — `desktop-clipboard` — a WIT contract with NO implementation behind it
+- **desktop-clipboard** — `desktop-clipboard` — read and write the desktop session's clipboard
+- **desktop-notifier-domain** — `desktop-notifier-domain` — raise a desktop notification from an HTTP call
 - **dev-portal** — portal:app — developer portal / API-key service over composed contracts
+- **device-radar-domain** — `device-radar-domain` — show which nearby devices a scan found, behind a login
 - **doc-search-domain** — `doc-search-domain` — retrieval-augmented answers over an indexed library, behind
+- **docker-manager-domain** — `docker-manager-domain` — list running containers and their state over HTTP
 - **driver-probe** — `driver-probe` — an instrument for `graph:run` (see wit/probe.wit)
 - **email-render** — `email-render` — render a transactional email from a named template and a set of variables
 - **eshop-basket** — eshop:basket — the eShopOnDapr Basket.API over composed contracts
@@ -261,43 +275,55 @@ capabilities, so anything marked reusable drops into another app via
 - **event-bus** — `event-bus` — publish an event and let several unrelated things react — in-app publish/subscribe over topics
 - **event-pusher** — `event-pusher` — push delivery for the pull-based event bus — drives consumer polls on hosts with a messaging plugin
 - **experiment-assign** — `experiment-assign` — split subjects across named A/B/n variants by weight, stickily — a subject stays in its arm
+- **expr** — `expr` — parse and evaluate a small arithmetic expression written as text
 - **feature-flags** — `feature-flags` — is this feature on for this user? — flag evaluation with percentage rollouts and kill switches
 - **fitness-probe** — `fitness-probe` — an instrument for `graph:fitness` (see wit/probe.wit)
 - **flags-domain** — flags:app — a live feature-rollout console over composed contracts
 - **forge-probe** — `forge-probe` — an instrument for `git:forge` (see wit/probe.wit)
-- **fs-watcher** — `fs-watcher` — a WIT contract with NO implementation behind it
+- **freight-tracker-domain** — `freight-tracker-domain` — track shipments behind a login, with per-account access to their history
+- **fs-watcher** — `fs-watcher` — watch a directory and report file changes as they happen
+- **fs-watcher-domain** — `fs-watcher-domain` — watch a directory for changes and report them over HTTP
 - **fsm-workflow** — `fsm-workflow` — enforce a lifecycle — declare the legal state transitions and refuse the illegal ones
 - **gate-domain** — `gate-domain` — a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed
 - **geo** — `geo` — distance between two lat/lon points, a bounding box for a within-N-km filter, and IP address classing
 - **github-forge** — `github-forge` — `git:forge` over GitHub's REST API
+- **glob** — `glob` — test whether a path matches a shell-style wildcard pattern
 - **golem-bridge** — `golem-bridge` — durable:workflow/orchestrator over `wasi:http`, to Golem
 - **graph-probe** — `graph-probe` — an instrument for `knowledge:graph/store` (see wit/probe.wit)
 - **graph-selector** — `graph-selector` — which branch won, and the only path to a pull request
+- **graph-viz-domain** — `graph-viz-domain` — draw the capability graph as a picture you can pan and read
+- **health-records-domain** — `health-records-domain` — keep patient records behind a login, with per-account access control
 - **helpdesk-domain** — helpdesk:app — support/ticketing SaaS domain over composed contracts
 - **i18n-catalog** — `i18n-catalog` — translate a message for a locale — placeholder interpolation, plural rules and locale negotiation
 - **iban** — `iban` — validate a bank account number — IBAN mod-97 checksum and the per-country length
 - **ical** — `ical` — write an .ics calendar file — RFC 5545, with the line folding, escaping and UTC timestamps it requires
 - **id-generate** — `id-generate` — mint a unique identifier — sortable ULIDs and random ids that do not collide across processes
 - **idempotency-guard** — `idempotency-guard` — make a mutating request safe to retry — dedup by idempotency key and replay the stored result
-- **image-optimizer** — `image-optimizer` — a WIT contract with NO implementation behind it
+- **image-optimizer** — `image-optimizer` — shrink a picture by re-encoding it at lower cost
+- **image-optimizer-domain** — `image-optimizer-domain` — shrink an uploaded picture and hand back the smaller one
 - **inproc-workflow** — `inproc-workflow` — the default execution backend for the jobs queue
+- **insta-domain** — `insta-domain` — post pictures, follow other people and like what they posted
 - **invoice-copilot-domain** — `invoice-copilot-domain` — the model writes the words and the money component does the
+- **iot-scanner** — `iot-scanner` — list nearby wireless devices with their signal strength and connection state
 - **jobs-domain** — jobs:app — a durable background-job queue over composed contracts
 - **jsonpatch** — `jsonpatch` — apply a partial change to a JSON document — RFC 6902 JSON Patch and RFC 7386 merge patch
 - **knowledge-graph** — `knowledge-graph` — nodes, edges and traversal over SurrealDB's HTTP API
 - **knowledge-memory** — `knowledge-memory` — the policy layer over the stores that already exist
 - **kv-probe** — `kv-probe` — an instrument for one specific unknown (see wit/probe.wit)
-- **lan-scanner** — `lan-scanner` — a WIT contract with NO implementation behind it
+- **lan-scanner** — `lan-scanner` — find which hosts are reachable on the local network
+- **lan-scanner-domain** — `lan-scanner-domain` — find which hosts are reachable on the local network
 - **ledger** — `ledger` — double-entry bookkeeping — validate that debits equal credits, and roll entries into balances
 - **link-shortener** — shortlink:app — link shortener over composed capability contracts
 - **llm-inference** — `llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`
-- **llm-local** — `llm-local` — a WIT contract with NO implementation behind it
+- **llm-local** — `llm-local` — send a prompt to a language model running on this machine
 - **llm-probe** — `llm-probe` — an instrument for `llm:inference` (see wit/probe.wit)
 - **lms-domain** — `lms-domain` — a learning-management service (docs/apps/LMS.md) as ONE composed wasm
+- **local-ai-domain** — `local-ai-domain` — ask a locally-hosted language model a question over HTTP
 - **lock-mutex** — `lock-mutex` — stop two workers doing the same job — a distributed mutex / advisory lease with an expiry
 - **login-app** — `login-app` — a consumer component that composes three universal
 - **markdown** — `markdown` — render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it
-- **mdns-discovery** — `mdns-discovery` — a WIT contract with NO implementation behind it
+- **mdns-discoverer-domain** — `mdns-discoverer-domain` — discover printers, speakers and other services advertised on the local network
+- **mdns-discovery** — `mdns-discovery` — discover printers, speakers and services advertised on the local network
 - **memory-probe** — `memory-probe` — an instrument for `knowledge:memory` (see wit/probe.wit)
 - **mesh-domain** — `mesh-domain` — the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP
 - **metrics-collect** — `metrics-collect` — count named events, read a family by prefix, and compute the rate between two counters
@@ -308,6 +334,7 @@ capabilities, so anything marked reusable drops into another app via
 - **money** — `money` — exact money arithmetic in integer minor units tagged with an ISO-4217 currency — never a float
 - **notify-dispatch** — `notify-dispatch` — send an outbound notification — a webhook POST, or email/SMS through a configured gateway
 - **openai-provider** — `openai-provider` — the OpenAI side of the LLM contract — chat, completion and embeddings over an OpenAI-compatible API
+- **ordinal** — `ordinal` — turn a number into its English ordinal — 1st, 2nd, 3rd, 111th
 - **otp** — `otp` — generate and verify a one-time password for two-factor login — TOTP and HOTP, RFC 6238 and 4226
 - **outbox** — `outbox` — emit an event reliably after a state change — the transactional outbox, so a crash neither loses nor double-fires it
 - **pagination** — `pagination` — paginate a long list without drift — encode a sort position into an opaque cursor
@@ -315,6 +342,7 @@ capabilities, so anything marked reusable drops into another app via
 - **paste-bin** — bin:app — a paste / gist bin over a chain of mostly pure-compute contracts
 - **payees-domain** — `payees-domain` — a payee book (docs/apps/PAYEES.md) as ONE composed wasm HTTP
 - **pdf** — `pdf` — write a PDF document — text laid onto pages, with no native library and no headless browser
+- **pdf-generator-domain** — `pdf-generator-domain` — render a web page to a PDF and return the bytes
 - **photo-critic** — `photo-critic` — a photo-critique app that runs on the lattice
 - **photosocial-domain** — `photosocial-domain` — a social photo-sharing application with AI critique,
 - **pii-redact** — `pii-redact` — find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink
@@ -322,16 +350,22 @@ capabilities, so anything marked reusable drops into another app via
 - **platform-domain** — `platform-domain` — the platform control plane (docs/adr/) as ONE composed wasm
 - **policy-guard** — `policy-guard` — does this principal own THIS row? — attribute-based, row-level authorization beyond roles
 - **poll-domain** — `poll-domain` — a live poll, as one component
+- **power-domain** — `power-domain` — work out what running an appliance costs from its wattage and hours
 - **proxy-route** — `proxy-route` — forward a request to an upstream by path prefix — a config-driven reverse proxy
 - **pulse-domain** — pulse:app — a realtime chat room over composed contracts
 - **qr** — `qr` — turn a URL or a string into a scannable QR code, as SVG
 - **quiz-grade** — `quiz-grade` — grade answers against an answer key, and roll a cohort's scores into statistics
 - **quota** — `quota` — meter cumulative usage against a budget over a billing period — reserve, consume, refund
 - **rate-limiter** — `rate-limiter` — stop a caller making too many requests — count attempts against a key and lock it out after too many
+- **real-estate-escrow-domain** — `real-estate-escrow-domain` — hold property transactions behind a login, with per-account access
 - **record-store** — `record-store` — store JSON records in named collections, query them by field, and index them
+- **reddit-domain** — `reddit-domain` — run threaded discussion boards where people post and reply under topics
 - **resilience** — `resilience` — stop hammering a failing service — a circuit breaker and exponential backoff, as pure functions
+- **roman** — `roman` — convert a number to Roman numerals and read Roman numerals back
+- **rot13** — `rot13` — obscure text with the ROT13 letter substitution, and reverse it
 - **rrule** — `rrule` — expand a repeating or recurring event into concrete dates — every weekday, every 2 weeks on Mon and Wed
 - **saga-domain** — saga:app — a durable trip-booking saga over composed contracts
+- **sample-consumer** — Sample HTTP consumer. Proves the auth:identity contract: every request is
 - **scheduler-timer** — `scheduler-timer` — do this later — durable timers for reminders, payment retries and nightly sweeps
 - **scribe-domain** — scribe:app — a collaborative document editor over composed contracts
 - **search-domain** — search:app — faceted search-as-you-type over composed contracts
@@ -343,13 +377,14 @@ capabilities, so anything marked reusable drops into another app via
 - **shaper** — `shaper` — the arithmetic behind rate limiting — token bucket and GCRA, as pure functions whose state the caller holds
 - **slug** — `slug` — turn a title into a clean URL slug, transliterating accents and suffixing on collision
 - **slug-probe** — Front the `slug` capability over HTTP: `GET /slugify?text=<pct-encoded>` calls
+- **smart-home-domain** — `smart-home-domain` — register household devices behind a login, with per-account access
 - **stash-domain** — `stash-domain` — a personal note stash (docs/apps/STASH.md) as ONE composed wasm HTTP
 - **static-assets** — `static-assets` — serve an embedded static bundle — an SPA in a component of its own, so the domain artifact stays slim
 - **status-page** — status:app — uptime monitor over composed capability contracts
 - **studio-domain** — `studio-domain` — the composition studio (docs/apps/STUDIO.md) as ONE composed wasm HTTP
 - **support-desk-domain** — `support-desk-domain` — a model writes the reply, and the reply gets there
 - **svg-chart** — `svg-chart` — render a chart to SVG on the server — bar, line, donut and sparkline
-- **system-cron** — `system-cron` — a WIT contract with NO implementation behind it
+- **system-cron** — `system-cron` — read and write the machine's scheduled jobs
 - **tempo-domain** — tempo:app — a multi-person worktime logger over composed contracts
 - **textdiff** — `textdiff` — what changed between two texts — a structured edit script, a unified diff, and apply
 - **throttle-domain** — throttle:app — a live throttle wall over composed contracts
@@ -359,16 +394,18 @@ capabilities, so anything marked reusable drops into another app via
 - **treasury-ledger-domain** — `treasury-ledger-domain` — concurrent transfers that never lose money
 - **triage-assist-domain** — `triage-assist-domain` — authenticated, rate-limited defect intake with an AI
 - **triage-domain** — `triage-domain` — defect intake, lifecycle and digest, as one component
-- **ui-notifier** — `ui-notifier` — a WIT contract with NO implementation behind it
+- **ui-notifier** — `ui-notifier` — raise a notification on the user's desktop
 - **upload-drop** — drop:app — a presigned direct-upload drop-box over composed contracts
 - **upload-policy** — `upload-policy` — validate a file upload against a size and content-type policy, then mint a signed upload ticket
 - **validate** — `validate` — validate input against declared per-field rules and return structured errors
 - **version-probe** — `version-probe` — answers with the tag it was BUILT with
 - **vet-domain** — `vet-domain` — the vet-clinic domain as a WIT HTTP component (FULL PARITY)
 - **vgit-probe** — `vgit-probe` — an instrument for `vgit:store` (see wit/probe.wit)
-- **video-ffmpeg** — `video-ffmpeg` — a WIT contract with NO implementation behind it
+- **video-ffmpeg** — `video-ffmpeg` — re-encode a video into another format or resolution
+- **video-transcoder-domain** — `video-transcoder-domain` — re-encode an uploaded video into another format
 - **virt-git** — `virt-git` — git's object model over `blob:store`. No disk, no working copy
-- **vpn-wireguard** — `vpn-wireguard` — a WIT contract with NO implementation behind it
+- **vpn-manager-domain** — `vpn-manager-domain` — report whether the VPN tunnel is up and who is connected to it
+- **vpn-wireguard** — `vpn-wireguard` — report whether the VPN tunnel is up and which peers are connected
 - **webauthn** — `webauthn` — the server half of passkey login — verify a WebAuthn registration and an assertion
 - **webhook-ingest** — `webhook-ingest` — verify an inbound webhook's HMAC signature, then dedup a redelivery
 - **webhook-relay** — relay:app — webhook relay over composed capability contracts
