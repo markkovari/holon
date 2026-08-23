@@ -74,9 +74,32 @@ jobs:
       - name: Test
         working-directory: components
         # `browser-automation` needs bindings that only exist after a component
-        # build of its own; `semver-range` fails 7 held-out spec tests on main.
-        # Both exclusions come out when #115 lands.
-        run: cargo test --workspace --exclude browser-automation --exclude semver-range
+        # build of its own.
+        run: cargo test --workspace --exclude browser-automation
+
+      # `publish` spawns `comp-host` through `tests/harness/mod.rs`, so the host
+      # has to exist before the step below. Dropped once already when this
+      # section was rewritten, and CI failed on
+      # `missing …/comp-host — cargo build --release in host/`.
+      - name: Build the host that `publish` spawns
+        working-directory: host
+        run: cargo build --release --bin comp-host
+
+      # Four reconciler suites need the BUILT artifacts and nothing else.
+      #
+      # They live here because `components/target/wasm32-wasip2/release/*.wasm`
+      # is produced by this job and CI jobs do not share a filesystem. Two of
+      # them — `capsearch` and `contracts` — were red on main and had never run.
+      #
+      # The other 21 integration suites are NOT here: they spawn `nats-server`,
+      # and several want SurrealDB. That is a real dependency and this workflow
+      # deliberately stands up neither, so they stay a local act until CI grows
+      # service containers. Measured, not guessed — see the note below.
+      - name: Test the reconciler suites that read built artifacts
+        working-directory: reconciler
+        run: >-
+          cargo test --release
+          --test capsearch --test contracts --test publish --test secrets
 
   native:
     name: native workspaces
@@ -90,8 +113,41 @@ jobs:
           # `--lib` is only legal where a lib target exists: `host` and `cli`
           # are bin-only and cargo errors rather than skipping. Found by this
           # workflow's own first run, which is the argument for having it.
+          # `--lib --bins` used to be the whole story here, and it hid four red
+          # test suites on main: `capsearch`, `contracts`, `docs` and `guestio`.
+          # None had run in CI once, and `guestio` alone was recording 20
+          # components that trap mid-response on any payload over 4 KiB.
+          #
+          # These six pass with NOTHING available: all 196 built `.wasm` files
+          # moved aside, `comp-host` moved aside, and `nats-server`/`surreal` off
+          # PATH. That is the only claim being made about them.
+          #
+          # Four earlier attempts classified these by READING them — grepping for
+          # `components/target`, then for `comp-host`. Every one was wrong,
+          # because a developer's machine has all three lying around from earlier
+          # work and cannot tell. Each dependency only became visible when it was
+          # REMOVED:
+          #
+          #   delete the .wasm            -> 16 suites need a build
+          #   delete comp-host too        -> 7 more spawn a host
+          #   drop nats-server from PATH  -> 21 of the rest spawn NATS
+          #
+          # 21 integration suites want NATS and sometimes SurrealDB. They stay
+          # out until CI runs service containers, which is a separate decision
+          # rather than a line in a test list.
+          #
+          # So the exclusion is a NAMED LIST rather than a blanket skip. The
+          # suites listed here need NOTHING; the ones that read built wasm run in
+          # the `components` job beside the build that produces it, and the ones
+          # wanting NATS/SurrealDB/a model are still out.
+          #
+          # `console_session` is out too: it spawns `comp-host` from
+          # `host/target/release`, which this job does not build.
           - workspace: reconciler
-            test-args: --lib --bins
+            test-args: >-
+              --lib --bins
+              --test docs --test fixtures --test guestio
+              --test stress_env --test stress_tree --test uideps
           # `surrealkv_test` is a goal's GATE, committed deliberately red: it
           # describes a `--kv surreal` backend that does not exist yet, and it
           # dials a real SurrealDB on :8000. The loop runs it through

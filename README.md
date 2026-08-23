@@ -71,16 +71,16 @@ pointed at itself. (The original capability-library README is kept at
 | | |
 |---|---|
 | what runs today, measured, and honestly missing | [`docs/CURRENT.md`](docs/CURRENT.md) |
-| the 52 showcase apps, one file each | [`docs/apps/`](docs/apps/README.md) |
+| the fifty-two showcase apps, one file each | [`docs/apps/`](docs/apps/README.md) |
 | how a run succeeds, and every way it fails | [`docs/SCENARIOS.md`](docs/SCENARIOS.md) |
 | the reasoning — 94 decisions, 10 of them superseded and kept | [`docs/adr/`](docs/adr/) |
 | the worklist — goals a person has written | [`.comp/goals/`](.comp/goals/) |
 | the browser surface: author a goal, read a run as a graph | [`docs/apps/CONSOLE.md`](docs/apps/CONSOLE.md) — `just host-console` |
 | the agentic core | `components/{agent-writer,agent-driver,graph-selector}`, `reconciler/src/generation.rs`, `reconciler/src/bin/goalrun.rs` |
 | what the swarm remembers | `components/knowledge-memory`, [ADR-0084](docs/adr/0084-two-retrievers-and-an-optimistic-database.md) |
-| why a component is worth more than a note about one | [ADR-0089](docs/adr/0089-capability-accumulation.md) — 202 components, reuse enforced by a gate that reads what a candidate actually called |
+| why a component is worth more than a note about one | [ADR-0089](docs/adr/0089-capability-accumulation.md) — 197 components, reuse enforced by a gate that reads what a candidate actually called |
 | what a hardening sweep found, fixed, and left | [`docs/HARDENING.md`](docs/HARDENING.md) — five failures that wore the return type of a success |
-| what is using what, and may I change it | [`docs/CAPABILITY-GRAPH.md`](docs/CAPABILITY-GRAPH.md) — interfaces, components and the 57 apps composed from them; `record-store` is inside 38 of them |
+| what is using what, and may I change it | [`docs/CAPABILITY-GRAPH.md`](docs/CAPABILITY-GRAPH.md) — interfaces, components and the 67 apps composed from them; `record-store` is inside 38 of them |
 | how two halves of one goal agree | `components/contract-registry`, `reconciler/src/compose.rs`, [ADR-0086](docs/adr/0086-parts-negotiate-a-contract.md) |
 
 ## Status
