@@ -84,10 +84,8 @@ fn stand_in_provider(port: u16) -> mpsc::Receiver<Seen> {
                 let _ = std::io::Read::read_exact(&mut reader, &mut b);
                 b
             };
-            let _ = tx.send(Seen {
-                authorization,
-                body: String::from_utf8_lossy(&body).into_owned(),
-            });
+            let _ =
+                tx.send(Seen { authorization, body: String::from_utf8_lossy(&body).into_owned() });
 
             let answer = serde_json::json!({
                 "id": "chatcmpl-stand-in",
@@ -134,7 +132,8 @@ fn spec_for(port: u16) -> std::path::PathBuf {
 }
 
 fn ask(fleet: &Fleet, path: &str) -> Value {
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap();
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     loop {
         let r = http
@@ -196,7 +195,11 @@ fn a_completion_comes_back_and_the_key_came_from_the_vault() {
     // And the request was the one the caller asked for, so a pass cannot come
     // from a provider that answered without being told anything.
     let body: Value = serde_json::from_str(&call.body).expect("the provider sent JSON");
-    assert_eq!(body["model"], Value::String("gpt-4o-mini".into()), "config chose the model: {body}");
+    assert_eq!(
+        body["model"],
+        Value::String("gpt-4o-mini".into()),
+        "config chose the model: {body}"
+    );
     assert_eq!(
         body["messages"][0]["content"],
         Value::String("what is a graph".into()),

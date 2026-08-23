@@ -8,12 +8,7 @@ pub struct TokenBucket {
 impl TokenBucket {
     /// Create a new token bucket that starts full.
     pub fn new(capacity: u64, refill_per_sec: u64) -> Self {
-        TokenBucket {
-            capacity,
-            refill_per_sec,
-            tokens: capacity,
-            last_update_ms: 0,
-        }
+        TokenBucket { capacity, refill_per_sec, tokens: capacity, last_update_ms: 0 }
     }
 
     /// Return current tokens plus refill since last update, capped at capacity.

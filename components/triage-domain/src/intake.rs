@@ -28,7 +28,10 @@ const INDEXES: [&str; 2] = ["component", "state"];
 
 /// A filter on the JSON encoding of a string value — the form the store indexes.
 fn filter(field: &str, value: &str) -> records::Filter {
-    records::Filter { field: field.to_string(), value: Value::String(value.to_string()).to_string() }
+    records::Filter {
+        field: field.to_string(),
+        value: Value::String(value.to_string()).to_string(),
+    }
 }
 
 /// The stored document with the store's id merged in.
@@ -49,11 +52,7 @@ impl EntryId for records::Entry {
 }
 
 fn field(v: &Value, key: &str) -> Option<String> {
-    v.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
+    v.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
 }
 
 /// Epoch seconds → RFC3339 UTC. The world has no wall clock, so the timestamp
@@ -70,12 +69,7 @@ fn rfc3339(secs: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
-    format!(
-        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
-        tod / 3600,
-        (tod / 60) % 60,
-        tod % 60
-    )
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", tod / 3600, (tod / 60) % 60, tod % 60)
 }
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {

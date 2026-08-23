@@ -156,8 +156,12 @@ fn set_experiment(request: &IncomingRequest, name: &str) -> Outcome {
     match exp::set_experiment(name, &tenant, &variants) {
         Ok(()) => {
             publish("reweight", name, &tenant, "", "");
-            let arms: Vec<Value> = variants.iter().map(|v| json!({"name": v.name, "weight": v.weight})).collect();
-            Outcome::Json(200, json!({"experiment": name, "tenant": tenant, "variants": arms}).to_string())
+            let arms: Vec<Value> =
+                variants.iter().map(|v| json!({"name": v.name, "weight": v.weight})).collect();
+            Outcome::Json(
+                200,
+                json!({"experiment": name, "tenant": tenant, "variants": arms}).to_string(),
+            )
         }
         Err(e) => assign_err(e),
     }
@@ -167,7 +171,8 @@ fn describe(path: &str, name: &str) -> Outcome {
     let tenant = query_str(path, "tenant").unwrap_or_default();
     match exp::describe(name, &tenant) {
         Ok(vs) => {
-            let arms: Vec<Value> = vs.iter().map(|v| json!({"name": v.name, "weight": v.weight})).collect();
+            let arms: Vec<Value> =
+                vs.iter().map(|v| json!({"name": v.name, "weight": v.weight})).collect();
             Outcome::Json(200, json!({"experiment": name, "variants": arms}).to_string())
         }
         Err(e) => assign_err(e),
@@ -205,7 +210,8 @@ fn cohort(path: &str) -> Outcome {
     }
     match exp::cohort(&name, &tenant, n) {
         Ok(cells) => {
-            let rows: Vec<Value> = cells.iter().map(|c| json!({"subject": c.subject, "arm": c.arm})).collect();
+            let rows: Vec<Value> =
+                cells.iter().map(|c| json!({"subject": c.subject, "arm": c.arm})).collect();
             Outcome::Json(200, json!({ "exp": name, "n": n, "cells": rows }).to_string())
         }
         Err(e) => assign_err(e),
@@ -234,7 +240,11 @@ fn record(request: &IncomingRequest, kind: &str) -> Outcome {
     match metrics::incr(&metric_key(&name, &tenant, &arm, kind), 1) {
         Ok(v) => {
             publish(kind, &name, &tenant, &subject, &arm);
-            Outcome::Json(200, json!({"exp": name, "subject": subject, "arm": arm, "kind": kind, "count": v}).to_string())
+            Outcome::Json(
+                200,
+                json!({"exp": name, "subject": subject, "arm": arm, "kind": kind, "count": v})
+                    .to_string(),
+            )
         }
         Err(e) => metrics_err(e),
     }
@@ -254,7 +264,8 @@ fn results(path: &str) -> Outcome {
     let mut arms = Vec::with_capacity(variants.len());
     for v in &variants {
         let exposed = metrics::get(&metric_key(&name, &tenant, &v.name, "exposed")).unwrap_or(0);
-        let converted = metrics::get(&metric_key(&name, &tenant, &v.name, "converted")).unwrap_or(0);
+        let converted =
+            metrics::get(&metric_key(&name, &tenant, &v.name, "converted")).unwrap_or(0);
         let rate = if exposed == 0 { 0.0 } else { converted as f64 / exposed as f64 };
         arms.push(json!({
             "name": v.name, "weight": v.weight,

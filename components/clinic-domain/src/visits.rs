@@ -86,7 +86,8 @@ fn create_visit(body: &str) -> Reply {
         }
     }
 
-    let doc = json!({"pet_id": pet_id, "vet": vet, "start": start, "minutes": minutes, "deleted": false});
+    let doc =
+        json!({"pet_id": pet_id, "vet": vet, "start": start, "minutes": minutes, "deleted": false});
     match records::create("visits", &doc.to_string(), &[]) {
         Ok(entry) => Reply::json(
             201,

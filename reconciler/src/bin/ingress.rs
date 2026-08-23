@@ -31,14 +31,17 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use comp_lattice::{nats::NatsLattice, CommandBus, Inventory};
-use comp_reconciler::settings;
 use comp_reconciler::plan::NodeInventory;
+use comp_reconciler::settings;
 use http_body_util::BodyExt;
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
 
 #[derive(Parser, Clone)]
-#[command(name = "comp-ingress", about = "Terminates HTTP and spreads it across the replicas of an app")]
+#[command(
+    name = "comp-ingress",
+    about = "Terminates HTTP and spreads it across the replicas of an app"
+)]
 struct Args {
     #[arg(long, default_value = "0.0.0.0:8088")]
     addr: String,
@@ -305,13 +308,7 @@ async fn activate(
     //
     // The next refresh replaces this entry with the node's full advertisement,
     // including its real core count.
-    table
-        .write()
-        .unwrap()
-        .routes
-        .entry(host.to_string())
-        .or_default()
-        .push(backend.clone());
+    table.write().unwrap().routes.entry(host.to_string()).or_default().push(backend.clone());
     eprintln!("comp-ingress: activated {host:?} on {}", backend.node);
     Some(backend)
 }
@@ -691,9 +688,21 @@ async fn main() -> Result<()> {
                 let (commands, activating) = (commands.clone(), activating.clone());
                 async move {
                     forward(
-                        table, client, next, inflight, per_host, shed, served, commands, activating,
+                        table,
+                        client,
+                        next,
+                        inflight,
+                        per_host,
+                        shed,
+                        served,
+                        commands,
+                        activating,
                         mode,
-                        max_inflight, slow_budget, activation_timeout, timeout, req,
+                        max_inflight,
+                        slow_budget,
+                        activation_timeout,
+                        timeout,
+                        req,
                     )
                     .await
                 }
@@ -782,9 +791,7 @@ async fn forward(
         counter(&shed, &host).fetch_add(1, Ordering::Relaxed);
         return Ok(status(
             503,
-            &format!(
-                "every replica of {host:?} is at {max_inflight} in flight; shedding\n"
-            ),
+            &format!("every replica of {host:?} is at {max_inflight} in flight; shedding\n"),
         ));
     }
     let (parts, body) = req.into_parts();
@@ -876,7 +883,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl CommandBus for AnswersOnce {
-        async fn serve(&self, _node: &str) -> Result<tokio::sync::mpsc::Receiver<comp_lattice::Command>> {
+        async fn serve(
+            &self,
+            _node: &str,
+        ) -> Result<tokio::sync::mpsc::Receiver<comp_lattice::Command>> {
             anyhow::bail!("not used")
         }
         async fn send(
@@ -1000,10 +1010,8 @@ mod tests {
     }
 
     fn inflight_of(pairs: &[(&str, usize)]) -> InFlight {
-        let m: BTreeMap<String, Arc<AtomicUsize>> = pairs
-            .iter()
-            .map(|(n, v)| (n.to_string(), Arc::new(AtomicUsize::new(*v))))
-            .collect();
+        let m: BTreeMap<String, Arc<AtomicUsize>> =
+            pairs.iter().map(|(n, v)| (n.to_string(), Arc::new(AtomicUsize::new(*v)))).collect();
         Arc::new(RwLock::new(m))
     }
 
@@ -1128,7 +1136,6 @@ mod tests {
         ];
         assert!(backends.iter().all(|b| saturated(b, &inflight, 64)));
     }
-
 }
 
 #[cfg(test)]

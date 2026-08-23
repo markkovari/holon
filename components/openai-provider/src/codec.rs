@@ -152,7 +152,8 @@ mod tests {
             Msg { role: "system", content: "You are a vet." },
             Msg { role: "user", content: "Summarize: Bella limps." },
         ];
-        let opts = Opts { model: "gpt-4o-mini", temperature: 700, max_tokens: 256, ..Default::default() };
+        let opts =
+            Opts { model: "gpt-4o-mini", temperature: 700, max_tokens: 256, ..Default::default() };
         let body = chat_body(&msgs, &opts);
         // valid JSON
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -187,7 +188,8 @@ mod tests {
     #[test]
     fn embed_body_shapes_a_valid_request() {
         let v: serde_json::Value =
-            serde_json::from_str(&embed_body("golden retriever", "text-embedding-3-small")).unwrap();
+            serde_json::from_str(&embed_body("golden retriever", "text-embedding-3-small"))
+                .unwrap();
         assert_eq!(v["model"], "text-embedding-3-small");
         assert_eq!(v["input"], "golden retriever");
     }

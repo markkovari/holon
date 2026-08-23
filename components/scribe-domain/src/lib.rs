@@ -134,8 +134,7 @@ fn usage_json() -> Outcome {
 // tie-break keeps reads deterministic. Harden with a keyed put or a lock if it
 // matters (rung 2).
 fn load(doc: &str) -> Doc {
-    let mut entries =
-        records::find_by(DOCS, "doc", &json!(doc).to_string()).unwrap_or_default();
+    let mut entries = records::find_by(DOCS, "doc", &json!(doc).to_string()).unwrap_or_default();
     entries.sort_by(|a, b| a.id.cmp(&b.id));
     match entries.into_iter().next() {
         Some(e) => {
@@ -153,12 +152,7 @@ fn load(doc: &str) -> Doc {
                 rev: e.revision,
             }
         }
-        None => Doc {
-            id: None,
-            meta: crdt::lwwmap_new(),
-            body: crdt::rga_new(),
-            rev: 0,
-        },
+        None => Doc { id: None, meta: crdt::lwwmap_new(), body: crdt::rga_new(), rev: 0 },
     }
 }
 
@@ -176,10 +170,7 @@ fn record_data(doc: &str, meta: &str, body: &str) -> String {
 
 /// The merged scalar fields (title, …) for an lwwmap meta state.
 fn merged_doc(meta: &str) -> Value {
-    crdt::value(meta)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| json!({}))
+    crdt::value(meta).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_else(|| json!({}))
 }
 
 /// The current body text from the rga state.
@@ -234,7 +225,11 @@ fn apply_op(request: &IncomingRequest, doc: &str) -> Outcome {
     }
     let replica = {
         let r = body["replica"].as_str().unwrap_or("").trim();
-        if r.is_empty() { ids::short_code(8) } else { r.to_string() }
+        if r.is_empty() {
+            ids::short_code(8)
+        } else {
+            r.to_string()
+        }
     };
 
     for _ in 0..MAX_RETRY {
@@ -258,10 +253,11 @@ fn apply_op(request: &IncomingRequest, doc: &str) -> Outcome {
                 }
                 let ts = body["ts"].as_u64().unwrap_or_else(|| now() * 1000);
                 let before = field_text(&cur.meta, &field);
-                let new_meta = match crdt::lwwmap_set(&cur.meta, &field, &value.to_string(), ts, &replica) {
-                    Ok(s) => s,
-                    Err(e) => return crdt_err(e),
-                };
+                let new_meta =
+                    match crdt::lwwmap_set(&cur.meta, &field, &value.to_string(), ts, &replica) {
+                        Ok(s) => s,
+                        Err(e) => return crdt_err(e),
+                    };
                 let after = field_text(&new_meta, &field);
                 (new_meta, cur.body.clone(), before, after)
             }

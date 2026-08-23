@@ -137,7 +137,6 @@ impl Runner {
         let body = out.split("\r\n\r\n").nth(1).unwrap_or_default();
         serde_json::from_str(body).map_err(|e| format!("unreadable report ({e}): {out}"))
     }
-
 }
 
 /// `sh -c` is not on any allow-list in this file; these use real binaries.

@@ -41,8 +41,8 @@ mod bindings;
 mod accounts;
 mod audit;
 mod config;
-mod kv;
 mod jwt_verify;
+mod kv;
 mod oidc_client;
 mod store;
 mod tokens;
@@ -88,19 +88,11 @@ impl Oidc for Component {
 // ---- accounts -----------------------------------------------------------
 
 impl Accounts for Component {
-    fn register(
-        email: String,
-        password: String,
-        tenant: String,
-    ) -> Result<Principal, AuthError> {
+    fn register(email: String, password: String, tenant: String) -> Result<Principal, AuthError> {
         accounts::register(&email, &password, &tenant)
     }
 
-    fn login(
-        email: String,
-        password: String,
-        tenant: String,
-    ) -> Result<TokenPair, AuthError> {
+    fn login(email: String, password: String, tenant: String) -> Result<TokenPair, AuthError> {
         accounts::login(&email, &password, &tenant)
     }
 
@@ -191,10 +183,7 @@ impl Authorizer for Component {
         authorize_impl(&token, required, &traceparent)
     }
 
-    fn authorize_any(
-        token: String,
-        required: Vec<Permission>,
-    ) -> Result<Principal, AuthError> {
+    fn authorize_any(token: String, required: Vec<Permission>) -> Result<Principal, AuthError> {
         let (principal, doc) = resolve_principal_doc(&token)?;
         if required.iter().any(|r| store::rbac_check_with(&doc, &principal, r)) {
             Ok(principal)

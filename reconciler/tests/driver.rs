@@ -139,17 +139,28 @@ fn plan(text: &str, checks: Value, seed: u64, max_attempts: u32) -> Value {
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(120)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(120))
+            .build()
+            .unwrap(),
     };
-    fleet.until("a run that reaches both the model and the runner", Duration::from_secs(180), || {
-        let r = probe.run(plan(
-            "go in circles",
-            json!([check("never-passes", &["test", "-f", "never.txt"])]),
-            0,
-            1,
-        ));
-        if r["attempts"][0]["score"].is_number() { Ok(()) } else { Err(r.to_string()) }
-    });
+    fleet.until(
+        "a run that reaches both the model and the runner",
+        Duration::from_secs(180),
+        || {
+            let r = probe.run(plan(
+                "go in circles",
+                json!([check("never-passes", &["test", "-f", "never.txt"])]),
+                0,
+                1,
+            ));
+            if r["attempts"][0]["score"].is_number() {
+                Ok(())
+            } else {
+                Err(r.to_string())
+            }
+        },
+    );
     probe
 }
 
@@ -190,7 +201,11 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
         "it should have taken exactly two: one to fail and one to fix. A run that took \
          one was never repaired, and a run that took four kept going after it had won: {run}"
     );
-    assert_eq!(attempts[0]["score"], json!(500), "the first attempt got the base right and not the fix");
+    assert_eq!(
+        attempts[0]["score"],
+        json!(500),
+        "the first attempt got the base right and not the fix"
+    );
     assert_ne!(
         attempts[0]["digest"], attempts[1]["digest"],
         "the two attempts produced the same candidate, so the failure never reached the model \
@@ -330,8 +345,8 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
         "one attempt that failed to improve must end it, and none of the three repeated \
          itself — so `plateau` would never have fired: {stubborn}"
     );
-    let digests: Vec<_> = stubborn["attempts"].as_array().unwrap().iter()
-        .map(|a| a["digest"].clone()).collect();
+    let digests: Vec<_> =
+        stubborn["attempts"].as_array().unwrap().iter().map(|a| a["digest"].clone()).collect();
     assert_eq!(
         digests.iter().collect::<std::collections::HashSet<_>>().len(),
         3,

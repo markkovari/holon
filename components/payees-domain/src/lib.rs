@@ -81,7 +81,9 @@ fn iban_msg(e: &iban::IbanError) -> String {
         iban::IbanError::TooShort => "too short".into(),
         iban::IbanError::BadCountry(c) => format!("country code must be two letters (got \"{c}\")"),
         iban::IbanError::BadChar(c) => format!("invalid character: \"{c}\""),
-        iban::IbanError::BadLength((got, exp)) => format!("wrong length for that country: got {got}, expected {exp}"),
+        iban::IbanError::BadLength((got, exp)) => {
+            format!("wrong length for that country: got {got}, expected {exp}")
+        }
         iban::IbanError::BadCheck => "checksum failed — check for a typo".into(),
     }
 }
@@ -120,7 +122,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -215,10 +218,12 @@ fn list_payees(request: &IncomingRequest) -> Outcome {
     let mut items: Vec<Value> = records::find_by(PAYEES, "owner", &json!(p.subject).to_string())
         .unwrap_or_default()
         .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            v["id"] = json!(e.id);
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                v["id"] = json!(e.id);
+                v
+            })
+        })
         .collect();
     items.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
     Outcome::Json(200, json!({ "items": items }).to_string())

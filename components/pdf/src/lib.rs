@@ -117,7 +117,9 @@ fn content(lines: &[Line]) -> Vec<u8> {
             continue;
         }
         let font = if ln.bold { "F2" } else { "F1" };
-        s.extend_from_slice(format!("BT /{} {} Tf {} {} Td (", font, ln.size, ln.x, ln.y).as_bytes());
+        s.extend_from_slice(
+            format!("BT /{} {} Tf {} {} Td (", font, ln.size, ln.x, ln.y).as_bytes(),
+        );
         s.extend_from_slice(&ln.text);
         s.extend_from_slice(b") Tj ET\n");
     }
@@ -151,7 +153,10 @@ impl Guest for Component {
             .into_bytes(),
         );
         // 3, 4: fonts
-        objects.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec());
+        objects.push(
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+                .to_vec(),
+        );
         objects.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".to_vec());
 
         // Reserve slots so page/content objects land at their computed numbers.
@@ -186,11 +191,8 @@ impl Guest for Component {
             out.extend_from_slice(format!("{:010} 00000 n \n", off).as_bytes());
         }
         out.extend_from_slice(
-            format!(
-                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF",
-                size, xref_at
-            )
-            .as_bytes(),
+            format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{}\n%%EOF", size, xref_at)
+                .as_bytes(),
         );
         out
     }

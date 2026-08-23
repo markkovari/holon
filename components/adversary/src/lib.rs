@@ -64,16 +64,16 @@ fn dictionary(neighbour: &str) -> Vec<String> {
 /// broken in the other direction, and that is worth knowing in the same run.
 const TARGETS: &[(&str, bool)] = &[
     // (target, lateral) — `lateral` means reaching it is an escape.
-    ("127.0.0.1:4222", true),      // the NATS bus this node is joined to
-    ("localhost:4222", true),      // the same thing, by a name that resolves to it
-    ("127.0.0.1:3401", true),      // this host's own listener — calling back in
-    ("169.254.169.254:80", true),  // cloud metadata: credentials
-    ("100.64.0.1:3401", true),     // Tailscale CGNAT — the rest of the lattice
+    ("127.0.0.1:4222", true),     // the NATS bus this node is joined to
+    ("localhost:4222", true),     // the same thing, by a name that resolves to it
+    ("127.0.0.1:3401", true),     // this host's own listener — calling back in
+    ("169.254.169.254:80", true), // cloud metadata: credentials
+    ("100.64.0.1:3401", true),    // Tailscale CGNAT — the rest of the lattice
     ("100.127.255.254:80", true),
     ("10.0.0.1:80", true),
     ("192.168.1.1:80", true),
     ("[::1]:4222", true),
-    ("example.com:80", false),     // the control
+    ("example.com:80", false), // the control
 ];
 
 struct Reached {
@@ -197,9 +197,7 @@ impl Guest for Component {
                 // Deliberately trivial and deliberately touching the store, so the
                 // load half of the run exercises the same capability path the
                 // isolation half attacks.
-                let n = kv::open("default")
-                    .and_then(|b| b.increment_or_zero("hits"))
-                    .unwrap_or(0);
+                let n = kv::open("default").and_then(|b| b.increment_or_zero("hits")).unwrap_or(0);
                 format!("{{\"ok\":true,\"hits\":{n}}}")
             }
             "/sweep" => {

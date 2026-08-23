@@ -95,9 +95,7 @@ fn decode_b64_str(payload: &str, what: &str) -> Result<String, ConfigError> {
 /// failure surfaces as `type-mismatch` with context.
 fn parse_entry(s: &str) -> Result<Entry, ConfigError> {
     let mut parts = s.splitn(4, '\t');
-    let tag = parts
-        .next()
-        .ok_or_else(|| ConfigError::TypeMismatch("missing type tag".into()))?;
+    let tag = parts.next().ok_or_else(|| ConfigError::TypeMismatch("missing type tag".into()))?;
     let version = parts
         .next()
         .and_then(|v| v.parse::<u32>().ok())
@@ -126,18 +124,10 @@ fn parse_entry(s: &str) -> Result<Entry, ConfigError> {
                 .map_err(|_| ConfigError::TypeMismatch("corrupt entry: decimal".into()))?,
         ),
         "j" => Value::Json(decode_b64_str(payload, "json")?),
-        other => {
-            return Err(ConfigError::TypeMismatch(format!(
-                "unknown type tag {other:?}"
-            )))
-        }
+        other => return Err(ConfigError::TypeMismatch(format!("unknown type tag {other:?}"))),
     };
 
-    Ok(Entry {
-        value,
-        version,
-        updated,
-    })
+    Ok(Entry { value, version, updated })
 }
 
 // ---- kv plumbing --------------------------------------------------------
@@ -180,10 +170,7 @@ fn read_index(bucket: &kv::Bucket, namespace: &str) -> Result<Vec<String>, Confi
         Ok(Some(bytes)) => {
             let s = String::from_utf8(bytes)
                 .map_err(|_| ConfigError::BackendUnavailable("index not utf-8".into()))?;
-            Ok(s.lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect())
+            Ok(s.lines().filter(|l| !l.is_empty()).map(|l| l.to_string()).collect())
         }
         Ok(None) => Ok(Vec::new()),
         Err(e) => Err(ConfigError::BackendUnavailable(format!("get index: {e:?}"))),

@@ -101,7 +101,8 @@ pub struct Agent {
     /// per instance: 16 apps sharing one component cost 16 copies and 3.17 MiB each,
     /// which is the marketplace case (many tenants, one popular component) paying
     /// for itself N times.
-    pub compiled: Arc<std::sync::RwLock<std::collections::HashMap<String, wasmtime::component::Component>>>,
+    pub compiled:
+        Arc<std::sync::RwLock<std::collections::HashMap<String, wasmtime::component::Component>>>,
     pub routes: Routes,
     pub limits: Limits,
     /// The node's NATS connection, for building wRPC clients. `None` off a lattice.
@@ -376,12 +377,8 @@ async fn handle(
                 // cost this cache exists to reduce, and the .cwasm stays on disk, so
                 // coming back costs the 0.3ms load rather than a recompile.
                 let digest = gone.scope.digest.clone();
-                let still_used = agent
-                    .instances
-                    .read()
-                    .unwrap()
-                    .values()
-                    .any(|i| i.scope.digest == digest);
+                let still_used =
+                    agent.instances.read().unwrap().values().any(|i| i.scope.digest == digest);
                 if !still_used {
                     crate::sync::writing(&agent.compiled).remove(&digest);
                 }
@@ -437,17 +434,16 @@ async fn start(
     // from under it. Also measured, not theorised.
     let resized = {
         let table = crate::sync::reading(&agent.instances);
-        table
-            .get(&id)
-            .filter(|e| e.scope.digest == cmd.digest && e.count != cmd.count.max(1))
-            .map(|e| {
+        table.get(&id).filter(|e| e.scope.digest == cmd.digest && e.count != cmd.count.max(1)).map(
+            |e| {
                 Arc::new(Instance {
                     scope: e.scope.clone(),
                     pre: e.pre.clone(),
                     remotes: e.remotes.clone(),
                     count: cmd.count.max(1),
                 })
-            })
+            },
+        )
     };
     if let Some(resized) = resized {
         let n = resized.count;
@@ -456,7 +452,8 @@ async fn start(
         return Ok(());
     }
     // Already exactly as asked: say so and touch nothing.
-    if crate::sync::reading(&agent.instances).get(&id).is_some_and(|e| e.scope.digest == cmd.digest) {
+    if crate::sync::reading(&agent.instances).get(&id).is_some_and(|e| e.scope.digest == cmd.digest)
+    {
         return Ok(());
     }
 
@@ -506,7 +503,10 @@ async fn start(
                     // The reference is a name, not a value, and naming it is the
                     // difference between an operator fixing the manifest and
                     // guessing which of five keys is the broken one.
-                    anyhow::anyhow!("{id} cannot start: secret {key:?} -> {}: {e}", reference.as_str())
+                    anyhow::anyhow!(
+                        "{id} cannot start: secret {key:?} -> {}: {e}",
+                        reference.as_str()
+                    )
                 })?;
         }
     }
@@ -530,33 +530,33 @@ async fn start(
     let (component, from_cache) = match in_memory {
         Some(hit) => (hit, true),
         None => tokio::task::spawn_blocking(move || {
-        // SAFETY: `deserialize_file` trusts its input completely — it maps machine
-        // code straight in. The only thing that makes that acceptable is where the
-        // file comes from: written by this process, into a host-private directory,
-        // named for the digest whose bytes we verified before compiling. Nothing
-        // off the wire is ever deserialised, and a file that came from anywhere
-        // else would be arbitrary code execution.
-        if cwasm.exists() {
-            match unsafe { wasmtime::component::Component::deserialize_file(&engine, &cwasm) } {
-                Ok(c) => return Ok((c, true)),
-                // A cache written by a different wasmtime build, or a truncated
-                // write, must not be fatal — it is a cache. Drop it and compile.
-                Err(e) => {
-                    eprintln!("comp-host: ignoring unusable {}: {e}", cwasm.display());
-                    let _ = std::fs::remove_file(&cwasm);
+            // SAFETY: `deserialize_file` trusts its input completely — it maps machine
+            // code straight in. The only thing that makes that acceptable is where the
+            // file comes from: written by this process, into a host-private directory,
+            // named for the digest whose bytes we verified before compiling. Nothing
+            // off the wire is ever deserialised, and a file that came from anywhere
+            // else would be arbitrary code execution.
+            if cwasm.exists() {
+                match unsafe { wasmtime::component::Component::deserialize_file(&engine, &cwasm) } {
+                    Ok(c) => return Ok((c, true)),
+                    // A cache written by a different wasmtime build, or a truncated
+                    // write, must not be fatal — it is a cache. Drop it and compile.
+                    Err(e) => {
+                        eprintln!("comp-host: ignoring unusable {}: {e}", cwasm.display());
+                        let _ = std::fs::remove_file(&cwasm);
+                    }
                 }
             }
-        }
-        let c = wasmtime::component::Component::from_file(&engine, &path)?;
-        // Write via a temp file in the same directory, then rename. Two starts of
-        // the same digest can race here, and a half-written .cwasm that another
-        // start deserialises is the one failure this cache must never cause.
-        if let Ok(bytes) = c.serialize() {
-            let tmp = cwasm.with_extension(format!("tmp.{}", std::process::id()));
-            if std::fs::write(&tmp, &bytes).is_ok() {
-                let _ = std::fs::rename(&tmp, &cwasm);
+            let c = wasmtime::component::Component::from_file(&engine, &path)?;
+            // Write via a temp file in the same directory, then rename. Two starts of
+            // the same digest can race here, and a half-written .cwasm that another
+            // start deserialises is the one failure this cache must never cause.
+            if let Ok(bytes) = c.serialize() {
+                let tmp = cwasm.with_extension(format!("tmp.{}", std::process::id()));
+                if std::fs::write(&tmp, &bytes).is_ok() {
+                    let _ = std::fs::rename(&tmp, &cwasm);
+                }
             }
-        }
             Ok::<_, anyhow::Error>((c, false))
         })
         .await
@@ -659,7 +659,13 @@ async fn start(
         scope.digest,
         t0.elapsed().as_micros(),
         t_fetch.as_micros(),
-        if shared { "shared" } else if from_cache { "cache-load" } else { "compile" },
+        if shared {
+            "shared"
+        } else if from_cache {
+            "cache-load"
+        } else {
+            "compile"
+        },
         t_compile.as_micros(),
         t_link.as_micros(),
     );

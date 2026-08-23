@@ -44,7 +44,9 @@ impl Ident {
     fn parse(s: &str) -> Self {
         // Leading zeroes make it a string, not a number: `01` is not `1`, and
         // treating it as one would make two distinct versions compare equal.
-        if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) && (s.len() == 1 || !s.starts_with('0'))
+        if !s.is_empty()
+            && s.bytes().all(|b| b.is_ascii_digit())
+            && (s.len() == 1 || !s.starts_with('0'))
         {
             s.parse().map(Ident::Num).unwrap_or_else(|_| Ident::Text(s.to_string()))
         } else {
@@ -135,14 +137,16 @@ impl Version {
 
 impl Ord for Version {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.triple().cmp(&other.triple()).then_with(|| match (self.pre.is_empty(), other.pre.is_empty()) {
-            // A release outranks any pre-release of the same triple.
-            (true, true) => std::cmp::Ordering::Equal,
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            // Field by field, and a shorter set is lower once every shared
-            // identifier is equal (SemVer §11.4.4).
-            (false, false) => self.pre.cmp(&other.pre),
+        self.triple().cmp(&other.triple()).then_with(|| {
+            match (self.pre.is_empty(), other.pre.is_empty()) {
+                // A release outranks any pre-release of the same triple.
+                (true, true) => std::cmp::Ordering::Equal,
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                // Field by field, and a shorter set is lower once every shared
+                // identifier is equal (SemVer §11.4.4).
+                (false, false) => self.pre.cmp(&other.pre),
+            }
         })
     }
 }
@@ -222,7 +226,8 @@ fn parse_term(term: &str) -> Option<Vec<Comparator>> {
     }
 
     // Longest operator first: `>=` must be tried before `>`.
-    for (prefix, op) in [(">=", Op::Gte), ("<=", Op::Lte), (">", Op::Gt), ("<", Op::Lt), ("=", Op::Eq)]
+    for (prefix, op) in
+        [(">=", Op::Gte), ("<=", Op::Lte), (">", Op::Gt), ("<", Op::Lt), ("=", Op::Eq)]
     {
         if let Some(rest) = term.strip_prefix(prefix) {
             let v = Version::parse(rest)?;

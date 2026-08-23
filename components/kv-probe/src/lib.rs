@@ -66,7 +66,11 @@ struct Component;
 /// failure. `?bucket=` keeps the probe's world to http + keyvalue and nothing else.
 fn bucket_of(query: &str) -> String {
     let b = param(query, "bucket");
-    if b.is_empty() { "default".to_string() } else { b }
+    if b.is_empty() {
+        "default".to_string()
+    } else {
+        b
+    }
 }
 
 /// One query parameter, no dependency on a URL crate for a two-key query.

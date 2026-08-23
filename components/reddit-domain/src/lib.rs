@@ -1,9 +1,9 @@
+use bindings::auth::identity::authorizer::authorize;
+use bindings::auth::identity::types::Permission;
+use bindings::wasi::keyvalue::store::open;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-use bindings::wasi::keyvalue::store::open;
-use bindings::auth::identity::authorizer::authorize;
-use bindings::auth::identity::types::Permission;
 
 mod bindings;
 
@@ -51,10 +51,7 @@ struct RedditDomain;
 
 impl RedditDomain {
     fn check_auth(token: &str, target: &str, action: &str) {
-        let perm = Permission {
-            target: target.to_string(),
-            action: action.to_string(),
-        };
+        let perm = Permission { target: target.to_string(), action: action.to_string() };
         let _principal = authorize(token, &perm).unwrap();
     }
 
@@ -114,39 +111,36 @@ impl bindings::exports::local::reddit::reddit::Guest for RedditDomain {
         let mut state = STATE.lock().unwrap();
         let id = state.get_id();
         let mut subreddits = Self::load_subreddits();
-        subreddits.push(Subreddit {
-            id: id.clone(),
-            name,
-        });
+        subreddits.push(Subreddit { id: id.clone(), name });
         Self::save_subreddits(&subreddits);
         id
     }
 
     fn get_subreddits() -> Vec<bindings::exports::local::reddit::reddit::Subreddit> {
-        Self::load_subreddits().into_iter().map(|s| bindings::exports::local::reddit::reddit::Subreddit {
-            id: s.id,
-            name: s.name,
-        }).collect()
+        Self::load_subreddits()
+            .into_iter()
+            .map(|s| bindings::exports::local::reddit::reddit::Subreddit { id: s.id, name: s.name })
+            .collect()
     }
 
-    fn create_thread(subreddit_id: String, title: String, content: String, token: String) -> String {
+    fn create_thread(
+        subreddit_id: String,
+        title: String,
+        content: String,
+        token: String,
+    ) -> String {
         Self::check_auth(&token, "thread", "create");
         let mut state = STATE.lock().unwrap();
         let id = state.get_id();
         let mut threads = Self::load_threads();
-        threads.push(Thread {
-            id: id.clone(),
-            subreddit_id,
-            title,
-            content,
-            upvotes: 0,
-        });
+        threads.push(Thread { id: id.clone(), subreddit_id, title, content, upvotes: 0 });
         Self::save_threads(&threads);
         id
     }
 
     fn get_threads(subreddit_id: String) -> Vec<bindings::exports::local::reddit::reddit::Thread> {
-        Self::load_threads().into_iter()
+        Self::load_threads()
+            .into_iter()
             .filter(|t| t.subreddit_id == subreddit_id)
             .map(|t| bindings::exports::local::reddit::reddit::Thread {
                 id: t.id,
@@ -154,7 +148,8 @@ impl bindings::exports::local::reddit::reddit::Guest for RedditDomain {
                 title: t.title,
                 content: t.content,
                 upvotes: t.upvotes,
-            }).collect()
+            })
+            .collect()
     }
 
     fn upvote_thread(thread_id: String, token: String) {
@@ -180,25 +175,22 @@ impl bindings::exports::local::reddit::reddit::Guest for RedditDomain {
         let mut state = STATE.lock().unwrap();
         let id = state.get_id();
         let mut comments = Self::load_comments();
-        comments.push(Comment {
-            id: id.clone(),
-            thread_id,
-            content,
-            upvotes: 0,
-        });
+        comments.push(Comment { id: id.clone(), thread_id, content, upvotes: 0 });
         Self::save_comments(&comments);
         id
     }
 
     fn get_comments(thread_id: String) -> Vec<bindings::exports::local::reddit::reddit::Comment> {
-        Self::load_comments().into_iter()
+        Self::load_comments()
+            .into_iter()
             .filter(|c| c.thread_id == thread_id)
             .map(|c| bindings::exports::local::reddit::reddit::Comment {
                 id: c.id,
                 thread_id: c.thread_id,
                 content: c.content,
                 upvotes: c.upvotes,
-            }).collect()
+            })
+            .collect()
     }
 
     fn upvote_comment(comment_id: String, token: String) {

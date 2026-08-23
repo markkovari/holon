@@ -35,7 +35,8 @@ use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
 const CLINIC_GOAL: &str = "export the day's veterinary visits for a clinic, one row per pet";
 const PAYROLL_GOAL: &str = "produce a monthly payroll remittance file for the finance team";
 const SHARED_TAG: &str = "csv:codec/codec@0.1.0";
-const LESSON: &str = "csv:codec's Dialect.delimiter is a String, not a char: pass \",\".to_string() \
+const LESSON: &str =
+    "csv:codec's Dialect.delimiter is a String, not a char: pass \",\".to_string() \
                       or the call will not compile";
 
 fn artifacts() -> Vec<String> {
@@ -132,7 +133,10 @@ fn a_lesson_crosses_two_goals_that_share_an_interface_and_nothing_else() {
     );
     let pool = Pool {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap(),
     };
     // The readiness check is a real recall, not a ping: the ingress answers
     // "no replica ... is currently placed" as plain text long before the pool can
@@ -166,8 +170,7 @@ fn a_lesson_crosses_two_goals_that_share_an_interface_and_nothing_else() {
     // The control arm, and the only thing that makes the next assertion mean
     // anything. These two goals have no words in common that matter, so if this
     // finds the lesson then tags are not what connected them.
-    let text_only =
-        pool.get(&format!("/recall?goal={}&k=5&min=0.55", enc(PAYROLL_GOAL)));
+    let text_only = pool.get(&format!("/recall?goal={}&k=5&min=0.55", enc(PAYROLL_GOAL)));
     let found_by_text = texts(&text_only).iter().any(|t| t.contains("Dialect.delimiter"));
 
     // --- and again, carrying the interface it imports --------------------------

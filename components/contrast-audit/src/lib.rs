@@ -126,7 +126,8 @@ fn post_anthropic(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     let _ = opts.set_connect_timeout(Some(30_000_000_000));
     let _ = opts.set_first_byte_timeout(Some(180_000_000_000));
     let _ = opts.set_between_bytes_timeout(Some(180_000_000_000));
-    let fut = outgoing_handler::handle(req, Some(opts)).map_err(|err| format!("handle: {err:?}"))?;
+    let fut =
+        outgoing_handler::handle(req, Some(opts)).map_err(|err| format!("handle: {err:?}"))?;
     fut.subscribe().block();
     let resp = fut
         .get()
@@ -195,7 +196,8 @@ fn read_body(request: &IncomingRequest) -> Vec<u8> {
 /// A table and not JSON: the numbers are already decided and this is the form a
 /// reader of the transcript can check by eye against the report.
 fn table(pairs: &[wcag::Pair]) -> String {
-    let mut s = String::from("| text | background | ratio | grade | share |\n|---|---|--:|---|--:|\n");
+    let mut s =
+        String::from("| text | background | ratio | grade | share |\n|---|---|--:|---|--:|\n");
     for p in pairs {
         s.push_str(&format!(
             "| `{}` | `{}` | {:.2}:1 | {} | {:.0}% |\n",
@@ -240,10 +242,7 @@ fn audit(request: &IncomingRequest) -> Result<String, String> {
     pairs.truncate(MAX_PAIRS);
 
     let failing = pairs.iter().filter(|p| !p.passes_aa()).count();
-    let mut prompt = format!(
-        "{PROMPT}\n\n{} pair(s) sampled, {failing} below 4.5:1.",
-        pairs.len()
-    );
+    let mut prompt = format!("{PROMPT}\n\n{} pair(s) sampled, {failing} below 4.5:1.", pairs.len());
     if dropped > 0 {
         // Said out loud, because a report that silently saw two thirds of the
         // evidence reads exactly like one that saw all of it.

@@ -115,7 +115,8 @@ impl Guest for Component {
 
     fn start(_req: RunRequest) -> Result<String, RunError> {
         Err(RunError::Unavailable(
-            "golem-bridge is synchronous over http; async start/status is the native provider".into(),
+            "golem-bridge is synchronous over http; async start/status is the native provider"
+                .into(),
         ))
     }
 

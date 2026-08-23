@@ -95,21 +95,11 @@ fn bound_length(mut s: String, sep: &str, max: usize) -> String {
 
 impl Guest for Component {
     fn slugify(text: String) -> String {
-        Self::slugify_with(
-            text,
-            Options {
-                separator: String::new(),
-                max_length: 0,
-            },
-        )
+        Self::slugify_with(text, Options { separator: String::new(), max_length: 0 })
     }
 
     fn slugify_with(text: String, opts: Options) -> String {
-        let sep = if opts.separator.is_empty() {
-            "-"
-        } else {
-            opts.separator.as_str()
-        };
+        let sep = if opts.separator.is_empty() { "-" } else { opts.separator.as_str() };
         let slug = slugify_sep(&text, sep);
         bound_length(slug, sep, opts.max_length as usize)
     }

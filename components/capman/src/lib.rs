@@ -18,7 +18,9 @@ pub fn parse(s: &str) -> Vec<(String, String)> {
     s.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .filter_map(|l| l.split_once(':').map(|(n, v)| (n.trim().to_string(), v.trim().to_string())))
+        .filter_map(|l| {
+            l.split_once(':').map(|(n, v)| (n.trim().to_string(), v.trim().to_string()))
+        })
         .collect()
 }
 
@@ -30,7 +32,11 @@ pub fn as_caps(s: &str) -> String {
 /// A `major.minor.patch` as a comparable tuple (missing parts are 0).
 fn triple(v: &str) -> (u64, u64, u64) {
     let p: Vec<u64> = v.split('.').map(|x| x.parse().unwrap_or(0)).collect();
-    (p.first().copied().unwrap_or(0), p.get(1).copied().unwrap_or(0), p.get(2).copied().unwrap_or(0))
+    (
+        p.first().copied().unwrap_or(0),
+        p.get(1).copied().unwrap_or(0),
+        p.get(2).copied().unwrap_or(0),
+    )
 }
 
 /// The behavior a capability must exhibit AT LEAST at `version`. This is what
@@ -56,13 +62,13 @@ pub fn conforms(name: &str, version: &str) -> Result<(), String> {
             let cases: &[(&str, &[(&str, &str)], &str)] = &[
                 ("Hi {{name}}", &[("name", "Ada")], "Hi Ada"),
                 ("{{a}}{{b}}", &[("a", "1"), ("b", "2")], "12"),
-                ("{{ name }}", &[("name", "Ada")], "Ada"),               // key trimmed
-                ("{{x}}", &[], "{{x}}"),                                  // unknown: verbatim
+                ("{{ name }}", &[("name", "Ada")], "Ada"), // key trimmed
+                ("{{x}}", &[], "{{x}}"),                   // unknown: verbatim
                 ("a {{ unmatched", &[("unmatched", "z")], "a {{ unmatched"), // no close: literal
-                ("{{k}} and {{k}}", &[("k", "z")], "z and z"),           // repeats
+                ("{{k}} and {{k}}", &[("k", "z")], "z and z"), // repeats
                 ("", &[], ""),
                 ("no placeholders", &[("a", "b")], "no placeholders"),
-                ("{{k}}", &[("other", "x"), ("k", "hit")], "hit"),       // first-match lookup
+                ("{{k}}", &[("other", "x"), ("k", "hit")], "hit"), // first-match lookup
             ];
             for (t, v, want) in cases {
                 let got = r(t, v);
@@ -106,8 +112,9 @@ mod tests {
     #[test]
     fn every_manifest_version_is_backed_by_its_behavior() {
         for (name, version) in parse(MANIFEST) {
-            conforms(&name, &version)
-                .unwrap_or_else(|e| panic!("manifest claims {name}:{version}, but behavior fails: {e}"));
+            conforms(&name, &version).unwrap_or_else(|e| {
+                panic!("manifest claims {name}:{version}, but behavior fails: {e}")
+            });
         }
     }
 }

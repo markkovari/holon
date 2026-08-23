@@ -79,7 +79,10 @@ fn api_version() -> String {
 /// The `max_tokens` to send when the caller asked for none. Anthropic requires a
 /// positive value, so 0 (the WIT "no cap") is resolved here rather than sent.
 fn default_max_tokens() -> u32 {
-    cfg("anthropic:max-tokens").and_then(|s| s.parse().ok()).filter(|&n| n > 0).unwrap_or(DEFAULT_MAX_TOKENS)
+    cfg("anthropic:max-tokens")
+        .and_then(|s| s.parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_MAX_TOKENS)
 }
 
 /// The x-api-key, from the vault. `none` is not an error at read time — the call
@@ -124,9 +127,9 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
             Ok(ok) => Ok(ok),
             // Both attempts failed: report the SECOND, and say there were two, so
             // a reader knows this is not a blip that a retry would have caught.
-            Err(InferError::ProviderUnavailable(second)) => Err(InferError::ProviderUnavailable(
-                format!("{second} (and once before: {first})"),
-            )),
+            Err(InferError::ProviderUnavailable(second)) => {
+                Err(InferError::ProviderUnavailable(format!("{second} (and once before: {first})")))
+            }
             Err(other) => Err(other),
         },
         other => other,

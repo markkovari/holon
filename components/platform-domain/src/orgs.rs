@@ -120,8 +120,12 @@ pub fn add_member(org: &str, subject: &str, email: &str, role: Role) -> Result<(
         "key": key, "org": org, "subject": subject, "email": email,
         "role": role.as_str(), "joined": crate::now(),
     });
-    records::create(MEMBERS, &doc.to_string(), &["key".to_string(), "org".to_string(), "subject".to_string()])
-        .map_err(|_| "could not add the member".to_string())?;
+    records::create(
+        MEMBERS,
+        &doc.to_string(),
+        &["key".to_string(), "org".to_string(), "subject".to_string()],
+    )
+    .map_err(|_| "could not add the member".to_string())?;
     Ok(())
 }
 
@@ -134,7 +138,9 @@ pub fn memberships(subject: &str) -> Vec<Value> {
         .filter_map(|m| {
             let org = m["org"].as_str()?.to_string();
             let row = crate::find_one(ORGS, "id", &org).map(|(_, _, v)| v)?;
-            Some(json!({ "id": org, "name": row["name"], "role": m["role"], "joined": m["joined"] }))
+            Some(
+                json!({ "id": org, "name": row["name"], "role": m["role"], "joined": m["joined"] }),
+            )
         })
         .collect()
 }

@@ -56,7 +56,9 @@ impl Guest for Component {
 
             (Method::Get, ["api", "profiles", name]) => get_profile(&request, name),
             (Method::Post, ["api", "profiles", name, "follow"]) => set_follow(&request, name, true),
-            (Method::Delete, ["api", "profiles", name, "follow"]) => set_follow(&request, name, false),
+            (Method::Delete, ["api", "profiles", name, "follow"]) => {
+                set_follow(&request, name, false)
+            }
 
             (Method::Get, ["api", "tags"]) => list_tags(),
             (Method::Post, ["api", "articles"]) => create_article(&request),
@@ -67,11 +69,17 @@ impl Guest for Component {
             (Method::Put, ["api", "articles", slug]) => update_article(&request, slug),
             (Method::Delete, ["api", "articles", slug]) => delete_article(&request, slug),
 
-            (Method::Post, ["api", "articles", slug, "favorite"]) => set_favorite(&request, slug, true),
-            (Method::Delete, ["api", "articles", slug, "favorite"]) => set_favorite(&request, slug, false),
+            (Method::Post, ["api", "articles", slug, "favorite"]) => {
+                set_favorite(&request, slug, true)
+            }
+            (Method::Delete, ["api", "articles", slug, "favorite"]) => {
+                set_favorite(&request, slug, false)
+            }
             (Method::Post, ["api", "articles", slug, "comments"]) => add_comment(&request, slug),
             (Method::Get, ["api", "articles", slug, "comments"]) => list_comments(&request, slug),
-            (Method::Delete, ["api", "articles", slug, "comments", id]) => delete_comment(&request, slug, id),
+            (Method::Delete, ["api", "articles", slug, "comments", id]) => {
+                delete_comment(&request, slug, id)
+            }
 
             _ => not_found("route"),
         };
@@ -255,7 +263,9 @@ fn update_user(request: &IncomingRequest) -> Outcome {
                 // "set password without the current one" verb. The suite checks
                 // the validation + 200, never that the new password logs in.
             }
-            Some(s) if !s.is_empty() => return invalid_field("password", "is too short (minimum is 8 characters)"),
+            Some(s) if !s.is_empty() => {
+                return invalid_field("password", "is too short (minimum is 8 characters)")
+            }
             _ => return blank("password"),
         }
     }
@@ -397,7 +407,8 @@ fn update_article(request: &IncomingRequest, slug: &str) -> Outcome {
         if let Some(title) = nonempty_string(v) {
             if data["title"].as_str() != Some(title.as_str()) {
                 let base = slug::slugify(&title);
-                data["slug"] = json!(unique_slug(if base.is_empty() { "article" } else { base.as_str() }));
+                data["slug"] =
+                    json!(unique_slug(if base.is_empty() { "article" } else { base.as_str() }));
             }
             data["title"] = json!(title);
         }
@@ -455,7 +466,10 @@ fn list_articles(request: &IncomingRequest, path: &str) -> Outcome {
     }
     if let Some(t) = query_param(path, "tag") {
         arts.retain(|(_, d)| {
-            d["tagList"].as_array().map(|a| a.iter().any(|x| x.as_str() == Some(t.as_str()))).unwrap_or(false)
+            d["tagList"]
+                .as_array()
+                .map(|a| a.iter().any(|x| x.as_str() == Some(t.as_str())))
+                .unwrap_or(false)
         });
     }
     if let Some(username) = query_param(path, "favorited") {
@@ -472,14 +486,17 @@ fn feed(request: &IncomingRequest, path: &str) -> Outcome {
         Ok(v) => v,
         Err(o) => return o,
     };
-    let followees: Vec<String> = records::find_by(FOLLOWS, "follower", &json!(p.subject).to_string())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
-        .filter_map(|d| d["followee"].as_str().map(String::from))
-        .collect();
+    let followees: Vec<String> =
+        records::find_by(FOLLOWS, "follower", &json!(p.subject).to_string())
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+            .filter_map(|d| d["followee"].as_str().map(String::from))
+            .collect();
     let mut arts = all_articles();
-    arts.retain(|(_, d)| d["author"].as_str().map(|a| followees.iter().any(|f| f == a)).unwrap_or(false));
+    arts.retain(|(_, d)| {
+        d["author"].as_str().map(|a| followees.iter().any(|f| f == a)).unwrap_or(false)
+    });
     Outcome::Json(200, articles_page(arts, path, Some(&p)))
 }
 
@@ -587,7 +604,8 @@ fn delete_comment(request: &IncomingRequest, slug: &str, id: &str) -> Outcome {
     let Ok(want) = id.parse::<i64>() else {
         return not_found("comment");
     };
-    let comments = records::find_by(COMMENTS, "article", &json!(article.id).to_string()).unwrap_or_default();
+    let comments =
+        records::find_by(COMMENTS, "article", &json!(article.id).to_string()).unwrap_or_default();
     let Some(entry) = comments.into_iter().find(|e| comment_id(&e.id) == want) else {
         return not_found("comment");
     };
@@ -645,13 +663,12 @@ fn is_following(follower: &str, followee: &str) -> bool {
 }
 
 fn follow_entry(follower: &str, followee: &str) -> Option<String> {
-    records::find_by(FOLLOWS, "follower", &json!(follower).to_string())
-        .ok()?
-        .into_iter()
-        .find_map(|e| {
+    records::find_by(FOLLOWS, "follower", &json!(follower).to_string()).ok()?.into_iter().find_map(
+        |e| {
             let d: Value = serde_json::from_str(&e.data).ok()?;
             (d["followee"].as_str() == Some(followee)).then_some(e.id)
-        })
+        },
+    )
 }
 
 /// The slug is free, or the first `-N` suffix that is (via slug:generate).
@@ -750,7 +767,11 @@ impl View {
 }
 
 /// list shape omits `body` (RealWorld's "multiple articles" response).
-fn articles_page(mut arts: Vec<(records::Entry, Value)>, path: &str, viewer: Option<&Principal>) -> String {
+fn articles_page(
+    mut arts: Vec<(records::Entry, Value)>,
+    path: &str,
+    viewer: Option<&Principal>,
+) -> String {
     arts.sort_by(|a, b| {
         let (sa, sb) = (a.1["seq"].as_u64().unwrap_or(0), b.1["seq"].as_u64().unwrap_or(0));
         sb.cmp(&sa).then(b.0.created.cmp(&a.0.created)).then(b.0.id.cmp(&a.0.id))
@@ -811,9 +832,11 @@ fn author_json(subject: &str, viewer: Option<&Principal>, view: &mut View) -> Va
 }
 
 fn favorite_state(article_id: &str, viewer: Option<&Principal>) -> (bool, u64) {
-    let favs = records::find_by(FAVORITES, "article", &json!(article_id).to_string()).unwrap_or_default();
+    let favs =
+        records::find_by(FAVORITES, "article", &json!(article_id).to_string()).unwrap_or_default();
     let count = favs.len() as u64;
-    let favorited = viewer.map(|v| favs.iter().any(|f| favorite_user(f) == v.subject)).unwrap_or(false);
+    let favorited =
+        viewer.map(|v| favs.iter().any(|f| favorite_user(f) == v.subject)).unwrap_or(false);
     (favorited, count)
 }
 
@@ -941,7 +964,8 @@ fn store_err(e: records::StoreError) -> Outcome {
 }
 
 fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
-    let body = read_body(request).map_err(|_| Outcome::Err(422, "body", "could not read body".into()))?;
+    let body =
+        read_body(request).map_err(|_| Outcome::Err(422, "body", "could not read body".into()))?;
     serde_json::from_slice(&body).map_err(|e| Outcome::Err(422, "body", format!("bad json: {e}")))
 }
 

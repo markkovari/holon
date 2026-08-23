@@ -149,12 +149,13 @@ impl CommandBus for NatsLattice {
         timeout: Duration,
     ) -> Result<Vec<u8>> {
         let subject = wire::command_subject(&self.lattice, node, verb);
-        let reply = tokio::time::timeout(timeout, self.client.request(subject.clone(), payload.into()))
-            .await
-            .map_err(|_| anyhow::anyhow!("no reply within {}s", timeout.as_secs()))?
-            // NATS answers `NoResponders` immediately rather than after the
-            // timeout, which is the distinction the trait doc asks for.
-            .with_context(|| format!("publishing to {subject}"))?;
+        let reply =
+            tokio::time::timeout(timeout, self.client.request(subject.clone(), payload.into()))
+                .await
+                .map_err(|_| anyhow::anyhow!("no reply within {}s", timeout.as_secs()))?
+                // NATS answers `NoResponders` immediately rather than after the
+                // timeout, which is the distinction the trait doc asks for.
+                .with_context(|| format!("publishing to {subject}"))?;
         Ok(reply.payload.to_vec())
     }
 }
@@ -170,11 +171,8 @@ impl Artifacts for NatsLattice {
     }
 
     async fn get(&self, name: &str) -> Result<Vec<u8>> {
-        let mut object = self
-            .objects
-            .get(name)
-            .await
-            .with_context(|| format!("fetching {name}"))?;
+        let mut object =
+            self.objects.get(name).await.with_context(|| format!("fetching {name}"))?;
         let mut bytes = Vec::new();
         tokio::io::AsyncReadExt::read_to_end(&mut object, &mut bytes)
             .await

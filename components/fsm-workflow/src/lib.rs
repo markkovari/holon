@@ -115,11 +115,7 @@ impl StoredDef {
             transitions: self
                 .transitions
                 .into_iter()
-                .map(|(event, source, target)| Transition {
-                    event,
-                    source,
-                    target,
-                })
+                .map(|(event, source, target)| Transition { event, source, target })
                 .collect(),
             terminal: self.terminal,
         }
@@ -146,12 +142,7 @@ struct StoredHist {
 
 impl StoredHist {
     fn into_wit(self) -> HistoryEntry {
-        HistoryEntry {
-            event: self.event,
-            source: self.source,
-            target: self.target,
-            at: self.at,
-        }
+        HistoryEntry { event: self.event, source: self.source, target: self.target, at: self.at }
     }
 }
 
@@ -181,9 +172,7 @@ fn load_json<T: for<'de> Deserialize<'de>>(
 fn store_json<T: Serialize>(bucket: &kv::Bucket, k: &str, value: &T) -> Result<(), FsmError> {
     let bytes = serde_json::to_vec(value)
         .map_err(|e| FsmError::BackendUnavailable(format!("encode {k}: {e}")))?;
-    bucket
-        .set(k, &bytes)
-        .map_err(|e| FsmError::BackendUnavailable(format!("set {k}: {e:?}")))
+    bucket.set(k, &bytes).map_err(|e| FsmError::BackendUnavailable(format!("set {k}: {e:?}")))
 }
 
 // ---- higher-level loaders -----------------------------------------------
@@ -220,9 +209,7 @@ impl Guest for Component {
     fn define(name: String, def: Definition) -> Result<(), FsmError> {
         // Validate before touching the store.
         if def.states.is_empty() {
-            return Err(FsmError::InvalidDefinition(
-                "states must be non-empty".into(),
-            ));
+            return Err(FsmError::InvalidDefinition("states must be non-empty".into()));
         }
         let in_states = |s: &str| def.states.iter().any(|x| x == s);
 
@@ -267,10 +254,7 @@ impl Guest for Component {
         let bucket = open()?;
         let def = load_def(&bucket, &machine)?;
 
-        let inst = StoredInst {
-            state: def.initial.clone(),
-            steps: 0,
-        };
+        let inst = StoredInst { state: def.initial.clone(), steps: 0 };
         store_json(&bucket, &inst_key(&machine, &instance), &inst)?;
         // Empty/clear the history.
         store_json::<Vec<StoredHist>>(&bucket, &hist_key(&machine, &instance), &Vec::new())?;
@@ -289,10 +273,7 @@ impl Guest for Component {
         let bucket = open()?;
         let def = load_def(&bucket, &machine)?;
         let inst = load_inst(&bucket, &machine, &instance)?;
-        Ok(def
-            .transitions
-            .iter()
-            .any(|(ev, src, _tgt)| *src == inst.state && *ev == event))
+        Ok(def.transitions.iter().any(|(ev, src, _tgt)| *src == inst.state && *ev == event))
     }
 
     fn allowed_events(machine: String, instance: String) -> Result<Vec<String>, FsmError> {
@@ -327,12 +308,7 @@ impl Guest for Component {
         inst.steps = inst.steps.saturating_add(1);
 
         let mut hist = load_hist(&bucket, &machine, &instance)?;
-        hist.push(StoredHist {
-            event: event.clone(),
-            source,
-            target,
-            at: now(),
-        });
+        hist.push(StoredHist { event: event.clone(), source, target, at: now() });
 
         // Persist instance state + appended history.
         store_json(&bucket, &inst_key(&machine, &instance), &inst)?;

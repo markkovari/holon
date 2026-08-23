@@ -147,22 +147,49 @@ fn run_transfer(route: &Route, body: &str) -> Reply {
     };
 
     let created_at = rfc3339(now_secs());
-    let pending = transfer_doc(&from, &to, moving.units, &currency, "pending", &route.idempotency_key, &created_at, "");
-    let transfer_entry = match records::create("transfers", &pending.to_string(), &["state".to_string()]) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(503, "contended"),
-    };
+    let pending = transfer_doc(
+        &from,
+        &to,
+        moving.units,
+        &currency,
+        "pending",
+        &route.idempotency_key,
+        &created_at,
+        "",
+    );
+    let transfer_entry =
+        match records::create("transfers", &pending.to_string(), &["state".to_string()]) {
+            Ok(e) => e,
+            Err(_) => return Reply::err(503, "contended"),
+        };
     let transfer_id = transfer_entry.id.clone();
 
     let _ = fsm::define(
         "transfer",
         &fsm::Definition {
-            states: vec!["pending".into(), "settled".into(), "refused".into(), "compensated".into()],
+            states: vec![
+                "pending".into(),
+                "settled".into(),
+                "refused".into(),
+                "compensated".into(),
+            ],
             initial: "pending".into(),
             transitions: vec![
-                fsm::Transition { event: "settle".into(), source: "pending".into(), target: "settled".into() },
-                fsm::Transition { event: "refuse".into(), source: "pending".into(), target: "refused".into() },
-                fsm::Transition { event: "compensate".into(), source: "settled".into(), target: "compensated".into() },
+                fsm::Transition {
+                    event: "settle".into(),
+                    source: "pending".into(),
+                    target: "settled".into(),
+                },
+                fsm::Transition {
+                    event: "refuse".into(),
+                    source: "pending".into(),
+                    target: "refused".into(),
+                },
+                fsm::Transition {
+                    event: "compensate".into(),
+                    source: "settled".into(),
+                    target: "compensated".into(),
+                },
             ],
             terminal: vec!["refused".into(), "compensated".into()],
         },
@@ -172,8 +199,22 @@ fn run_transfer(route: &Route, body: &str) -> Reply {
     match debit(&from, moving.units, &currency) {
         DebitOutcome::InsufficientFunds => {
             let _ = fsm::fire("transfer", &transfer_id, "refuse");
-            let refused = transfer_doc(&from, &to, moving.units, &currency, "refused", &route.idempotency_key, &created_at, &transfer_id);
-            let _ = records::update("transfers", &transfer_id, &refused.to_string(), transfer_entry.revision);
+            let refused = transfer_doc(
+                &from,
+                &to,
+                moving.units,
+                &currency,
+                "refused",
+                &route.idempotency_key,
+                &created_at,
+                &transfer_id,
+            );
+            let _ = records::update(
+                "transfers",
+                &transfer_id,
+                &refused.to_string(),
+                transfer_entry.revision,
+            );
             Reply::err(409, "insufficient_funds")
         }
         DebitOutcome::Failed => Reply::err(503, "contended"),
@@ -183,8 +224,16 @@ fn run_transfer(route: &Route, body: &str) -> Reply {
                     id: transfer_id.clone(),
                     memo: "transfer".into(),
                     lines: vec![
-                        doubleentry::Line { account: from.clone(), amount: moving.units, side: doubleentry::Side::Debit },
-                        doubleentry::Line { account: to.clone(), amount: moving.units, side: doubleentry::Side::Credit },
+                        doubleentry::Line {
+                            account: from.clone(),
+                            amount: moving.units,
+                            side: doubleentry::Side::Debit,
+                        },
+                        doubleentry::Line {
+                            account: to.clone(),
+                            amount: moving.units,
+                            side: doubleentry::Side::Credit,
+                        },
                     ],
                 };
                 if doubleentry::validate(&entry).is_err() {
@@ -194,21 +243,58 @@ fn run_transfer(route: &Route, body: &str) -> Reply {
                     "transfer": transfer_id, "from": from, "to": to, "units": moving.units,
                     "at": rfc3339(now_secs()),
                 });
-                if records::create("journal", &journal.to_string(), &["from".to_string(), "to".to_string()]).is_err() {
+                if records::create(
+                    "journal",
+                    &journal.to_string(),
+                    &["from".to_string(), "to".to_string()],
+                )
+                .is_err()
+                {
                     return Reply::err(500, "journal_lost");
                 }
                 let _ = fsm::fire("transfer", &transfer_id, "settle");
-                let settled = transfer_doc(&from, &to, moving.units, &currency, "settled", &route.idempotency_key, &created_at, &transfer_id);
-                let _ = records::update("transfers", &transfer_id, &settled.to_string(), transfer_entry.revision);
-                Reply::json(201, json!({ "transfer": transfer_id, "from_units": from_units, "to_units": to_units }))
+                let settled = transfer_doc(
+                    &from,
+                    &to,
+                    moving.units,
+                    &currency,
+                    "settled",
+                    &route.idempotency_key,
+                    &created_at,
+                    &transfer_id,
+                );
+                let _ = records::update(
+                    "transfers",
+                    &transfer_id,
+                    &settled.to_string(),
+                    transfer_entry.revision,
+                );
+                Reply::json(
+                    201,
+                    json!({ "transfer": transfer_id, "from_units": from_units, "to_units": to_units }),
+                )
             }
             None => {
                 // The debit already committed; the credit could not land after every retry.
                 // Put the money back on the source rather than lose it, then refuse.
                 let _ = credit(&from, moving.units, &currency);
                 let _ = fsm::fire("transfer", &transfer_id, "refuse");
-                let refused = transfer_doc(&from, &to, moving.units, &currency, "refused", &route.idempotency_key, &created_at, &transfer_id);
-                let _ = records::update("transfers", &transfer_id, &refused.to_string(), transfer_entry.revision);
+                let refused = transfer_doc(
+                    &from,
+                    &to,
+                    moving.units,
+                    &currency,
+                    "refused",
+                    &route.idempotency_key,
+                    &created_at,
+                    &transfer_id,
+                );
+                let _ = records::update(
+                    "transfers",
+                    &transfer_id,
+                    &refused.to_string(),
+                    transfer_entry.revision,
+                );
                 Reply::err(503, "contended")
             }
         },

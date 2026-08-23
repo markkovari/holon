@@ -13,9 +13,7 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::durable::workflow::orchestrator::{
-    Guest, RunError, RunRequest, RunStatus,
-};
+use bindings::exports::durable::workflow::orchestrator::{Guest, RunError, RunRequest, RunStatus};
 use serde_json::Value;
 
 struct Component;
@@ -80,8 +78,14 @@ mod tests {
 
     #[test]
     fn flaky_fails_then_succeeds() {
-        assert!(matches!(run("flaky", r#"{"attempt":1,"fail_until":3}"#), Err(RunError::WorkerFailed(_))));
-        assert!(matches!(run("flaky", r#"{"attempt":2,"fail_until":3}"#), Err(RunError::WorkerFailed(_))));
+        assert!(matches!(
+            run("flaky", r#"{"attempt":1,"fail_until":3}"#),
+            Err(RunError::WorkerFailed(_))
+        ));
+        assert!(matches!(
+            run("flaky", r#"{"attempt":2,"fail_until":3}"#),
+            Err(RunError::WorkerFailed(_))
+        ));
         assert!(run("flaky", r#"{"attempt":3,"fail_until":3}"#).is_ok());
     }
 

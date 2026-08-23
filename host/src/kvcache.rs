@@ -227,7 +227,11 @@ mod tests {
         c.set(&b, "k", b"v1").unwrap();
         assert_eq!(c.get(&b, "k").unwrap().as_deref(), Some(&b"v1"[..]));
         c.set(&b, "k", b"v2").unwrap();
-        assert_eq!(c.get(&b, "k").unwrap().as_deref(), Some(&b"v2"[..]), "stale after its own write");
+        assert_eq!(
+            c.get(&b, "k").unwrap().as_deref(),
+            Some(&b"v2"[..]),
+            "stale after its own write"
+        );
         c.delete(&b, "k").unwrap();
         assert_eq!(c.get(&b, "k").unwrap(), None, "a deleted key still read back");
     }

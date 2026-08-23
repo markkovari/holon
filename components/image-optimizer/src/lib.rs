@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::media::image::optimizer::Guest;
 struct Component;
-impl Guest for Component { fn optimize(img: String) -> String { format!("UNIMPLEMENTED: image-optimizer cannot re-encode an image from wasm ({})", img) } }
+impl Guest for Component {
+    fn optimize(img: String) -> String {
+        format!("UNIMPLEMENTED: image-optimizer cannot re-encode an image from wasm ({})", img)
+    }
+}
 bindings::export!(Component with_types_in bindings);

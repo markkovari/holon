@@ -153,7 +153,9 @@ impl Db {
         {
             self.raw(
                 db,
-                &format!("DEFINE NAMESPACE IF NOT EXISTS comp; DEFINE DATABASE IF NOT EXISTS {db};"),
+                &format!(
+                    "DEFINE NAMESPACE IF NOT EXISTS comp; DEFINE DATABASE IF NOT EXISTS {db};"
+                ),
             );
             body = self.raw(db, statement);
         }
@@ -238,7 +240,14 @@ fn already_done(db: &Db, name: &str, goal: &str, floor: f64) -> Option<(String, 
 /// ordering, weighted by outcomes. The lexical half is `search:index` in
 /// production, which has no SurrealDB in it — so the scenarios pass a rank list in
 /// rather than pretending to reimplement TF-IDF.
-fn recall(db: &Db, name: &str, goal: &str, k: u32, pools: &[&str], lexical: &[&str]) -> Vec<String> {
+fn recall(
+    db: &Db,
+    name: &str,
+    goal: &str,
+    k: u32,
+    pools: &[&str],
+    lexical: &[&str],
+) -> Vec<String> {
     if k == 0 {
         return Vec::new();
     }
@@ -286,7 +295,9 @@ impl Savings {
     fn report(&self) -> String {
         let branches = self.goals_skipped * BRANCHES_PER_GENERATION;
         let mut s = String::new();
-        s.push_str("\n=== knowledge:memory — what nine scenarios saved ==========================\n");
+        s.push_str(
+            "\n=== knowledge:memory — what nine scenarios saved ==========================\n",
+        );
         s.push_str(&format!(
             "duplicated work     {}/{} goals answered from a past passing run, {} false skips\n",
             self.goals_skipped, self.goals_asked, self.false_skips
@@ -419,11 +430,7 @@ fn scenarios() {
         );
     }
     saved.goals_asked += 1;
-    assert_eq!(
-        already_done(&db, s4, hard, 0.9),
-        None,
-        "three failures are not finished work"
-    );
+    assert_eq!(already_done(&db, s4, hard, 0.9), None, "three failures are not finished work");
     let row = &db.must(s4, &surql::already_done_exact(&digest(&normalise(hard))));
     assert!(row.is_empty(), "the exact-key path filters on passes > 0 too");
     let all = db.must(
@@ -433,7 +440,10 @@ fn scenarios() {
             surql::rid(surql::TASKS, &digest(&normalise(hard)))
         ),
     );
-    assert_eq!(all[0]["evaluations"], 3, "every evaluation was recorded, not only the passing ones");
+    assert_eq!(
+        all[0]["evaluations"], 3,
+        "every evaluation was recorded, not only the passing ones"
+    );
     assert_eq!(all[0]["passes"], 0);
     // And re-reporting one of those runs must not invent a fourth: the verdict
     // edge is keyed by (task, run), so a second report of `run-3` overwrites it.
@@ -453,13 +463,19 @@ fn scenarios() {
     );
     let after = db.must(
         s4,
-        &format!("SELECT count(->evaluated_by) AS evaluations FROM {};", surql::rid(surql::TASKS, &digest(&normalise(hard)))),
+        &format!(
+            "SELECT count(->evaluated_by) AS evaluations FROM {};",
+            surql::rid(surql::TASKS, &digest(&normalise(hard)))
+        ),
     );
     assert_eq!(after[0]["evaluations"], 3, "a re-reported run is one verdict, not two");
     // And the per-verdict trail is on the edges, with no run node needed.
     let trail = db.must(
         s4,
-        &format!("SELECT ->evaluated_by.score AS scores FROM {};", surql::rid(surql::TASKS, &digest(&normalise(hard)))),
+        &format!(
+            "SELECT ->evaluated_by.score AS scores FROM {};",
+            surql::rid(surql::TASKS, &digest(&normalise(hard)))
+        ),
     );
     assert_eq!(
         trail[0]["scores"].as_array().map(|a| a.len()),
@@ -474,14 +490,22 @@ fn scenarios() {
     let s5 = "s5_outcomes";
     let g = "make a slug from a title string";
     write_entry(&db, s5, "errors:bad", "errors", g, "make a slug by lowercasing the title only");
-    write_entry(&db, s5, "patterns:good", "patterns", g, "make a slug from a title with char_indices");
+    write_entry(
+        &db,
+        s5,
+        "patterns:good",
+        "patterns",
+        g,
+        "make a slug from a title with char_indices",
+    );
     let before = recall(&db, s5, g, 2, &["patterns", "errors"], &[]);
     assert_eq!(before.len(), 2, "both lessons are candidates before any outcome is known");
     for _ in 0..4 {
         db.must(s5, &surql::attribute(&["errors:bad".into()], "run-5", false));
         db.must(s5, &surql::attribute(&["patterns:good".into()], "run-6", true));
     }
-    let counters = db.must(s5, &format!("SELECT uses, wins FROM {};", surql::rid(surql::ENTRIES, "errors:bad")));
+    let counters = db
+        .must(s5, &format!("SELECT uses, wins FROM {};", surql::rid(surql::ENTRIES, "errors:bad")));
     assert_eq!((counters[0]["uses"].as_u64(), counters[0]["wins"].as_u64()), (Some(4), Some(0)));
     let after = recall(&db, s5, g, 2, &["patterns", "errors"], &[]);
     assert_eq!(
@@ -497,9 +521,8 @@ fn scenarios() {
     // failure mode ADR-0081 says does not announce itself, and here it is, visible.
     // Varying the pools per branch is what buys the diversity back; `k = 0` is the
     // branch that reads nothing.
-    let identical: Vec<Vec<String>> = (0..3)
-        .map(|_| recall(&db, s5, g, 2, &["patterns", "errors"], &[]))
-        .collect();
+    let identical: Vec<Vec<String>> =
+        (0..3).map(|_| recall(&db, s5, g, 2, &["patterns", "errors"], &[])).collect();
     assert!(
         identical.windows(2).all(|w| w[0] == w[1]),
         "same goal + same options = same prompt; herding is real"
@@ -526,25 +549,40 @@ fn scenarios() {
                 // Not dropped through `Drop` — this borrows the port only.
                 let db = std::mem::ManuallyDrop::new(db);
                 for _ in 0..PER_WRITER {
-                    db.rows_retrying(s7, &surql::attribute(&["errors:hot".into()], &format!("run-{w}"), true))
-                        .expect("an atomic increment survives contention");
+                    db.rows_retrying(
+                        s7,
+                        &surql::attribute(&["errors:hot".into()], &format!("run-{w}"), true),
+                    )
+                    .expect("an atomic increment survives contention");
                     // The naive arm, spelled out: read, add one here, write it back.
                     let seen = db
-                        .rows(s7, &format!("SELECT uses FROM {};", surql::rid(surql::ENTRIES, "errors:rmw")))
+                        .rows(
+                            s7,
+                            &format!(
+                                "SELECT uses FROM {};",
+                                surql::rid(surql::ENTRIES, "errors:rmw")
+                            ),
+                        )
                         .ok()
                         .and_then(|r| r.first().and_then(|v| v["uses"].as_u64()))
                         .unwrap_or(0);
                     let _ = db.rows(
                         s7,
-                        &format!("UPDATE {} SET uses = {};", surql::rid(surql::ENTRIES, "errors:rmw"), seen + 1),
+                        &format!(
+                            "UPDATE {} SET uses = {};",
+                            surql::rid(surql::ENTRIES, "errors:rmw"),
+                            seen + 1
+                        ),
                     );
                 }
             });
         }
     });
 
-    let atomic = db.must(s7, &format!("SELECT uses FROM {};", surql::rid(surql::ENTRIES, "errors:hot")));
-    let naive = db.must(s7, &format!("SELECT uses FROM {};", surql::rid(surql::ENTRIES, "errors:rmw")));
+    let atomic =
+        db.must(s7, &format!("SELECT uses FROM {};", surql::rid(surql::ENTRIES, "errors:hot")));
+    let naive =
+        db.must(s7, &format!("SELECT uses FROM {};", surql::rid(surql::ENTRIES, "errors:rmw")));
     saved.writes_landed_atomic = atomic[0]["uses"].as_u64().unwrap_or(0) as u32;
     saved.writes_landed_rmw = naive[0]["uses"].as_u64().unwrap_or(0) as u32;
     assert_eq!(
@@ -558,7 +596,10 @@ fn scenarios() {
     // Every branch's edge survived, even the ones whose statement was resent.
     let edges = db.must(
         s7,
-        &format!("SELECT count() FROM used_in WHERE in = {} GROUP ALL;", surql::rid(surql::ENTRIES, "errors:hot")),
+        &format!(
+            "SELECT count() FROM used_in WHERE in = {} GROUP ALL;",
+            surql::rid(surql::ENTRIES, "errors:hot")
+        ),
     );
     assert_eq!(
         edges[0]["count"].as_u64(),
@@ -577,7 +618,7 @@ fn scenarios() {
         attempt: "1",
         score: -1,
         promoted: false,
-                tags: &[],
+        tags: &[],
     };
     db.must(s8, &surql::upsert_entry(&w, Some(&vec![0.5; DIM]), false));
     let refused = db
@@ -588,7 +629,10 @@ fn scenarios() {
         "the refusal must be recognisable as drift, got: {refused}"
     );
     db.must(s8, &surql::upsert_entry(&w, None, true));
-    let kept = db.must(s8, &format!("SELECT text, dim_conflict FROM {};", surql::rid(surql::ENTRIES, "errors:drift")));
+    let kept = db.must(
+        s8,
+        &format!("SELECT text, dim_conflict FROM {};", surql::rid(surql::ENTRIES, "errors:drift")),
+    );
     assert_eq!(kept[0]["text"], "the gate rejects a bare unwrap", "the lesson survives the drift");
     assert_eq!(kept[0]["dim_conflict"], true, "and the drift is queryable rather than invisible");
     saved.lessons_kept_through_drift += 1;
@@ -617,7 +661,10 @@ fn scenarios() {
     );
 
     print!("{}", saved.report());
-    assert_eq!(saved.false_skips, 0, "a false skip is a silent wrong answer and there must be none");
+    assert_eq!(
+        saved.false_skips, 0,
+        "a false skip is a silent wrong answer and there must be none"
+    );
     assert_eq!(saved.goals_skipped, 2, "one exact repeat and one paraphrase");
 }
 
@@ -649,23 +696,33 @@ fn decay_forgets_the_unread_and_spares_everything_else() {
     }
     // Age two of them by hand — a test cannot wait a month — and let one earn its
     // place by being read twice.
-    db.must(name, &format!(
-        "UPDATE {} SET last_used = time::now() - 40d;",
-        surql::rid(surql::ENTRIES, "errors:unread")));
-    db.must(name, &format!(
-        "UPDATE {} SET last_used = time::now() - 40d, uses = 5;",
-        surql::rid(surql::ENTRIES, "errors:earned")));
+    db.must(
+        name,
+        &format!(
+            "UPDATE {} SET last_used = time::now() - 40d;",
+            surql::rid(surql::ENTRIES, "errors:unread")
+        ),
+    );
+    db.must(
+        name,
+        &format!(
+            "UPDATE {} SET last_used = time::now() - 40d, uses = 5;",
+            surql::rid(surql::ENTRIES, "errors:earned")
+        ),
+    );
     // And one with no date at all: a row from a write path that forgot to stamp it.
-    db.must(name, &format!(
-        "UPDATE {} SET last_used = NONE;",
-        surql::rid(surql::ENTRIES, "errors:fresh")));
+    db.must(
+        name,
+        &format!("UPDATE {} SET last_used = NONE;", surql::rid(surql::ENTRIES, "errors:fresh")),
+    );
 
     let gone = db.must(name, &surql::decay(30, 2));
     assert_eq!(gone.len(), 1, "exactly the unread, old one: {gone:?}");
     assert!(gone[0]["id"].as_str().unwrap_or_default().contains("unread"), "{gone:?}");
 
     let left = db.must(name, &format!("SELECT id FROM {};", surql::ENTRIES));
-    let ids: Vec<String> = left.iter().map(|r| r["id"].as_str().unwrap_or_default().to_string()).collect();
+    let ids: Vec<String> =
+        left.iter().map(|r| r["id"].as_str().unwrap_or_default().to_string()).collect();
     assert!(ids.iter().any(|i| i.contains("earned")), "two reads is earning its place: {ids:?}");
     assert!(
         ids.iter().any(|i| i.contains("fresh")),
@@ -705,10 +762,7 @@ fn a_re_reported_winner_does_not_invent_a_verdict() {
     let count = |db: &Db| {
         db.must(
             name,
-            &format!(
-                "SELECT count(->evaluated_by) AS n FROM {};",
-                surql::rid(surql::TASKS, &key)
-            ),
+            &format!("SELECT count(->evaluated_by) AS n FROM {};", surql::rid(surql::TASKS, &key)),
         )[0]["n"]
             .as_u64()
             .unwrap_or(0)
@@ -716,7 +770,16 @@ fn a_re_reported_winner_does_not_invent_a_verdict() {
     assert_eq!(count(&db), 4, "one verdict per branch");
     db.must(
         name,
-        &surql::evaluated(&key, goal, "4242/g0/user-first", 1000, true, "https://x.test/pr/7", Some(&v), false),
+        &surql::evaluated(
+            &key,
+            goal,
+            "4242/g0/user-first",
+            1000,
+            true,
+            "https://x.test/pr/7",
+            Some(&v),
+            false,
+        ),
     );
     assert_eq!(count(&db), 4, "the winner re-reported with an artifact is still one verdict");
     let ids = db.must(name, "SELECT id FROM evaluated_by;");

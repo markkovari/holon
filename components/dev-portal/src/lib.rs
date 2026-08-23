@@ -166,7 +166,8 @@ fn register(request: &IncomingRequest) -> Outcome {
         Err(e) => return Outcome::Auth(e),
     };
     let wanted = req.role.unwrap_or_else(|| "developer".into());
-    let role = if ["developer", "admin"].contains(&wanted.as_str()) { wanted } else { "developer".into() };
+    let role =
+        if ["developer", "admin"].contains(&wanted.as_str()) { wanted } else { "developer".into() };
     let _ = rbac::assign_role(&principal.tenant, &principal.subject, &role);
     Outcome::Json(201, json!({"subject": principal.subject, "roles": [role]}).to_string())
 }
@@ -227,7 +228,11 @@ fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
 // ---- ABAC helper -------------------------------------------------------------
 
 /// Load the project and enforce `action` for the principal via policy:guard.
-fn authorize_project(p: &Principal, project_id: &str, action: &str) -> Result<records::Entry, Outcome> {
+fn authorize_project(
+    p: &Principal,
+    project_id: &str,
+    action: &str,
+) -> Result<records::Entry, Outcome> {
     let entry = match records::get(PROJECTS, project_id) {
         Ok(e) => e,
         Err(records::StoreError::NotFound) => return Err(Outcome::NotFound),
@@ -237,7 +242,10 @@ fn authorize_project(p: &Principal, project_id: &str, action: &str) -> Result<re
     let principal_attrs = vec![policy::Attr { key: "subject".into(), value: p.subject.clone() }];
     let target_attrs = vec![
         policy::Attr { key: "owner".into(), value: data["owner"].as_str().unwrap_or("").into() },
-        policy::Attr { key: "members".into(), value: data["members"].as_str().unwrap_or("").into() },
+        policy::Attr {
+            key: "members".into(),
+            value: data["members"].as_str().unwrap_or("").into(),
+        },
     ];
     if policy::enforce(POLICY_DOMAIN, action, &principal_attrs, &target_attrs) {
         Ok(entry)
@@ -324,7 +332,11 @@ fn add_member(request: &IncomingRequest, id: &str) -> Outcome {
     let mut data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
     let members = data["members"].as_str().unwrap_or("");
     if !members.split(',').any(|m| m == req.subject) {
-        let joined = if members.is_empty() { req.subject.clone() } else { format!("{members},{}", req.subject) };
+        let joined = if members.is_empty() {
+            req.subject.clone()
+        } else {
+            format!("{members},{}", req.subject)
+        };
         data["members"] = json!(joined);
     }
     match records::update(PROJECTS, id, &data.to_string(), entry.revision) {
@@ -392,7 +404,11 @@ fn mint_key(request: &IncomingRequest, project_id: &str) -> Outcome {
         "limit": req.limit.unwrap_or(DEFAULT_KEY_LIMIT),
         "revoked": false,
     });
-    let entry = match records::create(KEYS, &data.to_string(), &["hash".to_string(), "project".to_string()]) {
+    let entry = match records::create(
+        KEYS,
+        &data.to_string(),
+        &["hash".to_string(), "project".to_string()],
+    ) {
         Ok(e) => e,
         Err(e) => return store_err(e),
     };
@@ -503,7 +519,8 @@ fn gateway_echo(request: &IncomingRequest) -> Outcome {
         Ok(b) => b,
         Err(quota::QuotaError::Exceeded(_)) => {
             // exceeded carries remaining (0 here); peek for the window reset.
-            let resets = quota::peek(&subject, limit, QUOTA_PERIOD).map(|b| b.resets_at).unwrap_or(0);
+            let resets =
+                quota::peek(&subject, limit, QUOTA_PERIOD).map(|b| b.resets_at).unwrap_or(0);
             return Outcome::Limited(resets);
         }
         Err(quota::QuotaError::BackendUnavailable(m)) => return Outcome::Err(503, m),
@@ -571,7 +588,8 @@ fn admin_drain(request: &IncomingRequest) -> Outcome {
         // stripe-scheme HMAC; the signature rides inside the envelope because
         // notify:dispatch's message has no header field.
         let envelope = match sign::sign(body.as_bytes(), &secret, sign::Scheme::Stripe) {
-            Ok(s) => json!({"payload": body, "signature": s.header, "timestamp": s.timestamp}).to_string(),
+            Ok(s) => json!({"payload": body, "signature": s.header, "timestamp": s.timestamp})
+                .to_string(),
             Err(e) => {
                 let _ = outbox::fail(&ev.id);
                 failed += 1;
@@ -709,11 +727,7 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request
-        .headers()
-        .get(name)
-        .into_iter()
-        .find_map(|v| String::from_utf8(v).ok())
+    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 // ---- responses --------------------------------------------------------------------

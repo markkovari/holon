@@ -121,7 +121,11 @@ fn error_for(name: &str, detail: &str) -> InferError {
 
 /// Find the first rule that matches. Order is significant, so a specific rule can
 /// sit above a general one.
-fn select(script: &serde_json::Value, text: &str, seed: u64) -> Result<serde_json::Value, InferError> {
+fn select(
+    script: &serde_json::Value,
+    text: &str,
+    seed: u64,
+) -> Result<serde_json::Value, InferError> {
     let rules = script["rules"].as_array().cloned().unwrap_or_default();
     if rules.is_empty() {
         return Err(InferError::InvalidRequest(
@@ -306,7 +310,9 @@ mod tests {
                 {"when":"cache","text":"fallback"}
             ]}"#,
         );
-        let pick = |seed| completion_from(&select(&s, "add a cache", seed).unwrap(), 10, "mock-1").unwrap().text;
+        let pick = |seed| {
+            completion_from(&select(&s, "add a cache", seed).unwrap(), 10, "mock-1").unwrap().text
+        };
         assert_eq!(pick(1), "branch one");
         assert_eq!(pick(2), "branch two");
         // A seed with no rule of its own falls through to the seedless rule.
@@ -319,8 +325,14 @@ mod tests {
         let s = script_of(
             r#"{"rules":[{"when":"specific","text":"narrow"},{"when":"*","text":"broad"}]}"#,
         );
-        assert_eq!(completion_from(&select(&s, "a specific thing", 0).unwrap(), 1, "mock-1").unwrap().text, "narrow");
-        assert_eq!(completion_from(&select(&s, "something else", 0).unwrap(), 1, "mock-1").unwrap().text, "broad");
+        assert_eq!(
+            completion_from(&select(&s, "a specific thing", 0).unwrap(), 1, "mock-1").unwrap().text,
+            "narrow"
+        );
+        assert_eq!(
+            completion_from(&select(&s, "something else", 0).unwrap(), 1, "mock-1").unwrap().text,
+            "broad"
+        );
     }
 
     /// The paths a real provider will not produce on demand.

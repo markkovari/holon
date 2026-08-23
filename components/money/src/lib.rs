@@ -75,9 +75,7 @@ impl Guest for Component {
             return Err(MoneyError::UnknownCurrency(currency));
         }
 
-        let major: i64 = major_str
-            .parse()
-            .map_err(|_| MoneyError::Overflow)?;
+        let major: i64 = major_str.parse().map_err(|_| MoneyError::Overflow)?;
         let minor: i64 = if minor_str.is_empty() {
             0
         } else {
@@ -85,9 +83,7 @@ impl Guest for Component {
         };
 
         // units = major * 10^exp + minor  (all checked)
-        let scaled = major
-            .checked_mul(pow10(exp))
-            .ok_or(MoneyError::Overflow)?;
+        let scaled = major.checked_mul(pow10(exp)).ok_or(MoneyError::Overflow)?;
         let mut units = scaled.checked_add(minor).ok_or(MoneyError::Overflow)?;
         if negative {
             units = units.checked_neg().ok_or(MoneyError::Overflow)?;
@@ -110,10 +106,7 @@ impl Guest for Component {
         let minor = abs % divisor;
 
         let sign = if negative { "-" } else { "" };
-        Ok(format!(
-            "{sign}{major}.{minor:0width$}",
-            width = exp as usize
-        ))
+        Ok(format!("{sign}{major}.{minor:0width$}", width = exp as usize))
     }
 
     fn add(a: Amount, b: Amount) -> Result<Amount, MoneyError> {
@@ -122,10 +115,7 @@ impl Guest for Component {
         }
         checked_exponent(&a.currency)?;
         let units = a.units.checked_add(b.units).ok_or(MoneyError::Overflow)?;
-        Ok(Amount {
-            units,
-            currency: a.currency,
-        })
+        Ok(Amount { units, currency: a.currency })
     }
 
     fn subtract(a: Amount, b: Amount) -> Result<Amount, MoneyError> {
@@ -134,19 +124,13 @@ impl Guest for Component {
         }
         checked_exponent(&a.currency)?;
         let units = a.units.checked_sub(b.units).ok_or(MoneyError::Overflow)?;
-        Ok(Amount {
-            units,
-            currency: a.currency,
-        })
+        Ok(Amount { units, currency: a.currency })
     }
 
     fn scale(a: Amount, factor: i64) -> Result<Amount, MoneyError> {
         checked_exponent(&a.currency)?;
         let units = a.units.checked_mul(factor).ok_or(MoneyError::Overflow)?;
-        Ok(Amount {
-            units,
-            currency: a.currency,
-        })
+        Ok(Amount { units, currency: a.currency })
     }
 
     fn allocate(total: Amount, shares: u32) -> Result<Vec<Amount>, MoneyError> {
@@ -168,10 +152,7 @@ impl Guest for Component {
         let mut out = Vec::with_capacity(shares as usize);
         for i in 0..shares as usize {
             let units = if i < count { base + extra } else { base };
-            out.push(Amount {
-                units,
-                currency: total.currency.clone(),
-            });
+            out.push(Amount { units, currency: total.currency.clone() });
         }
         Ok(out)
     }

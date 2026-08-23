@@ -163,7 +163,10 @@ fn post_entry(request: &IncomingRequest, account_id: &str) -> Outcome {
     match idem::begin(&idem_key, IDEM_TTL) {
         // seen before: replay the original response verbatim.
         Ok(Some(cached)) => {
-            return Outcome::Cached(cached.status, String::from_utf8_lossy(&cached.body).into_owned())
+            return Outcome::Cached(
+                cached.status,
+                String::from_utf8_lossy(&cached.body).into_owned(),
+            )
         }
         Ok(None) => {}
         Err(idem::IdemError::InProgress) => {
@@ -198,11 +201,12 @@ fn post_entry_inner(request: &IncomingRequest, account_id: &str) -> Outcome {
         Err(quota::QuotaError::BackendUnavailable(m)) => return Outcome::Err(503, m),
     }
 
-    let req: PostEntry =
-        match read_body(request).and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
-            Ok(r) => r,
-            Err(_) => return Outcome::Bad("expected json body {kind, amount, description?}".into()),
-        };
+    let req: PostEntry = match read_body(request)
+        .and_then(|b| serde_json::from_slice(&b).map_err(|_| ()))
+    {
+        Ok(r) => r,
+        Err(_) => return Outcome::Bad("expected json body {kind, amount, description?}".into()),
+    };
     if req.kind != "charge" && req.kind != "credit" {
         return Outcome::Bad("kind must be charge or credit".into());
     }
@@ -292,11 +296,8 @@ fn apply_balance(account_id: &str, amt: &money::Amount, charge: bool) -> Result<
             units: data["units"].as_i64().unwrap_or(0),
             currency: amt.currency.clone(),
         };
-        let updated = if charge {
-            money::add(&balance, amt)
-        } else {
-            money::subtract(&balance, amt)
-        };
+        let updated =
+            if charge { money::add(&balance, amt) } else { money::subtract(&balance, amt) };
         let updated = match updated {
             Ok(a) => a,
             Err(e) => return Err(Outcome::Bad(format!("balance: {e:?}"))),
@@ -474,11 +475,7 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 }
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request
-        .headers()
-        .get(name)
-        .into_iter()
-        .find_map(|v| String::from_utf8(v).ok())
+    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {
@@ -492,7 +489,9 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, &[], body.as_bytes(), "application/json"),
+        Outcome::Json(code, body) => {
+            respond(response_out, code, &[], body.as_bytes(), "application/json")
+        }
         Outcome::Cached(code, body) => respond(
             response_out,
             code,

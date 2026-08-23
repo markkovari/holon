@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::os::desktop::clipboard::Guest;
 struct Component;
-impl Guest for Component { fn read() -> String { "UNIMPLEMENTED: desktop-clipboard cannot read the clipboard from wasm".to_string() } }
+impl Guest for Component {
+    fn read() -> String {
+        "UNIMPLEMENTED: desktop-clipboard cannot read the clipboard from wasm".to_string()
+    }
+}
 bindings::export!(Component with_types_in bindings);

@@ -90,8 +90,7 @@ impl Guest for Component {
         let dlat = (b.lat - a.lat).to_radians();
         let dlon = (b.lon - a.lon).to_radians();
 
-        let h = (dlat / 2.0).sin().powi(2)
-            + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+        let h = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
         let d = 2.0 * EARTH_RADIUS_M * h.sqrt().asin();
         Ok(d)
     }
@@ -152,8 +151,14 @@ mod tests {
     /// pinned on both sides rather than sampled in the middle.
     #[test]
     fn every_private_v4_range_is_classified_private() {
-        for edge in ["10.0.0.0", "10.255.255.255", "172.16.0.0", "172.31.255.255",
-                     "192.168.0.0", "192.168.255.255"] {
+        for edge in [
+            "10.0.0.0",
+            "10.255.255.255",
+            "172.16.0.0",
+            "172.31.255.255",
+            "192.168.0.0",
+            "192.168.255.255",
+        ] {
             assert_eq!(c(edge), IpClass::Private, "{edge}");
         }
         // Just OUTSIDE 172.16/12 on both sides — the range people get wrong,

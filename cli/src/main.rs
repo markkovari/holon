@@ -177,7 +177,9 @@ pub fn check(spec: &Spec) -> Result<()> {
     for k in spec.config.keys() {
         // These become `CFG_<UPPER_SNAKE>` env names; anything else would silently
         // produce a variable the component cannot read.
-        if k.is_empty() || !k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        if k.is_empty()
+            || !k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        {
             bail!("config key {k:?} must be lowercase-with-dashes");
         }
     }
@@ -353,7 +355,11 @@ pub fn render_route(spec: &Spec, router: Router) -> String {
 // ---- cli --------------------------------------------------------------------
 
 #[derive(Parser)]
-#[command(name = "holon", version, about = "The Holon platform: components, apps, and the nodes they run on")]
+#[command(
+    name = "holon",
+    version,
+    about = "The Holon platform: components, apps, and the nodes they run on"
+)]
 struct Args {
     #[command(subcommand)]
     cmd: Cmd,
@@ -430,11 +436,17 @@ enum AppCmd {
     },
     /// Validate, build the manifest, and store it as a revision. The reconciler
     /// places it on its next pass.
-    Deploy { id: String },
+    Deploy {
+        id: String,
+    },
     Ls,
-    Show { id: String },
+    Show {
+        id: String,
+    },
     /// The desired state a revision stores.
-    Manifest { id: String },
+    Manifest {
+        id: String,
+    },
     /// Delete an app. The confirmation is the platform's rule, not this tool's.
     Rm {
         id: String,
@@ -446,7 +458,9 @@ enum AppCmd {
 #[derive(Subcommand)]
 enum OrgCmd {
     /// Create one. You become its owner.
-    Create { name: String },
+    Create {
+        name: String,
+    },
     /// Every org you belong to, and your role in each.
     Ls,
     /// Mint a single-use join code.
@@ -456,10 +470,17 @@ enum OrgCmd {
         role: String,
     },
     /// Redeem a code.
-    Join { code: String },
-    Members { org: String },
+    Join {
+        code: String,
+    },
+    Members {
+        org: String,
+    },
     /// Remove someone. Yourself needs no permission; anyone else needs owner.
-    Remove { org: String, subject: String },
+    Remove {
+        org: String,
+        subject: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -619,8 +640,8 @@ enum NodeCmd {
 }
 
 fn load(path: &Path) -> Result<Spec> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let spec: Spec =
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     check(&spec).with_context(|| format!("in {}", path.display()))?;
@@ -668,10 +689,13 @@ fn main() -> Result<()> {
             // and a `just`-built tree both work.
             let bin = std::env::var("COMP_GOALRUN_BIN").unwrap_or_else(|_| "comp-goalrun".into());
             let mut cmd = std::process::Command::new(&bin);
-            cmd.arg("--checkout").arg(&checkout)
+            cmd.arg("--checkout")
+                .arg(&checkout)
                 .args(["--repo", &repo])
-                .arg("--anthropic-key").arg(&anthropic_key)
-                .arg("--github-token").arg(&github_token)
+                .arg("--anthropic-key")
+                .arg(&anthropic_key)
+                .arg("--github-token")
+                .arg(&github_token)
                 .args(["--branches", &branches.to_string()])
                 .args(["--rounds", &rounds.to_string()])
                 .args(["--model", &model])
@@ -817,7 +841,10 @@ artifact = "components/target/gate_domain.composed.wasm"
         // Durable by default: a spec that says nothing must not lose data on the
         // first restart, and `Restart=always` makes restarts routine.
         assert_eq!(s.kv, "sqlite");
-        assert!(s.pooling, "pooling defaults on — it is what makes per-request instantiation cheap");
+        assert!(
+            s.pooling,
+            "pooling defaults on — it is what makes per-request instantiation cheap"
+        );
         assert_eq!(port_of(&s), derived_port("gate"));
     }
 
@@ -1031,10 +1058,7 @@ static_dir = "ui/dist"
 "#,
         );
         let unit = render_unit(&s, &Layout::default());
-        let exec = unit
-            .lines()
-            .find(|l| l.starts_with("ExecStart="))
-            .expect("an ExecStart line");
+        let exec = unit.lines().find(|l| l.starts_with("ExecStart=")).expect("an ExecStart line");
         for flag in exec.split_whitespace().filter(|w| w.starts_with("--")) {
             assert!(help.contains(flag), "comp-host has no {flag}\n--- help ---\n{help}");
         }
