@@ -70,7 +70,7 @@ fn emit(response_out: ResponseOutparam, outcome: Outcome) {
     ResponseOutparam::set(response_out, Ok(response));
 
     let stream = body.write().unwrap();
-    stream.blocking_write_and_flush(&body_bytes).unwrap();
+    let _ = write_all(&stream, &body_bytes);
     drop(stream);
     OutgoingBody::finish(body, None).unwrap();
 }
@@ -283,4 +283,33 @@ fn login_user(request: &IncomingRequest) -> Outcome {
         })
         .to_string(),
     )
+}
+
+/// Write every byte, respecting what the stream says it can take.
+///
+/// `blocking_write_and_flush` accepts at most 4096 bytes and TRAPS above it,
+/// which kills the component mid-response — the caller sees a closed connection
+/// and no status. Any page or JSON body larger than 4 KiB hits it, so the size
+/// of the payload decides whether the endpoint works.
+///
+/// `check_write` reports what the stream will accept now; a zero means block on
+/// the pollable and ask again. Copied from the shape every other domain here
+/// already uses.
+fn write_all(stream: &bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) -> bool {
+    while !bytes.is_empty() {
+        let ready = match stream.check_write() {
+            Ok(0) => {
+                stream.subscribe().block();
+                continue;
+            }
+            Ok(n) => n as usize,
+            Err(_) => return false,
+        };
+        let take = ready.min(bytes.len());
+        if stream.write(&bytes[..take]).is_err() {
+            return false;
+        }
+        bytes = &bytes[take..];
+    }
+    stream.blocking_flush().is_ok()
 }
