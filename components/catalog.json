@@ -1413,16 +1413,24 @@
   {
     "name": "fs-watcher",
     "package": "os:fs@0.1.0",
-    "description": "`fs-watcher` \u2014 watch a directory and report file changes as they happen",
+    "description": "`fs-watcher` \u2014 report what changed in a directory, since a cursor",
     "exports": [
       "watcher"
     ],
-    "capability_deps": [],
-    "config_keys": [],
-    "wasm_size_bytes": 47320,
-    "wasm_sha256_12": "be804a77fcd5",
+    "capability_deps": [
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "fswatch-url",
+        "description": "where `comp-fswatch` is listening, e.g. http://127.0.0.1:8car"
+      }
+    ],
+    "wasm_size_bytes": 105492,
+    "wasm_sha256_12": "5b7f11554f7f",
     "reusable_as_is": true,
-    "unimplemented": true
+    "unimplemented": false
   },
   {
     "name": "fs-watcher-domain",
@@ -1440,8 +1448,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91530,
-    "wasm_sha256_12": "30c8907dc437",
+    "wasm_size_bytes": 101758,
+    "wasm_sha256_12": "eb3887c5b24c",
     "reusable_as_is": false,
     "unimplemented": false
   },
