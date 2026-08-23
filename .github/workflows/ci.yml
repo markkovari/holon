@@ -77,31 +77,21 @@ jobs:
         # build of its own.
         run: cargo test --workspace --exclude browser-automation
 
-      # 17 of the 18 suites below drive a fleet through `reconciler/src/fleet.rs`,
-      # which spawns `host/target/release/comp-host`. Building it here costs a
-      # couple of minutes and is the difference between running them and not:
-      # CI reported `missing …/comp-host — cargo build --release in host/`, which
-      # was accurate and something no amount of test-list editing would fix.
-      - name: Build the host the fleet tests spawn
-        working-directory: host
-        run: cargo build --release --bin comp-host
-
-      # These reconciler suites read `components/target/wasm32-wasip2/release/*.wasm`,
-      # so they belong to the job that BUILT them. Jobs do not share a filesystem,
-      # and running them beside the native workspaces failed on a missing artifact
-      # with "run `just build`" — which is true, and was not something that job
-      # could do without building 198 components a second time.
+      # Four reconciler suites need the BUILT artifacts and nothing else.
+      #
+      # They live here because `components/target/wasm32-wasip2/release/*.wasm`
+      # is produced by this job and CI jobs do not share a filesystem. Two of
+      # them — `capsearch` and `contracts` — were red on main and had never run.
+      #
+      # The other 21 integration suites are NOT here: they spawn `nats-server`,
+      # and several want SurrealDB. That is a real dependency and this workflow
+      # deliberately stands up neither, so they stay a local act until CI grows
+      # service containers. Measured, not guessed — see the note below.
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
         run: >-
           cargo test --release
-          --test agent --test artifacts --test capsearch --test contracts
-          --test driver --test envbranch --test environments --test fitness
-          --test forge --test gendeploy --test generation --test ha
-          --test inference --test leader --test mockllm --test newversion
-          --test projects --test publish --test reveal --test scaling
-          --test search --test secretcli --test secrets --test select
-          --test vgit
+          --test capsearch --test contracts --test publish --test secrets
 
   native:
     name: native workspaces
@@ -120,17 +110,23 @@ jobs:
           # None had run in CI once, and `guestio` alone was recording 20
           # components that trap mid-response on any payload over 4 KiB.
           #
-          # The split below was VERIFIED by deleting all 196 built `.wasm` files
-          # AND `host/target/release/comp-host`, then re-running. Only these six
-          # pass with nothing built; everything else drives a fleet through
-          # `reconciler/src/fleet.rs`, which spawns the host, and belongs in the
-          # `components` job that builds both.
+          # These six pass with NOTHING available: all 196 built `.wasm` files
+          # moved aside, `comp-host` moved aside, and `nats-server`/`surreal` off
+          # PATH. That is the only claim being made about them.
           #
-          # Three earlier attempts classified these by READING them — grepping
-          # for `components/target`, then for `comp-host`. All three were wrong,
-          # because this machine had the artifacts lying around and could not
-          # tell. Removing what they depend on is the only method that has
-          # answered correctly.
+          # Four earlier attempts classified these by READING them — grepping for
+          # `components/target`, then for `comp-host`. Every one was wrong,
+          # because a developer's machine has all three lying around from earlier
+          # work and cannot tell. Each dependency only became visible when it was
+          # REMOVED:
+          #
+          #   delete the .wasm            -> 16 suites need a build
+          #   delete comp-host too        -> 7 more spawn a host
+          #   drop nats-server from PATH  -> 21 of the rest spawn NATS
+          #
+          # 21 integration suites want NATS and sometimes SurrealDB. They stay
+          # out until CI runs service containers, which is a separate decision
+          # rather than a line in a test list.
           #
           # So the exclusion is a NAMED LIST rather than a blanket skip. The
           # suites listed here need NOTHING; the ones that read built wasm run in
