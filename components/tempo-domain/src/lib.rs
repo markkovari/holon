@@ -121,7 +121,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -150,7 +151,12 @@ fn logging_projects(p: &Principal) -> Option<Vec<String>> {
     if is_admin(p) {
         return None;
     }
-    Some(my_memberships(&p.subject).iter().filter_map(|m| m["project"].as_str().map(String::from)).collect())
+    Some(
+        my_memberships(&p.subject)
+            .iter()
+            .filter_map(|m| m["project"].as_str().map(String::from))
+            .collect(),
+    )
 }
 
 /// Project ids the user leads (sees the whole distribution of): None = all (admin).
@@ -381,20 +387,31 @@ fn add_member(request: &IncomingRequest, project: &str) -> Outcome {
     };
     let subject = match subject_for_email(&email) {
         Some(s) => s,
-        None => return Outcome::Err(404, "no user with that email (they must register first)".into()),
+        None => {
+            return Outcome::Err(404, "no user with that email (they must register first)".into())
+        }
     };
     // upsert: one membership row per (project, user).
     let existing = records::find_by(MEMBERS, "user", &json!(subject).to_string())
         .unwrap_or_default()
         .into_iter()
-        .find(|e| serde_json::from_str::<Value>(&e.data).ok().and_then(|d| d["project"].as_str().map(|x| x == project)).unwrap_or(false));
+        .find(|e| {
+            serde_json::from_str::<Value>(&e.data)
+                .ok()
+                .and_then(|d| d["project"].as_str().map(|x| x == project))
+                .unwrap_or(false)
+        });
     let d = json!({ "project": project, "user": subject, "email": email, "role": role, "created": now() });
     match existing {
         Some(e) => {
             let _ = records::update(MEMBERS, &e.id, &d.to_string(), 0);
         }
         None => {
-            let _ = records::create(MEMBERS, &d.to_string(), &["user".to_string(), "project".to_string()]);
+            let _ = records::create(
+                MEMBERS,
+                &d.to_string(),
+                &["user".to_string(), "project".to_string()],
+            );
         }
     }
     Outcome::Json(200, d.to_string())
@@ -442,7 +459,10 @@ fn name_map(collection: &str) -> BTreeMap<String, String> {
 
 fn valid_day(d: &str) -> bool {
     let b = d.as_bytes();
-    d.len() == 10 && b[4] == b'-' && b[7] == b'-' && b.iter().enumerate().all(|(i, &c)| i == 4 || i == 7 || c.is_ascii_digit())
+    d.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b.iter().enumerate().all(|(i, &c)| i == 4 || i == 7 || c.is_ascii_digit())
 }
 
 /// Build an entry record from (project, category, minutes, day, note) for
@@ -508,7 +528,10 @@ fn edit_entry(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let (mut d, rev) = match records::get(ENTRIES, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| (d, e.revision))) {
+    let (mut d, rev) = match records::get(ENTRIES, id)
+        .ok()
+        .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| (d, e.revision)))
+    {
         Some(x) => x,
         None => return Outcome::Err(404, "no such entry".into()),
     };
@@ -585,10 +608,11 @@ fn delete_entry(request: &IncomingRequest, id: &str) -> Outcome {
 }
 
 fn save_indexed_entry(mut d: Value) -> Outcome {
-    let entry = match records::create(ENTRIES, &d.to_string(), &["user".to_string(), "day".to_string()]) {
-        Ok(e) => e,
-        Err(e) => return store_err(e),
-    };
+    let entry =
+        match records::create(ENTRIES, &d.to_string(), &["user".to_string(), "day".to_string()]) {
+            Ok(e) => e,
+            Err(e) => return store_err(e),
+        };
     d["id"] = json!(entry.id);
     let _ = records::update(ENTRIES, &entry.id, &d.to_string(), entry.revision);
     Outcome::Json(201, d.to_string())
@@ -761,7 +785,8 @@ fn report_data(p: &Principal, path: &str) -> Value {
         .iter()
         .map(|((p, c), n)| json!({ "project": p, "category": c, "minutes": n }))
         .collect();
-    let by_day_v: Vec<Value> = by_day.iter().map(|(d, n)| json!({ "day": d, "minutes": n })).collect();
+    let by_day_v: Vec<Value> =
+        by_day.iter().map(|(d, n)| json!({ "day": d, "minutes": n })).collect();
 
     let mut out = Map::new();
     out.insert("from".into(), json!(from));
@@ -787,7 +812,12 @@ fn report_pdf(request: &IncomingRequest, path: &str) -> Outcome {
     };
     let r = report_data(&p, path);
     let hm = |min: u64| format!("{}h {:02}m", min / 60, min % 60);
-    let line = |text: String, size: u32, bold: bool, gap: u32| pdf::Block { text, size, bold, gap_before: gap };
+    let line = |text: String, size: u32, bold: bool, gap: u32| pdf::Block {
+        text,
+        size,
+        bold,
+        gap_before: gap,
+    };
     let mut blocks = vec![
         line(
             format!("{} — {}", r["from"].as_str().unwrap_or(""), r["to"].as_str().unwrap_or("")),
@@ -805,7 +835,12 @@ fn report_pdf(request: &IncomingRequest, path: &str) -> Outcome {
         v.as_array()
             .map(|a| {
                 a.iter()
-                    .map(|x| (x[key].as_str().unwrap_or("(none)").to_string(), x["minutes"].as_u64().unwrap_or(0)))
+                    .map(|x| {
+                        (
+                            x[key].as_str().unwrap_or("(none)").to_string(),
+                            x["minutes"].as_u64().unwrap_or(0),
+                        )
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -826,7 +861,11 @@ fn report_pdf(request: &IncomingRequest, path: &str) -> Outcome {
     }
     let doc = pdf::Document { title: "tempo — time report".to_string(), blocks };
     let bytes = pdf::render(&doc);
-    let name = format!("tempo-report-{}_{}.pdf", r["from"].as_str().unwrap_or(""), r["to"].as_str().unwrap_or(""));
+    let name = format!(
+        "tempo-report-{}_{}.pdf",
+        r["from"].as_str().unwrap_or(""),
+        r["to"].as_str().unwrap_or("")
+    );
     Outcome::File(200, "application/pdf".to_string(), name, bytes)
 }
 
@@ -938,7 +977,13 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     respond(response_out, code, "application/json", None, body.as_bytes());
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, disposition: Option<&str>, body: &[u8]) {
+fn respond(
+    response_out: ResponseOutparam,
+    status: u16,
+    ctype: &str,
+    disposition: Option<&str>,
+    body: &[u8],
+) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {

@@ -92,7 +92,10 @@ fn rules() -> Vec<validate::Rule> {
             max_value: Some(130.0),
             ..text("age", false, 0)
         },
-        validate::Rule { one_of: vec!["admin".into(), "user".into(), "guest".into()], ..text("role", true, 0) },
+        validate::Rule {
+            one_of: vec!["admin".into(), "user".into(), "guest".into()],
+            ..text("role", true, 0)
+        },
     ]
 }
 
@@ -114,8 +117,12 @@ fn kind_name(k: validate::Kind) -> &'static str {
 fn coerce(field: &str, raw: &str, rules: &[validate::Rule]) -> Value {
     let kind = rules.iter().find(|r| r.field == field).map(|r| r.kind);
     match kind {
-        Some(validate::Kind::Integer) => raw.parse::<i64>().map(|n| json!(n)).unwrap_or_else(|_| json!(raw)),
-        Some(validate::Kind::Number) => raw.parse::<f64>().map(|n| json!(n)).unwrap_or_else(|_| json!(raw)),
+        Some(validate::Kind::Integer) => {
+            raw.parse::<i64>().map(|n| json!(n)).unwrap_or_else(|_| json!(raw))
+        }
+        Some(validate::Kind::Number) => {
+            raw.parse::<f64>().map(|n| json!(n)).unwrap_or_else(|_| json!(raw))
+        }
         Some(validate::Kind::Boolean) => match raw.to_lowercase().as_str() {
             "true" | "1" | "yes" => json!(true),
             "false" | "0" | "no" => json!(false),
@@ -171,8 +178,12 @@ fn import(request: &IncomingRequest) -> Outcome {
     let dialect = csv::Dialect { delimiter: ",".into(), has_header: true, trim: true };
     let parsed = match csv::parse_records(&text, &dialect) {
         Ok(rows) => rows,
-        Err(csv::CsvError::Malformed(m)) => return Outcome::err(422, &format!("malformed CSV: {m}")),
-        Err(csv::CsvError::RaggedRow(n)) => return Outcome::err(422, &format!("ragged row at line {n}")),
+        Err(csv::CsvError::Malformed(m)) => {
+            return Outcome::err(422, &format!("malformed CSV: {m}"))
+        }
+        Err(csv::CsvError::RaggedRow(n)) => {
+            return Outcome::err(422, &format!("ragged row at line {n}"))
+        }
     };
 
     let rule_set = rules();
@@ -234,17 +245,18 @@ fn rows(path: &str) -> Outcome {
         Ok(p) => p,
         Err(e) => return store_err(e),
     };
-    let items: Vec<Value> = page
-        .entries
-        .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
-        .collect();
+    let items: Vec<Value> =
+        page.entries.iter().filter_map(|e| serde_json::from_str::<Value>(&e.data).ok()).collect();
 
     // wrap the store's continuation in an opaque cursor for the next page.
     let next = if page.next.is_empty() {
         Value::Null
     } else {
-        let pos = paginate::Position { sort_key: String::new(), last_id: page.next.clone(), forward: true };
+        let pos = paginate::Position {
+            sort_key: String::new(),
+            last_id: page.next.clone(),
+            forward: true,
+        };
         json!(paginate::encode(&pos))
     };
     Outcome::Json(200, json!({"rows": items, "next": next}).to_string())
@@ -253,7 +265,8 @@ fn rows(path: &str) -> Outcome {
 // ---- CSV export --------------------------------------------------------------
 
 fn export() -> Outcome {
-    let mut out_rows: Vec<csv::Row> = vec![csv::Row { fields: COLUMNS.iter().map(|s| s.to_string()).collect() }];
+    let mut out_rows: Vec<csv::Row> =
+        vec![csv::Row { fields: COLUMNS.iter().map(|s| s.to_string()).collect() }];
     let mut after = String::new();
     loop {
         let page = match records::list_records(ROWS, 100, &after) {
@@ -304,7 +317,9 @@ fn store_err(e: records::StoreError) -> Outcome {
         records::StoreError::NotFound => Outcome::err(404, "not_found"),
         records::StoreError::InvalidJson(m) => Outcome::Json(422, json!({"error": m}).to_string()),
         records::StoreError::RevisionConflict(_) => Outcome::err(409, "conflict"),
-        records::StoreError::BackendUnavailable(m) => Outcome::Json(503, json!({"error": m}).to_string()),
+        records::StoreError::BackendUnavailable(m) => {
+            Outcome::Json(503, json!({"error": m}).to_string())
+        }
     }
 }
 
@@ -388,7 +403,9 @@ fn decode(s: &str) -> String {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
+        Outcome::Json(code, body) => {
+            respond(response_out, code, "application/json", body.as_bytes())
+        }
         Outcome::Text(code, ct, body) => respond(response_out, code, &ct, body.as_bytes()),
     }
 }

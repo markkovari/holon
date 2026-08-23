@@ -27,9 +27,8 @@ fn authorize(route: &Route, action: &str) -> Result<auth_types::Principal, Reply
     match auth::authorize(&route.bearer, &required) {
         Ok(p) => Ok(p),
         Err(auth_types::AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
-        Err(auth_types::AuthError::BackendUnavailable(_)) | Err(auth_types::AuthError::Internal(_)) => {
-            Err(Reply::err(503, "auth_unavailable"))
-        }
+        Err(auth_types::AuthError::BackendUnavailable(_))
+        | Err(auth_types::AuthError::Internal(_)) => Err(Reply::err(503, "auth_unavailable")),
         Err(_) => Err(Reply::err(401, "unauthenticated")),
     }
 }
@@ -91,7 +90,13 @@ fn handle_post(route: &Route, id: &str) -> Reply {
     let score = match ai::classify(&text, &labels) {
         Ok(s) => s,
         Err(_) => {
-            ledger::note(&route.trace, "reports.assist", "error", &principal.subject, "classify unavailable");
+            ledger::note(
+                &route.trace,
+                "reports.assist",
+                "error",
+                &principal.subject,
+                "classify unavailable",
+            );
             return Reply::err(503, "assist_unavailable");
         }
     };
@@ -102,7 +107,13 @@ fn handle_post(route: &Route, id: &str) -> Reply {
     let summary = match ai::summarize(&text, ai::Length::Brief, "what is broken and where") {
         Ok(s) => s,
         Err(_) => {
-            ledger::note(&route.trace, "reports.assist", "error", &principal.subject, "summarize unavailable");
+            ledger::note(
+                &route.trace,
+                "reports.assist",
+                "error",
+                &principal.subject,
+                "summarize unavailable",
+            );
             return Reply::err(503, "assist_unavailable");
         }
     };
@@ -123,7 +134,13 @@ fn handle_post(route: &Route, id: &str) -> Reply {
     }
 
     // subject is principal.subject — what authorize returned — never the bearer token.
-    ledger::note(&route.trace, "reports.assist", "ok", &principal.subject, &format!("severity={}", score.label));
+    ledger::note(
+        &route.trace,
+        "reports.assist",
+        "ok",
+        &principal.subject,
+        &format!("severity={}", score.label),
+    );
 
     Reply::json(200, assist)
 }

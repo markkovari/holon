@@ -87,7 +87,10 @@ pub struct Satisfies {
 /// function never was — so the test referenced a name that did not exist and the
 /// whole native test target of this component failed to compile. Nothing in it
 /// had run since, including anything added later.
-pub fn node_config(nodes: &[serde_json::Value], id: &str) -> serde_json::Map<String, serde_json::Value> {
+pub fn node_config(
+    nodes: &[serde_json::Value],
+    id: &str,
+) -> serde_json::Map<String, serde_json::Value> {
     nodes
         .iter()
         .find(|n| n["id"].as_str() == Some(id))
@@ -158,10 +161,9 @@ mod tests {
 
     #[test]
     fn config_is_read_off_the_node_it_belongs_to() {
-        let nodes: Vec<Value> = serde_json::from_str(
-            r#"[{"id":"gate","config":{"token":"abc"}},{"id":"store"}]"#,
-        )
-        .unwrap();
+        let nodes: Vec<Value> =
+            serde_json::from_str(r#"[{"id":"gate","config":{"token":"abc"}},{"id":"store"}]"#)
+                .unwrap();
         assert_eq!(node_config(&nodes, "gate").get("token"), Some(&Value::from("abc")));
         assert!(node_config(&nodes, "store").is_empty(), "no config is not an error");
         assert!(node_config(&nodes, "ghost").is_empty());

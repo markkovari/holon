@@ -80,7 +80,8 @@ impl Probe {
             Err(e) => return Value::String(format!("transport: {e}")),
         };
         let (status, text) = (r.status(), r.text().unwrap_or_default());
-        serde_json::from_str(&text).unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
+        serde_json::from_str(&text)
+            .unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
     }
 
     /// Commit a set of whole files onto `base`.
@@ -101,7 +102,10 @@ impl Probe {
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap(),
     };
     fleet.until("reading a ref that does not exist", Duration::from_secs(120), || {
         let r = probe.get("/ref?name=probe%2Fready");
@@ -142,12 +146,17 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
     // --- the assertion this file exists for ---------------------------------
     // A blob that travelled through a deployed component, a linked capability and
     // the key-value store must still have the id git gives those bytes.
-    let Some(theirs) = git(&["hash-object", "-t", "blob", "--stdin"], Some(b"fn main() {}\n")) else {
+    let Some(theirs) = git(&["hash-object", "-t", "blob", "--stdin"], Some(b"fn main() {}\n"))
+    else {
         eprintln!("SKIPPED: no usable `git` binary — the ground truth is unavailable");
         return;
     };
     let tree_of_src = probe.get(&format!("/tree?commit={c1}&path=src"));
-    assert_eq!(tree_of_src["tree"].as_str().map(str::len), Some(40), "no subtree id: {tree_of_src}");
+    assert_eq!(
+        tree_of_src["tree"].as_str().map(str::len),
+        Some(40),
+        "no subtree id: {tree_of_src}"
+    );
 
     // And the commit itself, against `git commit-tree` with the same tree,
     // author and timestamp — which is why the probe pins both.
@@ -156,10 +165,12 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
     std::fs::create_dir_all(&dir).unwrap();
     let d = dir.to_string_lossy().to_string();
     assert!(git(&["-C", &d, "init", "-q"], None).is_some(), "git init failed");
-    let blob_in_repo = git(&["-C", &d, "hash-object", "-w", "-t", "blob", "--stdin"], Some(b"fn main() {}\n"));
+    let blob_in_repo =
+        git(&["-C", &d, "hash-object", "-w", "-t", "blob", "--stdin"], Some(b"fn main() {}\n"));
     assert_eq!(blob_in_repo.as_deref(), Some(theirs.as_str()));
-    let src_tree = git(&["-C", &d, "mktree"], Some(format!("100644 blob {theirs}\tlib.rs\n").as_bytes()))
-        .expect("mktree");
+    let src_tree =
+        git(&["-C", &d, "mktree"], Some(format!("100644 blob {theirs}\tlib.rs\n").as_bytes()))
+            .expect("mktree");
     assert_eq!(
         tree_of_src["tree"].as_str().unwrap_or_default(),
         src_tree,
@@ -197,7 +208,9 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
     let changes = r["changes"].as_array().cloned().unwrap_or_default();
     let mut summary: Vec<String> = changes
         .iter()
-        .map(|c| format!("{} {}", c["kind"].as_str().unwrap_or(""), c["path"].as_str().unwrap_or("")))
+        .map(|c| {
+            format!("{} {}", c["kind"].as_str().unwrap_or(""), c["path"].as_str().unwrap_or(""))
+        })
         .collect();
     summary.sort();
     assert_eq!(
@@ -236,5 +249,7 @@ fn a_repository_lives_in_blob_storage_and_git_agrees_with_its_ids() {
     assert_eq!(r["ref"], json!(c2), "the stale write landed anyway — that is a lost update: {r}");
 
     let _ = std::fs::remove_dir_all(&dir);
-    println!("    a repo in blob storage: real git ids, subtree reuse, and refs that do not lose writes");
+    println!(
+        "    a repo in blob storage: real git ids, subtree reuse, and refs that do not lose writes"
+    );
 }

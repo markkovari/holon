@@ -98,11 +98,7 @@ fn tokenize(text: &str) -> Vec<String> {
             }
         })
         .collect();
-    folded
-        .split_whitespace()
-        .filter(|t| t.len() >= 2)
-        .map(|t| t.to_string())
-        .collect()
+    folded.split_whitespace().filter(|t| t.len() >= 2).map(|t| t.to_string()).collect()
 }
 
 /// Tokenize and reduce to per-doc term frequencies (deduped term set with counts).
@@ -145,17 +141,13 @@ fn set_string(bucket: &kv::Bucket, key: &str, value: &str) -> Result<(), SearchE
 }
 
 fn delete_key(bucket: &kv::Bucket, key: &str) -> Result<(), SearchError> {
-    bucket
-        .delete(key)
-        .map_err(|e| SearchError::BackendUnavailable(format!("delete {key}: {e:?}")))
+    bucket.delete(key).map_err(|e| SearchError::BackendUnavailable(format!("delete {key}: {e:?}")))
 }
 
 // ---- count maintenance ---------------------------------------------------
 
 fn read_count(bucket: &kv::Bucket) -> Result<u64, SearchError> {
-    Ok(get_string(bucket, COUNT_KEY)?
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or(0))
+    Ok(get_string(bucket, COUNT_KEY)?.and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0))
 }
 
 fn write_count(bucket: &kv::Bucket, n: u64) -> Result<(), SearchError> {
@@ -185,11 +177,8 @@ fn posting_remove(bucket: &kv::Bucket, token: &str, id: &str) -> Result<(), Sear
         Some(s) => s,
         None => return Ok(()),
     };
-    let lines: Vec<&str> = existing
-        .lines()
-        .filter(|l| !l.is_empty())
-        .filter(|l| posting_docid(l) != id)
-        .collect();
+    let lines: Vec<&str> =
+        existing.lines().filter(|l| !l.is_empty()).filter(|l| posting_docid(l) != id).collect();
     if lines.is_empty() {
         delete_key(bucket, &key)
     } else {
@@ -221,11 +210,8 @@ fn parse_posting(line: &str) -> (String, u64) {
 fn tag_add(bucket: &kv::Bucket, tag: &str, id: &str) -> Result<(), SearchError> {
     let key = tag_key(tag);
     let existing = get_string(bucket, &key)?.unwrap_or_default();
-    let mut ids: Vec<String> = existing
-        .lines()
-        .filter(|l| !l.is_empty() && *l != id)
-        .map(|l| l.to_string())
-        .collect();
+    let mut ids: Vec<String> =
+        existing.lines().filter(|l| !l.is_empty() && *l != id).map(|l| l.to_string()).collect();
     ids.push(id.to_string());
     set_string(bucket, &key, &ids.join("\n"))
 }
@@ -236,10 +222,7 @@ fn tag_remove(bucket: &kv::Bucket, tag: &str, id: &str) -> Result<(), SearchErro
         Some(s) => s,
         None => return Ok(()),
     };
-    let ids: Vec<&str> = existing
-        .lines()
-        .filter(|l| !l.is_empty() && *l != id)
-        .collect();
+    let ids: Vec<&str> = existing.lines().filter(|l| !l.is_empty() && *l != id).collect();
     if ids.is_empty() {
         delete_key(bucket, &key)
     } else {
@@ -249,12 +232,7 @@ fn tag_remove(bucket: &kv::Bucket, tag: &str, id: &str) -> Result<(), SearchErro
 
 fn tag_docids(bucket: &kv::Bucket, tag: &str) -> Result<Vec<String>, SearchError> {
     Ok(get_string(bucket, &tag_key(tag))?
-        .map(|s| {
-            s.lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect()
-        })
+        .map(|s| s.lines().filter(|l| !l.is_empty()).map(|l| l.to_string()).collect())
         .unwrap_or_default())
 }
 
@@ -272,14 +250,8 @@ fn load_forward(
     let mut lines = raw.lines();
     let tok_line = lines.next().unwrap_or("");
     let tag_line = lines.next().unwrap_or("");
-    let tokens: Vec<(String, u64)> = tok_line
-        .split_whitespace()
-        .map(parse_posting)
-        .collect();
-    let tags: Vec<String> = tag_line
-        .split_whitespace()
-        .map(|t| t.to_string())
-        .collect();
+    let tokens: Vec<(String, u64)> = tok_line.split_whitespace().map(parse_posting).collect();
+    let tags: Vec<String> = tag_line.split_whitespace().map(|t| t.to_string()).collect();
     Ok(Some((tokens, tags)))
 }
 
@@ -289,11 +261,7 @@ fn store_forward(
     terms: &[(String, u64)],
     tags: &[String],
 ) -> Result<(), SearchError> {
-    let tok_line = terms
-        .iter()
-        .map(|(t, tf)| format!("{t}:{tf}"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let tok_line = terms.iter().map(|(t, tf)| format!("{t}:{tf}")).collect::<Vec<_>>().join(" ");
     let tag_line = tags.join(" ");
     set_string(bucket, &doc_key(id), &format!("{tok_line}\n{tag_line}"))
 }
@@ -386,12 +354,7 @@ impl Guest for Component {
 
         for term in &terms {
             let postings: Vec<(String, u64)> = get_string(&bucket, &term_key(term))?
-                .map(|s| {
-                    s.lines()
-                        .filter(|l| !l.is_empty())
-                        .map(parse_posting)
-                        .collect()
-                })
+                .map(|s| s.lines().filter(|l| !l.is_empty()).map(parse_posting).collect())
                 .unwrap_or_default();
 
             let df = postings.len() as u64;
@@ -407,13 +370,7 @@ impl Guest for Component {
                     slot.1.score += contrib;
                     slot.1.matched_terms += 1;
                 } else {
-                    cands.push((
-                        doc,
-                        Cand {
-                            score: contrib,
-                            matched_terms: 1,
-                        },
-                    ));
+                    cands.push((doc, Cand { score: contrib, matched_terms: 1 }));
                 }
             }
         }
@@ -454,10 +411,7 @@ impl Guest for Component {
         let hits = cands
             .into_iter()
             .take(limit as usize)
-            .map(|(id, c)| Hit {
-                id,
-                score: c.score,
-            })
+            .map(|(id, c)| Hit { id, score: c.score })
             .collect();
         Ok(hits)
     }

@@ -50,7 +50,8 @@ impl Probe {
             Err(e) => return Value::String(format!("transport: {e}")),
         };
         let (status, text) = (r.status(), r.text().unwrap_or_default());
-        serde_json::from_str(&text).unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
+        serde_json::from_str(&text)
+            .unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
     }
 
     /// One branch's attempt at the shared question.
@@ -62,7 +63,10 @@ impl Probe {
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap(),
     };
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     let mut last = Value::Null;
@@ -87,7 +91,8 @@ fn wait_for_probe(fleet: &Fleet) -> Probe {
 
 #[test]
 fn a_scripted_provider_makes_a_swarm_reproducible_and_free() {
-    let fleet = Fleet::start_with_secrets("mockllm", &["fixtures/mock-llm.yaml"], &artifacts(), &[]);
+    let fleet =
+        Fleet::start_with_secrets("mockllm", &["fixtures/mock-llm.yaml"], &artifacts(), &[]);
     let probe = wait_for_probe(&fleet);
 
     let d = probe.get("/describe");
@@ -123,7 +128,11 @@ fn a_scripted_provider_makes_a_swarm_reproducible_and_free() {
     // These are the interesting paths through a loop, and they are exactly the
     // ones that are expensive or impossible to trigger deliberately upstream.
     let denied = probe.ask("rate limit me", 0);
-    assert_eq!(denied["error"], json!("provider-denied"), "a scripted 429 should surface: {denied}");
+    assert_eq!(
+        denied["error"],
+        json!("provider-denied"),
+        "a scripted 429 should surface: {denied}"
+    );
     assert!(
         denied["detail"].as_str().unwrap_or_default().contains("429"),
         "the reason should survive: {denied}"

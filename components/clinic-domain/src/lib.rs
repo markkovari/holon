@@ -11,9 +11,9 @@
 //! `src/owners.rs` and `src/visits.rs` are the goal. `CONTRACT.md` is what they
 //! must agree on.
 
+mod access;
 #[allow(warnings)]
 mod bindings;
-mod access;
 mod owners;
 mod reports;
 mod visits;
@@ -185,11 +185,7 @@ fn bearer(request: &IncomingRequest) -> String {
     let Some(value) = headers.get("authorization").into_iter().next() else {
         return String::new();
     };
-    String::from_utf8_lossy(&value)
-        .strip_prefix("Bearer ")
-        .unwrap_or_default()
-        .trim()
-        .to_string()
+    String::from_utf8_lossy(&value).strip_prefix("Bearer ").unwrap_or_default().trim().to_string()
 }
 
 /// A ceiling on a request body, not a policy: past this the read gives up and

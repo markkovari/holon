@@ -230,7 +230,13 @@ pub fn report_of(v: &Value) -> Report {
             format!(
                 "{}: {}",
                 o["id"].as_str().unwrap_or("?"),
-                o["detail"].as_str().unwrap_or("failed").lines().take(3).collect::<Vec<_>>().join(" ")
+                o["detail"]
+                    .as_str()
+                    .unwrap_or("failed")
+                    .lines()
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" ")
             )
         })
         .collect();
@@ -288,7 +294,8 @@ mod tests {
     #[test]
     fn fixtures_are_laid_beside_the_contract_and_replaced_not_stacked() {
         let plan = json!({ "text": "build the ui", "context": [] });
-        let v1 = with_mocks(&plan, r#"{"routes":[{"method":"GET","path":"/a","example":{"v":1}}]}"#);
+        let v1 =
+            with_mocks(&plan, r#"{"routes":[{"method":"GET","path":"/a","example":{"v":1}}]}"#);
         assert_eq!(v1["context"].as_array().unwrap().len(), 1);
         let v2 = with_mocks(&v1, r#"{"routes":[{"method":"GET","path":"/a","example":{"v":2}}]}"#);
         let ctx = v2["context"].as_array().unwrap();
@@ -326,7 +333,10 @@ mod tests {
             { "path": REQUEST_PATH, "content": "SearchResult needs total_pages\nI cannot paginate from next_cursor alone.\n" }
         ]));
         let (subject, body) = request_of(&asking).expect("the candidate asked for something");
-        assert_eq!(subject, "SearchResult needs total_pages", "a markdown heading is not a subject");
+        assert_eq!(
+            subject, "SearchResult needs total_pages",
+            "a markdown heading is not a subject"
+        );
         assert!(body.starts_with("I cannot paginate"));
 
         // And the question does not land.
@@ -365,7 +375,11 @@ mod tests {
         ];
         let out = refusal(&vacuous);
         assert_eq!(out.len(), 1, "only the unexcused one is a refusal: {out:?}");
-        assert!(out[0].contains("`component-compiles` already passes on the base tree"), "{}", out[0]);
+        assert!(
+            out[0].contains("`component-compiles` already passes on the base tree"),
+            "{}",
+            out[0]
+        );
         // The message has to say what to do, or the critic is a thing people
         // disable rather than fix.
         assert!(out[0].contains("Make it fail against the code as it stands"), "{}", out[0]);
@@ -375,15 +389,29 @@ mod tests {
 
     #[test]
     fn criticising_no_checks_is_itself_a_refusal() {
-        let e = criticise("http://127.0.0.1:1", "c", &json!([]), &json!([]), &[], Duration::from_secs(1))
-            .expect_err("an empty gate accepts everything");
+        let e = criticise(
+            "http://127.0.0.1:1",
+            "c",
+            &json!([]),
+            &json!([]),
+            &[],
+            Duration::from_secs(1),
+        )
+        .expect_err("an empty gate accepts everything");
         assert!(e.contains("empty gate"), "{e}");
     }
 
     #[test]
     fn an_empty_gate_is_refused_rather_than_passed() {
-        let e = gate("http://127.0.0.1:1", "c", &json!([]), &json!([]), &json!([]), Duration::from_secs(1))
-            .expect_err("an empty gate accepts everything");
+        let e = gate(
+            "http://127.0.0.1:1",
+            "c",
+            &json!([]),
+            &json!([]),
+            &json!([]),
+            Duration::from_secs(1),
+        )
+        .expect_err("an empty gate accepts everything");
         assert!(e.contains("empty gate"), "{e}");
     }
 
@@ -514,7 +542,8 @@ pub fn run_parts(
                 if !e.accepted {
                     if let Some(text) = memory::failure_text(&e.failures, e.score) {
                         if let Err(err) = m.observe_failure(&o.part, &o.part, &e.branch, &text) {
-                            log.borrow_mut().push(format!("{}: lesson not recorded: {err}", o.part));
+                            log.borrow_mut()
+                                .push(format!("{}: lesson not recorded: {err}", o.part));
                         }
                     }
                 }
@@ -650,7 +679,8 @@ pub fn run_parts(
     // 2. Do the halves agree about which interface they built against?
     let winners = composition.winners();
     for (part, entry) in &winners {
-        if let Err(e) = w.registry.built_against(&entry.digest, part, composition.contract_version) {
+        if let Err(e) = w.registry.built_against(&entry.digest, part, composition.contract_version)
+        {
             log.push(format!("could not record what {part} built against: {e}"));
         }
     }

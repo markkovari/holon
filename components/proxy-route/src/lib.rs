@@ -50,7 +50,9 @@ fn resolve_route(path_with_query: &str) -> Option<String> {
     let path = path_with_query.split('?').next().unwrap_or(path_with_query);
     table()
         .into_iter()
-        .find(|(prefix, _)| path == prefix || path.starts_with(&format!("{prefix}/")) || prefix == "/")
+        .find(|(prefix, _)| {
+            path == prefix || path.starts_with(&format!("{prefix}/")) || prefix == "/"
+        })
         .map(|(prefix, upstream)| target_for(path_with_query, &prefix, &upstream))
 }
 

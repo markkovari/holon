@@ -62,10 +62,8 @@ fn json(status: StatusCode, body: Vec<u8>) -> Response<Full<Bytes>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr: SocketAddr = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "127.0.0.1:3020".to_string())
-        .parse()?;
+    let addr: SocketAddr =
+        std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1:3020".to_string()).parse()?;
     let listener = TcpListener::bind(addr).await?;
     println!("refbench listening on {addr}");
     loop {

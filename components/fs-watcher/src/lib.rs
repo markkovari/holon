@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::os::fs::watcher::Guest;
 struct Component;
-impl Guest for Component { fn watch(dir: String) -> String { format!("UNIMPLEMENTED: fs-watcher cannot watch a directory from wasm ({})", dir) } }
+impl Guest for Component {
+    fn watch(dir: String) -> String {
+        format!("UNIMPLEMENTED: fs-watcher cannot watch a directory from wasm ({})", dir)
+    }
+}
 bindings::export!(Component with_types_in bindings);

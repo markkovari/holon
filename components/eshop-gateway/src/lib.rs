@@ -55,10 +55,8 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
                 }
             }
             ["internal", "pump"] => {
-                let ok = PUMPS
-                    .iter()
-                    .filter(|p| router::forward("POST", p, &[], &[]).is_ok())
-                    .count();
+                let ok =
+                    PUMPS.iter().filter(|p| router::forward("POST", p, &[], &[]).is_ok()).count();
                 let body = format!("{{\"pumped\":{ok}}}");
                 respond(response_out, 200, "application/json", body.as_bytes());
             }
@@ -84,12 +82,7 @@ fn method_str(m: &Method) -> String {
 }
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request
-        .headers()
-        .get(name)
-        .into_iter()
-        .next()
-        .and_then(|v| String::from_utf8(v).ok())
+    request.headers().get(name).into_iter().next().and_then(|v| String::from_utf8(v).ok())
 }
 
 /// A ceiling on a request body, not a policy: past this the read stops and the

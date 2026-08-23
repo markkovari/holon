@@ -60,10 +60,7 @@ fn now() -> u64 {
 }
 
 fn hex(n: usize) -> String {
-    get_random_bytes(n as u64)
-        .iter()
-        .map(|x| format!("{x:02x}"))
-        .collect()
+    get_random_bytes(n as u64).iter().map(|x| format!("{x:02x}")).collect()
 }
 
 fn open() -> Result<kv::Bucket, AuditError> {
@@ -124,29 +121,19 @@ impl Recorder for Component {
         let body = serde_json::to_vec(&stored)
             .map_err(|e| AuditError::BackendUnavailable(format!("encode: {e}")))?;
         let key = format!("al_{:020}_{}", stored.timestamp, stored.id);
-        open()?
-            .set(&key, &body)
-            .map_err(|e| AuditError::BackendUnavailable(format!("set: {e:?}")))
+        open()?.set(&key, &body).map_err(|e| AuditError::BackendUnavailable(format!("set: {e:?}")))
     }
 }
 
 impl Query for Component {
     fn recent(limit: u32) -> Result<Vec<Event>, AuditError> {
         let all = scan(&open()?)?;
-        Ok(all
-            .iter()
-            .take(limit as usize)
-            .map(Event::from)
-            .collect())
+        Ok(all.iter().take(limit as usize).map(Event::from).collect())
     }
 
     fn by_trace(trace_id: String) -> Result<Vec<Event>, AuditError> {
         let all = scan(&open()?)?;
-        Ok(all
-            .iter()
-            .filter(|s| s.trace_id == trace_id)
-            .map(Event::from)
-            .collect())
+        Ok(all.iter().filter(|s| s.trace_id == trace_id).map(Event::from).collect())
     }
 }
 

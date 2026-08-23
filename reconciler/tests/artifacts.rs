@@ -51,7 +51,8 @@ impl Probe {
             Err(e) => return Value::String(format!("transport: {e}")),
         };
         let (status, text) = (r.status(), r.text().unwrap_or_default());
-        serde_json::from_str(&text).unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
+        serde_json::from_str(&text)
+            .unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
     }
 
     fn get(&self, path: &str) -> Value {
@@ -77,7 +78,10 @@ impl Probe {
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap(),
     };
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     let mut last = Value::Null;
@@ -99,8 +103,12 @@ fn wait_for_probe(fleet: &Fleet) -> Probe {
 
 #[test]
 fn twenty_branches_missing_at_once_produce_exactly_one_producer() {
-    let fleet =
-        Fleet::start_with_secrets("artifacts", &["fixtures/artifact-cache.yaml"], &artifacts(), &[]);
+    let fleet = Fleet::start_with_secrets(
+        "artifacts",
+        &["fixtures/artifact-cache.yaml"],
+        &artifacts(),
+        &[],
+    );
     let probe = wait_for_probe(&fleet);
 
     // The id is a pure function of the key, and knowable without touching the

@@ -18,8 +18,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use comp_lattice::{nats::NatsLattice, Artifacts, CommandBus, Inventory};
 use comp_reconciler::oci;
-use comp_reconciler::settings;
 use comp_reconciler::plan::{plan, Cfg, Command, Hysteresis, Manifest, NodeInventory, Outcome};
+use comp_reconciler::settings;
 use serde_json::json;
 
 #[derive(Parser, Clone)]
@@ -174,8 +174,14 @@ async fn main() -> Result<()> {
     let known: std::sync::Arc<std::sync::RwLock<(Vec<Manifest>, Vec<NodeInventory>)>> =
         std::sync::Arc::new(std::sync::RwLock::new((Vec::new(), Vec::new())));
     if !args.dry_run {
-        serve_activations(commands.clone(), known.clone(), cfg.clone(), args.clone(), command_timeout)
-            .await;
+        serve_activations(
+            commands.clone(),
+            known.clone(),
+            cfg.clone(),
+            args.clone(),
+            command_timeout,
+        )
+        .await;
     }
     let mut hyst = Hysteresis::default();
     let mut world = World::default();
@@ -188,11 +194,8 @@ async fn main() -> Result<()> {
     let mut lease = if args.no_lease {
         None
     } else {
-        let id = format!(
-            "{}-{}",
-            hostname().unwrap_or_else(|| "reconciler".into()),
-            std::process::id()
-        );
+        let id =
+            format!("{}-{}", hostname().unwrap_or_else(|| "reconciler".into()), std::process::id());
         match comp_lattice::lease::Lease::connect(
             &args.nats_url,
             &args.lattice,
@@ -296,8 +299,10 @@ async fn main() -> Result<()> {
             .flat_map(|m| m.components.iter())
             .map(|c| c.replicas.max(1) as u64)
             .sum();
-        let running: u64 =
-            observed.iter().map(|n| n.instances.iter().map(|i| i.count.max(1) as u64).sum::<u64>()).sum();
+        let running: u64 = observed
+            .iter()
+            .map(|n| n.instances.iter().map(|i| i.count.max(1) as u64).sum::<u64>())
+            .sum();
         let lag = wanted.saturating_sub(running);
         let nodes = observed.len() as u64;
         report(&args, &http, &outcome, lag, wanted, running, nodes).await;
@@ -529,12 +534,7 @@ async fn send(
     // "Nothing is listening on that node" and "that node is slow" are kept distinct
     // by the implementation; both surface here as an error with the reason.
     let reply = bus
-        .send(
-            cmd.node(),
-            verb,
-            serde_json::to_vec(&body)?,
-            Duration::from_secs(command_timeout),
-        )
+        .send(cmd.node(), verb, serde_json::to_vec(&body)?, Duration::from_secs(command_timeout))
         .await?;
 
     let ack: serde_json::Value = serde_json::from_slice(&reply).unwrap_or_default();
@@ -608,11 +608,7 @@ async fn report(
 /// Everything about it is idempotent — "pending" is derived from the absence of a
 /// digest, and the object store is content-addressed — so a crash anywhere in here
 /// costs a repeated upload, never a wrong one.
-async fn push_pass(
-    args: &Args,
-    http: &reqwest::Client,
-    store: &dyn Artifacts,
-) -> Result<usize> {
+async fn push_pass(args: &Args, http: &reqwest::Client, store: &dyn Artifacts) -> Result<usize> {
     let base = args.platform_url.trim_end_matches('/');
     let pending = http
         .get(format!("{base}/api/internal/pending-pushes"))
@@ -861,14 +857,13 @@ async fn serve_activations(
                 .ok()
                 .and_then(|v| v["host"].as_str().map(str::to_string))
                 .unwrap_or_default();
-            let body = match activate(
-                bus.as_ref(), &known, &cfg, &args, &http, command_timeout, &host,
-            )
-            .await
-            {
-                Ok(v) => v,
-                Err(e) => serde_json::json!({ "error": format!("{e:#}") }),
-            };
+            let body =
+                match activate(bus.as_ref(), &known, &cfg, &args, &http, command_timeout, &host)
+                    .await
+                {
+                    Ok(v) => v,
+                    Err(e) => serde_json::json!({ "error": format!("{e:#}") }),
+                };
             let _ = cmd.reply.send(body.to_string().into_bytes());
         }
     });
@@ -925,7 +920,6 @@ async fn activate(
     eprintln!("comp-reconciler: activated {host} on {node}");
     Ok(serde_json::json!({ "node": node, "address": address }))
 }
-
 
 #[cfg(test)]
 mod load_tests {
@@ -985,7 +979,8 @@ mod load_tests {
 
     #[test]
     fn a_genuinely_busy_component_still_counts_its_refusals() {
-        let load = fold_load(&[entry(r#"{"host":"a.test","inflight":8,"shed":5000,"served":9000}"#)]);
+        let load =
+            fold_load(&[entry(r#"{"host":"a.test","inflight":8,"shed":5000,"served":9000}"#)]);
         assert_eq!(load.get("a.test"), Some(&5008));
     }
 
@@ -997,7 +992,6 @@ mod load_tests {
         let load = fold_load(&[entry(r#"{"host":"a.test","inflight":2,"shed":30}"#)]);
         assert_eq!(load.get("a.test"), Some(&32));
     }
-
 }
 
 /// Who this process is, for the lease. Hostname plus pid, because two

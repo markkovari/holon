@@ -63,10 +63,7 @@ fn sanitize_url(url: &str) -> Option<String> {
     let trimmed = url.trim();
     // Strip control/whitespace chars that could obscure a scheme
     // (e.g. `java\tscript:`); if any are present, treat conservatively.
-    let cleaned: String = trimmed
-        .chars()
-        .filter(|c| !c.is_control() && *c != '\u{0}')
-        .collect();
+    let cleaned: String = trimmed.chars().filter(|c| !c.is_control() && *c != '\u{0}').collect();
     if cleaned != trimmed {
         // Hidden control characters -> reject outright.
         return None;
@@ -218,8 +215,7 @@ fn inline_emphasis(s: &str, marker: &str, tag: &str) -> String {
 
 fn is_hr(line: &str) -> bool {
     let t = line.trim();
-    (t.len() >= 3 && t.chars().all(|c| c == '-'))
-        || (t.len() >= 3 && t.chars().all(|c| c == '*'))
+    (t.len() >= 3 && t.chars().all(|c| c == '-')) || (t.len() >= 3 && t.chars().all(|c| c == '*'))
 }
 
 fn heading_level(line: &str) -> Option<(usize, &str)> {
@@ -257,8 +253,7 @@ fn ordered_item(line: &str) -> Option<&str> {
         return None;
     }
     let rest = &line[digits..];
-    rest.strip_prefix(". ")
-        .or_else(|| rest.strip_prefix(") "))
+    rest.strip_prefix(". ").or_else(|| rest.strip_prefix(") "))
 }
 
 fn unordered_item(line: &str) -> Option<&str> {
@@ -483,10 +478,7 @@ fn render_text(markdown: &str) -> String {
             continue;
         }
         if line.starts_with('>') {
-            let stripped = line
-                .strip_prefix("> ")
-                .or_else(|| line.strip_prefix('>'))
-                .unwrap_or("");
+            let stripped = line.strip_prefix("> ").or_else(|| line.strip_prefix('>')).unwrap_or("");
             out.push(strip_inline(stripped.trim()));
             i += 1;
             continue;
@@ -511,10 +503,7 @@ fn render_text(markdown: &str) -> String {
 
 impl Guest for Component {
     fn to_html(markdown: String) -> String {
-        let opts = Options {
-            hard_breaks: false,
-            safe_links: true,
-        };
+        let opts = Options { hard_breaks: false, safe_links: true };
         render_html(&markdown, &opts)
     }
 

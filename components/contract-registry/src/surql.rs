@@ -187,10 +187,7 @@ pub fn rows(body: &str) -> Result<Vec<Value>, String> {
         }
         return Err(msg);
     }
-    Ok(statements
-        .last()
-        .and_then(|s| s["result"].as_array().cloned())
-        .unwrap_or_default())
+    Ok(statements.last().and_then(|s| s["result"].as_array().cloned()).unwrap_or_default())
 }
 
 /// A request id: stable for one `(from, to, subject)` within a version, so a

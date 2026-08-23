@@ -14,13 +14,62 @@ struct Component;
 
 /// Country code -> total IBAN length (the common registry entries).
 const LENGTHS: &[(&str, u32)] = &[
-    ("AD", 24), ("AE", 23), ("AT", 20), ("BE", 16), ("BG", 22), ("BH", 22), ("BR", 29), ("CH", 21),
-    ("CY", 28), ("CZ", 24), ("DE", 22), ("DK", 18), ("EE", 20), ("ES", 24), ("FI", 18), ("FO", 18),
-    ("FR", 27), ("GB", 22), ("GE", 22), ("GI", 23), ("GL", 18), ("GR", 27), ("HR", 21), ("HU", 28),
-    ("IE", 22), ("IL", 23), ("IS", 26), ("IT", 27), ("KW", 30), ("LB", 28), ("LI", 21), ("LT", 20),
-    ("LU", 20), ("LV", 21), ("MC", 27), ("MD", 24), ("ME", 22), ("MK", 19), ("MT", 31), ("MU", 30),
-    ("NL", 18), ("NO", 15), ("PL", 28), ("PT", 25), ("QA", 29), ("RO", 24), ("RS", 22), ("SA", 24),
-    ("SE", 24), ("SI", 19), ("SK", 24), ("SM", 27), ("TN", 24), ("TR", 26), ("UA", 29), ("VA", 22),
+    ("AD", 24),
+    ("AE", 23),
+    ("AT", 20),
+    ("BE", 16),
+    ("BG", 22),
+    ("BH", 22),
+    ("BR", 29),
+    ("CH", 21),
+    ("CY", 28),
+    ("CZ", 24),
+    ("DE", 22),
+    ("DK", 18),
+    ("EE", 20),
+    ("ES", 24),
+    ("FI", 18),
+    ("FO", 18),
+    ("FR", 27),
+    ("GB", 22),
+    ("GE", 22),
+    ("GI", 23),
+    ("GL", 18),
+    ("GR", 27),
+    ("HR", 21),
+    ("HU", 28),
+    ("IE", 22),
+    ("IL", 23),
+    ("IS", 26),
+    ("IT", 27),
+    ("KW", 30),
+    ("LB", 28),
+    ("LI", 21),
+    ("LT", 20),
+    ("LU", 20),
+    ("LV", 21),
+    ("MC", 27),
+    ("MD", 24),
+    ("ME", 22),
+    ("MK", 19),
+    ("MT", 31),
+    ("MU", 30),
+    ("NL", 18),
+    ("NO", 15),
+    ("PL", 28),
+    ("PT", 25),
+    ("QA", 29),
+    ("RO", 24),
+    ("RS", 22),
+    ("SA", 24),
+    ("SE", 24),
+    ("SI", 19),
+    ("SK", 24),
+    ("SM", 27),
+    ("TN", 24),
+    ("TR", 26),
+    ("UA", 29),
+    ("VA", 22),
 ];
 
 fn expected_length(country: &str) -> Option<u32> {
@@ -35,7 +84,8 @@ fn mod97_step(rem: u32, digit: u32) -> u32 {
 impl Guest for Component {
     fn validate(iban: String) -> Result<IbanInfo, IbanError> {
         // normalize: drop ASCII whitespace, upper-case.
-        let norm: String = iban.chars().filter(|c| !c.is_whitespace()).map(|c| c.to_ascii_uppercase()).collect();
+        let norm: String =
+            iban.chars().filter(|c| !c.is_whitespace()).map(|c| c.to_ascii_uppercase()).collect();
         if norm.len() < 5 {
             return Err(IbanError::TooShort);
         }

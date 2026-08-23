@@ -258,9 +258,7 @@ impl Manifest {
     fn conflicting_links(&self) -> Vec<String> {
         let mut seen: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
         for l in &self.links {
-            seen.entry((l.socket.as_str(), l.iface.as_str()))
-                .or_default()
-                .push(l.plug.as_str());
+            seen.entry((l.socket.as_str(), l.iface.as_str())).or_default().push(l.plug.as_str());
         }
         seen.into_iter()
             .filter(|(_, plugs)| plugs.len() > 1)
@@ -599,9 +597,7 @@ pub fn plan(
         if nodes.len() > 1 && holds_state(m) {
             let local: Vec<&str> = nodes
                 .iter()
-                .filter(|(n, _)| {
-                    !observed.iter().any(|o| o.node == *n && o.kv_shared)
-                })
+                .filter(|(n, _)| !observed.iter().any(|o| o.node == *n && o.kv_shared))
                 .map(|(n, _)| n.as_str())
                 .collect();
             if !local.is_empty() {
@@ -782,7 +778,8 @@ fn settled(
     // and only the full ranking can decide that.
     fleet_stable: bool,
 ) -> Option<Vec<(String, u32)>> {
-    if !fleet_stable || running == 0 || running != want_replicas || c.placement.mode == Mode::Daemon {
+    if !fleet_stable || running == 0 || running != want_replicas || c.placement.mode == Mode::Daemon
+    {
         // Daemon is one per ELIGIBLE node, so a new node must grow it. Counting
         // replicas cannot see that; only the ranking can.
         return None;
@@ -872,7 +869,10 @@ fn place<'a>(
     // apps that are actually changing, which is the churn, not the fleet.
     running_by_node: &BTreeMap<Owner<'_>, BTreeMap<&str, u32>>,
     node_load: &BTreeMap<&str, usize>,
-    eligible_for: &mut BTreeMap<(&'a BTreeMap<String, String>, &'a Vec<String>), Vec<&'a NodeInventory>>,
+    eligible_for: &mut BTreeMap<
+        (&'a BTreeMap<String, String>, &'a Vec<String>),
+        Vec<&'a NodeInventory>,
+    >,
     // What THIS pass has already decided to put on each node.
     //
     // Without it, every app in a pass ranks against the same unchanged inventory
@@ -929,8 +929,7 @@ fn place<'a>(
             let mut ranked: Vec<(&NodeInventory, u32, usize)> = eligible
                 .iter()
                 .map(|n| {
-                    let here =
-                        mine.and_then(|m| m.get(n.node.as_str())).copied().unwrap_or(0);
+                    let here = mine.and_then(|m| m.get(n.node.as_str())).copied().unwrap_or(0);
                     let observed_load = node_load.get(n.node.as_str()).copied().unwrap_or(0);
                     (*n, here, observed_load + pending.get(&n.node).copied().unwrap_or(0))
                 })
@@ -941,9 +940,7 @@ fn place<'a>(
             // divided so it stays integer arithmetic and never divides by zero.
             let rank = |a: &(&NodeInventory, u32, usize), b: &(&NodeInventory, u32, usize)| {
                 let (aw, bw) = (a.0.capacity.weight(), b.0.capacity.weight());
-                b.1.cmp(&a.1)
-                    .then((a.2 * bw).cmp(&(b.2 * aw)))
-                    .then(a.0.node.cmp(&b.0.node))
+                b.1.cmp(&a.1).then((a.2 * bw).cmp(&(b.2 * aw))).then(a.0.node.cmp(&b.0.node))
             };
             // Fewer replicas than nodes means only the first `replicas` entries are
             // ever read, so partition around that point and sort the prefix instead
@@ -961,8 +958,7 @@ fn place<'a>(
             // And the split is proportional for the same reason. wasmCloud puts 3 of
             // 4 replicas on a 10-core box and 1 on a 4-core one (ADR-0039); an even
             // split would put 2 on each and make the Pi the bottleneck for the app.
-            let weights: Vec<usize> =
-                ranked.iter().map(|(n, _, _)| n.capacity.weight()).collect();
+            let weights: Vec<usize> = ranked.iter().map(|(n, _, _)| n.capacity.weight()).collect();
             let shares: Vec<u32> = if (replicas as usize) <= ranked.len() {
                 // Fewer replicas than nodes: take the RANKING's answer, one each.
                 // Proportional-by-capacity would hand a single replica to the
@@ -1022,10 +1018,7 @@ mod tests {
 
     /// A component that keeps state, so the split-brain check applies to it.
     fn stateful(id: &str, digest: &str, replicas: u32) -> Component {
-        Component {
-            host_needs: vec!["wasi:keyvalue/store".into()],
-            ..comp(id, digest, replicas)
-        }
+        Component { host_needs: vec!["wasi:keyvalue/store".into()], ..comp(id, digest, replicas) }
     }
 
     fn running(inv: &mut NodeInventory, component: &str, digest: &str, count: u32) {
@@ -1121,7 +1114,12 @@ mod tests {
     fn counts(observed: &[NodeInventory], component: &str) -> Vec<(String, u32)> {
         observed
             .iter()
-            .map(|n| (n.node.clone(), n.instances.iter().filter(|i| i.component == component).map(|i| i.count).sum()))
+            .map(|n| {
+                (
+                    n.node.clone(),
+                    n.instances.iter().filter(|i| i.component == component).map(|i| i.count).sum(),
+                )
+            })
             .filter(|(_, c)| *c > 0)
             .collect()
     }
@@ -1149,8 +1147,11 @@ mod tests {
         assert!(first.commands.is_empty(), "must not stop on the first sighting");
         // Absolute: "hold 1", not "drop 2". Re-sending it is a no-op.
         let second = plan(&[m], &obs, None, &mut hyst, &cfg);
-        assert!(matches!(&second.commands[..], [Command::Start { count: 1, node, .. }] if node == "box-a"),
-            "{:?}", second.commands);
+        assert!(
+            matches!(&second.commands[..], [Command::Start { count: 1, node, .. }] if node == "box-a"),
+            "{:?}",
+            second.commands
+        );
     }
 
     #[test]
@@ -1184,7 +1185,11 @@ mod tests {
 
         obs.retain(|n| n.node != "box-b"); // box-b is gone
         converge(&[m], &mut obs, 2);
-        assert_eq!(counts(&obs, "api"), vec![("box-a".into(), 2)], "both replicas land on the survivor");
+        assert_eq!(
+            counts(&obs, "api"),
+            vec![("box-a".into(), 2)],
+            "both replicas land on the survivor"
+        );
     }
 
     #[test]
@@ -1224,7 +1229,13 @@ mod tests {
         let mut c = comp("api", "sha256:a", 1);
         c.placement.constraints.insert("region".into(), "antarctica".into());
         let m = app(vec![c], vec![], Strategy::Linked);
-        let out = plan(&[m], &[node("box-a", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(
+            &[m],
+            &[node("box-a", &[], &[])],
+            None,
+            &mut Hysteresis::default(),
+            &Cfg::default(),
+        );
         assert!(out.commands.is_empty());
         assert_eq!(out.unschedulable.len(), 1);
         assert!(out.unschedulable[0].reason.contains("antarctica"), "{:?}", out.unschedulable);
@@ -1238,7 +1249,13 @@ mod tests {
         c.placement.mode = Mode::Pinned;
         c.placement.nodes = vec!["box-gpu".into()];
         let m = app(vec![c], vec![], Strategy::Linked);
-        let out = plan(&[m], &[node("box-a", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(
+            &[m],
+            &[node("box-a", &[], &[])],
+            None,
+            &mut Hysteresis::default(),
+            &Cfg::default(),
+        );
         assert!(out.commands.is_empty());
         assert!(out.unschedulable[0].reason.contains("box-gpu"), "{:?}", out.unschedulable);
     }
@@ -1248,7 +1265,8 @@ mod tests {
         let mut c = comp("api", "sha256:a", 7);
         c.placement.mode = Mode::Daemon;
         let m = app(vec![c], vec![], Strategy::Linked);
-        let mut obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[]), node("box-c", &[], &[])];
+        let mut obs =
+            vec![node("box-a", &[], &[]), node("box-b", &[], &[]), node("box-c", &[], &[])];
         converge(&[m], &mut obs, 2);
         assert_eq!(
             counts(&obs, "api"),
@@ -1288,7 +1306,13 @@ mod tests {
             }],
             Strategy::Linked,
         );
-        let out = plan(&[m], &[node("box-a", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(
+            &[m],
+            &[node("box-a", &[], &[])],
+            None,
+            &mut Hysteresis::default(),
+            &Cfg::default(),
+        );
         let api = out
             .commands
             .iter()
@@ -1320,7 +1344,13 @@ mod tests {
             }],
             Strategy::Fused,
         );
-        let out = plan(&[m], &[node("box-a", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(
+            &[m],
+            &[node("box-a", &[], &[])],
+            None,
+            &mut Hysteresis::default(),
+            &Cfg::default(),
+        );
         assert_eq!(out.commands.len(), 1);
         assert!(matches!(&out.commands[0], Command::Start { component, .. } if component == "api"));
     }
@@ -1335,12 +1365,15 @@ mod tests {
 
         let first = plan(&[m.clone()], &[a.clone()], None, &mut hyst, &cfg);
         assert_eq!(first.commands.len(), 1, "the new one comes up alone first");
-        assert!(matches!(&first.commands[0], Command::Start { digest, .. } if digest == "sha256:new"));
+        assert!(
+            matches!(&first.commands[0], Command::Start { digest, .. } if digest == "sha256:new")
+        );
 
         let second = plan(&[m], &[a], None, &mut hyst, &cfg);
-        assert!(second.commands.iter().any(
-            |c| matches!(c, Command::Stop { digest, .. } if digest == "sha256:old")
-        ));
+        assert!(second
+            .commands
+            .iter()
+            .any(|c| matches!(c, Command::Stop { digest, .. } if digest == "sha256:old")));
         // Ordering holds within a pass too.
         let kinds: Vec<bool> =
             second.commands.iter().map(|c| matches!(c, Command::Start { .. })).collect();
@@ -1372,7 +1405,6 @@ mod tests {
         assert_eq!(out.deferred, 30);
     }
 
-
     /// THE test. This is the bug that shipped: two replicas, node-local stores,
     /// each getting its own store under the same bucket name. Nothing errored — the
     /// rate limiter just stopped rate-limiting, and the failover moved placement
@@ -1380,8 +1412,10 @@ mod tests {
     #[test]
     fn a_stateful_app_is_refused_rather_than_split_across_local_stores() {
         let m = app(vec![stateful("api", "sha256:a", 2)], vec![], Strategy::Linked);
-        let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
-                       node("box-b", &[], &["wasi:keyvalue/store"])];
+        let obs = vec![
+            node("box-a", &[], &["wasi:keyvalue/store"]),
+            node("box-b", &[], &["wasi:keyvalue/store"]),
+        ];
         let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "nothing may be placed: {:?}", out.commands);
         let reason = &out.unschedulable[0].reason;
@@ -1407,8 +1441,10 @@ mod tests {
         // The single-node self-hosting lane, which is where sqlite came from and
         // where it is exactly right. Refusing this would break that lane.
         let m = app(vec![stateful("api", "sha256:a", 1)], vec![], Strategy::Linked);
-        let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
-                       node("box-b", &[], &["wasi:keyvalue/store"])];
+        let obs = vec![
+            node("box-a", &[], &["wasi:keyvalue/store"]),
+            node("box-b", &[], &["wasi:keyvalue/store"]),
+        ];
         let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert_eq!(out.commands.len(), 1);
         assert!(out.unschedulable.is_empty());
@@ -1431,11 +1467,17 @@ mod tests {
         // does. Looking only at the root would miss it.
         let m = app(
             vec![comp("api", "sha256:a", 2), stateful("store", "sha256:b", 1)],
-            vec![Link { plug: "store".into(), socket: "api".into(), iface: "records:store/store@0.1.0".into() }],
+            vec![Link {
+                plug: "store".into(),
+                socket: "api".into(),
+                iface: "records:store/store@0.1.0".into(),
+            }],
             Strategy::Linked,
         );
-        let obs = vec![node("box-a", &[], &["wasi:keyvalue/store"]),
-                       node("box-b", &[], &["wasi:keyvalue/store"])];
+        let obs = vec![
+            node("box-a", &[], &["wasi:keyvalue/store"]),
+            node("box-b", &[], &["wasi:keyvalue/store"]),
+        ];
         let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "{:?}", out.commands);
         assert!(out.unschedulable[0].reason.contains("diverge"));
@@ -1465,10 +1507,15 @@ mod tests {
         root.placement.constraints.insert("role".into(), "web".into());
         let m = app(
             vec![root, plug],
-            vec![Link { plug: "store".into(), socket: "api".into(), iface: "records:store/store@0.1.0".into() }],
+            vec![Link {
+                plug: "store".into(),
+                socket: "api".into(),
+                iface: "records:store/store@0.1.0".into(),
+            }],
             Strategy::Linked,
         );
-        let obs = vec![node("edge", &[("role", "web")], &[]), node("data-1", &[("role", "data")], &[])];
+        let obs =
+            vec![node("edge", &[("role", "web")], &[]), node("data-1", &[("role", "data")], &[])];
         let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         let where_ = |c: &str| {
             out.commands
@@ -1477,7 +1524,11 @@ mod tests {
                 .map(|x| x.node().to_string())
         };
         assert_eq!(where_("api").as_deref(), Some("edge"));
-        assert_eq!(where_("store").as_deref(), Some("data-1"), "the plug follows its own placement");
+        assert_eq!(
+            where_("store").as_deref(),
+            Some("data-1"),
+            "the plug follows its own placement"
+        );
         assert_ne!(where_("api"), where_("store"), "the graph must actually span");
     }
 
@@ -1487,7 +1538,11 @@ mod tests {
         // spanning case should be opted into, not fallen into.
         let m = app(
             vec![comp("api", "sha256:a", 1), comp("store", "sha256:b", 1)],
-            vec![Link { plug: "store".into(), socket: "api".into(), iface: "records:store/store@0.1.0".into() }],
+            vec![Link {
+                plug: "store".into(),
+                socket: "api".into(),
+                iface: "records:store/store@0.1.0".into(),
+            }],
             Strategy::Linked,
         );
         let obs = vec![node("n1", &[], &[]), node("n2", &[], &[])];
@@ -1503,12 +1558,9 @@ mod tests {
         // graph has ten of them.
         let mut plug = comp("store", "sha256:b", 1);
         plug.placement.constraints.insert("role".into(), "gpu".into());
-        let m = app(
-            vec![comp("api", "sha256:a", 1), plug],
-            vec![],
-            Strategy::Linked,
-        );
-        let out = plan(&[m], &[node("n1", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
+        let m = app(vec![comp("api", "sha256:a", 1), plug], vec![], Strategy::Linked);
+        let out =
+            plan(&[m], &[node("n1", &[], &[])], None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.unschedulable[0].reason.starts_with("`store`:"), "{:?}", out.unschedulable);
     }
 
@@ -1621,9 +1673,17 @@ mod tests {
     fn scale_to_zero_is_reachable_and_a_request_brings_it_back() {
         let m = app_with(scaled(0, 5, 10), "shop.eve.test");
         let idle = Load::from([("shop.eve.test".to_string(), 0)]);
-        assert_eq!(desired_replicas(&m.components[0], &m, Some(&idle), 0), 0, "idle scales to zero");
+        assert_eq!(
+            desired_replicas(&m.components[0], &m, Some(&idle), 0),
+            0,
+            "idle scales to zero"
+        );
         let one = Load::from([("shop.eve.test".to_string(), 1)]);
-        assert_eq!(desired_replicas(&m.components[0], &m, Some(&one), 0), 1, "one request brings it back");
+        assert_eq!(
+            desired_replicas(&m.components[0], &m, Some(&one), 0),
+            1,
+            "one request brings it back"
+        );
     }
 
     #[test]
@@ -1654,7 +1714,6 @@ mod tests {
             .sum();
         assert_eq!(total, 4, "31 in flight at target 10 is 4 replicas: {:?}", out.commands);
     }
-
 
     #[test]
     fn a_proportional_split_is_exact_and_favours_the_bigger_node() {
@@ -1742,7 +1801,6 @@ mod tests {
         assert!(!out.commands.is_empty(), "a node with no advertised capacity must still be used");
     }
 
-
     #[test]
     fn losing_the_signal_holds_the_fleet_instead_of_shrinking_it() {
         // The failure this prevents: an app scaled to 6 loses its load signal and
@@ -1778,7 +1836,6 @@ mod tests {
         let out = plan(&[m], &obs, Some(&load), &mut Hysteresis::default(), &Cfg::default());
         assert!(out.at_ceiling.is_empty(), "{:?}", out.at_ceiling);
     }
-
 
     #[test]
     fn two_providers_of_one_interface_are_refused_rather_than_one_winning() {
@@ -1884,7 +1941,8 @@ mod tests {
             for replicas in 1..=7u32 {
                 for lopsided in [false, true] {
                     for concentrated in [false, true] {
-                        let m = app(vec![comp("api", "sha256:a", replicas)], vec![], Strategy::Linked);
+                        let m =
+                            app(vec![comp("api", "sha256:a", replicas)], vec![], Strategy::Linked);
                         let mut obs: Vec<NodeInventory> = (0..nodes)
                             .map(|i| {
                                 let cpus = if lopsided && i == 0 { 16 } else { 4 };
@@ -1952,7 +2010,11 @@ mod tests {
         let held = placed[0].0.clone();
 
         // The node it landed on is relabelled out of the region.
-        obs.iter_mut().find(|n| n.node == held).unwrap().labels.insert("region".into(), "us".into());
+        obs.iter_mut()
+            .find(|n| n.node == held)
+            .unwrap()
+            .labels
+            .insert("region".into(), "us".into());
         converge(&[m], &mut obs, 4);
 
         let after = counts(&obs, "api");
@@ -1970,11 +2032,18 @@ mod tests {
     #[test]
     fn one_tenants_replicas_do_not_count_as_anothers() {
         let shared = "sha256:popular";
-        let alice = Manifest { tenant: "alice".into(), app: "shop".into(), ..app(vec![comp("gate", shared, 1)], vec![], Strategy::Fused) };
+        let alice = Manifest {
+            tenant: "alice".into(),
+            app: "shop".into(),
+            ..app(vec![comp("gate", shared, 1)], vec![], Strategy::Fused)
+        };
         let bob = Manifest {
             tenant: "bob".into(),
             app: "shop".into(),
-            ingress: Some(Ingress { host: "shop.bob.example.com".into(), component: "gate".into() }),
+            ingress: Some(Ingress {
+                host: "shop.bob.example.com".into(),
+                component: "gate".into(),
+            }),
             ..app(vec![comp("gate", shared, 1)], vec![], Strategy::Fused)
         };
 

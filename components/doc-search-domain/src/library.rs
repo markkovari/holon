@@ -23,9 +23,8 @@ fn authorize(route: &Route, action: &str) -> Result<auth_types::Principal, Reply
     match authz::authorize(&route.bearer, &required) {
         Ok(principal) => Ok(principal),
         Err(auth_types::AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
-        Err(auth_types::AuthError::BackendUnavailable(_)) | Err(auth_types::AuthError::Internal(_)) => {
-            Err(Reply::err(503, "auth_unavailable"))
-        }
+        Err(auth_types::AuthError::BackendUnavailable(_))
+        | Err(auth_types::AuthError::Internal(_)) => Err(Reply::err(503, "auth_unavailable")),
         Err(_) => Err(Reply::err(401, "unauthenticated")),
     }
 }

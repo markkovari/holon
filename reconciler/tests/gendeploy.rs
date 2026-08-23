@@ -71,10 +71,9 @@ impl Api {
 
     /// Upload a component, declaring the config keys it may take.
     fn upload(&self, id: &str, file: &str, config: &str) -> u16 {
-        let wasm = std::fs::read(
-            repo_root().join("components/target/wasm32-wasip2/release").join(file),
-        )
-        .unwrap_or_else(|e| panic!("missing {file} — run `just build`: {e}"));
+        let wasm =
+            std::fs::read(repo_root().join("components/target/wasm32-wasip2/release").join(file))
+                .unwrap_or_else(|e| panic!("missing {file} — run `just build`: {e}"));
         let mut url = format!("{}/api/components?id={id}", self.base);
         if !config.is_empty() {
             url.push_str(&format!("&config={config}"));
@@ -213,7 +212,15 @@ fn a_generation_runs_one_branch_per_environment() {
         let ok = loop {
             // seed 700 is in the script; 999 would come back provider-down and no
             // amount of waiting fixes an unscripted seed.
-            let r = fan_out_from(&url, "unused", &base, std::slice::from_ref(&warm), None, 700, timeout);
+            let r = fan_out_from(
+                &url,
+                "unused",
+                &base,
+                std::slice::from_ref(&warm),
+                None,
+                700,
+                timeout,
+            );
             if r[0].note.is_empty() {
                 break true;
             }
@@ -241,7 +248,10 @@ fn a_generation_runs_one_branch_per_environment() {
     }
 
     assert_eq!(entries.len(), BRANCHES);
-    assert!(entries.iter().all(|e| e.note.is_empty()), "a branch never ran in its environment: {entries:?}");
+    assert!(
+        entries.iter().all(|e| e.note.is_empty()),
+        "a branch never ran in its environment: {entries:?}"
+    );
 
     // The two branches disagree, which is the point of running more than one — and
     // here they disagree BECAUSE they are separate environments running the same
@@ -255,7 +265,8 @@ fn a_generation_runs_one_branch_per_environment() {
 
     // Both environments really are placed and distinct in the fleet's own ledger,
     // not merely answering — a shared app would show one instance.
-    let ledger = std::fs::read_to_string(fleet.state_dir().join("n1/instances.json")).unwrap_or_default();
+    let ledger =
+        std::fs::read_to_string(fleet.state_dir().join("n1/instances.json")).unwrap_or_default();
     for n in &names {
         assert!(
             ledger.contains(&format!("swarm-env-{n}")),
@@ -263,5 +274,7 @@ fn a_generation_runs_one_branch_per_environment() {
         );
     }
 
-    println!("    {BRANCHES} branches, each in its own deployed environment: 42 accepted, 41 refused");
+    println!(
+        "    {BRANCHES} branches, each in its own deployed environment: 42 accepted, 41 refused"
+    );
 }

@@ -149,7 +149,8 @@ fn decide(key: &str, subject: &str) -> (u16, Value) {
             }
         }
         Err(limiter::LimitError::Locked(after)) => {
-            let v = json!({"verdict": "locked", "key": key, "retry_after": after, "attempts_left": 0});
+            let v =
+                json!({"verdict": "locked", "key": key, "retry_after": after, "attempts_left": 0});
             publish("locked", key, &v);
             (429, v)
         }
@@ -179,7 +180,10 @@ fn burst(request: &IncomingRequest) -> Outcome {
             throttled += 1;
         }
     }
-    Outcome::Json(200, json!({"key": key, "fired": n, "allowed": allowed, "throttled": throttled}).to_string())
+    Outcome::Json(
+        200,
+        json!({"key": key, "fired": n, "allowed": allowed, "throttled": throttled}).to_string(),
+    )
 }
 
 /// Record a failure directly (drives lockout without consuming quota).

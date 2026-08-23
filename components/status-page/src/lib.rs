@@ -109,7 +109,9 @@ fn create_monitor(request: &IncomingRequest) -> Outcome {
     let req: CreateMonitor =
         match read_body(request).and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
             Ok(r) => r,
-            Err(_) => return Outcome::Bad("expected json body {name, url, period?, alert-url?}".into()),
+            Err(_) => {
+                return Outcome::Bad("expected json body {name, url, period?, alert-url?}".into())
+            }
         };
     if !(req.url.starts_with("http://") || req.url.starts_with("https://")) {
         return Outcome::Bad("url must be http(s)".into());
@@ -159,7 +161,8 @@ fn delete_monitor(id: &str) -> Outcome {
 
 fn monitor_json(entry: &records::Entry) -> Value {
     let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
-    let state = fsm::get_status(MACHINE, &entry.id).map(|s| s.state).unwrap_or_else(|_| "up".into());
+    let state =
+        fsm::get_status(MACHINE, &entry.id).map(|s| s.state).unwrap_or_else(|_| "up".into());
     json!({
         "id": entry.id,
         "name": data["name"],
@@ -191,7 +194,9 @@ fn history(id: &str) -> Outcome {
                 .collect();
             Outcome::Json(200, json!({ "history": list }).to_string())
         }
-        Err(fsm::FsmError::UnknownInstance) | Err(fsm::FsmError::UnknownMachine) => Outcome::NotFound,
+        Err(fsm::FsmError::UnknownInstance) | Err(fsm::FsmError::UnknownMachine) => {
+            Outcome::NotFound
+        }
         Err(e) => Outcome::Err(503, format!("fsm: {e:?}")),
     }
 }
@@ -384,8 +389,12 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes(), "application/json"),
-        Outcome::Html(body) => respond(response_out, 200, body.as_bytes(), "text/html; charset=utf-8"),
+        Outcome::Json(code, body) => {
+            respond(response_out, code, body.as_bytes(), "application/json")
+        }
+        Outcome::Html(body) => {
+            respond(response_out, 200, body.as_bytes(), "text/html; charset=utf-8")
+        }
         Outcome::Bad(msg) => respond(
             response_out,
             400,
@@ -398,7 +407,9 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
             json!({ "error": msg }).to_string().as_bytes(),
             "application/json",
         ),
-        Outcome::NotFound => respond(response_out, 404, b"{\"error\":\"not_found\"}", "application/json"),
+        Outcome::NotFound => {
+            respond(response_out, 404, b"{\"error\":\"not_found\"}", "application/json")
+        }
     }
 }
 

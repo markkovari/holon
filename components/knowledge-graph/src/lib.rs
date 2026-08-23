@@ -32,10 +32,10 @@ use base64::Engine as _;
 use bindings::comp::secrets::reader as secrets;
 use bindings::exports::knowledge::graph::store::{Direction, GraphError, Guest, Node};
 use bindings::wasi::config::store as config;
-use bindings::wasi::io::streams::{OutputStream, StreamError as OutputStreamError};
 use bindings::wasi::http::types::{
     Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
 };
+use bindings::wasi::io::streams::{OutputStream, StreamError as OutputStreamError};
 
 struct Component;
 
@@ -110,9 +110,7 @@ impl Conn {
 /// is not a place to be creative.
 fn record_id(kind: &str, id: &str) -> Result<String, GraphError> {
     if kind.is_empty() || !kind.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(GraphError::Rejected(format!(
-            "kind must be [a-zA-Z0-9_], got {kind:?}"
-        )));
+        return Err(GraphError::Rejected(format!("kind must be [a-zA-Z0-9_], got {kind:?}")));
     }
     Ok(format!("{kind}:⟨{}⟩", id.replace('⟩', "")))
 }
@@ -120,9 +118,7 @@ fn record_id(kind: &str, id: &str) -> Result<String, GraphError> {
 /// An edge (table) name. Same rule as a kind, for the same reason.
 fn edge_name(edge: &str) -> Result<String, GraphError> {
     if edge.is_empty() || !edge.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(GraphError::Rejected(format!(
-            "edge must be [a-zA-Z0-9_], got {edge:?}"
-        )));
+        return Err(GraphError::Rejected(format!("edge must be [a-zA-Z0-9_], got {edge:?}")));
     }
     Ok(edge.to_string())
 }
@@ -202,9 +198,8 @@ fn sql(conn: &Conn, statement: &str) -> Result<String, GraphError> {
 
     let body = req.body().map_err(|_| GraphError::Unavailable("no request body".into()))?;
     {
-        let stream = body
-            .write()
-            .map_err(|_| GraphError::Unavailable("no request stream".into()))?;
+        let stream =
+            body.write().map_err(|_| GraphError::Unavailable("no request stream".into()))?;
         write_all(&stream, statement.as_bytes())
             .map_err(|e| GraphError::Unavailable(format!("writing the statement: {e}")))?;
     }
@@ -238,16 +233,17 @@ fn sql(conn: &Conn, statement: &str) -> Result<String, GraphError> {
             // "an empty result set" — a read that silently answers NOTHING FOUND
             // for a row that exists. The write side of this component had the
             // mirror-image bug and it took four runs to find.
-            Err(e) => {
-                return Err(GraphError::Unavailable(format!("reading the answer: {e:?}")))
-            }
+            Err(e) => return Err(GraphError::Unavailable(format!("reading the answer: {e:?}"))),
         }
     }
     let text = String::from_utf8_lossy(&out).to_string();
     if !(200..300).contains(&status) {
         // The database's own words, not a paraphrase: "table does not exist" is
         // worth reading and a generic "rejected" is not.
-        return Err(GraphError::Rejected(format!("HTTP {status}: {}", text.chars().take(400).collect::<String>())));
+        return Err(GraphError::Rejected(format!(
+            "HTTP {status}: {}",
+            text.chars().take(400).collect::<String>()
+        )));
     }
     Ok(text)
 }
@@ -388,9 +384,13 @@ fn run(conn: &Conn, statement: &str) -> Result<serde_json::Value, GraphError> {
 /// exist" rather than an empty set. For a graph an agent is still building, the
 /// first question about a kind ALWAYS precedes the first write of it, so letting
 /// that surface as a failure would make an empty graph look like a broken one.
-fn absent_is_empty(r: Result<serde_json::Value, GraphError>) -> Result<serde_json::Value, GraphError> {
+fn absent_is_empty(
+    r: Result<serde_json::Value, GraphError>,
+) -> Result<serde_json::Value, GraphError> {
     match r {
-        Err(GraphError::Rejected(msg)) if msg.contains("does not exist") => Ok(serde_json::Value::Array(vec![])),
+        Err(GraphError::Rejected(msg)) if msg.contains("does not exist") => {
+            Ok(serde_json::Value::Array(vec![]))
+        }
         other => other,
     }
 }
@@ -440,7 +440,8 @@ fn relate_statement(
 impl Guest for Component {
     fn upsert(n: Node) -> Result<(), GraphError> {
         let conn = Conn::open()?;
-        let stmt = format!("UPSERT {} CONTENT {};", record_id(&n.kind, &n.id)?, object(&n.properties)?);
+        let stmt =
+            format!("UPSERT {} CONTENT {};", record_id(&n.kind, &n.id)?, object(&n.properties)?);
         run(&conn, &stmt).map(|_| ())
     }
 
@@ -451,7 +452,12 @@ impl Guest for Component {
         Ok(result.as_array().and_then(|a| a.first()).and_then(node_of))
     }
 
-    fn relate(from_node: Node, edge: String, to_node: Node, properties: String) -> Result<(), GraphError> {
+    fn relate(
+        from_node: Node,
+        edge: String,
+        to_node: Node,
+        properties: String,
+    ) -> Result<(), GraphError> {
         let conn = Conn::open()?;
         // Both ends and the edge are submitted in ONE compound statement.
         // A graph that refuses an edge because a node is not there yet forces every
@@ -481,10 +487,7 @@ impl Guest for Component {
         let stmt = format!("SELECT * FROM {hop} LIMIT {n};");
         // An edge nobody has drawn yet is a table that does not exist yet.
         let result = absent_is_empty(run(&conn, &stmt))?;
-        Ok(result
-            .as_array()
-            .map(|a| a.iter().filter_map(node_of).collect())
-            .unwrap_or_default())
+        Ok(result.as_array().map(|a| a.iter().filter_map(node_of).collect()).unwrap_or_default())
     }
 
     fn query(surql: String) -> Result<String, GraphError> {
@@ -551,15 +554,14 @@ mod tests {
             id: "src/main.rs".into(),
             properties: r#"{"lines":100}"#.into(),
         };
-        let to = Node {
-            kind: "symbol".into(),
-            id: "main".into(),
-            properties: r#"{"pub":true}"#.into(),
-        };
+        let to =
+            Node { kind: "symbol".into(), id: "main".into(), properties: r#"{"pub":true}"#.into() };
         let stmt = relate_statement(&from, "defines", &to, r#"{"exported":true}"#).unwrap();
         assert!(stmt.contains("UPSERT file:⟨src/main.rs⟩ CONTENT {\"lines\":100};"));
         assert!(stmt.contains("UPSERT symbol:⟨main⟩ CONTENT {\"pub\":true};"));
-        assert!(stmt.contains("RELATE file:⟨src/main.rs⟩->defines->symbol:⟨main⟩ CONTENT {\"exported\":true};"));
+        assert!(stmt.contains(
+            "RELATE file:⟨src/main.rs⟩->defines->symbol:⟨main⟩ CONTENT {\"exported\":true};"
+        ));
     }
 }
 

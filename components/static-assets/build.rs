@@ -56,7 +56,9 @@ fn main() {
         writeln!(
             code,
             "    ({:?}, {:?}, include_bytes!({:?})),",
-            web_path, ct, fs_path.to_string_lossy()
+            web_path,
+            ct,
+            fs_path.to_string_lossy()
         )
         .unwrap();
     }

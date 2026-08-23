@@ -18,7 +18,8 @@ use bindings::exports::svg::chart::charts::{Chart, Guest, Kind, Slice};
 struct Component;
 
 const PALETTE: &[&str] = &[
-    "#6366f1", "#22c55e", "#f97316", "#06b6d4", "#ec4899", "#eab308", "#a855f7", "#14b8a6", "#ef4444", "#3b82f6",
+    "#6366f1", "#22c55e", "#f97316", "#06b6d4", "#ec4899", "#eab308", "#a855f7", "#14b8a6",
+    "#ef4444", "#3b82f6",
 ];
 
 fn color_of(s: &Slice, i: usize) -> String {
@@ -102,11 +103,17 @@ fn bar(c: &Chart, w: f64, h: f64) -> String {
         let y = base - bh;
         s += &format!(
             "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"2\" fill=\"{}\"/>",
-            n(x), n(y), n(bar_w), n(bh), color_of(sl, i)
+            n(x),
+            n(y),
+            n(bar_w),
+            n(bh),
+            color_of(sl, i)
         );
         s += &format!(
             "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-size=\"10\">{}</text>",
-            n(x + bar_w / 2.0), n(y - 3.0), fmt(sl.value)
+            n(x + bar_w / 2.0),
+            n(y - 3.0),
+            fmt(sl.value)
         );
         s += &format!(
             "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-size=\"10\" fill-opacity=\"0.7\">{}</text>",
@@ -122,7 +129,13 @@ fn line(c: &Chart, w: f64, h: f64) -> String {
     let base = mt + ph;
     let max = max_val(&c.data);
     let ncols = c.data.len();
-    let xat = |i: usize| if ncols <= 1 { ml + pw / 2.0 } else { ml + (i as f64 / (ncols - 1) as f64) * pw };
+    let xat = |i: usize| {
+        if ncols <= 1 {
+            ml + pw / 2.0
+        } else {
+            ml + (i as f64 / (ncols - 1) as f64) * pw
+        }
+    };
     let yat = |v: f64| base - (v.max(0.0) / max) * ph;
 
     let mut s = open(w, h) + &title_el(&c.title, w);
@@ -130,12 +143,26 @@ fn line(c: &Chart, w: f64, h: f64) -> String {
         "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"currentColor\" stroke-opacity=\"0.3\"/>",
         n(ml), n(base), n(ml + pw), n(base)
     );
-    let pts: Vec<String> = c.data.iter().enumerate().map(|(i, sl)| format!("{},{}", n(xat(i)), n(yat(sl.value)))).collect();
+    let pts: Vec<String> = c
+        .data
+        .iter()
+        .enumerate()
+        .map(|(i, sl)| format!("{},{}", n(xat(i)), n(yat(sl.value))))
+        .collect();
     if !pts.is_empty() {
-        s += &format!("<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"2\"/>", pts.join(" "), PALETTE[0]);
+        s += &format!(
+            "<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"2\"/>",
+            pts.join(" "),
+            PALETTE[0]
+        );
     }
     for (i, sl) in c.data.iter().enumerate() {
-        s += &format!("<circle cx=\"{}\" cy=\"{}\" r=\"3\" fill=\"{}\"/>", n(xat(i)), n(yat(sl.value)), PALETTE[0]);
+        s += &format!(
+            "<circle cx=\"{}\" cy=\"{}\" r=\"3\" fill=\"{}\"/>",
+            n(xat(i)),
+            n(yat(sl.value)),
+            PALETTE[0]
+        );
         s += &format!(
             "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-size=\"10\" fill-opacity=\"0.7\">{}</text>",
             n(xat(i)), n(base + 13.0), esc(&truncate(&sl.label, 6))
@@ -177,10 +204,16 @@ fn donut(c: &Chart, w: f64, h: f64) -> String {
     // legend below.
     let mut ly = mt + dia + 4.0;
     for (i, sl) in c.data.iter().enumerate() {
-        s += &format!("<rect x=\"12\" y=\"{}\" width=\"11\" height=\"11\" rx=\"2\" fill=\"{}\"/>", n(ly), color_of(sl, i));
+        s += &format!(
+            "<rect x=\"12\" y=\"{}\" width=\"11\" height=\"11\" rx=\"2\" fill=\"{}\"/>",
+            n(ly),
+            color_of(sl, i)
+        );
         s += &format!(
             "<text x=\"29\" y=\"{}\" font-size=\"11\">{} · {}</text>",
-            n(ly + 9.5), esc(&truncate(&sl.label, 22)), fmt(sl.value)
+            n(ly + 9.5),
+            esc(&truncate(&sl.label, 22)),
+            fmt(sl.value)
         );
         ly += 18.0;
     }
@@ -192,17 +225,38 @@ fn sparkline(c: &Chart, w: f64, h: f64) -> String {
     let (pw, ph) = (w - pad * 2.0, h - pad * 2.0);
     let ncols = c.data.len();
     let vals: Vec<f64> = c.data.iter().map(|s| s.value).collect();
-    let (mn, mx) = vals.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
+    let (mn, mx) =
+        vals.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), &v| (a.min(v), b.max(v)));
     let span = (mx - mn).max(1e-9);
-    let xat = |i: usize| if ncols <= 1 { pad + pw / 2.0 } else { pad + (i as f64 / (ncols - 1) as f64) * pw };
+    let xat = |i: usize| {
+        if ncols <= 1 {
+            pad + pw / 2.0
+        } else {
+            pad + (i as f64 / (ncols - 1) as f64) * pw
+        }
+    };
     let yat = |v: f64| pad + ph - ((v - mn) / span) * ph;
 
     let mut s = open(w, h);
-    let pts: Vec<String> = c.data.iter().enumerate().map(|(i, sl)| format!("{},{}", n(xat(i)), n(yat(sl.value)))).collect();
+    let pts: Vec<String> = c
+        .data
+        .iter()
+        .enumerate()
+        .map(|(i, sl)| format!("{},{}", n(xat(i)), n(yat(sl.value))))
+        .collect();
     if !pts.is_empty() {
-        s += &format!("<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"1.5\"/>", pts.join(" "), PALETTE[0]);
+        s += &format!(
+            "<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"1.5\"/>",
+            pts.join(" "),
+            PALETTE[0]
+        );
         if let Some(last) = c.data.last() {
-            s += &format!("<circle cx=\"{}\" cy=\"{}\" r=\"2\" fill=\"{}\"/>", n(xat(ncols - 1)), n(yat(last.value)), PALETTE[0]);
+            s += &format!(
+                "<circle cx=\"{}\" cy=\"{}\" r=\"2\" fill=\"{}\"/>",
+                n(xat(ncols - 1)),
+                n(yat(last.value)),
+                PALETTE[0]
+            );
         }
     }
     s + "</svg>"

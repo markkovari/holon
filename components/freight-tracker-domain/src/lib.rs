@@ -1,7 +1,6 @@
 #[allow(warnings)]
 mod bindings;
 
-use serde_json::{json, Map, Value};
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::session;
@@ -9,6 +8,7 @@ use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::records::store::store as records;
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::keyvalue::store;
+use serde_json::{json, Map, Value};
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
@@ -85,7 +85,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -174,7 +175,7 @@ fn create_item(request: &IncomingRequest) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
-    
+
     // RBAC check: Only admins can create items
     if !p.roles.contains(&"dispatcher".to_string()) {
         return Outcome::Err(403, "forbidden".into());
@@ -191,7 +192,7 @@ fn create_item(request: &IncomingRequest) -> Outcome {
             let mut v: Value = serde_json::from_str(&rec.data).unwrap_or(d);
             v["id"] = json!(rec.id);
             Outcome::Json(201, v.to_string())
-        },
+        }
         Err(_) => Outcome::Err(500, "store error".into()),
     }
 }
@@ -204,10 +205,12 @@ fn list_items(request: &IncomingRequest) -> Outcome {
     let items: Vec<Value> = records::find_by("shipments", "owner", &json!(p.subject).to_string())
         .unwrap_or_default()
         .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            v["id"] = json!(e.id);
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                v["id"] = json!(e.id);
+                v
+            })
+        })
         .collect();
     Outcome::Json(200, json!({ "items": items }).to_string())
 }

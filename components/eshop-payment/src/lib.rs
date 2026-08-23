@@ -44,11 +44,8 @@ impl Guest for Component {
 }
 
 fn pump() -> (u16, String) {
-    let succeeds = config::get("payment-succeeds")
-        .ok()
-        .flatten()
-        .map(|v| v != "false")
-        .unwrap_or(true);
+    let succeeds =
+        config::get("payment-succeeds").ok().flatten().map(|v| v != "false").unwrap_or(true);
     let mut processed = 0;
     match bus::poll("OrderStatusChangedToValidated", GROUP, 32) {
         Ok(events) => {

@@ -91,7 +91,8 @@ fn every_showcase_ui_installs_from_a_clean_checkout() {
                     continue; // not installed at all — npm's problem, not this check's
                 };
                 let Some(range) = range.as_str().and_then(caret_majors) else { continue };
-                let Some(have): Option<u64> = installed.split('.').next().and_then(|m| m.parse().ok())
+                let Some(have): Option<u64> =
+                    installed.split('.').next().and_then(|m| m.parse().ok())
                 else {
                     continue;
                 };

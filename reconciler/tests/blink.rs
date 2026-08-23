@@ -28,7 +28,11 @@ use comp_reconciler::fleet::Fleet;
 /// The hosts keep heartbeating their real snapshots underneath, so this is a
 /// race that has to be run continuously — which is also a fair imitation of the
 /// real thing, where whatever caused the gap did not stop after one tick.
-fn hold_inventory_empty(nats_url: String, lattice: String, stop: Arc<AtomicBool>) -> std::thread::JoinHandle<usize> {
+fn hold_inventory_empty(
+    nats_url: String,
+    lattice: String,
+    stop: Arc<AtomicBool>,
+) -> std::thread::JoinHandle<usize> {
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async move {
@@ -107,8 +111,7 @@ fn an_ingress_keeps_serving_through_an_empty_inventory() {
 
     // --- the gap ------------------------------------------------------------
     let stop = Arc::new(AtomicBool::new(false));
-    let blanker =
-        hold_inventory_empty(fleet.nats_url.clone(), fleet.lattice.clone(), stop.clone());
+    let blanker = hold_inventory_empty(fleet.nats_url.clone(), fleet.lattice.clone(), stop.clone());
 
     // Long enough to cover several refreshes: the whole question is whether the
     // ingress adopts an empty table when it reads one, and it only reads every
@@ -143,7 +146,8 @@ fn an_ingress_keeps_serving_through_an_empty_inventory() {
     );
     assert!(ok + failed > 0, "no requests were made during the gap");
     assert_eq!(
-        failed, 0,
+        failed,
+        0,
         "the ingress stopped serving while every backend was still running. {ok} ok, {failed} \
          failed, first: {why:?}\n\
          An inventory that reads empty is a gap to ride out, not a reason to throw away a \
@@ -161,7 +165,8 @@ fn an_ingress_keeps_serving_through_an_empty_inventory() {
     let (ok, failed, why) =
         drive(fleet.ingress_port, "shop.eve.test", Instant::now() + Duration::from_secs(3));
     assert_eq!(
-        failed, 0,
+        failed,
+        0,
         "the ingress did not recover after the inventory came back: {ok} ok, {failed} failed, \
          first: {why:?}\n--- ingress ---\n{}",
         fleet.ingress_log("")

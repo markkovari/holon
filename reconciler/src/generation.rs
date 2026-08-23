@@ -120,7 +120,14 @@ fn post(url: &str, host: &str, body: &Value, timeout: Duration) -> Result<Value,
 }
 
 /// Run one branch and turn whatever came back into an entry.
-fn one_branch(url: &str, host: &str, plan: &Value, name: &str, seed: u64, timeout: Duration) -> Entry {
+fn one_branch(
+    url: &str,
+    host: &str,
+    plan: &Value,
+    name: &str,
+    seed: u64,
+    timeout: Duration,
+) -> Entry {
     let mut plan = plan.clone();
     plan["seed"] = json!(seed);
 
@@ -147,10 +154,7 @@ fn one_branch(url: &str, host: &str, plan: &Value, name: &str, seed: u64, timeou
         Err(e) => return blank(e, "unreachable"),
     };
     if let Some(err) = answer["error"].as_str() {
-        return blank(
-            format!("{err}: {}", answer["detail"].as_str().unwrap_or_default()),
-            err,
-        );
+        return blank(format!("{err}: {}", answer["detail"].as_str().unwrap_or_default()), err);
     }
 
     // The digest of the run's BEST candidate, which is what the selector compares
@@ -160,7 +164,9 @@ fn one_branch(url: &str, host: &str, plan: &Value, name: &str, seed: u64, timeou
     let score = answer["score"].as_u64().unwrap_or(0);
     let digest = attempts
         .iter()
-        .find(|a| a["score"].as_u64() == Some(score) && !a["digest"].as_str().unwrap_or("").is_empty())
+        .find(|a| {
+            a["score"].as_u64() == Some(score) && !a["digest"].as_str().unwrap_or("").is_empty()
+        })
         .and_then(|a| a["digest"].as_str())
         .unwrap_or_default()
         .to_string();
@@ -276,11 +282,7 @@ pub fn on_hosts(strategies: &[Strategy], hosts: &[String]) -> Vec<Strategy> {
         hosts.len(),
         "every branch needs its own environment, or one of them writes another's store"
     );
-    strategies
-        .iter()
-        .zip(hosts)
-        .map(|(s, h)| Strategy { host: h.clone(), ..s.clone() })
-        .collect()
+    strategies.iter().zip(hosts).map(|(s, h)| Strategy { host: h.clone(), ..s.clone() }).collect()
 }
 
 /// Apply a strategy to a plan: the lens onto the goal, and the previous
@@ -489,7 +491,15 @@ pub fn search(
     base_seed: u64,
     timeout: Duration,
 ) -> Search {
-    search_with(driver_url, host, plan, &default_strategies(bounds.branches), bounds, base_seed, timeout)
+    search_with(
+        driver_url,
+        host,
+        plan,
+        &default_strategies(bounds.branches),
+        bounds,
+        base_seed,
+        timeout,
+    )
 }
 
 /// The same search, with the branches' strategies supplied.
@@ -638,7 +648,11 @@ mod tests {
         let prior = entry("w", 500, json!([{ "path": "a.rs", "content": "better" }]));
         let seeded = plan_for(&base, Some(&prior), &default_strategies(2)[0]);
         assert_eq!(seeded["context"][0]["content"], json!("better"));
-        assert_eq!(seeded["previous"][0]["id"], json!("x"), "the code without the verdict is half of it");
+        assert_eq!(
+            seeded["previous"][0]["id"],
+            json!("x"),
+            "the code without the verdict is half of it"
+        );
     }
 
     #[test]
@@ -815,7 +829,8 @@ mod tests {
 
     #[test]
     fn the_best_is_by_score_and_a_tie_goes_to_the_earlier_branch() {
-        let e = [entry("a", 500, json!([])), entry("b", 900, json!([])), entry("c", 900, json!([]))];
+        let e =
+            [entry("a", 500, json!([])), entry("b", 900, json!([])), entry("c", 900, json!([]))];
         assert_eq!(best_of(&e), Some(1));
     }
 
@@ -903,10 +918,7 @@ impl Composition {
     /// The winners, as `(part, candidate digest)` — what `composable` is asked
     /// about and what the selector is handed.
     pub fn winners(&self) -> Vec<(String, Entry)> {
-        self.parts
-            .iter()
-            .filter_map(|p| p.best.clone().map(|e| (p.part.clone(), e)))
-            .collect()
+        self.parts.iter().filter_map(|p| p.best.clone().map(|e| (p.part.clone(), e))).collect()
     }
 }
 
@@ -985,10 +997,8 @@ where
         .collect();
     // What each part builds against, by name. They start together and may diverge
     // for exactly as long as one of them is demonstrating an amendment.
-    let mut agreed: Vec<(String, String, u32)> = parts
-        .iter()
-        .map(|p| (p.name.clone(), contract.to_string(), contract_version))
-        .collect();
+    let mut agreed: Vec<(String, String, u32)> =
+        parts.iter().map(|p| (p.name.clone(), contract.to_string(), contract_version)).collect();
     let contract_of = |agreed: &[(String, String, u32)], part: &str| {
         agreed
             .iter()
@@ -1006,8 +1016,7 @@ where
         // A part that has already passed its gate does not run again. Re-running a
         // solved part would spend money to maybe make it worse, and the winner it
         // has is what the other parts are composing with.
-        let running: Vec<usize> =
-            (0..parts.len()).filter(|i| !outcomes[*i].accepted).collect();
+        let running: Vec<usize> = (0..parts.len()).filter(|i| !outcomes[*i].accepted).collect();
         if running.is_empty() {
             stopped = SearchStop::Accepted;
             break;

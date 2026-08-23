@@ -72,8 +72,12 @@ impl Api {
     }
 
     fn delete(&self, path: &str) -> (u16, Value) {
-        let r =
-            self.http.delete(format!("{}{path}", self.base)).bearer_auth(&self.token).send().unwrap();
+        let r = self
+            .http
+            .delete(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .send()
+            .unwrap();
         (r.status().as_u16(), r.json().unwrap_or(Value::Null))
     }
 
@@ -131,14 +135,13 @@ fn every_branch_writes_its_own_store_and_none_writes_the_parents() {
     // bucket from the request rather than hardcoding `default`, and because its
     // whole world is http + keyvalue — so a store that turned out to be shared
     // could not be blamed on a link.
-    let wasm = std::fs::read(
-        repo_root().join("components/target/wasm32-wasip2/release/kv_probe.wasm"),
-    )
-    .expect("run `just build`");
+    let wasm =
+        std::fs::read(repo_root().join("components/target/wasm32-wasip2/release/kv_probe.wasm"))
+            .expect("run `just build`");
     assert!(matches!(api.upload("kv", wasm), 200 | 201), "upload failed");
 
-    let (code, dep) =
-        api.post("/api/deployments", json!({ "name": "swarm", "nodes": [{"id": "kv"}], "edges": [] }));
+    let (code, dep) = api
+        .post("/api/deployments", json!({ "name": "swarm", "nodes": [{"id": "kv"}], "edges": [] }));
     assert_eq!(code, 201, "deploy failed: {dep}");
     let id = dep["id"].as_str().unwrap().to_string();
 

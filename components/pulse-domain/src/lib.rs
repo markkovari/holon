@@ -83,7 +83,9 @@ impl Guest for Component {
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
                     (Method::Get, [""]) => usage_json(),
-                    (Method::Post, ["api", "rooms", room, "messages"]) => post_message(&request, room),
+                    (Method::Post, ["api", "rooms", room, "messages"]) => {
+                        post_message(&request, room)
+                    }
                     (Method::Get, ["api", "rooms", room, "messages"]) => history(room, &path),
                     (Method::Post, ["api", "rooms", room, "presence"]) => heartbeat(&request, room),
                     (Method::Get, ["api", "rooms", room, "presence"]) => presence(room),
@@ -203,7 +205,10 @@ fn heartbeat(request: &IncomingRequest, room: &str) -> Outcome {
     }
     let existing = records::find_by(PRESENCE, "room", &json!(room).to_string()).unwrap_or_default();
     let mine = existing.into_iter().find(|e| {
-        serde_json::from_str::<Value>(&e.data).ok().and_then(|d| d["user"].as_str().map(|u| u == user)).unwrap_or(false)
+        serde_json::from_str::<Value>(&e.data)
+            .ok()
+            .and_then(|d| d["user"].as_str().map(|u| u == user))
+            .unwrap_or(false)
     });
     let data = json!({"room": room, "user": user, "at": now()});
     match mine {
@@ -238,7 +243,12 @@ fn presence(room: &str) -> Outcome {
 /// Sets the response, then loops until the client disconnects (a write error) or
 /// the connection cap is hit. `?after=seq` catches up from `seq`; the default is
 /// "only messages posted after I connected".
-fn stream_events(request: &IncomingRequest, response_out: ResponseOutparam, room: &str, path: &str) {
+fn stream_events(
+    request: &IncomingRequest,
+    response_out: ResponseOutparam,
+    room: &str,
+    path: &str,
+) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
     let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);

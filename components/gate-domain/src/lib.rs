@@ -13,9 +13,9 @@ use serde_json::{json, Map, Value};
 
 use bindings::comp::store::cas;
 use bindings::records::store::store as records;
-use bindings::wasi::keyvalue::store as kv;
 use bindings::shaper::limit::limiter as shaper;
 use bindings::wasi::clocks::wall_clock;
+use bindings::wasi::keyvalue::store as kv;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
@@ -120,7 +120,6 @@ fn open_bucket() -> Result<kv::Bucket, Outcome> {
     kv::open("default").map_err(|e| Outcome::Err(503, format!("store unavailable: {e:?}")))
 }
 
-
 fn ratelimit(request: &IncomingRequest) -> Outcome {
     let b = match body(request) {
         Ok(v) => v,
@@ -165,9 +164,7 @@ fn ratelimit(request: &IncomingRequest) -> Outcome {
         let (dec, next) = shaper::token_bucket(state, now, capacity, refill, cost);
         let nv = json!({ "key": key, "tokens": next.tokens, "updated_ms": next.updated_ms });
         match cas::set(&bucket, &bkey, nv.to_string().as_bytes(), rev) {
-            Ok(cas::Outcome::Committed(_)) => {
-                return decide_response(&dec, "token-bucket", &key)
-            }
+            Ok(cas::Outcome::Committed(_)) => return decide_response(&dec, "token-bucket", &key),
             // Someone else moved it between the read and the write: re-read and
             // decide again on what they left behind.
             Ok(cas::Outcome::Conflict(_)) => continue,
@@ -249,7 +246,9 @@ fn batch_submit(request: &IncomingRequest) -> Outcome {
         let open = records::find_by(BATCHES, "key", &json!(key).to_string())
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|v| (e.id, e.revision, v)))
+            .filter_map(|e| {
+                serde_json::from_str::<Value>(&e.data).ok().map(|v| (e.id, e.revision, v))
+            })
             .find(|(_, _, v)| !v["flushed"].as_bool().unwrap_or(false));
 
         match open {
@@ -260,7 +259,11 @@ fn batch_submit(request: &IncomingRequest) -> Outcome {
                     "max_size": max_size, "max_age_ms": max_age, "flushed": false, "results": Value::Null
                 });
                 if let Ok(rec) = records::create(BATCHES, &d.to_string(), &["key".to_string()]) {
-                    return Outcome::Json(201, json!({ "batch": rec.id, "index": 0, "size": 1, "flushed": false }).to_string());
+                    return Outcome::Json(
+                        201,
+                        json!({ "batch": rec.id, "index": 0, "size": 1, "flushed": false })
+                            .to_string(),
+                    );
                 }
                 // lost the create race -> loop, find the open batch, append.
             }
@@ -275,7 +278,12 @@ fn batch_submit(request: &IncomingRequest) -> Outcome {
                     || now.saturating_sub(created) >= v["max_age_ms"].as_u64().unwrap_or(max_age);
                 let mut my_result = Value::Null;
                 if flush {
-                    let results: Vec<Value> = v["items"].as_array().unwrap().iter().map(|it| json!(process(it.as_str().unwrap_or("")))).collect();
+                    let results: Vec<Value> = v["items"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|it| json!(process(it.as_str().unwrap_or(""))))
+                        .collect();
                     my_result = results.get(index).cloned().unwrap_or(Value::Null);
                     v["results"] = json!(results);
                     v["flushed"] = json!(true);

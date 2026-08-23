@@ -40,8 +40,7 @@ struct Args {
 fn main() -> Result<(), String> {
     let args = Args::parse();
     let root = std::env::current_dir().map_err(|e| e.to_string())?;
-    let dirs: Vec<PathBuf> =
-        args.dirs.iter().cloned().chain(default_dirs(&root)).collect();
+    let dirs: Vec<PathBuf> = args.dirs.iter().cloned().chain(default_dirs(&root)).collect();
 
     let catalog = Catalog::scan(&dirs);
     if catalog.is_empty() {

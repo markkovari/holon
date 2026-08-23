@@ -33,13 +33,13 @@ use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
 use comp_reconciler::compose;
 use comp_reconciler::contract::{Answerer, Registry};
+use comp_reconciler::fleet::{bin_path, free_port, repo_root, Fleet};
+use comp_reconciler::generation as generation_mod;
 use comp_reconciler::generation::{land, Bounds, Entry, Part};
 use comp_reconciler::memory::{self, run_id, Memory};
 use comp_reconciler::trace::Trace;
-use comp_reconciler::generation as generation_mod;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -671,13 +671,17 @@ fn smoke(
     let probe = http
         .post(format!("http://127.0.0.1:{port}/run"))
         .header("host", "goalrun.acme.test")
-        .body(json!({
-            "text": goal.text, "writable": goal.writable, "context": context,
-            "previous": [], "checks": checks, "base_commit": base_commit,
-            "base_tree": tree, "max_attempts": 0, "seed": 1,
-        }).to_string())
+        .body(
+            json!({
+                "text": goal.text, "writable": goal.writable, "context": context,
+                "previous": [], "checks": checks, "base_commit": base_commit,
+                "base_tree": tree, "max_attempts": 0, "seed": 1,
+            })
+            .to_string(),
+        )
         .send()?;
-    let body: Value = serde_json::from_str(&probe.text().unwrap_or_default()).unwrap_or(Value::Null);
+    let body: Value =
+        serde_json::from_str(&probe.text().unwrap_or_default()).unwrap_or(Value::Null);
     println!("\nSMOKE OK:");
     println!("  · both graphs started and serve → links, egress and secret GRANTS are correct");
     println!("  · driver reachable → {body}");
@@ -717,9 +721,7 @@ fn smoke(
             },
             Err(e) => bail!("the contract registry is not usable: {e}"),
         }
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+        let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build()?;
         let describe = http
             .get(format!("http://127.0.0.1:{port}/describe"))
             .header("host", "goalanswer.acme.test")
@@ -845,11 +847,7 @@ fn lean_context(path: &str, content: String) -> String {
     if !path.ends_with(".wit") {
         return content;
     }
-    content
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n")
+    content.lines().filter(|l| !l.trim_start().starts_with("//")).collect::<Vec<_>>().join("\n")
 }
 
 /// What the pool already has, as prose in every branch's context.
@@ -945,7 +943,12 @@ fn promote_and_sweep(
 /// lesson keyed on the whole-goal wording would be invisible to the next part that recalls on
 /// its own. Only a part whose gate accepted is promoted (ADR-0084), and the distiller answers
 /// most of them with nothing, which is the right answer for a part that taught nobody anything.
-fn promote_parts(memory: Option<&Memory>, goal: &GoalSpec, port: u16, parts: &[generation_mod::PartOutcome]) {
+fn promote_parts(
+    memory: Option<&Memory>,
+    goal: &GoalSpec,
+    port: u16,
+    parts: &[generation_mod::PartOutcome],
+) {
     let Some(m) = memory else { return };
     let door = Answerer {
         url: format!("http://127.0.0.1:{port}"),
@@ -958,10 +961,12 @@ fn promote_parts(memory: Option<&Memory>, goal: &GoalSpec, port: u16, parts: &[g
         let Some(spec) = goal.parts.iter().find(|p| p.name == outcome.part) else { continue };
         let prompt = memory::distil_prompt(&spec.text, &best.files, best.score);
         match door.reply_to(&prompt).map(|r| memory::distilled(&r)) {
-            Ok(Some(lesson)) => match m.promote(&spec.text, &outcome.part, &best.branch, &lesson, best.score) {
-                Ok(h) => println!("  promoted {}: {h}\n    {lesson}", outcome.part),
-                Err(e) => println!("  {} promoted nothing: {e}", outcome.part),
-            },
+            Ok(Some(lesson)) => {
+                match m.promote(&spec.text, &outcome.part, &best.branch, &lesson, best.score) {
+                    Ok(h) => println!("  promoted {}: {h}\n    {lesson}", outcome.part),
+                    Err(e) => println!("  {} promoted nothing: {e}", outcome.part),
+                }
+            }
             Ok(None) => println!("  {} taught nothing transferable, and said so", outcome.part),
             Err(e) => println!("  {} — the distiller could not be reached: {e}", outcome.part),
         }
@@ -1060,8 +1065,8 @@ fn reading_per_branch(
                 tags: tags.clone(),
                 min_similarity: 0.0,
                 pools: match i % 3 {
-                    0 => vec![],                                   // everything
-                    1 => vec!["errors".into()],                    // only what failed
+                    0 => vec![],                                      // everything
+                    1 => vec!["errors".into()],                       // only what failed
                     _ => vec!["patterns".into(), "solutions".into()], // only what worked
                 },
             };
@@ -1140,7 +1145,8 @@ fn main() -> Result<()> {
     if let (Some(manifest), false) = (&goal.workspace_manifest, goal.keep_members.is_empty()) {
         for e in tree.iter_mut() {
             if e["path"] == serde_json::json!(manifest) {
-                let trimmed = trim_members(e["content"].as_str().unwrap_or_default(), &goal.keep_members);
+                let trimmed =
+                    trim_members(e["content"].as_str().unwrap_or_default(), &goal.keep_members);
                 e["content"] = serde_json::json!(trimmed);
             }
         }
@@ -1240,8 +1246,7 @@ fn main() -> Result<()> {
     // it cannot choose a toolchain — no RUSTUP_HOME, no default. Pass both, so the
     // shim resolves the same toolchain the pre-warm used. Read from the ambient
     // environment (the operator's), never the agent's.
-    let rustup_home =
-        std::env::var("RUSTUP_HOME").unwrap_or_else(|_| format!("{home}/.rustup"));
+    let rustup_home = std::env::var("RUSTUP_HOME").unwrap_or_else(|_| format!("{home}/.rustup"));
     let toolchain = Command::new("rustup")
         .args(["show", "active-toolchain"])
         .output()
@@ -1354,9 +1359,9 @@ fn main() -> Result<()> {
                     ("LLM_HOST", &egress_authority(&base_url)),
                 ],
             )?
-                .to_str()
-                .unwrap()
-                .to_string(),
+            .to_str()
+            .unwrap()
+            .to_string(),
         );
         if !goal.parts.is_empty() {
             // A database PER GOAL. One shared `goalcontract` meant the second goal
@@ -1435,7 +1440,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-
     if args.smoke {
         return smoke(&args, &goal, port, &context, &checks, &base_commit, &tree, &allow);
     }
@@ -1444,7 +1448,6 @@ fn main() -> Result<()> {
     if !worth_running(memory.as_ref(), &goal, args.skip_above) {
         return Ok(());
     }
-
 
     // --- what this run leaves behind (ADR-0092) -----------------------------
     //
@@ -1532,7 +1535,8 @@ fn main() -> Result<()> {
 
     let driver_url = format!("http://127.0.0.1:{port}/run");
     let timeout = Duration::from_secs(args.timeout);
-    let bounds = Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
+    let bounds =
+        Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
 
     // `seed`, `run` and `trace` come from above the decomposed dispatch, so both
     // paths share one run identity and one trace.
@@ -1730,7 +1734,10 @@ fn main() -> Result<()> {
     }
 
     // Land the winner. A unique branch name per run, because a PR cannot reuse one.
-    let title = goal.title.clone().unwrap_or_else(|| goal.text.lines().next().unwrap_or("a candidate").to_string());
+    let title = goal
+        .title
+        .clone()
+        .unwrap_or_else(|| goal.text.lines().next().unwrap_or("a candidate").to_string());
     let branch = format!("graph/{}", seed);
     let landing = json!({
         "branch": branch,
@@ -1858,7 +1865,14 @@ fn decomposed(
                      registered: {}\n\n\
                      the file:   {}",
                     current.number,
-                    current.body.lines().next().unwrap_or_default().chars().take(90).collect::<String>(),
+                    current
+                        .body
+                        .lines()
+                        .next()
+                        .unwrap_or_default()
+                        .chars()
+                        .take(90)
+                        .collect::<String>(),
                     body.lines().next().unwrap_or_default().chars().take(90).collect::<String>(),
                 );
             }
@@ -1873,12 +1887,7 @@ fn decomposed(
     };
     // What the parts build against is whatever is canonical NOW, which after an
     // earlier run's negotiation may be later than v1.
-    let body = registry
-        .get(version)
-        .ok()
-        .flatten()
-        .map(|c| c.body)
-        .unwrap_or(body);
+    let body = registry.get(version).ok().flatten().map(|c| c.body).unwrap_or(body);
 
     let parts: Vec<Part> = goal
         .parts
@@ -1911,10 +1920,7 @@ fn decomposed(
             }),
         })
         .collect();
-    println!(
-        "parts: {}",
-        parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
-    );
+    println!("parts: {}", parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "));
 
     let timeout = Duration::from_secs(args.timeout);
     let bounds =
@@ -2045,18 +2051,15 @@ fn decomposed(
                 if !best.failures.as_array().map(|a| a.is_empty()).unwrap_or(true) {
                     println!("\n  {} was still failing:", p.part);
                     for f in best.failures.as_array().unwrap() {
-                        println!(
-                            "    · {}: {}",
-                            f["id"].as_str().unwrap_or("?"),
-                            {
-                                // The LAST lines, not the first: a failing command
-                                // says what went wrong at the end and spends its
-                                // beginning telling you what it is doing.
-                                let d = f["detail"].as_str().unwrap_or("");
-                                let lines: Vec<&str> = d.lines().filter(|l| !l.trim().is_empty()).collect();
-                                lines[lines.len().saturating_sub(6)..].join("\n      ")
-                            }
-                        );
+                        println!("    · {}: {}", f["id"].as_str().unwrap_or("?"), {
+                            // The LAST lines, not the first: a failing command
+                            // says what went wrong at the end and spends its
+                            // beginning telling you what it is doing.
+                            let d = f["detail"].as_str().unwrap_or("");
+                            let lines: Vec<&str> =
+                                d.lines().filter(|l| !l.trim().is_empty()).collect();
+                            lines[lines.len().saturating_sub(6)..].join("\n      ")
+                        });
                     }
                 }
             }
@@ -2081,9 +2084,10 @@ fn decomposed(
 
     // One pull request, carrying every part's work and the negotiation that got
     // them there — the part a reviewer most needs and could never reconstruct.
-    let title = goal.title.clone().unwrap_or_else(|| {
-        goal.text.lines().next().unwrap_or("a composed candidate").to_string()
-    });
+    let title = goal
+        .title
+        .clone()
+        .unwrap_or_else(|| goal.text.lines().next().unwrap_or("a composed candidate").to_string());
     let history = if run.log.is_empty() {
         "The parts needed nothing from each other.".to_string()
     } else {
@@ -2321,8 +2325,11 @@ command = ["cargo", "test"]
         for (provider, want) in
             [("openai", "openai_provider.wasm"), ("anthropic", "anthropic_provider.wasm")]
         {
-            let picked =
-                if provider == "openai" { "openai_provider.wasm" } else { "anthropic_provider.wasm" };
+            let picked = if provider == "openai" {
+                "openai_provider.wasm"
+            } else {
+                "anthropic_provider.wasm"
+            };
             assert_eq!(picked, want, "{provider} must ship {want}");
         }
     }

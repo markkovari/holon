@@ -261,10 +261,7 @@ fn run_check(
         // Refused as a FAILED check rather than an error, so one bad check in a
         // list does not discard the results of the others — and so the report
         // says which one, where a 400 would just say the request was bad.
-        return refuse(format!(
-            "`{}` is not on this runner's allow-list",
-            check.command.join(" ")
-        ));
+        return refuse(format!("`{}` is not on this runner's allow-list", check.command.join(" ")));
     }
 
     let mut cmd = Command::new(&check.command[0]);
@@ -468,11 +465,8 @@ fn respond(mut stream: TcpStream, status: u16, body: &str) {
 }
 
 fn serve(args: Args) -> Result<()> {
-    let allow: Vec<Vec<String>> = args
-        .allow
-        .iter()
-        .map(|a| a.split_whitespace().map(str::to_string).collect())
-        .collect();
+    let allow: Vec<Vec<String>> =
+        args.allow.iter().map(|a| a.split_whitespace().map(str::to_string).collect()).collect();
     if allow.is_empty() {
         // Refusing to start beats starting useless: a runner with no allow-list
         // fails every check, which reads from the outside like every candidate
@@ -485,11 +479,15 @@ fn serve(args: Args) -> Result<()> {
         }
     }
 
-    let listener = TcpListener::bind(&args.addr).with_context(|| format!("binding {}", args.addr))?;
+    let listener =
+        TcpListener::bind(&args.addr).with_context(|| format!("binding {}", args.addr))?;
     eprintln!(
         "comp-checks: listening on http://{} | base {} | {} allowed command(s) | {}s timeout",
         args.addr,
-        args.base.as_ref().map(|b| b.display().to_string()).unwrap_or_else(|| "(sent per request)".into()),
+        args.base
+            .as_ref()
+            .map(|b| b.display().to_string())
+            .unwrap_or_else(|| "(sent per request)".into()),
         allow.len(),
         args.timeout
     );
@@ -567,7 +565,11 @@ fn serve(args: Args) -> Result<()> {
             Ok(Err(need)) => {
                 eprintln!(
                     "comp-checks: need the tree for {}",
-                    if need.base_commit.is_empty() { "(no commit given)" } else { &need.base_commit }
+                    if need.base_commit.is_empty() {
+                        "(no commit given)"
+                    } else {
+                        &need.base_commit
+                    }
                 );
                 respond(stream, 409, &serde_json::to_string(&need).unwrap_or_default());
             }
@@ -609,10 +611,8 @@ fn chunk_body_complete(body: &[u8]) -> bool {
     let mut i = 0;
     while i < body.len() {
         let Some(nl) = body[i..].windows(2).position(|w| w == b"\r\n") else { return false };
-        let Ok(size) = usize::from_str_radix(
-            String::from_utf8_lossy(&body[i..i + nl]).trim(),
-            16,
-        ) else {
+        let Ok(size) = usize::from_str_radix(String::from_utf8_lossy(&body[i..i + nl]).trim(), 16)
+        else {
             return false;
         };
         if size == 0 {
@@ -629,8 +629,7 @@ fn dechunk(body: &[u8]) -> Vec<u8> {
     let mut i = 0;
     while i < body.len() {
         let Some(nl) = body[i..].windows(2).position(|w| w == b"\r\n") else { break };
-        let Ok(size) =
-            usize::from_str_radix(String::from_utf8_lossy(&body[i..i + nl]).trim(), 16)
+        let Ok(size) = usize::from_str_radix(String::from_utf8_lossy(&body[i..i + nl]).trim(), 16)
         else {
             break;
         };
@@ -735,10 +734,8 @@ mod tests {
     /// written by an agent.
     #[test]
     fn only_allowed_commands_may_run() {
-        let allow: Vec<Vec<String>> = vec![
-            vec!["cargo".into(), "test".into()],
-            vec!["just".into()],
-        ];
+        let allow: Vec<Vec<String>> =
+            vec![vec!["cargo".into(), "test".into()], vec!["just".into()]];
         let cmd = |s: &str| -> Vec<String> { s.split(' ').map(str::to_string).collect() };
 
         assert!(permitted(&allow, &cmd("cargo test")));

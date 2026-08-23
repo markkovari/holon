@@ -81,7 +81,8 @@ impl Guest for Component {
             })
             .collect();
         let healthy = !items.is_empty();
-        let map = items.iter().map(|(n, v)| format!("\"{n}\":\"{v}\"")).collect::<Vec<_>>().join(",");
+        let map =
+            items.iter().map(|(n, v)| format!("\"{n}\":\"{v}\"")).collect::<Vec<_>>().join(",");
         let body = format!(
             "{{\"tag\":\"{TAG}\",\"healthy\":{healthy},\"capability_count\":{},\"capabilities\":{{{map}}}}}",
             items.len()

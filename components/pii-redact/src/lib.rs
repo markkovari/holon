@@ -37,24 +37,14 @@ struct Component;
 
 /// Priority order for overlap resolution: most specific first. Phone is last
 /// so a card/SSN digit run claims its bytes before phone can.
-const PRIORITY: [Kind; 5] = [
-    Kind::CreditCard,
-    Kind::Ssn,
-    Kind::Email,
-    Kind::Ip,
-    Kind::Phone,
-];
+const PRIORITY: [Kind; 5] = [Kind::CreditCard, Kind::Ssn, Kind::Email, Kind::Ip, Kind::Phone];
 
 fn wanted(opts: &Options) -> Vec<Kind> {
     if opts.kinds.is_empty() {
         PRIORITY.to_vec()
     } else {
         // honor the caller's set, but always scan in priority order.
-        PRIORITY
-            .iter()
-            .copied()
-            .filter(|k| opts.kinds.iter().any(|w| same_kind(*w, *k)))
-            .collect()
+        PRIORITY.iter().copied().filter(|k| opts.kinds.iter().any(|w| same_kind(*w, *k))).collect()
     }
 }
 
@@ -85,11 +75,7 @@ fn scan(text: &str, opts: &Options) -> Vec<Finding> {
         };
         for (start, length) in candidates {
             if !overlaps(&out, start, length) {
-                out.push(Finding {
-                    kind,
-                    start: start as u32,
-                    length: length as u32,
-                });
+                out.push(Finding { kind, start: start as u32, length: length as u32 });
             }
         }
     }
@@ -357,13 +343,7 @@ fn matches_pat(s: &[u8], pat: &[u8]) -> bool {
     if s.len() != pat.len() {
         return false;
     }
-    s.iter().zip(pat).all(|(&c, &p)| {
-        if p == b'N' {
-            is_digit(c)
-        } else {
-            c == p
-        }
-    })
+    s.iter().zip(pat).all(|(&c, &p)| if p == b'N' { is_digit(c) } else { c == p })
 }
 
 // ---- ipv4 ---------------------------------------------------------------

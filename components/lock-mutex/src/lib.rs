@@ -47,10 +47,7 @@ fn now() -> u64 {
 
 /// A fresh 16-hex token from 8 random bytes.
 fn new_token() -> String {
-    get_random_bytes(8)
-        .iter()
-        .map(|x| format!("{x:02x}"))
-        .collect()
+    get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// Sanitize an arbitrary string to NATS-legal kv chars, with a 3-char prefix.
@@ -84,13 +81,7 @@ fn open() -> Result<kv::Bucket, LockError> {
 // tabs by replacing them — owners are opaque ids, not arbitrary bytes.
 
 fn serialize(l: &Lease) -> String {
-    format!(
-        "{}\t{}\t{}\t{}",
-        l.owner.replace('\t', " "),
-        l.token,
-        l.expires,
-        l.fence,
-    )
+    format!("{}\t{}\t{}\t{}", l.owner.replace('\t', " "), l.token, l.expires, l.fence,)
 }
 
 fn parse(key: &str, s: &str) -> Result<Lease, LockError> {
@@ -105,13 +96,7 @@ fn parse(key: &str, s: &str) -> Result<Lease, LockError> {
         .next()
         .and_then(|v| v.parse().ok())
         .ok_or_else(|| LockError::BackendUnavailable("corrupt lease: fence".into()))?;
-    Ok(Lease {
-        key: key.to_string(),
-        owner,
-        token,
-        expires,
-        fence,
-    })
+    Ok(Lease { key: key.to_string(), owner, token, expires, fence })
 }
 
 fn load(bucket: &kv::Bucket, key: &str) -> Result<Option<Lease>, LockError> {

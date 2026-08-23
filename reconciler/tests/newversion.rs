@@ -120,8 +120,7 @@ impl Api {
     /// run. For a fused deployment this is the composed artifact rather than the
     /// uploaded component, which is why it is the number that matters.
     fn manifest_digest(&self, id: &str) -> String {
-        self.get(&format!("/api/deployments/{id}/manifests"))["manifest"]["components"][0]
-            ["digest"]
+        self.get(&format!("/api/deployments/{id}/manifests"))["manifest"]["components"][0]["digest"]
             .as_str()
             .unwrap_or("(none)")
             .to_string()
@@ -156,7 +155,8 @@ impl Api {
 /// The host is `{app}.{org}.{suffix}` — the platform derives it, nobody chooses
 /// it, and guessing it wrong reads exactly like the app never starting.
 fn tag_served(fleet: &Fleet) -> Option<String> {
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
     let r = http
         .get(format!("http://127.0.0.1:{}/", fleet.ingress_port))
         .header("host", "ver.ada.test")
@@ -195,10 +195,8 @@ fn a_recompiled_artifact_replaces_the_running_one() {
 
     // --- ship v1 -------------------------------------------------------------
     assert!(matches!(api.upload("ver", alpha.clone()), 200 | 201), "uploading alpha failed");
-    let (code, dep) = api.post(
-        "/api/deployments",
-        json!({ "name": "ver", "nodes": [{"id": "ver"}], "edges": [] }),
-    );
+    let (code, dep) = api
+        .post("/api/deployments", json!({ "name": "ver", "nodes": [{"id": "ver"}], "edges": [] }));
     assert_eq!(code, 201, "deploy failed: {dep}");
     let id = dep["id"].as_str().unwrap().to_string();
 
@@ -280,10 +278,7 @@ fn a_recompiled_artifact_replaces_the_running_one() {
     // The node ran both, which is what "replaced" means: not that the old one was
     // never there, but that it is not there now.
     let log = fleet.node_log("n1");
-    assert!(
-        log.contains("started ada/ver/"),
-        "the node never reported starting anything:\n{log}"
-    );
+    assert!(log.contains("started ada/ver/"), "the node never reported starting anything:\n{log}");
     println!("    and it stayed replaced");
 
     // --- an upgrade that removes an export is refused -------------------------
@@ -297,10 +292,9 @@ fn a_recompiled_artifact_replaces_the_running_one() {
     // Uploading the wrong artifact under an existing id is the ordinary way this
     // happens, so that is what is done here — a component that exports a domain
     // interface rather than an HTTP handler.
-    let wrong = std::fs::read(
-        repo_root().join("components/target/wasm32-wasip2/release/slug.wasm"),
-    )
-    .expect("run `just build`");
+    let wrong =
+        std::fs::read(repo_root().join("components/target/wasm32-wasip2/release/slug.wasm"))
+            .expect("run `just build`");
     assert!(matches!(api.upload("ver", wrong), 200 | 201), "uploading the wrong artifact failed");
 
     let deadline = Instant::now() + Duration::from_secs(120);
@@ -341,7 +335,6 @@ fn a_recompiled_artifact_replaces_the_running_one() {
     assert!(forced, "`force=true` did not get past the gate, so the gate cannot be overridden");
     println!("    and force=true gets past it");
 }
-
 
 /// What content-addressed staging buys.
 ///

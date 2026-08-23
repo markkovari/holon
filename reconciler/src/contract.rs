@@ -140,7 +140,8 @@ impl Registry {
     }
 
     pub fn get(&self, version: u32) -> Result<Option<Version>, String> {
-        let v = self.call(reqwest::Method::GET, &format!("/get?version={version}"), String::new())?;
+        let v =
+            self.call(reqwest::Method::GET, &format!("/get?version={version}"), String::new())?;
         if v["found"] == Value::Bool(false) {
             return Ok(None);
         }
@@ -168,8 +169,11 @@ impl Registry {
     }
 
     pub fn pending(&self, part: &str) -> Result<Vec<Ask>, String> {
-        let v =
-            self.call(reqwest::Method::GET, &format!("/pending?part={}", enc(part)), String::new())?;
+        let v = self.call(
+            reqwest::Method::GET,
+            &format!("/pending?part={}", enc(part)),
+            String::new(),
+        )?;
         Ok(v["requests"]
             .as_array()
             .cloned()
@@ -288,9 +292,7 @@ impl Registry {
                     .and_then(|(verdict, body)| {
                         self.answer(&ask.id, &verdict, &body).map(|v| (verdict, v))
                     }) {
-                    Ok((verdict, 0)) => {
-                        log.push(format!("{} {verdict} {:?}", o.part, ask.subject))
-                    }
+                    Ok((verdict, 0)) => log.push(format!("{} {verdict} {:?}", o.part, ask.subject)),
                     Ok((verdict, version)) => log.push(format!(
                         "{} {verdict} {:?} → contract v{version} proposed, canonical once {} \
                          passes its gate against it",
@@ -327,7 +329,10 @@ impl Registry {
                 }
                 Ok(_) => next.push((o.part.clone(), canonical.body.clone(), canonical.number)),
                 Err(e) => {
-                    log.push(format!("could not read {}'s proposal ({e}) — using the canonical one", o.part));
+                    log.push(format!(
+                        "could not read {}'s proposal ({e}) — using the canonical one",
+                        o.part
+                    ));
                     next.push((o.part.clone(), canonical.body.clone(), canonical.number));
                 }
             }
@@ -490,9 +495,7 @@ pub fn ratifiable(outcomes: &[PartOutcome]) -> Vec<(u32, String, u64)> {
     outcomes
         .iter()
         .filter(|o| o.accepted && o.built_against > 0)
-        .filter_map(|o| {
-            o.best.as_ref().map(|b| (o.built_against, o.part.clone(), b.score))
-        })
+        .filter_map(|o| o.best.as_ref().map(|b| (o.built_against, o.part.clone(), b.score)))
         .collect()
 }
 
@@ -527,10 +530,7 @@ mod tests {
 
     #[test]
     fn only_a_part_that_passed_may_ratify_and_only_its_own_version() {
-        let outcomes = vec![
-            outcome("backend", true, 2, 1000),
-            outcome("frontend", false, 2, 400),
-        ];
+        let outcomes = vec![outcome("backend", true, 2, 1000), outcome("frontend", false, 2, 400)];
         let out = ratifiable(&outcomes);
         assert_eq!(out, vec![(2, "backend".to_string(), 1000)]);
     }
@@ -556,11 +556,9 @@ mod tests {
     #[test]
     fn a_reply_is_read_strictly_or_not_at_all() {
         let json_contract = r#"{"routes":[]}"#;
-        let (v, b) = parse_reply(
-            "VERDICT: granted\n---\n{\"routes\":[\"/api/search\"]}",
-            json_contract,
-        )
-        .expect("a well-formed grant");
+        let (v, b) =
+            parse_reply("VERDICT: granted\n---\n{\"routes\":[\"/api/search\"]}", json_contract)
+                .expect("a well-formed grant");
         assert_eq!(v, "granted");
         assert!(b.contains("/api/search"));
 

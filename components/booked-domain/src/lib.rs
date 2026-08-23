@@ -53,8 +53,12 @@ impl Guest for Component {
 
             (Method::Post, ["api", "resources"]) => create_resource(&request),
             (Method::Get, ["api", "resources"]) => list_resources(&request),
-            (Method::Post, ["api", "resources", id, "availability"]) => set_availability(&request, id),
-            (Method::Get, ["api", "resources", id, "availability"]) => get_availability(&request, id),
+            (Method::Post, ["api", "resources", id, "availability"]) => {
+                set_availability(&request, id)
+            }
+            (Method::Get, ["api", "resources", id, "availability"]) => {
+                get_availability(&request, id)
+            }
             (Method::Get, ["api", "resources", id, "slots"]) => slots(&request, id, &path),
             (Method::Get, ["api", "resources", id, "calendar.ics"]) => resource_ics(&request, id),
 
@@ -167,7 +171,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -275,10 +280,12 @@ fn create_resource(request: &IncomingRequest) -> Outcome {
 }
 
 fn resource(id: &str) -> Option<Value> {
-    records::get(RESOURCES, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(|mut v| {
-        v["id"] = json!(id);
-        v
-    })
+    records::get(RESOURCES, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
+        |mut v| {
+            v["id"] = json!(id);
+            v
+        },
+    )
 }
 
 fn list_resources(request: &IncomingRequest) -> Outcome {
@@ -289,10 +296,12 @@ fn list_resources(request: &IncomingRequest) -> Outcome {
         .map(|p| p.entries)
         .unwrap_or_default()
         .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            v["id"] = json!(e.id);
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                v["id"] = json!(e.id);
+                v
+            })
+        })
         .collect();
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
@@ -319,7 +328,11 @@ fn set_availability(request: &IncomingRequest, id: &str) -> Outcome {
     }
     let mut saved = Vec::new();
     for w in windows {
-        let (wd, s, e) = (w["weekday"].as_i64().unwrap_or(-1), w["start"].as_i64().unwrap_or(-1), w["end"].as_i64().unwrap_or(-1));
+        let (wd, s, e) = (
+            w["weekday"].as_i64().unwrap_or(-1),
+            w["start"].as_i64().unwrap_or(-1),
+            w["end"].as_i64().unwrap_or(-1),
+        );
         if !(0..7).contains(&wd) || s < 0 || e <= s || e > 1440 {
             continue;
         }
@@ -371,7 +384,9 @@ fn fits_availability(resource: &str, day: &str, start: i64, end: i64) -> bool {
     }
     let Some(wd) = weekday(day) else { return false };
     all.iter().any(|w| {
-        w["weekday"].as_i64() == Some(wd) && w["start"].as_i64().unwrap_or(0) <= start && end <= w["end"].as_i64().unwrap_or(0)
+        w["weekday"].as_i64() == Some(wd)
+            && w["start"].as_i64().unwrap_or(0) <= start
+            && end <= w["end"].as_i64().unwrap_or(0)
     })
 }
 
@@ -382,7 +397,16 @@ fn overlaps(start: i64, end: i64, existing: &[(i64, i64)]) -> bool {
 /// Book ONE instance under a lock:mutex lease on `book:{resource}:{day}` — the
 /// no-double-book critical section: acquire, re-check overlap, write, release.
 /// Returns the stored booking, or None on conflict / lock contention.
-fn book_one(res_id: &str, res_name: &str, p: &Principal, email_addr: &str, day: &str, start: i64, end: i64, note: &str) -> Option<Value> {
+fn book_one(
+    res_id: &str,
+    res_name: &str,
+    p: &Principal,
+    email_addr: &str,
+    day: &str,
+    start: i64,
+    end: i64,
+    note: &str,
+) -> Option<Value> {
     let key = format!("book:{res_id}:{day}");
     // Brief spin: a competing booker holds the lease only for its tiny
     // check-then-write, so a bounded retry avoids spurious conflicts under load.
@@ -494,8 +518,12 @@ fn create_booking(request: &IncomingRequest) -> Outcome {
         return Outcome::Err(409, format!("already booked (conflicts: {})", conflicts.join(", ")));
     }
     let first = &booked[0];
-    let conf = confirmation(&email_addr, &res_name, first["day"].as_str().unwrap_or(&day), start, end);
-    Outcome::Json(201, json!({ "booked": booked, "conflicts": conflicts, "confirmation": conf }).to_string())
+    let conf =
+        confirmation(&email_addr, &res_name, first["day"].as_str().unwrap_or(&day), start, end);
+    Outcome::Json(
+        201,
+        json!({ "booked": booked, "conflicts": conflicts, "confirmation": conf }).to_string(),
+    )
 }
 
 /// Expand a `repeat` object ({freq, interval?, weekdays?, count?, until?}) into
@@ -508,7 +536,10 @@ fn expand_repeat(day: &str, rep: &Value) -> Vec<String> {
     let rule = rrule::Rule {
         frequency: freq,
         interval: rep["interval"].as_u64().unwrap_or(1) as u32,
-        by_weekday: rep["weekdays"].as_array().map(|a| a.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect()).unwrap_or_default(),
+        by_weekday: rep["weekdays"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_u64().map(|n| n as u8)).collect())
+            .unwrap_or_default(),
         count: rep["count"].as_u64().unwrap_or(0) as u32,
         until: rep["until"].as_str().unwrap_or("").to_string(),
     };
@@ -537,10 +568,12 @@ fn list_bookings(request: &IncomingRequest, path: &str) -> Outcome {
     };
     let mut items: Vec<Value> = all
         .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            v["id"] = json!(e.id);
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                v["id"] = json!(e.id);
+                v
+            })
+        })
         .filter(|v| {
             let d = v["day"].as_str().unwrap_or("");
             from.as_str() <= d && d <= to.as_str()
@@ -553,10 +586,12 @@ fn list_bookings(request: &IncomingRequest, path: &str) -> Outcome {
 }
 
 fn booking(id: &str) -> Option<Value> {
-    records::get(BOOKINGS, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(|mut v| {
-        v["id"] = json!(id);
-        v
-    })
+    records::get(BOOKINGS, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
+        |mut v| {
+            v["id"] = json!(id);
+            v
+        },
+    )
 }
 
 fn cancel_booking(request: &IncomingRequest, id: &str) -> Outcome {
@@ -609,7 +644,12 @@ fn booking_ics(request: &IncomingRequest, id: &str) -> Outcome {
         return Outcome::Err(403, "not your booking".into());
     }
     let ics = ical::format_event(&booking_event(&bk), PRODID);
-    Outcome::File(200, "text/calendar; charset=utf-8".into(), Some(format!("booking-{id}.ics")), ics.into_bytes())
+    Outcome::File(
+        200,
+        "text/calendar; charset=utf-8".into(),
+        Some(format!("booking-{id}.ics")),
+        ics.into_bytes(),
+    )
 }
 
 fn resource_ics(request: &IncomingRequest, id: &str) -> Outcome {
@@ -626,10 +666,12 @@ fn resource_ics(request: &IncomingRequest, id: &str) -> Outcome {
     let events: Vec<ical::Event> = records::find_by(BOOKINGS, "resource", &json!(id).to_string())
         .unwrap_or_default()
         .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            v["id"] = json!(e.id);
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                v["id"] = json!(e.id);
+                v
+            })
+        })
         .filter(|v| owner || v["user"].as_str() == Some(&p.subject))
         .map(|v| booking_event(&v))
         .collect();
@@ -776,7 +818,13 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     respond(response_out, code, "application/json", None, body.as_bytes());
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, disposition: Option<&str>, body: &[u8]) {
+fn respond(
+    response_out: ResponseOutparam,
+    status: u16,
+    ctype: &str,
+    disposition: Option<&str>,
+    body: &[u8],
+) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {

@@ -37,7 +37,9 @@ fn stamp_key(key: &str) -> String {
 
 fn read_u64(bucket: &kv::Bucket, key: &str) -> Result<u64, MetricsError> {
     match bucket.get(key) {
-        Ok(Some(bytes)) => Ok(std::str::from_utf8(&bytes).ok().and_then(|s| s.parse().ok()).unwrap_or(0)),
+        Ok(Some(bytes)) => {
+            Ok(std::str::from_utf8(&bytes).ok().and_then(|s| s.parse().ok()).unwrap_or(0))
+        }
         Ok(None) => Ok(0),
         Err(e) => Err(MetricsError::BackendUnavailable(format!("get: {e:?}"))),
     }

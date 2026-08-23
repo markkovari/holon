@@ -112,8 +112,8 @@ fn ensure_seeded() -> Result<(), Outcome> {
     }
     let mut type_ids = Vec::new();
     for name in SEED_TYPES {
-        let e = records::create(TYPES, &json!({ "type": name }).to_string(), &[])
-            .map_err(store_err)?;
+        let e =
+            records::create(TYPES, &json!({ "type": name }).to_string(), &[]).map_err(store_err)?;
         type_ids.push((name, e.id));
     }
     let id_of = |pairs: &[(&str, String)], name: &str| {
@@ -149,7 +149,8 @@ fn list_items(query: &str) -> Outcome {
     if let Err(o) = ensure_seeded() {
         return o;
     }
-    let page_index: usize = query_param(query, "pageIndex").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let page_index: usize =
+        query_param(query, "pageIndex").and_then(|v| v.parse().ok()).unwrap_or(0);
     let page_size: usize = query_param(query, "pageSize")
         .and_then(|v| v.parse().ok())
         .map(|n: usize| n.clamp(1, 100))
@@ -260,9 +261,7 @@ fn pump() -> Outcome {
         }
     });
     match (validated, decremented) {
-        (Ok(v), Ok(d)) => {
-            Outcome::Json(200, json!({"validated": v, "decremented": d}).to_string())
-        }
+        (Ok(v), Ok(d)) => Outcome::Json(200, json!({"validated": v, "decremented": d}).to_string()),
         (Err(e), _) | (_, Err(e)) => e,
     }
 }
@@ -271,11 +270,7 @@ fn pump() -> Outcome {
 /// is a watermark (ack advances past everything below the highest id), so
 /// events are handled strictly in order and the pass STOPS at the first
 /// skippable event — acking only the contiguous handled prefix.
-fn consume(
-    topic: &str,
-    kind: &str,
-    handle: impl Fn(&OrderStockEvent),
-) -> Result<u32, Outcome> {
+fn consume(topic: &str, kind: &str, handle: impl Fn(&OrderStockEvent)) -> Result<u32, Outcome> {
     let events = bus::poll(topic, GROUP, 32).map_err(bus_err)?;
     let mut handled = 0;
     let mut acked: Vec<String> = Vec::new();

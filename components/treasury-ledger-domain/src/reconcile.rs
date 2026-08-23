@@ -146,11 +146,7 @@ fn journal(route: &Route) -> Reply {
         return e;
     }
     let limit_param = route.param("limit");
-    let limit: usize = if limit_param.is_empty() {
-        50
-    } else {
-        limit_param.parse().unwrap_or(50)
-    };
+    let limit: usize = if limit_param.is_empty() { 50 } else { limit_param.parse().unwrap_or(50) };
     let limit = limit.clamp(1, 500);
 
     let mut lines = match read_journal() {
@@ -158,9 +154,10 @@ fn journal(route: &Route) -> Reply {
         Err(_) => return Reply::err(503, "store_unavailable"),
     };
     lines.sort_by(|a, b| {
-        a.get("at").and_then(Value::as_str).unwrap_or("").cmp(
-            b.get("at").and_then(Value::as_str).unwrap_or(""),
-        )
+        a.get("at")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(b.get("at").and_then(Value::as_str).unwrap_or(""))
     });
     lines.truncate(limit);
     Reply::json(200, json!({ "lines": lines }))

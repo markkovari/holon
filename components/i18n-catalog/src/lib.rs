@@ -140,10 +140,7 @@ fn interpolate(template: &str, args: &[Arg]) -> String {
 /// Parse a plural blob (`{category}\t{template}` per line) into pairs.
 fn parse_plural(blob: &str) -> Vec<(String, String)> {
     blob.lines()
-        .filter_map(|line| {
-            line.split_once('\t')
-                .map(|(c, t)| (c.to_string(), t.to_string()))
-        })
+        .filter_map(|line| line.split_once('\t').map(|(c, t)| (c.to_string(), t.to_string())))
         .collect()
 }
 
@@ -161,11 +158,8 @@ impl Guest for Component {
         forms: Vec<(String, String)>,
     ) -> Result<(), I18nError> {
         let bucket = open()?;
-        let blob = forms
-            .iter()
-            .map(|(cat, tmpl)| format!("{cat}\t{tmpl}"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let blob =
+            forms.iter().map(|(cat, tmpl)| format!("{cat}\t{tmpl}")).collect::<Vec<_>>().join("\n");
         bucket
             .set(&plural_key(&locale, &key), blob.as_bytes())
             .map_err(|e| I18nError::BackendUnavailable(format!("set: {e:?}")))
@@ -210,10 +204,7 @@ impl Guest for Component {
         // Auto-add a `count` arg unless the caller already supplied one.
         let mut args = args;
         if !args.iter().any(|a| a.name == "count") {
-            args.push(Arg {
-                name: "count".to_string(),
-                value: count.to_string(),
-            });
+            args.push(Arg { name: "count".to_string(), value: count.to_string() });
         }
         Ok(interpolate(&template, &args))
     }

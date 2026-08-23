@@ -18,10 +18,7 @@ pub type Usage<'a> = (u32, u32, &'a str);
 /// The sum of each attempt priced by `cost_cents` — not a re-derivation, so the
 /// per-model pricing lives in exactly one place. An empty run has spent nothing.
 pub fn spent_cents(attempts: &[Usage]) -> u64 {
-    attempts
-        .iter()
-        .map(|(input, output, model)| cost_cents(*input, *output, model))
-        .sum()
+    attempts.iter().map(|(input, output, model)| cost_cents(*input, *output, model)).sum()
 }
 
 /// Has this run spent past its cap? `cap_cents` of 0 means no cap, so a run with

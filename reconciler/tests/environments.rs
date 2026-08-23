@@ -25,10 +25,8 @@ struct Api {
 
 impl Api {
     fn new(base: String) -> Self {
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap();
+        let http =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap();
         // The control plane is a component like any other, so it comes up when its
         // host does — poll rather than sleep on a guess.
         let deadline = std::time::Instant::now() + Duration::from_secs(90);
@@ -115,7 +113,9 @@ fn ledger(fleet: &Fleet) -> String {
         // A missing ledger would make every "is it gone" check pass for the wrong
         // reason, so say so loudly rather than returning "not there".
         let listing: Vec<String> = std::fs::read_dir(fleet.state_dir())
-            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into()).collect())
+            .map(|d| {
+                d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into()).collect()
+            })
             .unwrap_or_default();
         panic!("no ledger at {} ({e}) — state dir holds {listing:?}", p.display())
     })
@@ -155,7 +155,10 @@ fn an_environment_spins_up_and_closes_down() {
     // the linked case.
     let wasm = composed_gate();
     assert!(matches!(api.upload("gate", wasm), 200 | 201), "upload failed");
-    let (code, dep) = api.post("/api/deployments", json!({ "name": "graph", "nodes": [{"id": "gate"}], "edges": [] }));
+    let (code, dep) = api.post(
+        "/api/deployments",
+        json!({ "name": "graph", "nodes": [{"id": "gate"}], "edges": [] }),
+    );
     assert_eq!(code, 201, "deploy failed: {dep}");
     let id = dep["id"].as_str().unwrap().to_string();
 

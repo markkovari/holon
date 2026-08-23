@@ -5,13 +5,11 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::Deserialize;
 
-use crate::bindings::exports::auth::identity::types::{AuthError, TokenPair};
 use crate::bindings::exports::auth::identity::oidc::OidcConfig;
-use crate::bindings::wasi::http::outgoing_handler;
-use crate::bindings::wasi::http::types::{
-    Fields, Method, OutgoingRequest, RequestOptions, Scheme,
-};
+use crate::bindings::exports::auth::identity::types::{AuthError, TokenPair};
 use crate::bindings::wasi::clocks::wall_clock;
+use crate::bindings::wasi::http::outgoing_handler;
+use crate::bindings::wasi::http::types::{Fields, Method, OutgoingRequest, RequestOptions, Scheme};
 use crate::bindings::wasi::io::streams::StreamError;
 use crate::{config, kv};
 
@@ -118,8 +116,8 @@ fn select_key<'a>(jwks: &'a Jwks, kid: Option<&str>) -> Option<&'a Jwk> {
 /// Resolve the RSA modulus (n) and exponent (e) for the issuer/kid.
 pub fn jwks_rsa_key(issuer: &str, kid: Option<&str>) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     let jwks = fetch_jwks(issuer)?;
-    let jwk = select_key(&jwks, kid)
-        .ok_or_else(|| AuthError::InvalidToken("no matching jwk".into()))?;
+    let jwk =
+        select_key(&jwks, kid).ok_or_else(|| AuthError::InvalidToken("no matching jwk".into()))?;
     if jwk.kty != "RSA" {
         return Err(AuthError::InvalidToken("jwk is not RSA".into()));
     }
@@ -131,8 +129,8 @@ pub fn jwks_rsa_key(issuer: &str, kid: Option<&str>) -> Result<(Vec<u8>, Vec<u8>
 /// Resolve the EC public point coordinates (x, y) for the issuer/kid.
 pub fn jwks_ec_key(issuer: &str, kid: Option<&str>) -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     let jwks = fetch_jwks(issuer)?;
-    let jwk = select_key(&jwks, kid)
-        .ok_or_else(|| AuthError::InvalidToken("no matching jwk".into()))?;
+    let jwk =
+        select_key(&jwks, kid).ok_or_else(|| AuthError::InvalidToken("no matching jwk".into()))?;
     if jwk.kty != "EC" {
         return Err(AuthError::InvalidToken("jwk is not EC".into()));
     }
@@ -143,9 +141,7 @@ pub fn jwks_ec_key(issuer: &str, kid: Option<&str>) -> Result<(Vec<u8>, Vec<u8>)
 
 fn decode_b64(v: Option<&str>) -> Result<Vec<u8>, AuthError> {
     let s = v.ok_or_else(|| AuthError::InvalidToken("jwk missing field".into()))?;
-    URL_SAFE_NO_PAD
-        .decode(s)
-        .map_err(|_| AuthError::InvalidToken("jwk field not base64url".into()))
+    URL_SAFE_NO_PAD.decode(s).map_err(|_| AuthError::InvalidToken("jwk field not base64url".into()))
 }
 
 /// Authorization-code exchange. POSTs to the token endpoint; client creds are
@@ -214,10 +210,7 @@ fn request(method: Method, url: &str, body: Option<&[u8]>) -> Result<Vec<u8>, Au
     let (scheme, authority, path) = parse_url(url)?;
     let headers = Fields::new();
     if body.is_some() {
-        let _ = headers.set(
-            "content-type",
-            &[b"application/x-www-form-urlencoded".to_vec()],
-        );
+        let _ = headers.set("content-type", &[b"application/x-www-form-urlencoded".to_vec()]);
     }
     let req = OutgoingRequest::new(headers);
     req.set_method(&method).map_err(|_| net_err("set method"))?;

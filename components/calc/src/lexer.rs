@@ -1,6 +1,14 @@
 //! Tokenize an arithmetic expression.
 #[derive(Clone, Copy, PartialEq)]
-pub enum Tok { Num(i64), Plus, Minus, Star, Slash, LParen, RParen }
+pub enum Tok {
+    Num(i64),
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    LParen,
+    RParen,
+}
 
 pub fn lex(s: &str) -> Vec<Tok> {
     let b: Vec<char> = s.chars().collect();

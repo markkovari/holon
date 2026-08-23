@@ -190,10 +190,7 @@ fn there_is_no_route_that_returns_a_secret_value_to_a_user() {
 
     for path in ["/api/secrets?org=acme", "/api/secrets/stripe?org=acme", "/api/market?q=stripe"] {
         let (_, v) = p.get(&ada, path);
-        assert!(
-            !v.to_string().contains("sk_secret_value"),
-            "{path} returned the value: {v}"
-        );
+        assert!(!v.to_string().contains("sk_secret_value"), "{path} returned the value: {v}");
     }
     // Even the internal route refuses a user's bearer token — it wants an
     // instance-scoped fetch token, which a user has no way to mint.

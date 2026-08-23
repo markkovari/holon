@@ -210,7 +210,10 @@ fn activate(request: &IncomingRequest) -> Outcome {
         return store_err(e);
     }
     // the plaintext recovery codes are returned ONCE, here, and never stored.
-    Outcome::Json(200, json!({"account": account, "state": "enrolled", "recovery_codes": codes}).to_string())
+    Outcome::Json(
+        200,
+        json!({"account": account, "state": "enrolled", "recovery_codes": codes}).to_string(),
+    )
 }
 
 // ---- 3. login: challenge -> session ------------------------------------------
@@ -244,7 +247,10 @@ fn login(request: &IncomingRequest) -> Outcome {
     let totp_ok = matches!(otp::verify(&secret, &code, PERIOD, DIGITS, SKEW), Ok(true));
     if !totp_ok {
         let h = hash_code(&code);
-        let mut remaining: Vec<String> = rec["recovery"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        let mut remaining: Vec<String> = rec["recovery"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .unwrap_or_default();
         if let Some(pos) = remaining.iter().position(|x| *x == h) {
             remaining.remove(pos); // single-use: burn it
             rec["recovery"] = json!(remaining);
@@ -303,10 +309,14 @@ fn status(account: &str) -> Outcome {
             let remaining = rec["recovery"].as_array().map(|a| a.len()).unwrap_or(0);
             Outcome::Json(
                 200,
-                json!({"account": account, "state": rec["state"], "recovery_remaining": remaining}).to_string(),
+                json!({"account": account, "state": rec["state"], "recovery_remaining": remaining})
+                    .to_string(),
             )
         }
-        Ok(None) => Outcome::Json(200, json!({"account": account, "state": "none", "recovery_remaining": 0}).to_string()),
+        Ok(None) => Outcome::Json(
+            200,
+            json!({"account": account, "state": "none", "recovery_remaining": 0}).to_string(),
+        ),
         Err(e) => store_err(e),
     }
 }
@@ -323,8 +333,12 @@ fn otp_err(e: otp::OtpError) -> Outcome {
 fn vault_err(e: vault::VaultError) -> Outcome {
     match e {
         vault::VaultError::NotFound => Outcome::err(404, "secret not found"),
-        vault::VaultError::Crypto(m) => Outcome::Json(500, json!({"error": format!("crypto: {m}")}).to_string()),
-        vault::VaultError::BackendUnavailable(m) => Outcome::Json(503, json!({"error": m}).to_string()),
+        vault::VaultError::Crypto(m) => {
+            Outcome::Json(500, json!({"error": format!("crypto: {m}")}).to_string())
+        }
+        vault::VaultError::BackendUnavailable(m) => {
+            Outcome::Json(503, json!({"error": m}).to_string())
+        }
     }
 }
 
@@ -332,7 +346,9 @@ fn session_err(e: session::SessionError) -> Outcome {
     match e {
         session::SessionError::NotFound => Outcome::err(404, "no live session"),
         session::SessionError::CsrfMismatch => Outcome::err(403, "csrf mismatch"),
-        session::SessionError::BackendUnavailable(m) => Outcome::Json(503, json!({"error": m}).to_string()),
+        session::SessionError::BackendUnavailable(m) => {
+            Outcome::Json(503, json!({"error": m}).to_string())
+        }
     }
 }
 
@@ -341,7 +357,9 @@ fn store_err(e: records::StoreError) -> Outcome {
         records::StoreError::NotFound => Outcome::err(404, "not_found"),
         records::StoreError::InvalidJson(m) => Outcome::Json(422, json!({"error": m}).to_string()),
         records::StoreError::RevisionConflict(_) => Outcome::err(409, "conflict"),
-        records::StoreError::BackendUnavailable(m) => Outcome::Json(503, json!({"error": m}).to_string()),
+        records::StoreError::BackendUnavailable(m) => {
+            Outcome::Json(503, json!({"error": m}).to_string())
+        }
     }
 }
 
@@ -352,7 +370,8 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
-    serde_json::from_slice(&body).map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
+    serde_json::from_slice(&body)
+        .map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
 /// The most a request body may be, before the component stops reading it.

@@ -2,9 +2,9 @@
 //!
 //! ROUTER, and no part may write it. See CONTRACT.md.
 
+mod accounts;
 #[allow(warnings)]
 mod bindings;
-mod accounts;
 mod reconcile;
 mod transfers;
 
@@ -132,7 +132,12 @@ pub fn rfc3339(secs: u64) -> String {
     let y = if m <= 2 { y + 1 } else { y };
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y, m, d, tod / 3600, (tod % 3600) / 60, tod % 60
+        y,
+        m,
+        d,
+        tod / 3600,
+        (tod % 3600) / 60,
+        tod % 60
     )
 }
 
@@ -238,9 +243,10 @@ fn peek_journal() -> Reply {
         after = page.next;
     }
     lines.sort_by(|a, b| {
-        a.get("at").and_then(Value::as_str).unwrap_or("").cmp(
-            b.get("at").and_then(Value::as_str).unwrap_or(""),
-        )
+        a.get("at")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .cmp(b.get("at").and_then(Value::as_str).unwrap_or(""))
     });
     Reply::json(200, json!({ "lines": lines }))
 }

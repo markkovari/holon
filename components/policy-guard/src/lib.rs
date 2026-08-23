@@ -123,21 +123,13 @@ impl From<StoredEffect> for Effect {
 
 impl From<&Condition> for StoredCond {
     fn from(c: &Condition) -> Self {
-        StoredCond {
-            left: c.left.clone(),
-            op: c.op.into(),
-            right: c.right.clone(),
-        }
+        StoredCond { left: c.left.clone(), op: c.op.into(), right: c.right.clone() }
     }
 }
 
 impl From<&StoredCond> for Condition {
     fn from(c: &StoredCond) -> Self {
-        Condition {
-            left: c.left.clone(),
-            op: c.op.into(),
-            right: c.right.clone(),
-        }
+        Condition { left: c.left.clone(), op: c.op.into(), right: c.right.clone() }
     }
 }
 
@@ -240,7 +232,11 @@ fn validate_cond(rule_id: &str, c: &Condition) -> Result<(), PolicyError> {
 
 /// Resolve one operand: a `principal.`/`resource.` reference is looked up in
 /// the matching attr map (absent -> ""); anything else is the literal itself.
-fn resolve(side: &str, principal: &HashMap<String, String>, resource: &HashMap<String, String>) -> String {
+fn resolve(
+    side: &str,
+    principal: &HashMap<String, String>,
+    resource: &HashMap<String, String>,
+) -> String {
     if let Some(key) = side.strip_prefix("principal.") {
         principal.get(key).cloned().unwrap_or_default()
     } else if let Some(key) = side.strip_prefix("resource.") {
@@ -319,9 +315,7 @@ impl Guest for Component {
         // Stable sort by ascending priority — lower priority wins. Within the
         // same priority a DENY must be seen before an ALLOW so deny overrides.
         rules.sort_by(|a, b| {
-            a.priority
-                .cmp(&b.priority)
-                .then(deny_first(a.effect).cmp(&deny_first(b.effect)))
+            a.priority.cmp(&b.priority).then(deny_first(a.effect).cmp(&deny_first(b.effect)))
         });
 
         for r in &rules {
@@ -332,11 +326,7 @@ impl Guest for Component {
                 } else {
                     format!("denied by rule {:?}", r.id)
                 };
-                return Ok(Decision {
-                    allowed,
-                    rule_id: r.id.clone(),
-                    reason,
-                });
+                return Ok(Decision { allowed, rule_id: r.id.clone(), reason });
             }
         }
 

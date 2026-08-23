@@ -56,9 +56,7 @@ fn create_item(route: &Route, body: &str) -> Reply {
         Err(LimitError::Locked(secs)) => {
             return Reply::json(429, json!({ "error": "rate_limited", "retry_after": secs }))
         }
-        Err(LimitError::BackendUnavailable(_)) => {
-            return Reply::err(503, "rate_limit_unavailable")
-        }
+        Err(LimitError::BackendUnavailable(_)) => return Reply::err(503, "rate_limit_unavailable"),
     }
 
     let entry = match records::create(
@@ -79,9 +77,7 @@ fn create_item(route: &Route, body: &str) -> Reply {
     // Count this accepted submission against the window.
     match rl::record_failure(key) {
         Ok(()) => {}
-        Err(LimitError::BackendUnavailable(_)) => {
-            return Reply::err(503, "rate_limit_unavailable")
-        }
+        Err(LimitError::BackendUnavailable(_)) => return Reply::err(503, "rate_limit_unavailable"),
         Err(LimitError::Locked(_)) => {} // already past `check`; item is already stored
     }
 

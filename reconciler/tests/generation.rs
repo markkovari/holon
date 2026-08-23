@@ -97,7 +97,10 @@ fn stand_in_forge(port: u16) -> Log {
             } else if path.ends_with("/git/refs") {
                 (201, json!({ "ref": "refs/heads/x", "object": { "sha": COMMIT_SHA } }))
             } else if path.ends_with("/pulls") {
-                (201, json!({ "number": 11, "html_url": "https://forge.test/acme/widgets/pull/11" }))
+                (
+                    201,
+                    json!({ "number": 11, "html_url": "https://forge.test/acme/widgets/pull/11" }),
+                )
             } else {
                 (404, json!({ "message": "Not Found" }))
             };
@@ -116,7 +119,6 @@ fn stand_in_forge(port: u16) -> Log {
     });
     log
 }
-
 
 struct Checks {
     child: Child,
@@ -175,18 +177,21 @@ fn artifacts() -> Vec<String> {
 }
 
 fn specs(checks_port: u16, forge_port: u16) -> Vec<std::path::PathBuf> {
-    [("fixtures/gen-driver.yaml", "CHECKS_PORT", checks_port), ("fixtures/gen-select.yaml", "FORGE_PORT", forge_port)]
-        .iter()
-        .map(|(src, placeholder, port)| {
-            let yaml = std::fs::read_to_string(repo_root().join(src))
-                .unwrap()
-                .replace(placeholder, &port.to_string());
-            let name = src.rsplit('/').next().unwrap();
-            let out = std::env::temp_dir().join(format!("comp-{checks_port}-{name}"));
-            std::fs::write(&out, yaml).unwrap();
-            out
-        })
-        .collect()
+    [
+        ("fixtures/gen-driver.yaml", "CHECKS_PORT", checks_port),
+        ("fixtures/gen-select.yaml", "FORGE_PORT", forge_port),
+    ]
+    .iter()
+    .map(|(src, placeholder, port)| {
+        let yaml = std::fs::read_to_string(repo_root().join(src))
+            .unwrap()
+            .replace(placeholder, &port.to_string());
+        let name = src.rsplit('/').next().unwrap();
+        let out = std::env::temp_dir().join(format!("comp-{checks_port}-{name}"));
+        std::fs::write(&out, yaml).unwrap();
+        out
+    })
+    .collect()
 }
 
 /// The goal every branch is given. Three checks: two required, one optional —
@@ -237,8 +242,19 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     fleet.until("both apps serving", Duration::from_secs(180), || {
         let mut warm = plan();
         warm["seed"] = json!(100);
-        let r = comp_reconciler::generation::fan_out(&driver_url, "gendrive.acme.test", &warm, 1, 100, timeout);
-        if r[0].note.is_empty() { Ok(()) } else { Err(r[0].note.clone()) }
+        let r = comp_reconciler::generation::fan_out(
+            &driver_url,
+            "gendrive.acme.test",
+            &warm,
+            1,
+            100,
+            timeout,
+        );
+        if r[0].note.is_empty() {
+            Ok(())
+        } else {
+            Err(r[0].note.clone())
+        }
     });
 
     // --- FOUR BRANCHES, AT ONCE ---------------------------------------------
@@ -317,7 +333,10 @@ fn one_goal_four_branches_at_once_and_one_pull_request() {
     let blobs: Vec<String> = seen
         .iter()
         .filter(|s| s.path.ends_with("/git/blobs"))
-        .map(|s| String::from_utf8_lossy(&base64_decode(s.body["content"].as_str().unwrap_or_default())).into_owned())
+        .map(|s| {
+            String::from_utf8_lossy(&base64_decode(s.body["content"].as_str().unwrap_or_default()))
+                .into_owned()
+        })
         .collect();
     assert_eq!(blobs.len(), 1, "one file changed, one blob: {blobs:?}");
     assert!(
@@ -349,4 +368,3 @@ fn base64_decode(s: &str) -> Vec<u8> {
     }
     out
 }
-

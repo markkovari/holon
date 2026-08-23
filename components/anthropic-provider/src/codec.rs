@@ -314,7 +314,10 @@ mod tests {
     fn max_tokens_is_always_present() {
         let v = body(&[Msg { role: "user", content: "hi" }], 4096);
         assert_eq!(v["max_tokens"], 4096);
-        assert!(v.get("temperature").is_none(), "temperature is deprecated on the 5-gen models, so never sent");
+        assert!(
+            v.get("temperature").is_none(),
+            "temperature is deprecated on the 5-gen models, so never sent"
+        );
         assert!(v.get("seed").is_none(), "there is no seed on this API");
     }
 
@@ -344,7 +347,10 @@ mod tests {
     #[test]
     fn a_top_level_cache_control_turns_on_automatic_caching() {
         let v = body(&[Msg { role: "user", content: "hi" }], 16);
-        assert_eq!(v["cache_control"]["type"], "ephemeral", "automatic caching is enabled at the request level");
+        assert_eq!(
+            v["cache_control"]["type"], "ephemeral",
+            "automatic caching is enabled at the request level"
+        );
         // The message tail is a plain text block — automatic caching owns its breakpoint.
         assert!(v["messages"][0]["content"][0].get("cache_control").is_none());
     }
@@ -386,8 +392,11 @@ mod tests {
 
     #[test]
     fn an_error_envelope_on_a_200_is_still_an_error() {
-        let body = br#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
-        assert!(matches!(parse_completion(body), Err(ParseError::BadResponse(m)) if m.contains("Overloaded")));
+        let body =
+            br#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#;
+        assert!(
+            matches!(parse_completion(body), Err(ParseError::BadResponse(m)) if m.contains("Overloaded"))
+        );
     }
 
     #[test]

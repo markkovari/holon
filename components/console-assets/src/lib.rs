@@ -25,10 +25,7 @@ impl Guest for Component {
         static_assets::STATIC_ASSETS
             .iter()
             .find(|(p, _, _)| *p == path)
-            .map(|(_, ct, bytes)| Asset {
-                content_type: (*ct).to_string(),
-                body: bytes.to_vec(),
-            })
+            .map(|(_, ct, bytes)| Asset { content_type: (*ct).to_string(), body: bytes.to_vec() })
     }
 }
 

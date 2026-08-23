@@ -86,16 +86,17 @@ fn day_lines(day: &str) -> Result<Vec<Line>, Reply> {
             continue;
         }
         let pet_id = doc.get("pet_id").and_then(Value::as_str).unwrap_or("").to_string();
-        let pet = pets.entry(pet_id.clone()).or_insert_with(|| match records::get("pets", &pet_id) {
-            Ok(p) => {
-                let d: Value = serde_json::from_str(&p.data).unwrap_or_else(|_| json!({}));
-                (
-                    d.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
-                    d.get("species").and_then(Value::as_str).unwrap_or("").to_string(),
-                )
-            }
-            Err(_) => (String::new(), String::new()),
-        });
+        let pet =
+            pets.entry(pet_id.clone()).or_insert_with(|| match records::get("pets", &pet_id) {
+                Ok(p) => {
+                    let d: Value = serde_json::from_str(&p.data).unwrap_or_else(|_| json!({}));
+                    (
+                        d.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+                        d.get("species").and_then(Value::as_str).unwrap_or("").to_string(),
+                    )
+                }
+                Err(_) => (String::new(), String::new()),
+            });
         lines.push(Line {
             id: e.id.clone(),
             pet_id: pet_id.clone(),
@@ -118,7 +119,10 @@ fn csv(lines: &[Line]) -> String {
         rows.push(row([&l.id, &l.pet_id, &l.pet_name, &l.vet, &l.start, &m]));
     }
     // The comma in `Rex, Jr.` is the codec's job, not `join(",")`'s.
-    codec::format(&rows, &codec::Dialect { delimiter: ",".to_string(), has_header: true, trim: false })
+    codec::format(
+        &rows,
+        &codec::Dialect { delimiter: ",".to_string(), has_header: true, trim: false },
+    )
 }
 
 fn summary(lines: &[Line]) -> Value {

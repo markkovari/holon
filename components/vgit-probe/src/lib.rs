@@ -127,7 +127,8 @@ impl Guest for Component {
         let body = match (&method, route.as_str()) {
             (Method::Post, "/commit") => {
                 let raw = read_body(request);
-                let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+                let v: serde_json::Value =
+                    serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
                 let changes: Vec<worktree::PathChange> = v["changes"]
                     .as_array()
                     .cloned()
@@ -192,7 +193,8 @@ impl Guest for Component {
             (Method::Post, "/ref") => {
                 let expect = param(&query, "expect");
                 let expect = if expect.is_empty() { None } else { Some(expect) };
-                match refs::update(&param(&query, "name"), expect.as_deref(), &param(&query, "to")) {
+                match refs::update(&param(&query, "name"), expect.as_deref(), &param(&query, "to"))
+                {
                     Ok(won) => json!({ "updated": won }).to_string(),
                     Err(e) => err(e),
                 }

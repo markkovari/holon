@@ -86,7 +86,10 @@ fn do_search(path: &str) -> Outcome {
     let tags: Vec<String> = tags_s.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
 
     if q.trim().is_empty() {
-        return Outcome::Json(200, json!({"hits": [], "total": 0, "cached": false, "ms": 0}).to_string());
+        return Outcome::Json(
+            200,
+            json!({"hits": [], "total": 0, "cached": false, "ms": 0}).to_string(),
+        );
     }
 
     let started = now();
@@ -103,7 +106,8 @@ fn do_search(path: &str) -> Outcome {
     }
     let _ = metrics::incr(MISS, 1);
 
-    let mode = if mode_s.eq_ignore_ascii_case("all") { search::Mode::All } else { search::Mode::Any };
+    let mode =
+        if mode_s.eq_ignore_ascii_case("all") { search::Mode::All } else { search::Mode::Any };
     // over-fetch so we can offset within the ranked list.
     let want = (offset as u32).saturating_add(limit).saturating_add(1);
     let hits = match search::query(q.trim(), mode, &tags, want) {
@@ -160,7 +164,10 @@ fn index_doc(request: &IncomingRequest) -> Outcome {
         return Outcome::Err(422, "title or body required".into());
     }
     let given = body["id"].as_str().map(String::from);
-    let tags: Vec<String> = body["tags"].as_array().map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect()).unwrap_or_default();
+    let tags: Vec<String> = body["tags"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+        .unwrap_or_default();
     let url = body["url"].as_str().unwrap_or("").to_string();
     persist_and_index(given, &title, &bodytext, &url, &tags)
 }
@@ -168,7 +175,13 @@ fn index_doc(request: &IncomingRequest) -> Outcome {
 /// Upsert the record + (re)index its postings + invalidate the query cache.
 /// The record-store owns the id (it mints a ULID on create); we index under
 /// that SAME id so a hit hydrates. `given` = an existing record id to re-index.
-fn persist_and_index(given: Option<String>, title: &str, body: &str, url: &str, tags: &[String]) -> Outcome {
+fn persist_and_index(
+    given: Option<String>,
+    title: &str,
+    body: &str,
+    url: &str,
+    tags: &[String],
+) -> Outcome {
     let id = match &given {
         // re-index an existing document.
         Some(id) => match records::get(DOCS, id) {
@@ -179,7 +192,9 @@ fn persist_and_index(given: Option<String>, title: &str, body: &str, url: &str, 
                 }
                 id.clone()
             }
-            Err(records::StoreError::NotFound) => return Outcome::Err(404, "unknown document id".into()),
+            Err(records::StoreError::NotFound) => {
+                return Outcome::Err(404, "unknown document id".into())
+            }
             Err(e) => return store_err(e),
         },
         // new document: create first so we index under the store-minted id.
@@ -219,16 +234,56 @@ fn seed() -> Outcome {
 
 /// A small demo corpus with overlapping + rare terms so ranking + facets show.
 const CORPUS: &[(&str, &str, &[&str])] = &[
-    ("WebAssembly components", "The component model composes wasm modules with typed WIT interfaces.", &["kind:doc", "topic:wasm"]),
-    ("Distributed sagas", "A saga coordinates a distributed transaction with compensating actions on failure.", &["kind:doc", "topic:distributed"]),
-    ("Server-sent events", "SSE holds an HTTP connection open and streams data frames to the browser.", &["kind:doc", "topic:realtime"]),
-    ("Feature flags and rollouts", "Percentage rollouts bucket subjects on a stable hash so cohorts stay sticky.", &["kind:doc", "topic:flags"]),
-    ("Rate limiting", "A fixed-window limiter counts failures and locks a key out until the window elapses.", &["kind:note", "topic:traffic"]),
-    ("Inverted index", "Search maps tokens to postings and ranks documents by TF-IDF over the corpus.", &["kind:doc", "topic:search"]),
-    ("Idempotency keys", "Exactly-once request handling dedups on a client-supplied idempotency key.", &["kind:note", "topic:reliability"]),
-    ("Transactional outbox", "The outbox enqueues an event in the same store as the write for at-least-once delivery.", &["kind:doc", "topic:reliability"]),
-    ("Durable timers", "A scheduler persists timers so a one-shot or recurring job survives a restart.", &["kind:note", "topic:scheduling"]),
-    ("Envelope encryption", "A vault seals secrets under a master key using AEAD, so rotation re-wraps data keys.", &["kind:doc", "topic:security"]),
+    (
+        "WebAssembly components",
+        "The component model composes wasm modules with typed WIT interfaces.",
+        &["kind:doc", "topic:wasm"],
+    ),
+    (
+        "Distributed sagas",
+        "A saga coordinates a distributed transaction with compensating actions on failure.",
+        &["kind:doc", "topic:distributed"],
+    ),
+    (
+        "Server-sent events",
+        "SSE holds an HTTP connection open and streams data frames to the browser.",
+        &["kind:doc", "topic:realtime"],
+    ),
+    (
+        "Feature flags and rollouts",
+        "Percentage rollouts bucket subjects on a stable hash so cohorts stay sticky.",
+        &["kind:doc", "topic:flags"],
+    ),
+    (
+        "Rate limiting",
+        "A fixed-window limiter counts failures and locks a key out until the window elapses.",
+        &["kind:note", "topic:traffic"],
+    ),
+    (
+        "Inverted index",
+        "Search maps tokens to postings and ranks documents by TF-IDF over the corpus.",
+        &["kind:doc", "topic:search"],
+    ),
+    (
+        "Idempotency keys",
+        "Exactly-once request handling dedups on a client-supplied idempotency key.",
+        &["kind:note", "topic:reliability"],
+    ),
+    (
+        "Transactional outbox",
+        "The outbox enqueues an event in the same store as the write for at-least-once delivery.",
+        &["kind:doc", "topic:reliability"],
+    ),
+    (
+        "Durable timers",
+        "A scheduler persists timers so a one-shot or recurring job survives a restart.",
+        &["kind:note", "topic:scheduling"],
+    ),
+    (
+        "Envelope encryption",
+        "A vault seals secrets under a master key using AEAD, so rotation re-wraps data keys.",
+        &["kind:doc", "topic:security"],
+    ),
 ];
 
 // ---- stats -------------------------------------------------------------------

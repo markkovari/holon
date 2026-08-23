@@ -176,12 +176,17 @@ fn set_rule(request: &IncomingRequest, name: &str) -> Outcome {
     let tenant = body["tenant"].as_str().unwrap_or("").to_string();
     let rule = match parse_rule(&body["rule"]) {
         Some(r) => r,
-        None => return Outcome::Err(422, "rule must be \"on\", \"off\", or a number 0..=100".into()),
+        None => {
+            return Outcome::Err(422, "rule must be \"on\", \"off\", or a number 0..=100".into())
+        }
     };
     match flags::set_rule(name, &tenant, rule) {
         Ok(()) => {
             publish_change(name, &tenant, &rule_label(&rule));
-            Outcome::Json(200, json!({"flag": name, "tenant": tenant, "rule": rule_label(&rule)}).to_string())
+            Outcome::Json(
+                200,
+                json!({"flag": name, "tenant": tenant, "rule": rule_label(&rule)}).to_string(),
+            )
         }
         Err(e) => flag_err(e),
     }
@@ -192,7 +197,10 @@ fn clear_rule(path: &str, name: &str) -> Outcome {
     match flags::clear_rule(name, &tenant) {
         Ok(()) => {
             publish_change(name, &tenant, &json!("cleared"));
-            Outcome::Json(200, json!({"flag": name, "tenant": tenant, "rule": "cleared"}).to_string())
+            Outcome::Json(
+                200,
+                json!({"flag": name, "tenant": tenant, "rule": "cleared"}).to_string(),
+            )
         }
         Err(e) => flag_err(e),
     }
@@ -219,7 +227,9 @@ fn eval_one(path: &str) -> Outcome {
         return Outcome::Err(422, "flag required".into());
     }
     match flags::is_enabled(&flag, &ctx(&tenant, &subject)) {
-        Ok(on) => Outcome::Json(200, json!({"flag": flag, "subject": subject, "enabled": on}).to_string()),
+        Ok(on) => {
+            Outcome::Json(200, json!({"flag": flag, "subject": subject, "enabled": on}).to_string())
+        }
         Err(e) => flag_err(e),
     }
 }

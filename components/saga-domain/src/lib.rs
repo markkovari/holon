@@ -210,7 +210,8 @@ fn pump() -> Outcome {
     }
     let mut advanced = 0u32;
     for status in ["running", "compensating"] {
-        let live = records::find_by(SAGAS, "status", &json!(status).to_string()).unwrap_or_default();
+        let live =
+            records::find_by(SAGAS, "status", &json!(status).to_string()).unwrap_or_default();
         for e in live {
             if step(&e.id) {
                 advanced += 1;
@@ -259,7 +260,10 @@ fn step(id: &str) -> bool {
                             data["steps"][i]["state"] = json!("retrying");
                             let _ = timer::schedule_at(&timer_key, now(), b""); // backoff 0 = eligible now
                             save(id, &data);
-                            publish("saga.leg.retry", &json!({"saga": id, "leg": leg, "attempt": attempts + 1}));
+                            publish(
+                                "saga.leg.retry",
+                                &json!({"saga": id, "leg": leg, "attempt": attempts + 1}),
+                            );
                         } else {
                             // …and retries are exhausted: give up and roll back.
                             let _ = timer::cancel(&timer_key);
@@ -268,11 +272,18 @@ fn step(id: &str) -> bool {
                     } else {
                         // success (also the recovery of a previously-flaky leg)
                         let _ = timer::cancel(&timer_key);
-                        match book_leg(id, &leg, golem.as_ref().map(|(u, h)| (u.as_str(), h.as_str()))) {
+                        match book_leg(
+                            id,
+                            &leg,
+                            golem.as_ref().map(|(u, h)| (u.as_str(), h.as_str())),
+                        ) {
                             Ok(reference) => {
                                 set_leg(&mut data, i, "booked", &reference);
                                 save(id, &data);
-                                publish("saga.leg.booked", &json!({"saga": id, "leg": leg, "ref": reference}));
+                                publish(
+                                    "saga.leg.booked",
+                                    &json!({"saga": id, "leg": leg, "ref": reference}),
+                                );
                             }
                             // the leg's durable provider (Golem) failed → roll back,
                             // like any other leg failure. Prior legs are compensated.
@@ -298,7 +309,10 @@ fn step(id: &str) -> bool {
                     true
                 }
                 None => {
-                    set_status(&mut data, fire(id, "compensated").unwrap_or_else(|| "compensated".into()));
+                    set_status(
+                        &mut data,
+                        fire(id, "compensated").unwrap_or_else(|| "compensated".into()),
+                    );
                     save(id, &data);
                     publish("saga.compensated", &json!({"saga": id}));
                     true

@@ -30,7 +30,10 @@ use semver::Version;
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-selfimprove", about = "Promote a component version only if it is healthy and more capable, judged over the lattice.")]
+#[command(
+    name = "comp-selfimprove",
+    about = "Promote a component version only if it is healthy and more capable, judged over the lattice."
+)]
 struct Args {
     /// The self-target component. Must export wasi:http and report
     /// `{healthy, capability_count, capabilities}` (see `version-probe`).
@@ -82,9 +85,16 @@ fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
         bail!("bindings for slug-probe failed");
     }
     let mut build = Command::new("cargo");
-    build
-        .current_dir(&comp)
-        .args(["build", "--release", "--target", "wasm32-wasip2", "-p", "slug-probe", "-p", "slug"]);
+    build.current_dir(&comp).args([
+        "build",
+        "--release",
+        "--target",
+        "wasm32-wasip2",
+        "-p",
+        "slug-probe",
+        "-p",
+        "slug",
+    ]);
     if feature {
         build.env("COMP_SLUGWITH", "1");
     } else {
@@ -114,14 +124,17 @@ struct Case {
 /// line is `<route> => <field>=<expected>`. This is the generalization: the gate
 /// judges ANY capability by the cases its own spec declares, not a hard-coded set.
 fn load_cases(path: &Path) -> Result<Vec<Case>> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let mut cases = Vec::new();
     for line in text.lines().map(str::trim) {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let (route, rhs) = line.split_once("=>").with_context(|| format!("case has no `=>`: {line}"))?;
-        let (field, expected) = rhs.trim().split_once('=').with_context(|| format!("rhs is not field=value: {rhs}"))?;
+        let (route, rhs) =
+            line.split_once("=>").with_context(|| format!("case has no `=>`: {line}"))?;
+        let (field, expected) =
+            rhs.trim().split_once('=').with_context(|| format!("rhs is not field=value: {rhs}"))?;
         cases.push(Case {
             path: route.trim().to_string(),
             field: field.trim().to_string(),
@@ -136,7 +149,8 @@ fn load_cases(path: &Path) -> Result<Vec<Case>> {
 
 /// Call a route over the lattice and return its JSON response, if any.
 fn call_json(fleet: &Fleet, host: &str, path: &str) -> Option<Value> {
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
     let r = http
         .get(format!("http://127.0.0.1:{}{path}", fleet.ingress_port))
         .header("host", host)
@@ -152,7 +166,9 @@ fn passing(fleet: &Fleet, host: &str, cases: &[Case]) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter(|(_, c)| {
-            call_json(fleet, host, &c.path).and_then(|v| v[&c.field].as_str().map(str::to_string)).as_deref()
+            call_json(fleet, host, &c.path)
+                .and_then(|v| v[&c.field].as_str().map(str::to_string))
+                .as_deref()
                 == Some(c.expected.as_str())
         })
         .map(|(i, _)| i)
@@ -191,7 +207,8 @@ fn behavior_gate(cases_path: &Path) -> Result<()> {
     let cand_pass = passing(&fleet, host, &cases);
     println!("  candidate · passes {:?} of {} cases over the lattice", cand_pass, cases.len());
 
-    let regressed: Vec<usize> = base_pass.iter().copied().filter(|i| !cand_pass.contains(i)).collect();
+    let regressed: Vec<usize> =
+        base_pass.iter().copied().filter(|i| !cand_pass.contains(i)).collect();
     let gained: Vec<usize> = cand_pass.iter().copied().filter(|i| !base_pass.contains(i)).collect();
     println!();
     if regressed.is_empty() && !gained.is_empty() {
@@ -263,7 +280,10 @@ fn build_probe(components: &Path, component: &str, tag: &str) -> Result<Vec<u8>>
         .output()
         .context("cargo component check (bindings)")?;
     if !chk.status.success() {
-        bail!("generating bindings for {component} failed:\n{}", String::from_utf8_lossy(&chk.stderr));
+        bail!(
+            "generating bindings for {component} failed:\n{}",
+            String::from_utf8_lossy(&chk.stderr)
+        );
     }
     let mut cmd = Command::new("cargo");
     cmd.current_dir(components)
@@ -330,7 +350,13 @@ impl Api {
     }
 
     fn post(&self, path: &str, body: Value) -> (u16, Value) {
-        match self.http.post(format!("{}{path}", self.base)).bearer_auth(&self.token).json(&body).send() {
+        match self
+            .http
+            .post(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+        {
             Ok(r) => (r.status().as_u16(), r.json().unwrap_or(Value::Null)),
             Err(e) => (0, Value::String(format!("transport: {e}"))),
         }
@@ -339,7 +365,8 @@ impl Api {
 
 /// The whole self-report the running version answers with, over the lattice.
 fn report(fleet: &Fleet, host: &str) -> Option<Value> {
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
     let r = http
         .get(format!("http://127.0.0.1:{}/", fleet.ingress_port))
         .header("host", host)
@@ -366,8 +393,8 @@ fn deploy_and_read(
     api.upload(id, wasm)?;
     let node = json!({ "id": id, "config": { "capabilities": caps } });
     if dep_id.is_none() {
-        let (code, dep) =
-            api.post("/api/deployments", json!({ "name": id, "nodes": [node.clone()], "edges": [] }));
+        let (code, dep) = api
+            .post("/api/deployments", json!({ "name": id, "nodes": [node.clone()], "edges": [] }));
         if code != 201 {
             bail!("deploy create failed: {dep}");
         }
@@ -380,7 +407,8 @@ fn deploy_and_read(
         // Save carries the nodes (with config), so a save both stages the new bytes
         // and updates the registry the instance reads. Retried because an upload
         // clears the digest and the push pass must stage it first (ADR-0006).
-        let (sc, sb) = api.post(&format!("/api/deployments/{did}/save"), json!({ "nodes": [node.clone()] }));
+        let (sc, sb) =
+            api.post(&format!("/api/deployments/{did}/save"), json!({ "nodes": [node.clone()] }));
         last_save = json!({ "code": sc, "body": sb });
         let r = report(fleet, host);
         let tag_ok = r.as_ref().and_then(|r| r["tag"].as_str()) == Some(want);
@@ -401,7 +429,8 @@ fn deploy_and_read(
 /// `name:semver` list the probe's config wants — comments and blanks stripped.
 fn registry_caps(tree: &Path) -> Result<String> {
     let path = tree.join("components/capman/capabilities.txt");
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     Ok(text
         .lines()
         .map(str::trim)
@@ -481,8 +510,10 @@ fn main() -> Result<()> {
     // capman/capabilities.txt, handed to the instance as config). A caps string
     // is the registry directly, for a reproducible run against the local tree.
     let here = repo_root().join("components");
-    let base_dir = args.baseline_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
-    let cand_dir = args.candidate_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
+    let base_dir =
+        args.baseline_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
+    let cand_dir =
+        args.candidate_src.clone().map(|d| d.join("components")).unwrap_or_else(|| here.clone());
     let base_registry = match &args.baseline_src {
         Some(d) => registry_caps(d)?,
         None => args.baseline.clone().context("give --baseline-src or --baseline")?,
@@ -501,12 +532,30 @@ fn main() -> Result<()> {
     let mut dep_id: Option<String> = None;
 
     // --- deploy the baseline and ask it what it is --------------------------
-    let r_base = deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_wasm, "baseline", &base_registry)?;
+    let r_base = deploy_and_read(
+        &api,
+        &fleet,
+        id,
+        &mut dep_id,
+        host,
+        base_wasm,
+        "baseline",
+        &base_registry,
+    )?;
     let base_caps = caps_of(&r_base);
     println!("  baseline  · healthy={} · {}", r_base["healthy"], show(&base_caps));
 
     // --- deploy the candidate over the top and ask again --------------------
-    let r_cand = deploy_and_read(&api, &fleet, id, &mut dep_id, host, cand_wasm.clone(), "candidate", &cand_registry)?;
+    let r_cand = deploy_and_read(
+        &api,
+        &fleet,
+        id,
+        &mut dep_id,
+        host,
+        cand_wasm.clone(),
+        "candidate",
+        &cand_registry,
+    )?;
     let cand_caps = caps_of(&r_cand);
     println!("  candidate · healthy={} · {}", r_cand["healthy"], show(&cand_caps));
 
@@ -545,8 +594,16 @@ fn main() -> Result<()> {
         };
         println!("  ROLL BACK — {reason}.");
         let base_again = build_probe(&base_dir, &args.component, "baseline")?;
-        let restored =
-            deploy_and_read(&api, &fleet, id, &mut dep_id, host, base_again, "baseline", &base_registry)?;
+        let restored = deploy_and_read(
+            &api,
+            &fleet,
+            id,
+            &mut dep_id,
+            host,
+            base_again,
+            "baseline",
+            &base_registry,
+        )?;
         println!("  restored baseline over the lattice: {}", show(&caps_of(&restored)));
         bail!("candidate rejected: {reason}");
     }

@@ -336,7 +336,11 @@ pub fn compose(name: &str, catalog: &Catalog) -> Result<Vec<u8>, String> {
     compose_inner(name, catalog, &mut Vec::new())
 }
 
-fn compose_inner(name: &str, catalog: &Catalog, stack: &mut Vec<String>) -> Result<Vec<u8>, String> {
+fn compose_inner(
+    name: &str,
+    catalog: &Catalog,
+    stack: &mut Vec<String>,
+) -> Result<Vec<u8>, String> {
     if stack.iter().any(|s| s == name) {
         stack.push(name.to_string());
         return Err(format!("capability cycle: {}", stack.join(" → ")));
@@ -445,15 +449,10 @@ pub fn tags_for(writable: &[String], catalog: &Catalog) -> Vec<String> {
 
 /// The directories built components normally live in.
 pub fn default_dirs(repo_root: &Path) -> Vec<PathBuf> {
-    [
-        "wasm32-wasip2/release",
-        "wasm32-wasip2/debug",
-        "wasm32-wasip1/release",
-        "wasm32-wasip1/debug",
-    ]
-    .iter()
-    .map(|d| repo_root.join("components/target").join(d))
-    .collect()
+    ["wasm32-wasip2/release", "wasm32-wasip2/debug", "wasm32-wasip1/release", "wasm32-wasip1/debug"]
+        .iter()
+        .map(|d| repo_root.join("components/target").join(d))
+        .collect()
 }
 
 #[cfg(test)]

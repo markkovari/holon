@@ -81,17 +81,26 @@ fn post_invoice(id: &str, route: &Route) -> Reply {
         id: id.to_string(),
         memo: id.to_string(),
         lines: vec![
-            ledger::Line { account: receivable.clone(), amount: total_units, side: ledger::Side::Debit },
-            ledger::Line { account: revenue.clone(), amount: total_units, side: ledger::Side::Credit },
+            ledger::Line {
+                account: receivable.clone(),
+                amount: total_units,
+                side: ledger::Side::Debit,
+            },
+            ledger::Line {
+                account: revenue.clone(),
+                amount: total_units,
+                side: ledger::Side::Credit,
+            },
         ],
     };
     if let Err(err) = ledger::validate(&entry) {
         // The ledger refused; an unbalanced entry posted anyway is how a ledger stops
         // being one, so nothing below this line runs.
         return match err {
-            ledger::LedgerError::Unbalanced((debits, credits)) => {
-                Reply::json(500, json!({ "error": "unbalanced", "debits": debits, "credits": credits }))
-            }
+            ledger::LedgerError::Unbalanced((debits, credits)) => Reply::json(
+                500,
+                json!({ "error": "unbalanced", "debits": debits, "credits": credits }),
+            ),
             _ => Reply::err(500, "unbalanced"),
         };
     }

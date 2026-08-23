@@ -117,7 +117,8 @@ impl Api {
     }
 
     fn goal(&self, project: &str, title: &str) -> String {
-        let (code, v) = self.post(&format!("/api/projects/{project}/goals"), json!({ "title": title }));
+        let (code, v) =
+            self.post(&format!("/api/projects/{project}/goals"), json!({ "title": title }));
         assert_eq!(code, 201, "queueing `{title}` failed: {v}");
         v["id"].as_str().unwrap().to_string()
     }
@@ -470,10 +471,8 @@ fn the_platform_refuses_work_the_fleet_cannot_place() {
 /// anything.
 #[test]
 fn a_stale_fleet_report_stops_new_work() {
-    let fleet = fleet_with(
-        "stale",
-        &[("COMP_MAX_PLACEMENT_LAG", "10000"), ("COMP_STATUS_MAX_AGE", "1")],
-    );
+    let fleet =
+        fleet_with("stale", &[("COMP_MAX_PLACEMENT_LAG", "10000"), ("COMP_STATUS_MAX_AGE", "1")]);
     let api = Api::new(fleet.platform_url());
 
     // A fresh report is admitted: the limit is enormous, so only age can refuse.

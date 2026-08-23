@@ -81,7 +81,11 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
     // THE trap: an empty rule_id is "no rule matched", not "denied" — only a
     // non-empty rule_id means the policy actually decided anything.
     let final_state = if !decision.rule_id.is_empty() {
-        if decision.allowed { "allowed" } else { "blocked" }
+        if decision.allowed {
+            "allowed"
+        } else {
+            "blocked"
+        }
     } else {
         match label_score.label.as_str() {
             "allow" => "allowed",

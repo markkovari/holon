@@ -64,7 +64,11 @@ async fn increment_starts_at_zero_and_accumulates() {
     let k = bucket("counter");
     assert_eq!(b.increment(&k, "hits", 1).unwrap(), 1, "an absent counter starts at zero");
     assert_eq!(b.increment(&k, "hits", 4).unwrap(), 5);
-    assert_eq!(b.get(&k, "hits").unwrap().as_deref(), Some(&b"5"[..]), "stored as a decimal string");
+    assert_eq!(
+        b.get(&k, "hits").unwrap().as_deref(),
+        Some(&b"5"[..]),
+        "stored as a decimal string"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -94,15 +98,23 @@ async fn compare_and_set_commits_once_and_then_conflicts() {
     let first = b.set_if_revision(&k, "row", b"one", 0).unwrap();
     let rev = match first {
         Cas::Committed(r) => r,
-        Cas::Conflict(r) => panic!("a create against an absent key must commit, got conflict at {r}"),
+        Cas::Conflict(r) => {
+            panic!("a create against an absent key must commit, got conflict at {r}")
+        }
     };
 
     // The same guard a second time is the lost update ADR-0065 measured.
     match b.set_if_revision(&k, "row", b"two", 0).unwrap() {
-        Cas::Conflict(seen) => assert_eq!(seen, rev, "a conflict reports the revision actually held"),
+        Cas::Conflict(seen) => {
+            assert_eq!(seen, rev, "a conflict reports the revision actually held")
+        }
         Cas::Committed(_) => panic!("a stale guard must NOT commit — this is the lost update"),
     }
-    assert_eq!(b.get(&k, "row").unwrap().as_deref(), Some(&b"one"[..]), "the refused write left no trace");
+    assert_eq!(
+        b.get(&k, "row").unwrap().as_deref(),
+        Some(&b"one"[..]),
+        "the refused write left no trace"
+    );
 
     match b.set_if_revision(&k, "row", b"two", rev).unwrap() {
         Cas::Committed(next) => assert!(next > rev),
@@ -121,7 +133,11 @@ async fn two_buckets_do_not_see_each_other() {
     assert_eq!(b.get(&z, "same-key").unwrap().as_deref(), Some(&b"from-z"[..]));
     // Tenancy is the point: `BucketId` is already namespaced, and a backend that
     // flattened it would leak one tenant's data into another's reads.
-    assert!(!b.list_keys(&a).unwrap().iter().any(|key| b.get(&z, key).unwrap().as_deref() == Some(&b"from-a"[..])));
+    assert!(!b
+        .list_keys(&a)
+        .unwrap()
+        .iter()
+        .any(|key| b.get(&z, key).unwrap().as_deref() == Some(&b"from-a"[..])));
 }
 
 #[tokio::test(flavor = "multi_thread")]

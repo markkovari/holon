@@ -144,8 +144,17 @@ pub struct OpenLoad {
 impl OpenLoad {
     pub fn stop(self) -> Report {
         self.stop.store(true, Ordering::Relaxed);
-        let mut all =
-            Report { due: 0, ok: 0, shed: 0, failed: 0, statuses: Default::default(), first_refusal: None, refusal_window: None, first_error: None, latencies: Vec::new() };
+        let mut all = Report {
+            due: 0,
+            ok: 0,
+            shed: 0,
+            failed: 0,
+            statuses: Default::default(),
+            first_refusal: None,
+            refusal_window: None,
+            first_error: None,
+            latencies: Vec::new(),
+        };
         for t in self.threads {
             if let Ok(r) = t.join() {
                 all.due += r.due;
@@ -208,7 +217,8 @@ pub fn repo_root() -> std::path::PathBuf {
 /// what a process SAID — the phase timings a host prints, the reason a reconciler
 /// gives — and a test that cannot read them has to guess.
 fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
-    let f = std::fs::File::create(log).unwrap_or_else(|e| panic!("creating {}: {e}", log.display()));
+    let f =
+        std::fs::File::create(log).unwrap_or_else(|e| panic!("creating {}: {e}", log.display()));
     let err = f.try_clone().unwrap();
     Kill(
         cmd.stdout(Stdio::from(f))
@@ -230,11 +240,7 @@ fn spawn_logged(name: &str, cmd: &mut Command, log: &std::path::Path) -> Kill {
 /// small, and the alternative — children reporting a port they chose — needs a
 /// channel out of every process here, including `nats-server`.
 pub fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("no free port")
-        .local_addr()
-        .unwrap()
-        .port()
+    std::net::TcpListener::bind("127.0.0.1:0").expect("no free port").local_addr().unwrap().port()
 }
 
 impl Fleet {
@@ -355,7 +361,11 @@ impl Fleet {
         let host_bin = std::env::var("COMP_HOST_BIN")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| root.join("host/target/release/comp-host"));
-        assert!(host_bin.exists(), "missing {} — cargo build --release in host/", host_bin.display());
+        assert!(
+            host_bin.exists(),
+            "missing {} — cargo build --release in host/",
+            host_bin.display()
+        );
 
         let (nats_port, platform_port, ingress_port) = (free_port(), free_port(), free_port());
         let dir = tempfile::tempdir().unwrap();
@@ -371,9 +381,12 @@ impl Fleet {
         let mut children = Vec::new();
 
         let mut nats = Command::new("nats-server");
-        nats.args(["-js", "-sd"])
-            .arg(sp.join("nats"))
-            .args(["-a", "127.0.0.1", "-p", &nats_port.to_string()]);
+        nats.args(["-js", "-sd"]).arg(sp.join("nats")).args([
+            "-a",
+            "127.0.0.1",
+            "-p",
+            &nats_port.to_string(),
+        ]);
         children.push(spawn_logged("nats-server", &mut nats, &sp.join("nats.log")));
         std::thread::sleep(Duration::from_secs(2));
 
@@ -488,7 +501,14 @@ impl Fleet {
             host_ports.push(host_port);
             let mut c = Command::new(&host_bin);
             c.current_dir(&root)
-                .args(["--lattice-nats", &nats_url, "--node", &format!("n{n}"), "--lattice", lattice])
+                .args([
+                    "--lattice-nats",
+                    &nats_url,
+                    "--node",
+                    &format!("n{n}"),
+                    "--lattice",
+                    lattice,
+                ])
                 .args(["--addr", &format!("127.0.0.1:{host_port}")])
                 .args(["--advertise-addr", &format!("127.0.0.1:{host_port}")])
                 // Where a granted secret is fetched from (ADR-0051). Every node in a
@@ -539,9 +559,14 @@ impl Fleet {
         children.push(rec_child);
 
         let mut ing = Command::new(bin_path("comp-ingress"));
-        ing.current_dir(&root)
-            .args(["--addr", &format!("127.0.0.1:{ingress_port}")])
-            .args(["--nats-url", &nats_url, "--lattice", lattice, "--refresh-secs", "2"]);
+        ing.current_dir(&root).args(["--addr", &format!("127.0.0.1:{ingress_port}")]).args([
+            "--nats-url",
+            &nats_url,
+            "--lattice",
+            lattice,
+            "--refresh-secs",
+            "2",
+        ]);
         if let Some(m) = max_inflight {
             ing.args(["--max-inflight", &m.to_string()]);
         }
@@ -574,10 +599,19 @@ impl Fleet {
     pub fn second_ingress(&mut self) -> u16 {
         let port = free_port();
         let mut ing = Command::new(bin_path("comp-ingress"));
-        ing.current_dir(repo_root())
-            .args(["--addr", &format!("127.0.0.1:{port}")])
-            .args(["--nats-url", &self.nats_url, "--lattice", &self.lattice, "--refresh-secs", "2"]);
-        self._children.push(spawn_logged("comp-ingress-b", &mut ing, &self.dir.path().join("ingress-b.log")));
+        ing.current_dir(repo_root()).args(["--addr", &format!("127.0.0.1:{port}")]).args([
+            "--nats-url",
+            &self.nats_url,
+            "--lattice",
+            &self.lattice,
+            "--refresh-secs",
+            "2",
+        ]);
+        self._children.push(spawn_logged(
+            "comp-ingress-b",
+            &mut ing,
+            &self.dir.path().join("ingress-b.log"),
+        ));
         port
     }
 
@@ -667,9 +701,9 @@ impl Fleet {
             while Instant::now() < deadline {
                 if let Ok(entries) = comp_lattice::Inventory::read_all(&inv).await {
                     let placed = entries.iter().any(|e| {
-                        serde_json::from_slice::<serde_json::Value>(&comp_lattice::snapshot::expand(
-                            e.value.clone(),
-                        ))
+                        serde_json::from_slice::<serde_json::Value>(
+                            &comp_lattice::snapshot::expand(e.value.clone()),
+                        )
                         .ok()
                         .and_then(|v| v["instances"].as_array().cloned())
                         .is_some_and(|is| {
@@ -764,11 +798,13 @@ impl Fleet {
 
     /// Which node answered, over `n` requests to `port`. The `x-comp-node` header is
     /// the only way to see the balance from outside.
-    pub fn who_answers(&self, port: u16, n: usize) -> (std::collections::BTreeMap<String, usize>, usize) {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap();
+    pub fn who_answers(
+        &self,
+        port: u16,
+        n: usize,
+    ) -> (std::collections::BTreeMap<String, usize>, usize) {
+        let client =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
         let mut seen = std::collections::BTreeMap::new();
         let mut failed = 0;
         for i in 0..n {
@@ -861,7 +897,8 @@ impl Fleet {
     /// wrong here".
     pub fn platform_log(&self) -> String {
         let stub = std::fs::read_to_string(self.dir.path().join("stub.log")).unwrap_or_default();
-        let real = std::fs::read_to_string(self.dir.path().join("platform.log")).unwrap_or_default();
+        let real =
+            std::fs::read_to_string(self.dir.path().join("platform.log")).unwrap_or_default();
         format!("{stub}{real}")
     }
 
@@ -943,9 +980,7 @@ impl Fleet {
     ) -> OpenLoad {
         let stop = Arc::new(AtomicBool::new(false));
         let url = format!("http://127.0.0.1:{port}/api/ratelimit");
-        let gap = rate.map(|r| {
-            Duration::from_secs_f64(1.0 / (r as f64 / workers as f64).max(1.0))
-        });
+        let gap = rate.map(|r| Duration::from_secs_f64(1.0 / (r as f64 / workers as f64).max(1.0)));
         let mut threads = Vec::new();
         for w in 0..workers {
             let (stop, url) = (stop.clone(), url.clone());
@@ -959,8 +994,17 @@ impl Fleet {
                     .timeout(Duration::from_secs(10))
                     .build()
                     .unwrap();
-                let mut r =
-                    Report { due: 0, ok: 0, shed: 0, failed: 0, statuses: Default::default(), first_refusal: None, refusal_window: None, first_error: None, latencies: Vec::new() };
+                let mut r = Report {
+                    due: 0,
+                    ok: 0,
+                    shed: 0,
+                    failed: 0,
+                    statuses: Default::default(),
+                    first_refusal: None,
+                    refusal_window: None,
+                    first_error: None,
+                    latencies: Vec::new(),
+                };
                 let start = Instant::now();
                 let mut n: u32 = 0;
                 while !stop.load(Ordering::Relaxed) {
@@ -1022,10 +1066,8 @@ impl Fleet {
 
     /// Poll until a request to `host` is answered, or give up.
     pub fn serves(&self, host: &str, within: Duration) -> bool {
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap();
+        let client =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
         let url = format!("http://127.0.0.1:{}/api/ratelimit", self.ingress_port);
         let deadline = Instant::now() + within;
         while Instant::now() < deadline {
