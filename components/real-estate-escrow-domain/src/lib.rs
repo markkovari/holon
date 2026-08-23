@@ -18,7 +18,6 @@ use bindings::wasi::http::types::{
 struct Component;
 
 const TENANT: &str = "real-estate-escrow";
-const DOMAIN: &str = "Real Estate Escrow Management";
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
@@ -79,7 +78,7 @@ fn serve_html() -> Outcome {
 
 fn bearer(request: &IncomingRequest) -> Option<String> {
     let headers = request.headers();
-    let vals = headers.get(&"authorization".to_string());
+    let vals = headers.get("authorization");
     let raw = vals.first()?;
     let s = String::from_utf8(raw.clone()).ok()?;
     s.strip_prefix("Bearer ").map(|t| t.to_string())
@@ -190,7 +189,7 @@ fn list_items(request: &IncomingRequest) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let mut items: Vec<Value> = records::find_by("transactions", "owner", &json!(p.subject).to_string())
+    let items: Vec<Value> = records::find_by("transactions", "owner", &json!(p.subject).to_string())
         .unwrap_or_default()
         .iter()
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
@@ -216,7 +215,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         }
     };
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type]);
+    let _ = headers.set("content-type", &[content_type]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(code);
     let out = response.body().expect("outgoing body");

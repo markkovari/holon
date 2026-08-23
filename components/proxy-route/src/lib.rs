@@ -103,7 +103,7 @@ fn fetch(
     };
 
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     for (k, v) in extra_headers {
         let _ = headers.set(k, &[v.as_bytes().to_vec()]);
     }
@@ -137,7 +137,7 @@ fn fetch(
     let status = resp.status();
     let content_type = resp
         .headers()
-        .get(&"content-type".to_string())
+        .get("content-type")
         .into_iter()
         .next()
         .and_then(|v| String::from_utf8(v).ok())

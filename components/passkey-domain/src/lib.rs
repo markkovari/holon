@@ -215,7 +215,7 @@ fn credential_view(v: &Value) -> Value {
 // ---- sessions ---------------------------------------------------------------
 
 fn bearer(request: &IncomingRequest) -> Option<String> {
-    let h = request.headers().get(&"authorization".to_string());
+    let h = request.headers().get("authorization");
     let raw = String::from_utf8(h.into_iter().next()?).ok()?;
     raw.strip_prefix("bearer ")
         .or_else(|| raw.strip_prefix("Bearer "))
@@ -607,7 +607,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string()),
     };
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(code);
     let out = response.body().expect("outgoing body");

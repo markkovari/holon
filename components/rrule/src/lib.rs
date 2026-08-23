@@ -89,7 +89,7 @@ fn expand_impl(dtstart: &str, r: &Rule, from: &str, to: &str) -> Result<Vec<Stri
     // Stop conditions shared by both frequencies. `occ` is the candidate day.
     // Returns true if we should stop the whole expansion.
     let stop = |occ: i64, n: usize| -> bool {
-        (count > 0 && n >= count) || until.map_or(false, |u| occ > u) || occ > wt || n > CAP
+        (count > 0 && n >= count) || until.is_some_and(|u| occ > u) || occ > wt || n > CAP
     };
 
     match r.frequency {

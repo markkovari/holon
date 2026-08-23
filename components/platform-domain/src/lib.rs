@@ -270,7 +270,7 @@ fn login(request: &IncomingRequest) -> Outcome {
 
 /// The verified caller. Roles come from the RBAC store, never from the token.
 fn caller(request: &IncomingRequest) -> Option<auth_types::Principal> {
-    let raw = request.headers().get(&"authorization".to_string());
+    let raw = request.headers().get("authorization");
     let header = String::from_utf8(raw.into_iter().next()?).ok()?;
     let token = header
         .strip_prefix("bearer ")
@@ -820,7 +820,7 @@ fn fetch_token_mint(request: &IncomingRequest) -> Outcome {
 fn secret_fetch(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
     let token = request
         .headers()
-        .get(&"x-fetch-token".to_string())
+        .get("x-fetch-token")
         .into_iter()
         .next()
         .and_then(|v| String::from_utf8(v).ok())
@@ -1495,7 +1495,7 @@ fn claim_fetch_nonce(request: &IncomingRequest) -> Result<(), Outcome> {
     let header = |name: &str| -> String {
         request
             .headers()
-            .get(&name.to_string())
+            .get(name)
             .into_iter()
             .next()
             .and_then(|v| String::from_utf8(v).ok())
@@ -1569,7 +1569,7 @@ fn valid_env_name(env: &str) -> bool {
 fn internal_env_spawn(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
     let token = request
         .headers()
-        .get(&"x-fetch-token".to_string())
+        .get("x-fetch-token")
         .into_iter()
         .next()
         .and_then(|v| String::from_utf8(v).ok())
@@ -1916,7 +1916,7 @@ fn internal_ok(request: &IncomingRequest) -> bool {
     }
     request
         .headers()
-        .get(&"x-platform-secret".to_string())
+        .get("x-platform-secret")
         .into_iter()
         .next()
         .and_then(|v| String::from_utf8(v).ok())
@@ -3213,7 +3213,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         Outcome::Structured(c, v) => (c, "application/json".to_string(), v.to_string().into_bytes()),
     };
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[ctype.into_bytes()]);
+    let _ = headers.set("content-type", &[ctype.into_bytes()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(code);
     let out = response.body().expect("outgoing body");

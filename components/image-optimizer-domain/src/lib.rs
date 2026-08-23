@@ -1,15 +1,11 @@
 #[allow(warnings)] mod bindings;
-use bindings::auth::identity::{accounts, authorizer, session};
-use bindings::auth::identity::types::{Principal, AuthError};
-use bindings::records::store::store as records;
-use serde_json::{json, Map, Value};
+use serde_json::json;
 use bindings::media::image::optimizer;
 use bindings::wasi::keyvalue::store;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{ Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam };
 
 struct Component;
-const TENANT: &str = "image-optimizer";
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
@@ -46,7 +42,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string(), b"application/json".to_vec()),
     };
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type]);
+    let _ = headers.set("content-type", &[content_type]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(code);
     let out = response.body().expect("outgoing body");

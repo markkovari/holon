@@ -215,7 +215,7 @@ fn request(method: Method, url: &str, body: Option<&[u8]>) -> Result<Vec<u8>, Au
     let headers = Fields::new();
     if body.is_some() {
         let _ = headers.set(
-            &"content-type".to_string(),
+            "content-type",
             &[b"application/x-www-form-urlencoded".to_vec()],
         );
     }

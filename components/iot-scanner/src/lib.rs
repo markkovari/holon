@@ -24,7 +24,7 @@ impl Guest for Component {
             Err(_) => return vec![],
         };
         
-        let _ = res.subscribe().block();
+        res.subscribe().block();
         let incoming = match res.get() {
             Some(Ok(Ok(r))) => r,
             _ => return vec![],

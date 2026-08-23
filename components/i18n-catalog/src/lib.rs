@@ -234,7 +234,7 @@ impl Guest for Component {
         }
         // nothing matched -> default if available, else first available, else default.
         let def = default_locale();
-        if available.iter().any(|a| *a == def) {
+        if available.contains(&def) {
             def
         } else if let Some(first) = available.first() {
             first.clone()

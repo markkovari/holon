@@ -294,7 +294,7 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 
 fn bearer_token(request: &IncomingRequest) -> Option<String> {
     let headers = request.headers();
-    for v in headers.get(&"authorization".to_string()) {
+    for v in headers.get("authorization") {
         if let Ok(s) = String::from_utf8(v) {
             if let Some(tok) = s.strip_prefix("Bearer ") {
                 return Some(tok.trim().to_string());
@@ -353,7 +353,7 @@ fn error_response(e: &AuthError) -> (u16, &'static str) {
 
 fn respond(response_out: ResponseOutparam, status: u16, body: &str) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

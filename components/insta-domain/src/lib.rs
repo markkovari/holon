@@ -61,7 +61,7 @@ fn emit(response_out: ResponseOutparam, outcome: Outcome) {
     };
 
     let fields = Fields::new();
-    let _ = fields.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = fields.set("content-type", &[b"application/json".to_vec()]);
 
     let response = OutgoingResponse::new(fields);
     response.set_status_code(status).unwrap();
@@ -80,7 +80,7 @@ fn get_bucket() -> bindings::wasi::keyvalue::store::Bucket {
 
 fn get_auth_token(request: &IncomingRequest) -> Option<String> {
     let headers = request.headers();
-    let values = headers.get(&"authorization".to_string());
+    let values = headers.get("authorization");
     if !values.is_empty() {
         if let Ok(s) = String::from_utf8(values[0].clone()) {
             if s.to_lowercase().starts_with("bearer ") {
@@ -243,7 +243,7 @@ fn login_user(request: &IncomingRequest) -> Outcome {
     let password = json["password"].as_str().unwrap_or("").to_string();
     
     // Perform a 'full' authentication check
-    if password != "password" && password != "admin" && password != "" {
+    if password != "password" && password != "admin" && !password.is_empty() {
         return Outcome::Err(401, "Invalid credentials".into());
     }
     
