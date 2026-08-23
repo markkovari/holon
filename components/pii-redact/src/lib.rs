@@ -554,3 +554,87 @@ impl Guest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spans(text: &str, k: Kind) -> Vec<(usize, usize)> {
+        match k {
+            Kind::Email => scan_email(text.as_bytes()),
+            Kind::CreditCard => scan_credit_card(text.as_bytes()),
+            Kind::Ssn => scan_ssn(text.as_bytes()),
+            Kind::Phone => scan_phone(text.as_bytes()),
+            Kind::Ip => scan_ip(text.as_bytes()),
+        }
+    }
+
+    /// Luhn is the whole difference between a card number and sixteen digits.
+    ///
+    /// Both directions are pinned. A false NEGATIVE leaks a card; a false
+    /// POSITIVE redacts an order number and destroys data the caller needed,
+    /// and only one of those is usually tested.
+    #[test]
+    fn luhn_accepts_real_check_digits_and_rejects_near_misses() {
+        assert!(luhn(&[4, 5, 3, 9, 1, 4, 8, 8, 0, 3, 4, 3, 6, 4, 6, 7]));
+        assert!(luhn(&[7, 9, 9, 2, 7, 3, 9, 8, 7, 1, 3]));
+        // One digit off is not a card.
+        assert!(!luhn(&[4, 5, 3, 9, 1, 4, 8, 8, 0, 3, 4, 3, 6, 4, 6, 8]));
+        // Two digits transposed is the error Luhn exists to catch.
+        assert!(!luhn(&[7, 9, 9, 2, 7, 3, 9, 8, 7, 3, 1]));
+    }
+
+    #[test]
+    fn a_card_is_found_with_or_without_separators() {
+        assert_eq!(spans("pay 4539148803436467 now", Kind::CreditCard).len(), 1);
+        assert_eq!(spans("4539-1488-0343-6467", Kind::CreditCard).len(), 1);
+        assert_eq!(spans("4539 1488 0343 6467", Kind::CreditCard).len(), 1);
+        // Sixteen digits that fail the check digit are left alone.
+        assert!(spans("4539148803436468", Kind::CreditCard).is_empty());
+    }
+
+    /// An SSN is exactly `NNN-NN-NNNN`, and the guards on both ends are the
+    /// interesting part: without them the middle of a longer number matches and
+    /// the redaction lands in the wrong place.
+    #[test]
+    fn an_ssn_does_not_match_inside_a_longer_number() {
+        assert_eq!(spans("ssn 123-45-6789 ok", Kind::Ssn), vec![(4, 11)]);
+        assert!(spans("9123-45-6789", Kind::Ssn).is_empty(), "a leading digit disqualifies it");
+        assert!(spans("123-45-67891", Kind::Ssn).is_empty(), "a trailing digit disqualifies it");
+        assert!(spans("123456789", Kind::Ssn).is_empty(), "hyphens are required");
+    }
+
+    /// Priority is what stops a card being reported as a phone number.
+    ///
+    /// Both scanners match a long run of digits, and the placeholder a caller
+    /// sees decides how the value is handled downstream — `[CARD]` and `[PHONE]`
+    /// are not interchangeable to anything that reads the output.
+    #[test]
+    fn a_higher_priority_kind_claims_an_overlapping_span() {
+        let opts = Options { kinds: vec![] };
+        let found = scan("call 4539148803436467 today", &opts);
+        assert_eq!(found.len(), 1, "one span, not one per scanner");
+        assert!(matches!(found[0].kind, Kind::CreditCard), "the card wins over the phone shape");
+    }
+
+    /// Findings come back sorted by start, because a caller replaces spans in
+    /// order and unsorted spans corrupt every offset after the first swap.
+    #[test]
+    fn findings_are_sorted_by_start() {
+        let opts = Options { kinds: vec![] };
+        let found = scan("a@b.com then 123-45-6789 then c@d.org", &opts);
+        assert!(found.len() >= 2);
+        let starts: Vec<usize> = found.iter().map(|f| f.start as usize).collect();
+        let mut sorted = starts.clone();
+        sorted.sort_unstable();
+        assert_eq!(starts, sorted);
+    }
+
+    /// An address needs a plausible TLD, or every `foo@bar` in prose is PII.
+    #[test]
+    fn an_email_needs_a_tld() {
+        assert_eq!(spans("mail me at a@b.com ok", Kind::Email).len(), 1);
+        assert!(spans("a@localhost", Kind::Email).is_empty());
+        assert!(spans("not an @ sign", Kind::Email).is_empty());
+    }
+}
