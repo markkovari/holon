@@ -1,0 +1,182 @@
+{
+ "titles": [
+  "Drive the queue",
+  "Fuel is money",
+  "Diversity beyond seed",
+  "A branch reads what the swarm learned",
+  "Nothing criticises a gate"
+ ],
+ "cases": [
+  {
+   "q": "show me the failed ones",
+   "want": {
+    "kind": "state",
+    "state": "failed"
+   }
+  },
+  {
+   "q": "what's queued",
+   "want": {
+    "kind": "state",
+    "state": "queued"
+   }
+  },
+  {
+   "q": "anything running right now?",
+   "want": {
+    "kind": "state",
+    "state": "running"
+   }
+  },
+  {
+   "q": "which goals are waiting on me",
+   "want": {
+    "kind": "state",
+    "state": "awaiting-human"
+   }
+  },
+  {
+   "q": "show done",
+   "want": {
+    "kind": "state",
+    "state": "done"
+   }
+  },
+  {
+   "q": "dead letter queue",
+   "want": {
+    "kind": "state",
+    "state": "failed"
+   }
+  },
+  {
+   "q": "hide everything except running",
+   "want": {
+    "kind": "state",
+    "state": "running"
+   }
+  },
+  {
+   "q": "goals that need my review",
+   "want": {
+    "kind": "state",
+    "state": "awaiting-human"
+   }
+  },
+  {
+   "q": "what have we finished",
+   "want": {
+    "kind": "state",
+    "state": "done"
+   }
+  },
+  {
+   "q": "stuff that blew up",
+   "want": {
+    "kind": "state",
+    "state": "failed"
+   }
+  },
+  {
+   "q": "not started yet",
+   "want": {
+    "kind": "state",
+    "state": "queued"
+   }
+  },
+  {
+   "q": "in flight",
+   "want": {
+    "kind": "state",
+    "state": "running"
+   }
+  },
+  {
+   "q": "open drive the queue",
+   "want": {
+    "kind": "focus",
+    "title": "Drive the queue"
+   }
+  },
+  {
+   "q": "show me fuel is money",
+   "want": {
+    "kind": "focus",
+    "title": "Fuel is money"
+   }
+  },
+  {
+   "q": "the swarm learned one",
+   "want": {
+    "kind": "focus",
+    "title": "A branch reads what the swarm learned"
+   }
+  },
+  {
+   "q": "diversity",
+   "want": {
+    "kind": "focus",
+    "title": "Diversity beyond seed"
+   }
+  },
+  {
+   "q": "gate criticism goal",
+   "want": {
+    "kind": "focus",
+    "title": "Nothing criticises a gate"
+   }
+  },
+  {
+   "q": "select the queue draining goal",
+   "want": {
+    "kind": "focus",
+    "title": "Drive the queue"
+   }
+  },
+  {
+   "q": "show the run for fuel is money",
+   "want": {
+    "kind": "run",
+    "title": "Fuel is money"
+   }
+  },
+  {
+   "q": "what happened in drive the queue",
+   "want": {
+    "kind": "run",
+    "title": "Drive the queue"
+   }
+  },
+  {
+   "q": "open the latest run of diversity",
+   "want": {
+    "kind": "run",
+    "title": "Diversity beyond seed"
+   }
+  },
+  {
+   "q": "delete all the goals",
+   "want": {
+    "kind": "none"
+   }
+  },
+  {
+   "q": "what's the weather in Lagos",
+   "want": {
+    "kind": "none"
+   }
+  },
+  {
+   "q": "start drive the queue",
+   "want": {
+    "kind": "none"
+   }
+  },
+  {
+   "q": "write me a haiku",
+   "want": {
+    "kind": "none"
+   }
+  }
+ ]
+}
