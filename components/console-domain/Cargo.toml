@@ -22,7 +22,7 @@ path = "wit"
 world = "console-domain"
 
 [package.metadata.component.target.dependencies]
-"ui:assets" = { path = "../console-assets/wit" }
+"ui:assets" = { path = "../../wit/ui-assets" }
 "git:forge" = { path = "../git-forge/wit" }
 "knowledge:graph" = { path = "../knowledge-graph/wit" }
 # knowledge:graph's own world imports this; needed to merge the package.
