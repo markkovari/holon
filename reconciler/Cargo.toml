@@ -34,6 +34,11 @@ path = "src/bin/plug.rs"
 name = "comp-trace-seed"
 path = "src/bin/traceseed.rs"
 
+# Drains a project's goal queue, N runs at a time (ADR-0082's missing loop).
+[[bin]]
+name = "comp-goald"
+path = "src/bin/goald.rs"
+
 # The capability graph: who imports what from whom, derived from the artifacts.
 [[bin]]
 name = "comp-capgraph"

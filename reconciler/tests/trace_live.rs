@@ -79,7 +79,7 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
 
     // A run as it actually happens: two branches, one repair, one winner.
     let run = "77/g1";
-    trace.run_started(run, "add pagination to the search box", 77, "abc123", 2);
+    trace.run_started(run, "add pagination to the search box", ".comp/goals/pagination.toml", 77, "abc123", 2);
     trace.capsearch(run, "paginate a result set", 1);
     trace.capsearch(run, "render a swimlane chart", 0);
 
@@ -143,7 +143,7 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
 
     // 3. A goal that contains quotes and SurrealQL is DATA, not syntax.
     let nasty = r#"add a "search" box'; DELETE event; --"#;
-    trace.run_started("78/g1", nasty, 78, "def456", 1);
+    trace.run_started("78/g1", nasty, ".comp/goal.toml", 78, "def456", 1);
     assert!(trace.report().is_none(), "the quoted goal broke its own statement");
     // 12 from the run, +1 capability-added, +1 for the hostile run below.
     assert_eq!(count(&store, "event"), 14, "DELETE event ran as SurrealQL — the log is gone");
@@ -159,7 +159,7 @@ fn a_dead_database_costs_a_line_of_output_and_nothing_else() {
     let trace = Trace::new("http://127.0.0.1:1", DB, None);
     let started = std::time::Instant::now();
 
-    trace.run_started("dead/g1", "a goal", 1, "abc", 1);
+    trace.run_started("dead/g1", "a goal", ".comp/goal.toml", 1, "abc", 1);
     trace.branch_spawned("dead/g1", "dead/g1/a", "a", 1);
     trace.attempt_finished("dead/g1", "dead/g1/a", "errored", 0, &serde_json::json!([]), 0, 0, 0);
     trace.run_resolved("dead/g1", "failed", None, "");
@@ -228,7 +228,7 @@ fn an_unauthenticated_database_takes_writes_with_no_auth_header() {
 
     // No password: the case the seeder and a local run actually use.
     let trace = Trace::new(&url, DB, None);
-    trace.run_started("unauth/g1", "a goal with no password", 1, "abc", 1);
+    trace.run_started("unauth/g1", "a goal with no password", ".comp/goal.toml", 1, "abc", 1);
     trace.run_resolved("unauth/g1", "merged", Some("only"), "");
 
     assert!(
@@ -265,7 +265,7 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
     // attempt, two branches over two rounds.
     let seed: u64 = 1_700_000_000;
     let run = seed.to_string();
-    trace.run_started(&run, "a real goal", seed, "deadbeef", 2);
+    trace.run_started(&run, "a real goal", ".comp/goal.toml", seed, "deadbeef", 2);
     for round in 0..2 {
         for branch in ["risk-first", "mvp"] {
             let attempt = comp_reconciler::memory::run_id(seed, round, branch);

@@ -12,11 +12,21 @@
 // have on it.
 
 import { useEffect, useState } from "react";
-import { RunDetail, RunList } from "./Runs";
+import { RunDetail, RunList, type Run } from "./Runs";
+import { parse } from "./query";
+import {
+  QueueGraph,
+  NEW_NODE,
+  goalIdOf,
+  isGoalNode,
+  isRunNode,
+  runIdOf,
+  runsOf,
+  type Goal,
+} from "./Queue";
 
 type Session = { authenticated?: boolean; subject?: string };
 type Project = { id: string; name?: string };
-type Goal = { id: string; title?: string; state?: string; spec?: string; priority?: number };
 
 const api = async (path: string, init?: RequestInit) => {
   const r = await fetch(path, { credentials: "same-origin", ...init });
@@ -112,7 +122,12 @@ function Worklist({ subject }: { subject?: string }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [goals, setGoals] = useState<Goal[] | null>(null);
+  const [runs, setRuns] = useState<Run[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /// The node the graph has selected: a goal, a run, or the authoring node.
+  const [node, setNode] = useState<string | null>(null);
+  /// A lifecycle state the command box narrowed the graph to. Null shows all.
+  const [only, setOnly] = useState<string | null>(null);
 
   useEffect(() => {
     api("/api/projects")
@@ -129,12 +144,39 @@ function Worklist({ subject }: { subject?: string }) {
       .then((r) => setGoals(r?.goals ?? r ?? []))
       .catch((e) => setError(e.message));
 
+  // The runs are fetched for the queue graph, which hangs each one off the goal
+  // whose spec drove it. Same endpoint the runs tab reads — one list, two
+  // pictures of it.
+  const loadRuns = () =>
+    api("/api/runs")
+      .then((r) => setRuns(r?.runs ?? []))
+      .catch(() => setRuns([]));
+
   useEffect(() => {
-    if (selected) loadGoals(selected);
+    if (selected) {
+      loadGoals(selected);
+      loadRuns();
+    }
   }, [selected]);
 
   const [tab, setTab] = useState<"goals" | "runs">("goals");
   const [openRun, setOpenRun] = useState<string | null>(null);
+
+  const move = async (id: string, action: string, body?: any) => {
+    setError(null);
+    try {
+      await api(`/api/goals/${encodeURIComponent(id)}/${action}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (selected) await loadGoals(selected);
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const goal = node && isGoalNode(node) ? goals?.find((g) => g.id === goalIdOf(node)) : undefined;
 
   return (
     <div className="space-y-8">
@@ -175,25 +217,274 @@ function Worklist({ subject }: { subject?: string }) {
       )}
 
       {tab === "goals" && selected && (
-        <>
-          <section className="space-y-3">
+        <section className="space-y-3">
+          <div className="flex items-baseline justify-between">
             <h2 className="text-lg">Worklist</h2>
-            {goals === null && <p className="text-slate-400">Loading…</p>}
-            {goals?.length === 0 && <p className="text-slate-400">Nothing queued.</p>}
-            <ul className="divide-y divide-slate-800">
-              {goals?.map((g) => (
-                <li key={g.id} className="flex items-baseline justify-between py-2">
-                  <span>{g.title ?? g.id}</span>
-                  <span className="text-xs uppercase tracking-wide text-slate-500">{g.state}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <AuthorGoal project={selected} onQueued={() => loadGoals(selected)} />
-        </>
+            <p className="text-xs text-slate-500">
+              {goals?.length ?? 0} goal(s) · click one to act on it
+            </p>
+          </div>
+          {goals === null ? (
+            <p className="text-slate-400">Loading…</p>
+          ) : (
+            <>
+            <CommandBox
+              titles={(goals ?? []).map((g) => g.title ?? g.id)}
+              only={only}
+              onClear={() => setOnly(null)}
+              onAction={(a) => {
+                if (a.kind === "state") {
+                  setOnly(a.state);
+                  setNode(null);
+                  return true;
+                }
+                if (a.kind === "none") return false;
+                const g = goals?.find((x) => (x.title ?? x.id) === a.title);
+                if (!g) return false;
+                setOnly(null);
+                if (a.kind === "focus") {
+                  setNode(`goal:${g.id}`);
+                  return true;
+                }
+                const r = runsOf(g, runs)[0];
+                if (!r) return false;
+                setTab("runs");
+                setOpenRun(r.id_text);
+                return true;
+              }}
+            />
+            <QueueGraph
+              goals={only ? goals.filter((g) => (g.state ?? "queued") === only) : goals}
+              runs={runs}
+              selected={node}
+              onSelect={setNode}
+              panel={
+                node === NEW_NODE ? (
+                  <Panel title="Write a goal" onClose={() => setNode(null)}>
+                    <AuthorGoal
+                      project={selected}
+                      onQueued={() => {
+                        loadGoals(selected);
+                        setNode(null);
+                      }}
+                    />
+                  </Panel>
+                ) : goal ? (
+                  <Panel title={goal.title ?? goal.id} onClose={() => setNode(null)}>
+                    <GoalPanel
+                      goal={goal}
+                      runs={runsOf(goal, runs)}
+                      onMove={move}
+                      onOpenRun={(id) => {
+                        setTab("runs");
+                        setOpenRun(id);
+                      }}
+                    />
+                  </Panel>
+                ) : node && isRunNode(node) ? (
+                  <Panel title="Run" onClose={() => setNode(null)}>
+                    <button
+                      onClick={() => {
+                        setTab("runs");
+                        setOpenRun(runIdOf(node));
+                      }}
+                      className="w-full rounded bg-slate-100 px-3 py-2 text-xs font-medium text-slate-900"
+                    >
+                      Open the run graph
+                    </button>
+                  </Panel>
+                ) : undefined
+              }
+            />
+            </>
+          )}
+        </section>
       )}
     </div>
+  );
+}
+
+/// Type a sentence, move the graph.
+///
+/// No model behind this, and that was measured rather than assumed:
+/// `bench/NEEDLE-BENCH.md` scores this exact file at 24/25 against a 45M
+/// tool-calling model's 11/25. What it will not do is act — a phrase like "start
+/// X" is refused here, because starting a goal spends money and opens a pull
+/// request, and that stays a button somebody presses (ADR-0082).
+function CommandBox({
+  titles,
+  only,
+  onAction,
+  onClear,
+}: {
+  titles: string[];
+  only: string | null;
+  onAction: (a: ReturnType<typeof parse>) => boolean;
+  onClear: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [miss, setMiss] = useState(false);
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const a = parse(q, titles);
+    // A query that matched nothing leaves the graph ALONE and says so. Guessing
+    // — showing the first goal, or clearing the filter — is worse than nothing:
+    // the person cannot tell a wrong answer from a right one they misread.
+    const hit = a.kind !== "none" && onAction(a);
+    setMiss(!hit);
+    if (hit) setQ("");
+  };
+
+  return (
+    <form onSubmit={submit} className="flex items-center gap-2">
+      <input
+        value={q}
+        onChange={(e) => {
+          setQ(e.target.value);
+          setMiss(false);
+        }}
+        data-testid="command"
+        placeholder="show me the failed ones · open drive the queue · what happened in X"
+        className={`flex-1 rounded border bg-slate-900 px-3 py-2 text-sm outline-none ${
+          miss ? "border-red-900 focus:border-red-700" : "border-slate-800 focus:border-slate-600"
+        }`}
+      />
+      {only && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded border border-slate-700 px-2 py-1 text-xs text-slate-300 hover:border-slate-500"
+        >
+          {only} ✕
+        </button>
+      )}
+    </form>
+  );
+}
+
+function Panel({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded border border-slate-800 bg-slate-900/95 p-3 text-sm">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-sm font-medium leading-tight">{title}</h3>
+        <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-300">
+          ✕
+        </button>
+      </div>
+      <div className="mt-3 space-y-3">{children}</div>
+    </div>
+  );
+}
+
+/// What a goal is, and what may be done to it from here.
+///
+/// The buttons are the transitions `goal_may` allows OUT OF this state, and
+/// nothing else — a `done` button on a queued goal would be a 409 the platform
+/// has to refuse, and a UI that offers refused moves teaches people to ignore it.
+///
+/// `start` stays a button rather than something the daemon does, on purpose: it is
+/// ADR-0082's one deliberate act per goal, the moment where stopping is free, and
+/// the reason the interruption rate is a number anyone can measure.
+function GoalPanel({
+  goal,
+  runs,
+  onMove,
+  onOpenRun,
+}: {
+  goal: Goal;
+  runs: Run[];
+  onMove: (id: string, action: string, body?: any) => void;
+  onOpenRun: (id: string) => void;
+}) {
+  const state = goal.state ?? "queued";
+  return (
+    <>
+      <dl className="space-y-1 text-xs text-slate-400">
+        <div className="flex justify-between gap-2">
+          <dt>state</dt>
+          <dd className="uppercase tracking-wide text-slate-300">{state}</dd>
+        </div>
+        {goal.spec && (
+          <div className="flex justify-between gap-2">
+            <dt>spec</dt>
+            <dd className="truncate font-mono text-slate-300" title={goal.spec}>
+              {goal.spec}
+            </dd>
+          </div>
+        )}
+        {goal.reason && <p className="pt-1 text-red-300">{goal.reason}</p>}
+      </dl>
+
+      {runs.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs uppercase tracking-wide text-slate-500">runs</p>
+          {runs.map((r) => (
+            <button
+              key={r.id_text}
+              onClick={() => onOpenRun(r.id_text)}
+              className="block w-full truncate rounded border border-slate-800 px-2 py-1 text-left text-xs text-slate-300 hover:border-slate-600"
+            >
+              {r.outcome ?? "running…"} · {r.id_text}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
+        {state === "queued" && (
+          <Action onClick={() => onMove(goal.id, "start")}>Start</Action>
+        )}
+        {state === "awaiting-human" && (
+          <Action onClick={() => onMove(goal.id, "done")}>Land it</Action>
+        )}
+        {["running", "awaiting-human"].includes(state) && (
+          <Action
+            tone="danger"
+            onClick={() => {
+              const reason = window.prompt("Why did this fail?");
+              if (reason) onMove(goal.id, "fail", { reason });
+            }}
+          >
+            Dead-letter
+          </Action>
+        )}
+      </div>
+      {state === "queued" && (
+        <p className="text-xs text-slate-500">
+          Starting it spends money and opens a pull request. The daemon picks up what you
+          start; nothing starts itself.
+        </p>
+      )}
+    </>
+  );
+}
+
+function Action({
+  children,
+  onClick,
+  tone = "normal",
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  tone?: "normal" | "danger";
+}) {
+  const cls =
+    tone === "danger"
+      ? "border border-red-900 text-red-300 hover:bg-red-950/50"
+      : "bg-slate-100 text-slate-900";
+  return (
+    <button onClick={onClick} className={`rounded px-3 py-1.5 text-xs font-medium ${cls}`}>
+      {children}
+    </button>
   );
 }
 
@@ -227,9 +518,8 @@ function AuthorGoal({ project, onQueued }: { project: string; onQueued: () => vo
   };
 
   return (
-    <form onSubmit={submit} className="space-y-3 border-t border-slate-800 pt-6">
-      <h2 className="text-lg">Write a goal</h2>
-      <p className="text-sm text-slate-400">
+    <form onSubmit={submit} className="space-y-3">
+      <p className="text-xs text-slate-400">
         The spec is committed to the repository as a pull request and queued here. Nothing
         runs until you start it.
       </p>
@@ -237,7 +527,7 @@ function AuthorGoal({ project, onQueued }: { project: string; onQueued: () => vo
       <textarea
         value={spec}
         onChange={(e) => setSpec(e.target.value)}
-        rows={10}
+        rows={8}
         placeholder="The goal, in prose. This becomes the file a model reads."
         className="w-full rounded border border-slate-800 bg-slate-900 px-3 py-2 font-mono text-sm outline-none focus:border-slate-600"
       />

@@ -80,6 +80,15 @@ impl Guest for Component {
             }
 
             (Method::Post, ["api", "goals"]) => author_goal(&request),
+            // The lifecycle moves, forwarded verbatim. The console does not decide
+            // which are legal — `goal_may` in platform-domain does, and its 409
+            // names both ends of the refused move, which is the message worth
+            // showing. A second copy of that table here could only disagree.
+            (Method::Post, ["api", "goals", id, action])
+                if matches!(*action, "start" | "review" | "done" | "fail") =>
+            {
+                proxy_post(&request, &format!("/api/goals/{}/{action}", percent_decode(id)))
+            }
 
             (Method::Get, ["api", "runs"]) => runs(),
             (Method::Get, ["api", "runs", id]) => run_detail(&percent_decode(id)),
@@ -322,9 +331,9 @@ fn runs() -> Outcome {
     // on a field the statement does not select, with a 400 rather than an
     // unordered result. Trimming this list to "just what the UI shows" would
     // break the query, not merely the sort.
-    let surql = "SELECT id_text, goal, outcome, winner, url, branches, started_at, resolved_at \
+    let surql = "SELECT id_text, goal, spec, outcome, winner, url, branches, started_at, resolved_at \
                  FROM run ORDER BY started_at DESC LIMIT 50;";
-    match graph::query(&surql.to_string()) {
+    match graph::query(surql) {
         Ok(answer) => Outcome::Raw(
             200,
             vec![("content-type".into(), "application/json".into())],
@@ -494,6 +503,23 @@ fn proxy_get(request: &IncomingRequest, path: &str) -> Outcome {
     }
 }
 
+/// A POST forwarded to the platform, body and all.
+///
+/// The body is passed through unchanged for the same reason `log_in` does it: a
+/// `fail` carries a reason the platform owns the shape of, and reshaping it here
+/// would mean editing the console every time that shape moves.
+fn proxy_post(request: &IncomingRequest, path: &str) -> Outcome {
+    let token = session_token(request);
+    let body = read_body(request).unwrap_or_default();
+    let body = (!body.is_empty()).then_some(body);
+    match platform_call("POST", path, token.as_deref(), body.as_deref()) {
+        Ok((status, body)) => {
+            Outcome::Raw(status, vec![("content-type".into(), "application/json".into())], body)
+        }
+        Err(e) => Outcome::Err(502, e),
+    }
+}
+
 /// The session token, from the cookie. `None` means not signed in.
 fn session_token(request: &IncomingRequest) -> Option<String> {
     let raw = header(request, "cookie")?;
@@ -519,19 +545,19 @@ fn platform_call(
     let (scheme, authority, full_path) = parse_url(&url)?;
 
     let headers = Fields::new();
-    let _ = headers.set(&"accept".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("accept", &[b"application/json".to_vec()]);
     if let Some(b) = body {
-        let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
         // Framed by length rather than chunked: a chunked body is legal and a
         // real edge can still mishandle it, and the symptom is a truncated
         // response that a loopback test never reproduces.
-        let _ = headers.set(&"content-length".to_string(), &[b.len().to_string().into_bytes()]);
+        let _ = headers.set("content-length", &[b.len().to_string().into_bytes()]);
     }
     // Close after the response, so the whole body is delivered rather than the
     // host being left reading a keep-alive socket that never signals end.
-    let _ = headers.set(&"connection".to_string(), &[b"close".to_vec()]);
+    let _ = headers.set("connection", &[b"close".to_vec()]);
     if let Some(t) = token {
-        let _ = headers.set(&"authorization".to_string(), &[format!("Bearer {t}").into_bytes()]);
+        let _ = headers.set("authorization", &[format!("Bearer {t}").into_bytes()]);
     }
 
     let req = OutgoingRequest::new(headers);
@@ -682,7 +708,7 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
     request
         .headers()
-        .get(&name.to_string())
+        .get(name)
         .into_iter()
         .find_map(|v| String::from_utf8(v).ok())
 }
