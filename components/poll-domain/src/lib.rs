@@ -143,7 +143,7 @@ fn read_body(request: &IncomingRequest) -> String {
 /// contain the substring, and only two of them are this cookie.
 fn voter_of(request: &IncomingRequest) -> String {
     let headers = request.headers();
-    for raw in headers.get(&"cookie".to_string()) {
+    for raw in headers.get("cookie") {
         let s = String::from_utf8_lossy(&raw).into_owned();
         for pair in s.split(';') {
             if let Some((k, v)) = pair.split_once('=') {
@@ -337,7 +337,7 @@ fn qr_svg(code: &str, base: &str) -> Reply {
 fn base_url(request: &IncomingRequest) -> String {
     let host = request
         .headers()
-        .get(&"host".to_string())
+        .get("host")
         .into_iter()
         .next()
         .map(|h| String::from_utf8_lossy(&h).into_owned())
@@ -378,18 +378,18 @@ impl Guest for Component {
         };
 
         let headers = Fields::new();
-        let _ = headers.set(&"content-type".to_string(), &[reply.content_type.as_bytes().to_vec()]);
+        let _ = headers.set("content-type", &[reply.content_type.as_bytes().to_vec()]);
         if let Some(v) = &reply.set_voter {
             // HttpOnly so a script cannot read or forge it; SameSite=Lax so the
             // shared link still carries it; no Secure, because this serves over
             // plain http on a laptop and a Secure cookie would simply be dropped
             // there — the deployment behind TLS is where that flag belongs.
             let cookie = format!("voter={v}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000");
-            let _ = headers.set(&"set-cookie".to_string(), &[cookie.into_bytes()]);
+            let _ = headers.set("set-cookie", &[cookie.into_bytes()]);
         }
         // No caching: a result that updates is the whole app, and a proxy that
         // remembers the first answer makes it look broken rather than stale.
-        let _ = headers.set(&"cache-control".to_string(), &[b"no-store".to_vec()]);
+        let _ = headers.set("cache-control", &[b"no-store".to_vec()]);
         let resp = OutgoingResponse::new(headers);
         let _ = resp.set_status_code(reply.status);
         let out = resp.body().expect("body");

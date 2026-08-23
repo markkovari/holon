@@ -1,6 +1,5 @@
 #[allow(warnings)]
 mod bindings;
-use bindings::exports::media::video::ffmpeg;
 use bindings::exports::media::video::ffmpeg::Guest;
 struct Component;
 impl Guest for Component { fn transcode(input: String) -> String { format!("transcoded_{}.mp4", input) } }

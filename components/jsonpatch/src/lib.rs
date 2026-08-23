@@ -193,7 +193,7 @@ fn req_str<'a>(op: &'a serde_json::Map<String, Value>, field: &str) -> Result<&'
 }
 
 /// Read the required `value` field from an op object.
-fn req_value<'a>(op: &'a serde_json::Map<String, Value>) -> Result<&'a Value, PatchError> {
+fn req_value(op: &serde_json::Map<String, Value>) -> Result<&Value, PatchError> {
     op.get("value")
         .ok_or_else(|| PatchError::InvalidPatch("op missing 'value' field".into()))
 }

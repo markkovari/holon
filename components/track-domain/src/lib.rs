@@ -529,7 +529,7 @@ fn list_issues(request: &IncomingRequest, ) -> Outcome {
     let out: Vec<Value> = entries
         .iter()
         .filter(|e| {
-            status.as_ref().map_or(true, |s| {
+            status.as_ref().is_none_or(|s| {
                 serde_json::from_str::<Value>(&e.data).ok().and_then(|d| d["status"].as_str().map(|x| x == s)).unwrap_or(false)
             })
         })
@@ -717,9 +717,9 @@ fn tick() -> Outcome {
 
 fn stream_events(response_out: ResponseOutparam, path: &str) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"text/event-stream".to_vec()]);
-    let _ = headers.set(&"cache-control".to_string(), &[b"no-cache".to_vec()]);
-    let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
+    let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
+    let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
+    let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(200);
     let body = response.body().expect("outgoing body");
@@ -906,7 +906,7 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(&name.to_string()).into_iter().find_map(|v| String::from_utf8(v).ok())
+    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 fn query_str(path: &str, key: &str) -> Option<String> {
@@ -970,10 +970,10 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 
 fn respond_ct(response_out: ResponseOutparam, status: u16, content_type: &str, extra: &[(&str, &str)], body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
-    let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
     for (k, v) in extra {
-        let _ = headers.set(&k.to_string(), &[v.as_bytes().to_vec()]);
+        let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
     }
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);

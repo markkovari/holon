@@ -276,7 +276,7 @@ fn consume(
     kind: &str,
     handle: impl Fn(&OrderStockEvent),
 ) -> Result<u32, Outcome> {
-    let events = bus::poll(topic, GROUP, 32).map_err(|e| bus_err(e))?;
+    let events = bus::poll(topic, GROUP, 32).map_err(bus_err)?;
     let mut handled = 0;
     let mut acked: Vec<String> = Vec::new();
     for ev in &events {
@@ -300,7 +300,7 @@ fn consume(
         }
     }
     if !acked.is_empty() {
-        bus::ack(topic, GROUP, &acked).map_err(|e| bus_err(e))?;
+        bus::ack(topic, GROUP, &acked).map_err(bus_err)?;
     }
     Ok(handled)
 }
@@ -374,7 +374,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 
 fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

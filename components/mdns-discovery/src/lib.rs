@@ -1,6 +1,5 @@
 #[allow(warnings)]
 mod bindings;
-use bindings::exports::net::mdns::discovery;
 use bindings::exports::net::mdns::discovery::Guest;
 struct Component;
 impl Guest for Component { fn discover() -> String { "Apple TV, HomePrinter".to_string() } }

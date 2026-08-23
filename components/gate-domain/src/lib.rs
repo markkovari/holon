@@ -202,7 +202,7 @@ fn throttle(request: &IncomingRequest) -> Outcome {
         let (dec, new_tat) = shaper::gcra(tat, now, period_ms, burst, cost);
         let nv = json!({ "key": key, "tat": new_tat });
         let committed = match &existing {
-            Some((id, rev)) => matches!(records::update(GCRA, id, &nv.to_string(), *rev), Ok(_)),
+            Some((id, rev)) => records::update(GCRA, id, &nv.to_string(), *rev).is_ok(),
             None => records::create(GCRA, &nv.to_string(), &["key".to_string()]).is_ok(),
         };
         if committed {
@@ -389,8 +389,8 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string()),
     };
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
-    let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+    let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(code);
     let out = response.body().expect("outgoing body");
