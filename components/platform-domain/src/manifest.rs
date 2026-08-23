@@ -297,12 +297,8 @@ pub fn build(input: &ManifestInput) -> Result<Value, ManifestError> {
     let total_modules: u32 = input.parts.iter().map(|p| p.nested_instances.max(1)).sum();
     let pool = safe_pool_size(input.plan.pool_size, total_modules);
     let egress = expand_egress(&input.plan.egress);
-    let constraints: serde_json::Map<String, Value> = input
-        .plan
-        .constraints
-        .iter()
-        .map(|(k, v)| (k.clone(), json!(v)))
-        .collect();
+    let constraints: serde_json::Map<String, Value> =
+        input.plan.constraints.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
 
     let components: Vec<Value> = input
         .parts
@@ -383,7 +379,11 @@ mod tests {
         }
     }
 
-    fn input<'a>(parts: &'a [Part], plan: &'a Plan, edges: &'a [(String, String, String)]) -> ManifestInput<'a> {
+    fn input<'a>(
+        parts: &'a [Part],
+        plan: &'a Plan,
+        edges: &'a [(String, String, String)],
+    ) -> ManifestInput<'a> {
         ManifestInput {
             tenant: "alice",
             name: "shop",
@@ -424,7 +424,10 @@ mod tests {
     fn a_scheme_qualified_egress_entry_is_not_split_on_its_colon() {
         // Splitting this would allow-list the host `https`, which is legal and
         // would be a very quiet hole.
-        assert_eq!(expand_egress(&["https://api.example.com".into()]), vec!["https://api.example.com"]);
+        assert_eq!(
+            expand_egress(&["https://api.example.com".into()]),
+            vec!["https://api.example.com"]
+        );
     }
 
     #[test]
@@ -440,8 +443,12 @@ mod tests {
         let parts = vec![p];
         let plan = Plan::default();
         let m = build(&input(&parts, &plan, &[])).unwrap();
-        let needs: Vec<&str> =
-            m["components"][0]["host_needs"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        let needs: Vec<&str> = m["components"][0]["host_needs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
         assert_eq!(needs, vec!["wasi:keyvalue/store"]);
     }
 
@@ -478,7 +485,8 @@ mod tests {
     fn links_survive_a_fuse_because_they_are_the_build_recipe() {
         let parts = vec![part("api", "sha256:fused")];
         let plan = Plan::default();
-        let edges = vec![("store".to_string(), "api".to_string(), "records:store/store@0.1.0".to_string())];
+        let edges =
+            vec![("store".to_string(), "api".to_string(), "records:store/store@0.1.0".to_string())];
         let mut i = input(&parts, &plan, &edges);
         i.strategy = Strategy::Fused;
         let m = build(&i).unwrap();
@@ -497,7 +505,9 @@ mod tests {
         for k in ["app", "tenant", "strategy", "components", "links", "ingress"] {
             assert!(!m[k].is_null(), "missing top-level `{k}`");
         }
-        for k in ["id", "digest", "replicas", "placement", "host_needs", "config", "secrets", "egress"] {
+        for k in
+            ["id", "digest", "replicas", "placement", "host_needs", "config", "secrets", "egress"]
+        {
             assert!(!m["components"][0][k].is_null(), "missing component `{k}`");
         }
         assert_eq!(m["strategy"], json!("linked"));
@@ -510,7 +520,8 @@ mod tests {
         // The multiregion knob: a tenant's plan can pin them to a jurisdiction and
         // the reconciler will refuse to place them anywhere else.
         let parts = vec![part("api", "sha256:a")];
-        let plan = Plan { constraints: vec![("region".into(), "eu-central".into())], ..Plan::default() };
+        let plan =
+            Plan { constraints: vec![("region".into(), "eu-central".into())], ..Plan::default() };
         let m = build(&input(&parts, &plan, &[])).unwrap();
         assert_eq!(m["components"][0]["placement"]["constraints"]["region"], json!("eu-central"));
     }

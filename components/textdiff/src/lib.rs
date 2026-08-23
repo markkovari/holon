@@ -34,11 +34,8 @@ fn edit_script<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<Op> {
     let mut dp = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            dp[i][j] = if a[i] == b[j] {
-                dp[i + 1][j + 1] + 1
-            } else {
-                dp[i + 1][j].max(dp[i][j + 1])
-            };
+            dp[i][j] =
+                if a[i] == b[j] { dp[i + 1][j + 1] + 1 } else { dp[i + 1][j].max(dp[i][j + 1]) };
         }
     }
     let mut ops = Vec::new();
@@ -138,9 +135,7 @@ fn build_unified(a: &str, b: &str, from: &str, to: &str, context: usize) -> Stri
             .find(|r| !matches!(r.op, Op::Delete(_)))
             .map(|r| r.bi + 1)
             .unwrap_or(run[0].bi + 1);
-        out.push_str(&format!(
-            "@@ -{a_start},{a_count} +{b_start},{b_count} @@\n"
-        ));
+        out.push_str(&format!("@@ -{a_start},{a_count} +{b_start},{b_count} @@\n"));
         for r in run {
             match &r.op {
                 Op::Equal(t) => out.push_str(&format!(" {t}\n")),
@@ -158,9 +153,7 @@ fn build_unified(a: &str, b: &str, from: &str, to: &str, context: usize) -> Stri
 fn hunk_a_start(h: &str) -> Option<usize> {
     let minus = h.find('-')?;
     let rest = &h[minus + 1..];
-    let end = rest
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(rest.len());
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
     rest[..end].parse().ok()
 }
 
@@ -220,9 +213,7 @@ fn apply(a: &str, patch: &str) -> Result<String, DiffError> {
             } else if body.starts_with('\\') {
                 // "\ No newline at end of file" — ignore.
             } else {
-                return Err(DiffError::MalformedPatch(format!(
-                    "unrecognized patch line: {body}"
-                )));
+                return Err(DiffError::MalformedPatch(format!("unrecognized patch line: {body}")));
             }
         }
     }
@@ -283,14 +274,14 @@ mod tests {
     #[test]
     fn roundtrip_apply_reproduces_target() {
         let cases = [
-            ("", "hello"),                                   // empty -> content
-            ("hello", ""),                                   // content -> empty
-            ("a\nb\nc\nd\ne", "a\nB\nc\nd\ne"),              // single change
-            ("a\nb\nc\nd\ne", "a\nc\nd\ne\nf"),              // delete + append
-            ("one\ntwo\nthree", "zero\none\ntwo\nthree"),    // prepend
-            ("keep\ndrop\nkeep", "keep\nkeep"),              // middle delete
-            ("x\ny\nz\n", "x\nY\nz\n"),                      // trailing newline preserved
-            ("line", "totally\ndifferent\ntext"),           // full rewrite
+            ("", "hello"),                                // empty -> content
+            ("hello", ""),                                // content -> empty
+            ("a\nb\nc\nd\ne", "a\nB\nc\nd\ne"),           // single change
+            ("a\nb\nc\nd\ne", "a\nc\nd\ne\nf"),           // delete + append
+            ("one\ntwo\nthree", "zero\none\ntwo\nthree"), // prepend
+            ("keep\ndrop\nkeep", "keep\nkeep"),           // middle delete
+            ("x\ny\nz\n", "x\nY\nz\n"),                   // trailing newline preserved
+            ("line", "totally\ndifferent\ntext"),         // full rewrite
         ];
         for (a, b) in cases {
             for ctx in [0usize, 1, 3] {

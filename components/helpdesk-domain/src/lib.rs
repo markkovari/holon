@@ -104,7 +104,10 @@ fn ensure_seeded() {
         fsm::Transition { event: event.into(), source: source.into(), target: target.into() }
     }
     let def = fsm::Definition {
-        states: ["new", "open", "pending", "solved", "closed"].iter().map(|s| s.to_string()).collect(),
+        states: ["new", "open", "pending", "solved", "closed"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         initial: "new".into(),
         transitions: vec![
             t("triage", "new", "open"),
@@ -143,7 +146,11 @@ fn register(request: &IncomingRequest) -> Outcome {
         Err(e) => return Outcome::Auth(e),
     };
     let wanted = req.role.unwrap_or_else(|| "requester".into());
-    let role = if ["requester", "agent", "admin"].contains(&wanted.as_str()) { wanted } else { "requester".into() };
+    let role = if ["requester", "agent", "admin"].contains(&wanted.as_str()) {
+        wanted
+    } else {
+        "requester".into()
+    };
     let _ = rbac::assign_role(&principal.tenant, &principal.subject, &role);
     Outcome::Json(201, json!({"subject": principal.subject, "roles": [role]}).to_string())
 }
@@ -257,7 +264,11 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
         "priority": priority,
         "status": "new",
     });
-    let entry = match records::create(TICKETS, &data.to_string(), &["requester".to_string(), "status".to_string()]) {
+    let entry = match records::create(
+        TICKETS,
+        &data.to_string(),
+        &["requester".to_string(), "status".to_string()],
+    ) {
         Ok(e) => e,
         Err(e) => return store_err(e),
     };
@@ -377,7 +388,8 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
         (false, _, "solved") => &["reopen"],
         (false, _, _) => &[],
     };
-    let status = apply_events(&entry, &data, events).unwrap_or_else(|| data["status"].as_str().unwrap_or("").into());
+    let status = apply_events(&entry, &data, events)
+        .unwrap_or_else(|| data["status"].as_str().unwrap_or("").into());
     Outcome::Json(201, json!({"id": created.id, "kind": kind, "status": status}).to_string())
 }
 
@@ -584,11 +596,7 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request
-        .headers()
-        .get(name)
-        .into_iter()
-        .find_map(|v| String::from_utf8(v).ok())
+    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 // ---- responses --------------------------------------------------------------------

@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::net::mdns::discovery::Guest;
 struct Component;
-impl Guest for Component { fn discover() -> String { "UNIMPLEMENTED: mdns-discovery cannot browse mDNS from wasm".to_string() } }
+impl Guest for Component {
+    fn discover() -> String {
+        "UNIMPLEMENTED: mdns-discovery cannot browse mDNS from wasm".to_string()
+    }
+}
 bindings::export!(Component with_types_in bindings);

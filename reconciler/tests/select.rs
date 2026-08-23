@@ -111,7 +111,6 @@ fn stand_in_forge(port: u16) -> Log {
     log
 }
 
-
 fn artifacts() -> Vec<String> {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
@@ -175,14 +174,21 @@ fn file(path: &str, content: &str) -> Value {
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap(),
     };
     fleet.until("a selection", Duration::from_secs(120), || {
         let r = probe.call(
             "/select",
             json!({ "entries": [branch("only", true, 1000, json!([file("a", "b")]), 10)] }),
         );
-        if r["winner"]["branch"] == json!("only") { Ok(()) } else { Err(r.to_string()) }
+        if r["winner"]["branch"] == json!("only") {
+            Ok(())
+        } else {
+            Err(r.to_string())
+        }
     });
     probe
 }
@@ -214,8 +220,11 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
         }),
     );
     if alive["number"] != json!(7) {
-        panic!("the forge is not reachable, so this test could not tell a held gate from a \
-                broken deployment: {alive}\n--- node log ---\n{}", fleet.node_log("n1"));
+        panic!(
+            "the forge is not reachable, so this test could not tell a held gate from a \
+                broken deployment: {alive}\n--- node log ---\n{}",
+            fleet.node_log("n1")
+        );
     }
 
     // --- NOTHING PASSED THE GATE: the forge must not be touched --------------
@@ -268,7 +277,10 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
         }),
     );
     if landed["number"] != json!(7) {
-        panic!("the pull request did not open: {landed}\n--- node log ---\n{}", fleet.node_log("n1"));
+        panic!(
+            "the pull request did not open: {landed}\n--- node log ---\n{}",
+            fleet.node_log("n1")
+        );
     }
 
     let seen = log.lock().unwrap().clone();
@@ -293,7 +305,10 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
     // branches tried, or what they scored.
     let pull = seen.iter().find(|s| s.path.ends_with("/pulls")).expect("no pull request opened");
     let body = pull.body["body"].as_str().unwrap_or_default().to_string();
-    assert!(body.contains("tight"), "the pull request does not say which branch it came from: {body}");
+    assert!(
+        body.contains("tight"),
+        "the pull request does not say which branch it came from: {body}"
+    );
     assert!(
         body.contains("smaller"),
         "nor why that branch won, which makes the selection unarguable after the fact: {body}"

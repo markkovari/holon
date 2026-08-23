@@ -268,9 +268,7 @@ fn json_omits_an_apps_own_root_while_surql_includes_it() {
 
     let in_apps: BTreeSet<String> = graph["component_in_apps"]
         .as_array()
-        .map(|a| {
-            a.iter().filter_map(|x| x["component"].as_str().map(String::from)).collect()
-        })
+        .map(|a| a.iter().filter_map(|x| x["component"].as_str().map(String::from)).collect())
         .unwrap_or_default();
     assert!(
         !in_apps.iter().any(|c| c.ends_with("-domain")),
@@ -295,8 +293,5 @@ fn graph_json_emits_valid_stats_summary() {
         stats["total_import_edges"].as_u64().unwrap_or(0) > 50,
         "expected >50 import edges in stats"
     );
-    assert!(
-        stats["total_apps"].as_u64().unwrap_or(0) >= 10,
-        "expected >=10 apps in stats"
-    );
+    assert!(stats["total_apps"].as_u64().unwrap_or(0) >= 10, "expected >=10 apps in stats");
 }

@@ -21,24 +21,35 @@ pub fn ordinal(n: u32) -> String {
 }
 
 impl Guest for Component {
-    fn ordinal(n: u32) -> String { ordinal(n) }
+    fn ordinal(n: u32) -> String {
+        ordinal(n)
+    }
 }
 bindings::export!(Component with_types_in bindings);
 
 #[cfg(test)]
 mod tests {
     use super::ordinal;
-    #[test] fn ones() {
-        assert_eq!(ordinal(1), "1st"); assert_eq!(ordinal(2), "2nd");
-        assert_eq!(ordinal(3), "3rd"); assert_eq!(ordinal(4), "4th");
+    #[test]
+    fn ones() {
+        assert_eq!(ordinal(1), "1st");
+        assert_eq!(ordinal(2), "2nd");
+        assert_eq!(ordinal(3), "3rd");
+        assert_eq!(ordinal(4), "4th");
     }
-    #[test] fn the_teens_are_all_th() {
-        assert_eq!(ordinal(11), "11th"); assert_eq!(ordinal(12), "12th");
+    #[test]
+    fn the_teens_are_all_th() {
+        assert_eq!(ordinal(11), "11th");
+        assert_eq!(ordinal(12), "12th");
         assert_eq!(ordinal(13), "13th");
     }
-    #[test] fn tens_and_hundreds() {
-        assert_eq!(ordinal(21), "21st"); assert_eq!(ordinal(22), "22nd");
-        assert_eq!(ordinal(23), "23rd"); assert_eq!(ordinal(101), "101st");
-        assert_eq!(ordinal(111), "111th"); assert_eq!(ordinal(113), "113th");
+    #[test]
+    fn tens_and_hundreds() {
+        assert_eq!(ordinal(21), "21st");
+        assert_eq!(ordinal(22), "22nd");
+        assert_eq!(ordinal(23), "23rd");
+        assert_eq!(ordinal(101), "101st");
+        assert_eq!(ordinal(111), "111th");
+        assert_eq!(ordinal(113), "113th");
     }
 }

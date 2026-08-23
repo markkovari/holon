@@ -73,7 +73,8 @@ fn upload_a_photo_and_get_a_critique_over_the_lattice() {
         &[format!("vault://acme/anthropic=@{}", key_path.display())],
     );
 
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(90)).build().unwrap();
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(90)).build().unwrap();
     let base = format!("http://127.0.0.1:{}", fleet.ingress_port);
 
     // 1) the UI serves over the lattice
@@ -105,8 +106,10 @@ fn upload_a_photo_and_get_a_critique_over_the_lattice() {
     let v: Value = r.json().unwrap_or(Value::Null);
     assert!(status.is_success(), "evaluate failed: {status} {v}\n{}", fleet.node_log("n1"));
     let critique = v["critique"].as_str().unwrap_or("");
-    assert!(critique.contains("Interesting") || critique.contains("Composition"),
-        "no critique came back: {v}");
+    assert!(
+        critique.contains("Interesting") || critique.contains("Composition"),
+        "no critique came back: {v}"
+    );
     println!("    critique over the lattice:\n{}", critique);
 }
 

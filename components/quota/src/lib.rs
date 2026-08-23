@@ -85,10 +85,9 @@ fn open() -> Result<kv::Bucket, QuotaError> {
 /// Read a u64 counter, treating absent / unparseable as 0.
 fn read_u64(bucket: &kv::Bucket, key: &str) -> Result<u64, QuotaError> {
     match bucket.get(key) {
-        Ok(Some(bytes)) => Ok(String::from_utf8(bytes)
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0)),
+        Ok(Some(bytes)) => {
+            Ok(String::from_utf8(bytes).ok().and_then(|s| s.parse().ok()).unwrap_or(0))
+        }
         Ok(None) => Ok(0),
         Err(e) => Err(QuotaError::BackendUnavailable(format!("get: {e:?}"))),
     }
@@ -170,11 +169,7 @@ impl Guest for Component {
         Ok(balance(new, limit, bucket, period))
     }
 
-    fn peek(
-        subject: String,
-        limit: u64,
-        period_seconds: u64,
-    ) -> Result<Balance, QuotaError> {
+    fn peek(subject: String, limit: u64, period_seconds: u64) -> Result<Balance, QuotaError> {
         let period = period_or_default(period_seconds);
         let bucket = bucket_of(period);
         let b = open()?;

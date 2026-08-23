@@ -62,7 +62,8 @@ impl Pair {
 /// off-by-a-shade version of it.
 pub fn parse_hex(s: &str) -> Option<(u8, u8, u8)> {
     let h = s.trim().trim_start_matches('#');
-    let d: Vec<u8> = h.bytes().map(|b| (b as char).to_digit(16).map(|d| d as u8)).collect::<Option<_>>()?;
+    let d: Vec<u8> =
+        h.bytes().map(|b| (b as char).to_digit(16).map(|d| d as u8)).collect::<Option<_>>()?;
     match d.len() {
         3 => Some((d[0] * 17, d[1] * 17, d[2] * 17)),
         6 => Some((d[0] * 16 + d[1], d[2] * 16 + d[3], d[4] * 16 + d[5])),
@@ -156,12 +157,22 @@ mod tests {
     #[test]
     fn the_grades_land_on_the_right_side_of_the_thresholds() {
         // #767676 on white is the canonical "just passes AA" grey (4.54:1).
-        let grey = Pair { fg: "#767676".into(), bg: "#ffffff".into(), ratio: ratio((0x76, 0x76, 0x76), (255, 255, 255)), share: 0.1 };
+        let grey = Pair {
+            fg: "#767676".into(),
+            bg: "#ffffff".into(),
+            ratio: ratio((0x76, 0x76, 0x76), (255, 255, 255)),
+            share: 0.1,
+        };
         assert!(grey.passes_aa(), "#767676 on white passes AA, got {}", grey.ratio);
         assert!(!grey.passes_aaa());
         assert_eq!(grey.verdict(), "AA");
         // #949494 on white is the canonical "large text only" grey (3.03:1).
-        let light = Pair { fg: "#949494".into(), bg: "#ffffff".into(), ratio: ratio((0x94, 0x94, 0x94), (255, 255, 255)), share: 0.1 };
+        let light = Pair {
+            fg: "#949494".into(),
+            bg: "#ffffff".into(),
+            ratio: ratio((0x94, 0x94, 0x94), (255, 255, 255)),
+            share: 0.1,
+        };
         assert!(!light.passes_aa(), "ratio {}", light.ratio);
         assert!(light.passes_aa_large());
         assert_eq!(light.verdict(), "AA large text only");
@@ -193,7 +204,11 @@ mod tests {
     fn a_ratio_from_the_client_is_recomputed_not_trusted() {
         let audited = audit(&[("#777777".into(), "#808080".into(), 0.5)]);
         assert_eq!(audited.len(), 1);
-        assert!(audited[0].ratio < 1.2, "two near-identical greys cannot be 21:1, got {}", audited[0].ratio);
+        assert!(
+            audited[0].ratio < 1.2,
+            "two near-identical greys cannot be 21:1, got {}",
+            audited[0].ratio
+        );
         assert_eq!(audited[0].verdict(), "fails");
     }
 
@@ -202,10 +217,10 @@ mod tests {
     #[test]
     fn the_audit_drops_noise_and_reports_the_worst_first() {
         let audited = audit(&[
-            ("#000000".into(), "#ffffff".into(), 0.4),  // 21:1, best
+            ("#000000".into(), "#ffffff".into(), 0.4), // 21:1, best
             ("#ff0000".into(), "not-a-colour".into(), 0.3), // dropped
-            ("#333333".into(), "#333333".into(), 0.2),  // same colour, dropped
-            ("#888888".into(), "#999999".into(), 9.0),  // awful, and a bogus share
+            ("#333333".into(), "#333333".into(), 0.2), // same colour, dropped
+            ("#888888".into(), "#999999".into(), 9.0), // awful, and a bogus share
         ]);
         assert_eq!(audited.len(), 2, "two of the four are noise: {audited:?}");
         assert_eq!(audited[0].fg, "#888888", "worst contrast comes first");

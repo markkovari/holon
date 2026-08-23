@@ -106,7 +106,10 @@ impl KvBackend for MemoryKv {
 
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
         let bucket = bucket.as_str();
-        Ok(crate::sync::held(&self.buckets).get(bucket).and_then(|b| b.get(key)).map(|(_, v)| v.clone()))
+        Ok(crate::sync::held(&self.buckets)
+            .get(bucket)
+            .and_then(|b| b.get(key))
+            .map(|(_, v)| v.clone()))
     }
     fn set(&self, bucket: &BucketId, key: &str, value: &[u8]) -> Result<()> {
         let bucket = bucket.as_str();
@@ -125,11 +128,17 @@ impl KvBackend for MemoryKv {
     }
     fn exists(&self, bucket: &BucketId, key: &str) -> Result<bool> {
         let bucket = bucket.as_str();
-        Ok(crate::sync::held(&self.buckets).get(bucket).map(|b| b.contains_key(key)).unwrap_or(false))
+        Ok(crate::sync::held(&self.buckets)
+            .get(bucket)
+            .map(|b| b.contains_key(key))
+            .unwrap_or(false))
     }
     fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
         let bucket = bucket.as_str();
-        Ok(crate::sync::held(&self.buckets).get(bucket).map(|b| b.keys().cloned().collect()).unwrap_or_default())
+        Ok(crate::sync::held(&self.buckets)
+            .get(bucket)
+            .map(|b| b.keys().cloned().collect())
+            .unwrap_or_default())
     }
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
         let bucket = bucket.as_str();
@@ -770,8 +779,7 @@ impl KvBackend for SqliteKv {
     fn exists(&self, bucket: &BucketId, key: &str) -> Result<bool> {
         let bucket = bucket.as_str();
         let conn = crate::sync::held(&self.conn);
-        let mut q = conn
-            .prepare_cached("SELECT 1 FROM kv WHERE bucket = ?1 AND key = ?2")?;
+        let mut q = conn.prepare_cached("SELECT 1 FROM kv WHERE bucket = ?1 AND key = ?2")?;
         Ok(q.exists(rusqlite::params![bucket, key])?)
     }
 

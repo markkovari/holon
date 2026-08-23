@@ -123,7 +123,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer token".into())))?;
+    let token = bearer(request)
+        .ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer token".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -153,11 +154,8 @@ fn register(request: &IncomingRequest) -> Outcome {
         Err(e) => return Outcome::Auth(e),
     };
 
-    let role_to_assign = if requested_role == "admin" || email.starts_with("admin@") {
-        "admin"
-    } else {
-        "user"
-    };
+    let role_to_assign =
+        if requested_role == "admin" || email.starts_with("admin@") { "admin" } else { "user" };
     let _ = rbac::assign_role(TENANT, &p.subject, role_to_assign);
 
     seed_default_attributes_if_needed();
@@ -248,10 +246,26 @@ fn seed_default_attributes_if_needed() {
     }
 
     let defaults = [
-        ("perspective", "Perspective & Depth", "Framing, leading lines, vantage point, and optical depth of field."),
-        ("lighting", "Lighting & Exposure", "Dynamic range, shadows, highlights, specular details, and color grading."),
-        ("creativity", "Creativity & Concept", "Originality, artistic narrative, emotional resonance, and unique vision."),
-        ("composition", "Composition & Balance", "Rule of thirds, golden ratio, visual balance, and clean framing."),
+        (
+            "perspective",
+            "Perspective & Depth",
+            "Framing, leading lines, vantage point, and optical depth of field.",
+        ),
+        (
+            "lighting",
+            "Lighting & Exposure",
+            "Dynamic range, shadows, highlights, specular details, and color grading.",
+        ),
+        (
+            "creativity",
+            "Creativity & Concept",
+            "Originality, artistic narrative, emotional resonance, and unique vision.",
+        ),
+        (
+            "composition",
+            "Composition & Balance",
+            "Rule of thirds, golden ratio, visual balance, and clean framing.",
+        ),
     ];
 
     for (id, name, desc) in defaults {
@@ -359,7 +373,11 @@ fn delete_attribute(request: &IncomingRequest, id: &str) -> Outcome {
 // Photos & AI Automated Critique
 // -----------------------------------------------------------------------------
 
-fn run_ai_photo_critique(title: &str, description: &str, tags: &[String]) -> (String, String, Vec<String>) {
+fn run_ai_photo_critique(
+    title: &str,
+    description: &str,
+    tags: &[String],
+) -> (String, String, Vec<String>) {
     let prompt = format!(
         "Analyze this photographic artwork titled \"{}\". Description: \"{}\". User tags: {:?}. \
         Respond with an inspiring artistic description, a structured critique covering Lighting, Perspective, and Composition, and 4 refined aesthetic keywords.",
@@ -367,13 +385,8 @@ fn run_ai_photo_critique(title: &str, description: &str, tags: &[String]) -> (St
     );
 
     let system = "You are a master photography curator and art critic. Provide a concise, evocative evaluation of the photo.";
-    let opts = Options {
-        model: "".into(),
-        temperature: 700,
-        max_tokens: 300,
-        stop: vec![],
-        seed: 42,
-    };
+    let opts =
+        Options { model: "".into(), temperature: 700, max_tokens: 300, stop: vec![], seed: 42 };
 
     let ai_reply = match inference::complete(&prompt, system, &opts) {
         Ok(comp) if !comp.text.trim().is_empty() => comp.text.trim().to_string(),
@@ -426,7 +439,8 @@ fn create_photo(request: &IncomingRequest) -> Outcome {
         if !image_data.is_empty() {
             image_url = image_data.clone();
         } else {
-            image_url = "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800".to_string();
+            image_url =
+                "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=800".to_string();
         }
     }
     let user_desc = body["description"].as_str().unwrap_or("").to_string();
@@ -617,11 +631,13 @@ fn vote_photo(request: &IncomingRequest, photo_id: &str) -> Outcome {
     if let Some(page) = photos_page {
         for entry in page.entries {
             if let Ok(mut pval) = serde_json::from_str::<Value>(&entry.data) {
-                if pval.get("id").and_then(|v| v.as_str()) == Some(photo_id) || entry.id == photo_id {
+                if pval.get("id").and_then(|v| v.as_str()) == Some(photo_id) || entry.id == photo_id
+                {
                     pval["upvotes"] = json!(upvotes);
                     pval["downvotes"] = json!(downvotes);
                     pval["score"] = json!(net_score);
-                    let _ = records::update(PHOTOS_COLL, &entry.id, &pval.to_string(), entry.revision);
+                    let _ =
+                        records::update(PHOTOS_COLL, &entry.id, &pval.to_string(), entry.revision);
                     break;
                 }
             }
@@ -669,7 +685,9 @@ fn rate_photo_attributes(request: &IncomingRequest, photo_id: &str) -> Outcome {
 
         if let Ok(page) = records::list_records(RATINGS_COLL, 100, "") {
             for entry in page.entries {
-                if entry.id == rating_id || entry.data.contains(&format!("\"id\":\"{}\"", rating_id)) {
+                if entry.id == rating_id
+                    || entry.data.contains(&format!("\"id\":\"{}\"", rating_id))
+                {
                     let _ = records::delete(RATINGS_COLL, &entry.id);
                 }
             }
@@ -700,7 +718,8 @@ fn rate_photo_attributes(request: &IncomingRequest, photo_id: &str) -> Outcome {
 
 fn calculate_attribute_averages(photo_id: &str) -> Map<String, Value> {
     let mut map = Map::new();
-    let mut sums: std::collections::HashMap<String, (f64, usize)> = std::collections::HashMap::new();
+    let mut sums: std::collections::HashMap<String, (f64, usize)> =
+        std::collections::HashMap::new();
 
     if let Ok(page) = records::list_records(RATINGS_COLL, 200, "") {
         for entry in page.entries {
@@ -742,7 +761,9 @@ fn get_my_ratings(request: &IncomingRequest, photo_id: &str) -> Outcome {
     if let Ok(page) = records::list_records(RATINGS_COLL, 200, "") {
         for entry in page.entries {
             if let Ok(v) = serde_json::from_str::<Value>(&entry.data) {
-                if v["photo_id"].as_str() == Some(photo_id) && v["user_id"].as_str() == Some(&principal.subject) {
+                if v["photo_id"].as_str() == Some(photo_id)
+                    && v["user_id"].as_str() == Some(&principal.subject)
+                {
                     if let Some(attr) = v["attribute_id"].as_str() {
                         my_ratings.insert(attr.to_string(), v["score"].clone());
                     }
@@ -754,7 +775,9 @@ fn get_my_ratings(request: &IncomingRequest, photo_id: &str) -> Outcome {
     if let Ok(page) = records::list_records(VOTES_COLL, 200, "") {
         for entry in page.entries {
             if let Ok(v) = serde_json::from_str::<Value>(&entry.data) {
-                if v["photo_id"].as_str() == Some(photo_id) && v["user_id"].as_str() == Some(&principal.subject) {
+                if v["photo_id"].as_str() == Some(photo_id)
+                    && v["user_id"].as_str() == Some(&principal.subject)
+                {
                     my_vote = v["value"].as_i64().unwrap_or(0);
                 }
             }

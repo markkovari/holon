@@ -49,7 +49,14 @@ fn main() {
     // something to explain. A single-branch run would render fine and prove
     // nothing about "why did this one beat that one".
     let run = "77/g1";
-    trace.run_started(run, "add pagination to the search box", ".comp/goals/pagination.toml", 77, "abc123", 2);
+    trace.run_started(
+        run,
+        "add pagination to the search box",
+        ".comp/goals/pagination.toml",
+        77,
+        "abc123",
+        2,
+    );
 
     // A hit and a MISS. The miss is the row the run view calls out, because it
     // is the graph naming a capability the pool lacks (ADR-0089).

@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::net::vpn::wireguard::Guest;
 struct Component;
-impl Guest for Component { fn status() -> String { "UNIMPLEMENTED: vpn-wireguard cannot inspect a tunnel from wasm".to_string() } }
+impl Guest for Component {
+    fn status() -> String {
+        "UNIMPLEMENTED: vpn-wireguard cannot inspect a tunnel from wasm".to_string()
+    }
+}
 bindings::export!(Component with_types_in bindings);

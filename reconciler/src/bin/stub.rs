@@ -86,8 +86,8 @@ fn load(paths: &[std::path::PathBuf], tenant: Option<&str>) -> Result<Vec<Value>
     files
         .iter()
         .map(|f| {
-            let text = std::fs::read_to_string(f)
-                .with_context(|| format!("reading {}", f.display()))?;
+            let text =
+                std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?;
             let spec = AppSpec::parse(&text).with_context(|| format!("in {}", f.display()))?;
             Ok(serde_json::to_value(spec.to_manifest(tenant)?)?)
         })
@@ -104,7 +104,8 @@ async fn main() -> Result<()> {
     }
     let mut vault = HashMap::new();
     for s in &args.secrets {
-        let (reference, value) = s.split_once('=').context("--secret wants vault://org/name=value")?;
+        let (reference, value) =
+            s.split_once('=').context("--secret wants vault://org/name=value")?;
         // `@path` reads the value from a FILE, so a real credential never appears
         // in argv (and hence never in `ps`, a shell history, or a crash dump). The
         // curl convention; the path is not the secret. A trailing newline is

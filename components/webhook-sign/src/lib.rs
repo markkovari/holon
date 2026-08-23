@@ -27,11 +27,7 @@ fn hmac_hex(secret: &str, msg: &[u8]) -> String {
     let mut mac =
         HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac accepts any key length");
     mac.update(msg);
-    mac.finalize()
-        .into_bytes()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Constant-time comparison of two hex strings: length-check, then
@@ -70,17 +66,11 @@ impl Guest for Component {
                 let mut signed = format!("{timestamp}.").into_bytes();
                 signed.extend_from_slice(&body);
                 let hex = hmac_hex(&secret, &signed);
-                Ok(Signature {
-                    header: format!("t={timestamp},v1={hex}"),
-                    timestamp,
-                })
+                Ok(Signature { header: format!("t={timestamp},v1={hex}"), timestamp })
             }
             Scheme::Github => {
                 let hex = hmac_hex(&secret, &body);
-                Ok(Signature {
-                    header: format!("sha256={hex}"),
-                    timestamp: 0,
-                })
+                Ok(Signature { header: format!("sha256={hex}"), timestamp: 0 })
             }
         }
     }
@@ -98,11 +88,11 @@ impl Guest for Component {
                 let mut t: Option<u64> = None;
                 let mut v1: Option<String> = None;
                 for part in header.split(',') {
-                    let (k, val) = part
-                        .split_once('=')
-                        .ok_or(SignError::MalformedSignature)?;
+                    let (k, val) = part.split_once('=').ok_or(SignError::MalformedSignature)?;
                     match k.trim() {
-                        "t" => t = Some(val.trim().parse().map_err(|_| SignError::MalformedSignature)?),
+                        "t" => {
+                            t = Some(val.trim().parse().map_err(|_| SignError::MalformedSignature)?)
+                        }
                         "v1" => v1 = Some(val.trim().to_string()),
                         _ => {}
                     }
@@ -130,9 +120,7 @@ impl Guest for Component {
             }
             Scheme::Github => {
                 // header = `sha256={hex}` — no timestamp check.
-                let hex = header
-                    .strip_prefix("sha256=")
-                    .ok_or(SignError::MalformedSignature)?;
+                let hex = header.strip_prefix("sha256=").ok_or(SignError::MalformedSignature)?;
                 let expected = hmac_hex(&secret, &body);
                 if ct_eq(&expected, hex) {
                     Ok(())

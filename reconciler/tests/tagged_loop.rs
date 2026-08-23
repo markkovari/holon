@@ -235,13 +235,8 @@ fn a_lesson_reaches_a_goal_that_shares_only_an_interface() {
     // deterministic function of the text rather than a language model's: without a
     // floor, two unrelated goals can land arbitrarily close and the arm would be
     // measuring the fixture instead of the design.
-    let text_only = Reading {
-        k: 3,
-        budget: 1200,
-        pools: vec![],
-        tags: vec![],
-        min_similarity: 0.55,
-    };
+    let text_only =
+        Reading { k: 3, budget: 1200, pools: vec![], tags: vec![], min_similarity: 0.55 };
     let by_text = pool.recall(SECOND_GOAL, &text_only).expect("the pool answered");
     let text_render = memory::render(&by_text);
     assert!(

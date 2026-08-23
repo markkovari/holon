@@ -193,7 +193,10 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
 
     // --- the lesson comes back, and is rendered as advice ----------------------
     let lessons = pool
-        .recall(goal, &Reading { k: 3, budget: 1200, pools: vec![], tags: vec![], min_similarity: 0.0 })
+        .recall(
+            goal,
+            &Reading { k: 3, budget: 1200, pools: vec![], tags: vec![], min_similarity: 0.0 },
+        )
         .expect("the pool answered");
     assert!(!lessons.is_empty(), "a lesson written is a lesson findable");
     let rendered = memory::render(&lessons);
@@ -222,7 +225,11 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
         "the branch that read the lesson still failed — the loop did not learn: {:?}",
         learned.files
     );
-    assert!(matches!(second.stopped, comp_reconciler::generation::SearchStop::Accepted), "{:?}", second.stopped);
+    assert!(
+        matches!(second.stopped, comp_reconciler::generation::SearchStop::Accepted),
+        "{:?}",
+        second.stopped
+    );
 
     // --- and a branch that reads nothing still fails ---------------------------
     //
@@ -248,7 +255,13 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
     pool.attribute(&keys, &run_id(13_000, 0, "branch-0"), false).expect("attribution landed");
     // Still retrievable afterwards: attribution moves standing, it does not delete.
     assert!(
-        !pool.recall(goal, &Reading { k: 3, budget: 1200, pools: vec![], tags: vec![], min_similarity: 0.0 }).unwrap().is_empty(),
+        !pool
+            .recall(
+                goal,
+                &Reading { k: 3, budget: 1200, pools: vec![], tags: vec![], min_similarity: 0.0 }
+            )
+            .unwrap()
+            .is_empty(),
         "sinking is not deletion"
     );
 
@@ -275,7 +288,16 @@ fn a_run_writes_what_it_failed_on_and_a_later_run_reads_it() {
 
     // And the promoted lesson comes back marked as what it is.
     let after = pool
-        .recall(goal, &Reading { k: 5, budget: 1200, pools: vec!["patterns".into()], tags: vec![], min_similarity: 0.0 })
+        .recall(
+            goal,
+            &Reading {
+                k: 5,
+                budget: 1200,
+                pools: vec!["patterns".into()],
+                tags: vec![],
+                min_similarity: 0.0,
+            },
+        )
         .expect("the pool answered");
     let rendered_after = memory::render(&after);
     assert!(rendered_after.contains("[PROVEN]"), "a pattern is not a guess: {rendered_after}");

@@ -140,7 +140,10 @@ fn winning_line(board: &[u8], r: usize, c: usize, color: u8) -> Option<Vec<usize
         // extend both directions along the axis
         for sign in [1i32, -1] {
             let (mut rr, mut cc) = (r as i32 + dr * sign, c as i32 + dc * sign);
-            while rr >= 0 && rr < ROWS as i32 && cc >= 0 && cc < COLS as i32
+            while rr >= 0
+                && rr < ROWS as i32
+                && cc >= 0
+                && cc < COLS as i32
                 && board[idx(rr as usize, cc as usize)] == color
             {
                 line.push(idx(rr as usize, cc as usize));
@@ -207,7 +210,9 @@ fn lobby() -> Outcome {
         .iter()
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|d| public(&d, e.revision)))
         .collect();
-    games.sort_by(|a, b| b["updated"].as_u64().unwrap_or(0).cmp(&a["updated"].as_u64().unwrap_or(0)));
+    games.sort_by(|a, b| {
+        b["updated"].as_u64().unwrap_or(0).cmp(&a["updated"].as_u64().unwrap_or(0))
+    });
     Outcome::Json(200, json!({ "games": games }).to_string())
 }
 
@@ -446,10 +451,15 @@ fn query_i64(path: &str, key: &str) -> Option<i64> {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
-        Outcome::Err(code, msg) => {
-            respond(response_out, code, "application/json", json!({ "error": msg }).to_string().as_bytes())
+        Outcome::Json(code, body) => {
+            respond(response_out, code, "application/json", body.as_bytes())
         }
+        Outcome::Err(code, msg) => respond(
+            response_out,
+            code,
+            "application/json",
+            json!({ "error": msg }).to_string().as_bytes(),
+        ),
     }
 }
 

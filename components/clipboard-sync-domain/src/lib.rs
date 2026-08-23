@@ -1,9 +1,12 @@
-#[allow(warnings)] mod bindings;
-use serde_json::json;
-use bindings::os::desktop::clipboard;
-use bindings::wasi::keyvalue::store;
+#[allow(warnings)]
+mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::wasi::http::types::{ Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam };
+use bindings::os::desktop::clipboard;
+use bindings::wasi::http::types::{
+    Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
+};
+use bindings::wasi::keyvalue::store;
+use serde_json::json;
 
 struct Component;
 
@@ -33,7 +36,11 @@ impl Guest for Component {
     }
 }
 
-enum Outcome { Html(u16, String), Json(u16, String), Err(u16, String) }
+enum Outcome {
+    Html(u16, String),
+    Json(u16, String),
+    Err(u16, String),
+}
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, body, content_type) = match result {

@@ -147,7 +147,8 @@ impl Guest for Component {
 
         let body = if route == "/run" {
             let raw = read_body(request);
-            let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+            let v: serde_json::Value =
+                serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
             match run::run(&plan_of(&v)) {
                 Ok(r) => report(&r).to_string(),
                 Err(e) => {

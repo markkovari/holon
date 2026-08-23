@@ -69,7 +69,8 @@ fn now() -> u64 {
 fn bucket() -> Result<kv::Bucket, CacheError> {
     // The host names the bucket; a guest names one from its allow-list and never
     // chooses what that resolves to (ADR-0012).
-    kv::open("default").map_err(|e| CacheError::Unavailable(format!("opening the claim store: {e:?}")))
+    kv::open("default")
+        .map_err(|e| CacheError::Unavailable(format!("opening the claim store: {e:?}")))
 }
 
 fn store_err(e: blobstore::BlobError) -> CacheError {
@@ -207,19 +208,18 @@ impl Guest for Component {
                 // Metadata is a second object rather than a header on the first,
                 // because `blob:store` has no metadata a caller can set beyond a
                 // content type, and provenance is worth more than one field.
-                let (producer, content_type, stored_at) =
-                    match blobstore::get(&c, &meta_key(&id)) {
-                        Ok(m) => {
-                            let s = String::from_utf8_lossy(&m).to_string();
-                            let mut parts = s.splitn(3, '\n');
-                            (
-                                parts.next().unwrap_or_default().to_string(),
-                                parts.next().unwrap_or_default().to_string(),
-                                parts.next().unwrap_or_default().parse().unwrap_or(0),
-                            )
-                        }
-                        Err(_) => (String::new(), String::new(), 0),
-                    };
+                let (producer, content_type, stored_at) = match blobstore::get(&c, &meta_key(&id)) {
+                    Ok(m) => {
+                        let s = String::from_utf8_lossy(&m).to_string();
+                        let mut parts = s.splitn(3, '\n');
+                        (
+                            parts.next().unwrap_or_default().to_string(),
+                            parts.next().unwrap_or_default().to_string(),
+                            parts.next().unwrap_or_default().parse().unwrap_or(0),
+                        )
+                    }
+                    Err(_) => (String::new(), String::new(), 0),
+                };
                 Ok(Some(Artifact { id, bytes, content_type, producer, stored_at }))
             }
             Err(blobstore::BlobError::NotFound) => Ok(None),
@@ -250,7 +250,9 @@ impl Guest for Component {
             // Refused rather than written. A producer this late may have been
             // superseded, and letting it write would overwrite whatever the
             // producer that replaced it stored.
-            return Err(CacheError::NotYourClaim(format!("the claim on {id} expired while you held it")));
+            return Err(CacheError::NotYourClaim(format!(
+                "the claim on {id} expired while you held it"
+            )));
         }
 
         let c = container();
@@ -276,11 +278,9 @@ impl Guest for Component {
         match parse_claim(&v.value) {
             // Only the holder may release it. Otherwise a straggler abandoning
             // late would free the claim of the producer that replaced it.
-            Some((_, held)) if held == claim => {
-                cas::set(&b, &ck, b"", v.revision)
-                    .map(|_| ())
-                    .map_err(|e| CacheError::Unavailable(format!("{e:?}")))
-            }
+            Some((_, held)) if held == claim => cas::set(&b, &ck, b"", v.revision)
+                .map(|_| ())
+                .map_err(|e| CacheError::Unavailable(format!("{e:?}"))),
             _ => Ok(()),
         }
     }

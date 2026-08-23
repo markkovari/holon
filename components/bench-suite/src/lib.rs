@@ -80,10 +80,7 @@ impl Guest for Component {
             // streams; if they all land at once it buffers.
             (Method::Get, "/sse") => {
                 let headers = Fields::new();
-                let _ = headers.set(
-                    "content-type",
-                    &[b"text/event-stream".to_vec()],
-                );
+                let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
                 let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
                 let response = OutgoingResponse::new(headers);
                 let _ = response.set_status_code(200);
@@ -123,10 +120,7 @@ impl Guest for Component {
                 Some(pet) => match kv::open("bench") {
                     Ok(bucket) => {
                         let hit = matches!(bucket.get(&pet.name), Ok(Some(_)));
-                        let body = format!(
-                            "{{\"name\":\"{}\",\"hit\":{hit}}}",
-                            pet.name
-                        );
+                        let body = format!("{{\"name\":\"{}\",\"hit\":{hit}}}", pet.name);
                         respond(response_out, 200, "application/json", body.as_bytes());
                     }
                     Err(_) => respond(response_out, 500, "text/plain", b"kv open failed"),

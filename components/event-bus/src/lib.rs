@@ -137,12 +137,7 @@ fn parse_event(topic: &str, seq: u64, s: &str) -> Result<Event, BusError> {
     let payload = B64
         .decode(p.next().unwrap_or(""))
         .map_err(|_| BusError::BackendUnavailable("corrupt event: payload".into()))?;
-    Ok(Event {
-        id: seq.to_string(),
-        topic: topic.to_string(),
-        payload,
-        at,
-    })
+    Ok(Event { id: seq.to_string(), topic: topic.to_string(), payload, at })
 }
 
 // ---- guest --------------------------------------------------------------
@@ -184,11 +179,7 @@ impl Guest for Component {
         let key = off_key(&topic, &group);
         let current = get_u64(&bucket, &key)?;
         // advance to the highest acked id (monotonic; lower acks are no-ops).
-        let highest = ids
-            .iter()
-            .filter_map(|i| i.parse::<u64>().ok())
-            .max()
-            .unwrap_or(0);
+        let highest = ids.iter().filter_map(|i| i.parse::<u64>().ok()).max().unwrap_or(0);
         if highest > current {
             set_u64(&bucket, &key, highest)?;
         }

@@ -6,7 +6,6 @@ use bindings::wasi::http::types::{
 };
 use bindings::wasi::keyvalue::store::open;
 
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -35,7 +34,7 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-                        (Method::Post, ["api", "login"]) => login_user(&request),
+            (Method::Post, ["api", "login"]) => login_user(&request),
             (Method::Get, ["api", "posts"]) => get_posts(),
             (Method::Post, ["api", "posts"]) => create_post(&request),
             (Method::Post, ["api", "posts", id, "like"]) => like_post(&request, id),
@@ -92,7 +91,11 @@ fn get_auth_token(request: &IncomingRequest) -> Option<String> {
     None
 }
 
-fn authenticate(request: &IncomingRequest, _target: &str, _action: &str) -> Result<String, Outcome> {
+fn authenticate(
+    request: &IncomingRequest,
+    _target: &str,
+    _action: &str,
+) -> Result<String, Outcome> {
     let token = get_auth_token(request).ok_or(Outcome::Err(401, "Missing token".into()))?;
     if token.starts_with("authenticated_token_for_") {
         let parts: Vec<&str> = token.split('_').collect();
@@ -117,27 +120,25 @@ fn get_users() -> Outcome {
 
 fn create_user(request: &IncomingRequest) -> Outcome {
     let body_bytes = read_body(request).unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
+    let json: serde_json::Value =
+        serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
     let username = json["username"].as_str().unwrap_or("anonymous").to_string();
-    
+
     // Attempt to authenticate to tie this to a real identity, though not strictly required
-    let user_id = authenticate(request, "users", "create").unwrap_or_else(|_| format!("user_{}", bindings::wasi::random::random::get_random_u64()));
-    
-    let user = UserProfile {
-        id: user_id,
-        username,
-        followers: Vec::new(),
-    };
-    
+    let user_id = authenticate(request, "users", "create")
+        .unwrap_or_else(|_| format!("user_{}", bindings::wasi::random::random::get_random_u64()));
+
+    let user = UserProfile { id: user_id, username, followers: Vec::new() };
+
     let bucket = get_bucket();
     let mut users: Vec<UserProfile> = match bucket.get("users") {
         Ok(Some(bytes)) => serde_json::from_slice(&bytes).unwrap_or_default(),
         _ => Vec::new(),
     };
-    
+
     users.push(user.clone());
     bucket.set("users", &serde_json::to_vec(&users).unwrap()).unwrap();
-    
+
     Outcome::Json(201, serde_json::to_string(&user).unwrap())
 }
 
@@ -148,10 +149,11 @@ fn create_post(request: &IncomingRequest) -> Outcome {
     };
 
     let body_bytes = read_body(request).unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
+    let json: serde_json::Value =
+        serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
     let image_url = json["image_url"].as_str().unwrap_or("").to_string();
     let caption = json["caption"].as_str().unwrap_or("").to_string();
-    
+
     let post = Post {
         id: format!("post_{}", bindings::wasi::random::random::get_random_u64()),
         author_id,
@@ -159,16 +161,16 @@ fn create_post(request: &IncomingRequest) -> Outcome {
         caption,
         likes: Vec::new(),
     };
-    
+
     let bucket = get_bucket();
     let mut posts: Vec<Post> = match bucket.get("posts") {
         Ok(Some(bytes)) => serde_json::from_slice(&bytes).unwrap_or_default(),
         _ => Vec::new(),
     };
-    
+
     posts.push(post.clone());
     bucket.set("posts", &serde_json::to_vec(&posts).unwrap()).unwrap();
-    
+
     Outcome::Json(201, serde_json::to_string(&post).unwrap())
 }
 
@@ -254,20 +256,29 @@ bindings::export!(Component with_types_in bindings);
 
 fn login_user(request: &IncomingRequest) -> Outcome {
     let body_bytes = read_body(request).unwrap_or_default();
-    let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
+    let json: serde_json::Value =
+        serde_json::from_slice(&body_bytes).unwrap_or(serde_json::json!({}));
     let username = json["username"].as_str().unwrap_or("anonymous").to_string();
     let password = json["password"].as_str().unwrap_or("").to_string();
-    
+
     // Perform a 'full' authentication check
     if password != "password" && password != "admin" && !password.is_empty() {
         return Outcome::Err(401, "Invalid credentials".into());
     }
-    
+
     // Mint a 'real' token (in a production system this would be a signed JWT)
-    let token = format!("bearer authenticated_token_for_{}_{}", username, bindings::wasi::random::random::get_random_u64());
-    
-    Outcome::Json(200, serde_json::json!({
-        "token": token,
-        "username": username
-    }).to_string())
+    let token = format!(
+        "bearer authenticated_token_for_{}_{}",
+        username,
+        bindings::wasi::random::random::get_random_u64()
+    );
+
+    Outcome::Json(
+        200,
+        serde_json::json!({
+            "token": token,
+            "username": username
+        })
+        .to_string(),
+    )
 }
