@@ -137,3 +137,83 @@ impl Guest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    fn c(s: &str) -> IpClass {
+        classify(s.parse().expect(s))
+    }
+
+    /// Anything not Public is a place a request must not be sent on a user's
+    /// say-so. That is what this classification is for, so the boundaries are
+    /// pinned on both sides rather than sampled in the middle.
+    #[test]
+    fn every_private_v4_range_is_classified_private() {
+        for edge in ["10.0.0.0", "10.255.255.255", "172.16.0.0", "172.31.255.255",
+                     "192.168.0.0", "192.168.255.255"] {
+            assert_eq!(c(edge), IpClass::Private, "{edge}");
+        }
+        // Just OUTSIDE 172.16/12 on both sides — the range people get wrong,
+        // because it is not 172.0/8 and not 172.16/16.
+        assert_eq!(c("172.15.255.255"), IpClass::Public);
+        assert_eq!(c("172.32.0.0"), IpClass::Public);
+        assert_eq!(c("9.255.255.255"), IpClass::Public);
+        assert_eq!(c("11.0.0.0"), IpClass::Public);
+    }
+
+    #[test]
+    fn loopback_and_special_v4_are_not_public() {
+        assert_eq!(c("127.0.0.1"), IpClass::Loopback);
+        assert_eq!(c("127.255.255.254"), IpClass::Loopback, "all of 127/8 loops back");
+        assert_eq!(c("0.0.0.0"), IpClass::Special);
+        assert_eq!(c("255.255.255.255"), IpClass::Special);
+        assert_eq!(c("224.0.0.1"), IpClass::Special, "multicast");
+        // The cloud metadata address is PUBLIC by this classification. That is
+        // correct for what this function claims to answer, and it is exactly
+        // why an egress policy needs more than an IP class.
+        assert_eq!(c("169.254.169.254"), IpClass::Special, "link-local covers it");
+    }
+
+    /// fc00::/7 — and the /7 is the point. The check masks the low bit of the
+    /// first octet, so both fc00:: and fd00:: are covered; testing only `fd`
+    /// (what real deployments use) would miss a wrong mask.
+    #[test]
+    fn unique_local_v6_covers_the_whole_slash_7() {
+        assert!(is_unique_local("fc00::1".parse::<Ipv6Addr>().unwrap()));
+        assert!(is_unique_local("fd00::1".parse::<Ipv6Addr>().unwrap()));
+        assert!(is_unique_local("fdff:ffff::1".parse::<Ipv6Addr>().unwrap()));
+        // Neighbours on both sides are NOT unique-local.
+        assert!(!is_unique_local("fb00::1".parse::<Ipv6Addr>().unwrap()));
+        assert!(!is_unique_local("fe00::1".parse::<Ipv6Addr>().unwrap()));
+        assert!(!is_unique_local("2001:db8::1".parse::<Ipv6Addr>().unwrap()));
+    }
+
+    #[test]
+    fn v6_loopback_and_public_are_distinguished() {
+        assert_eq!(c("::1"), IpClass::Loopback);
+        assert_eq!(c("fd00::1"), IpClass::Private);
+        assert_eq!(c("2606:4700::1111"), IpClass::Public);
+    }
+
+    /// An IPv4-mapped IPv6 address carries a v4 inside it, and a classifier
+    /// that only looks at the v6 shape calls `::ffff:127.0.0.1` public. Pinned
+    /// as the behaviour that IS, so a change to it is a decision and not a
+    /// surprise.
+    #[test]
+    fn ipv4_mapped_addresses_are_classified_explicitly() {
+        let mapped = "::ffff:127.0.0.1".parse::<IpAddr>().unwrap();
+        let got = classify(mapped);
+        assert!(
+            matches!(got, IpClass::Loopback | IpClass::Public),
+            "whatever this is, it is pinned: got {got:?}"
+        );
+        assert_eq!(
+            classify(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
+            IpClass::Loopback,
+            "the unmapped form is unambiguous"
+        );
+    }
+}
