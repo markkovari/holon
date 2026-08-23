@@ -216,3 +216,46 @@ impl Guest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A cursor is only opaque if it is also unforgeable. These pin that the
+    /// tag depends on BOTH the key and the payload, so a client cannot page
+    /// into someone else's results by editing the offset it was handed.
+    #[test]
+    fn a_cursor_tag_binds_the_key_and_the_payload() {
+        let tag = checksum("k1", "offset:10");
+        assert_eq!(tag, checksum("k1", "offset:10"), "deterministic");
+        assert_ne!(tag, checksum("k2", "offset:10"), "a different key, a different tag");
+        assert_ne!(tag, checksum("k1", "offset:11"), "a different payload, a different tag");
+        assert_eq!(tag.len(), TAG_LEN * 2, "hex of a truncated tag");
+        assert!(tag.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn verify_accepts_only_the_tag_this_key_produces() {
+        let tag = checksum("secret", "page:2");
+        assert!(verify("secret", "page:2", &tag));
+        assert!(!verify("secret", "page:3", &tag), "the payload is bound");
+        assert!(!verify("other", "page:2", &tag), "the key is bound");
+    }
+
+    /// Malformed tags must be REJECTED, not crash and not accidentally pass.
+    ///
+    /// A cursor arrives from a client, so every one of these is reachable by
+    /// anyone with a URL bar: odd-length hex, non-hex characters, an empty
+    /// tag, and a truncated one. The truncation case is the sharp one — the
+    /// verifier tolerates a shortened tag by design, so "shorter" must still
+    /// mean "wrong length" rather than "fewer bytes to guess".
+    #[test]
+    fn a_malformed_tag_is_refused_rather_than_trusted() {
+        let tag = checksum("secret", "page:2");
+        assert!(!verify("secret", "page:2", ""), "empty");
+        assert!(!verify("secret", "page:2", "zz"), "not hex");
+        assert!(!verify("secret", "page:2", &tag[..tag.len() - 1]), "odd length");
+        assert!(!verify("secret", "page:2", &tag[..tag.len() - 2]), "truncated tag");
+        assert!(!verify("secret", "page:2", &format!("{tag}00")), "over-long");
+    }
+}
