@@ -74,10 +74,7 @@ impl Guest for Component {
 fn guard(request: &IncomingRequest) -> Result<Principal, AuthError> {
     let token = bearer_token(request)
         .ok_or_else(|| AuthError::InvalidToken("missing bearer token".into()))?;
-    let required = Permission {
-        target: "demo".to_string(),
-        action: "read".to_string(),
-    };
+    let required = Permission { target: "demo".to_string(), action: "read".to_string() };
     authorize(&token, &required)
 }
 

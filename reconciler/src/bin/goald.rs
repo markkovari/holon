@@ -109,10 +109,7 @@ struct Session {
 /// The same credentials file the CLI writes, read the same way — so `comp login`
 /// is the only way a token gets onto this box, and the daemon does not become a
 /// second place that knows how to authenticate.
-fn session(
-    override_url: Option<String>,
-    login: Option<(String, String)>,
-) -> Result<Session> {
+fn session(override_url: Option<String>, login: Option<(String, String)>) -> Result<Session> {
     let p = std::env::var("COMP_CREDENTIALS").map(PathBuf::from).unwrap_or_else(|_| {
         PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
             .join(".config/comp/credentials.json")
@@ -213,7 +210,12 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
     if spec.is_empty() {
         let why = "the goal names no spec file — a run needs a goal.toml in the repo";
         eprintln!("[goald] {id} SKIPPED: {why}");
-        let _ = call(s, "POST", &format!("/api/goals/{id}/fail"), Some(serde_json::json!({ "reason": why })));
+        let _ = call(
+            s,
+            "POST",
+            &format!("/api/goals/{id}/fail"),
+            Some(serde_json::json!({ "reason": why })),
+        );
         return Ok(());
     }
 
@@ -243,7 +245,12 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
             code => format!("comp-goalrun exited {}", code.unwrap_or(-1)),
         };
         eprintln!("[goald] {id} FAILED: {reason}");
-        call(s, "POST", &format!("/api/goals/{id}/fail"), Some(serde_json::json!({ "reason": reason })))?;
+        call(
+            s,
+            "POST",
+            &format!("/api/goals/{id}/fail"),
+            Some(serde_json::json!({ "reason": reason })),
+        )?;
     }
     Ok(())
 }

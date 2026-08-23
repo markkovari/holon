@@ -2,8 +2,24 @@
 //! logical && || !, and parens. Whitespace ignored.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Tok {
-    Num(i64), Plus, Minus, Star, Slash, Percent, Pow,
-    Lt, Le, Gt, Ge, Eq, Ne, And, Or, Not, LParen, RParen,
+    Num(i64),
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Pow,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
+    And,
+    Or,
+    Not,
+    LParen,
+    RParen,
 }
 pub fn lex(s: &str) -> Vec<Tok> {
     let b: Vec<char> = s.chars().collect();
@@ -11,7 +27,10 @@ pub fn lex(s: &str) -> Vec<Tok> {
     let mut out = Vec::new();
     while i < b.len() {
         let c = b[i];
-        if c.is_whitespace() { i += 1; continue; }
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
         if c.is_ascii_digit() {
             let mut n: i64 = 0;
             while i < b.len() && b[i].is_ascii_digit() {

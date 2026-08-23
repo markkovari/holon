@@ -203,7 +203,9 @@ fn pump() {
             // sink down: report the failure; the outbox reschedules with backoff
             // and, once attempts exceed the cap, moves it to `dead`.
             match queue::fail(&ev.id) {
-                Ok(queue::State::Dead) => publish_xition(&ev.id, &ev.topic, "dead", ev.attempts + 1),
+                Ok(queue::State::Dead) => {
+                    publish_xition(&ev.id, &ev.topic, "dead", ev.attempts + 1)
+                }
                 Ok(_) => publish_xition(&ev.id, &ev.topic, "retry", ev.attempts + 1),
                 Err(_) => {}
             }

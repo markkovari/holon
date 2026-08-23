@@ -49,10 +49,7 @@ impl Inventory for MemoryLattice {
         // Per-entry TTL, which NATS cannot do (it is per bucket). Worth noting: the
         // trait signature allows something the current production impl approximates,
         // and that is the abstraction being honest rather than NATS-shaped.
-        self.entries
-            .lock()
-            .unwrap()
-            .insert(key.to_string(), (value, Instant::now() + ttl));
+        self.entries.lock().unwrap().insert(key.to_string(), (value, Instant::now() + ttl));
         Ok(())
     }
 
@@ -140,10 +137,8 @@ mod tests {
             assert_eq!(cmd.payload, b"{}".to_vec());
             let _ = cmd.reply.send(b"{\"ok\":true}".to_vec());
         });
-        let reply = l
-            .send("box-a", "start", b"{}".to_vec(), Duration::from_secs(1))
-            .await
-            .expect("ack");
+        let reply =
+            l.send("box-a", "start", b"{}".to_vec(), Duration::from_secs(1)).await.expect("ack");
         assert_eq!(reply, b"{\"ok\":true}".to_vec());
         worker.await.unwrap();
     }

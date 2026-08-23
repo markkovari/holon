@@ -129,13 +129,10 @@ fn unseal(blob: &str) -> Result<Vec<u8>, VaultError> {
         return Err(VaultError::Crypto("stored value truncated".into()));
     }
     let (nonce_bytes, ct) = raw.split_at(NONCE_LEN);
-    let n: [u8; NONCE_LEN] = nonce_bytes
-        .try_into()
-        .map_err(|_| VaultError::Crypto("stored value truncated".into()))?;
+    let n: [u8; NONCE_LEN] =
+        nonce_bytes.try_into().map_err(|_| VaultError::Crypto("stored value truncated".into()))?;
     let nonce = Nonce::from(n);
-    cipher
-        .decrypt(&nonce, ct)
-        .map_err(|_| VaultError::Crypto("decrypt/authenticate failed".into()))
+    cipher.decrypt(&nonce, ct).map_err(|_| VaultError::Crypto("decrypt/authenticate failed".into()))
 }
 
 // ---- kv plumbing --------------------------------------------------------
@@ -161,9 +158,7 @@ fn set_str(bucket: &kv::Bucket, key: &str, val: &str) -> Result<(), VaultError> 
 }
 
 fn delete_key(bucket: &kv::Bucket, key: &str) -> Result<(), VaultError> {
-    bucket
-        .delete(key)
-        .map_err(|e| VaultError::BackendUnavailable(format!("delete: {e:?}")))
+    bucket.delete(key).map_err(|e| VaultError::BackendUnavailable(format!("delete: {e:?}")))
 }
 
 // ---- meta ---------------------------------------------------------------
@@ -184,7 +179,12 @@ fn read_meta(bucket: &kv::Bucket, name: &str) -> Result<Option<(u32, u64)>, Vaul
     }
 }
 
-fn write_meta(bucket: &kv::Bucket, name: &str, version: u32, updated: u64) -> Result<(), VaultError> {
+fn write_meta(
+    bucket: &kv::Bucket,
+    name: &str,
+    version: u32,
+    updated: u64,
+) -> Result<(), VaultError> {
     set_str(bucket, &meta_key(name), &format!("{version}:{updated}"))
 }
 
@@ -198,11 +198,7 @@ fn write_meta(bucket: &kv::Bucket, name: &str, version: u32, updated: u64) -> Re
 
 fn read_index(bucket: &kv::Bucket) -> Result<Vec<String>, VaultError> {
     Ok(match get_str(bucket, INDEX_KEY)? {
-        Some(s) => s
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
-            .collect(),
+        Some(s) => s.lines().filter(|l| !l.is_empty()).map(|l| l.to_string()).collect(),
         None => Vec::new(),
     })
 }
@@ -244,36 +240,26 @@ impl Guest for Component {
         if current == 0 {
             index_add(&bucket, &name)?;
         }
-        Ok(SecretMeta {
-            name,
-            version: new_version,
-            updated,
-        })
+        Ok(SecretMeta { name, version: new_version, updated })
     }
 
     fn get(name: String) -> Result<Vec<u8>, VaultError> {
         let bucket = open()?;
         let (version, _) = read_meta(&bucket, &name)?.ok_or(VaultError::NotFound)?;
-        let blob = get_str(&bucket, &version_key(&name, version))?
-            .ok_or(VaultError::NotFound)?;
+        let blob = get_str(&bucket, &version_key(&name, version))?.ok_or(VaultError::NotFound)?;
         unseal(&blob)
     }
 
     fn get_version(name: String, version: u32) -> Result<Vec<u8>, VaultError> {
         let bucket = open()?;
-        let blob = get_str(&bucket, &version_key(&name, version))?
-            .ok_or(VaultError::NotFound)?;
+        let blob = get_str(&bucket, &version_key(&name, version))?.ok_or(VaultError::NotFound)?;
         unseal(&blob)
     }
 
     fn describe(name: String) -> Result<SecretMeta, VaultError> {
         let bucket = open()?;
         let (version, updated) = read_meta(&bucket, &name)?.ok_or(VaultError::NotFound)?;
-        Ok(SecretMeta {
-            name,
-            version,
-            updated,
-        })
+        Ok(SecretMeta { name, version, updated })
     }
 
     fn rotate(name: String, new_value: Vec<u8>) -> Result<(u32, u32), VaultError> {

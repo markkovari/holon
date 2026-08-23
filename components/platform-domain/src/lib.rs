@@ -20,8 +20,8 @@
 #[allow(warnings)]
 mod bindings;
 mod manifest;
-mod req;
 mod orgs;
+mod req;
 
 use serde_json::{json, Map, Value};
 
@@ -29,13 +29,13 @@ use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::types as auth_types;
 use bindings::blob::store::blobstore as blob;
+use bindings::comp::store::cas;
 use bindings::policy::guard::guard as policy;
 use bindings::quota::meter::meter as quota;
 use bindings::records::store::store as records;
+use bindings::secrets::vault::vault;
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::config::store as config;
-use bindings::comp::store::cas;
-use bindings::secrets::vault::vault;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wit::reflect::composer;
 use bindings::wit::reflect::inspector;
@@ -103,14 +103,28 @@ impl Guest for Component {
 
             (Method::Post, ["api", "projects"]) => project_create(&request, &query),
             (Method::Get, ["api", "projects"]) => projects_list(&request, &query),
-            (Method::Post, ["api", "projects", project, "goals"]) => goal_create(&request, project, &query),
-            (Method::Get, ["api", "projects", project, "goals"]) => goals_list(&request, project, &query),
+            (Method::Post, ["api", "projects", project, "goals"]) => {
+                goal_create(&request, project, &query)
+            }
+            (Method::Get, ["api", "projects", project, "goals"]) => {
+                goals_list(&request, project, &query)
+            }
             // A human starts every goal; there is no loop that does (ADR-0082).
-            (Method::Post, ["api", "goals", id, "start"]) => goal_transition(&request, id, "running", &query),
-            (Method::Post, ["api", "goals", id, "fail"]) => goal_transition(&request, id, "failed", &query),
-            (Method::Post, ["api", "goals", id, "done"]) => goal_transition(&request, id, "done", &query),
-            (Method::Post, ["api", "goals", id, "review"]) => goal_transition(&request, id, "awaiting-human", &query),
-            (Method::Delete, ["api", "goals", id]) => goal_transition(&request, id, "abandoned", &query),
+            (Method::Post, ["api", "goals", id, "start"]) => {
+                goal_transition(&request, id, "running", &query)
+            }
+            (Method::Post, ["api", "goals", id, "fail"]) => {
+                goal_transition(&request, id, "failed", &query)
+            }
+            (Method::Post, ["api", "goals", id, "done"]) => {
+                goal_transition(&request, id, "done", &query)
+            }
+            (Method::Post, ["api", "goals", id, "review"]) => {
+                goal_transition(&request, id, "awaiting-human", &query)
+            }
+            (Method::Delete, ["api", "goals", id]) => {
+                goal_transition(&request, id, "abandoned", &query)
+            }
 
             (Method::Post, ["api", "deployments"]) => deployment_create(&request, &query),
             (Method::Get, ["api", "deployments"]) => deployments_list(&request),
@@ -272,10 +286,7 @@ fn login(request: &IncomingRequest) -> Outcome {
 fn caller(request: &IncomingRequest) -> Option<auth_types::Principal> {
     let raw = request.headers().get("authorization");
     let header = String::from_utf8(raw.into_iter().next()?).ok()?;
-    let token = header
-        .strip_prefix("bearer ")
-        .or_else(|| header.strip_prefix("Bearer "))?
-        .trim();
+    let token = header.strip_prefix("bearer ").or_else(|| header.strip_prefix("Bearer "))?.trim();
     authorizer::introspect(token).ok()
 }
 
@@ -499,23 +510,25 @@ fn components_satisfies(request: &IncomingRequest) -> Outcome {
     // may use. Asking whether two components fit must not become a way to learn that
     // a private component exists.
     let find = |id: &str| -> Option<Value> {
-        find_one(CATALOG, "key", &format!("{}/{}", p.tenant, id))
-            .map(|(_, _, v)| v)
-            .or_else(|| {
-                records::list_records(CATALOG, 500, "")
-                    .map(|page| page.entries)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
-                    .find(|r| r["id"] == json!(id) && may_use(&p, r))
-            })
+        find_one(CATALOG, "key", &format!("{}/{}", p.tenant, id)).map(|(_, _, v)| v).or_else(|| {
+            records::list_records(CATALOG, 500, "")
+                .map(|page| page.entries)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
+                .find(|r| r["id"] == json!(id) && may_use(&p, r))
+        })
     };
     let bytes_of = |id: &str| -> Result<Vec<u8>, Outcome> {
         let Some(row) = find(id) else {
-            return Err(Outcome::Err(422, format!("component `{id}` is unknown or not visible to you")));
+            return Err(Outcome::Err(
+                422,
+                format!("component `{id}` is unknown or not visible to you"),
+            ));
         };
-        blob::get(BIN, &staged_key(&row))
-            .map_err(|_| Outcome::Err(409, format!("component `{id}` has no staged bytes — re-upload it")))
+        blob::get(BIN, &staged_key(&row)).map_err(|_| {
+            Outcome::Err(409, format!("component `{id}` has no staged bytes — re-upload it"))
+        })
     };
 
     let socket = match bytes_of(&socket_id) {
@@ -807,7 +820,9 @@ fn fetch_token_mint(request: &IncomingRequest) -> Outcome {
         "instance": instance, "refs": refs, "expires": now() + ttl, "issued": now(),
     });
     match records::create(FETCH_TOKENS, &doc.to_string(), &["instance".to_string()]) {
-        Ok(rec) => Outcome::Json(201, json!({ "token": rec.id, "expires": now() + ttl }).to_string()),
+        Ok(rec) => {
+            Outcome::Json(201, json!({ "token": rec.id, "expires": now() + ttl }).to_string())
+        }
         Err(_) => Outcome::Err(500, "could not mint a fetch token".into()),
     }
 }
@@ -1005,9 +1020,8 @@ fn market_search(request: &IncomingRequest, query: &Map<String, Value>) -> Outco
         return Outcome::Err(401, "no session".into());
     };
     seed_policy();
-    let want = |k: &str| {
-        query.get(k).and_then(|v| v.as_str()).unwrap_or_default().trim().to_lowercase()
-    };
+    let want =
+        |k: &str| query.get(k).and_then(|v| v.as_str()).unwrap_or_default().trim().to_lowercase();
     let (q, iface, org) = (want("q"), want("iface"), want("org"));
 
     let rows: Vec<Value> = records::list_records(CATALOG, 500, "")
@@ -1091,7 +1105,9 @@ fn component_publish(request: &IncomingRequest) -> Outcome {
                 if sig.is_empty() {
                     return Outcome::Err(
                         422,
-                        format!("public requires `signature`: an ECDSA P-256 signature over {digest}"),
+                        format!(
+                            "public requires `signature`: an ECDSA P-256 signature over {digest}"
+                        ),
                     );
                 }
                 match verify_publish(&org, &digest, &sig) {
@@ -1240,9 +1256,7 @@ fn internal_pushed(request: &IncomingRequest) -> Outcome {
             // about this row. Demoted rather than refused: the upload is legitimate,
             // it is the PUBLIC claim that is not, and re-publishing with a fresh
             // signature is one call away (ADR-0073).
-            if row["visibility"] == json!("public")
-                && str_of(&row, "signed_digest") != digest
-            {
+            if row["visibility"] == json!("public") && str_of(&row, "signed_digest") != digest {
                 row["visibility"] = json!("private");
                 row["unpublished_reason"] = json!("new bytes pushed; re-sign to publish again");
             }
@@ -1328,7 +1342,9 @@ fn key_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
         "added_by": p.subject, "added": now(),
     });
     match records::create(ORGKEYS, &doc.to_string(), &["org".to_string()]) {
-        Ok(rec) => Outcome::Json(201, json!({ "id": rec.id, "org": org, "name": name }).to_string()),
+        Ok(rec) => {
+            Outcome::Json(201, json!({ "id": rec.id, "org": org, "name": name }).to_string())
+        }
         Err(e) => Outcome::Err(500, format!("storing the key: {e:?}")),
     }
 }
@@ -1668,9 +1684,12 @@ fn env_spawn(request: &IncomingRequest, _query: &Map<String, Value>) -> Outcome 
             None => return Outcome::Err(404, format!("no deployment or environment `{app}`")),
         },
     };
-    if let Err((code, msg)) =
-        orgs::acting(&p.subject, &personal_org(&p), &Map::from_iter([("org".into(), json!(owner))]), orgs::Role::Member)
-    {
+    if let Err((code, msg)) = orgs::acting(
+        &p.subject,
+        &personal_org(&p),
+        &Map::from_iter([("org".into(), json!(owner))]),
+        orgs::Role::Member,
+    ) {
         return Outcome::Err(code, msg);
     }
     // Whether there IS a revision to copy is `spawn_environment`'s business; this
@@ -1783,7 +1802,9 @@ fn env_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
     let envs: Vec<Value> = all_records(REVISIONS, 100_000)
         .into_iter()
         .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
-        .filter(|r| !r["environment"].is_null() && (of.is_empty() || r["environment"]["of"] == json!(of)))
+        .filter(|r| {
+            !r["environment"].is_null() && (of.is_empty() || r["environment"]["of"] == json!(of))
+        })
         .map(|r| {
             json!({
                 "environment": r["environment"]["name"],
@@ -1924,7 +1945,6 @@ fn internal_ok(request: &IncomingRequest) -> bool {
         .unwrap_or(false)
 }
 
-
 // ---- organisations ----------------------------------------------------------
 
 /// The org a caller acts on behalf of when they name none: their own.
@@ -2064,7 +2084,8 @@ fn deployment_create(request: &IncomingRequest, query: &Map<String, Value>) -> O
         "nodes": b.nodes, "edges": b.edges,
         "created": now(), "revision": 0, "status": "draft",
     });
-    match records::create(DEPLOYMENTS, &doc.to_string(), &["org".to_string(), "tenant".to_string()]) {
+    match records::create(DEPLOYMENTS, &doc.to_string(), &["org".to_string(), "tenant".to_string()])
+    {
         Ok(rec) => Outcome::Json(201, json!({ "id": rec.id, "name": name }).to_string()),
         Err(_) => Outcome::Err(500, "could not create".into()),
     }
@@ -2100,7 +2121,9 @@ fn plan_of(tenant: &str) -> TenantPlan {
             constraints: p["constraints"]
                 .as_object()
                 .map(|o| {
-                    o.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect()
+                    o.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
                 })
                 .unwrap_or_default(),
         },
@@ -2124,11 +2147,8 @@ fn owned_deployment(
     let (rec, rev, doc) = records::get(DEPLOYMENTS, id)
         .ok()
         .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|v| (e.id, e.revision, v)))?;
-    let owner = doc["org"]
-        .as_str()
-        .or_else(|| doc["tenant"].as_str())
-        .unwrap_or_default()
-        .to_string();
+    let owner =
+        doc["org"].as_str().or_else(|| doc["tenant"].as_str()).unwrap_or_default().to_string();
     match orgs::role_of(&p.subject, &owner) {
         Some(have) if have >= need => Some((rec, rev, doc)),
         _ => None,
@@ -2182,13 +2202,18 @@ fn resolve_parts(
     // The org this deployment belongs to, which is what a secret reference is checked
     // against. Stored on the record at creation, so it cannot be changed by the body
     // of a save.
-    let deploy_org = doc["org"].as_str().unwrap_or_else(|| doc["tenant"].as_str().unwrap_or_default()).to_string();
+    let deploy_org = doc["org"]
+        .as_str()
+        .unwrap_or_else(|| doc["tenant"].as_str().unwrap_or_default())
+        .to_string();
     seed_policy();
     let node_ids: Vec<String> = doc["nodes"]
         .as_array()
         .map(|a| {
             a.iter()
-                .filter_map(|v| v.as_str().map(String::from).or_else(|| v["id"].as_str().map(String::from)))
+                .filter_map(|v| {
+                    v.as_str().map(String::from).or_else(|| v["id"].as_str().map(String::from))
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -2216,7 +2241,10 @@ fn resolve_parts(
                     .find(|r| r["id"] == json!(id) && may_use(p, r))
             });
         let Some(mut row) = row else {
-            return Err(Outcome::Err(422, format!("component `{id}` is unknown or not visible to you")));
+            return Err(Outcome::Err(
+                422,
+                format!("component `{id}` is unknown or not visible to you"),
+            ));
         };
 
         // Resolve a tag to the content it names. A tag that was never recorded is
@@ -2231,10 +2259,7 @@ fn resolve_parts(
                     row["digest"] = json!("");
                 }
                 None => {
-                    return Err(Outcome::Err(
-                        422,
-                        format!("component `{id}` has no tag `{tag}`"),
-                    ))
+                    return Err(Outcome::Err(422, format!("component `{id}` has no tag `{tag}`")))
                 }
             }
         }
@@ -2345,7 +2370,9 @@ fn resolve_parts(
         doc["nodes"]
             .as_array()
             .and_then(|a| {
-                a.iter().find(|n| n["id"].as_str() == Some(id)).and_then(|n| n["secrets"].as_array())
+                a.iter()
+                    .find(|n| n["id"].as_str() == Some(id))
+                    .and_then(|n| n["secrets"].as_array())
             })
             .cloned()
             .unwrap_or_default()
@@ -2419,11 +2446,9 @@ fn resolve_parts(
             // The fused artifact is one component: the root, with everything else
             // composed into it. Its host imports are the union, and it is the root
             // that must already be in the registry as a composed artifact.
-            let root = plan
-                .roots
-                .first()
-                .cloned()
-                .ok_or_else(|| Outcome::Err(422, "no root: something is plugged into every component".into()))?;
+            let root = plan.roots.first().cloned().ok_or_else(|| {
+                Outcome::Err(422, "no root: something is plugged into every component".into())
+            })?;
             let root_row = rows
                 .iter()
                 .find(|r| r["id"] == json!(root))
@@ -2440,14 +2465,15 @@ fn resolve_parts(
                 let Ok(bytes) = blob::get(BIN, &staged_key(row)) else {
                     return Err(Outcome::Err(
                         409,
-                        format!("component `{id}` has no staged bytes to compose from — re-upload it"),
+                        format!(
+                            "component `{id}` has no staged bytes to compose from — re-upload it"
+                        ),
                     ));
                 };
                 cparts.push(composer::Part { id, bytes });
             }
-            let fused = composer::compose(&cparts, &edges, &root).map_err(|e| {
-                Outcome::Err(422, format!("fused: {}", compose_detail(&e)))
-            })?;
+            let fused = composer::compose(&cparts, &edges, &root)
+                .map_err(|e| Outcome::Err(422, format!("fused: {}", compose_detail(&e))))?;
 
             // The composed artifact is a new component with a new identity, staged
             // like any other. The EXISTING pending-push queue then distributes it
@@ -2560,15 +2586,18 @@ fn resolve_parts(
 /// A readable sentence for a `compose` failure.
 fn compose_detail(e: &composer::ComposeError) -> String {
     match e {
-        composer::ComposeError::MissingPart(s) => format!("a component has no bytes to compose: {s}"),
-        composer::ComposeError::Unbuildable(s) => format!("the graph cannot be composed statically: {s}"),
+        composer::ComposeError::MissingPart(s) => {
+            format!("a component has no bytes to compose: {s}")
+        }
+        composer::ComposeError::Unbuildable(s) => {
+            format!("the graph cannot be composed statically: {s}")
+        }
         composer::ComposeError::PlugFailed(s) => format!("wac refused the plug: {s}"),
-        composer::ComposeError::EncodeFailed(s) => format!("the composed graph could not be encoded: {s}"),
+        composer::ComposeError::EncodeFailed(s) => {
+            format!("the composed graph could not be encoded: {s}")
+        }
     }
 }
-
-
-
 
 /// A component reference, in the shape everyone already knows from registries.
 ///
@@ -2599,7 +2628,9 @@ fn parse_component_ref(raw: &str) -> ComponentRef {
         return ComponentRef { name, tag, digest: Some(hex.to_string()) };
     }
     match raw.split_once(':') {
-        Some((n, t)) => ComponentRef { name: n.to_string(), tag: Some(t.to_string()), digest: None },
+        Some((n, t)) => {
+            ComponentRef { name: n.to_string(), tag: Some(t.to_string()), digest: None }
+        }
         None => ComponentRef { name: raw.to_string(), tag: None, digest: None },
     }
 }
@@ -2693,8 +2724,10 @@ fn stage_fused(
     let host_imports: Vec<Value> = plan
         .host_needs
         .iter()
-        .map(|h| json!({ "raw": format!("{}:{}/{}", h.namespace, h.pkg, h.name),
-                         "namespace": h.namespace, "pkg": h.pkg, "name": h.name }))
+        .map(|h| {
+            json!({ "raw": format!("{}:{}/{}", h.namespace, h.pkg, h.name),
+                         "namespace": h.namespace, "pkg": h.pkg, "name": h.name })
+        })
         .collect();
     let surface = json!({
         "exports": root_row["surface"]["exports"],
@@ -2737,8 +2770,11 @@ fn stage_fused(
                 "surface": surface, "inputs": inputs,
                 "digest": "", "generated": true, "added": now(),
             });
-            let _ = records::create(CATALOG, &row.to_string(),
-                &["key".to_string(), "id".to_string(), "tenant".to_string()]);
+            let _ = records::create(
+                CATALOG,
+                &row.to_string(),
+                &["key".to_string(), "id".to_string(), "tenant".to_string()],
+            );
             String::new()
         }
     }
@@ -2794,11 +2830,8 @@ fn deployment_save(request: &IncomingRequest, id: &str, query: &Map<String, Valu
     // ADR-0012's property is unchanged and now wider: two orgs cannot see each
     // other's data for the same reason two tenants could not, because the host
     // still names the bucket from a control-plane record the guest cannot write.
-    let owner_org = doc["org"]
-        .as_str()
-        .or_else(|| doc["tenant"].as_str())
-        .unwrap_or(&p.tenant)
-        .to_string();
+    let owner_org =
+        doc["org"].as_str().or_else(|| doc["tenant"].as_str()).unwrap_or(&p.tenant).to_string();
     let tenant_plan = plan_of(&owner_org);
     let name = doc["name"].as_str().unwrap_or("app").to_string();
     let suffix = cfg("ingress-suffix", "apps.local");
@@ -2878,7 +2911,11 @@ fn deployment_save(request: &IncomingRequest, id: &str, query: &Map<String, Valu
         // upgrade from a break.
         "surfaces": surfaces,
     });
-    let _ = records::create(REVISIONS, &revision_doc.to_string(), &["deployment".to_string(), "tenant".to_string()]);
+    let _ = records::create(
+        REVISIONS,
+        &revision_doc.to_string(),
+        &["deployment".to_string(), "tenant".to_string()],
+    );
 
     doc["revision"] = json!(next);
     // There is nothing to apply. The reconciler polls the current revision and
@@ -2976,7 +3013,9 @@ fn internal_revisions(request: &IncomingRequest) -> Outcome {
             let key = v["deployment"].as_str().unwrap_or_default().to_string();
             let better = current
                 .get(&key)
-                .map(|old| v["revision"].as_u64().unwrap_or(0) > old["revision"].as_u64().unwrap_or(0))
+                .map(|old| {
+                    v["revision"].as_u64().unwrap_or(0) > old["revision"].as_u64().unwrap_or(0)
+                })
                 .unwrap_or(true);
             if better {
                 current.insert(key, v);
@@ -2989,7 +3028,6 @@ fn internal_revisions(request: &IncomingRequest) -> Outcome {
     )
 }
 
-
 /// Delete a deployment: drop its records, and the lattice follows.
 ///
 /// This used to prune a Kubernetes footprint first, because the platform forgetting
@@ -2997,11 +3035,7 @@ fn internal_revisions(request: &IncomingRequest) -> Outcome {
 /// whole hazard is gone: the reconciler derives desired state from these records
 /// every pass, so an app that leaves them stops on its own within a pass or two.
 /// ADR-0016's two-signals-before-reaping apparatus goes with it.
-fn deployment_delete(
-    request: &IncomingRequest,
-    id: &str,
-    query: &Map<String, Value>,
-) -> Outcome {
+fn deployment_delete(request: &IncomingRequest, id: &str, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "unauthorized".into());
     };
@@ -3205,12 +3239,12 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, ctype, body) = match result {
         Outcome::Json(c, b) => (c, "application/json".to_string(), b.into_bytes()),
         Outcome::Bytes(c, ct, b) => (c, ct, b),
-        Outcome::Err(c, m) => (
-            c,
-            "application/json".to_string(),
-            json!({ "error": m }).to_string().into_bytes(),
-        ),
-        Outcome::Structured(c, v) => (c, "application/json".to_string(), v.to_string().into_bytes()),
+        Outcome::Err(c, m) => {
+            (c, "application/json".to_string(), json!({ "error": m }).to_string().into_bytes())
+        }
+        Outcome::Structured(c, v) => {
+            (c, "application/json".to_string(), v.to_string().into_bytes())
+        }
     };
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.into_bytes()]);
@@ -3263,9 +3297,12 @@ mod config_tests {
     fn a_typo_is_refused_and_the_message_lists_the_legal_keys() {
         // THE error ADR-0010 promised. "Rejected" is useless; "you wrote
         // grace-period-sec, it takes grace-period-secs" is the whole value.
-        let err = check_config("gate", &row(&[("grace-period-secs", false)]),
-                               &given(&[("grace-period-sec", "5")]))
-            .unwrap_err();
+        let err = check_config(
+            "gate",
+            &row(&[("grace-period-secs", false)]),
+            &given(&[("grace-period-sec", "5")]),
+        )
+        .unwrap_err();
         assert!(err.contains("grace-period-sec"), "{err}");
         assert!(err.contains("grace-period-secs"), "the legal key must be offered: {err}");
     }
@@ -3380,7 +3417,10 @@ fn project_create(request: &IncomingRequest, query: &Map<String, Value>) -> Outc
         Err(o) => return o,
     };
     if !valid_project_name(&b.name) {
-        return Outcome::Err(422, "name must be 1-40 chars of [a-z0-9-], not starting or ending with -".into());
+        return Outcome::Err(
+            422,
+            "name must be 1-40 chars of [a-z0-9-], not starting or ending with -".into(),
+        );
     }
     // `owner/name`, checked here rather than at the first forge call, where the
     // answer is a 404 that reads like "the repository does not exist".
@@ -3403,7 +3443,11 @@ fn project_create(request: &IncomingRequest, query: &Map<String, Value>) -> Outc
         "created": now(),
     });
     match records::create(PROJECTS, &doc.to_string(), &["org".to_string()]) {
-        Ok(e) => Outcome::Json(201, json!({ "id": e.id, "name": doc["name"], "repo": doc["repo"], "base": doc["base"] }).to_string()),
+        Ok(e) => Outcome::Json(
+            201,
+            json!({ "id": e.id, "name": doc["name"], "repo": doc["repo"], "base": doc["base"] })
+                .to_string(),
+        ),
         Err(e) => Outcome::Err(500, format!("recording the project: {e:?}")),
     }
 }
@@ -3444,10 +3488,12 @@ fn goals_of(project: &str) -> Vec<Value> {
     records::find_by(GOALS, "project", &json!(project).to_string())
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            v["id"] = json!(e.id);
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                v["id"] = json!(e.id);
+                v
+            })
+        })
         .collect()
 }
 
@@ -3483,7 +3529,11 @@ fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String, Val
         "created": now(),
     });
     match records::create(GOALS, &doc.to_string(), &["project".to_string(), "org".to_string()]) {
-        Ok(e) => Outcome::Json(201, json!({ "id": e.id, "project": project, "state": "queued", "title": doc["title"] }).to_string()),
+        Ok(e) => Outcome::Json(
+            201,
+            json!({ "id": e.id, "project": project, "state": "queued", "title": doc["title"] })
+                .to_string(),
+        ),
         Err(e) => Outcome::Err(500, format!("recording the goal: {e:?}")),
     }
 }
@@ -3492,7 +3542,8 @@ fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, Valu
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer) {
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer)
+    {
         return Outcome::Err(code, msg);
     }
     let want = query.get("state").and_then(|v| v.as_str()).unwrap_or_default();
@@ -3521,7 +3572,8 @@ fn goal_transition(
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
     };
-    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member)
+    {
         return Outcome::Err(code, msg);
     }
     let Ok(entry) = records::get(GOALS, id) else {
@@ -3564,10 +3616,9 @@ fn goal_transition(
     // the first and two runs believe they own one goal — which, with one run per
     // project, is exactly the case this design exists to prevent.
     match records::update(GOALS, id, &doc.to_string(), entry.revision) {
-        Err(records::StoreError::RevisionConflict(_)) => Outcome::Err(
-            409,
-            format!("`{id}` moved while you were looking at it — read it again"),
-        ),
+        Err(records::StoreError::RevisionConflict(_)) => {
+            Outcome::Err(409, format!("`{id}` moved while you were looking at it — read it again"))
+        }
         Ok(_) => Outcome::Json(
             200,
             json!({ "id": id, "from": from, "state": to, "title": doc["title"] }).to_string(),

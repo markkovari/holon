@@ -198,7 +198,8 @@ fn author_goal(request: &IncomingRequest) -> Outcome {
     let Some(token) = session_token(request) else {
         return Outcome::Err(401, "not signed in".into());
     };
-    let body = match read_body(request).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+    let body = match read_body(request).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+    {
         Some(v) => v,
         None => return Outcome::Err(400, "expected a json body".into()),
     };
@@ -229,7 +230,10 @@ fn author_goal(request: &IncomingRequest) -> Outcome {
              `{project}`. Nothing runs until someone starts it (ADR-0082).\n"
         ),
         message: format!("goal: {title}"),
-        changes: vec![forge::FileChange { path: path.clone(), content: spec_document(&title, &spec) }],
+        changes: vec![forge::FileChange {
+            path: path.clone(),
+            content: spec_document(&title, &spec),
+        }],
     };
     let opened = match forge::propose(&proposal) {
         Ok(o) => o,
@@ -307,12 +311,16 @@ fn forge_error(e: forge::ForgeError) -> Outcome {
     match e {
         // The branch already exists — the caller's move is a different title,
         // not a different request, so this is not a 400.
-        forge::ForgeError::Conflict(m) => Outcome::Err(409, format!("a goal by that name is already proposed: {m}")),
+        forge::ForgeError::Conflict(m) => {
+            Outcome::Err(409, format!("a goal by that name is already proposed: {m}"))
+        }
         forge::ForgeError::NotConfigured(m) => {
             Outcome::Err(503, format!("no repository or token configured for the forge: {m}"))
         }
         forge::ForgeError::Rejected(m) => Outcome::Err(422, format!("the forge refused it: {m}")),
-        forge::ForgeError::Unavailable(m) => Outcome::Err(502, format!("the forge is unreachable: {m}")),
+        forge::ForgeError::Unavailable(m) => {
+            Outcome::Err(502, format!("the forge is unreachable: {m}"))
+        }
     }
 }
 
@@ -331,7 +339,8 @@ fn runs() -> Outcome {
     // on a field the statement does not select, with a 400 rather than an
     // unordered result. Trimming this list to "just what the UI shows" would
     // break the query, not merely the sort.
-    let surql = "SELECT id_text, goal, spec, outcome, winner, url, branches, started_at, resolved_at \
+    let surql =
+        "SELECT id_text, goal, spec, outcome, winner, url, branches, started_at, resolved_at \
                  FROM run ORDER BY started_at DESC LIMIT 50;";
     match graph::query(surql) {
         Ok(answer) => Outcome::Raw(
@@ -468,8 +477,12 @@ fn graph_error(e: graph::GraphError) -> Outcome {
         graph::GraphError::NotConfigured(m) => {
             Outcome::Err(503, format!("no knowledge store configured: {m}"))
         }
-        graph::GraphError::Unavailable(m) => Outcome::Err(502, format!("the knowledge store is unreachable: {m}")),
-        graph::GraphError::Rejected(m) => Outcome::Err(502, format!("the knowledge store refused the read: {m}")),
+        graph::GraphError::Unavailable(m) => {
+            Outcome::Err(502, format!("the knowledge store is unreachable: {m}"))
+        }
+        graph::GraphError::Rejected(m) => {
+            Outcome::Err(502, format!("the knowledge store refused the read: {m}"))
+        }
     }
 }
 
@@ -706,20 +719,14 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 }
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request
-        .headers()
-        .get(name)
-        .into_iter()
-        .find_map(|v| String::from_utf8(v).ok())
+    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, header_pairs, body) = match result {
-        Outcome::Json(c, b) => (
-            c,
-            vec![("content-type".to_string(), "application/json".to_string())],
-            b.into_bytes(),
-        ),
+        Outcome::Json(c, b) => {
+            (c, vec![("content-type".to_string(), "application/json".to_string())], b.into_bytes())
+        }
         Outcome::Raw(c, h, b) => (c, h, b),
         Outcome::Err(c, m) => (
             c,

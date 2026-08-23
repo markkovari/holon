@@ -18,9 +18,9 @@
 //! as an answer. Neither is visible in one request, and neither is checkable inside
 //! one part.
 
+mod answer;
 #[allow(warnings)]
 mod bindings;
-mod answer;
 mod library;
 mod stepup;
 
@@ -131,7 +131,6 @@ fn percent(s: &str) -> String {
     }
     String::from_utf8_lossy(&out).into_owned()
 }
-
 
 /// A `wasi:config` value as a number, with a default.
 ///
@@ -300,10 +299,7 @@ fn read_body(request: &IncomingRequest) -> String {
 fn header(request: &IncomingRequest, name: &str) -> String {
     let fields = request.headers();
     let values = fields.get(name);
-    values
-        .first()
-        .map(|v| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_default()
+    values.first().map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default()
 }
 
 impl Guest for Component {
@@ -350,12 +346,9 @@ impl Guest for Component {
             // `["api", "docs"]` is not listed: `["api", "docs", ..]` already
             // matches the zero-extra-segment case, and naming both made the
             // second arm unreachable.
-            ["api", "search"] | ["api", "docs", ..] => {
-                library::handle(&method, &route, &body)
-            }
+            ["api", "search"] | ["api", "docs", ..] => library::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),
         };
-
 
         let headers = Fields::new();
         let _ = headers.set("content-type", &[b"application/json".to_vec()]);

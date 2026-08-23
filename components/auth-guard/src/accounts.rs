@@ -28,7 +28,9 @@ fn rl_err(e: LimitError) -> AuthError {
     match e {
         // carry the rate-limiter's retry-after (seconds) through to the caller.
         LimitError::Locked(retry_after) => AuthError::RateLimited(retry_after),
-        LimitError::BackendUnavailable(m) => AuthError::BackendUnavailable(format!("ratelimit: {m}")),
+        LimitError::BackendUnavailable(m) => {
+            AuthError::BackendUnavailable(format!("ratelimit: {m}"))
+        }
     }
 }
 
@@ -56,8 +58,7 @@ fn hash_password(password: &str) -> Result<String, AuthError> {
     // 16 random bytes -> base64 salt for the PHC string.
     let raw = get_random_bytes(16);
     let salt_b64 = b64_salt(&raw);
-    let salt = Salt::from_b64(&salt_b64)
-        .map_err(|e| AuthError::Internal(format!("salt: {e}")))?;
+    let salt = Salt::from_b64(&salt_b64).map_err(|e| AuthError::Internal(format!("salt: {e}")))?;
     Argon2::default()
         .hash_password(password.as_bytes(), salt)
         .map(|h| h.to_string())
@@ -66,9 +67,7 @@ fn hash_password(password: &str) -> Result<String, AuthError> {
 
 fn verify(password: &str, phc: &str) -> bool {
     match PasswordHash::new(phc) {
-        Ok(parsed) => Argon2::default()
-            .verify_password(password.as_bytes(), &parsed)
-            .is_ok(),
+        Ok(parsed) => Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok(),
         Err(_) => false,
     }
 }
@@ -86,9 +85,7 @@ fn validate_input(email: &str, password: &str) -> Result<(), AuthError> {
     }
     let min = config::password_min_len();
     if password.len() < min {
-        return Err(AuthError::Malformed(format!(
-            "password must be >= {min} chars"
-        )));
+        return Err(AuthError::Malformed(format!("password must be >= {min} chars")));
     }
     Ok(())
 }
@@ -101,19 +98,19 @@ fn new_subject() -> String {
 
 fn principal_for(subject: String, tenant: &str) -> Principal {
     let roles = store::rbac_roles_for(tenant, &subject).unwrap_or_default();
-    Principal {
-        subject,
-        tenant: tenant.to_string(),
-        roles,
-        scopes: Vec::new(),
-        expires_at: 0,
-    }
+    Principal { subject, tenant: tenant.to_string(), roles, scopes: Vec::new(), expires_at: 0 }
 }
 
 pub fn register(email: &str, password: &str, tenant: &str) -> Result<Principal, AuthError> {
     validate_input(email, password)?;
     if load(tenant, email)?.is_some() {
-        crate::audit::emit("register", crate::audit::Outcome::Deny, tenant, email, "already_exists");
+        crate::audit::emit(
+            "register",
+            crate::audit::Outcome::Deny,
+            tenant,
+            email,
+            "already_exists",
+        );
         return Err(AuthError::AlreadyExists);
     }
     let subject = new_subject();
@@ -126,11 +123,7 @@ pub fn register(email: &str, password: &str, tenant: &str) -> Result<Principal, 
     Ok(principal_for(subject, tenant))
 }
 
-pub fn verify_password(
-    email: &str,
-    password: &str,
-    tenant: &str,
-) -> Result<Principal, AuthError> {
+pub fn verify_password(email: &str, password: &str, tenant: &str) -> Result<Principal, AuthError> {
     // Constant-ish path: always do a verify, even on missing account, to avoid
     // user enumeration via timing. Return the same error for both cases.
     match load(tenant, email)? {

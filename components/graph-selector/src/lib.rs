@@ -101,10 +101,9 @@ fn decide(entries: &[Entry]) -> Result<Outcome, SelectError> {
     if eligible.is_empty() {
         let best = entries.iter().max_by_key(|e| e.score);
         let detail = match best {
-            Some(b) => format!(
-                "no branch passed the gate; the closest was {} at {}",
-                b.branch, b.score
-            ),
+            Some(b) => {
+                format!("no branch passed the gate; the closest was {} at {}", b.branch, b.score)
+            }
             None => "no branch passed the gate".into(),
         };
         return Ok(Outcome { decision: Decision::NothingAcceptable(detail), ..common });
@@ -225,14 +224,16 @@ mod tests {
     /// that difference came from running real commands.
     #[test]
     fn score_beats_a_smaller_change() {
-        let w = winner_of(&[entry("small", true, 700, 1, 10), entry("thorough", true, 1000, 8, 10)]);
+        let w =
+            winner_of(&[entry("small", true, 700, 1, 10), entry("thorough", true, 1000, 8, 10)]);
         assert_eq!(w.branch, "thorough");
         assert!(w.because.contains("1000") && w.because.contains("700"), "{}", w.because);
     }
 
     #[test]
     fn at_the_same_score_the_smaller_change_wins() {
-        let w = winner_of(&[entry("sprawling", true, 1000, 6, 10), entry("tight", true, 1000, 2, 99)]);
+        let w =
+            winner_of(&[entry("sprawling", true, 1000, 6, 10), entry("tight", true, 1000, 2, 99)]);
         assert_eq!(w.branch, "tight", "same gate passed, less to review");
         assert!(w.because.contains("smaller"), "{}", w.because);
     }

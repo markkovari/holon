@@ -109,7 +109,10 @@ fn stand_in_forge(port: u16) -> Log {
             } else if path.ends_with("/git/refs") {
                 (201, json!({ "ref": "refs/heads/x", "object": { "sha": COMMIT_SHA } }))
             } else if path.ends_with("/pulls") {
-                (201, json!({ "number": 42, "html_url": "https://forge.test/acme/widgets/pull/42" }))
+                (
+                    201,
+                    json!({ "number": 42, "html_url": "https://forge.test/acme/widgets/pull/42" }),
+                )
             } else {
                 (404, json!({ "message": "Not Found" }))
             };
@@ -129,7 +132,6 @@ fn stand_in_forge(port: u16) -> Log {
     });
     log
 }
-
 
 fn artifacts() -> Vec<String> {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
@@ -165,14 +167,18 @@ impl Probe {
             .send()
             .expect("the probe should answer");
         let (status, text) = (r.status(), r.text().unwrap_or_default());
-        serde_json::from_str(&text).unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
+        serde_json::from_str(&text)
+            .unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
     }
 }
 
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap(),
     };
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     while std::time::Instant::now() < deadline {
@@ -260,13 +266,26 @@ fn a_component_opens_a_pull_request_in_an_order_that_leaves_no_litter() {
         .collect();
     assert_eq!(
         order,
-        vec!["GET main", "POST blobs", "POST blobs", "POST trees", "POST commits", "POST refs", "POST pulls"],
+        vec![
+            "GET main",
+            "POST blobs",
+            "POST blobs",
+            "POST trees",
+            "POST commits",
+            "POST refs",
+            "POST pulls"
+        ],
         "the sequence is the design: one blob per file, and the BRANCH LAST so a \
          failure partway cannot leave an empty branch behind. Got {order:?}"
     );
 
     let body_of = |needle: &str| -> Value {
-        calls.iter().rev().find(|c| c.path.ends_with(needle)).map(|c| c.body.clone()).unwrap_or(Value::Null)
+        calls
+            .iter()
+            .rev()
+            .find(|c| c.path.ends_with(needle))
+            .map(|c| c.body.clone())
+            .unwrap_or(Value::Null)
     };
 
     // Blobs are base64, so a file containing a quote survives the JSON.
@@ -281,7 +300,11 @@ fn a_component_opens_a_pull_request_in_an_order_that_leaves_no_litter() {
     // The tree is laid OVER the base tree. Without this the commit deletes every
     // file nobody touched — the single most destructive way to get this wrong.
     let tree = body_of("/git/trees");
-    assert_eq!(tree["base_tree"], json!(BASE_SHA), "no base_tree: this commit would delete the repo");
+    assert_eq!(
+        tree["base_tree"],
+        json!(BASE_SHA),
+        "no base_tree: this commit would delete the repo"
+    );
     let entries = tree["tree"].as_array().cloned().unwrap_or_default();
     assert_eq!(entries.len(), 2, "one entry per changed file: {tree}");
     assert_eq!(entries[0]["mode"], json!("100644"));

@@ -97,7 +97,8 @@ impl Probe {
             Err(e) => return Value::String(format!("transport: {e}")),
         };
         let (status, text) = (r.status(), r.text().unwrap_or_default());
-        serde_json::from_str(&text).unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
+        serde_json::from_str(&text)
+            .unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
     }
 }
 
@@ -113,7 +114,10 @@ impl Probe {
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap(),
     };
     fleet.until("an evaluation that reaches the runner", Duration::from_secs(120), || {
         let r = probe.call(
@@ -144,8 +148,7 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     let checks = Checks::start();
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
     let spec = spec_for(checks.port);
-    let fleet =
-        Fleet::start_with_secrets("fitness", &[spec.to_str().unwrap()], &artifacts(), &[]);
+    let fleet = Fleet::start_with_secrets("fitness", &[spec.to_str().unwrap()], &artifacts(), &[]);
     let probe = wait_for_probe(&fleet);
 
     let commit = "1111111111111111111111111111111111111111";
@@ -244,11 +247,9 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     // --- an empty gate is refused rather than passed -------------------------
     // The arithmetic would call it accepted, vacuously, since no required check
     // failed. That is how a swarm accepts everything.
-    let empty = probe.call("/evaluate", json!({ "name": "x", "base_commit": commit, "checks": [] }));
+    let empty =
+        probe.call("/evaluate", json!({ "name": "x", "base_commit": commit, "checks": [] }));
     assert_eq!(empty["error"], json!("invalid"), "an empty check list must be refused: {empty}");
 
-    println!(
-        "    judged three candidates through a real runner: 1000, {mid}, {}",
-        worst["score"]
-    );
+    println!("    judged three candidates through a real runner: 1000, {mid}, {}", worst["score"]);
 }

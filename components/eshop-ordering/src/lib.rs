@@ -91,10 +91,17 @@ fn ensure_seeded() {
         fsm::Transition { event: event.into(), source: source.into(), target: target.into() }
     }
     let def = fsm::Definition {
-        states: ["submitted", "awaitingStockValidation", "validated", "paid", "shipped", "cancelled"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect(),
+        states: [
+            "submitted",
+            "awaitingStockValidation",
+            "validated",
+            "paid",
+            "shipped",
+            "cancelled",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
         initial: "submitted".into(),
         transitions: vec![
             t("grace-expired", "submitted", "awaitingStockValidation"),
@@ -360,13 +367,17 @@ fn pump() -> Outcome {
 
     // 3. grace sweep: submitted orders past the window go to stock validation.
     let grace = grace_secs();
-    let submitted = records::find_by(ORDERS, "status", &json!("submitted").to_string())
-        .unwrap_or_default();
+    let submitted =
+        records::find_by(ORDERS, "status", &json!("submitted").to_string()).unwrap_or_default();
     for entry in &submitted {
         let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
         let at = data["submittedAt"].as_u64().unwrap_or(entry.created);
         if now() >= at + grace
-            && advance_order(&entry.id, "grace-expired", "OrderStatusChangedToAwaitingStockValidation")
+            && advance_order(
+                &entry.id,
+                "grace-expired",
+                "OrderStatusChangedToAwaitingStockValidation",
+            )
         {
             advanced += 1;
         }

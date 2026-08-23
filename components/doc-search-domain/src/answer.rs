@@ -30,9 +30,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         Ok(p) => p,
         Err(auth_types::AuthError::InvalidToken(_))
         | Err(auth_types::AuthError::Expired)
-        | Err(auth_types::AuthError::Malformed(_)) => {
-            return Reply::err(401, "unauthenticated")
-        }
+        | Err(auth_types::AuthError::Malformed(_)) => return Reply::err(401, "unauthenticated"),
         Err(auth_types::AuthError::InsufficientScope(_)) => return Reply::err(403, "forbidden"),
         Err(auth_types::AuthError::BackendUnavailable(_))
         | Err(auth_types::AuthError::Internal(_)) => return Reply::err(503, "auth_unavailable"),
@@ -106,7 +104,10 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
                 Ok(b) => b.resets_at.saturating_sub(now_secs()),
                 Err(_) => 0,
             };
-            return Reply::json(429, json!({ "error": "budget_exhausted", "retry_after": retry_after }));
+            return Reply::json(
+                429,
+                json!({ "error": "budget_exhausted", "retry_after": retry_after }),
+            );
         }
         Err(_) => return Reply::err(503, "answer_unavailable"),
     };

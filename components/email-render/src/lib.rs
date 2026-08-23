@@ -19,9 +19,7 @@ mod bindings;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 
-use bindings::exports::email::template::renderer::{
-    Guest, Message, RenderError, Template, Var,
-};
+use bindings::exports::email::template::renderer::{Guest, Message, RenderError, Template, Var};
 use bindings::wasi::keyvalue::store as kv;
 
 struct Component;
@@ -64,11 +62,7 @@ fn parse(s: &str) -> Result<Template, RenderError> {
     let subject = decode_field(parts.next())?;
     let text = decode_field(parts.next())?;
     let html = decode_field(parts.next())?;
-    Ok(Template {
-        subject,
-        text,
-        html,
-    })
+    Ok(Template { subject, text, html })
 }
 
 fn decode_field(part: Option<&str>) -> Result<String, RenderError> {
@@ -118,9 +112,7 @@ fn html_escape(s: &str) -> String {
 
 /// Look up a var by name.
 fn lookup<'a>(vars: &'a [Var], name: &str) -> Option<&'a str> {
-    vars.iter()
-        .find(|v| v.name == name)
-        .map(|v| v.value.as_str())
+    vars.iter().find(|v| v.name == name).map(|v| v.value.as_str())
 }
 
 /// Render one field: scan for `{name}` tokens and substitute the matching var.
@@ -201,11 +193,7 @@ impl Guest for Component {
         let subject = render_field(&tmpl.subject, &vars, false)?;
         let text = render_field(&tmpl.text, &vars, false)?;
         let html = render_field(&tmpl.html, &vars, true)?;
-        Ok(Message {
-            subject,
-            text,
-            html,
-        })
+        Ok(Message { subject, text, html })
     }
 }
 

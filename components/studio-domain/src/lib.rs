@@ -22,8 +22,8 @@ use serde_json::{json, Map, Value};
 use bindings::blob::store::blobstore as blob;
 use bindings::records::store::store as records;
 use bindings::wasi::clocks::wall_clock;
-use bindings::wit::reflect::composer as composer;
-use bindings::wit::reflect::inspector as inspector;
+use bindings::wit::reflect::composer;
+use bindings::wit::reflect::inspector;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
@@ -348,10 +348,8 @@ fn satisfies_route(request: &IncomingRequest) -> Outcome {
         Ok(v) => v,
         Err(o) => return o,
     };
-    let (socket_id, plug_id) = (
-        b["socket"].as_str().unwrap_or_default(),
-        b["plug"].as_str().unwrap_or_default(),
-    );
+    let (socket_id, plug_id) =
+        (b["socket"].as_str().unwrap_or_default(), b["plug"].as_str().unwrap_or_default());
     let (Ok(socket), Ok(plug)) = (blob::get(BIN, socket_id), blob::get(BIN, plug_id)) else {
         return Outcome::Err(404, "socket or plug bytes not stored".into());
     };
@@ -381,7 +379,10 @@ fn emit_route(request: &IncomingRequest) -> Outcome {
 
     let (text, content_type) = match b["form"].as_str().unwrap_or("plug") {
         "plug" => (
-            composer::emit_plug_script(&plan, meta["out_dir"].as_str().unwrap_or("components/target")),
+            composer::emit_plug_script(
+                &plan,
+                meta["out_dir"].as_str().unwrap_or("components/target"),
+            ),
             "text/x-shellscript; charset=utf-8",
         ),
         "wac" => (
@@ -424,7 +425,12 @@ fn compose_route(request: &IncomingRequest) -> Outcome {
         Some(r) => r.to_string(),
         None => match plan.roots.as_slice() {
             [only] => only.clone(),
-            [] => return Outcome::Err(422, "no root: every component has something plugged into it (a cycle?)".into()),
+            [] => {
+                return Outcome::Err(
+                    422,
+                    "no root: every component has something plugged into it (a cycle?)".into(),
+                )
+            }
             many => {
                 return Outcome::Err(
                     422,
@@ -438,9 +444,7 @@ fn compose_route(request: &IncomingRequest) -> Outcome {
     for node in &nodes {
         match blob::get(BIN, &node.id) {
             Ok(bytes) => parts.push(composer::Part { id: node.id.clone(), bytes }),
-            Err(_) => {
-                return Outcome::Err(422, format!("no stored bytes for `{}`", node.id))
-            }
+            Err(_) => return Outcome::Err(422, format!("no stored bytes for `{}`", node.id)),
         }
     }
 
@@ -449,9 +453,7 @@ fn compose_route(request: &IncomingRequest) -> Outcome {
             // Reflect the result so the caller learns what it still imports —
             // the composed artifact is only useful with its remaining host needs.
             let left = inspector::inspect(&bytes)
-                .map(|s| {
-                    s.host_imports.iter().map(|h| h.raw.clone()).collect::<Vec<_>>().join(",")
-                })
+                .map(|s| s.host_imports.iter().map(|h| h.raw.clone()).collect::<Vec<_>>().join(","))
                 .unwrap_or_default();
             let headers = vec![
                 ("content-type".to_string(), "application/wasm".to_string()),
@@ -600,11 +602,9 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 
 fn emit_response(response_out: ResponseOutparam, result: Outcome) {
     let (code, header_pairs, body) = match result {
-        Outcome::Json(c, b) => (
-            c,
-            vec![("content-type".to_string(), "application/json".to_string())],
-            b.into_bytes(),
-        ),
+        Outcome::Json(c, b) => {
+            (c, vec![("content-type".to_string(), "application/json".to_string())], b.into_bytes())
+        }
         Outcome::Raw(c, h, b) => (c, h, b),
         Outcome::Err(c, m) => (
             c,

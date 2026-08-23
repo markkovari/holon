@@ -55,10 +55,8 @@ impl Guest for Component {
                 // A check with no rule in the script fails. Not passes: an
                 // unscripted gate that waved everything through would make this a
                 // stub that proves the loop RUNS by proving nothing about it.
-                let passed = script[&k.id]
-                    .as_str()
-                    .map(|needle| text.contains(needle))
-                    .unwrap_or(false);
+                let passed =
+                    script[&k.id].as_str().map(|needle| text.contains(needle)).unwrap_or(false);
                 Outcome {
                     id: k.id.clone(),
                     required: k.required,
@@ -153,7 +151,11 @@ mod tests {
     /// would prove the loop runs by proving nothing about the gate.
     #[test]
     fn an_unscripted_check_fails_rather_than_passes() {
-        let v = with_script(r#"{"a":"foo"}"#, candidate("foo"), vec![check("a", true), check("z", true)]);
+        let v = with_script(
+            r#"{"a":"foo"}"#,
+            candidate("foo"),
+            vec![check("a", true), check("z", true)],
+        );
         assert!(!v.accepted, "z is not in the script");
         assert_eq!(v.score, 500);
     }

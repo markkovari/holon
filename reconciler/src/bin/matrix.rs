@@ -115,9 +115,8 @@ fn main() -> Result<()> {
     let wasm = match std::fs::read(&legacy) {
         Ok(bytes) => bytes,
         Err(_) => {
-            let catalog = comp_reconciler::plug::Catalog::scan(
-                &comp_reconciler::plug::default_dirs(&root),
-            );
+            let catalog =
+                comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
             comp_reconciler::plug::compose("gate-domain", &catalog)
                 .map_err(|e| anyhow::anyhow!("composing gate-domain: {e} — `just build` first"))?
         }
@@ -216,10 +215,8 @@ fn leb128(mut v: u64, out: &mut Vec<u8>) {
 }
 
 fn rss_mib(pid: u32) -> f64 {
-    let out = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &pid.to_string()])
-        .output()
-        .ok();
+    let out =
+        std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output().ok();
     out.and_then(|o| String::from_utf8(o.stdout).ok())
         .and_then(|s| s.trim().parse::<f64>().ok())
         .map(|kb| kb / 1024.0)
@@ -236,10 +233,8 @@ fn run_cell(
 ) -> Result<Cell> {
     let dir = tempfile::tempdir()?;
     let artifacts = write_inputs(dir.path(), wasm, apps, digests == "distinct")?;
-    let arts: Vec<String> = artifacts
-        .iter()
-        .map(|(id, p)| format!("{id}={}", p.display()))
-        .collect();
+    let arts: Vec<String> =
+        artifacts.iter().map(|(id, p)| format!("{id}={}", p.display())).collect();
 
     let lattice = format!("mx{apps}{digests}{}", u8::from(pool));
     let fleet = Fleet::start_bench(
@@ -391,7 +386,10 @@ fn report(cells: &[Cell], args: &Args) {
             Some(r) => format!("OPEN loop at {r} rps offered, through {}", door(args)),
             // Said out loud, because the latency columns below are then
             // `conns / rps` by construction and mean nothing on their own.
-            None => format!("CLOSED loop (latency == conns/rps by Little's law), through {}", door(args)),
+            None => format!(
+                "CLOSED loop (latency == conns/rps by Little's law), through {}",
+                door(args)
+            ),
         }
     );
     println!(

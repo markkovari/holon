@@ -18,12 +18,21 @@ use bindings::exports::cron::expr::parser::{CronError, Guest};
 struct Component;
 
 const MONTHS: &[(&str, u32)] = &[
-    ("jan", 1), ("feb", 2), ("mar", 3), ("apr", 4), ("may", 5), ("jun", 6),
-    ("jul", 7), ("aug", 8), ("sep", 9), ("oct", 10), ("nov", 11), ("dec", 12),
+    ("jan", 1),
+    ("feb", 2),
+    ("mar", 3),
+    ("apr", 4),
+    ("may", 5),
+    ("jun", 6),
+    ("jul", 7),
+    ("aug", 8),
+    ("sep", 9),
+    ("oct", 10),
+    ("nov", 11),
+    ("dec", 12),
 ];
-const DAYS: &[(&str, u32)] = &[
-    ("sun", 0), ("mon", 1), ("tue", 2), ("wed", 3), ("thu", 4), ("fri", 5), ("sat", 6),
-];
+const DAYS: &[(&str, u32)] =
+    &[("sun", 0), ("mon", 1), ("tue", 2), ("wed", 3), ("thu", 4), ("fri", 5), ("sat", 6)];
 
 struct Schedule {
     min: Vec<bool>,   // 0..=59
@@ -57,9 +66,7 @@ fn resolve(tok: &str, names: &[(&str, u32)], lo: u32, hi: u32) -> Result<u32, Cr
     if let Some((_, v)) = names.iter().find(|(n, _)| *n == t) {
         return Ok(*v);
     }
-    let v: u32 = t
-        .parse()
-        .map_err(|_| inv(format!("not a number or name: '{tok}'")))?;
+    let v: u32 = t.parse().map_err(|_| inv(format!("not a number or name: '{tok}'")))?;
     if v < lo || v > hi {
         return Err(inv(format!("{v} out of range {lo}-{hi}")));
     }
@@ -83,10 +90,8 @@ fn parse_field(
         }
         let (rng, step) = match part.split_once('/') {
             Some((r, s)) => {
-                let step: u32 = s
-                    .trim()
-                    .parse()
-                    .map_err(|_| inv(format!("bad step '{s}' in '{part}'")))?;
+                let step: u32 =
+                    s.trim().parse().map_err(|_| inv(format!("bad step '{s}' in '{part}'")))?;
                 (r, step)
             }
             None => (part, 1),
@@ -101,7 +106,11 @@ fn parse_field(
         } else {
             let v = resolve(rng, names, lo, hi)?;
             // "a/n" means a..=hi step n; a bare "a" is just a.
-            if part.contains('/') { (v, hi) } else { (v, v) }
+            if part.contains('/') {
+                (v, hi)
+            } else {
+                (v, v)
+            }
         };
         if start > end {
             return Err(inv(format!("range start > end in '{part}'")));
@@ -267,7 +276,7 @@ mod tests {
     fn civil_roundtrip_epoch() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(weekday(0), 4); // Thursday
-        // 2021-01-01 was a Friday; days = 18628
+                                   // 2021-01-01 was a Friday; days = 18628
         assert_eq!(civil_from_days(18628), (2021, 1, 1));
         assert_eq!(weekday(18628), 5);
     }
@@ -278,7 +287,10 @@ mod tests {
         assert_eq!(<Component as Guest>::parse("@daily".into()).unwrap(), "0 0 * * *");
         // names + step lower to numbers
         assert_eq!(<Component as Guest>::parse("0 0 * jan mon".into()).unwrap(), "0 0 * 1 1");
-        assert_eq!(<Component as Guest>::parse("*/15 * * * *".into()).unwrap(), "0,15,30,45 * * * *");
+        assert_eq!(
+            <Component as Guest>::parse("*/15 * * * *".into()).unwrap(),
+            "0,15,30,45 * * * *"
+        );
     }
 
     #[test]
@@ -296,7 +308,7 @@ mod tests {
         let mon_0930 = 1609752600;
         assert!(matches_at(&s, mon_0930));
         assert!(!matches_at(&s, mon_0930 + 86400)); // Tuesday
-        // both dom and dow restricted -> OR: fires on the 1st OR any Friday
+                                                    // both dom and dow restricted -> OR: fires on the 1st OR any Friday
         let s2 = build("0 0 1 * fri").unwrap();
         assert!(!s2.dom_star && !s2.dow_star);
     }

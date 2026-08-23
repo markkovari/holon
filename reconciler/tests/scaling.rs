@@ -7,13 +7,16 @@
 //! interesting half, because that is where the signal has to come from somewhere
 //! other than in-flight requests (ADR-0045).
 
-
 use std::time::{Duration, Instant};
 
 use comp_reconciler::fleet::Fleet;
 
 /// Replica count over time, sampled from the lattice rather than from a log.
-fn wait_for(fleet: &Fleet, want: impl Fn(u32) -> bool, within: Duration) -> (u32, Option<Duration>) {
+fn wait_for(
+    fleet: &Fleet,
+    want: impl Fn(u32) -> bool,
+    within: Duration,
+) -> (u32, Option<Duration>) {
     let start = Instant::now();
     let mut last = fleet.replicas();
     while start.elapsed() < within {
@@ -61,10 +64,7 @@ fn shedding_grows_the_app_rather_than_hiding_the_demand() {
     let load = fleet.load("shop.eve.test", 120, Duration::from_secs(45));
     let (peak, at) = wait_for(&fleet, |n| n >= 4, Duration::from_secs(45));
     println!("    while shedding: {peak} replicas after {at:?}");
-    assert!(
-        peak >= 4,
-        "refusals are unmet demand and must grow the app; stuck at {peak}"
-    );
+    assert!(peak >= 4, "refusals are unmet demand and must grow the app; stuck at {peak}");
     let (ok, shed) = load.stop();
     println!("    served {ok}, shed {shed}");
     assert!(shed > 0, "the bound was not low enough to shed anything");

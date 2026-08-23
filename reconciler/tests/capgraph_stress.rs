@@ -40,7 +40,6 @@
 use std::process::Command;
 use std::time::Duration;
 
-
 mod harness;
 use harness::{Store, SURREAL_IMAGE};
 
@@ -151,7 +150,7 @@ fn lesson_rows(n: usize) -> String {
             "UPSERT memory:⟨stress-{i}⟩ SET ns = 'errors', text = 'lesson {i}', \
              tags = ['{tag}'], uses = 0;\n"
         ));
-        }
+    }
     out
 }
 

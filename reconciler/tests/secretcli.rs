@@ -91,7 +91,16 @@ fn a_key_goes_into_the_vault_from_stdin_and_never_from_argv() {
     assert!(up, "the control plane never answered");
 
     let (ok, out) = cli.run(
-        &["login", "--url", &cli.url, "--email", "ada@cli.test", "--password", "password123", "--register"],
+        &[
+            "login",
+            "--url",
+            &cli.url,
+            "--email",
+            "ada@cli.test",
+            "--password",
+            "password123",
+            "--register",
+        ],
         None,
     );
     assert!(ok, "register/login failed: {out}");

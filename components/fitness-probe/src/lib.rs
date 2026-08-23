@@ -69,7 +69,8 @@ impl Guest for Component {
 
         let body = if route == "/evaluate" {
             let raw = read_body(request);
-            let v: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+            let v: serde_json::Value =
+                serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
             let candidate = fitness::Candidate {
                 name: v["name"].as_str().unwrap_or_default().to_string(),
                 base_commit: v["base_commit"].as_str().unwrap_or_default().to_string(),

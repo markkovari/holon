@@ -57,10 +57,7 @@ fn now() -> u64 {
 
 /// A fresh 16-hex reservation nonce — used to detect a racing first-caller.
 fn nonce() -> String {
-    get_random_bytes(8)
-        .iter()
-        .map(|x| format!("{x:02x}"))
-        .collect()
+    get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// Sanitize an opaque key to NATS-legal kv chars (same scheme as the
@@ -98,10 +95,7 @@ fn parse(s: &str) -> Result<Record, IdemError> {
     if let Some(rest) = s.strip_prefix("pending:") {
         let (created_str, nonce) = rest.split_once(':').unwrap_or((rest, ""));
         let created = created_str.parse().unwrap_or(0);
-        return Ok(Record::Pending {
-            created,
-            nonce: nonce.to_string(),
-        });
+        return Ok(Record::Pending { created, nonce: nonce.to_string() });
     }
     if let Some(rest) = s.strip_prefix("done:") {
         // rest = {created}:{status}:{b64}

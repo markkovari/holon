@@ -61,10 +61,8 @@ fn component_with_digest(p: &Platform, token: &str, id: &str) -> (String, String
     assert!(!key.is_empty(), "the upload did not report a catalogue key: {row}");
 
     let digest = format!("sha256:{:0>64}", id);
-    let (code, body) = p.post_internal(
-        "/api/internal/pushed",
-        json!({ "key": key, "digest": digest }),
-    );
+    let (code, body) =
+        p.post_internal("/api/internal/pushed", json!({ "key": key, "digest": digest }));
     assert_eq!(code, 200, "recording the push failed: {body}");
     (key, digest)
 }
@@ -87,11 +85,8 @@ fn public_requires_a_signature_over_the_digest() {
     assert_eq!(code, 403, "public was granted with no key on file: {body}");
 
     // 2. Register the verifying key. The private half never leaves this test.
-    let (code, body) = p.post(
-        &ada,
-        "/api/keys",
-        json!({ "name": "release", "public_key": pubr.public_b64() }),
-    );
+    let (code, body) =
+        p.post(&ada, "/api/keys", json!({ "name": "release", "public_key": pubr.public_b64() }));
     assert_eq!(code, 201, "registering a key failed: {body}");
 
     // 3. A signature over the WRONG digest must not pass. This is the attack that
@@ -184,13 +179,21 @@ fn revoking_a_key_unpublishes_what_it_signed() {
     let (_k1, d1) = component_with_digest(&p, &ada, "doomed");
     let (_k2, d2) = component_with_digest(&p, &ada, "innocent");
     assert_eq!(
-        p.post(&ada, "/api/components/publish",
-            json!({ "id": "doomed", "visibility": "public", "signature": old.sign(&d1) })).0,
+        p.post(
+            &ada,
+            "/api/components/publish",
+            json!({ "id": "doomed", "visibility": "public", "signature": old.sign(&d1) })
+        )
+        .0,
         200
     );
     assert_eq!(
-        p.post(&ada, "/api/components/publish",
-            json!({ "id": "innocent", "visibility": "public", "signature": new.sign(&d2) })).0,
+        p.post(
+            &ada,
+            "/api/components/publish",
+            json!({ "id": "innocent", "visibility": "public", "signature": new.sign(&d2) })
+        )
+        .0,
         200
     );
 

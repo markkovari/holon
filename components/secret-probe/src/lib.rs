@@ -84,7 +84,11 @@ impl Guest for Component {
                 // query: it proves the handle carries the manifest's name, which is
                 // the only thing about a secret that is safe to log.
                 Ok(Some(s)) => {
-                    format!("{{\"key\":\"{}\",\"granted\":true,\"name\":\"{}\"}}", esc(&k), esc(&s.key()))
+                    format!(
+                        "{{\"key\":\"{}\",\"granted\":true,\"name\":\"{}\"}}",
+                        esc(&k),
+                        esc(&s.key())
+                    )
                 }
                 // Not an error. An optional secret being absent is a normal way to
                 // run, and it is also what a guest gets for a key it was not granted.
@@ -99,7 +103,9 @@ impl Guest for Component {
                 Ok(None) => format!("{{\"key\":\"{}\",\"granted\":false}}", esc(&k)),
                 Err(e) => format!("{{\"key\":\"{}\",\"error\":\"{e:?}\"}}", esc(&k)),
             },
-            _ => "{\"service\":\"secret-probe\",\"routes\":[\"/has?k=\",\"/reveal?k=\"]}".to_string(),
+            _ => {
+                "{\"service\":\"secret-probe\",\"routes\":[\"/has?k=\",\"/reveal?k=\"]}".to_string()
+            }
         };
 
         let headers = Fields::new();

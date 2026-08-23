@@ -23,11 +23,7 @@ struct Component;
 
 /// Build a `field-error` with the given field, machine code, and message.
 fn err(field: &str, code: &str, message: impl Into<String>) -> FieldError {
-    FieldError {
-        field: field.to_string(),
-        code: code.to_string(),
-        message: message.into(),
-    }
+    FieldError { field: field.to_string(), code: code.to_string(), message: message.into() }
 }
 
 /// Basic email shape: exactly one '@', non-empty local part, domain contains a
@@ -124,16 +120,17 @@ fn check_present(rule: &Rule, value: &Value, out: &mut Vec<FieldError>) {
                         ));
                     }
                 }
-                Kind::Uuid
-                    if !is_uuid_shape(s) => {
-                        out.push(err(field, "format", "not a valid UUID"));
-                    }
+                Kind::Uuid if !is_uuid_shape(s) => {
+                    out.push(err(field, "format", "not a valid UUID"));
+                }
                 _ => {}
             }
         }
         Kind::Integer => {
             let is_int = match value {
-                Value::Number(n) => n.is_i64() || n.is_u64() || n.as_f64().is_some_and(|f| f.fract() == 0.0),
+                Value::Number(n) => {
+                    n.is_i64() || n.is_u64() || n.as_f64().is_some_and(|f| f.fract() == 0.0)
+                }
                 _ => false,
             };
             if !is_int {
@@ -175,20 +172,12 @@ fn check_numeric_range(rule: &Rule, value: &Value, out: &mut Vec<FieldError>) {
     };
     if let Some(min) = rule.min_value {
         if n < min {
-            out.push(err(
-                rule.field.as_str(),
-                "min-value",
-                format!("must be at least {min}"),
-            ));
+            out.push(err(rule.field.as_str(), "min-value", format!("must be at least {min}")));
         }
     }
     if let Some(max) = rule.max_value {
         if n > max {
-            out.push(err(
-                rule.field.as_str(),
-                "max-value",
-                format!("must be at most {max}"),
-            ));
+            out.push(err(rule.field.as_str(), "max-value", format!("must be at most {max}")));
         }
     }
 }

@@ -123,7 +123,8 @@ impl ProfileKv {
         let reads = s.get.calls + s.exists.calls + s.list_keys.calls + s.get_revision.calls;
         let writes = s.set.calls + s.delete.calls + s.increment.calls + s.set_if_revision.calls;
         let total = reads + writes;
-        let mut out = String::from("\ncomp-host --kv-profile: what the app asked the store for\n\n");
+        let mut out =
+            String::from("\ncomp-host --kv-profile: what the app asked the store for\n\n");
         out.push_str("  op            calls        mean us      share\n");
         for (name, op) in [
             ("get", s.get),

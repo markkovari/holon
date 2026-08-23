@@ -76,10 +76,7 @@ fn measure(name: &str, lattice: &str, fixture: &str, args: &Args) -> f64 {
         &["role=web", "role=data"],
         Some("memory"),
     );
-    assert!(
-        fleet.serves("split.alice.test", Duration::from_secs(120)),
-        "{name}: never served"
-    );
+    assert!(fleet.serves("split.alice.test", Duration::from_secs(120)), "{name}: never served");
     // Load with a DISTINCT key per request, which the shared `Fleet::load` helper
     // cannot do — it drives one key, and one key is the wrong instrument here.
     //
@@ -98,7 +95,8 @@ fn measure(name: &str, lattice: &str, fixture: &str, args: &Args) -> f64 {
     let shaper_remote = n2.contains("started alice/split/shaper");
     let wants_split = fixture.contains("split-graph");
     assert_eq!(
-        shaper_remote, wants_split,
+        shaper_remote,
+        wants_split,
         "{name}: shaper is on the {} node, which is not what this arm measures.\n\
          A co-located arm needs it beside gate; a split arm needs it across the bus.",
         if shaper_remote { "data" } else { "web" }

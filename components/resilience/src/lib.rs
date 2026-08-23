@@ -81,7 +81,14 @@ impl Guest for Component {
                 } else {
                     // Probe budget spent; someone else's probe decides. No useful
                     // retry-after: the answer arrives when that probe reports.
-                    (Admission { admit: false, state: CircuitState::HalfOpen, retry_after_ms: 0 }, c)
+                    (
+                        Admission {
+                            admit: false,
+                            state: CircuitState::HalfOpen,
+                            retry_after_ms: 0,
+                        },
+                        c,
+                    )
                 }
             }
         }
@@ -164,7 +171,9 @@ impl Guest for Component {
         // Decorrelated jitter: uniform in [base, delay]. Deterministic in `seed`
         // (splitmix64 mixed with the attempt) so this stays a pure function.
         let span = delay - base + 1;
-        Some((base + mix(seed ^ (attempt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)) % span) as u32)
+        Some(
+            (base + mix(seed ^ (attempt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)) % span) as u32,
+        )
     }
 }
 
@@ -296,7 +305,13 @@ mod tests {
 
     #[test]
     fn backoff_grows_caps_and_stops() {
-        let p = RetryPolicy { max_attempts: 4, base_ms: 100, factor_pct: 200, max_ms: 500, jitter: false };
+        let p = RetryPolicy {
+            max_attempts: 4,
+            base_ms: 100,
+            factor_pct: 200,
+            max_ms: 500,
+            jitter: false,
+        };
         let b = |n| <Component as Guest>::backoff(n, p, 7);
         assert_eq!(b(1), Some(0), "no wait before the first attempt");
         assert_eq!(b(2), Some(100));
@@ -310,12 +325,26 @@ mod tests {
 
     #[test]
     fn jitter_stays_in_range_and_is_deterministic() {
-        let p = RetryPolicy { max_attempts: 6, base_ms: 100, factor_pct: 200, max_ms: 10_000, jitter: true };
+        let p = RetryPolicy {
+            max_attempts: 6,
+            base_ms: 100,
+            factor_pct: 200,
+            max_ms: 10_000,
+            jitter: true,
+        };
         for seed in 0..50u64 {
             for attempt in 2..=6u32 {
                 let d = <Component as Guest>::backoff(attempt, p, seed).unwrap();
-                let exact = <Component as Guest>::backoff(attempt, RetryPolicy { jitter: false, ..p }, seed).unwrap();
-                assert!((100..=exact).contains(&d), "attempt {attempt} seed {seed}: {d} not in 100..={exact}");
+                let exact = <Component as Guest>::backoff(
+                    attempt,
+                    RetryPolicy { jitter: false, ..p },
+                    seed,
+                )
+                .unwrap();
+                assert!(
+                    (100..=exact).contains(&d),
+                    "attempt {attempt} seed {seed}: {d} not in 100..={exact}"
+                );
             }
         }
         assert_eq!(

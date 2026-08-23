@@ -34,10 +34,7 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) {
         return None;
     }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
-        .collect()
+    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
 }
 
 fn fetch_secret(secret_ref: &str) -> Result<Vec<u8>, IngestError> {
@@ -84,9 +81,7 @@ impl Guest for Component {
             // already completed -> replay.
             Ok(Some(_)) => Ok(Verdict { accepted: false, replay: true }),
             // a concurrent duplicate is mid-flight -> also a replay for our purposes.
-            Err(idem::IdemError::InProgress) => {
-                Ok(Verdict { accepted: false, replay: true })
-            }
+            Err(idem::IdemError::InProgress) => Ok(Verdict { accepted: false, replay: true }),
             Err(idem::IdemError::BackendUnavailable(m)) => {
                 Err(IngestError::BackendUnavailable(format!("idempotency: {m}")))
             }

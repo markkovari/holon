@@ -139,7 +139,8 @@ fn random_b64u(n: u64) -> String {
 /// don't yet know the user.
 fn issue_challenge(purpose: &str, username: &str, user_handle: &str) -> String {
     let challenge = random_b64u(32);
-    let meta = json!({ "purpose": purpose, "username": username, "user_handle": user_handle }).to_string();
+    let meta =
+        json!({ "purpose": purpose, "username": username, "user_handle": user_handle }).to_string();
     let _ = cache::set(&format!("chal:{challenge}"), meta.as_bytes(), CHALLENGE_TTL);
     challenge
 }
@@ -312,10 +313,11 @@ fn register_finish(request: &IncomingRequest) -> Outcome {
         Ok(u) => u,
         Err(o) => return o,
     };
-    let (client_data, attestation) = match (field_bytes(&b, "client_data_json"), field_bytes(&b, "attestation_object")) {
-        (Ok(c), Ok(a)) => (c, a),
-        (Err(o), _) | (_, Err(o)) => return o,
-    };
+    let (client_data, attestation) =
+        match (field_bytes(&b, "client_data_json"), field_bytes(&b, "attestation_object")) {
+            (Ok(c), Ok(a)) => (c, a),
+            (Err(o), _) | (_, Err(o)) => return o,
+        };
     let challenge = match b["challenge"].as_str() {
         Some(c) => c.to_string(),
         // The challenge is inside clientDataJSON too; requiring it explicitly
@@ -358,7 +360,9 @@ fn register_finish(request: &IncomingRequest) -> Outcome {
         "backed_up": cred.backed_up, "attestation_format": cred.attestation_format,
         "created": now_secs(), "last_used": Value::Null
     });
-    if records::create(CREDENTIALS, &doc.to_string(), &["id".to_string(), "username".to_string()]).is_err() {
+    if records::create(CREDENTIALS, &doc.to_string(), &["id".to_string(), "username".to_string()])
+        .is_err()
+    {
         return Outcome::Err(500, "could not store credential".into());
     }
 
@@ -426,7 +430,11 @@ fn login_finish(request: &IncomingRequest) -> Outcome {
         (Ok(c), Ok(a), Ok(s)) => (c, a, s),
         (Err(o), _, _) | (_, Err(o), _) | (_, _, Err(o)) => return o,
     };
-    let challenge = match b["challenge"].as_str().map(|s| s.to_string()).or_else(|| challenge_from_client_data(&client_data)) {
+    let challenge = match b["challenge"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| challenge_from_client_data(&client_data))
+    {
         Some(c) => c,
         None => return Outcome::Err(400, "no challenge in clientDataJSON".into()),
     };
@@ -450,7 +458,13 @@ fn login_finish(request: &IncomingRequest) -> Outcome {
         None => return Outcome::Err(500, "stored credential is corrupt".into()),
     };
 
-    let assertion = match wa::authenticate(&expectations(&challenge), &cred, &client_data, &auth_data, &signature) {
+    let assertion = match wa::authenticate(
+        &expectations(&challenge),
+        &cred,
+        &client_data,
+        &auth_data,
+        &signature,
+    ) {
         Ok(a) => a,
         Err(e) => return ceremony_error(e),
     };
@@ -539,9 +553,8 @@ fn logout(request: &IncomingRequest) -> Outcome {
 
 /// A base64url (or base64) field the browser sent as an ArrayBuffer.
 fn field_bytes(b: &Value, key: &str) -> Result<Vec<u8>, Outcome> {
-    let s = b[key]
-        .as_str()
-        .ok_or_else(|| Outcome::Err(422, format!("{key} required (base64url)")))?;
+    let s =
+        b[key].as_str().ok_or_else(|| Outcome::Err(422, format!("{key} required (base64url)")))?;
     URL_SAFE_NO_PAD
         .decode(s.trim_end_matches('='))
         .or_else(|_| STANDARD.decode(s))

@@ -72,19 +72,18 @@ fn percent(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         match (b[i], b.get(i + 1), b.get(i + 2)) {
-            (b'%', Some(h), Some(l)) => match u8::from_str_radix(
-                core::str::from_utf8(&[*h, *l]).unwrap_or("zz"),
-                16,
-            ) {
-                Ok(v) => {
-                    out.push(v);
-                    i += 3;
+            (b'%', Some(h), Some(l)) => {
+                match u8::from_str_radix(core::str::from_utf8(&[*h, *l]).unwrap_or("zz"), 16) {
+                    Ok(v) => {
+                        out.push(v);
+                        i += 3;
+                    }
+                    Err(_) => {
+                        out.push(b[i]);
+                        i += 1;
+                    }
                 }
-                Err(_) => {
-                    out.push(b[i]);
-                    i += 1;
-                }
-            },
+            }
             _ => {
                 out.push(b[i]);
                 i += 1;

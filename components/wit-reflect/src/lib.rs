@@ -31,8 +31,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use sha2::{Digest, Sha256};
 
 use bindings::exports::wit::reflect::composer::{
-    ComposeError, Edge, Gap, Guest as ComposerGuest, CompositionPlan, Node, Part, PlugStep, Problem,
-    WorkloadMeta,
+    ComposeError, CompositionPlan, Edge, Gap, Guest as ComposerGuest, Node, Part, PlugStep,
+    Problem, WorkloadMeta,
 };
 use bindings::exports::wit::reflect::inspector::{
     Guest as InspectorGuest, IfaceRef, ReflectError, Surface,
@@ -263,7 +263,12 @@ impl ComposerGuest for Component {
         emit::plug_script(&p, &out_dir)
     }
 
-    fn emit_wac(nodes: Vec<Node>, edges: Vec<Edge>, p: CompositionPlan, package_name: String) -> String {
+    fn emit_wac(
+        nodes: Vec<Node>,
+        edges: Vec<Edge>,
+        p: CompositionPlan,
+        package_name: String,
+    ) -> String {
         emit::wac_file(&nodes, &edges, &p, &package_name)
     }
 
@@ -345,9 +350,7 @@ fn plug_together(
             "{socket_id}: {e} (nothing the plugs export is imported by this socket)"
         ))
     })?;
-    graph
-        .encode(EncodeOptions::default())
-        .map_err(|e| ComposeError::EncodeFailed(e.to_string()))
+    graph.encode(EncodeOptions::default()).map_err(|e| ComposeError::EncodeFailed(e.to_string()))
 }
 
 // ---- the planning graph -----------------------------------------------------
@@ -383,7 +386,10 @@ impl<'a> Graph<'a> {
             else {
                 g.problems.push(problem(
                     "unknown-node",
-                    format!("edge {} -> {} names a node that isn't on the canvas", e.plug, e.socket),
+                    format!(
+                        "edge {} -> {} names a node that isn't on the canvas",
+                        e.plug, e.socket
+                    ),
                 ));
                 continue;
             };
@@ -548,11 +554,8 @@ impl<'a> Graph<'a> {
                     for plug in &plugs {
                         let drawn = self.drawn.get(&(*socket, *plug)).cloned().unwrap_or_default();
                         for export in &self.by_id[*plug].surface.exports {
-                            let imported = socket_node
-                                .surface
-                                .imports
-                                .iter()
-                                .any(|i| i.raw == export.raw);
+                            let imported =
+                                socket_node.surface.imports.iter().any(|i| i.raw == export.raw);
                             if imported && !drawn.contains(export.raw.as_str()) {
                                 also.push(export.raw.clone());
                             }
@@ -595,8 +598,7 @@ impl<'a> Graph<'a> {
         // Instance budget: each node contributes itself plus whatever it already
         // nests (a composed plug carries its own). An estimate, but the right
         // order of magnitude, and the limit it warns about is real.
-        let instance_count: u32 =
-            self.nodes.iter().map(|n| 1 + n.surface.nested_instances).sum();
+        let instance_count: u32 = self.nodes.iter().map(|n| 1 + n.surface.nested_instances).sum();
         let over = instance_count > NESTED_INSTANCE_LIMIT;
         if over {
             self.problems.push(Problem {
@@ -664,8 +666,10 @@ mod tests {
     #[test]
     fn parses_interface_names() {
         let r = iface("records:store/store@0.1.0");
-        assert_eq!((r.namespace.as_str(), r.pkg.as_str(), r.name.as_str(), r.version.as_str()),
-                   ("records", "store", "store", "0.1.0"));
+        assert_eq!(
+            (r.namespace.as_str(), r.pkg.as_str(), r.name.as_str(), r.version.as_str()),
+            ("records", "store", "store", "0.1.0")
+        );
         let r = iface("wasi:keyvalue/store@0.2.0-draft");
         assert_eq!(r.version, "0.2.0-draft", "prerelease versions survive intact");
         // gen-catalog.py drops these; we keep them, because wac and wasmCloud
@@ -680,8 +684,24 @@ mod tests {
     fn plans_a_two_level_build_in_order() {
         // app <- cache <- cache-backing, the shape four recipes hand-write.
         let nodes = vec![
-            node("app", surface("app", &["wasi:http/incoming-handler@0.2.0"], &["cache:store/cache@0.1.0"], &["wasi:clocks/wall-clock@0.2.0"])),
-            node("cache", surface("cache", &["cache:store/cache@0.1.0"], &["cache:store/source@0.1.0"], &["wasi:keyvalue/store@0.2.0-draft"])),
+            node(
+                "app",
+                surface(
+                    "app",
+                    &["wasi:http/incoming-handler@0.2.0"],
+                    &["cache:store/cache@0.1.0"],
+                    &["wasi:clocks/wall-clock@0.2.0"],
+                ),
+            ),
+            node(
+                "cache",
+                surface(
+                    "cache",
+                    &["cache:store/cache@0.1.0"],
+                    &["cache:store/source@0.1.0"],
+                    &["wasi:keyvalue/store@0.2.0-draft"],
+                ),
+            ),
             node("backing", surface("cache-backing", &["cache:store/source@0.1.0"], &[], &[])),
         ];
         let edges = vec![
@@ -719,8 +739,24 @@ mod tests {
         // One plug exporting two interfaces the socket imports: `wac plug` wires
         // BOTH whether you drew one edge or two. A UI that hides this is lying.
         let nodes = vec![
-            node("app", surface("app", &[], &["auth:identity/authorizer@0.1.0", "auth:identity/accounts@0.1.0"], &[])),
-            node("guard", surface("auth-guard", &["auth:identity/authorizer@0.1.0", "auth:identity/accounts@0.1.0"], &[], &[])),
+            node(
+                "app",
+                surface(
+                    "app",
+                    &[],
+                    &["auth:identity/authorizer@0.1.0", "auth:identity/accounts@0.1.0"],
+                    &[],
+                ),
+            ),
+            node(
+                "guard",
+                surface(
+                    "auth-guard",
+                    &["auth:identity/authorizer@0.1.0", "auth:identity/accounts@0.1.0"],
+                    &[],
+                    &[],
+                ),
+            ),
         ];
         let p = <Component as ComposerGuest>::plan(
             nodes,
@@ -729,8 +765,10 @@ mod tests {
         assert_eq!(p.steps.len(), 1);
         assert_eq!(p.steps[0].also_satisfies, vec!["auth:identity/accounts@0.1.0"]);
         // ...and so it is not reported as a gap either.
-        assert!(p.unsatisfied.iter().any(|g| g.iface.name == "accounts"),
-                "still listed as undrawn until the user wires it");
+        assert!(
+            p.unsatisfied.iter().any(|g| g.iface.name == "accounts"),
+            "still listed as undrawn until the user wires it"
+        );
     }
 
     #[test]
@@ -753,7 +791,10 @@ mod tests {
     #[test]
     fn rejects_edges_that_cannot_exist() {
         let nodes = vec![
-            node("app", surface("app", &[], &["a:b/c@0.1.0"], &["wasi:keyvalue/store@0.2.0-draft"])),
+            node(
+                "app",
+                surface("app", &[], &["a:b/c@0.1.0"], &["wasi:keyvalue/store@0.2.0-draft"]),
+            ),
             node("cap", surface("cap", &["a:b/c@0.1.0"], &[], &[])),
         ];
         let cases: Vec<(Edge, &str)> = vec![
@@ -763,7 +804,11 @@ mod tests {
         ];
         for (e, kind) in cases {
             let p = <Component as ComposerGuest>::plan(nodes.clone(), vec![e]);
-            assert!(p.problems.iter().any(|pr| pr.kind == kind), "expected {kind}: {:?}", p.problems);
+            assert!(
+                p.problems.iter().any(|pr| pr.kind == kind),
+                "expected {kind}: {:?}",
+                p.problems
+            );
         }
         // A host capability is not a composition edge, however you draw it.
         let host = node("kv", surface("kv", &["wasi:keyvalue/store@0.2.0-draft"], &[], &[]));
@@ -780,10 +825,8 @@ mod tests {
     fn warns_before_the_instance_limit_bites() {
         // vet-domain's real shape: one app, 19 capabilities, ~104 modules. It
         // composes and then refuses to instantiate — the warning is the product.
-        let mut nodes = vec![node(
-            "app",
-            Surface { nested_instances: 4, ..surface("app", &[], &[], &[]) },
-        )];
+        let mut nodes =
+            vec![node("app", Surface { nested_instances: 4, ..surface("app", &[], &[], &[]) })];
         for i in 0..19 {
             nodes.push(node(
                 &format!("cap{i}"),
@@ -829,8 +872,10 @@ mod tests {
         assert_eq!(composable.len(), 3, "exactly the three plugs its recipe uses: {composable:?}");
         // ...and everything else needs a host, which no component can supply.
         assert!(s.host_imports.iter().all(|h| h.namespace == "wasi"));
-        assert!(s.host_imports.iter().any(|h| h.raw == "wasi:keyvalue/store@0.2.0-draft")
-            || s.host_imports.iter().any(|h| h.name == "wall-clock"));
+        assert!(
+            s.host_imports.iter().any(|h| h.raw == "wasi:keyvalue/store@0.2.0-draft")
+                || s.host_imports.iter().any(|h| h.name == "wall-clock")
+        );
     }
 
     #[test]
@@ -904,13 +949,16 @@ mod tests {
             edge("resilience", "mesh", "resilience:breaker/breaker@0.1.0"),
             edge("proxy", "mesh", "proxy:route/router@0.1.0"),
         ];
-        let out = <Component as ComposerGuest>::compose(parts, edges, "mesh".into())
-            .expect("composes");
+        let out =
+            <Component as ComposerGuest>::compose(parts, edges, "mesh".into()).expect("composes");
 
         // It is a component, and every composable import is gone.
         let s = <Component as InspectorGuest>::inspect(out.clone()).expect("output inspects");
         assert!(s.imports.is_empty(), "left over: {:?}", s.imports);
-        assert!(s.host_imports.iter().any(|h| h.name == "incoming-handler" || h.namespace == "wasi"));
+        assert!(s
+            .host_imports
+            .iter()
+            .any(|h| h.name == "incoming-handler" || h.namespace == "wasi"));
         assert_eq!(s.exports[0].raw, "wasi:http/incoming-handler@0.2.0");
 
         // Structurally what `wac plug` writes: the plugs are nested inside, so the

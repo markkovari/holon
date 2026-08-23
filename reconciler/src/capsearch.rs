@@ -61,22 +61,25 @@ pub struct Capability {
 /// blast radius. Neither alone is enough: the catalogue has descriptions but is
 /// hand-generated and covers 109 of 150 components, and the artifacts have the
 /// truth about interfaces but no idea what anything is FOR.
-pub fn capabilities(repo_root: &Path, catalog: &Catalog, apps_of: &BTreeMap<String, usize>) -> Vec<Capability> {
-    let described: BTreeMap<String, String> = std::fs::read_to_string(
-        repo_root.join("components/catalog.json"),
-    )
-    .ok()
-    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-    .and_then(|v| v.as_array().cloned())
-    .unwrap_or_default()
-    .iter()
-    .filter_map(|e| {
-        Some((
-            e["name"].as_str()?.to_string(),
-            e["description"].as_str().unwrap_or_default().to_string(),
-        ))
-    })
-    .collect();
+pub fn capabilities(
+    repo_root: &Path,
+    catalog: &Catalog,
+    apps_of: &BTreeMap<String, usize>,
+) -> Vec<Capability> {
+    let described: BTreeMap<String, String> =
+        std::fs::read_to_string(repo_root.join("components/catalog.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| {
+                Some((
+                    e["name"].as_str()?.to_string(),
+                    e["description"].as_str().unwrap_or_default().to_string(),
+                ))
+            })
+            .collect();
 
     let wit = wit_prose(repo_root);
     let mut out: Vec<Capability> = Vec::new();
@@ -134,9 +137,10 @@ fn wit_prose(repo_root: &Path) -> BTreeMap<String, String> {
             }
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
             // `package ratelimit:guard@0.1.0;` names what this file describes.
-            let Some(pkg) = text.lines().find_map(|l| {
-                l.trim().strip_prefix("package ").and_then(|r| r.split('@').next())
-            }) else {
+            let Some(pkg) = text
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("package ").and_then(|r| r.split('@').next()))
+            else {
                 continue;
             };
             let header: String = text
@@ -145,9 +149,7 @@ fn wit_prose(repo_root: &Path) -> BTreeMap<String, String> {
                 .filter_map(|l| l.trim_start().strip_prefix("//"))
                 .collect::<Vec<_>>()
                 .join(" ");
-            out.entry(pkg.trim().trim_end_matches(';').to_string())
-                .or_default()
-                .push_str(&header);
+            out.entry(pkg.trim().trim_end_matches(';').to_string()).or_default().push_str(&header);
         }
     }
     out
@@ -241,9 +243,7 @@ pub fn find<'a>(query: &str, pool: &'a [Capability]) -> Vec<Match<'a>> {
         score += (cap.apps as f64 + 1.0).ln() * 0.5;
         out.push(Match { capability: cap, score, because });
     }
-    out.sort_by(|a, b| {
-        b.score.total_cmp(&a.score).then(a.capability.name.cmp(&b.capability.name))
-    });
+    out.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.capability.name.cmp(&b.capability.name)));
     out
 }
 
@@ -394,11 +394,8 @@ pub fn twins(catalog: &Catalog) -> Vec<Twins> {
         let surfaces: Vec<&BTreeSet<String>> =
             components.iter().filter_map(|c| catalog.surface(c)).map(|s| &s.exports).collect();
         let Some(first) = surfaces.first() else { continue };
-        let shared: BTreeSet<String> = first
-            .iter()
-            .filter(|e| surfaces.iter().all(|s| s.contains(*e)))
-            .cloned()
-            .collect();
+        let shared: BTreeSet<String> =
+            first.iter().filter(|e| surfaces.iter().all(|s| s.contains(*e))).cloned().collect();
         // Against the SMALLEST surface: a tiny component fully contained in a
         // large one is entirely duplicated, and dividing by the larger would hide
         // that behind the larger one's unrelated exports.

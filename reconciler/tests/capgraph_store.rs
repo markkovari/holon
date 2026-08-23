@@ -47,11 +47,7 @@ fn project(db: &Store, generation: u64) {
         .args(["--format", "surql", "--gen", &generation.to_string()])
         .output()
         .expect("comp-capgraph did not run");
-    assert!(
-        out.status.success(),
-        "comp-capgraph failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    assert!(out.status.success(), "comp-capgraph failed: {}", String::from_utf8_lossy(&out.stderr));
     let sql = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(sql.contains("UPSERT interface:"), "projection wrote no interfaces");
     db.last(&sql);
@@ -108,7 +104,9 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
 #[test]
 fn the_projection_preserves_the_app_and_component_connections() {
     let Some(db) = Store::start() else {
-        eprintln!("SKIPPED: docker could not start {SURREAL_IMAGE} — the connections are unverified");
+        eprintln!(
+            "SKIPPED: docker could not start {SURREAL_IMAGE} — the connections are unverified"
+        );
         return;
     };
     project(&db, 1);
@@ -117,9 +115,8 @@ fn the_projection_preserves_the_app_and_component_connections() {
     //    dangling record link reads, and it is exactly what a partial write or a
     //    mismatched id would produce.
     for edge in ["carries", "imports", "exports"] {
-        let dangling = db.last(&format!(
-            "SELECT count() FROM {edge} WHERE out.name = NONE GROUP ALL;"
-        ));
+        let dangling =
+            db.last(&format!("SELECT count() FROM {edge} WHERE out.name = NONE GROUP ALL;"));
         assert_eq!(
             dangling[0]["count"].as_u64().unwrap_or(0),
             0,
@@ -129,9 +126,8 @@ fn the_projection_preserves_the_app_and_component_connections() {
 
     // 2. Every app carries its own root — the fix ADR-0091's query depends on, and
     //    the one place the projection deliberately differs from `--format json`.
-    let rootless = db.last(
-        "SELECT VALUE name FROM app WHERE root NOT IN ->carries->artifact.name;",
-    );
+    let rootless =
+        db.last("SELECT VALUE name FROM app WHERE root NOT IN ->carries->artifact.name;");
     assert_eq!(
         rootless.as_array().map(|a| a.len()),
         Some(0),
@@ -159,16 +155,13 @@ fn the_projection_preserves_the_app_and_component_connections() {
         let carried = db.last(&format!(
             "SELECT VALUE array::sort(->carries->artifact.name) FROM ONLY app:⟨{app}⟩;"
         ));
-        let has = carried
-            .as_array()
-            .map(|a| a.iter().any(|x| x.as_str() == Some(part)))
-            .unwrap_or(false);
+        let has =
+            carried.as_array().map(|a| a.iter().any(|x| x.as_str() == Some(part))).unwrap_or(false);
         assert!(has, "{app} does not carry {part} in the store: {carried:?}");
     }
 
     // 5. Every artifact has a digest, or Q9's staleness stamp has nothing to stamp.
-    let undigested =
-        db.last("SELECT count() FROM artifact WHERE digest = '' GROUP ALL;");
+    let undigested = db.last("SELECT count() FROM artifact WHERE digest = '' GROUP ALL;");
     assert_eq!(
         undigested[0]["count"].as_u64().unwrap_or(0),
         0,
@@ -215,9 +208,10 @@ fn the_join_works_and_a_rebuild_cannot_reach_the_lessons() {
          SELECT text FROM memory WHERE tags CONTAINSANY $ifaces;"
     );
     let hits = db.last(&query);
-    let texts: Vec<&str> = hits.as_array().map(|a| {
-        a.iter().filter_map(|h| h["text"].as_str()).collect()
-    }).unwrap_or_default();
+    let texts: Vec<&str> = hits
+        .as_array()
+        .map(|a| a.iter().filter_map(|h| h["text"].as_str()).collect())
+        .unwrap_or_default();
 
     assert!(
         texts.iter().any(|t| t.contains("Dialect.delimiter")),
@@ -351,7 +345,9 @@ fn a_lesson_is_reached_through_the_interface_it_is_about() {
 #[test]
 fn the_index_survives_an_empty_pool_and_a_lesson_about_nothing() {
     let Some(db) = Store::start() else {
-        eprintln!("SKIPPED: docker could not start {SURREAL_IMAGE} — the edge cases are unverified");
+        eprintln!(
+            "SKIPPED: docker could not start {SURREAL_IMAGE} — the edge cases are unverified"
+        );
         return;
     };
 

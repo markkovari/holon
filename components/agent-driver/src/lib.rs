@@ -229,7 +229,9 @@ impl Guest for Component {
                     continue;
                 }
                 // Not reachable. Every remaining attempt would fail the same way.
-                Err(agent::AgentError::InferenceFailed(m)) => return Err(RunError::ProviderDown(m)),
+                Err(agent::AgentError::InferenceFailed(m)) => {
+                    return Err(RunError::ProviderDown(m))
+                }
                 // The goal itself is wrong, and no seed fixes a goal.
                 Err(agent::AgentError::UnderSpecified(m)) => return Err(RunError::Invalid(m)),
             };
@@ -409,7 +411,10 @@ mod tests {
         ]);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].id, "the-fix");
-        assert_eq!(got[0].detail, "expected 42, found 41", "the detail is what makes it actionable");
+        assert_eq!(
+            got[0].detail, "expected 42, found 41",
+            "the detail is what makes it actionable"
+        );
     }
 
     fn goal(context: &[(&str, &str)]) -> Goal {
@@ -428,9 +433,17 @@ mod tests {
         let g = goal(&[("src/lib.rs", "fn answer() { 41 }")]);
         let best = vec![f("src/lib.rs", "fn answer() { 43 }")];
 
-        assert_eq!(goal_for(&g, None).context[0].content, "fn answer() { 41 }", "the first attempt sees the base");
+        assert_eq!(
+            goal_for(&g, None).context[0].content,
+            "fn answer() { 41 }",
+            "the first attempt sees the base"
+        );
         let repair = goal_for(&g, Some(&best));
-        assert_eq!(repair.context.len(), 1, "the candidate replaces the file, it does not duplicate it");
+        assert_eq!(
+            repair.context.len(),
+            1,
+            "the candidate replaces the file, it does not duplicate it"
+        );
         assert_eq!(repair.context[0].content, "fn answer() { 43 }");
     }
 

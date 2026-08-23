@@ -117,22 +117,11 @@ fn parse(s: &str) -> Result<Record, SessionError> {
     let data = B64
         .decode(b64)
         .map_err(|_| SessionError::BackendUnavailable("corrupt record: data".into()))?;
-    Ok(Record {
-        created,
-        expires,
-        csrf,
-        data,
-    })
+    Ok(Record { created, expires, csrf, data })
 }
 
 fn serialize(r: &Record) -> String {
-    format!(
-        "{}:{}:{}:{}",
-        r.created,
-        r.expires,
-        r.csrf,
-        B64.encode(&r.data)
-    )
+    format!("{}:{}:{}:{}", r.created, r.expires, r.csrf, B64.encode(&r.data))
 }
 
 fn set(bucket: &kv::Bucket, key: &str, body: &str) -> Result<(), SessionError> {
@@ -179,12 +168,7 @@ impl Guest for Component {
         let now = now();
         // 256-bit opaque id, separate 256-bit csrf token.
         let id = token();
-        let record = Record {
-            created: now,
-            expires: now + ttl,
-            csrf: token(),
-            data,
-        };
+        let record = Record { created: now, expires: now + ttl, csrf: token(), data };
         set(&bucket, &sess_key(&id), &serialize(&record))?;
         Ok(to_session(&id, &record))
     }

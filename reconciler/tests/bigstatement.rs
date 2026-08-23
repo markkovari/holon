@@ -83,11 +83,13 @@ fn a_statement_over_four_kilobytes_round_trips() {
 
     // The readiness check IS a `query`, so the hatch is what gets waited on rather
     // than something adjacent to it.
-    fleet.until("a small query through the escape hatch", Duration::from_secs(180), || {
-        match post(port, "/query", "SELECT * FROM nothing_here;") {
-            Value::String(s) => Err(s),
-            _ => Ok(()),
-        }
+    fleet.until("a small query through the escape hatch", Duration::from_secs(180), || match post(
+        port,
+        "/query",
+        "SELECT * FROM nothing_here;",
+    ) {
+        Value::String(s) => Err(s),
+        _ => Ok(()),
     });
 
     // Comfortably over the limit, and a size a contract really reaches: the file

@@ -45,10 +45,7 @@ const READS_ALLOWED: &[(&str, &str)] = &[
         "proxies to another component, which sees the truncation as a malformed \
          request and refuses it",
     ),
-    (
-        "photo-critic",
-        "a truncated image fails to decode; the failure is loud and immediate",
-    ),
+    ("photo-critic", "a truncated image fails to decode; the failure is loud and immediate"),
     (
         "bench-suite",
         "counts bytes to measure throughput; a failed read shows up as a number so \
@@ -187,13 +184,8 @@ fn every_write_all_asks_the_stream_how_much_it_will_take() {
         if !text.contains("fn write_all(") {
             continue;
         }
-        let body: String = text
-            .split("fn write_all(")
-            .nth(1)
-            .unwrap_or_default()
-            .chars()
-            .take(1200)
-            .collect();
+        let body: String =
+            text.split("fn write_all(").nth(1).unwrap_or_default().chars().take(1200).collect();
         let rel = path.strip_prefix(repo_root()).unwrap_or(&path).display().to_string();
         if !body.contains("check_write") {
             wrong.push(format!("  {rel}: does not call check_write"));

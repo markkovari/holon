@@ -73,7 +73,9 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
     };
 
     match events {
-        Ok(list) => Reply::json(200, json!({ "events": list.iter().map(event_json).collect::<Vec<_>>() })),
+        Ok(list) => {
+            Reply::json(200, json!({ "events": list.iter().map(event_json).collect::<Vec<_>>() }))
+        }
         Err(_) => Reply::err(503, "audit_unavailable"),
     }
 }

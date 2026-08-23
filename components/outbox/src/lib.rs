@@ -80,10 +80,7 @@ fn now() -> u64 {
 /// A fresh 16-hex id from 8 random bytes (same scheme as idempotency-guard's
 /// nonce).
 fn new_id() -> String {
-    get_random_bytes(8)
-        .iter()
-        .map(|x| format!("{x:02x}"))
-        .collect()
+    get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// Sanitize an opaque id to NATS-legal kv chars (same scheme as
@@ -168,15 +165,7 @@ fn parse(id: &str, s: &str) -> Result<Event, OutboxError> {
     let payload = B64
         .decode(payload_b64)
         .map_err(|_| OutboxError::BackendUnavailable("corrupt record: payload".into()))?;
-    Ok(Event {
-        id: id.to_string(),
-        topic,
-        payload,
-        state,
-        attempts,
-        created,
-        not_before,
-    })
+    Ok(Event { id: id.to_string(), topic, payload, state, attempts, created, not_before })
 }
 
 fn load(bucket: &kv::Bucket, id: &str) -> Result<Option<Event>, OutboxError> {

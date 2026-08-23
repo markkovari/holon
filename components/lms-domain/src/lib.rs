@@ -103,7 +103,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -134,7 +135,11 @@ fn register(request: &IncomingRequest) -> Outcome {
     let wanted = body["role"].as_str().unwrap_or("student");
     let role = if ["instructor", "student"].contains(&wanted) { wanted } else { "student" };
     let _ = rbac::assign_role(&p.tenant, &p.subject, role);
-    let _ = records::create(USERS, &json!({ "subject": p.subject, "email": email }).to_string(), &["subject".to_string(), "email".to_string()]);
+    let _ = records::create(
+        USERS,
+        &json!({ "subject": p.subject, "email": email }).to_string(),
+        &["subject".to_string(), "email".to_string()],
+    );
     if role == "instructor" {
         seed_demo(&p.subject);
     }
@@ -181,20 +186,24 @@ fn logout(request: &IncomingRequest) -> Outcome {
 // ---- records helpers --------------------------------------------------------
 
 fn get(coll: &str, id: &str) -> Option<Value> {
-    records::get(coll, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(|mut v| {
-        v["id"] = json!(id);
-        v
-    })
+    records::get(coll, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
+        |mut v| {
+            v["id"] = json!(id);
+            v
+        },
+    )
 }
 
 fn find(coll: &str, field: &str, value: &str) -> Vec<Value> {
     records::find_by(coll, field, &json!(value).to_string())
         .unwrap_or_default()
         .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            v["id"] = json!(e.id);
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                v["id"] = json!(e.id);
+                v
+            })
+        })
         .collect()
 }
 
@@ -237,15 +246,17 @@ fn list_courses(request: &IncomingRequest) -> Outcome {
         .map(|pg| pg.entries)
         .unwrap_or_default()
         .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            let id = e.id.clone();
-            v["id"] = json!(id);
-            v["enrolled"] = json!(my_enrolled.contains(&id));
-            v["is_mine"] = json!(v["instructor"].as_str() == Some(&p.subject));
-            v["lessons"] = json!(find(LESSONS, "course", &id).len());
-            v["quizzes"] = json!(find(QUIZZES, "course", &id).len());
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                let id = e.id.clone();
+                v["id"] = json!(id);
+                v["enrolled"] = json!(my_enrolled.contains(&id));
+                v["is_mine"] = json!(v["instructor"].as_str() == Some(&p.subject));
+                v["lessons"] = json!(find(LESSONS, "course", &id).len());
+                v["quizzes"] = json!(find(QUIZZES, "course", &id).len());
+                v
+            })
+        })
         .collect();
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
@@ -266,7 +277,9 @@ fn quizzes_of(course: &str) -> Vec<Value> {
 fn quiz_public(q: &Value) -> Value {
     let questions: Vec<Value> = q["questions"]
         .as_array()
-        .map(|a| a.iter().map(|qu| json!({ "prompt": qu["prompt"], "options": qu["options"] })).collect())
+        .map(|a| {
+            a.iter().map(|qu| json!({ "prompt": qu["prompt"], "options": qu["options"] })).collect()
+        })
         .unwrap_or_default();
     json!({ "id": q["id"], "title": q["title"], "pass_mark": q["pass_mark"], "questions": questions })
 }
@@ -281,8 +294,10 @@ fn get_course(request: &IncomingRequest, id: &str) -> Outcome {
         None => return Outcome::Err(404, "not_found".into()),
     };
     let owner = course["instructor"].as_str() == Some(&p.subject);
-    let quizzes: Vec<Value> = quizzes_of(id).iter().map(|q| if owner { q.clone() } else { quiz_public(q) }).collect();
-    let enrolled = !find(ENROLLMENTS, "student", &p.subject).iter().all(|e| e["course"].as_str() != Some(id));
+    let quizzes: Vec<Value> =
+        quizzes_of(id).iter().map(|q| if owner { q.clone() } else { quiz_public(q) }).collect();
+    let enrolled =
+        !find(ENROLLMENTS, "student", &p.subject).iter().all(|e| e["course"].as_str() != Some(id));
     Outcome::Json(
         200,
         json!({ "course": course, "lessons": lessons_of(id), "quizzes": quizzes, "enrolled": enrolled, "is_mine": owner }).to_string(),
@@ -344,7 +359,10 @@ fn add_quiz(request: &IncomingRequest, id: &str) -> Outcome {
         let opts = q["options"].as_array().map(|a| a.len()).unwrap_or(0);
         let ans = q["answer"].as_u64().unwrap_or(u64::MAX);
         if q["prompt"].as_str().unwrap_or("").is_empty() || opts < 2 || ans as usize >= opts {
-            return Outcome::Err(422, "each question needs a prompt, >=2 options, and a valid answer index".into());
+            return Outcome::Err(
+                422,
+                "each question needs a prompt, >=2 options, and a valid answer index".into(),
+            );
         }
     }
     let pass_mark = b["pass_mark"].as_u64().unwrap_or(60).min(100);
@@ -369,7 +387,11 @@ fn enroll(request: &IncomingRequest, id: &str) -> Outcome {
         return Outcome::Json(200, json!({ "ok": true, "already": true }).to_string());
     }
     let d = json!({ "course": id, "student": p.subject, "email": subject_email(&p.subject), "created": now() });
-    match records::create(ENROLLMENTS, &d.to_string(), &["course".to_string(), "student".to_string()]) {
+    match records::create(
+        ENROLLMENTS,
+        &d.to_string(),
+        &["course".to_string(), "student".to_string()],
+    ) {
         Ok(_) => Outcome::Json(201, json!({ "ok": true }).to_string()),
         Err(e) => store_err(e),
     }
@@ -385,15 +407,24 @@ fn submit_quiz(request: &IncomingRequest, quiz_id: &str) -> Outcome {
         None => return Outcome::Err(404, "no such quiz".into()),
     };
     let course = quiz["course"].as_str().unwrap_or("").to_string();
-    if !find(ENROLLMENTS, "course", &course).iter().any(|e| e["student"].as_str() == Some(&p.subject)) {
+    if !find(ENROLLMENTS, "course", &course)
+        .iter()
+        .any(|e| e["student"].as_str() == Some(&p.subject))
+    {
         return Outcome::Err(403, "enroll in the course first".into());
     }
     let b = match body(request) {
         Ok(v) => v,
         Err(o) => return o,
     };
-    let answers: Vec<u32> = b["answers"].as_array().map(|a| a.iter().map(|x| x.as_u64().unwrap_or(u64::MAX) as u32).collect()).unwrap_or_default();
-    let key: Vec<u32> = quiz["questions"].as_array().map(|a| a.iter().map(|q| q["answer"].as_u64().unwrap_or(0) as u32).collect()).unwrap_or_default();
+    let answers: Vec<u32> = b["answers"]
+        .as_array()
+        .map(|a| a.iter().map(|x| x.as_u64().unwrap_or(u64::MAX) as u32).collect())
+        .unwrap_or_default();
+    let key: Vec<u32> = quiz["questions"]
+        .as_array()
+        .map(|a| a.iter().map(|q| q["answer"].as_u64().unwrap_or(0) as u32).collect())
+        .unwrap_or_default();
     let pass_mark = quiz["pass_mark"].as_u64().unwrap_or(60) as u32;
 
     // the grading lives in quiz:grade.
@@ -402,7 +433,11 @@ fn submit_quiz(request: &IncomingRequest, quiz_id: &str) -> Outcome {
         "quiz": quiz_id, "course": course, "student": p.subject, "email": subject_email(&p.subject),
         "answers": answers, "correct": r.correct, "total": r.total, "score_pct": r.score_pct, "passed": r.passed, "created": now()
     });
-    let _ = records::create(SUBMISSIONS, &d.to_string(), &["quiz".to_string(), "student".to_string(), "course".to_string()]);
+    let _ = records::create(
+        SUBMISSIONS,
+        &d.to_string(),
+        &["quiz".to_string(), "student".to_string(), "course".to_string()],
+    );
     Outcome::Json(
         200,
         json!({ "correct": r.correct, "total": r.total, "score_pct": r.score_pct, "passed": r.passed }).to_string(),
@@ -449,7 +484,10 @@ fn progress(request: &IncomingRequest, course: &str) -> Outcome {
             json!({ "quiz": qid, "title": q["title"], "best_score": pct, "passed": passed, "attempted": attempted })
         })
         .collect();
-    let passed_all = !quizzes.is_empty() && quizzes.iter().all(|q| best.get(q["id"].as_str().unwrap_or("")).map(|(_, p)| *p).unwrap_or(false));
+    let passed_all = !quizzes.is_empty()
+        && quizzes
+            .iter()
+            .all(|q| best.get(q["id"].as_str().unwrap_or("")).map(|(_, p)| *p).unwrap_or(false));
     let done = rows.iter().filter(|r| r["passed"].as_bool().unwrap_or(false)).count();
     let completion = if quizzes.is_empty() { 0 } else { (done * 100 / quizzes.len()) as u32 };
     Outcome::Json(
@@ -500,9 +538,19 @@ fn gradebook(request: &IncomingRequest, id: &str) -> Outcome {
         let st = quiz::distribution(&scores, pm);
         quiz_meta.push(json!({ "id": qid, "title": q["title"], "pass_mark": pm,
             "mean": st.mean, "median": st.median, "min": st.min, "max": st.max, "pass_count": st.pass_count, "count": st.count, "buckets": st.buckets }));
-        chart_slices.push(svg::Slice { label: q["title"].as_str().unwrap_or("").to_string(), value: st.mean as f64, color: String::new() });
+        chart_slices.push(svg::Slice {
+            label: q["title"].as_str().unwrap_or("").to_string(),
+            value: st.mean as f64,
+            color: String::new(),
+        });
     }
-    let chart = svg::Chart { kind: svg::Kind::Bar, title: "Class average by quiz (%)".to_string(), data: chart_slices, width: 480, height: 240 };
+    let chart = svg::Chart {
+        kind: svg::Kind::Bar,
+        title: "Class average by quiz (%)".to_string(),
+        data: chart_slices,
+        width: 480,
+        height: 240,
+    };
     let chart_svg = svg::render(&chart);
 
     Outcome::Json(
@@ -522,20 +570,46 @@ fn certificate(request: &IncomingRequest, course: &str) -> Outcome {
     };
     let quizzes = quizzes_of(course);
     let best = best_scores(course, &p.subject);
-    let passed_all = !quizzes.is_empty() && quizzes.iter().all(|q| best.get(q["id"].as_str().unwrap_or("")).map(|(_, p)| *p).unwrap_or(false));
+    let passed_all = !quizzes.is_empty()
+        && quizzes
+            .iter()
+            .all(|q| best.get(q["id"].as_str().unwrap_or("")).map(|(_, p)| *p).unwrap_or(false));
     if !passed_all {
         return Outcome::Err(403, "not eligible — pass every quiz first".into());
     }
-    let avg: u32 = if quizzes.is_empty() { 0 } else { quizzes.iter().map(|q| best.get(q["id"].as_str().unwrap_or("")).map(|(p, _)| *p).unwrap_or(0)).sum::<u32>() / quizzes.len() as u32 };
-    let line = |text: String, size: u32, bold: bool, gap: u32| pdf::Block { text, size, bold, gap_before: gap };
+    let avg: u32 = if quizzes.is_empty() {
+        0
+    } else {
+        quizzes
+            .iter()
+            .map(|q| best.get(q["id"].as_str().unwrap_or("")).map(|(p, _)| *p).unwrap_or(0))
+            .sum::<u32>()
+            / quizzes.len() as u32
+    };
+    let line = |text: String, size: u32, bold: bool, gap: u32| pdf::Block {
+        text,
+        size,
+        bold,
+        gap_before: gap,
+    };
     let blocks = vec![
         line("Certificate of Completion".into(), 22, true, 40),
         line("This certifies that".into(), 12, false, 30),
         line(subject_email(&p.subject), 16, true, 10),
         line("has successfully completed".into(), 12, false, 20),
         line(c["title"].as_str().unwrap_or("the course").to_string(), 16, true, 10),
-        line(format!("passing all {} quizzes with an average of {}%.", quizzes.len(), avg), 12, false, 24),
-        line(format!("Instructor: {}", c["instructor_email"].as_str().unwrap_or("")), 11, false, 40),
+        line(
+            format!("passing all {} quizzes with an average of {}%.", quizzes.len(), avg),
+            12,
+            false,
+            24,
+        ),
+        line(
+            format!("Instructor: {}", c["instructor_email"].as_str().unwrap_or("")),
+            11,
+            false,
+            40,
+        ),
     ];
     let doc = pdf::Document { title: "Certificate".to_string(), blocks };
     Outcome::File(200, "application/pdf".into(), Some("certificate.pdf".into()), pdf::render(&doc))
@@ -657,7 +731,13 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     respond(response_out, code, "application/json", None, body.as_bytes());
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, disposition: Option<&str>, body: &[u8]) {
+fn respond(
+    response_out: ResponseOutparam,
+    status: u16,
+    ctype: &str,
+    disposition: Option<&str>,
+    body: &[u8],
+) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {
