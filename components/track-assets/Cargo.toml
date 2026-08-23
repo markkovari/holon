@@ -16,5 +16,5 @@ wit-bindgen-rt = { workspace = true }
 package = "track-ui:component"
 
 [package.metadata.component.target]
-path = "wit"
+path = "../../wit/ui-assets"
 world = "ui-assets"
