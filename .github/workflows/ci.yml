@@ -74,9 +74,23 @@ jobs:
       - name: Test
         working-directory: components
         # `browser-automation` needs bindings that only exist after a component
-        # build of its own; `semver-range` fails 7 held-out spec tests on main.
-        # Both exclusions come out when #115 lands.
-        run: cargo test --workspace --exclude browser-automation --exclude semver-range
+        # build of its own.
+        run: cargo test --workspace --exclude browser-automation
+
+      # These reconciler suites read `components/target/wasm32-wasip2/release/*.wasm`,
+      # so they belong to the job that BUILT them. Jobs do not share a filesystem,
+      # and running them beside the native workspaces failed on a missing artifact
+      # with "run `just build`" — which is true, and was not something that job
+      # could do without building 198 components a second time.
+      - name: Test the reconciler suites that read built artifacts
+        working-directory: reconciler
+        run: >-
+          cargo test --release
+          --test agent --test artifacts --test capsearch --test contracts
+          --test driver --test envbranch --test fitness --test forge
+          --test gendeploy --test generation --test inference --test mockllm
+          --test newversion --test publish --test reveal --test search
+          --test select --test vgit
 
   native:
     name: native workspaces
@@ -91,26 +105,29 @@ jobs:
           # are bin-only and cargo errors rather than skipping. Found by this
           # workflow's own first run, which is the argument for having it.
           # `--lib --bins` used to be the whole story here, and it hid four red
-          # test suites on main: `capsearch`, `contracts`, `docs` and `guestio`
-          # need no NATS, no SurrealDB and no model, and none of them had run in
-          # CI once. `guestio` alone was recording 20 components that trap
-          # mid-response on any payload over 4 KiB.
+          # test suites on main: `capsearch`, `contracts`, `docs` and `guestio`.
+          # None had run in CI once, and `guestio` alone was recording 20
+          # components that trap mid-response on any payload over 4 KiB.
           #
-          # So the exclusion is a NAMED LIST of the suites that genuinely want
-          # infrastructure, and everything else runs. A blanket skip is a
-          # suppression with no removal condition, which is the one thing every
-          # other suppression in this file is careful not to be.
+          # The split below was VERIFIED by deleting all 196 built `.wasm` files
+          # and re-running: these pass, and `capsearch`/`contracts` do not — they
+          # read the artifacts, so they live in the `components` job. Guessing
+          # from a grep put them here first and CI caught it.
+          #
+          # So the exclusion is a NAMED LIST rather than a blanket skip. The
+          # suites listed here need NOTHING; the ones that read built wasm run in
+          # the `components` job beside the build that produces it, and the ones
+          # wanting NATS/SurrealDB/a model are still out.
+          #
+          # `console_session` is out too: it spawns `comp-host` from
+          # `host/target/release`, which this job does not build.
           - workspace: reconciler
             test-args: >-
               --lib --bins
-              --test agent --test artifacts --test capsearch --test console_session
-              --test contracts --test docs --test driver --test envbranch
-              --test environments --test fitness --test fixtures --test forge
-              --test gendeploy --test generation --test guestio --test ha
-              --test inference --test leader --test mockllm --test newversion
-              --test projects --test publish --test reveal --test scaling
-              --test search --test secretcli --test secrets --test select
-              --test stress_env --test stress_tree --test uideps --test vgit
+              --test docs --test environments --test fixtures --test guestio
+              --test ha --test leader --test projects --test scaling
+              --test secretcli --test secrets --test stress_env
+              --test stress_tree --test uideps
           # `surrealkv_test` is a goal's GATE, committed deliberately red: it
           # describes a `--kv surreal` backend that does not exist yet, and it
           # dials a real SurrealDB on :8000. The loop runs it through
