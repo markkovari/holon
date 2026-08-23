@@ -1,3 +1,5 @@
+//! `cron-scheduler-domain` — list and inspect the machine's scheduled jobs over HTTP
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

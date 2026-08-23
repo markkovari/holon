@@ -1,3 +1,5 @@
+//! `expr` — parse and evaluate a small arithmetic expression written as text
+
 #[allow(warnings)]
 mod bindings;
 pub mod eval;

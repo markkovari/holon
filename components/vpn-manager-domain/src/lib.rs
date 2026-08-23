@@ -1,3 +1,5 @@
+//! `vpn-manager-domain` — report whether the VPN tunnel is up and who is connected to it
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;
