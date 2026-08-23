@@ -107,6 +107,13 @@ def scan_component(d: Path):
         "wasm_size_bytes": size,
         "wasm_sha256_12": sha,
         "reusable_as_is": d.name not in APP_SPECIFIC,
+        # A component whose exports all return an `UNIMPLEMENTED:` marker is a
+        # CONTRACT, not a capability, and the catalogue has to say so. Detected
+        # from the source rather than kept in a list here, because a list is a
+        # second place to forget: implement the thing and the flag clears itself.
+        "unimplemented": "UNIMPLEMENTED:" in lib.read_text(encoding="utf-8", errors="ignore")
+        if lib.exists()
+        else False,
     }
 
 
@@ -135,6 +142,13 @@ def main() -> None:
         "capabilities, so anything marked reusable drops into another app via",
         "`wac plug` or a wasmCloud link, configured through `wasi:config` knobs.",
         "",
+        "",
+        "`contract only` means the WIT is real and there is NO implementation "
+        "behind it: every export returns an `UNIMPLEMENTED:` marker. Those need a "
+        "host-side capability a wasm component cannot have (a syscall, a socket, "
+        "a subprocess), so they state what a host must satisfy rather than "
+        "satisfying it.",
+        "",
         "| component | package | deps | config knobs | size | reusable as-is |",
         "|---|---|---|---|--:|:--:|",
     ]
@@ -143,7 +157,8 @@ def main() -> None:
         knobs = ", ".join(f"`{k['name']}`" for k in e["config_keys"]) or "—"
         lines.append(
             f"| **{e['name']}** | `{e['package']}` | {dep_badge(e['capability_deps'])} "
-            f"| {knobs} | {size} | {'✓' if e['reusable_as_is'] else 'app/demo'} |"
+            f"| {knobs} | {size} | "
+            f"{'contract only' if e['unimplemented'] else ('✓' if e['reusable_as_is'] else 'app/demo')} |"
         )
     lines += ["", "## Descriptions", ""]
     for e in entries:
