@@ -257,7 +257,7 @@ fn luhn(digits: &[u8]) -> bool {
         sum += v;
         dbl = !dbl;
     }
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 // ---- ssn ----------------------------------------------------------------
@@ -549,7 +549,7 @@ impl Guest for Component {
 
     fn mask(text: String, opts: Options) -> String {
         let findings = scan(&text, &opts);
-        rewrite(&text, &findings, |k, span| mask_span(k, span))
+        rewrite(&text, &findings, mask_span)
     }
 }
 

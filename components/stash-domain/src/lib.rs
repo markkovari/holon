@@ -81,7 +81,7 @@ fn usage() -> Outcome {
 
 fn bearer(request: &IncomingRequest) -> Option<String> {
     let headers = request.headers();
-    let vals = headers.get(&"authorization".to_string());
+    let vals = headers.get("authorization");
     let raw = vals.first()?;
     let s = String::from_utf8(raw.clone()).ok()?;
     s.strip_prefix("Bearer ").map(|t| t.to_string())
@@ -401,11 +401,11 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 
 fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, disposition: Option<&str>, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[ctype.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {
-        let _ = headers.set(&"content-disposition".to_string(), &[d.as_bytes().to_vec()]);
+        let _ = headers.set("content-disposition", &[d.as_bytes().to_vec()]);
     }
-    let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
+    let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

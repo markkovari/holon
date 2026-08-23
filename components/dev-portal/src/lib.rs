@@ -421,7 +421,7 @@ fn list_keys(request: &IncomingRequest, project_id: &str) -> Outcome {
     }
     match records::find_by(KEYS, "project", &json!(project_id).to_string()) {
         Ok(entries) => {
-            let keys: Vec<Value> = entries.iter().map(|e| key_json(e)).collect();
+            let keys: Vec<Value> = entries.iter().map(key_json).collect();
             Outcome::Json(200, json!({ "keys": keys }).to_string())
         }
         Err(e) => store_err(e),
@@ -711,7 +711,7 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
     request
         .headers()
-        .get(&name.to_string())
+        .get(name)
         .into_iter()
         .find_map(|v| String::from_utf8(v).ok())
 }
@@ -757,9 +757,9 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 
 fn respond(response_out: ResponseOutparam, status: u16, extra: &[(&str, &str)], body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     for (k, v) in extra {
-        let _ = headers.set(&k.to_string(), &[v.as_bytes().to_vec()]);
+        let _ = headers.set(k.as_ref(), &[v.as_bytes().to_vec()]);
     }
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);

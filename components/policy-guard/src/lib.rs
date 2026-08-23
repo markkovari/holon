@@ -222,7 +222,7 @@ fn validate_cond(rule_id: &str, c: &Condition) -> Result<(), PolicyError> {
         }
         // A reference must have a non-empty key after the prefix dot.
         if is_reference(side) {
-            let key = side.splitn(2, '.').nth(1).unwrap_or("");
+            let key = side.split_once('.').map(|x| x.1).unwrap_or("");
             if key.is_empty() {
                 return Err(PolicyError::InvalidRule(format!(
                     "rule {rule_id:?}: {label} reference {side:?} has empty key"

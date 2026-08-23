@@ -263,7 +263,7 @@ impl Guest for Component {
             Some((ct, _)) => ct.as_str(),
             None => "application/json",
         };
-        let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+        let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
         let resp = OutgoingResponse::new(headers);
         let _ = resp.set_status_code(status);
         let out = resp.body().expect("body");

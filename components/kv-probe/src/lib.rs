@@ -118,7 +118,7 @@ impl Guest for Component {
             // components that do bind on this host.
             (Method::Get, "/many") => {
                 let k = param(&query, "k");
-                match kv::open(&name).and_then(|b| batch::get_many(&b, &[k.clone()])) {
+                match kv::open(&name).and_then(|b| batch::get_many(&b, std::slice::from_ref(&k))) {
                     Ok(v) => format!("{{\"bucket\":\"{name}\",\"many\":{}}}", v.len()),
                     Err(e) => format!("{{\"bucket\":\"{name}\",\"error\":\"{e:?}\"}}"),
                 }
@@ -142,7 +142,7 @@ impl Guest for Component {
         };
 
         let headers = Fields::new();
-        let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
         let resp = OutgoingResponse::new(headers);
         let _ = resp.set_status_code(200);
         let out = resp.body().expect("body");

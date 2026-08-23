@@ -502,8 +502,8 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string()),
     };
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
-    let _ = headers.set(&"access-control-allow-origin".to_string(), &[b"*".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+    let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(code);
     let out = response.body().expect("outgoing body");

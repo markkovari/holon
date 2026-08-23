@@ -7,7 +7,6 @@ use bindings::auth::identity::authorizer;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::iot::scanner::scanner::{scan, Protocol};
-use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::keyvalue::store;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
@@ -89,7 +88,7 @@ fn serve_html() -> Outcome {
 
 fn bearer(request: &IncomingRequest) -> Option<String> {
     let headers = request.headers();
-    let vals = headers.get(&"authorization".to_string());
+    let vals = headers.get("authorization");
     let raw = vals.first()?;
     let s = String::from_utf8(raw.clone()).ok()?;
     s.strip_prefix("Bearer ").map(|t| t.to_string())
@@ -153,7 +152,7 @@ fn me(request: &IncomingRequest) -> Outcome {
     match introspect(request) { Ok(p) => Outcome::Json(200, json!({ "subject": p.subject, "roles": p.roles }).to_string()), Err(o) => o, }
 }
 
-fn list_devices(request: &IncomingRequest) -> Outcome {
+fn list_devices(_request: &IncomingRequest) -> Outcome {
     // Only authenticated users can scan
     // let p = match introspect(request) { Ok(p) => p, Err(o) => return o, };
     // actually, let's allow anyone for demo or require auth
@@ -197,7 +196,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
         }
     };
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type]);
+    let _ = headers.set("content-type", &[content_type]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(code);
     let out = response.body().expect("outgoing body");

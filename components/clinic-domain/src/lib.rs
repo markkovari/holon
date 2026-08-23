@@ -182,7 +182,7 @@ fn seed() -> Reply {
 /// The token out of `Authorization: Bearer <token>`, or empty.
 fn bearer(request: &IncomingRequest) -> String {
     let headers = request.headers();
-    let Some(value) = headers.get(&"authorization".to_string()).into_iter().next() else {
+    let Some(value) = headers.get("authorization").into_iter().next() else {
         return String::new();
     };
     String::from_utf8_lossy(&value)
@@ -266,7 +266,7 @@ impl Guest for Component {
             Some((ct, _)) => ct.as_str(),
             None => "application/json",
         };
-        let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+        let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
         let resp = OutgoingResponse::new(headers);
         let _ = resp.set_status_code(status);
         let out = resp.body().expect("body");

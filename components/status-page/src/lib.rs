@@ -39,7 +39,7 @@ impl Guest for Component {
         let method = request.method();
         let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
         let route = path.split('?').next().unwrap_or("/").to_string();
-        let query = path.splitn(2, '?').nth(1).unwrap_or("").to_string();
+        let query = path.split_once('?').map(|x| x.1).unwrap_or("").to_string();
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let result = match (&method, seg.as_slice()) {
@@ -266,10 +266,9 @@ fn tick() -> Outcome {
 fn probe(url: &str) -> Option<u16> {
     let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
         (Scheme::Https, r)
-    } else if let Some(r) = url.strip_prefix("http://") {
-        (Scheme::Http, r)
     } else {
-        return None;
+        let r = url.strip_prefix("http://")?;
+        (Scheme::Http, r)
     };
     let (authority, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
@@ -405,7 +404,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 
 fn respond(response_out: ResponseOutparam, status: u16, body: &[u8], content_type: &str) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

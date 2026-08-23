@@ -45,13 +45,13 @@ fn golem_post(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), RunError> {
     let net = |m: &str| RunError::Unavailable(m.to_string());
 
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     // Golem gateway subdomain routing: CONNECT to the golem-url authority, but
     // send the agent's vhost as the Host header (e.g. golem-agent.localhost:9006).
     // These are distinct — conflating them dials a name the pod can't resolve.
     let host = cfg("golem-host", "");
     if !host.is_empty() {
-        let _ = headers.set(&"host".to_string(), &[host.into_bytes()]);
+        let _ = headers.set("host", &[host.into_bytes()]);
     }
 
     let req = OutgoingRequest::new(headers);

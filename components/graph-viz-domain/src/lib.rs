@@ -1,12 +1,12 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::knowledge::graph::store::{self, Node, Direction};
+use bindings::knowledge::graph::store::{self};
 use bindings::wasi::http::types::{
     IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
 use bindings::exports::wasi::http::incoming_handler::Guest;
-use serde_json::{json, Value};
+use serde_json::json;
 
 struct Component;
 
@@ -508,7 +508,7 @@ impl Guest for Component {
         match outcome {
             Outcome::Html(html) => {
                 let headers = bindings::wasi::http::types::Fields::new();
-                let _ = headers.set(&"content-type".to_string(), &[b"text/html".to_vec()]);
+                let _ = headers.set("content-type", &[b"text/html".to_vec()]);
                 let resp = OutgoingResponse::new(headers);
                 let _ = resp.set_status_code(200);
                 let out = resp.body().expect("body");
@@ -532,7 +532,7 @@ impl Guest for Component {
             }
             Outcome::Json(code, json) => {
                 let headers = bindings::wasi::http::types::Fields::new();
-                let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+                let _ = headers.set("content-type", &[b"application/json".to_vec()]);
                 let resp = OutgoingResponse::new(headers);
                 let _ = resp.set_status_code(code);
                 let out = resp.body().expect("body");
@@ -557,7 +557,7 @@ impl Guest for Component {
             Outcome::Error(code, msg) => {
                 let json = json!({ "error": msg }).to_string();
                 let headers = bindings::wasi::http::types::Fields::new();
-                let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+                let _ = headers.set("content-type", &[b"application/json".to_vec()]);
                 let resp = OutgoingResponse::new(headers);
                 let _ = resp.set_status_code(code);
                 let out = resp.body().expect("body");

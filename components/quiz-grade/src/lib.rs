@@ -35,7 +35,7 @@ impl Guest for Component {
         let mut sorted = scores.clone();
         sorted.sort_unstable();
         let n = sorted.len();
-        let median = if n % 2 == 1 { sorted[n / 2] } else { (sorted[n / 2 - 1] + sorted[n / 2] + 1) / 2 };
+        let median = if n % 2 == 1 { sorted[n / 2] } else { (sorted[n / 2 - 1] + sorted[n / 2]).div_ceil(2) };
 
         // 5 bins: [0-19, 20-39, 40-59, 60-79, 80-100].
         let mut buckets = vec![0u32; 5];
