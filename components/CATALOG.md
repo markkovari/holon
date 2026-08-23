@@ -60,7 +60,7 @@ capabilities, so anything marked reusable drops into another app via
 | **desktop-clipboard** | `os:desktop@0.1.0` | pure compute | — | 44 KiB | contract only |
 | **desktop-notifier-domain** | `local:desktop-notifier` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:ui/notifications, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **dev-portal** | `portal:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, id:generate/generator, notify:dispatch/dispatcher, outbox:dispatch/queue, policy:guard/guard, quota:meter/meter, records:store/store, webhook:sign/signer | — | 214 KiB | app/demo |
-| **device-radar-domain** | `device-radar:device-radar` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, iot:scanner/scanner, records:store/store, kv:store | — | 134 KiB | app/demo |
+| **device-radar-domain** | `device-radar:device-radar` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, iot:scanner/scanner, records:store/store, kv:store | — | 133 KiB | app/demo |
 | **doc-search-domain** | `docsearch:agent@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, cache:store/cache, otp:totp/authenticator, quota:meter/meter, records:store/store, search:index/index, config/store | `question`, `verified_at`, `stepup-ttl-secs`, `answer-budget`, `answer-period-secs`, `answer`, `sources`, `docs`, `title`, `text`, `answer-cache-ttl-secs`, `subject`, `scopes`, `tag`, `code`, `secret` | 166 KiB | app/demo |
 | **docker-manager-domain** | `local:docker-manager` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, os:container/docker, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **driver-probe** | `comp:driverprobe@0.1.0` | graph:run/driver | — | 120 KiB | ✓ |
@@ -100,7 +100,7 @@ capabilities, so anything marked reusable drops into another app via
 | **image-optimizer** | `media:image@0.1.0` | pure compute | — | 46 KiB | contract only |
 | **image-optimizer-domain** | `local:image-optimizer` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, media:image/optimizer, records:store/store, kv:store | — | 89 KiB | app/demo |
 | **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 76 KiB | ✓ |
-| **insta-domain** | `insta:app@0.1.0` | kv:store | — | 169 KiB | app/demo |
+| **insta-domain** | `insta:app@0.1.0` | kv:store | — | 167 KiB | app/demo |
 | **invoice-copilot-domain** | `invoice:copilot@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, idempotency:guard/store, ledger:doubleentry/ledger, money:amount/arithmetic, ratelimit:guard/limiter, records:store/store, config/store | `prose`, `total`, `shares`, `invoices`, `state`, `currency`, `customer`, `subject`, `scopes`, `idempotency-ttl-secs`, `lines`, `total_units`, `receivable-account`, `revenue-account`, `entry` | 165 KiB | app/demo |
 | **iot-scanner** | `iot:scanner@0.1.0` | http/outgoing-handler | — | 81 KiB | ✓ |
 | **jobs-domain** | `jobs:app@0.1.0` | cron:expr/parser, durable:workflow/orchestrator, idempotency:guard/store, outbox:dispatch/queue, records:store/store | — | 171 KiB | app/demo |
@@ -175,7 +175,7 @@ capabilities, so anything marked reusable drops into another app via
 | **shaper** | `shaper:limit@0.1.0` | pure compute | — | 14 KiB | ✓ |
 | **slug** | `slug:generate@0.1.0` | pure compute | — | 76 KiB | ✓ |
 | **slug-probe** | `comp:slugprobe@0.1.0` | slug:generate/generator | — | 66 KiB | ✓ |
-| **smart-home-domain** | `smart-home:smart-home` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB | app/demo |
+| **smart-home-domain** | `smart-home:smart-home` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 145 KiB | app/demo |
 | **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 176 KiB | app/demo |
 | **static-assets** | `ui:assets@0.1.0` | pure compute | — | 644 KiB | ✓ |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 182 KiB | app/demo |
