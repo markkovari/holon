@@ -140,7 +140,9 @@ fn read_body(request: &IncomingRequest) -> Vec<u8> {
                     Err(bindings::wasi::io::streams::StreamError::Closed) => break,
                     // A failed read is not an end of body: collapsing the two
                     // returns a truncated payload as if it were whole.
-                    Err(_) => break,
+                    // A failed read is NOT the end of a body. Breaking here returns
+                    // what arrived so far as though it were complete.
+                    Err(_) => return Vec::new(),
                 }
             }
         }
