@@ -98,6 +98,9 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
+/// Ceiling on a request body, matching the rest of the tree.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
     let b = request.consume().map_err(|_| ())?;
     let stream = b.stream().map_err(|_| ())?;
@@ -105,7 +108,16 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
     loop {
         match stream.blocking_read(8192) {
             Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => buf.extend_from_slice(&chunk),
+            Ok(chunk) => {
+                // A ceiling, not a policy: past this the read stops and the
+                // caller is told, rather than growing until the store's
+                // memory cap traps the component and the connection just
+                // closes with nothing said.
+                if buf.len() + chunk.len() > MAX_BODY_BYTES {
+                    return Err(());
+                }
+                buf.extend_from_slice(&chunk);
+            }
             Err(bindings::wasi::io::streams::StreamError::Closed) => break,
             Err(_) => return Err(()),
         }
