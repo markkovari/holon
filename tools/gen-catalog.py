@@ -30,10 +30,23 @@ COMPONENTS = ROOT / "components"
 RELEASE = COMPONENTS / "target" / "wasm32-wasip2" / "release"
 
 # app/demo components: listed, but flagged not-reusable-as-is.
+#
+# The `-domain` suffix is the repo's own convention for "this is an application",
+# so it is DERIVED rather than listed. The hand-written set below had ten names in
+# it while the tree had sixty-three domains, and `capsearch` uses this flag to
+# keep showcases from outranking the capabilities they are built from — so a
+# stale list meant fifty-three applications competing with real capabilities for
+# every goal.
+#
+# The explicit names are the ones the convention does not catch.
 APP_SPECIFIC = {
     "vet-domain", "login-app", "accounts-app", "sample-consumer", "bench-suite",
     "link-shortener", "dev-portal", "webhook-relay", "billing-ledger", "status-page",
 }
+
+
+def is_app(name: str) -> bool:
+    return name.endswith("-domain") or name in APP_SPECIFIC
 
 GET_CALL = re.compile(r'[a-z_]*(?:get|cfg)[a-z_0-9]*\(\s*"([a-z0-9._-]{2,})"')
 # the repo convention: a module-doc block listing knobs with descriptions:
@@ -59,8 +72,40 @@ def first_doc_line(lib_rs: Path) -> str:
     return ""
 
 
+def component_wit_dir(d: Path) -> Path | None:
+    """Where this crate's WIT actually lives.
+
+    A local `wit/` is the common case and was once assumed to be the only one.
+    It is not: a crate may point `[package.metadata.component.target].path` at a
+    shared directory instead, and `auth-guard` does — it uses the repo-root
+    `wit/` so it can share the wkg-vendored `wasi:*` packages.
+
+    That assumption made the single most-depended-on capability in the tree
+    invisible to `capsearch`. 36 applications import `auth:guard`, and a goal
+    asking to let users log in could not find it, because a crate with no local
+    `wit/` was skipped before its description was ever read.
+    """
+    manifest = d / "Cargo.toml"
+    if manifest.is_file():
+        text = manifest.read_text(encoding="utf-8", errors="ignore")
+        # Only trust the path when the crate declares itself a component at all.
+        if "[package.metadata.component]" in text:
+            m = re.search(
+                r"\[package\.metadata\.component\.target\][^\[]*?^path\s*=\s*\"([^\"]+)\"",
+                text,
+                re.M | re.S,
+            )
+            if m:
+                candidate = (d / m.group(1)).resolve()
+                if candidate.is_dir():
+                    return candidate
+    local = d / "wit"
+    return local if local.is_dir() else None
+
+
 def scan_component(d: Path):
-    wits = sorted((d / "wit").glob("*.wit")) if (d / "wit").is_dir() else []
+    wit_dir = component_wit_dir(d)
+    wits = sorted(wit_dir.glob("*.wit")) if wit_dir else []
     lib = d / "src" / "lib.rs"
     if not wits or not lib.is_file():
         return None
@@ -106,7 +151,7 @@ def scan_component(d: Path):
         "config_keys": config_keys,
         "wasm_size_bytes": size,
         "wasm_sha256_12": sha,
-        "reusable_as_is": d.name not in APP_SPECIFIC,
+        "reusable_as_is": not is_app(d.name),
         # A component whose exports all return an `UNIMPLEMENTED:` marker is a
         # CONTRACT, not a capability, and the catalogue has to say so. Detected
         # from the source rather than kept in a list here, because a list is a

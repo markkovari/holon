@@ -1,3 +1,5 @@
+//! `pdf-generator-domain` — render a web page to a PDF and return the bytes
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

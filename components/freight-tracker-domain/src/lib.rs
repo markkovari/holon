@@ -1,3 +1,5 @@
+//! `freight-tracker-domain` — track shipments behind a login, with per-account access to their history
+
 #[allow(warnings)]
 mod bindings;
 

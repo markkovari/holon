@@ -1,3 +1,5 @@
+//! `bigadd` — add two integers too large for a machine word, given as decimal strings
+
 pub mod add;
 #[allow(warnings)]
 mod bindings;

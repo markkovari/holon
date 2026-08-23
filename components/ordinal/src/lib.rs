@@ -1,3 +1,5 @@
+//! `ordinal` — turn a number into its English ordinal — 1st, 2nd, 3rd, 111th
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::demo::ordinal::suffix::Guest;

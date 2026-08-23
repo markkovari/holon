@@ -1,8 +1,10 @@
-//! `system-cron` — a WIT contract with NO implementation behind it.
+//! `system-cron` — read and write the machine's scheduled jobs
 //!
-//! Every export returns an `UNIMPLEMENTED:` marker, and that is the honest
-//! state of this component rather than a placeholder someone forgot to fill
-//! in. It cannot be filled in from here: to read or write cron needs the host's crontab,
+//! **There is NO implementation behind this contract.** Every export returns
+//! an `UNIMPLEMENTED:` marker and `CATALOG.md` lists it as `contract only`.
+//!
+//! That is the honest state of this component rather than a placeholder
+//! someone forgot to fill in, and it cannot be filled in from here: to read or write cron needs the host's crontab,
 //! and a wasm32-wasip2 component has none of those. The contract is the
 //! useful part — it states what a host-side implementation must satisfy.
 //!

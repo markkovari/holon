@@ -1,3 +1,5 @@
+//! `rot13` — obscure text with the ROT13 letter substitution, and reverse it
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::demo::rot13::cipher::Guest;

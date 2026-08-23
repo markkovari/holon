@@ -1,3 +1,5 @@
+//! `clipboard-sync-domain` — read and share the desktop clipboard over HTTP, keeping a usage count
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

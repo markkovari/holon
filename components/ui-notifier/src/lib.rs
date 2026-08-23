@@ -1,8 +1,10 @@
-//! `ui-notifier` — a WIT contract with NO implementation behind it.
+//! `ui-notifier` — raise a notification on the user's desktop
 //!
-//! Every export returns an `UNIMPLEMENTED:` marker, and that is the honest
-//! state of this component rather than a placeholder someone forgot to fill
-//! in. It cannot be filled in from here: to raise a notification needs the desktop notification bus,
+//! **There is NO implementation behind this contract.** Every export returns
+//! an `UNIMPLEMENTED:` marker and `CATALOG.md` lists it as `contract only`.
+//!
+//! That is the honest state of this component rather than a placeholder
+//! someone forgot to fill in, and it cannot be filled in from here: to raise a notification needs the desktop notification bus,
 //! and a wasm32-wasip2 component has none of those. The contract is the
 //! useful part — it states what a host-side implementation must satisfy.
 //!

@@ -1,3 +1,5 @@
+//! `calc` — evaluate the four arithmetic operations on a pair of numbers
+
 #[allow(warnings)]
 mod bindings;
 pub mod eval;

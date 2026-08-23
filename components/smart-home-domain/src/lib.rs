@@ -1,3 +1,5 @@
+//! `smart-home-domain` — register household devices behind a login, with per-account access
+
 #[allow(warnings)]
 mod bindings;
 
