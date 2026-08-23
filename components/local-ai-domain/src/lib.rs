@@ -1,6 +1,6 @@
 #[allow(warnings)] mod bindings;
 use serde_json::json;
-use bindings::ai::inference::local;
+use bindings::ai::local::local;
 use bindings::wasi::keyvalue::store;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{ Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam };

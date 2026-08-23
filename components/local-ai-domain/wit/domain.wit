@@ -5,6 +5,6 @@ world domain {
     import auth:identity/authorizer@0.1.0;
     import auth:identity/session@0.1.0;
     import auth:identity/accounts@0.1.0;
-    import ai:inference/local@0.1.0;
+    import ai:local/local@0.1.0;
     export wasi:http/incoming-handler@0.2.0;
 }
