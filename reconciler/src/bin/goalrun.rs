@@ -543,6 +543,90 @@ fn artifacts(provider: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Seed the capability graph into the pool, so the loop can ask what exists.
+///
+/// ADR-0089 wants a run to ask "do we already have this?" before generating an
+/// implementation, and `capsearch` answers that from `catalog.json` plus the
+/// artifacts. The GRAPH — who imports what from whom, and how many applications
+/// carry a capability — lived only in `docs/CAPABILITY-GRAPH.md` and in a
+/// projection that nothing outside a test ever ran. `just capgraph-store` could
+/// write it by hand; nothing did it on the path a real run takes.
+///
+/// So a run with a pool seeds it, at startup, from the BUILT artifacts. That
+/// keeps `comp-capgraph`'s own rule — "derived from the built artifacts every
+/// time, never maintained by hand" — and makes the pool a cache that can always
+/// be thrown away and rebuilt rather than a second source of truth.
+///
+/// Failure is reported and ignored, like every other thing the pool does. A run
+/// without a graph is the run that has always happened; a run that stopped
+/// because a projection failed would trade a working loop for a nicety.
+fn seed_capability_graph(url: &str, password: Option<&str>) {
+    let gen = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let bin = bin_path("comp-capgraph");
+    let out = match Command::new(&bin).args(["--format", "surql", "--gen", &gen.to_string()]).output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        Ok(o) => {
+            println!(
+                "capability graph not seeded: comp-capgraph exited {} — {}",
+                o.status,
+                String::from_utf8_lossy(&o.stderr).trim()
+            );
+            return;
+        }
+        Err(e) => {
+            println!("capability graph not seeded: could not run {} ({e})", bin.display());
+            return;
+        }
+    };
+
+    let http = match reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build() {
+        Ok(c) => c,
+        Err(e) => {
+            println!("capability graph not seeded: {e}");
+            return;
+        }
+    };
+    let sql_url = format!("{}/sql", url.trim_end_matches('/'));
+    let send = |body: String| {
+        let mut req = http
+            .post(&sql_url)
+            .header("Accept", "application/json")
+            .header("surreal-ns", "comp")
+            .header("surreal-db", "goalmemory");
+        if let Some(pw) = password {
+            req = req.basic_auth("root", Some(pw));
+        }
+        req.body(body).send()
+    };
+
+    // The namespace and database may not exist on a fresh store, and a
+    // projection into nothing is a wall of errors that reads like a broken tool.
+    let _ = send(
+        "DEFINE NAMESPACE IF NOT EXISTS comp; USE NS comp; \
+         DEFINE DATABASE IF NOT EXISTS goalmemory;"
+            .to_string(),
+    );
+
+    match send(String::from_utf8_lossy(&out).into_owned()) {
+        Ok(resp) => {
+            let text = resp.text().unwrap_or_default();
+            // SurrealDB answers 200 with per-statement status, so the HTTP code
+            // says nothing about whether the projection landed.
+            let errs = text.matches("\"status\":\"ERR\"").count();
+            if errs == 0 {
+                println!("capability graph seeded into the pool at generation {gen}");
+            } else {
+                println!("capability graph partly seeded: {errs} statement(s) rejected");
+            }
+        }
+        Err(e) => println!("capability graph not seeded: {e}"),
+    }
+}
+
 /// Poll an app's root route until it answers — cheap readiness that never calls
 /// the model (the probe's `/` returns a static service line).
 fn wait_serving(port: u16, host: &str, within: Duration) -> Result<()> {
@@ -1422,6 +1506,15 @@ fn main() -> Result<()> {
         Some(url) => match wait_serving(port, "goalmemory.acme.test", Duration::from_secs(180)) {
             Ok(()) => {
                 println!("knowledge pool serving, backed by {url}");
+                // Read here rather than reusing the binding below, which is
+                // declared after this block: the password is a file path in
+                // argv and reading it twice costs nothing.
+                let pw = args
+                    .surreal_password
+                    .as_ref()
+                    .and_then(|p| std::fs::read_to_string(p).ok())
+                    .map(|s| s.trim().to_string());
+                seed_capability_graph(url, pw.as_deref());
                 Some(Memory {
                     url: format!("http://127.0.0.1:{port}"),
                     host: "goalmemory.acme.test".to_string(),
