@@ -235,11 +235,19 @@ fn the_readme_counts_what_is_actually_there() {
 
     // Spelled out in prose, so the check is on the word.
     let apps = count("docs/apps");
+    // Spelled out because the README spells it out, and a count in prose is the
+    // thing that rots — the word is what a reader sees, so the word is checked.
     let spelled = match apps {
         32 => "thirty-two",
         33 => "thirty-three",
         34 => "thirty-four",
         35 => "thirty-five",
+        50 => "fifty",
+        51 => "fifty-one",
+        52 => "fifty-two",
+        53 => "fifty-three",
+        54 => "fifty-four",
+        55 => "fifty-five",
         _ => "",
     };
     if spelled.is_empty() {

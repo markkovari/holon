@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**152 components, 80 interfaces with a provider and at least one consumer, 303 import edges, 13 interfaces exported but unconsumed in-tree, 57 applications composed from them.**
+**197 components, 93 interfaces with a provider and at least one consumer, 422 import edges, 15 interfaces exported but unconsumed in-tree, 67 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -17,55 +17,57 @@ The number in the first column is the answer. One consumer means an edit; thirty
 
 | consumers | interface | provider | who imports it |
 | --: | --- | --- | --- |
-| 37 | `records:store/store` | `record-store` | `arena-domain`, `billing-ledger`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `csv-report`, `dashboards-domain`, `dev-portal`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `gate-domain`, `helpdesk-domain`, `jobs-domain`, `link-shortener`, `lms-domain`, `mesh-domain`, `mfa-authgate`, `passkey-domain`, `paste-bin`, `payees-domain`, `platform-domain`, `pulse-domain`, `saga-domain`, `scribe-domain`, `search-domain`, `stash-domain`, `status-page`, `studio-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `upload-drop`, `vet-domain`, `webhook-relay` |
-| 19 | `auth:identity/authorizer` | `auth-guard` | `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `eshop-basket`, `eshop-ordering`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `platform-domain`, `sample-consumer`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
-| 19 | `auth:identity/types` | `auth-guard` | `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `eshop-basket`, `eshop-ordering`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `platform-domain`, `sample-consumer`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
-| 16 | `auth:identity/accounts` | `auth-guard` | `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `platform-domain`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
-| 14 | `auth:identity/session` | `auth-guard` | `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `dashboards-domain`, `dev-portal`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
-| 13 | `event:bus/bus` | `event-bus` | `abtest-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `eshop-payment`, `flags-domain`, `pipeline-domain`, `pulse-domain`, `saga-domain`, `status-page`, `throttle-domain`, `track-domain`, `vet-domain` |
-| 12 | `id:generate/generator` | `id-generate` | `abtest-domain`, `arena-domain`, `clinic-domain`, `dev-portal`, `flags-domain`, `helpdesk-domain`, `link-shortener`, `pipeline-domain`, `pulse-domain`, `saga-domain`, `scribe-domain`, `throttle-domain` |
-| 9 | `auth:identity/rbac` | `auth-guard` | `accounts-app`, `booked-domain`, `dev-portal`, `helpdesk-domain`, `lms-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
+| 51 | `records:store/store` | `record-store` | `academic-review-domain`, `arena-domain`, `billing-ledger`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `csv-report`, `dashboards-domain`, `dev-portal`, `doc-search-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `freight-tracker-domain`, `gate-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `jobs-domain`, `link-shortener`, `lms-domain`, `mesh-domain`, `mfa-authgate`, `moderation-domain`, `passkey-domain`, `paste-bin`, `payees-domain`, `photosocial-domain`, `platform-domain`, `poll-domain`, `pulse-domain`, `real-estate-escrow-domain`, `saga-domain`, `scribe-domain`, `search-domain`, `smart-home-domain`, `stash-domain`, `status-page`, `studio-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `triage-domain`, `upload-drop`, `vet-domain`, `webhook-relay` |
+| 35 | `auth:identity/types` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
+| 34 | `auth:identity/authorizer` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
+| 28 | `auth:identity/session` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
+| 24 | `auth:identity/accounts` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
+| 14 | `event:bus/bus` | `event-bus` | `abtest-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `eshop-payment`, `flags-domain`, `moderation-domain`, `pipeline-domain`, `pulse-domain`, `saga-domain`, `status-page`, `throttle-domain`, `track-domain`, `vet-domain` |
+| 13 | `id:generate/generator` | `id-generate` | `abtest-domain`, `arena-domain`, `clinic-domain`, `dev-portal`, `flags-domain`, `helpdesk-domain`, `link-shortener`, `pipeline-domain`, `poll-domain`, `pulse-domain`, `saga-domain`, `scribe-domain`, `throttle-domain` |
+| 10 | `auth:identity/rbac` | `auth-guard` | `accounts-app`, `booked-domain`, `dev-portal`, `helpdesk-domain`, `lms-domain`, `photosocial-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
+| 8 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
+| 8 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `invoice-copilot-domain`, `jobs-domain`, `saga-domain`, `treasury-ledger-domain`, `webhook-ingest` |
+| 7 | `ai:inference/inference` | `ai-inference` | `doc-search-domain`, `invoice-copilot-domain`, `moderation-domain`, `support-desk-domain`, `track-domain`, `triage-assist-domain`, `vet-domain` |
+| 7 | `ratelimit:guard/limiter` | `rate-limiter` | `auth-guard`, `invoice-copilot-domain`, `link-shortener`, `moderation-domain`, `throttle-domain`, `triage-assist-domain`, `webhook-relay` |
 | 6 | `blob:store/blobstore` | `blob-store` | `artifact-cache`, `platform-domain`, `studio-domain`, `upload-drop`, `vet-domain`, `virt-git` |
-| 6 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `vet-domain` |
-| 6 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `jobs-domain`, `saga-domain`, `webhook-ingest` |
+| 6 | `csv:codec/codec` | `csv` | `billing-ledger`, `clinic-domain`, `csv-report`, `stash-domain`, `triage-domain`, `vet-domain` |
+| 6 | `outbox:dispatch/queue` | `outbox` | `billing-ledger`, `dev-portal`, `jobs-domain`, `pipeline-domain`, `support-desk-domain`, `webhook-relay` |
+| 6 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `doc-search-domain`, `platform-domain`, `support-desk-domain`, `throttle-domain` |
+| 6 | `search:index/index` | `search-index` | `clinic-domain`, `doc-search-domain`, `knowledge-memory`, `search-domain`, `track-domain`, `vet-domain` |
+| 5 | `cache:store/cache` | `cache` | `doc-search-domain`, `link-shortener`, `passkey-domain`, `search-domain`, `vet-domain` |
 | 5 | `graph:agent/writer` | `agent-writer` | `agent-driver`, `agent-probe`, `driver-probe`, `graph-selector`, `select-probe` |
-| 5 | `outbox:dispatch/queue` | `outbox` | `billing-ledger`, `dev-portal`, `jobs-domain`, `pipeline-domain`, `webhook-relay` |
-| 4 | `cache:store/cache` | `cache` | `link-shortener`, `passkey-domain`, `search-domain`, `vet-domain` |
-| 4 | `csv:codec/codec` | `csv` | `billing-ledger`, `csv-report`, `stash-domain`, `vet-domain` |
+| 5 | `knowledge:graph/store` | `knowledge-graph` | `console-domain`, `contract-registry`, `graph-probe`, `graph-viz-domain`, `knowledge-memory` |
+| 5 | `llm:inference/inference` | `anthropic-provider` | `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe`, `photosocial-domain` |
+| 5 | `notify:dispatch/dispatcher` | `notify-dispatch` | `dev-portal`, `status-page`, `support-desk-domain`, `track-domain`, `webhook-relay` |
 | 4 | `git:forge/repo` | `github-forge` | `console-domain`, `forge-probe`, `graph-selector`, `select-probe` |
-| 4 | `knowledge:graph/store` | `knowledge-graph` | `console-domain`, `contract-registry`, `graph-probe`, `knowledge-memory` |
-| 4 | `llm:inference/inference` | `anthropic-provider` | `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe` |
 | 4 | `md:render/renderer` | `markdown` | `helpdesk-domain`, `paste-bin`, `track-domain`, `vet-domain` |
-| 4 | `notify:dispatch/dispatcher` | `notify-dispatch` | `dev-portal`, `status-page`, `track-domain`, `webhook-relay` |
-| 4 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `platform-domain`, `throttle-domain` |
-| 4 | `ratelimit:guard/limiter` | `rate-limiter` | `auth-guard`, `link-shortener`, `throttle-domain`, `webhook-relay` |
-| 4 | `search:index/index` | `search-index` | `knowledge-memory`, `search-domain`, `track-domain`, `vet-domain` |
+| 4 | `money:amount/arithmetic` | `money` | `billing-ledger`, `invoice-copilot-domain`, `treasury-ledger-domain`, `vet-domain` |
+| 4 | `pii:redact/redactor` | `pii-redact` | `paste-bin`, `triage-assist-domain`, `triage-domain`, `vet-domain` |
+| 4 | `policy:guard/guard` | `policy-guard` | `dev-portal`, `moderation-domain`, `platform-domain`, `track-domain` |
 | 4 | `secrets:vault/vault` | `secrets-vault` | `login-app`, `mfa-authgate`, `platform-domain`, `vet-domain` |
+| 4 | `session:store/store` | `session-store` | `login-app`, `mfa-authgate`, `passkey-domain`, `support-desk-domain` |
 | 4 | `slug:generate/generator` | `slug` | `conduit-domain`, `link-shortener`, `paste-bin`, `slug-probe` |
 | 4 | `webhook:sign/signer` | `webhook-sign` | `dev-portal`, `track-domain`, `upload-drop`, `webhook-relay` |
+| 3 | `audit:log/recorder` | `audit-log` | `auth-guard`, `triage-assist-domain`, `webhook-relay` |
 | 3 | `graph:fitness/evaluator` | `checks-runner` | `agent-driver`, `driver-probe`, `fitness-probe` |
+| 3 | `ledger:doubleentry/ledger` | `ledger` | `books-domain`, `invoice-copilot-domain`, `treasury-ledger-domain` |
+| 3 | `otp:totp/authenticator` | `otp` | `doc-search-domain`, `mfa-authgate`, `vet-domain` |
 | 3 | `paginate:cursor/cursors` | `pagination` | `csv-report`, `track-domain`, `vet-domain` |
 | 3 | `pdf:codec/codec` | `pdf` | `books-domain`, `lms-domain`, `tempo-domain` |
-| 3 | `policy:guard/guard` | `policy-guard` | `dev-portal`, `platform-domain`, `track-domain` |
 | 3 | `proxy:route/router` | `proxy-route` | `eshop-gateway`, `event-pusher`, `mesh-domain` |
+| 3 | `qr:encode/encoder` | `qr` | `mfa-authgate`, `poll-domain`, `transit-domain` |
 | 3 | `sched:timer/timer` | `scheduler-timer` | `saga-domain`, `status-page`, `vet-domain` |
-| 3 | `session:store/store` | `session-store` | `login-app`, `mfa-authgate`, `passkey-domain` |
+| 3 | `svg:chart/charts` | `svg-chart` | `dashboards-domain`, `lms-domain`, `poll-domain` |
 | 3 | `ui:assets/files` | `console-assets` | `console-domain`, `track-domain`, `vet-domain` |
 | 3 | `validate:schema/validator` | `validate` | `csv-report`, `paste-bin`, `vet-domain` |
-| 2 | `ai:inference/inference` | `ai-inference` | `track-domain`, `vet-domain` |
-| 2 | `audit:log/recorder` | `audit-log` | `auth-guard`, `webhook-relay` |
+| 2 | `audit:log/query` | `audit-log` | `triage-assist-domain`, `webhook-relay` |
 | 2 | `lock:mutex/mutex` | `lock-mutex` | `booked-domain`, `vet-domain` |
 | 2 | `metrics:collect/collector` | `metrics-collect` | `abtest-domain`, `search-domain` |
-| 2 | `money:amount/arithmetic` | `money` | `billing-ledger`, `vet-domain` |
-| 2 | `otp:totp/authenticator` | `otp` | `mfa-authgate`, `vet-domain` |
-| 2 | `pii:redact/redactor` | `pii-redact` | `paste-bin`, `vet-domain` |
-| 2 | `qr:encode/encoder` | `qr` | `mfa-authgate`, `transit-domain` |
-| 2 | `svg:chart/charts` | `svg-chart` | `dashboards-domain`, `lms-domain` |
 | 2 | `upload:policy/gate` | `upload-policy` | `upload-drop`, `vet-domain` |
 | 2 | `wit:reflect/composer` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 2 | `wit:reflect/inspector` | `wit-reflect` | `platform-domain`, `studio-domain` |
+| 1 | `ai:local/local` | `llm-local` | `local-ai-domain` |
 | 1 | `artifact:cache/store` | `artifact-cache` | `artifact-probe` |
-| 1 | `audit:log/query` | `audit-log` | `webhook-relay` |
 | 1 | `cache:store/sink` | `cache-backing` | `cache` |
 | 1 | `cache:store/source` | `cache-backing` | `cache` |
 | 1 | `config:store/store` | `config-store` | `login-app` |
@@ -83,10 +85,20 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `i18n:catalog/catalog` | `i18n-catalog` | `vet-domain` |
 | 1 | `iban:validate/validator` | `iban` | `payees-domain` |
 | 1 | `ical:codec/codec` | `ical` | `booked-domain` |
+| 1 | `iot:scanner/scanner` | `iot-scanner` | `device-radar-domain` |
 | 1 | `json:patch/patcher` | `jsonpatch` | `webhook-relay` |
 | 1 | `knowledge:memory/memory` | `knowledge-memory` | `memory-probe` |
 | 1 | `knowledge:memory/promotion` | `knowledge-memory` | `memory-probe` |
-| 1 | `ledger:doubleentry/ledger` | `ledger` | `books-domain` |
+| 1 | `media:image/optimizer` | `image-optimizer` | `image-optimizer-domain` |
+| 1 | `media:video/ffmpeg` | `video-ffmpeg` | `video-transcoder-domain` |
+| 1 | `net:lan/scanner` | `lan-scanner` | `lan-scanner-domain` |
+| 1 | `net:mdns/discovery` | `mdns-discovery` | `mdns-discoverer-domain` |
+| 1 | `net:vpn/wireguard` | `vpn-wireguard` | `vpn-manager-domain` |
+| 1 | `os:container/docker` | `container-docker` | `docker-manager-domain` |
+| 1 | `os:desktop/clipboard` | `desktop-clipboard` | `clipboard-sync-domain` |
+| 1 | `os:fs/watcher` | `fs-watcher` | `fs-watcher-domain` |
+| 1 | `os:system/cron` | `system-cron` | `cron-scheduler-domain` |
+| 1 | `os:ui/notifications` | `ui-notifier` | `desktop-notifier-domain` |
 | 1 | `quiz:grade/grader` | `quiz-grade` | `lms-domain` |
 | 1 | `resilience:breaker/breaker` | `resilience` | `mesh-domain` |
 | 1 | `rrule:recur/recur` | `rrule` | `booked-domain` |
@@ -94,6 +106,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `vgit:store/objects` | `virt-git` | `vgit-probe` |
 | 1 | `vgit:store/refs` | `virt-git` | `vgit-probe` |
 | 1 | `vgit:store/worktree` | `virt-git` | `vgit-probe` |
+| 1 | `web:browser/automation` | `browser-automation` | `pdf-generator-domain` |
 | 1 | `webauthn:verify/verifier` | `webauthn` | `passkey-domain` |
 | 1 | `webhook:ingest/verifier` | `webhook-ingest` | `webhook-relay` |
 | 1 | `zip:archive/archiver` | `zip` | `stash-domain` |
@@ -104,40 +117,40 @@ The number in the first column is the answer. One consumer means an edit; thirty
 graph LR
   records_store_store(["records:store/store"])
   record_store[record-store] --> records_store_store
-  records_store_store --> many_records_store_store["37 consumers"]
-  auth_identity_authorizer(["auth:identity/authorizer"])
-  auth_guard[auth-guard] --> auth_identity_authorizer
-  auth_identity_authorizer --> many_auth_identity_authorizer["19 consumers"]
+  records_store_store --> many_records_store_store["51 consumers"]
   auth_identity_types(["auth:identity/types"])
   auth_guard[auth-guard] --> auth_identity_types
-  auth_identity_types --> many_auth_identity_types["19 consumers"]
-  auth_identity_accounts(["auth:identity/accounts"])
-  auth_guard[auth-guard] --> auth_identity_accounts
-  auth_identity_accounts --> many_auth_identity_accounts["16 consumers"]
+  auth_identity_types --> many_auth_identity_types["35 consumers"]
+  auth_identity_authorizer(["auth:identity/authorizer"])
+  auth_guard[auth-guard] --> auth_identity_authorizer
+  auth_identity_authorizer --> many_auth_identity_authorizer["34 consumers"]
   auth_identity_session(["auth:identity/session"])
   auth_guard[auth-guard] --> auth_identity_session
-  auth_identity_session --> many_auth_identity_session["14 consumers"]
+  auth_identity_session --> many_auth_identity_session["28 consumers"]
+  auth_identity_accounts(["auth:identity/accounts"])
+  auth_guard[auth-guard] --> auth_identity_accounts
+  auth_identity_accounts --> many_auth_identity_accounts["24 consumers"]
   event_bus_bus(["event:bus/bus"])
   event_bus[event-bus] --> event_bus_bus
-  event_bus_bus --> many_event_bus_bus["13 consumers"]
+  event_bus_bus --> many_event_bus_bus["14 consumers"]
   id_generate_generator(["id:generate/generator"])
   id_generate[id-generate] --> id_generate_generator
-  id_generate_generator --> many_id_generate_generator["12 consumers"]
+  id_generate_generator --> many_id_generate_generator["13 consumers"]
   auth_identity_rbac(["auth:identity/rbac"])
   auth_guard[auth-guard] --> auth_identity_rbac
-  auth_identity_rbac --> many_auth_identity_rbac["9 consumers"]
-  blob_store_blobstore(["blob:store/blobstore"])
-  blob_store[blob-store] --> blob_store_blobstore
-  blob_store_blobstore --> many_blob_store_blobstore["6 consumers"]
+  auth_identity_rbac --> many_auth_identity_rbac["10 consumers"]
   fsm_workflow_engine(["fsm:workflow/engine"])
   fsm_workflow[fsm-workflow] --> fsm_workflow_engine
-  fsm_workflow_engine --> many_fsm_workflow_engine["6 consumers"]
+  fsm_workflow_engine --> many_fsm_workflow_engine["8 consumers"]
   idempotency_guard_store(["idempotency:guard/store"])
   idempotency_guard[idempotency-guard] --> idempotency_guard_store
-  idempotency_guard_store --> many_idempotency_guard_store["6 consumers"]
-  graph_agent_writer(["graph:agent/writer"])
-  agent_writer[agent-writer] --> graph_agent_writer
-  graph_agent_writer --> many_graph_agent_writer["5 consumers"]
+  idempotency_guard_store --> many_idempotency_guard_store["8 consumers"]
+  ai_inference_inference(["ai:inference/inference"])
+  ai_inference[ai-inference] --> ai_inference_inference
+  ai_inference_inference --> many_ai_inference_inference["7 consumers"]
+  ratelimit_guard_limiter(["ratelimit:guard/limiter"])
+  rate_limiter[rate-limiter] --> ratelimit_guard_limiter
+  ratelimit_guard_limiter --> many_ratelimit_guard_limiter["7 consumers"]
 ```
 
 ## Which apps is this component inside?
@@ -148,15 +161,15 @@ This is the number to look at before changing a component, and before deleting o
 
 | apps | component | which |
 | --: | --- | --- |
-| 38 | `record-store` | `arena`, `authgate`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `drop`, `eshop`, `eshop-catalog`, `gate`, `helpdesk`, `jobs`, `jobs-golem`, `ledger`, `lms`, `mesh`, `passkey`, `paste`, `payees`, `platform`, `portal`, `pulse`, `relay`, `report`, `saga`, `scribe`, `search`, `shortlink`, `stash`, `status`, `studio`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 22 | `rate-limiter` | `auth-guard`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `eshop`, `helpdesk`, `lms`, `payees`, `platform`, `portal`, `ratelimit`, `relay`, `shortlink`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 20 | `audit-log` | `auth-guard`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `eshop`, `helpdesk`, `lms`, `payees`, `platform`, `portal`, `relay`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 18 | `auth-guard` | `booked`, `books`, `buzz`, `conduit`, `dashboards`, `eshop`, `helpdesk`, `lms`, `payees`, `platform`, `portal`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 45 | `record-store` | `academic-review`, `arena`, `authgate`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `drop`, `eshop`, `eshop-catalog`, `freight-tracker`, `gate`, `health-records`, `helpdesk`, `jobs`, `jobs-golem`, `ledger`, `lms`, `mesh`, `passkey`, `paste`, `payees`, `photosocial`, `platform`, `poll`, `portal`, `pulse`, `real-estate-escrow`, `relay`, `report`, `saga`, `scribe`, `search`, `shortlink`, `smart-home`, `stash`, `status`, `studio`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 29 | `rate-limiter` | `academic-review`, `auth-guard`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `ratelimit`, `real-estate-escrow`, `relay`, `shortlink`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 27 | `audit-log` | `academic-review`, `auth-guard`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `relay`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 25 | `auth-guard` | `academic-review`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
 | 13 | `event-bus` | `abtest`, `eshop`, `eshop-catalog`, `flags`, `pipeline`, `pulse`, `ratelimit`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
-| 11 | `id-generate` | `abtest`, `arena`, `flags`, `helpdesk`, `pipeline`, `portal`, `pulse`, `ratelimit`, `saga`, `scribe`, `shortlink` |
+| 12 | `id-generate` | `abtest`, `arena`, `flags`, `helpdesk`, `pipeline`, `poll`, `portal`, `pulse`, `ratelimit`, `saga`, `scribe`, `shortlink` |
 | 8 | `fsm-workflow` | `eshop`, `helpdesk`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 8 | `idempotency-guard` | `eshop`, `eshop-catalog`, `jobs`, `jobs-golem`, `ledger`, `relay`, `saga`, `webhook` |
-| 6 | `anthropic-provider` | `ai`, `ai-openai`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 7 | `anthropic-provider` | `ai`, `ai-openai`, `photosocial`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `blob-store` | `drop`, `platform`, `studio`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `cache` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `cache-backing` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
@@ -181,14 +194,15 @@ This is the number to look at before changing a component, and before deleting o
 | 3 | `i18n-catalog` | `vet`, `vet-full`, `vet-lattice` |
 | 3 | `pdf` | `books`, `lms`, `tempo` |
 | 3 | `policy-guard` | `platform`, `portal`, `track` |
+| 3 | `qr` | `authgate`, `poll`, `transit` |
 | 3 | `session-store` | `authgate`, `login`, `passkey` |
 | 3 | `slug` | `conduit`, `paste`, `shortlink` |
+| 3 | `svg-chart` | `dashboards`, `lms`, `poll` |
 | 2 | `cron` | `jobs`, `jobs-golem` |
 | 2 | `golem-bridge` | `jobs`, `jobs-golem` |
+| 2 | `knowledge-graph` | `console`, `graphviz` |
 | 2 | `metrics-collect` | `abtest`, `search` |
 | 2 | `proxy-route` | `eshop`, `mesh` |
-| 2 | `qr` | `authgate`, `transit` |
-| 2 | `svg-chart` | `dashboards`, `lms` |
 | 2 | `wit-reflect` | `platform`, `studio` |
 | 1 | `config-store` | `login` |
 | 1 | `crdt` | `scribe` |
@@ -198,8 +212,8 @@ This is the number to look at before changing a component, and before deleting o
 | 1 | `github-forge` | `console` |
 | 1 | `iban` | `payees` |
 | 1 | `ical` | `booked` |
+| 1 | `iot-scanner` | `device-radar` |
 | 1 | `jsonpatch` | `relay` |
-| 1 | `knowledge-graph` | `console` |
 | 1 | `ledger` | `books` |
 | 1 | `quiz-grade` | `lms` |
 | 1 | `resilience` | `mesh` |
@@ -217,8 +231,9 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | app | root component | composes | artifact |
 | --- | --- | --: | --- |
 | **abtest** | `abtest-domain` | 4 | `abtest_domain.composed.wasm` |
-| **ai** | `ai-inference` | 1 | `ai_inference.composed.wasm` |
-| **ai-openai** | `ai-inference` | 1 | `ai_inference.openai.composed.wasm` |
+| **academic-review** | `academic-review-domain` | 4 | `academic-review.composed.wasm` |
+| **ai** | `ai-inference` | 1 | `llm_local.composed.wasm` |
+| **ai-openai** | `ai-inference` | 1 | `llm_local.openai.composed.wasm` |
 | **arena** | `arena-domain` | 2 | `arena_domain.composed.wasm` |
 | **auth-guard** | `auth-guard` | 2 | `auth_guard.composed.wasm` |
 | **authgate** | `mfa-authgate` | 5 | `mfa_authgate.composed.wasm` |
@@ -228,6 +243,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **conduit** | `conduit-domain` | 5 | `conduit_domain.composed.wasm` |
 | **console** | `console-domain` | 3 | `console_domain.composed.wasm` |
 | **dashboards** | `dashboards-domain` | 5 | `dashboards_domain.composed.wasm` |
+| **device-radar** | `device-radar-domain` | 4 | `device-radar.composed.wasm` |
 | **drop** | `upload-drop` | 4 | `upload_drop.composed.wasm` |
 | **eshop** | `accounts-app` | 3 | `eshop_identity.composed.wasm` |
 | **eshop** | `eshop-basket` | 5 | `eshop_basket.composed.wasm` |
@@ -237,8 +253,12 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **eshop** | `event-pusher` | 1 | `event_pusher.composed.wasm` |
 | **eshop-catalog** | `eshop-catalog` | 3 | `eshop_catalog.composed.wasm` |
 | **flags** | `flags-domain` | 3 | `flags_domain.composed.wasm` |
+| **freight-tracker** | `freight-tracker-domain` | 4 | `freight-tracker.composed.wasm` |
 | **gate** | `gate-domain` | 2 | `gate_domain.composed.wasm` |
+| **graphviz** | `graph-viz-domain` | 1 | `graphviz_domain.composed.wasm` |
+| **health-records** | `health-records-domain` | 4 | `health-records.composed.wasm` |
 | **helpdesk** | `helpdesk-domain` | 7 | `helpdesk_domain.composed.wasm` |
+| **iot-scanner** | `iot-scanner` | 0 | `iot-scanner.composed.wasm` |
 | **jobs** | `jobs-domain` | 5 | `jobs_domain.composed.wasm` |
 | **jobs-golem** | `jobs-domain` | 5 | `jobs_domain.golem.wasm` |
 | **ledger** | `billing-ledger` | 6 | `billing_ledger.composed.wasm` |
@@ -249,11 +269,14 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **passkey** | `passkey-domain` | 5 | `passkey_domain.composed.wasm` |
 | **paste** | `paste-bin` | 5 | `paste_bin.composed.wasm` |
 | **payees** | `payees-domain` | 5 | `payees_domain.composed.wasm` |
+| **photosocial** | `photosocial-domain` | 5 | `photosocial_domain.composed.wasm` |
 | **pipeline** | `pipeline-domain` | 3 | `pipeline_domain.composed.wasm` |
 | **platform** | `platform-domain` | 9 | `platform_domain.composed.wasm` |
+| **poll** | `poll-domain` | 4 | `poll_domain.composed.wasm` |
 | **portal** | `dev-portal` | 10 | `dev_portal.composed.wasm` |
 | **pulse** | `pulse-domain` | 3 | `pulse_domain.composed.wasm` |
 | **ratelimit** | `throttle-domain` | 4 | `throttle_domain.composed.wasm` |
+| **real-estate-escrow** | `real-estate-escrow-domain` | 4 | `real-estate-escrow.composed.wasm` |
 | **relay** | `webhook-relay` | 9 | `webhook_relay.composed.wasm` |
 | **report** | `csv-report` | 4 | `csv_report.composed.wasm` |
 | **saga** | `saga-domain` | 6 | `saga_domain.composed.wasm` |
@@ -262,6 +285,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **search** | `search-domain` | 5 | `search_domain.composed.wasm` |
 | **shortlink** | `cache` | 1 | `cache.composed.wasm` |
 | **shortlink** | `link-shortener` | 6 | `link_shortener.composed.wasm` |
+| **smart-home** | `smart-home-domain` | 4 | `smart-home.composed.wasm` |
 | **stash** | `stash-domain` | 6 | `stash_domain.composed.wasm` |
 | **status** | `status-page` | 5 | `status_page.composed.wasm` |
 | **studio** | `studio-domain` | 3 | `studio_domain.composed.wasm` |
@@ -281,6 +305,11 @@ graph LR
   app_abtest["abtest"]
   app_abtest --> event_bus([event-bus])
   app_abtest --> id_generate([id-generate])
+  app_academic_review["academic-review"]
+  app_academic_review --> audit_log([audit-log])
+  app_academic_review --> auth_guard([auth-guard])
+  app_academic_review --> rate_limiter([rate-limiter])
+  app_academic_review --> record_store([record-store])
   app_ai["ai"]
   app_ai --> anthropic_provider([anthropic-provider])
   app_ai_openai["ai-openai"]
@@ -320,13 +349,10 @@ graph LR
   app_dashboards --> auth_guard([auth-guard])
   app_dashboards --> rate_limiter([rate-limiter])
   app_dashboards --> record_store([record-store])
-  app_drop["drop"]
-  app_drop --> blob_store([blob-store])
-  app_drop --> record_store([record-store])
-  app_eshop["eshop"]
-  app_eshop --> audit_log([audit-log])
-  app_eshop --> auth_guard([auth-guard])
-  app_eshop --> rate_limiter([rate-limiter])
+  app_device_radar["device-radar"]
+  app_device_radar --> audit_log([audit-log])
+  app_device_radar --> auth_guard([auth-guard])
+  app_device_radar --> rate_limiter([rate-limiter])
 ```
 
 
@@ -347,6 +373,8 @@ Not a finding. A capability library is allowed to be ahead of its callers, and s
 | `glob` | `demo:glob/matcher` |
 | `login-app` | `login:app/auth` |
 | `ordinal` | `demo:ordinal/suffix` |
+| `power-domain` | `calculate-cost` |
+| `reddit-domain` | `local:reddit/reddit` |
 | `roman` | `demo:roman/numerals` |
 | `rot13` | `demo:rot13/cipher` |
 
