@@ -1,7 +1,77 @@
+// os:fs — what changed in a directory, as a contract a host can satisfy.
+//
+// The first version of this was `watch: func(dir: string) -> string`, and the
+// shape is why it shipped as a fake: a single string can hold any sentence, so
+// "Watching /var/log for changes..." satisfied it exactly as well as a real
+// answer would have. A contract nothing can fail is a contract that proves
+// nothing.
+//
+// ## Why it is a poll and not a stream
+//
+// A watcher is naturally a stream of events, and `wasi:io/streams` could carry
+// one. It is a POLL here because the caller is an HTTP handler with a request to
+// answer: it asks what changed since a cursor and gets a bounded list back. A
+// component that blocked waiting for the next inotify event would hold a request
+// open for as long as nothing happened.
+//
+// The cursor is opaque on purpose. Today the daemon fills it with a timestamp;
+// an implementation over inotify or FSEvents would put a queue offset there, and
+// nothing on this side may care which.
 package os:fs@0.1.0;
+
 interface watcher {
-    watch: func(dir: string) -> string;
+    /// What happened to a path.
+    enum change {
+        created,
+        modified,
+        removed,
+    }
+
+    /// One change, as the watcher saw it.
+    record event {
+        /// Absolute, and always inside the watched directory — a daemon that
+        /// returned a path outside it would be reporting on somewhere the
+        /// caller never asked about.
+        path: string,
+        kind: change,
+        /// Milliseconds since the epoch, from the watcher's clock rather than
+        /// the caller's. The two disagree and only one of them saw the event.
+        at: u64,
+    }
+
+    /// A page of changes, and where to resume.
+    record changes {
+        events: list<event>,
+        /// Pass back to the next `poll` to continue. Opaque.
+        cursor: string,
+        /// The page was capped and more is waiting. A caller that ignores this
+        /// and treats an empty-looking result as "nothing happened" is the
+        /// reason it is reported rather than inferred from a full page.
+        truncated: bool,
+    }
+
+    variant watch-error {
+        /// The directory is not one this watcher was permitted to look at.
+        /// Distinct from not-found so a caller can tell "you may not" from
+        /// "there is nothing there" — an allow-list is a decision, and a
+        /// caller retrying a refusal forever is worse than one that stops.
+        not-permitted(string),
+        no-such-directory(string),
+        /// The watcher is there and could not answer. Retryable.
+        unavailable(string),
+    }
+
+    /// Changes in `dir` since `cursor`. An empty cursor starts from now, so a
+    /// first call reports nothing and hands back a position — the alternative
+    /// is replaying a directory's whole history to a caller that only wanted
+    /// to know what happens next.
+    poll: func(dir: string, cursor: string) -> result<changes, watch-error>;
 }
+
 world component {
     export watcher;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }
