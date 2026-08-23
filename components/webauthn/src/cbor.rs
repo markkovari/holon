@@ -27,7 +27,9 @@ impl Cbor {
     /// Look up a text key in a map.
     pub fn get(&self, key: &str) -> Option<&Cbor> {
         match self {
-            Cbor::Map(pairs) => pairs.iter().find(|(k, _)| matches!(k, Cbor::Text(t) if t == key)).map(|(_, v)| v),
+            Cbor::Map(pairs) => {
+                pairs.iter().find(|(k, _)| matches!(k, Cbor::Text(t) if t == key)).map(|(_, v)| v)
+            }
             _ => None,
         }
     }
@@ -77,7 +79,10 @@ pub fn decode(buf: &[u8]) -> Result<(Cbor, usize), String> {
         1 => Ok((Cbor::Nint(-1 - i64::try_from(arg).map_err(|_| "negative int too large")?), used)),
         2 | 3 => {
             let n = arg as usize;
-            let end = used.checked_add(n).filter(|e| *e <= buf.len()).ok_or("string past end of buffer")?;
+            let end = used
+                .checked_add(n)
+                .filter(|e| *e <= buf.len())
+                .ok_or("string past end of buffer")?;
             let raw = buf[used..end].to_vec();
             let item = if major == 2 {
                 Cbor::Bytes(raw)
@@ -141,7 +146,10 @@ fn head(buf: &[u8]) -> Result<(u8, u64, usize), String> {
 pub fn encode_int_map(pairs: &std::collections::BTreeMap<i64, Cbor>) -> Vec<u8> {
     let mut out = vec![0xa0 | pairs.len() as u8];
     for (k, v) in pairs {
-        out.extend(encode_head(if *k < 0 { 1 } else { 0 }, if *k < 0 { (-1 - k) as u64 } else { *k as u64 }));
+        out.extend(encode_head(
+            if *k < 0 { 1 } else { 0 },
+            if *k < 0 { (-1 - k) as u64 } else { *k as u64 },
+        ));
         match v {
             Cbor::Uint(u) => out.extend(encode_head(0, *u)),
             Cbor::Nint(n) => out.extend(encode_head(1, (-1 - n) as u64)),

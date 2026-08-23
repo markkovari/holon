@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::os::system::cron::Guest;
 struct Component;
-impl Guest for Component { fn list_jobs() -> String { "UNIMPLEMENTED: system-cron cannot read or write cron from wasm".to_string() } }
+impl Guest for Component {
+    fn list_jobs() -> String {
+        "UNIMPLEMENTED: system-cron cannot read or write cron from wasm".to_string()
+    }
+}
 bindings::export!(Component with_types_in bindings);

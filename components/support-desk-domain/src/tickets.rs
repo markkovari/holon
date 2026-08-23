@@ -8,7 +8,7 @@ use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types as auth_types;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
-use crate::{rfc3339, now_secs, Reply, Route};
+use crate::{now_secs, rfc3339, Reply, Route};
 use serde_json::{json, Value};
 
 /// Resolve the bearer against `{tickets, action}`, mapped per CONTRACT.md's table.
@@ -16,13 +16,13 @@ fn require(route: &Route, action: &str) -> Result<auth_types::Principal, Reply> 
     if route.bearer.is_empty() {
         return Err(Reply::err(401, "unauthenticated"));
     }
-    let required = auth_types::Permission { target: "tickets".to_string(), action: action.to_string() };
+    let required =
+        auth_types::Permission { target: "tickets".to_string(), action: action.to_string() };
     match authz::authorize(&route.bearer, &required) {
         Ok(principal) => Ok(principal),
         Err(auth_types::AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
-        Err(auth_types::AuthError::BackendUnavailable(_)) | Err(auth_types::AuthError::Internal(_)) => {
-            Err(Reply::err(503, "auth_unavailable"))
-        }
+        Err(auth_types::AuthError::BackendUnavailable(_))
+        | Err(auth_types::AuthError::Internal(_)) => Err(Reply::err(503, "auth_unavailable")),
         // invalid-token, expired, malformed, and anything else we didn't enumerate:
         // all read as "not authenticated" per the contract table.
         Err(_) => Err(Reply::err(401, "unauthenticated")),
@@ -51,7 +51,11 @@ fn create(route: &Route, body: &str) -> Reply {
     let customer = req.get("customer").and_then(Value::as_str).unwrap_or("").trim();
     // The one rule with its own check: a delivery address nothing can deliver to is
     // refused here, not dead-lettered days later for a reason nobody can act on.
-    if subject.is_empty() || text.is_empty() || customer.is_empty() || !customer.starts_with("webhook:") {
+    if subject.is_empty()
+        || text.is_empty()
+        || customer.is_empty()
+        || !customer.starts_with("webhook:")
+    {
         return Reply::err(400, "invalid_ticket");
     }
     let data = json!({
@@ -84,11 +88,19 @@ fn list(route: &Route) -> Reply {
     }
     let state = {
         let s = route.param("state");
-        if s.is_empty() { "open".to_string() } else { s }
+        if s.is_empty() {
+            "open".to_string()
+        } else {
+            s
+        }
     };
     let limit = {
         let s = route.param("limit");
-        if s.is_empty() { 20 } else { s.parse::<u32>().unwrap_or(20) }
+        if s.is_empty() {
+            20
+        } else {
+            s.parse::<u32>().unwrap_or(20)
+        }
     }
     .min(100);
 

@@ -94,11 +94,13 @@ fn create_link(request: &IncomingRequest) -> Outcome {
         Err(LimitError::BackendUnavailable(m)) => return Outcome::Err(503, m),
     }
 
-    let req: CreateReq = match read_body(request).and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
-        Ok(r) => r,
-        Err(_) => return Outcome::Bad("expected json body {url, slug?, title?}".into()),
-    };
-    if !(req.url.starts_with("http://") || req.url.starts_with("https://")) || req.url.len() > 2048 {
+    let req: CreateReq =
+        match read_body(request).and_then(|b| serde_json::from_slice(&b).map_err(|_| ())) {
+            Ok(r) => r,
+            Err(_) => return Outcome::Bad("expected json body {url, slug?, title?}".into()),
+        };
+    if !(req.url.starts_with("http://") || req.url.starts_with("https://")) || req.url.len() > 2048
+    {
         return Outcome::Bad("url must be http(s) and under 2048 chars".into());
     }
 
@@ -269,11 +271,7 @@ fn link_json(entry: &records::Entry, clicks: Option<u64>) -> Value {
 }
 
 fn field(data: &str, name: &str) -> Option<String> {
-    serde_json::from_str::<Value>(data)
-        .ok()?
-        .get(name)?
-        .as_str()
-        .map(str::to_string)
+    serde_json::from_str::<Value>(data).ok()?.get(name)?.as_str().map(str::to_string)
 }
 
 fn store_err(e: records::StoreError) -> Outcome {
@@ -326,11 +324,7 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 }
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request
-        .headers()
-        .get(name)
-        .into_iter()
-        .find_map(|v| String::from_utf8(v).ok())
+    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
 }
 
 fn query_param(query: &str, key: &str) -> Option<String> {

@@ -22,10 +22,7 @@ impl Guest for Component {
         if !msg.subject.contains(".eb.seq.") {
             return Ok(());
         }
-        let targets = config::get("push-targets")
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+        let targets = config::get("push-targets").ok().flatten().unwrap_or_default();
         for path in targets.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             // Best-effort poke: a missed one is caught by the sweep timer.
             let _ = router::forward("POST", path, &[], &[]);

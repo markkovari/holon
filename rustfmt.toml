@@ -1,0 +1,14 @@
+# Match the house style rather than rewrite it.
+#
+# `cargo fmt` with stock defaults rewrote 343 files, +16880/-4881 — a net twelve
+# thousand lines ADDED, which is not a formatting fix, it is a different
+# codebase. The cause is not `max_width`: it is `fn_call_width`, which defaults
+# to 60, so a 94-character call whose ARGUMENTS exceed 60 gets exploded across
+# six lines even though the line was always inside the limit.
+#
+# `use_small_heuristics = "Max"` ties every width heuristic to `max_width`, which
+# is what this code was written against. Measured over 420 files and 108,949
+# non-blank lines: p50 is 39 characters, p95 is 87, p99 is 104, and 1.38% of
+# lines exceed 100. The config records the rule the tree already follows.
+max_width = 100
+use_small_heuristics = "Max"

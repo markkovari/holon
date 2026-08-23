@@ -87,7 +87,9 @@ impl Guest for Component {
         // decision we deliberately don't make (see the WIT doc): report the
         // format, don't pretend to have validated a chain.
         if fmt == "packed" {
-            if let (Some(att_stmt), None) = (att.get("attStmt"), att.get("attStmt").and_then(|s| s.get("x5c"))) {
+            if let (Some(att_stmt), None) =
+                (att.get("attStmt"), att.get("attStmt").and_then(|s| s.get("x5c")))
+            {
                 if let Some(sig) = att_stmt.get("sig").and_then(Cbor::as_bytes) {
                     let mut signed = auth_data.clone();
                     signed.extend_from_slice(&Sha256::digest(&client_data_json));
@@ -148,8 +150,8 @@ impl Guest for Component {
 // ---- clientDataJSON ---------------------------------------------------------
 
 fn check_client_data(json: &[u8], want_type: &str, exp: &Expectations) -> Result<(), VerifyError> {
-    let v: serde_json::Value =
-        serde_json::from_slice(json).map_err(|e| VerifyError::BadEncoding(format!("clientDataJSON: {e}")))?;
+    let v: serde_json::Value = serde_json::from_slice(json)
+        .map_err(|e| VerifyError::BadEncoding(format!("clientDataJSON: {e}")))?;
 
     let ty = v["type"].as_str().unwrap_or_default();
     if ty != want_type {
@@ -204,7 +206,8 @@ fn parse_auth_data(buf: &[u8]) -> Result<AuthData, VerifyError> {
     let flags = buf[32];
     let sign_count = u32::from_be_bytes([buf[33], buf[34], buf[35], buf[36]]);
 
-    let mut ad = AuthData { rp_id_hash, flags, sign_count, aaguid: None, cred_id: None, cose: None };
+    let mut ad =
+        AuthData { rp_id_hash, flags, sign_count, aaguid: None, cred_id: None, cose: None };
     if flags & FLAG_AT == 0 {
         return Ok(ad); // an assertion carries no credential
     }
@@ -220,7 +223,8 @@ fn parse_auth_data(buf: &[u8]) -> Result<AuthData, VerifyError> {
     }
     // The COSE key runs to the end unless extensions follow, so decode it and use
     // exactly the bytes it consumed — never `&buf[id_end..]` blindly.
-    let (_, used) = cbor::decode(&buf[id_end..]).map_err(|e| VerifyError::BadEncoding(format!("COSE key: {e}")))?;
+    let (_, used) = cbor::decode(&buf[id_end..])
+        .map_err(|e| VerifyError::BadEncoding(format!("COSE key: {e}")))?;
     ad.aaguid = Some(aaguid);
     ad.cred_id = Some(buf[55..id_end].to_vec());
     ad.cose = Some(buf[id_end..id_end + used].to_vec());
@@ -284,7 +288,12 @@ fn verifying_key(cose_bytes: &[u8], alg: i64) -> Result<Key, VerifyError> {
     }
 }
 
-fn verify_signature(cose_bytes: &[u8], alg: i64, message: &[u8], sig: &[u8]) -> Result<(), VerifyError> {
+fn verify_signature(
+    cose_bytes: &[u8],
+    alg: i64,
+    message: &[u8],
+    sig: &[u8],
+) -> Result<(), VerifyError> {
     match verifying_key(cose_bytes, alg)? {
         Key::Es256(vk) => {
             use p256::ecdsa::signature::Verifier;
@@ -295,7 +304,8 @@ fn verify_signature(cose_bytes: &[u8], alg: i64, message: &[u8], sig: &[u8]) -> 
         Key::Rs256(key) => {
             use rsa::signature::Verifier;
             let vk = rsa::pkcs1v15::VerifyingKey::<Sha256>::new(*key);
-            let s = rsa::pkcs1v15::Signature::try_from(sig).map_err(|_| VerifyError::BadSignature)?;
+            let s =
+                rsa::pkcs1v15::Signature::try_from(sig).map_err(|_| VerifyError::BadSignature)?;
             vk.verify(message, &s).map_err(|_| VerifyError::BadSignature)
         }
     }
@@ -330,8 +340,10 @@ mod tests {
     }
 
     fn client_data(ty: &str, challenge: &str, origin: &str) -> Vec<u8> {
-        format!(r#"{{"type":"{ty}","challenge":"{challenge}","origin":"{origin}","crossOrigin":false}}"#)
-            .into_bytes()
+        format!(
+            r#"{{"type":"{ty}","challenge":"{challenge}","origin":"{origin}","crossOrigin":false}}"#
+        )
+        .into_bytes()
     }
 
     fn cose_key(sk: &SigningKey) -> Vec<u8> {
@@ -390,7 +402,13 @@ mod tests {
     }
 
     /// Sign an assertion the way an authenticator does.
-    fn assert_with(sk: &SigningKey, rp: &str, flags: u8, count: u32, cd: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    fn assert_with(
+        sk: &SigningKey,
+        rp: &str,
+        flags: u8,
+        count: u32,
+        cd: &[u8],
+    ) -> (Vec<u8>, Vec<u8>) {
         let ad = auth_data(rp, flags, count, None);
         let mut signed = ad.clone();
         signed.extend_from_slice(&Sha256::digest(cd));
@@ -413,7 +431,8 @@ mod tests {
         let (sk, cred) = register_ok();
         let cd = client_data("webauthn.get", CHALLENGE, ORIGIN);
         let (ad, sig) = assert_with(&sk, RP, FLAG_UP | FLAG_UV, 5, &cd);
-        let a = <Component as Guest>::authenticate(exp(true), cred, cd, ad, sig).expect("assertion verifies");
+        let a = <Component as Guest>::authenticate(exp(true), cred, cd, ad, sig)
+            .expect("assertion verifies");
         assert_eq!(a.sign_count, 5);
         assert!(a.user_verified);
     }
@@ -491,9 +510,10 @@ mod tests {
         let cd = client_data("webauthn.get", CHALLENGE, ORIGIN);
 
         let (ad, sig) = assert_with(&sk, RP, FLAG_UP, 4, &cd);
-        cred.sign_count = <Component as Guest>::authenticate(exp(false), cred.clone(), cd.clone(), ad, sig)
-            .unwrap()
-            .sign_count;
+        cred.sign_count =
+            <Component as Guest>::authenticate(exp(false), cred.clone(), cd.clone(), ad, sig)
+                .unwrap()
+                .sign_count;
         assert_eq!(cred.sign_count, 4);
 
         // The same counter again (or lower) means two copies of the key exist.
@@ -523,7 +543,11 @@ mod tests {
         let cose = cbor::encode_int_map(&m);
         let ad = auth_data(RP, FLAG_UP | FLAG_AT, 0, Some((b"cred-x", &cose)));
         assert!(matches!(
-            <Component as Guest>::register(exp(false), client_data("webauthn.create", CHALLENGE, ORIGIN), attestation_object(&ad)),
+            <Component as Guest>::register(
+                exp(false),
+                client_data("webauthn.create", CHALLENGE, ORIGIN),
+                attestation_object(&ad)
+            ),
             Err(VerifyError::UnsupportedAlgorithm(-8))
         ));
     }

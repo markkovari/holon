@@ -36,7 +36,7 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::graph::agent::writer::{AgentError, Candidate, File, Goal, Guest, Failure};
+use bindings::exports::graph::agent::writer::{AgentError, Candidate, Failure, File, Goal, Guest};
 use bindings::llm::inference::inference as llm;
 use std::collections::HashMap;
 
@@ -424,8 +424,10 @@ mod tests {
 
     /// Parse + apply, the path a candidate actually travels.
     fn run(answer: &str, base: &[(&str, &str)]) -> Result<Vec<File>, String> {
-        let base: Vec<File> =
-            base.iter().map(|(p, c)| File { path: p.to_string(), content: c.to_string() }).collect();
+        let base: Vec<File> = base
+            .iter()
+            .map(|(p, c)| File { path: p.to_string(), content: c.to_string() })
+            .collect();
         apply_ops(&base, parse_ops(answer))
     }
 
@@ -462,12 +464,13 @@ mod tests {
     #[test]
     fn an_edit_that_does_not_match_is_an_error() {
         let base = [("a.rs", "hello\n")];
-        let err = run(
-            &format!("{EDIT_OPEN} a.rs\n{S_MARK}\ngoodbye\n{DIV}\nhi\n{R_MARK}\n"),
-            &base,
-        )
-        .unwrap_err();
-        assert!(err.contains("not in the file"), "a diff that will not apply must fail loudly: {err}");
+        let err =
+            run(&format!("{EDIT_OPEN} a.rs\n{S_MARK}\ngoodbye\n{DIV}\nhi\n{R_MARK}\n"), &base)
+                .unwrap_err();
+        assert!(
+            err.contains("not in the file"),
+            "a diff that will not apply must fail loudly: {err}"
+        );
     }
 
     /// The model rarely reproduces trailing whitespace exactly; a match that

@@ -92,7 +92,11 @@ fn report_who_consumes_each_capability() {
     let used: Vec<_> = consumers.iter().filter(|(_, c)| !c.is_empty()).collect();
     let unused: Vec<_> = consumers.iter().filter(|(_, c)| c.is_empty()).collect();
 
-    println!("\n  {} interfaces exported, {} of them consumed in-tree\n", consumers.len(), used.len());
+    println!(
+        "\n  {} interfaces exported, {} of them consumed in-tree\n",
+        consumers.len(),
+        used.len()
+    );
     println!("  load-bearing (interface: consumers)");
     let mut ranked: Vec<_> = used.iter().map(|(i, c)| (c.len(), i, c)).collect();
     ranked.sort_by(|a, b| b.0.cmp(&a.0));

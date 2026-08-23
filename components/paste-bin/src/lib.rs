@@ -118,7 +118,10 @@ fn create_paste(request: &IncomingRequest) -> Outcome {
     }];
     let errs = validate::validate(&json!({"body": raw}).to_string(), &rules);
     if !errs.is_empty() {
-        let fe: Vec<Value> = errs.iter().map(|e| json!({"field": e.field, "code": e.code, "message": e.message})).collect();
+        let fe: Vec<Value> = errs
+            .iter()
+            .map(|e| json!({"field": e.field, "code": e.code, "message": e.message}))
+            .collect();
         return Outcome::Json(422, json!({"error": "validation_failed", "fields": fe}).to_string());
     }
 
@@ -222,7 +225,9 @@ fn store_err(e: records::StoreError) -> Outcome {
         records::StoreError::NotFound => Outcome::err(404, "not_found"),
         records::StoreError::InvalidJson(m) => Outcome::Json(422, json!({"error": m}).to_string()),
         records::StoreError::RevisionConflict(_) => Outcome::err(409, "conflict"),
-        records::StoreError::BackendUnavailable(m) => Outcome::Json(503, json!({"error": m}).to_string()),
+        records::StoreError::BackendUnavailable(m) => {
+            Outcome::Json(503, json!({"error": m}).to_string())
+        }
     }
 }
 
@@ -233,7 +238,8 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
-    serde_json::from_slice(&body).map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
+    serde_json::from_slice(&body)
+        .map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
 /// A ceiling on a request body, not a policy: past this the read stops and the
@@ -267,8 +273,12 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
-        Outcome::Text(code, body) => respond(response_out, code, "text/plain; charset=utf-8", body.as_bytes()),
+        Outcome::Json(code, body) => {
+            respond(response_out, code, "application/json", body.as_bytes())
+        }
+        Outcome::Text(code, body) => {
+            respond(response_out, code, "text/plain; charset=utf-8", body.as_bytes())
+        }
     }
 }
 

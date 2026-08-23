@@ -90,7 +90,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -166,10 +167,12 @@ fn create_dashboard(request: &IncomingRequest) -> Outcome {
 }
 
 fn dashboard(id: &str) -> Option<Value> {
-    records::get(DASHBOARDS, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(|mut v| {
-        v["id"] = json!(id);
-        v
-    })
+    records::get(DASHBOARDS, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
+        |mut v| {
+            v["id"] = json!(id);
+            v
+        },
+    )
 }
 
 fn owns_dashboard(p: &Principal, id: &str) -> Option<Value> {
@@ -181,11 +184,12 @@ fn list_dashboards(request: &IncomingRequest) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
-    let mut items: Vec<Value> = records::find_by(DASHBOARDS, "owner", &json!(p.subject).to_string())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&hydrate(&e.id, &e.data)).ok())
-        .collect();
+    let mut items: Vec<Value> =
+        records::find_by(DASHBOARDS, "owner", &json!(p.subject).to_string())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| serde_json::from_str::<Value>(&hydrate(&e.id, &e.data)).ok())
+            .collect();
     items.sort_by_key(|d| d["created"].as_u64().unwrap_or(0));
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
@@ -241,10 +245,12 @@ fn add_panel(request: &IncomingRequest, dashboard_id: &str) -> Outcome {
 }
 
 fn panel(id: &str) -> Option<Value> {
-    records::get(PANELS, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(|mut v| {
-        v["id"] = json!(id);
-        v
-    })
+    records::get(PANELS, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
+        |mut v| {
+            v["id"] = json!(id);
+            v
+        },
+    )
 }
 
 /// The panel, if the caller owns its dashboard.
@@ -315,7 +321,8 @@ fn chart_of(pn: &Value) -> svg::Chart {
 
 /// Seed a fresh account with a demo dashboard so the app is never empty.
 fn seed_demo(subject: &str) {
-    let d = json!({ "id": Value::Null, "name": "Demo dashboard", "owner": subject, "created": now() });
+    let d =
+        json!({ "id": Value::Null, "name": "Demo dashboard", "owner": subject, "created": now() });
     let dash = match records::create(DASHBOARDS, &d.to_string(), &["owner".to_string()]) {
         Ok(r) => r.id,
         Err(_) => return,

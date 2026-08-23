@@ -95,7 +95,12 @@ impl Api {
 }
 
 /// One request. `body` is `None` for a GET.
-fn call(api: &Api, method: Method, path: &str, body: Option<String>) -> Result<(u16, String), ForgeError> {
+fn call(
+    api: &Api,
+    method: Method,
+    path: &str,
+    body: Option<String>,
+) -> Result<(u16, String), ForgeError> {
     let headers = Fields::new();
     let set = |k: &str, v: &str| {
         let _ = headers.set(k, &[v.as_bytes().to_vec()]);
@@ -167,7 +172,9 @@ fn call(api: &Api, method: Method, path: &str, body: Option<String>) -> Result<(
 fn status_error(what: &str, status: u16, body: &str) -> ForgeError {
     let snippet: String = body.chars().take(400).collect();
     match status {
-        401 | 403 => ForgeError::Rejected(format!("{what}: {status} — the token was refused: {snippet}")),
+        401 | 403 => {
+            ForgeError::Rejected(format!("{what}: {status} — the token was refused: {snippet}"))
+        }
         404 => ForgeError::Rejected(format!(
             "{what}: 404 — the repository, or the base branch, is not there (a token \
              without access reads as 404 here, not 403): {snippet}"
@@ -209,9 +216,7 @@ fn valid_branch(name: &str) -> bool {
         && !name.contains("..")
         && !name.contains("//")
         && !name.contains("@{")
-        && name.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.')
-        })
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | '.'))
 }
 
 /// A path inside the repository, and not outside it.
@@ -258,7 +263,10 @@ impl Guest for Component {
             return Err(ForgeError::Rejected("no changes — there is nothing to propose".into()));
         }
         if let Some(bad) = p.changes.iter().find(|c| !valid_path(&c.path)) {
-            return Err(ForgeError::Rejected(format!("path escapes the repository: {:?}", bad.path)));
+            return Err(ForgeError::Rejected(format!(
+                "path escapes the repository: {:?}",
+                bad.path
+            )));
         }
 
         // 1. What we are branching from. Every candidate in a generation must be

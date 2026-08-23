@@ -10,7 +10,6 @@ use crate::config;
 use crate::kv;
 use crate::tokens;
 
-
 // ---- serde mirrors of the WIT records -----------------------------------
 // The generated WIT types don't derive serde, so we (de)serialize through
 // these plain structs.
@@ -181,8 +180,7 @@ fn revoke_family(family: &str) -> Result<(), AuthError> {
 }
 
 pub fn session_lookup(session_id: &str) -> Result<Principal, AuthError> {
-    let body = kv::get(&format!("sess:{session_id}"))?
-        .ok_or(AuthError::Expired)?;
+    let body = kv::get(&format!("sess:{session_id}"))?.ok_or(AuthError::Expired)?;
     let dto: PrincipalDto = serde_json::from_str(&body).map_err(json_err)?;
     if dto.expires_at != 0 && dto.expires_at < now() {
         kv::delete(&format!("sess:{session_id}"))?;
@@ -297,9 +295,9 @@ pub fn rbac_check_with(doc: &RbacDoc, p: &Principal, required: &Permission) -> b
     }
     // 2. Role-derived permissions.
     p.roles.iter().any(|role| {
-        doc.roles
-            .get(role)
-            .is_some_and(|perms| perms.iter().any(|d| matches_parts(&d.target, &d.action, required)))
+        doc.roles.get(role).is_some_and(|perms| {
+            perms.iter().any(|d| matches_parts(&d.target, &d.action, required))
+        })
     })
 }
 

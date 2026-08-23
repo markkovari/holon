@@ -43,8 +43,7 @@ fn span_id() -> String {
 /// malformed, in which case a fresh 32-hex trace-id is minted instead.
 fn trace_id_from(traceparent: &str) -> String {
     let parts: Vec<&str> = traceparent.split('-').collect();
-    if parts.len() == 4 && parts[1].len() == 32 && parts[1].bytes().all(|c| c.is_ascii_hexdigit())
-    {
+    if parts.len() == 4 && parts[1].len() == 32 && parts[1].bytes().all(|c| c.is_ascii_hexdigit()) {
         parts[1].to_string()
     } else {
         let b = get_random_bytes(16);

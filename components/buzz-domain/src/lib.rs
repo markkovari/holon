@@ -51,7 +51,9 @@ impl Guest for Component {
             (Method::Post, ["api", "games"]) => create_game(&request),
             (Method::Get, ["api", "games", pin, "host"]) => host_view(&request, pin),
             (Method::Post, ["api", "games", pin, "start"]) => host_advance(&request, pin, "start"),
-            (Method::Post, ["api", "games", pin, "reveal"]) => host_advance(&request, pin, "reveal"),
+            (Method::Post, ["api", "games", pin, "reveal"]) => {
+                host_advance(&request, pin, "reveal")
+            }
             (Method::Post, ["api", "games", pin, "next"]) => host_advance(&request, pin, "next"),
             (Method::Post, ["api", "games", pin, "join"]) => join(&request, pin),
             (Method::Get, ["api", "games", pin, "play"]) => play_view(&request, pin, &path),
@@ -97,7 +99,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -153,20 +156,24 @@ fn logout(request: &IncomingRequest) -> Outcome {
 // ---- records helpers --------------------------------------------------------
 
 fn get(coll: &str, id: &str) -> Option<Value> {
-    records::get(coll, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(|mut v| {
-        v["id"] = json!(id);
-        v
-    })
+    records::get(coll, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
+        |mut v| {
+            v["id"] = json!(id);
+            v
+        },
+    )
 }
 
 fn find(coll: &str, field: &str, value: &str) -> Vec<Value> {
     records::find_by(coll, field, &json!(value).to_string())
         .unwrap_or_default()
         .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-            v["id"] = json!(e.id);
-            v
-        }))
+        .filter_map(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
+                v["id"] = json!(e.id);
+                v
+            })
+        })
         .collect()
 }
 
@@ -194,10 +201,14 @@ fn create_quiz(request: &IncomingRequest) -> Outcome {
         let opts = q["options"].as_array().map(|a| a.len()).unwrap_or(0);
         let ans = q["answer"].as_u64().unwrap_or(u64::MAX);
         if q["prompt"].as_str().unwrap_or("").is_empty() || opts < 2 || ans as usize >= opts {
-            return Outcome::Err(422, "each question needs a prompt, >=2 options, and a valid answer index".into());
+            return Outcome::Err(
+                422,
+                "each question needs a prompt, >=2 options, and a valid answer index".into(),
+            );
         }
     }
-    let d = json!({ "host": p.subject, "title": title, "questions": questions, "created": now_ms() });
+    let d =
+        json!({ "host": p.subject, "title": title, "questions": questions, "created": now_ms() });
     match records::create(QUIZZES, &d.to_string(), &["host".to_string()]) {
         Ok(rec) => Outcome::Json(201, hydrate(&rec.id, &rec.data)),
         Err(e) => store_err(e),
@@ -269,7 +280,13 @@ fn quiz_questions(quiz_id: &str) -> Vec<Value> {
 
 fn players_ranked(pin: &str) -> Vec<Value> {
     let mut ps = find(PLAYERS, "game", pin);
-    ps.sort_by(|a, b| b["score"].as_i64().unwrap_or(0).cmp(&a["score"].as_i64().unwrap_or(0)).then(a["joined"].as_u64().cmp(&b["joined"].as_u64())));
+    ps.sort_by(|a, b| {
+        b["score"]
+            .as_i64()
+            .unwrap_or(0)
+            .cmp(&a["score"].as_i64().unwrap_or(0))
+            .then(a["joined"].as_u64().cmp(&b["joined"].as_u64()))
+    });
     ps
 }
 
@@ -419,7 +436,9 @@ fn join(request: &IncomingRequest, pin: &str) -> Outcome {
     }
     let d = json!({ "game": pin, "nickname": nickname, "score": 0, "joined": now_ms() });
     match records::create(PLAYERS, &d.to_string(), &["game".to_string()]) {
-        Ok(rec) => Outcome::Json(201, json!({ "player": rec.id, "nickname": nickname }).to_string()),
+        Ok(rec) => {
+            Outcome::Json(201, json!({ "player": rec.id, "nickname": nickname }).to_string())
+        }
         Err(e) => store_err(e),
     }
 }
@@ -483,13 +502,15 @@ fn play_view(request: &IncomingRequest, pin: &str, path: &str) -> Outcome {
                 let started = g["q_started_ms"].as_u64().unwrap_or(0);
                 let limit_ms = q["time_limit"].as_u64().unwrap_or(20) * 1000;
                 let left = (started + limit_ms).saturating_sub(now_ms());
-                let answered = answers_for(pin, cur).iter().any(|a| a["player"].as_str() == Some(&pid));
+                let answered =
+                    answers_for(pin, cur).iter().any(|a| a["player"].as_str() == Some(&pid));
                 out["question"] = json!({ "index": cur, "total": questions.len(), "prompt": q["prompt"], "options": q["options"], "time_limit": q["time_limit"], "time_left_ms": left, "answered": answered });
             }
         }
         "reveal" if cur >= 0 => {
             if let Some(q) = questions.get(cur as usize) {
-                let mine = answers_for(pin, cur).into_iter().find(|a| a["player"].as_str() == Some(&pid));
+                let mine =
+                    answers_for(pin, cur).into_iter().find(|a| a["player"].as_str() == Some(&pid));
                 out["reveal"] = json!({
                     "correct_option": q["answer"],
                     "my_option": mine.as_ref().and_then(|a| a["option"].as_u64()),
@@ -499,7 +520,11 @@ fn play_view(request: &IncomingRequest, pin: &str, path: &str) -> Outcome {
             }
         }
         "final" => {
-            out["podium"] = json!(ranked.iter().take(3).map(|p| json!({ "nickname": p["nickname"], "score": p["score"] })).collect::<Vec<_>>());
+            out["podium"] = json!(ranked
+                .iter()
+                .take(3)
+                .map(|p| json!({ "nickname": p["nickname"], "score": p["score"] }))
+                .collect::<Vec<_>>());
         }
         _ => {}
     }

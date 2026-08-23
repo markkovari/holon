@@ -9,7 +9,6 @@
 //! number tells you it passed but not what it cost — so this prints ADR-0040's table
 //! and fails if the cache stops paying for itself.
 
-
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -61,8 +60,13 @@ fn a_cached_artifact_starts_far_faster_than_a_compile() {
     // so the run contains real cold starts rather than re-pulls that still hit the
     // compile cache.
     for i in 0..6 {
-        rt.block_on(bus.send("n1", "stop", serde_json::to_vec(&stop_cmd).unwrap(), Duration::from_secs(30)))
-            .expect("stop");
+        rt.block_on(bus.send(
+            "n1",
+            "stop",
+            serde_json::to_vec(&stop_cmd).unwrap(),
+            Duration::from_secs(30),
+        ))
+        .expect("stop");
         if i % 2 == 1 {
             for d in ["artifacts", "cache"] {
                 let dir = node.join(d);
@@ -73,8 +77,13 @@ fn a_cached_artifact_starts_far_faster_than_a_compile() {
                 }
             }
         }
-        rt.block_on(bus.send("n1", "start", serde_json::to_vec(&start_cmd).unwrap(), Duration::from_secs(60)))
-            .expect("start");
+        rt.block_on(bus.send(
+            "n1",
+            "start",
+            serde_json::to_vec(&start_cmd).unwrap(),
+            Duration::from_secs(60),
+        ))
+        .expect("start");
     }
 
     let log = fleet.node_log("n1");
@@ -95,7 +104,10 @@ fn a_cached_artifact_starts_far_faster_than_a_compile() {
     // Loose on purpose: the exact ratio is hardware, but "the cache is worth having"
     // is the property, and a regression that makes a warm start as slow as a compile
     // is what this must catch.
-    assert!(w < c / 5.0, "a cached start ({w:.2} ms) should be far cheaper than a compile ({c:.2} ms)");
+    assert!(
+        w < c / 5.0,
+        "a cached start ({w:.2} ms) should be far cheaper than a compile ({c:.2} ms)"
+    );
 }
 
 #[test]
@@ -117,8 +129,13 @@ fn a_corrupt_cache_falls_back_to_compiling() {
     let bus = rt
         .block_on(NatsLattice::connect(&fleet.nats_url, &fleet.lattice, Duration::from_secs(15)))
         .unwrap();
-    rt.block_on(bus.send("n1", "stop", serde_json::to_vec(&stop_cmd).unwrap(), Duration::from_secs(30)))
-        .expect("stop");
+    rt.block_on(bus.send(
+        "n1",
+        "stop",
+        serde_json::to_vec(&stop_cmd).unwrap(),
+        Duration::from_secs(30),
+    ))
+    .expect("stop");
 
     let cache = node.join("cache");
     let files: Vec<_> = std::fs::read_dir(&cache).unwrap().filter_map(Result::ok).collect();
@@ -127,8 +144,13 @@ fn a_corrupt_cache_falls_back_to_compiling() {
         std::fs::write(f.path(), b"this is not machine code, it is a sentence").unwrap();
     }
 
-    rt.block_on(bus.send("n1", "start", serde_json::to_vec(&start_cmd).unwrap(), Duration::from_secs(60)))
-        .expect("start after corruption");
+    rt.block_on(bus.send(
+        "n1",
+        "start",
+        serde_json::to_vec(&start_cmd).unwrap(),
+        Duration::from_secs(60),
+    ))
+    .expect("start after corruption");
     assert!(fleet.serves("shop.eve.test", Duration::from_secs(60)), "did not recover");
 
     let log = fleet.node_log("n1");

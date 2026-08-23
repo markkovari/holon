@@ -127,13 +127,25 @@ impl Trace {
             lit(run),
             lit(branch),
         ));
-        self.event(run, Some(attempt), "branch-spawned", json!({ "branch": branch, "round": round }));
+        self.event(
+            run,
+            Some(attempt),
+            "branch-spawned",
+            json!({ "branch": branch, "round": round }),
+        );
     }
 
     /// What the gate said (ADR-0088). The score AND the verdict text, because
     /// the verdict is what the next attempt reads and a score alone cannot be
     /// argued with later.
-    pub fn gate_verdict(&self, run: &str, attempt: &str, score: u64, passed: bool, verdict: &Value) {
+    pub fn gate_verdict(
+        &self,
+        run: &str,
+        attempt: &str,
+        score: u64,
+        passed: bool,
+        verdict: &Value,
+    ) {
         self.event(
             run,
             Some(attempt),
@@ -238,7 +250,12 @@ impl Trace {
             lit(winner.unwrap_or_default()),
             lit(url),
         ));
-        self.event(run, None, "run-resolved", json!({ "outcome": outcome, "winner": winner, "url": url }));
+        self.event(
+            run,
+            None,
+            "run-resolved",
+            json!({ "outcome": outcome, "winner": winner, "url": url }),
+        );
     }
 
     /// One line for the operator, or nothing when everything landed.
@@ -282,12 +299,26 @@ impl Trace {
             "DEFINE NAMESPACE IF NOT EXISTS {}; USE NS {}; DEFINE DATABASE IF NOT EXISTS {};",
             self.namespace, self.namespace, self.database
         );
-        let _ = ureq_post(&self.url, &self.namespace, &self.database, &self.user, self.password.as_deref(), &surql);
+        let _ = ureq_post(
+            &self.url,
+            &self.namespace,
+            &self.database,
+            &self.user,
+            self.password.as_deref(),
+            &surql,
+        );
     }
 
     fn send(&self, surql: &str) {
         self.ensure_defined();
-        let ok = ureq_post(&self.url, &self.namespace, &self.database, &self.user, self.password.as_deref(), surql);
+        let ok = ureq_post(
+            &self.url,
+            &self.namespace,
+            &self.database,
+            &self.user,
+            self.password.as_deref(),
+            surql,
+        );
         if !ok {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
@@ -295,7 +326,14 @@ impl Trace {
 }
 
 /// POST one body to `/sql`. Returns whether every statement in it was accepted.
-fn ureq_post(url: &str, ns: &str, db: &str, user: &str, password: Option<&str>, surql: &str) -> bool {
+fn ureq_post(
+    url: &str,
+    ns: &str,
+    db: &str,
+    user: &str,
+    password: Option<&str>,
+    surql: &str,
+) -> bool {
     let client = match reqwest::blocking::Client::builder()
         // Short on purpose: a trace write must never be the reason a run stalls,
         // and the run has already done the expensive part by the time we write.
@@ -349,11 +387,7 @@ fn tokens_sql(tokens: u64) -> String {
 fn file_paths(files: &Value) -> Vec<String> {
     let mut out: Vec<String> = files
         .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|f| f["path"].as_str().map(str::to_string))
-                .collect()
-        })
+        .map(|a| a.iter().filter_map(|f| f["path"].as_str().map(str::to_string)).collect())
         .unwrap_or_default();
     out.sort();
     out.dedup();
@@ -384,7 +418,10 @@ mod tests {
         let nasty = r#"add a "search" box'; DROP TABLE memory; --"#;
         let l = lit(nasty);
         assert!(l.starts_with('"') && l.ends_with('"'));
-        assert!(!l[1..l.len() - 1].contains('"') || l.contains("\\\""), "inner quotes must be escaped: {l}");
+        assert!(
+            !l[1..l.len() - 1].contains('"') || l.contains("\\\""),
+            "inner quotes must be escaped: {l}"
+        );
         assert!(
             serde_json::from_str::<String>(&l).unwrap() == nasty,
             "the literal must round-trip to exactly what was passed"

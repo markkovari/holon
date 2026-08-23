@@ -286,7 +286,10 @@ mod tests {
     #[test]
     fn what_a_part_builds_against_is_the_latest_ratified_version() {
         let s = surql::current_contract();
-        assert!(s.contains("canonical = true"), "a proposed amendment is not what siblings build on: {s}");
+        assert!(
+            s.contains("canonical = true"),
+            "a proposed amendment is not what siblings build on: {s}"
+        );
         assert!(s.contains("ORDER BY version DESC LIMIT 1"), "{s}");
     }
 
@@ -299,7 +302,10 @@ mod tests {
     #[test]
     fn answering_carries_its_once_only_guard_in_the_statement() {
         let s = surql::answer("abc", "granted", "{}", 5);
-        assert!(s.contains("WHERE answered != true"), "two boundaries could resolve one request: {s}");
+        assert!(
+            s.contains("WHERE answered != true"),
+            "two boundaries could resolve one request: {s}"
+        );
         assert!(s.contains("RETURN id"), "an empty result is how the caller learns it lost: {s}");
     }
 
@@ -316,8 +322,14 @@ mod tests {
         let b = surql::request_id("frontend", "backend", "SearchResult needs total_pages", 3);
         assert_eq!(a, b, "asking twice in one generation is one request");
         // A different version is a different question: the interface moved under it.
-        assert_ne!(a, surql::request_id("frontend", "backend", "SearchResult needs total_pages", 4));
-        assert_ne!(a, surql::request_id("backend", "frontend", "SearchResult needs total_pages", 3));
+        assert_ne!(
+            a,
+            surql::request_id("frontend", "backend", "SearchResult needs total_pages", 4)
+        );
+        assert_ne!(
+            a,
+            surql::request_id("backend", "frontend", "SearchResult needs total_pages", 3)
+        );
     }
 
     #[test]
@@ -348,7 +360,13 @@ mod tests {
 
     #[test]
     fn a_contract_body_cannot_carry_surrealql_syntax() {
-        let s = surql::put_contract(2, r#"{"routes":["/api/x"]}; DROP TABLE contract;"#, false, "be", "r1");
+        let s = surql::put_contract(
+            2,
+            r#"{"routes":["/api/x"]}; DROP TABLE contract;"#,
+            false,
+            "be",
+            "r1",
+        );
         assert!(
             s.contains(r#"body = "{\"routes\":[\"/api/x\"]}; DROP TABLE contract;""#),
             "the body is a literal, not syntax: {s}"

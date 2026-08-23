@@ -73,7 +73,8 @@ impl Guest for Component {
                 let v: serde_json::Value = match serde_json::from_str(&raw) {
                     Ok(v) => v,
                     Err(e) => {
-                        let m = serde_json::json!({ "error": "bad-request", "detail": e.to_string() });
+                        let m =
+                            serde_json::json!({ "error": "bad-request", "detail": e.to_string() });
                         respond(response_out, &m.to_string());
                         return;
                     }

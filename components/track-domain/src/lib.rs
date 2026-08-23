@@ -35,9 +35,9 @@ use bindings::policy::guard::guard as policy;
 use bindings::records::store::store as records;
 use bindings::search::index::index as search;
 use bindings::ui::assets::files as statics;
-use bindings::webhook::sign::signer as sign;
 use bindings::wasi::clocks::monotonic_clock;
 use bindings::wasi::clocks::wall_clock;
+use bindings::webhook::sign::signer as sign;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
@@ -241,7 +241,8 @@ fn register(request: &IncomingRequest) -> Outcome {
     };
     // global role: `admin` may create projects; everyone else is `member`.
     let wanted = req.role.unwrap_or_else(|| "member".into());
-    let role = if ["member", "admin"].contains(&wanted.as_str()) { wanted } else { "member".into() };
+    let role =
+        if ["member", "admin"].contains(&wanted.as_str()) { wanted } else { "member".into() };
     let _ = rbac::assign_role(&principal.tenant, &principal.subject, &role);
     Outcome::Json(201, json!({"subject": principal.subject, "roles": [role]}).to_string())
 }
@@ -268,7 +269,10 @@ fn login(request: &IncomingRequest) -> Outcome {
 
 fn me(request: &IncomingRequest) -> Outcome {
     match introspect(request) {
-        Ok(p) => Outcome::Json(200, json!({"subject": p.subject, "tenant": p.tenant, "roles": p.roles}).to_string()),
+        Ok(p) => Outcome::Json(
+            200,
+            json!({"subject": p.subject, "tenant": p.tenant, "roles": p.roles}).to_string(),
+        ),
         Err(o) => o,
     }
 }
@@ -372,10 +376,14 @@ fn list_projects(request: &IncomingRequest) -> Outcome {
     }
     match records::list_records(PROJECTS, 0, "") {
         Ok(page) => {
-            let out: Vec<Value> = page.entries.iter().filter_map(|e| {
-                let d: Value = serde_json::from_str(&e.data).ok()?;
-                Some(json!({"id": e.id, "key": d["key"], "name": d["name"], "lead": d["lead"]}))
-            }).collect();
+            let out: Vec<Value> = page
+                .entries
+                .iter()
+                .filter_map(|e| {
+                    let d: Value = serde_json::from_str(&e.data).ok()?;
+                    Some(json!({"id": e.id, "key": d["key"], "name": d["name"], "lead": d["lead"]}))
+                })
+                .collect();
             Outcome::Json(200, json!({"projects": out}).to_string())
         }
         Err(e) => store_err(e),
@@ -423,7 +431,8 @@ fn add_member_row(project: &str, subject: &str, role: &str) {
         }
     }
     let data = json!({"key": key, "project": project, "subject": subject, "role": role});
-    let _ = records::create(MEMBERS, &data.to_string(), &["key".to_string(), "project".to_string()]);
+    let _ =
+        records::create(MEMBERS, &data.to_string(), &["key".to_string(), "project".to_string()]);
 }
 
 // ---- issues ------------------------------------------------------------------
@@ -479,7 +488,11 @@ fn create_issue(request: &IncomingRequest) -> Outcome {
         "status": "backlog",
         "flagged": false,
     });
-    let entry = match records::create(ISSUES, &data.to_string(), &["project".to_string(), "status".to_string()]) {
+    let entry = match records::create(
+        ISSUES,
+        &data.to_string(),
+        &["project".to_string(), "status".to_string()],
+    ) {
         Ok(e) => e,
         Err(e) => return store_err(e),
     };
@@ -490,11 +503,14 @@ fn create_issue(request: &IncomingRequest) -> Outcome {
         tags.push(format!("label:{label}"));
     }
     let _ = search::index_doc(&entry.id, &format!("{} {}", req.title, req.body), &tags);
-    publish("issue.created", &json!({"issue": entry.id, "ref": reference, "project": req.project, "by": p.subject}));
+    publish(
+        "issue.created",
+        &json!({"issue": entry.id, "ref": reference, "project": req.project, "by": p.subject}),
+    );
     Outcome::Json(201, issue_json(&entry).to_string())
 }
 
-fn list_issues(request: &IncomingRequest, ) -> Outcome {
+fn list_issues(request: &IncomingRequest) -> Outcome {
     let p = match introspect(request) {
         Ok(p) => p,
         Err(o) => return o,
@@ -530,7 +546,10 @@ fn list_issues(request: &IncomingRequest, ) -> Outcome {
         .iter()
         .filter(|e| {
             status.as_ref().is_none_or(|s| {
-                serde_json::from_str::<Value>(&e.data).ok().and_then(|d| d["status"].as_str().map(|x| x == s)).unwrap_or(false)
+                serde_json::from_str::<Value>(&e.data)
+                    .ok()
+                    .and_then(|d| d["status"].as_str().map(|x| x == s))
+                    .unwrap_or(false)
             })
         })
         .map(issue_json)
@@ -585,12 +604,20 @@ fn move_issue(request: &IncomingRequest, id: &str) -> Outcome {
     match fsm::fire(MACHINE, id, &req.event) {
         Ok(status) => {
             mirror_status(&entry, &data, &status.state);
-            publish("issue.moved", &json!({"issue": id, "ref": data["ref"], "event": req.event, "to": status.state, "by": p.subject}));
+            publish(
+                "issue.moved",
+                &json!({"issue": id, "ref": data["ref"], "event": req.event, "to": status.state, "by": p.subject}),
+            );
             // out axis: signed webhook on every transition.
-            fire_webhook("issue.moved", &json!({"issue": id, "ref": data["ref"], "to": status.state}));
+            fire_webhook(
+                "issue.moved",
+                &json!({"issue": id, "ref": data["ref"], "to": status.state}),
+            );
             Outcome::Json(200, json!({"status": status.state, "done": status.done}).to_string())
         }
-        Err(fsm::FsmError::IllegalTransition(cur)) => Outcome::Err(409, format!("cannot {} from {cur}", req.event)),
+        Err(fsm::FsmError::IllegalTransition(cur)) => {
+            Outcome::Err(409, format!("cannot {} from {cur}", req.event))
+        }
         Err(e) => Outcome::Err(503, format!("fsm: {e:?}")),
     }
 }
@@ -644,7 +671,11 @@ fn summarize(request: &IncomingRequest, id: &str) -> Outcome {
     let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
     let comments = records::find_by(COMMENTS, "issue", &json!(id).to_string()).unwrap_or_default();
     // assemble the thread text: title + body + every comment.
-    let mut thread = format!("{}\n{}\n", data["title"].as_str().unwrap_or(""), data["body"].as_str().unwrap_or(""));
+    let mut thread = format!(
+        "{}\n{}\n",
+        data["title"].as_str().unwrap_or(""),
+        data["body"].as_str().unwrap_or("")
+    );
     for c in &comments {
         if let Ok(d) = serde_json::from_str::<Value>(&c.data) {
             thread.push_str(d["body"].as_str().unwrap_or(""));
@@ -652,7 +683,10 @@ fn summarize(request: &IncomingRequest, id: &str) -> Outcome {
         }
     }
     match ai::summarize(&thread, ai::Length::Brief, "status and next steps") {
-        Ok(summary) => Outcome::Json(200, json!({"issue": id, "summary": summary, "comments": comments.len()}).to_string()),
+        Ok(summary) => Outcome::Json(
+            200,
+            json!({"issue": id, "summary": summary, "comments": comments.len()}).to_string(),
+        ),
         Err(e) => Outcome::Err(503, format!("ai: {e:?}")),
     }
 }
@@ -676,12 +710,15 @@ fn do_search(request: &IncomingRequest, path: &str) -> Outcome {
         Ok(h) => h,
         Err(e) => return Outcome::Err(503, format!("search: {e:?}")),
     };
-    let rows: Vec<Value> = hits.iter().filter_map(|h| {
-        let e = records::get(ISSUES, &h.id).ok()?;
-        let mut j = issue_json(&e);
-        j["score"] = json!((h.score * 1000.0).round() / 1000.0);
-        Some(j)
-    }).collect();
+    let rows: Vec<Value> = hits
+        .iter()
+        .filter_map(|h| {
+            let e = records::get(ISSUES, &h.id).ok()?;
+            let mut j = issue_json(&e);
+            j["score"] = json!((h.score * 1000.0).round() / 1000.0);
+            Some(j)
+        })
+        .collect();
     Outcome::Json(200, json!({"hits": rows}).to_string())
 }
 
@@ -690,7 +727,8 @@ fn do_search(request: &IncomingRequest, path: &str) -> Outcome {
 /// The timer pump (wasip2 has no background tasks). Flag in_progress issues
 /// older than STALE_SECS that aren't already flagged, publishing an event each.
 fn tick() -> Outcome {
-    let entries = records::find_by(ISSUES, "status", &json!("in_progress").to_string()).unwrap_or_default();
+    let entries =
+        records::find_by(ISSUES, "status", &json!("in_progress").to_string()).unwrap_or_default();
     let cutoff = now().saturating_sub(STALE_SECS);
     let mut flagged = 0;
     for e in &entries {
@@ -707,7 +745,10 @@ fn tick() -> Outcome {
         d["flagged"] = json!(true);
         if records::update(ISSUES, &e.id, &d.to_string(), e.revision).is_ok() {
             flagged += 1;
-            publish("issue.flagged", &json!({"issue": e.id, "ref": d["ref"], "reason": "stale in_progress"}));
+            publish(
+                "issue.flagged",
+                &json!({"issue": e.id, "ref": d["ref"], "reason": "stale in_progress"}),
+            );
         }
     }
     Outcome::Json(200, json!({"swept": entries.len(), "flagged": flagged}).to_string())
@@ -902,7 +943,8 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 }
 
 fn bearer(request: &IncomingRequest) -> Option<String> {
-    header(request, "authorization").and_then(|s| s.strip_prefix("Bearer ").map(|t| t.trim().to_string()))
+    header(request, "authorization")
+        .and_then(|s| s.strip_prefix("Bearer ").map(|t| t.trim().to_string()))
 }
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
@@ -951,24 +993,64 @@ fn decode(s: &str) -> String {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond_ct(response_out, code, "application/json", &[], body.as_bytes()),
+        Outcome::Json(code, body) => {
+            respond_ct(response_out, code, "application/json", &[], body.as_bytes())
+        }
         Outcome::Raw(code, ct, bytes) => respond_ct(response_out, code, &ct, &[], &bytes),
         Outcome::Auth(e) => {
             if let AuthError::RateLimited(secs) = e {
-                respond_ct(response_out, 429, "application/json", &[("retry-after", &secs.to_string())], format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}").as_bytes());
+                respond_ct(
+                    response_out,
+                    429,
+                    "application/json",
+                    &[("retry-after", &secs.to_string())],
+                    format!("{{\"error\":\"rate_limited\",\"retryAfter\":{secs}}}").as_bytes(),
+                );
             } else {
                 let (code, msg) = auth_error(&e);
-                respond_ct(response_out, code, "application/json", &[], format!("{{\"error\":\"{msg}\"}}").as_bytes());
+                respond_ct(
+                    response_out,
+                    code,
+                    "application/json",
+                    &[],
+                    format!("{{\"error\":\"{msg}\"}}").as_bytes(),
+                );
             }
         }
-        Outcome::Bad(msg) => respond_ct(response_out, 400, "application/json", &[], json!({ "error": msg }).to_string().as_bytes()),
-        Outcome::Err(code, msg) => respond_ct(response_out, code, "application/json", &[], json!({ "error": msg }).to_string().as_bytes()),
-        Outcome::Forbidden(msg) => respond_ct(response_out, 403, "application/json", &[], json!({ "error": msg }).to_string().as_bytes()),
-        Outcome::NotFound => respond_ct(response_out, 404, "application/json", &[], b"{\"error\":\"not_found\"}"),
+        Outcome::Bad(msg) => respond_ct(
+            response_out,
+            400,
+            "application/json",
+            &[],
+            json!({ "error": msg }).to_string().as_bytes(),
+        ),
+        Outcome::Err(code, msg) => respond_ct(
+            response_out,
+            code,
+            "application/json",
+            &[],
+            json!({ "error": msg }).to_string().as_bytes(),
+        ),
+        Outcome::Forbidden(msg) => respond_ct(
+            response_out,
+            403,
+            "application/json",
+            &[],
+            json!({ "error": msg }).to_string().as_bytes(),
+        ),
+        Outcome::NotFound => {
+            respond_ct(response_out, 404, "application/json", &[], b"{\"error\":\"not_found\"}")
+        }
     }
 }
 
-fn respond_ct(response_out: ResponseOutparam, status: u16, content_type: &str, extra: &[(&str, &str)], body: &[u8]) {
+fn respond_ct(
+    response_out: ResponseOutparam,
+    status: u16,
+    content_type: &str,
+    extra: &[(&str, &str)],
+    body: &[u8],
+) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);

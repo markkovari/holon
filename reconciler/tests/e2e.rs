@@ -155,14 +155,9 @@ async fn serve_platform(state: Shared) {
                 move |Json(body): Json<Value>| {
                     let state = state.clone();
                     async move {
-                        if let (Some(id), Some(d)) =
-                            (body["key"].as_str(), body["digest"].as_str())
+                        if let (Some(id), Some(d)) = (body["key"].as_str(), body["digest"].as_str())
                         {
-                            state
-                                .lock()
-                                .unwrap()
-                                .pushed
-                                .insert(id.to_string(), d.to_string());
+                            state.lock().unwrap().pushed.insert(id.to_string(), d.to_string());
                         }
                         StatusCode::OK
                     }
@@ -213,8 +208,18 @@ fn post_json(host: &str) -> Result<u16, String> {
     let body = json!({ "key": "e2e", "capacity": 100_000_000u64, "refill": 100_000_000u64 });
     let out = Command::new("curl")
         .args([
-            "-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10",
-            "-X", "POST", "-H", "content-type: application/json", "-H",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--max-time",
+            "10",
+            "-X",
+            "POST",
+            "-H",
+            "content-type: application/json",
+            "-H",
         ])
         .arg(format!("Host: {host}"))
         .args(["-d", &body.to_string(), &format!("http://127.0.0.1:{INGRESS_PORT}/api/ratelimit")])
@@ -244,7 +249,9 @@ fn serves(host: &str, within: Duration) -> Result<(), String> {
 fn six_manifests_one_fleet() {
     let root = repo_root();
     let raw = root.join("components/target/wasm32-wasip2/release");
-    for f in [&raw.join("gate_domain.wasm"), &raw.join("record_store.wasm"), &raw.join("shaper.wasm")] {
+    for f in
+        [&raw.join("gate_domain.wasm"), &raw.join("record_store.wasm"), &raw.join("shaper.wasm")]
+    {
         assert!(f.exists(), "missing {} — run `just build`", f.display());
     }
     // Composed here rather than by `just compose-gate`, which is the whole point of
@@ -252,8 +259,9 @@ fn six_manifests_one_fleet() {
     // test needs no second manual step and cannot run against a stale composition
     // someone built by hand three commits ago.
     let catalog = plug::Catalog::scan(&plug::default_dirs(&root));
-    let composed = plug::compose_to("gate-domain", &catalog, &root.join("components/target/composed"))
-        .expect("gate-domain composes with what it imports");
+    let composed =
+        plug::compose_to("gate-domain", &catalog, &root.join("components/target/composed"))
+            .expect("gate-domain composes with what it imports");
     assert!(
         comp_host_bin().exists(),
         "missing {} — run `cargo build --release` in host/",
@@ -283,9 +291,12 @@ fn six_manifests_one_fleet() {
     let sp = dir.path();
 
     let mut nats = Command::new("nats-server");
-    nats.args(["-js", "-sd"])
-        .arg(sp.join("nats"))
-        .args(["-a", "127.0.0.1", "-p", &NATS_PORT.to_string()]);
+    nats.args(["-js", "-sd"]).arg(sp.join("nats")).args([
+        "-a",
+        "127.0.0.1",
+        "-p",
+        &NATS_PORT.to_string(),
+    ]);
     let _nats = spawn("nats-server", nats);
     std::thread::sleep(Duration::from_secs(2));
 
@@ -309,8 +320,14 @@ fn six_manifests_one_fleet() {
     let _rec = spawn("comp-reconciler", rec);
 
     let mut ing = Command::new(env!("CARGO_BIN_EXE_comp-ingress"));
-    ing.args(["--addr", &format!("127.0.0.1:{INGRESS_PORT}")])
-        .args(["--nats-url", &nats_url, "--lattice", LATTICE, "--refresh-secs", "2"]);
+    ing.args(["--addr", &format!("127.0.0.1:{INGRESS_PORT}")]).args([
+        "--nats-url",
+        &nats_url,
+        "--lattice",
+        LATTICE,
+        "--refresh-secs",
+        "2",
+    ]);
     let _ing = spawn("comp-ingress", ing);
 
     // Serving is checked by INVOKING, never by reading inventory: an app that is

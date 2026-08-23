@@ -51,9 +51,7 @@ fn parse_index(tok: &str, len: usize) -> Result<usize, PatchError> {
         return Ok(0);
     }
     if tok.is_empty() || tok.starts_with('0') || !tok.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(PatchError::PathNotFound(format!(
-            "invalid array index token: {tok}"
-        )));
+        return Err(PatchError::PathNotFound(format!("invalid array index token: {tok}")));
     }
     tok.parse::<usize>().map_err(|_| {
         PatchError::PathNotFound(format!("array index out of range: {tok} (len {len})"))
@@ -105,9 +103,7 @@ fn resolve_parent_mut<'a>(
                     .ok_or_else(|| PatchError::PathNotFound(format!("missing parent: {idx}")))?
             }
             _ => {
-                return Err(PatchError::PathNotFound(format!(
-                    "parent is a scalar at token: {tok}"
-                )))
+                return Err(PatchError::PathNotFound(format!("parent is a scalar at token: {tok}")))
             }
         };
     }
@@ -145,9 +141,7 @@ fn op_add(root: &mut Value, tokens: &[String], value: Value) -> Result<(), Patch
             arr.insert(idx, value);
             Ok(())
         }
-        _ => Err(PatchError::PathNotFound(
-            "cannot add into a scalar parent".into(),
-        )),
+        _ => Err(PatchError::PathNotFound("cannot add into a scalar parent".into())),
     }
 }
 
@@ -165,15 +159,11 @@ fn op_remove(root: &mut Value, tokens: &[String]) -> Result<Value, PatchError> {
         Value::Array(arr) => {
             let idx = parse_index(last, arr.len())?;
             if idx >= arr.len() {
-                return Err(PatchError::PathNotFound(format!(
-                    "remove index out of range: {idx}"
-                )));
+                return Err(PatchError::PathNotFound(format!("remove index out of range: {idx}")));
             }
             Ok(arr.remove(idx))
         }
-        _ => Err(PatchError::PathNotFound(
-            "cannot remove from a scalar parent".into(),
-        )),
+        _ => Err(PatchError::PathNotFound("cannot remove from a scalar parent".into())),
     }
 }
 
@@ -194,8 +184,7 @@ fn req_str<'a>(op: &'a serde_json::Map<String, Value>, field: &str) -> Result<&'
 
 /// Read the required `value` field from an op object.
 fn req_value(op: &serde_json::Map<String, Value>) -> Result<&Value, PatchError> {
-    op.get("value")
-        .ok_or_else(|| PatchError::InvalidPatch("op missing 'value' field".into()))
+    op.get("value").ok_or_else(|| PatchError::InvalidPatch("op missing 'value' field".into()))
 }
 
 fn apply_op(root: &mut Value, op: &Value) -> Result<(), PatchError> {

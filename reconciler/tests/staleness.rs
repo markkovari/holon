@@ -89,7 +89,8 @@ fn read_batch(fleet: &Fleet, node: u16, id: &str) -> (Option<u64>, String) {
                 let body = r.text().unwrap_or_default();
                 let v: serde_json::Value =
                     serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
-                let n = v["items"].as_array().map(|a| a.len() as u64).or_else(|| v["size"].as_u64());
+                let n =
+                    v["items"].as_array().map(|a| a.len() as u64).or_else(|| v["size"].as_u64());
                 return (n, format!("{status} {body}"));
             }
             Err(e) => {

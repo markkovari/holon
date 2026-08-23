@@ -8,8 +8,8 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::cache::store::source;
 use bindings::cache::store::sink;
+use bindings::cache::store::source;
 use bindings::exports::cache::store::cache::{CacheError, Guest};
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::keyvalue::store;

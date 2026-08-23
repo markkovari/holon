@@ -20,10 +20,8 @@ fn require(route: &Route, action: &str) -> Result<(), Reply> {
     if route.bearer.is_empty() {
         return Err(Reply::err(401, "unauthenticated"));
     }
-    let required = auth_types::Permission {
-        target: "items".to_string(),
-        action: action.to_string(),
-    };
+    let required =
+        auth_types::Permission { target: "items".to_string(), action: action.to_string() };
     match authz::authorize(&route.bearer, &required) {
         Ok(_) => Ok(()),
         Err(auth_types::AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
@@ -148,7 +146,11 @@ fn get_queue(route: &Route) -> Reply {
     }
     let state = {
         let s = route.param("state");
-        if s.is_empty() { "pending".to_string() } else { s }
+        if s.is_empty() {
+            "pending".to_string()
+        } else {
+            s
+        }
     };
     let limit: usize = {
         let s = route.param("limit");
@@ -184,11 +186,19 @@ fn get_events(route: &Route) -> Reply {
     }
     let topic = {
         let t = route.param("topic");
-        if t.is_empty() { "moderation.decided".to_string() } else { t }
+        if t.is_empty() {
+            "moderation.decided".to_string()
+        } else {
+            t
+        }
     };
     let max: u32 = {
         let s = route.param("max");
-        if s.is_empty() { 20 } else { s.parse().unwrap_or(20) }
+        if s.is_empty() {
+            20
+        } else {
+            s.parse().unwrap_or(20)
+        }
     };
     match bus::poll(&topic, "queue-reader", max) {
         Ok(events) => Reply::json(

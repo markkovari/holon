@@ -171,8 +171,8 @@ fn total_running(fleet: &Fleet, dead: &[u16]) -> usize {
 fn deploy_root(api: &Api, fleet: &Fleet, name: &str) -> String {
     let wasm = composed_gate();
     assert!(matches!(api.upload("gate", wasm), 200 | 201), "upload failed");
-    let (code, dep) =
-        api.post("/api/deployments", json!({ "name": name, "nodes": [{"id": "gate"}], "edges": [] }));
+    let (code, dep) = api
+        .post("/api/deployments", json!({ "name": name, "nodes": [{"id": "gate"}], "edges": [] }));
     assert_eq!(code, 201, "deploy failed: {dep}");
     let id = dep["id"].as_str().unwrap().to_string();
 
@@ -361,11 +361,7 @@ fn a_search_tree_survives_a_machine_dying_under_it() {
     names.dedup();
     assert_eq!(before, names.len(), "two branches share an app name: {everything:?}");
 
-    assert!(
-        everything.len() > 1,
-        "not one branch was ever created:\n{}",
-        fleet.reconciler_log()
-    );
+    assert!(everything.len() > 1, "not one branch was ever created:\n{}", fleet.reconciler_log());
 
     let survivors = total_running(&fleet, &dead);
     assert!(

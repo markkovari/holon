@@ -20,9 +20,9 @@
 //! afterwards, that any of it happened. A part that invents its own storage shape
 //! or its own audit signature passes its own gate and fails the composition.
 
+mod assist;
 #[allow(warnings)]
 mod bindings;
-mod assist;
 mod intake;
 mod ledger;
 
@@ -272,10 +272,7 @@ fn read_body(request: &IncomingRequest) -> String {
 fn header(request: &IncomingRequest, name: &str) -> String {
     let fields = request.headers();
     let values = fields.get(name);
-    values
-        .first()
-        .map(|v| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_default()
+    values.first().map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default()
 }
 
 impl Guest for Component {

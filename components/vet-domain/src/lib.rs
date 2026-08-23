@@ -29,8 +29,8 @@ use serde::Deserialize;
 
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
-use bindings::auth::identity::session;
 use bindings::auth::identity::rbac;
+use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Permission, Principal, TokenPair};
 use bindings::records::store::store as records;
 use bindings::records::store::store::StoreError;
@@ -41,7 +41,7 @@ use bindings::validate::schema::validator::{Kind, Rule};
 // full-parity capability imports.
 use bindings::ai::inference::inference as ai;
 use bindings::blob::store::blobstore as blob;
-use bindings::cache::store::cache as cache;
+use bindings::cache::store::cache;
 use bindings::csv::codec::codec as csv;
 use bindings::event::bus::bus as events;
 use bindings::fsm::workflow::engine as fsm;
@@ -52,10 +52,10 @@ use bindings::money::amount::arithmetic as money;
 use bindings::otp::totp::authenticator as otp;
 use bindings::paginate::cursor::cursors as paginate;
 use bindings::pii::redact::redactor as pii;
-use bindings::sched::timer::timer as timer;
-use bindings::secrets::vault::vault as vault;
-use bindings::upload::policy::gate as upload;
+use bindings::sched::timer::timer;
+use bindings::secrets::vault::vault;
 use bindings::ui::assets::files as statics;
+use bindings::upload::policy::gate as upload;
 
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::keyvalue::store as kv;
@@ -149,7 +149,9 @@ impl Guest for Component {
                 (Method::Post, ["appointments", id, "notes"]) => add_note(&request, id),
                 (Method::Get, ["appointments", id, "notes"]) => list_notes(&request, id),
                 // /appointments/{id}/summary
-                (Method::Post, ["appointments", id, "summary"]) => post_summary(&request, id, &query),
+                (Method::Post, ["appointments", id, "summary"]) => {
+                    post_summary(&request, id, &query)
+                }
                 (Method::Get, ["appointments", id, "summary"]) => get_summary(&request, id),
 
                 // not an API route — try serving the embedded SPA (GET only).
@@ -175,7 +177,9 @@ enum Outcome {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
+        Outcome::Json(code, body) => {
+            respond(response_out, code, "application/json", body.as_bytes())
+        }
         Outcome::Raw(code, ct, bytes) => respond(response_out, code, &ct, &bytes),
         Outcome::Auth(e) => {
             // rate-limited carries a retry-after (seconds) — surface it as the
@@ -191,8 +195,12 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
                 respond_json(response_out, code, &format!("{{\"error\":\"{msg}\"}}"));
             }
         }
-        Outcome::Bad(msg) => respond_json(response_out, 400, &format!("{{\"error\":\"{}\"}}", esc(&msg))),
-        Outcome::Err(code, msg) => respond_json(response_out, code, &format!("{{\"error\":\"{}\"}}", esc(&msg))),
+        Outcome::Bad(msg) => {
+            respond_json(response_out, 400, &format!("{{\"error\":\"{}\"}}", esc(&msg)))
+        }
+        Outcome::Err(code, msg) => {
+            respond_json(response_out, code, &format!("{{\"error\":\"{}\"}}", esc(&msg)))
+        }
         Outcome::NotFound => respond_json(response_out, 404, "{\"error\":\"not_found\"}"),
     }
 }
@@ -211,18 +219,29 @@ fn ensure_seeded() {
 
     // appointment lifecycle: booked -> confirmed -> completed | cancel.
     let def = fsm::Definition {
-        states: vec![
-            "booked".into(),
-            "confirmed".into(),
-            "completed".into(),
-            "cancelled".into(),
-        ],
+        states: vec!["booked".into(), "confirmed".into(), "completed".into(), "cancelled".into()],
         initial: "booked".into(),
         transitions: vec![
-            fsm::Transition { event: "confirm".into(), source: "booked".into(), target: "confirmed".into() },
-            fsm::Transition { event: "complete".into(), source: "confirmed".into(), target: "completed".into() },
-            fsm::Transition { event: "cancel".into(), source: "booked".into(), target: "cancelled".into() },
-            fsm::Transition { event: "cancel".into(), source: "confirmed".into(), target: "cancelled".into() },
+            fsm::Transition {
+                event: "confirm".into(),
+                source: "booked".into(),
+                target: "confirmed".into(),
+            },
+            fsm::Transition {
+                event: "complete".into(),
+                source: "confirmed".into(),
+                target: "completed".into(),
+            },
+            fsm::Transition {
+                event: "cancel".into(),
+                source: "booked".into(),
+                target: "cancelled".into(),
+            },
+            fsm::Transition {
+                event: "cancel".into(),
+                source: "confirmed".into(),
+                target: "cancelled".into(),
+            },
         ],
         terminal: vec!["completed".into(), "cancelled".into()],
     };
@@ -480,7 +499,10 @@ fn create_pet(request: &IncomingRequest) -> Outcome {
     // store WITHOUT an id — records:store mints the ULID. owner is the subject.
     let data = format!(
         "{{\"name\":{},\"species\":{},\"owner\":{},\"notes\":{}}}",
-        js(&req.name), js(&req.species), js(&principal.subject), js(&notes)
+        js(&req.name),
+        js(&req.species),
+        js(&principal.subject),
+        js(&notes)
     );
     let entry = match records::create("pets", &data, &["owner".to_string()]) {
         Ok(e) => e,
@@ -683,7 +705,8 @@ fn upload_pet_photo(request: &IncomingRequest, pet_id: &str) -> Outcome {
     if owner != principal.subject {
         return Outcome::Err(403, "not_your_pet".into());
     }
-    let content_type = header(request, "content-type").unwrap_or_else(|| "application/octet-stream".into());
+    let content_type =
+        header(request, "content-type").unwrap_or_else(|| "application/octet-stream".into());
     let body = match read_body(request) {
         Ok(b) => b,
         Err(_) => return Outcome::Bad("could not read body".into()),
@@ -692,10 +715,11 @@ fn upload_pet_photo(request: &IncomingRequest, pet_id: &str) -> Outcome {
         return Outcome::Err(400, "empty_body".into());
     }
     // 1) upload:policy — validate + mint a signed ticket.
-    let ticket = match upload::authorize(&format!("pet/{pet_id}"), &content_type, body.len() as u64, 0) {
-        Ok(t) => t,
-        Err(e) => return policy_err(e),
-    };
+    let ticket =
+        match upload::authorize(&format!("pet/{pet_id}"), &content_type, body.len() as u64, 0) {
+            Ok(t) => t,
+            Err(e) => return policy_err(e),
+        };
     // 2) upload:policy — redeem the ticket (signature + expiry check).
     if upload::redeem(&ticket.token).is_err() {
         return Outcome::Err(400, "invalid_ticket".into());
@@ -773,7 +797,10 @@ fn create_appointment(request: &IncomingRequest) -> Outcome {
     let doctor = req.doctor.unwrap_or_default();
     let data = format!(
         "{{\"pet\":{},\"owner\":{},\"doctor\":{},\"datetime\":{},\"status\":\"booked\"}}",
-        js(&req.pet), js(&owner), js(&doctor), js(&req.datetime)
+        js(&req.pet),
+        js(&owner),
+        js(&doctor),
+        js(&req.datetime)
     );
     let entry = match records::create(
         "appointments",
@@ -788,10 +815,8 @@ fn create_appointment(request: &IncomingRequest) -> Outcome {
     // schedule the 24h-before reminder (no-op on unparseable datetime).
     schedule_reminder(&entry.id, &req.datetime);
     // publish the domain event — reactions consume it via event:bus on their own.
-    let payload = format!(
-        "{{\"id\":{},\"pet\":{},\"owner\":{}}}",
-        js(&entry.id), js(&req.pet), js(&owner)
-    );
+    let payload =
+        format!("{{\"id\":{},\"pet\":{},\"owner\":{}}}", js(&entry.id), js(&req.pet), js(&owner));
     let _ = events::publish(APPT_TOPIC, payload.as_bytes());
     Outcome::Json(201, appt_json(&entry.id, &entry.data))
 }
@@ -1019,7 +1044,10 @@ fn add_note(request: &IncomingRequest, appt_id: &str) -> Outcome {
     assign_doctor(appt_id, &principal.subject);
     let data = format!(
         "{{\"appointment\":{},\"author\":{},\"text\":{},\"at\":{}}}",
-        js(appt_id), js(&principal.subject), js(&req.text), now_seconds()
+        js(appt_id),
+        js(&principal.subject),
+        js(&req.text),
+        now_seconds()
     );
     match records::create("notes", &data, &["appointment".to_string()]) {
         Ok(e) => Outcome::Json(201, format!("{{\"id\":{},{}}}", js(&e.id), strip_braces(&e.data))),
@@ -1054,12 +1082,7 @@ fn notes_for(appt_id: &str) -> Vec<String> {
         .map(|e| {
             let text = json_field(&e.data, "text").unwrap_or_default();
             let html = render_markdown(&text);
-            format!(
-                "{{\"id\":{},{},\"textHtml\":{}}}",
-                js(&e.id),
-                strip_braces(&e.data),
-                js(&html)
-            )
+            format!("{{\"id\":{},{},\"textHtml\":{}}}", js(&e.id), strip_braces(&e.data), js(&html))
         })
         .collect()
 }
@@ -1226,7 +1249,9 @@ fn admin_run_reminders(request: &IncomingRequest, query: &str) -> Outcome {
                 let owner = json_field(&appt.data, "owner").unwrap_or_default();
                 fired.push(format!(
                     "{{\"appointment\":{},\"pet\":{},\"owner\":{}}}",
-                    js(&appt_id), js(&pet_id), js(&owner)
+                    js(&appt_id),
+                    js(&pet_id),
+                    js(&owner)
                 ));
             }
         }
@@ -1379,7 +1404,8 @@ fn admin_export_csv(request: &IncomingRequest, what: &str) -> Outcome {
                     "status".into(),
                 ],
             }];
-            let appts = records::list_records("appointments", 0, "").map(|p| p.entries).unwrap_or_default();
+            let appts =
+                records::list_records("appointments", 0, "").map(|p| p.entries).unwrap_or_default();
             for a in appts {
                 rows.push(csv::Row {
                     fields: vec![
@@ -1547,9 +1573,8 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 }
 
 fn bearer(request: &IncomingRequest) -> Option<String> {
-    header(request, "authorization").and_then(|s| {
-        s.strip_prefix("Bearer ").map(|tok| tok.trim().to_string())
-    })
+    header(request, "authorization")
+        .and_then(|s| s.strip_prefix("Bearer ").map(|tok| tok.trim().to_string()))
 }
 
 /// First value of a request header as a UTF-8 string.
@@ -1664,7 +1689,8 @@ fn jget_str(v: &serde_json::Value, key: &str) -> String {
 
 /// Set/replace a top-level string field in a flat JSON object string.
 fn set_json_field(obj: &str, key: &str, value: &str) -> String {
-    let mut v: serde_json::Value = serde_json::from_str(obj).unwrap_or_else(|_| serde_json::json!({}));
+    let mut v: serde_json::Value =
+        serde_json::from_str(obj).unwrap_or_else(|_| serde_json::json!({}));
     if let Some(map) = v.as_object_mut() {
         map.insert(key.to_string(), serde_json::Value::String(value.to_string()));
     }
@@ -1703,7 +1729,10 @@ fn token_pair_json(tp: &TokenPair) -> String {
     let session = tp.session_id.as_ref().map(|s| js(s)).unwrap_or_else(|| "null".into());
     format!(
         "{{\"access_token\":{},\"refresh_token\":{},\"expires_in\":{},\"session_id\":{}}}",
-        js(&tp.access_token), refresh, tp.expires_in, session
+        js(&tp.access_token),
+        refresh,
+        tp.expires_in,
+        session
     )
 }
 
@@ -1748,7 +1777,9 @@ fn policy_err(e: upload::PolicyError) -> Outcome {
         upload::PolicyError::TypeNotAllowed(_) => Outcome::Err(415, "type_not_allowed".into()),
         upload::PolicyError::TooLarge(_) => Outcome::Err(413, "too_large".into()),
         upload::PolicyError::InvalidTicket => Outcome::Err(400, "invalid_ticket".into()),
-        upload::PolicyError::BackendUnavailable(m) => Outcome::Err(503, format!("backend: {}", esc(&m))),
+        upload::PolicyError::BackendUnavailable(m) => {
+            Outcome::Err(503, format!("backend: {}", esc(&m)))
+        }
     }
 }
 

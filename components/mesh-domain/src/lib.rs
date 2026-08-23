@@ -195,11 +195,16 @@ fn cas_circuit<T>(
             .ok()?
             .into_iter()
             .next()
-            .and_then(|e| serde_json::from_str::<Value>(&e.data).ok().map(|v| (e.id, e.revision, v)));
+            .and_then(|e| {
+                serde_json::from_str::<Value>(&e.data).ok().map(|v| (e.id, e.revision, v))
+            });
 
         let (existing, doc) = match current {
             Some((id, rev, v)) => (Some((id, rev)), v),
-            None => (None, json!({ "key": key, "circuit": circuit_json(&zero_circuit()), "stats": stats_json(&Counters::default()) })),
+            None => (
+                None,
+                json!({ "key": key, "circuit": circuit_json(&zero_circuit()), "stats": stats_json(&Counters::default()) }),
+            ),
         };
         let (out, next, delta) = f(circuit_from(&doc));
         let mut stats = counters_from(&doc["stats"]);
@@ -242,7 +247,13 @@ impl Counters {
 
 fn counters_from(v: &Value) -> Counters {
     let n = |k: &str| v[k].as_u64().unwrap_or(0);
-    Counters { attempts: n("attempts"), ok: n("ok"), failed: n("failed"), shed: n("shed"), trips: n("trips") }
+    Counters {
+        attempts: n("attempts"),
+        ok: n("ok"),
+        failed: n("failed"),
+        shed: n("shed"),
+        trips: n("trips"),
+    }
 }
 
 fn stats_json(c: &Counters) -> Value {
@@ -327,9 +338,14 @@ fn call(request: &IncomingRequest) -> Outcome {
             Err(router::ProxyError::NoRoute) => {
                 // A missing route is OUR misconfiguration, not an upstream
                 // failure — don't let it trip the breaker.
-                return Outcome::Err(502, format!("no route configured for {path} (set CFG_ROUTES)"));
+                return Outcome::Err(
+                    502,
+                    format!("no route configured for {path} (set CFG_ROUTES)"),
+                );
             }
-            Err(router::ProxyError::UpstreamUnreachable(m)) => (false, 0, Some(format!("unreachable: {m}"))),
+            Err(router::ProxyError::UpstreamUnreachable(m)) => {
+                (false, 0, Some(format!("unreachable: {m}")))
+            }
         };
         last_status = status;
         last_error = err.clone();
@@ -339,7 +355,8 @@ fn call(request: &IncomingRequest) -> Outcome {
         let state = cas_circuit(&key, pol.breaker.open_ms, |c| {
             let before = c.state;
             let next = rb::observe(c, now, pol.breaker, ok);
-            let tripped = !matches!(before, rb::CircuitState::Open) && matches!(next.state, rb::CircuitState::Open);
+            let tripped = !matches!(before, rb::CircuitState::Open)
+                && matches!(next.state, rb::CircuitState::Open);
             let delta = Counters {
                 attempts: 1,
                 ok: ok as u64,
@@ -372,7 +389,8 @@ fn call(request: &IncomingRequest) -> Outcome {
     }
 
     // Every attempt failed — surface it as a bad gateway with the whole trail.
-    let state = current_doc(&key).map(|v| v["circuit"]["state"].as_str().unwrap_or("closed").to_string());
+    let state =
+        current_doc(&key).map(|v| v["circuit"]["state"].as_str().unwrap_or("closed").to_string());
     Outcome::Json(
         502,
         json!({
@@ -400,7 +418,11 @@ fn current_doc(key: &str) -> Option<Value> {
 fn view(doc: &Value, now: u64) -> Value {
     let c = circuit_from(doc);
     let open_ms = doc["open_ms"].as_u64().unwrap_or(2_000);
-    let open_for = if matches!(c.state, rb::CircuitState::Open) { now.saturating_sub(c.changed_ms) } else { 0 };
+    let open_for = if matches!(c.state, rb::CircuitState::Open) {
+        now.saturating_sub(c.changed_ms)
+    } else {
+        0
+    };
     let mut v = doc.clone();
     v["retry_after_ms"] = json!(open_ms.saturating_sub(open_for));
     v["would_admit"] = json!(!matches!(c.state, rb::CircuitState::Open) || open_for >= open_ms);

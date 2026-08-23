@@ -112,7 +112,10 @@ impl AppSpec {
     pub fn parse(yaml: &str) -> Result<Self> {
         let spec: Self = serde_norway::from_str(yaml).context("reading the app spec")?;
         if spec.version != VERSION {
-            bail!("unsupported spec version {:?}; this build understands {VERSION:?}", spec.version);
+            bail!(
+                "unsupported spec version {:?}; this build understands {VERSION:?}",
+                spec.version
+            );
         }
         if spec.components.is_empty() {
             bail!("`{}` declares no components", spec.app);

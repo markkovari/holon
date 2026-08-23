@@ -39,7 +39,11 @@ is obvious motion blur or the subject is clearly missing focus — otherwise ass
 it is sharp and judge composition, light, subject, and moment instead.";
 
 fn model() -> String {
-    config::get("photo:model").ok().flatten().filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_MODEL.to_string())
+    config::get("photo:model")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string())
 }
 
 fn api_key() -> Option<String> {
@@ -89,9 +93,14 @@ fn post_anthropic(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     let _ = opts.set_connect_timeout(Some(30_000_000_000));
     let _ = opts.set_first_byte_timeout(Some(180_000_000_000));
     let _ = opts.set_between_bytes_timeout(Some(180_000_000_000));
-    let fut = outgoing_handler::handle(req, Some(opts)).map_err(|err| format!("handle: {err:?}"))?;
+    let fut =
+        outgoing_handler::handle(req, Some(opts)).map_err(|err| format!("handle: {err:?}"))?;
     fut.subscribe().block();
-    let resp = fut.get().ok_or_else(|| e("no response"))?.map_err(|_| e("taken"))?.map_err(|err| format!("http: {err:?}"))?;
+    let resp = fut
+        .get()
+        .ok_or_else(|| e("no response"))?
+        .map_err(|_| e("taken"))?
+        .map_err(|err| format!("http: {err:?}"))?;
     let status = resp.status();
     let mut buf = Vec::new();
     if let Ok(incoming) = resp.consume() {
@@ -153,7 +162,8 @@ fn read_body(request: &IncomingRequest) -> Vec<u8> {
 /// The whole evaluate path: parse the upload, ask the model, return the critique.
 fn evaluate(request: &IncomingRequest) -> Result<String, String> {
     let body = read_body(request);
-    let v: serde_json::Value = serde_json::from_slice(&body).map_err(|e| format!("bad JSON body: {e}"))?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|e| format!("bad JSON body: {e}"))?;
     let media_type = v["media_type"].as_str().ok_or("missing media_type")?;
     let data = v["data"].as_str().ok_or("missing data")?;
     if data.is_empty() {
@@ -171,11 +181,17 @@ fn evaluate(request: &IncomingRequest) -> Result<String, String> {
         let snippet = String::from_utf8_lossy(&resp).chars().take(300).collect::<String>();
         return Err(format!("vision API {status}: {snippet}"));
     }
-    let parsed: serde_json::Value = serde_json::from_slice(&resp).map_err(|e| format!("bad response: {e}"))?;
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&resp).map_err(|e| format!("bad response: {e}"))?;
     let text: String = parsed["content"]
         .as_array()
         .map(|blocks| {
-            blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("")
+            blocks
+                .iter()
+                .filter(|b| b["type"] == "text")
+                .filter_map(|b| b["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
         })
         .unwrap_or_default();
     if text.is_empty() {

@@ -6,8 +6,8 @@
 //! matters is never re-checked from the send result — it is read from `outbox::fail`'s return
 //! value, which is the only thing that says whether this event will ever be retried again.
 
-use crate::bindings::auth::identity::types::{AuthError, Permission};
 use crate::bindings::auth::identity::authorizer as authz;
+use crate::bindings::auth::identity::types::{AuthError, Permission};
 use crate::bindings::notify::dispatch::dispatcher as notify;
 use crate::bindings::outbox::dispatch::queue as outbox;
 use crate::bindings::wasi::http::types::Method;
@@ -22,9 +22,9 @@ fn authorize(route: &Route) -> Result<(), Reply> {
     let required = Permission { target: "tickets".to_string(), action: "deliver".to_string() };
     match authz::authorize(&route.bearer, &required) {
         Ok(_) => Ok(()),
-        Err(AuthError::InvalidToken(_)) | Err(AuthError::Expired) | Err(AuthError::Malformed(_)) => {
-            Err(Reply::err(401, "unauthenticated"))
-        }
+        Err(AuthError::InvalidToken(_))
+        | Err(AuthError::Expired)
+        | Err(AuthError::Malformed(_)) => Err(Reply::err(401, "unauthenticated")),
         Err(AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
         Err(AuthError::BackendUnavailable(_)) | Err(AuthError::Internal(_)) => {
             Err(Reply::err(503, "auth_unavailable"))

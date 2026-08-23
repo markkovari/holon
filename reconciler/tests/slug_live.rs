@@ -73,7 +73,13 @@ impl Api {
         assert!(matches!(code, 200 | 201), "upload returned {code}");
     }
     fn post(&self, path: &str, body: Value) -> (u16, Value) {
-        let r = self.http.post(format!("{}{path}", self.base)).bearer_auth(&self.token).json(&body).send().unwrap();
+        let r = self
+            .http
+            .post(format!("{}{path}", self.base))
+            .bearer_auth(&self.token)
+            .json(&body)
+            .send()
+            .unwrap();
         (r.status().as_u16(), r.json().unwrap_or(Value::Null))
     }
 }
@@ -81,7 +87,8 @@ impl Api {
 /// Call the capability over the lattice: ingress HTTP -> NATS -> slug-probe ->
 /// (internal) slug -> back. Returns the slug it produced.
 fn slugify_over_lattice(fleet: &Fleet, text: &str) -> Option<String> {
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
     let enc: String = url_encode(text);
     let r = http
         .get(format!("http://127.0.0.1:{}/slugify?text={enc}", fleet.ingress_port))
@@ -96,7 +103,9 @@ fn url_encode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -110,8 +119,10 @@ fn the_slug_capability_runs_and_behaves_over_the_lattice() {
     let api = Api::new(fleet.platform_url());
 
     api.upload("slug", wasm);
-    let (code, dep) =
-        api.post("/api/deployments", json!({ "name": "slug", "nodes": [{"id": "slug"}], "edges": [] }));
+    let (code, dep) = api.post(
+        "/api/deployments",
+        json!({ "name": "slug", "nodes": [{"id": "slug"}], "edges": [] }),
+    );
     assert_eq!(code, 201, "deploy failed: {dep}");
     let id = dep["id"].as_str().unwrap().to_string();
 

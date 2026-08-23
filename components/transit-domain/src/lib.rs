@@ -101,7 +101,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -147,7 +148,8 @@ fn me(request: &IncomingRequest) -> Outcome {
     match introspect(request) {
         Ok(p) => Outcome::Json(
             200,
-            json!({ "subject": p.subject, "roles": p.roles, "is_validator": is_validator(&p) }).to_string(),
+            json!({ "subject": p.subject, "roles": p.roles, "is_validator": is_validator(&p) })
+                .to_string(),
         ),
         Err(o) => o,
     }
@@ -173,7 +175,8 @@ fn ensure_fares() {
         return;
     }
     for (key, name, kind, minutes, price) in CATALOG {
-        let d = json!({ "key": key, "name": name, "kind": kind, "minutes": minutes, "price": price });
+        let d =
+            json!({ "key": key, "name": name, "kind": kind, "minutes": minutes, "price": price });
         let _ = records::create(FARES, &d.to_string(), &["key".to_string()]);
     }
 }
@@ -345,11 +348,13 @@ fn validate(request: &IncomingRequest) -> Outcome {
             // no state change (already used / expired) -> answer immediately.
             Step::Done(outcome) => return outcome,
             // activation / use recorded -> commit guarded by the read revision.
-            Step::Commit(next, outcome) => match records::update(TICKETS, &code, &next.to_string(), entry.revision) {
-                Ok(_) => return outcome,
-                Err(records::StoreError::RevisionConflict(_)) => continue, // lost the race; re-read
-                Err(e) => return store_err(e),
-            },
+            Step::Commit(next, outcome) => {
+                match records::update(TICKETS, &code, &next.to_string(), entry.revision) {
+                    Ok(_) => return outcome,
+                    Err(records::StoreError::RevisionConflict(_)) => continue, // lost the race; re-read
+                    Err(e) => return store_err(e),
+                }
+            }
         }
     }
     Outcome::Err(503, "validation contended, please retry".into())
@@ -386,7 +391,10 @@ fn decide(t: &Value, validator: &str) -> Step {
 
     if kind == "single" {
         if activated == 0 {
-            Step::Commit(with_use(t, now), accept("single ride — enjoy your trip", &kind, None, None))
+            Step::Commit(
+                with_use(t, now),
+                accept("single ride — enjoy your trip", &kind, None, None),
+            )
         } else {
             Step::Done(reject("already used", t))
         }
@@ -394,11 +402,17 @@ fn decide(t: &Value, validator: &str) -> Step {
         // duration / pass: activate on first scan, then valid until the window ends.
         if activated == 0 {
             let until = now + (minutes as u64) * 60;
-            Step::Commit(with_use(t, now), accept("ticket activated", &kind, Some(until), Some(minutes)))
+            Step::Commit(
+                with_use(t, now),
+                accept("ticket activated", &kind, Some(until), Some(minutes)),
+            )
         } else {
             let until = activated + (minutes as u64) * 60;
             if now <= until {
-                Step::Commit(with_use(t, 0), accept("valid", &kind, Some(until), Some(((until - now) / 60) as i64)))
+                Step::Commit(
+                    with_use(t, 0),
+                    accept("valid", &kind, Some(until), Some(((until - now) / 60) as i64)),
+                )
             } else {
                 Step::Done(reject("expired", t))
             }
@@ -500,7 +514,13 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     respond(response_out, code, "application/json", None, body.as_bytes());
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, disposition: Option<&str>, body: &[u8]) {
+fn respond(
+    response_out: ResponseOutparam,
+    status: u16,
+    ctype: &str,
+    disposition: Option<&str>,
+    body: &[u8],
+) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {
