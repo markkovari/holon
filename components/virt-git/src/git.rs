@@ -203,7 +203,8 @@ fn hex_to_raw(hex: &str) -> Result<[u8; 20], String> {
     let mut out = [0u8; 20];
     for i in 0..20 {
         let hi = (b[i * 2] as char).to_digit(16).ok_or_else(|| format!("{hex:?} is not hex"))?;
-        let lo = (b[i * 2 + 1] as char).to_digit(16).ok_or_else(|| format!("{hex:?} is not hex"))?;
+        let lo =
+            (b[i * 2 + 1] as char).to_digit(16).ok_or_else(|| format!("{hex:?} is not hex"))?;
         out[i] = ((hi << 4) | lo) as u8;
     }
     Ok(out)
@@ -240,7 +241,8 @@ mod tests {
     /// assertions can skip rather than fail for the wrong reason.
     fn git(args: &[&str], stdin: Option<&[u8]>) -> Option<String> {
         let mut c = Command::new("git");
-        c.args(args).stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        c.args(args)
+            .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         let mut child = c.spawn().ok()?;
@@ -333,7 +335,8 @@ mod tests {
         let hashed = git(&["-C", &d, "hash-object", "-w", "-t", "blob", "--stdin"], Some(b""));
         assert_eq!(hashed.as_deref(), Some(empty.as_str()), "the empty blob should round-trip");
         // Write the subtree into the repo too.
-        let _ = git(&["-C", &d, "mktree"], Some(format!("100644 blob {empty}\tinner\n").as_bytes()));
+        let _ =
+            git(&["-C", &d, "mktree"], Some(format!("100644 blob {empty}\tinner\n").as_bytes()));
 
         let theirs = git(&["-C", &d, "mktree"], Some(ordered.as_bytes()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -341,7 +344,10 @@ mod tests {
             eprintln!("SKIPPED: `git mktree` would not run");
             return;
         };
-        assert_eq!(ours, theirs, "tree id disagrees with git — the ordering rule is the usual cause");
+        assert_eq!(
+            ours, theirs,
+            "tree id disagrees with git — the ordering rule is the usual cause"
+        );
     }
 
     #[test]

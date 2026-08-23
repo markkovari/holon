@@ -40,11 +40,11 @@ mod bindings;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use bindings::comp::store::cas;
 use bindings::exports::records::store::store::{
     Entry, Filter, Guest, Page, RepairReport, StoreError,
 };
 use bindings::wasi::clocks::wall_clock;
-use bindings::comp::store::cas;
 use bindings::wasi::keyvalue::batch;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wasi::random::random::get_random_bytes;
@@ -121,12 +121,7 @@ fn idx_key(collection: &str) -> String {
 
 /// Storage key for a secondary index: `ix_{collection}_{field}_{sanitize(value)}`.
 fn ix_key(collection: &str, field: &str, value: &str) -> String {
-    format!(
-        "ix_{}_{}_{}",
-        sanitize(collection),
-        sanitize(field),
-        sanitize_value(value)
-    )
+    format!("ix_{}_{}_{}", sanitize(collection), sanitize(field), sanitize_value(value))
 }
 
 // ---- ULID minting -------------------------------------------------------
@@ -200,9 +195,8 @@ fn load_record(
 ) -> Result<Option<Stored>, StoreError> {
     match bucket.get(&rec_key(collection, id)) {
         Ok(Some(bytes)) => {
-            let s = serde_json::from_slice::<Stored>(&bytes).map_err(|e| {
-                StoreError::BackendUnavailable(format!("corrupt record {id}: {e}"))
-            })?;
+            let s = serde_json::from_slice::<Stored>(&bytes)
+                .map_err(|e| StoreError::BackendUnavailable(format!("corrupt record {id}: {e}")))?;
             Ok(Some(s))
         }
         Ok(None) => Ok(None),
@@ -233,9 +227,8 @@ fn load_records_many(
     let mut out = Vec::with_capacity(ids.len());
     for (id, key) in ids.iter().zip(&keys) {
         if let Some(bytes) = by_key.remove(key) {
-            let stored = serde_json::from_slice::<Stored>(&bytes).map_err(|e| {
-                StoreError::BackendUnavailable(format!("corrupt record {id}: {e}"))
-            })?;
+            let stored = serde_json::from_slice::<Stored>(&bytes)
+                .map_err(|e| StoreError::BackendUnavailable(format!("corrupt record {id}: {e}")))?;
             out.push((id.clone(), stored));
         }
     }
@@ -345,11 +338,9 @@ fn ids_load(bucket: &kv::Bucket, base: &str) -> Result<IdList, StoreError> {
             if let Ok(m) = serde_json::from_slice::<Manifest>(&bytes) {
                 Ok(IdList::Chunked(m))
             } else {
-                serde_json::from_slice::<Vec<String>>(&bytes)
-                    .map(IdList::Legacy)
-                    .map_err(|e| {
-                        StoreError::BackendUnavailable(format!("corrupt id list {base}: {e}"))
-                    })
+                serde_json::from_slice::<Vec<String>>(&bytes).map(IdList::Legacy).map_err(|e| {
+                    StoreError::BackendUnavailable(format!("corrupt id list {base}: {e}"))
+                })
             }
         }
         Ok(None) => Ok(IdList::Absent),
@@ -359,10 +350,7 @@ fn ids_load(bucket: &kv::Bucket, base: &str) -> Result<IdList, StoreError> {
 
 /// Batched fetch of the given chunk keys, concatenated in input order
 /// (missing chunks skipped — index drift is best-effort, as before).
-fn ids_fetch_chunks(
-    bucket: &kv::Bucket,
-    keys: &[String],
-) -> Result<Vec<String>, StoreError> {
+fn ids_fetch_chunks(bucket: &kv::Bucket, keys: &[String]) -> Result<Vec<String>, StoreError> {
     if keys.is_empty() {
         return Ok(Vec::new());
     }
@@ -373,9 +361,8 @@ fn ids_fetch_chunks(
     let mut out = Vec::new();
     for key in keys {
         if let Some(bytes) = by_key.remove(key) {
-            let ids: Vec<String> = serde_json::from_slice(&bytes).map_err(|e| {
-                StoreError::BackendUnavailable(format!("corrupt chunk {key}: {e}"))
-            })?;
+            let ids: Vec<String> = serde_json::from_slice(&bytes)
+                .map_err(|e| StoreError::BackendUnavailable(format!("corrupt chunk {key}: {e}")))?;
             out.extend(ids);
         }
     }
@@ -430,8 +417,7 @@ fn ids_page(
     // < chunks[i+1].first, so if chunks[i+1].first <= after none can qualify.
     let mut start_chunk = 0;
     if !after.is_empty() {
-        while start_chunk + 1 < m.chunks.len()
-            && m.chunks[start_chunk + 1].first.as_str() <= after
+        while start_chunk + 1 < m.chunks.len() && m.chunks[start_chunk + 1].first.as_str() <= after
         {
             start_chunk += 1;
         }
@@ -453,8 +439,7 @@ fn ids_page(
     let ids = ids_fetch_chunks(bucket, &keys)?;
     let from = page_start(&ids, after);
     let window: Vec<String> = ids.iter().skip(from).take(want).cloned().collect();
-    let more = ids.len() - from > window.len()
-        || start_chunk + fetched_chunks < m.chunks.len();
+    let more = ids.len() - from > window.len() || start_chunk + fetched_chunks < m.chunks.len();
     Ok((window, more))
 }
 
@@ -472,11 +457,7 @@ fn ids_write_chunked(bucket: &kv::Bucket, base: &str, ids: &[String]) -> Result<
     let mut chunks = Vec::new();
     for (i, chunk) in ids.chunks(CHUNK_MAX).enumerate() {
         let seq = i as u32;
-        chunks.push(ChunkMeta {
-            seq,
-            first: chunk[0].clone(),
-            count: chunk.len() as u64,
-        });
+        chunks.push(ChunkMeta { seq, first: chunk[0].clone(), count: chunk.len() as u64 });
         writes.push((chunk_key(base, seq), enc(&chunk)?));
     }
     writes.push((base.to_string(), enc(&Manifest { chunks })?));
@@ -644,10 +625,7 @@ fn ix_remove(bucket: &kv::Bucket, key: &str, id: &str) -> Result<(), StoreError>
 /// field is absent. Encodes compactly so a string field `acme` -> `"acme"`,
 /// matching the `value` callers pass to `find-by` / `filter`.
 fn field_value(parsed: &Value, field: &str) -> Option<String> {
-    parsed
-        .as_object()
-        .and_then(|obj| obj.get(field))
-        .map(|v| v.to_string())
+    parsed.as_object().and_then(|obj| obj.get(field)).map(|v| v.to_string())
 }
 
 /// Add `id` to every secondary index implied by `data` + `index_fields`.
@@ -717,13 +695,7 @@ impl Guest for Component {
         let id = mint_ulid();
         let ts = now();
 
-        let stored = Stored {
-            data,
-            revision: 1,
-            created: ts,
-            updated: ts,
-            index_fields,
-        };
+        let stored = Stored { data, revision: 1, created: ts, updated: ts, index_fields };
         put_record(&bucket, &collection, &id, &stored)?;
         id_index_insert(&bucket, &collection, &id)?;
         add_secondary_indexes(&bucket, &collection, &id, &parsed, &stored.index_fields)?;
@@ -763,9 +735,8 @@ impl Guest for Component {
                 Ok(None) => return Err(StoreError::NotFound),
                 Err(e) => return Err(StoreError::BackendUnavailable(format!("cas get: {e:?}"))),
             };
-            let current: Stored = serde_json::from_slice(&bytes).map_err(|e| {
-                StoreError::BackendUnavailable(format!("corrupt record {id}: {e}"))
-            })?;
+            let current: Stored = serde_json::from_slice(&bytes)
+                .map_err(|e| StoreError::BackendUnavailable(format!("corrupt record {id}: {e}")))?;
 
             // The CALLER's expectation is about the record's own revision, which is
             // a different number from the store's — one is this component's
@@ -783,9 +754,8 @@ impl Guest for Component {
                 updated: now(),
                 index_fields: current.index_fields.clone(),
             };
-            let body = serde_json::to_vec(&stored).map_err(|e| {
-                StoreError::BackendUnavailable(format!("serialize record: {e}"))
-            })?;
+            let body = serde_json::to_vec(&stored)
+                .map_err(|e| StoreError::BackendUnavailable(format!("serialize record: {e}")))?;
 
             match cas::set(&bucket, &key, &body, store_revision) {
                 Ok(cas::Outcome::Committed(_)) => {
@@ -816,9 +786,7 @@ impl Guest for Component {
                 // try again — this is the retry the old code could not do, because
                 // it never found out.
                 Ok(cas::Outcome::Conflict(_)) => continue,
-                Err(e) => {
-                    return Err(StoreError::BackendUnavailable(format!("cas set: {e:?}")))
-                }
+                Err(e) => return Err(StoreError::BackendUnavailable(format!("cas set: {e:?}"))),
             }
         }
         Err(StoreError::BackendUnavailable(format!(
@@ -876,11 +844,7 @@ impl Guest for Component {
         Ok(Page { entries, next })
     }
 
-    fn find_by(
-        collection: String,
-        field: String,
-        value: String,
-    ) -> Result<Vec<Entry>, StoreError> {
+    fn find_by(collection: String, field: String, value: String) -> Result<Vec<Entry>, StoreError> {
         let bucket = open()?;
         // Missing index key -> empty list, not an error.
         let ids = read_ix(&bucket, &ix_key(&collection, &field, &value))?;
@@ -948,9 +912,9 @@ impl Guest for Component {
                     continue;
                 };
                 // AND: every filter's top-level field must JSON-equal its value.
-                let matches = filters.iter().all(|f| {
-                    field_value(&parsed, &f.field).as_deref() == Some(f.value.as_str())
-                });
+                let matches = filters
+                    .iter()
+                    .all(|f| field_value(&parsed, &f.field).as_deref() == Some(f.value.as_str()));
                 if matches {
                     entries.push(entry_from(&id, stored));
                 }
@@ -1186,7 +1150,8 @@ mod tests {
     /// before `_c2` and the id list silently reorders after the tenth chunk.
     #[test]
     fn chunk_keys_sort_lexicographically_in_sequence_order() {
-        let mut keys: Vec<String> = [0u32, 2, 9, 10, 11, 100, 12345].iter().map(|n| chunk_key("idx_c", *n)).collect();
+        let mut keys: Vec<String> =
+            [0u32, 2, 9, 10, 11, 100, 12345].iter().map(|n| chunk_key("idx_c", *n)).collect();
         let ordered = keys.clone();
         keys.sort();
         assert_eq!(keys, ordered, "string order must match numeric order");

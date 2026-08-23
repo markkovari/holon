@@ -92,7 +92,9 @@ impl Guest for Component {
         let method = request.method();
 
         let body = match (&method, route.as_str()) {
-            (Method::Get, "/id") => json!({ "id": cache::derive_id(&key_from(&query)) }).to_string(),
+            (Method::Get, "/id") => {
+                json!({ "id": cache::derive_id(&key_from(&query)) }).to_string()
+            }
             (Method::Get, "/lookup") => match cache::lookup(&key_from(&query)) {
                 Ok(cache::Outcome::Hit(a)) => json!({
                     "state": "hit",

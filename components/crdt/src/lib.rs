@@ -39,15 +39,9 @@ enum State {
     #[serde(rename = "lww")]
     Lww { v: Value, ts: u64, replica: String },
     #[serde(rename = "pn")]
-    Pn {
-        p: BTreeMap<String, u64>,
-        n: BTreeMap<String, u64>,
-    },
+    Pn { p: BTreeMap<String, u64>, n: BTreeMap<String, u64> },
     #[serde(rename = "orset")]
-    OrSet {
-        adds: BTreeMap<String, BTreeSet<String>>,
-        removes: BTreeSet<String>,
-    },
+    OrSet { adds: BTreeMap<String, BTreeSet<String>>, removes: BTreeSet<String> },
     #[serde(rename = "lwwmap")]
     LwwMap { entries: BTreeMap<String, Reg> },
     #[serde(rename = "rga")]
@@ -125,10 +119,7 @@ fn max_merge(mut a: BTreeMap<String, u64>, b: BTreeMap<String, u64>) -> BTreeMap
 /// two states are different CRDT types. Commutative, associative, idempotent.
 fn merge_states(a: State, b: State) -> Option<State> {
     Some(match (a, b) {
-        (
-            State::Lww { v: va, ts: ta, replica: ra },
-            State::Lww { v: vb, ts: tb, replica: rb },
-        ) => {
+        (State::Lww { v: va, ts: ta, replica: ra }, State::Lww { v: vb, ts: tb, replica: rb }) => {
             let ka = (ta, ra.clone(), 1u8, canon(&va));
             let kb = (tb, rb.clone(), 1u8, canon(&vb));
             if kb > ka {
@@ -137,14 +128,10 @@ fn merge_states(a: State, b: State) -> Option<State> {
                 State::Lww { v: va, ts: ta, replica: ra }
             }
         }
-        (State::Pn { p: pa, n: na }, State::Pn { p: pb, n: nb }) => State::Pn {
-            p: max_merge(pa, pb),
-            n: max_merge(na, nb),
-        },
-        (
-            State::OrSet { adds: aa, removes: mut ra },
-            State::OrSet { adds: ab, removes: rb },
-        ) => {
+        (State::Pn { p: pa, n: na }, State::Pn { p: pb, n: nb }) => {
+            State::Pn { p: max_merge(pa, pb), n: max_merge(na, nb) }
+        }
+        (State::OrSet { adds: aa, removes: mut ra }, State::OrSet { adds: ab, removes: rb }) => {
             let mut adds = aa;
             for (el, tags) in ab {
                 adds.entry(el).or_default().extend(tags);
@@ -215,10 +202,7 @@ fn rga_visible(elems: &BTreeMap<String, RgaElem>) -> Vec<String> {
 
 /// The text the RGA represents.
 fn rga_text(elems: &BTreeMap<String, RgaElem>) -> String {
-    rga_visible(elems)
-        .iter()
-        .filter_map(|id| elems.get(id).map(|e| e.ch.as_str()))
-        .collect()
+    rga_visible(elems).iter().filter_map(|id| elems.get(id).map(|e| e.ch.as_str())).collect()
 }
 
 /// The logical value a state represents.
@@ -265,11 +249,7 @@ impl Guest for Component {
     }
 
     fn lww_new(value_json: String, timestamp: u64, replica: String) -> Result<String, CrdtError> {
-        dump(&State::Lww {
-            v: parse_val(&value_json)?,
-            ts: timestamp,
-            replica,
-        })
+        dump(&State::Lww { v: parse_val(&value_json)?, ts: timestamp, replica })
     }
 
     fn lww_set(
@@ -284,11 +264,7 @@ impl Guest for Component {
     }
 
     fn counter_new() -> String {
-        dump(&State::Pn {
-            p: BTreeMap::new(),
-            n: BTreeMap::new(),
-        })
-        .expect("empty pn serializes")
+        dump(&State::Pn { p: BTreeMap::new(), n: BTreeMap::new() }).expect("empty pn serializes")
     }
 
     fn counter_add(state: String, replica: String, delta: i64) -> Result<String, CrdtError> {
@@ -301,11 +277,8 @@ impl Guest for Component {
     }
 
     fn orset_new() -> String {
-        dump(&State::OrSet {
-            adds: BTreeMap::new(),
-            removes: BTreeSet::new(),
-        })
-        .expect("empty orset serializes")
+        dump(&State::OrSet { adds: BTreeMap::new(), removes: BTreeSet::new() })
+            .expect("empty orset serializes")
     }
 
     fn orset_add(state: String, element: String, tag: String) -> Result<String, CrdtError> {
@@ -317,11 +290,7 @@ impl Guest for Component {
     }
 
     fn orset_remove(state: String, element: String) -> Result<String, CrdtError> {
-        let State::OrSet {
-            adds,
-            mut removes,
-        } = parse_state(&state, "state")?
-        else {
+        let State::OrSet { adds, mut removes } = parse_state(&state, "state")? else {
             return Err(CrdtError::InvalidState("expected an orset".into()));
         };
         // Observed-remove: tombstone exactly the tags we currently see. Any tag
@@ -333,10 +302,7 @@ impl Guest for Component {
     }
 
     fn lwwmap_new() -> String {
-        dump(&State::LwwMap {
-            entries: BTreeMap::new(),
-        })
-        .expect("empty lwwmap serializes")
+        dump(&State::LwwMap { entries: BTreeMap::new() }).expect("empty lwwmap serializes")
     }
 
     fn lwwmap_set(
@@ -356,22 +322,11 @@ impl Guest for Component {
         timestamp: u64,
         replica: String,
     ) -> Result<String, CrdtError> {
-        lwwmap_put(
-            state,
-            key,
-            Reg {
-                v: None,
-                ts: timestamp,
-                replica,
-            },
-        )
+        lwwmap_put(state, key, Reg { v: None, ts: timestamp, replica })
     }
 
     fn rga_new() -> String {
-        dump(&State::Rga {
-            elems: BTreeMap::new(),
-        })
-        .expect("empty rga serializes")
+        dump(&State::Rga { elems: BTreeMap::new() }).expect("empty rga serializes")
     }
 
     fn rga_insert(
@@ -386,11 +341,7 @@ impl Guest for Component {
         let visible = rga_visible(&elems);
         // insert BEFORE visible[index]; anchor = the element just before it.
         let idx = (index as usize).min(visible.len());
-        let mut anchor = if idx == 0 {
-            String::new()
-        } else {
-            visible[idx - 1].clone()
-        };
+        let mut anchor = if idx == 0 { String::new() } else { visible[idx - 1].clone() };
         // Each char becomes an element chained after the previous, so a
         // multi-char insert stays contiguous. Ids must be unique + sortable;
         // `id_base` carries the (ts, replica) order, the `:k` keeps chars apart.
@@ -398,11 +349,7 @@ impl Guest for Component {
             let id = format!("{id_base}:{k:04}");
             elems.insert(
                 id.clone(),
-                RgaElem {
-                    ch: ch.to_string(),
-                    after: anchor.clone(),
-                    del: false,
-                },
+                RgaElem { ch: ch.to_string(), after: anchor.clone(), del: false },
             );
             anchor = id;
         }
@@ -434,20 +381,14 @@ impl Guest for Component {
             return Err(CrdtError::InvalidState("expected an rga".into()));
         };
         if !after_id.is_empty() && !elems.contains_key(&after_id) {
-            return Err(CrdtError::InvalidState(format!(
-                "after-id not found: {after_id}"
-            )));
+            return Err(CrdtError::InvalidState(format!("after-id not found: {after_id}")));
         }
         let mut anchor = after_id;
         for (k, ch) in text.chars().enumerate() {
             let id = format!("{id_base}:{k:04}");
             elems.insert(
                 id.clone(),
-                RgaElem {
-                    ch: ch.to_string(),
-                    after: anchor.clone(),
-                    del: false,
-                },
+                RgaElem { ch: ch.to_string(), after: anchor.clone(), del: false },
             );
             anchor = id;
         }
@@ -472,11 +413,7 @@ impl Guest for Component {
         };
         let list: Vec<Value> = rga_visible(&elems)
             .iter()
-            .filter_map(|id| {
-                elems
-                    .get(id)
-                    .map(|e| json!({ "id": id, "ch": e.ch }))
-            })
+            .filter_map(|id| elems.get(id).map(|e| json!({ "id": id, "ch": e.ch })))
             .collect();
         serde_json::to_string(&Value::Array(list))
             .map_err(|e| CrdtError::InvalidState(format!("serialize: {e}")))
@@ -568,7 +505,11 @@ mod tests {
             value_of(merge_states(clone(&removed), clone(&readded)).unwrap()),
             Value::Array(vec![Value::from("x")])
         );
-        assert_converges(&[clone(&removed), clone(&readded), s(r#"{"type":"orset","adds":{},"removes":[]}"#)]);
+        assert_converges(&[
+            clone(&removed),
+            clone(&readded),
+            s(r#"{"type":"orset","adds":{},"removes":[]}"#),
+        ]);
     }
 
     #[test]
@@ -636,14 +577,19 @@ mod tests {
     fn rga_id_anchored_ops_are_unambiguous() {
         let base = ins(Component::rga_new(), 0, "AC", "0000-seed");
         // find the ids of A and C
-        let elems: Value = serde_json::from_str(&Component::rga_elements(base.clone()).unwrap()).unwrap();
+        let elems: Value =
+            serde_json::from_str(&Component::rga_elements(base.clone()).unwrap()).unwrap();
         let arr = elems.as_array().unwrap();
         assert_eq!(arr.len(), 2);
         let id_a = arr[0]["id"].as_str().unwrap().to_string();
         assert_eq!(arr[0]["ch"], "A");
         // two replicas insert AFTER A concurrently — both survive, deterministic
-        let rx = Component::rga_insert_after(base.clone(), id_a.clone(), "X".into(), "0001-x".into()).unwrap();
-        let ry = Component::rga_insert_after(base.clone(), id_a.clone(), "Y".into(), "0002-y".into()).unwrap();
+        let rx =
+            Component::rga_insert_after(base.clone(), id_a.clone(), "X".into(), "0001-x".into())
+                .unwrap();
+        let ry =
+            Component::rga_insert_after(base.clone(), id_a.clone(), "Y".into(), "0002-y".into())
+                .unwrap();
         assert_eq!(text(&Component::merge(rx.clone(), ry.clone()).unwrap()), "AYXC");
         // delete by id
         let del = Component::rga_delete_ids(base.clone(), vec![id_a]).unwrap();
@@ -657,7 +603,7 @@ mod tests {
         let base = ins(Component::rga_new(), 0, "abc", "0000-s");
         let deleted = Component::rga_delete(base.clone(), 1, 1).unwrap(); // "ac"
         let edited = ins(base.clone(), 3, "d", "0001-e"); // "abcd"
-        // merge: b stays deleted, d survives -> "acd"
+                                                          // merge: b stays deleted, d survives -> "acd"
         assert_eq!(text(&Component::merge(deleted.clone(), edited.clone()).unwrap()), "acd");
         assert_converges(&[s(&deleted), s(&edited), s(&base)]);
     }

@@ -108,7 +108,12 @@ fn expand_impl(dtstart: &str, r: &Rule, from: &str, to: &str) -> Result<Vec<Stri
             let mut wds: Vec<i64> = if r.by_weekday.is_empty() {
                 vec![weekday(ds)]
             } else {
-                let mut v: Vec<i64> = r.by_weekday.iter().map(|&w| w as i64).filter(|&w| (0..7).contains(&w)).collect();
+                let mut v: Vec<i64> = r
+                    .by_weekday
+                    .iter()
+                    .map(|&w| w as i64)
+                    .filter(|&w| (0..7).contains(&w))
+                    .collect();
                 v.sort_unstable();
                 v.dedup();
                 v
@@ -144,7 +149,12 @@ fn expand_impl(dtstart: &str, r: &Rule, from: &str, to: &str) -> Result<Vec<Stri
 }
 
 impl Guest for Component {
-    fn expand(dtstart: String, r: Rule, window_from: String, window_to: String) -> Result<Vec<String>, RecurError> {
+    fn expand(
+        dtstart: String,
+        r: Rule,
+        window_from: String,
+        window_to: String,
+    ) -> Result<Vec<String>, RecurError> {
         expand_impl(&dtstart, &r, &window_from, &window_to)
     }
 }

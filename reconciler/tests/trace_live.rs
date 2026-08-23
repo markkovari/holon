@@ -79,7 +79,14 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
 
     // A run as it actually happens: two branches, one repair, one winner.
     let run = "77/g1";
-    trace.run_started(run, "add pagination to the search box", ".comp/goals/pagination.toml", 77, "abc123", 2);
+    trace.run_started(
+        run,
+        "add pagination to the search box",
+        ".comp/goals/pagination.toml",
+        77,
+        "abc123",
+        2,
+    );
     trace.capsearch(run, "paginate a result set", 1);
     trace.capsearch(run, "render a swimlane chart", 0);
 
@@ -87,13 +94,41 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
         trace.branch_spawned(run, attempt, branch, 1);
         trace.lesson_read(run, attempt, &["mem:paginate".to_string()]);
     }
-    trace.gate_verdict(run, "77/g1/risk-first", 40, false, &serde_json::json!({"failing": ["test_pages"]}));
-    trace.attempt_finished(run, "77/g1/risk-first", "failed", 40, &serde_json::json!([{"path": "apps/search/a.rs"}]), 18_400, 94_000, 1);
+    trace.gate_verdict(
+        run,
+        "77/g1/risk-first",
+        40,
+        false,
+        &serde_json::json!({"failing": ["test_pages"]}),
+    );
+    trace.attempt_finished(
+        run,
+        "77/g1/risk-first",
+        "failed",
+        40,
+        &serde_json::json!([{"path": "apps/search/a.rs"}]),
+        18_400,
+        94_000,
+        1,
+    );
     trace.gate_verdict(run, "77/g1/mvp", 100, true, &serde_json::json!({"failing": []}));
-    trace.attempt_finished(run, "77/g1/mvp", "passed", 100, &serde_json::json!([{"path": "components/paginate/src/lib.rs"}]), 31_200, 156_000, 1);
+    trace.attempt_finished(
+        run,
+        "77/g1/mvp",
+        "passed",
+        100,
+        &serde_json::json!([{"path": "components/paginate/src/lib.rs"}]),
+        31_200,
+        156_000,
+        1,
+    );
     trace.run_resolved(run, "merged", Some("mvp"), "https://example.test/pull/1");
 
-    assert!(trace.report().is_none(), "writes were dropped against a live database: {:?}", trace.report());
+    assert!(
+        trace.report().is_none(),
+        "writes were dropped against a live database: {:?}",
+        trace.report()
+    );
 
     // 1. The history is there.
     assert_eq!(count(&store, "run"), 1, "the run node");
@@ -110,7 +145,10 @@ fn a_whole_run_lands_and_a_dead_database_never_fails_one() {
 
     // `started_at` and `resolved_at` are FIELDS. A timeline that reconstructs its
     // own bounds from events gets them wrong the moment one is missing.
-    let bounds = rows(&store, "SELECT count() FROM run WHERE started_at != NONE AND resolved_at != NONE GROUP ALL;");
+    let bounds = rows(
+        &store,
+        "SELECT count() FROM run WHERE started_at != NONE AND resolved_at != NONE GROUP ALL;",
+    );
     assert_eq!(bounds[0]["count"], 1, "the run carries its own bounds");
 
     // A capsearch MISS is retrievable on its own — it is the signal for what to
@@ -165,7 +203,10 @@ fn a_dead_database_costs_a_line_of_output_and_nothing_else() {
     trace.run_resolved("dead/g1", "failed", None, "");
 
     let report = trace.report().expect("dropped writes must be reported");
-    assert!(report.contains("the run is unaffected"), "the report must say the run survived: {report}");
+    assert!(
+        report.contains("the run is unaffected"),
+        "the report must say the run survived: {report}"
+    );
     assert!(
         started.elapsed() < Duration::from_secs(30),
         "a dead database stalled the run for {:?} — the timeout is not bounding it",
@@ -270,7 +311,16 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
         for branch in ["risk-first", "mvp"] {
             let attempt = comp_reconciler::memory::run_id(seed, round, branch);
             trace.branch_spawned(&run, &attempt, branch, round);
-            trace.attempt_finished(&run, &attempt, "failed", 10, &serde_json::json!([]), 100, 1_000, 1);
+            trace.attempt_finished(
+                &run,
+                &attempt,
+                "failed",
+                10,
+                &serde_json::json!([]),
+                100,
+                1_000,
+                1,
+            );
         }
     }
     trace.run_resolved(&run, "exhausted", None, "");
@@ -283,7 +333,9 @@ fn goalruns_own_ids_join_a_run_to_its_attempts() {
         // ordered field to be selected — omitting it is a 400, not a silent
         // reorder. The console's own queries are safe only because they either
         // `SELECT *` or happen to list the field they order by.
-        &format!("SELECT id_text, started_at FROM attempt WHERE run = '{run}' ORDER BY started_at;"),
+        &format!(
+            "SELECT id_text, started_at FROM attempt WHERE run = '{run}' ORDER BY started_at;"
+        ),
     );
     assert_eq!(
         attempts.as_array().map(|a| a.len()),

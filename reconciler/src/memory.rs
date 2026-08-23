@@ -137,10 +137,8 @@ impl Memory {
     /// paying a few milliseconds to keep the pool bounded is cheaper than a
     /// scheduler nobody remembers to deploy.
     pub fn decay(&self, days: u32, min_uses: u64) -> Result<u32, String> {
-        let v = self.call(
-            reqwest::Method::POST,
-            &format!("/decay?days={days}&min-uses={min_uses}"),
-        )?;
+        let v =
+            self.call(reqwest::Method::POST, &format!("/decay?days={days}&min-uses={min_uses}"))?;
         if let Some(detail) = v["error"].as_str() {
             return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
         }
@@ -263,11 +261,7 @@ impl Memory {
         }
         let v = self.call(
             reqwest::Method::POST,
-            &format!(
-                "/attribute?keys={}&run={}&ok={succeeded}",
-                enc(&keys.join(",")),
-                enc(run)
-            ),
+            &format!("/attribute?keys={}&run={}&ok={succeeded}", enc(&keys.join(",")), enc(run)),
         )?;
         if let Some(detail) = v["error"].as_str() {
             return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
@@ -543,7 +537,10 @@ mod tests {
         let text = failure_text(&failures, 400).expect("a failed branch has something to teach");
         assert!(text.starts_with("scored 400;"), "{text}");
         assert!(text.contains("`pager-renders` failed: grep: no match"), "{text}");
-        assert!(text.contains("`component-tests` failed"), "a check with no detail still names itself");
+        assert!(
+            text.contains("`component-tests` failed"),
+            "a check with no detail still names itself"
+        );
         // One line, because it is rendered into a bullet list.
         assert_eq!(text.lines().count(), 1, "{text:?}");
     }

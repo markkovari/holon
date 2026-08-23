@@ -40,15 +40,7 @@ fn ts(secs: u64) -> String {
     let days = (secs / 86400) as i64;
     let rem = secs % 86400;
     let (y, m, d) = civil_from_days(days);
-    format!(
-        "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
-        y,
-        m,
-        d,
-        rem / 3600,
-        (rem % 3600) / 60,
-        rem % 60
-    )
+    format!("{:04}{:02}{:02}T{:02}{:02}{:02}Z", y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60)
 }
 
 /// Escape a text value per RFC 5545 §3.3.11.

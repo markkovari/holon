@@ -91,9 +91,7 @@ impl Guest for Component {
                 respond(response_out, code, &format!("{{\"error\":\"{msg}\"}}"));
             }
             Outcome::NotFound => respond(response_out, 404, "{\"error\":\"not_found\"}"),
-            Outcome::Bad(msg) => {
-                respond(response_out, 400, &format!("{{\"error\":\"{msg}\"}}"))
-            }
+            Outcome::Bad(msg) => respond(response_out, 400, &format!("{{\"error\":\"{msg}\"}}")),
         }
     }
 }

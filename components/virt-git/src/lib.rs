@@ -22,20 +22,24 @@ mod git;
 
 use bindings::blob::store::blobstore;
 use bindings::comp::store::cas;
-use bindings::wasi::keyvalue::store as kv;
 use bindings::exports::vgit::store::objects::{
     CommitInfo, GitError, Guest as ObjectsGuest, TreeEntry,
 };
 use bindings::exports::vgit::store::refs::Guest as RefsGuest;
 use bindings::exports::vgit::store::worktree::{Changed, Guest as WorktreeGuest, PathChange};
 use bindings::wasi::config::store as config;
+use bindings::wasi::keyvalue::store as kv;
 
 struct Component;
 
 /// The container objects live in. One per repository, so two repositories in one
 /// deployment cannot see each other's objects.
 fn container() -> String {
-    config::get("git-container").ok().flatten().filter(|s| !s.is_empty()).unwrap_or_else(|| "git".into())
+    config::get("git-container")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "git".into())
 }
 
 fn store_err(e: blobstore::BlobError) -> GitError {
@@ -114,7 +118,11 @@ impl ObjectsGuest for Component {
 
     fn read_tree(id: String) -> Result<Vec<TreeEntry>, GitError> {
         let payload = get_object(&id, "tree")?;
-        Ok(git::parse_tree(&payload).map_err(GitError::Corrupt)?.into_iter().map(entry_out).collect())
+        Ok(git::parse_tree(&payload)
+            .map_err(GitError::Corrupt)?
+            .into_iter()
+            .map(entry_out)
+            .collect())
     }
 
     fn write_commit(info: CommitInfo) -> Result<String, GitError> {
@@ -320,9 +328,7 @@ impl WorktreeGuest for Component {
     fn read_path(commit: String, path: String) -> Result<Option<Vec<u8>>, GitError> {
         let segs = git::split_path(&path).map_err(GitError::Invalid)?;
         match entry_at(&commit, &segs)? {
-            Some(e) if e.mode != "40000" => {
-                <Component as ObjectsGuest>::read_blob(e.id).map(Some)
-            }
+            Some(e) if e.mode != "40000" => <Component as ObjectsGuest>::read_blob(e.id).map(Some),
             Some(_) => Err(GitError::Invalid(format!("{path} is a directory"))),
             None => Ok(None),
         }

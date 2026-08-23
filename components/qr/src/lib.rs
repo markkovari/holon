@@ -56,7 +56,11 @@ impl Guest for Component {
     fn unicode(data: String, level: Ecc) -> Result<String, QrError> {
         let (w, m) = grid(&data, level)?;
         let dark = |x: i64, y: i64| -> bool {
-            x >= 0 && y >= 0 && (x as usize) < w && (y as usize) < w && m[y as usize * w + x as usize]
+            x >= 0
+                && y >= 0
+                && (x as usize) < w
+                && (y as usize) < w
+                && m[y as usize * w + x as usize]
         };
         // One character encodes two vertical modules. Add a 1-cell light border.
         let mut out = String::new();
@@ -131,16 +135,14 @@ mod tests {
         // same data, more recovery -> at least as many modules per side
         let low = <Component as Guest>::matrix("payload".into(), Ecc::Low).unwrap();
         let high = <Component as Guest>::matrix("payload".into(), Ecc::High).unwrap();
-        let size = |s: &str| s[s.find(':').unwrap() + 1..s.find(',').unwrap()].parse::<usize>().unwrap();
+        let size =
+            |s: &str| s[s.find(':').unwrap() + 1..s.find(',').unwrap()].parse::<usize>().unwrap();
         assert!(size(&high) >= size(&low));
     }
 
     #[test]
     fn too_long_input_errors() {
         let huge = "x".repeat(8000);
-        assert!(matches!(
-            <Component as Guest>::svg(huge, Ecc::High, 2),
-            Err(QrError::TooLong(_))
-        ));
+        assert!(matches!(<Component as Guest>::svg(huge, Ecc::High, 2), Err(QrError::TooLong(_))));
     }
 }

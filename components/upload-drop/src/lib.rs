@@ -20,8 +20,8 @@ use serde_json::{json, Value};
 use bindings::blob::store::blobstore as blob;
 use bindings::records::store::store as records;
 use bindings::upload::policy::gate as upload;
-use bindings::webhook::sign::signer as sign;
 use bindings::wasi::clocks::wall_clock;
+use bindings::webhook::sign::signer as sign;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
@@ -261,14 +261,18 @@ fn policy_err(e: upload::PolicyError) -> Outcome {
             Outcome::Json(413, json!({"error": "too_large", "max": max}).to_string())
         }
         upload::PolicyError::InvalidTicket => Outcome::err(403, "invalid_ticket"),
-        upload::PolicyError::BackendUnavailable(m) => Outcome::Json(503, json!({"error": m}).to_string()),
+        upload::PolicyError::BackendUnavailable(m) => {
+            Outcome::Json(503, json!({"error": m}).to_string())
+        }
     }
 }
 
 fn blob_err(e: blob::BlobError) -> Outcome {
     match e {
         blob::BlobError::NotFound => Outcome::err(404, "not_found"),
-        blob::BlobError::BackendUnavailable(m) => Outcome::Json(503, json!({"error": m}).to_string()),
+        blob::BlobError::BackendUnavailable(m) => {
+            Outcome::Json(503, json!({"error": m}).to_string())
+        }
     }
 }
 
@@ -277,7 +281,9 @@ fn store_err(e: records::StoreError) -> Outcome {
         records::StoreError::NotFound => Outcome::err(404, "not_found"),
         records::StoreError::InvalidJson(m) => Outcome::Json(422, json!({"error": m}).to_string()),
         records::StoreError::RevisionConflict(_) => Outcome::err(409, "conflict"),
-        records::StoreError::BackendUnavailable(m) => Outcome::Json(503, json!({"error": m}).to_string()),
+        records::StoreError::BackendUnavailable(m) => {
+            Outcome::Json(503, json!({"error": m}).to_string())
+        }
     }
 }
 
@@ -288,7 +294,8 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
     if body.is_empty() {
         return Ok(Value::Object(Default::default()));
     }
-    serde_json::from_slice(&body).map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
+    serde_json::from_slice(&body)
+        .map_err(|e| Outcome::Json(400, json!({"error": format!("bad json: {e}")}).to_string()))
 }
 
 /// A ceiling on a request body, not a policy: past this the read stops and the
@@ -358,7 +365,9 @@ fn decode(s: &str) -> String {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
+        Outcome::Json(code, body) => {
+            respond(response_out, code, "application/json", body.as_bytes())
+        }
         Outcome::Bytes(code, ct, bytes) => respond(response_out, code, &ct, &bytes),
     }
 }

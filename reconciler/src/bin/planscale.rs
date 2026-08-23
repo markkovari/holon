@@ -49,7 +49,10 @@ fn world(nodes: usize, apps: usize) -> (Vec<Manifest>, Vec<NodeInventory>) {
                 egress: Vec::new(),
             }],
             links: Vec::new(),
-            ingress: Some(Ingress { host: format!("app{a}.example.com"), component: "gate".into() }),
+            ingress: Some(Ingress {
+                host: format!("app{a}.example.com"),
+                component: "gate".into(),
+            }),
         })
         .collect();
 
@@ -142,8 +145,7 @@ fn main() {
             let insts: usize = observed.iter().map(|n| n.instances.len()).sum();
             let biggest =
                 observed.iter().map(|n| serde_json::to_vec(n).unwrap().len()).max().unwrap_or(0);
-            let total: usize =
-                observed.iter().map(|n| serde_json::to_vec(n).unwrap().len()).sum();
+            let total: usize = observed.iter().map(|n| serde_json::to_vec(n).unwrap().len()).sum();
 
             println!(
                 "  {nodes:5}  {apps:5}  {insts:5} │ {cold:8.2} {:9.2} {parse:9.2} {recheck:7.2} │ {:12.1}  {:13.2} │ {:4}",

@@ -250,11 +250,8 @@ fn vote(code: &str, body: &str, voter: &str) -> Reply {
     }
     // A voter with no cookie yet gets one; the id is minted before the vote so the
     // record and the cookie cannot disagree.
-    let (voter_id, fresh) = if voter.is_empty() {
-        (ids::ulid(), true)
-    } else {
-        (voter.to_string(), false)
-    };
+    let (voter_id, fresh) =
+        if voter.is_empty() { (ids::ulid(), true) } else { (voter.to_string(), false) };
 
     // One vote per browser. Checked by reading this poll's votes rather than a
     // compound index, because `(poll, voter)` is not a field the store indexes and a
@@ -342,11 +339,8 @@ fn base_url(request: &IncomingRequest) -> String {
         .next()
         .map(|h| String::from_utf8_lossy(&h).into_owned())
         .unwrap_or_else(|| "127.0.0.1".to_string());
-    let scheme = if host.ends_with(".ts.net") || host.ends_with(".test") {
-        "https"
-    } else {
-        "http"
-    };
+    let scheme =
+        if host.ends_with(".ts.net") || host.ends_with(".test") { "https" } else { "http" };
     format!("{scheme}://{host}")
 }
 

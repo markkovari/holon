@@ -133,7 +133,6 @@ pub fn env_for(tenant: &str, app: &str) -> String {
 
 // ---- egress ----------------------------------------------------------------
 
-
 /// What one app may dial.
 ///
 /// Two independent checks, on purpose. The allow-list is on **names**, because
@@ -467,11 +466,11 @@ mod tests {
     fn opening_an_unlisted_name_is_a_refusal_not_a_fallback() {
         let alice = scope("alice", "shop");
         for hostile in [
-            "b-app-eve-shop",  // eve's real store, named directly
+            "b-app-eve-shop", // eve's real store, named directly
             "eve",
             "app-eve-shop",
             "",
-            "DEFAULT",         // case must not be a way in
+            "DEFAULT", // case must not be a way in
             "default ",
             "../default",
         ] {
@@ -497,8 +496,11 @@ mod tests {
         // discovering as a leak.
         let a = scope("a.b", "shop");
         let b = scope("a_b", "shop");
-        assert_eq!(a.bucket("default"), b.bucket("default"),
-            "sanitising collides — tenant ids must be validated as DNS labels upstream");
+        assert_eq!(
+            a.bucket("default"),
+            b.bucket("default"),
+            "sanitising collides — tenant ids must be validated as DNS labels upstream"
+        );
     }
 
     #[test]
@@ -555,13 +557,13 @@ mod tests {
     fn the_address_deny_list_covers_every_way_off_the_box() {
         let p = EgressPolicy::new(&["*".into()], false, &[]);
         for bad in [
-            "127.0.0.1",        // the node's own listener, the NATS bus
+            "127.0.0.1", // the node's own listener, the NATS bus
             "0.0.0.0",
-            "169.254.169.254",  // cloud metadata — credentials
+            "169.254.169.254", // cloud metadata — credentials
             "10.0.0.5",
             "172.16.0.1",
             "192.168.1.1",
-            "100.64.0.1",       // Tailscale CGNAT: the rest of the lattice
+            "100.64.0.1", // Tailscale CGNAT: the rest of the lattice
             "100.127.255.255",
             "::1",
             "fe80::1",
@@ -587,14 +589,16 @@ mod tests {
         let nats: SocketAddr = "10.1.2.3:4222".parse().unwrap();
         let p = EgressPolicy::new(&["*".into()], true, &[nats]);
         assert!(!p.permits_addr(nats));
-        assert!(p.permits_addr("10.1.2.4:4222".parse().unwrap()), "allow_private otherwise applies");
+        assert!(
+            p.permits_addr("10.1.2.4:4222".parse().unwrap()),
+            "allow_private otherwise applies"
+        );
         // The DENY is the socket, not the machine. Under `--allow-private-egress`
         // a database sharing an address with the bus stays reachable — denying the
         // whole IP was what made a loopback SurrealDB undialable while the thing
         // actually being protected was one port.
         assert!(p.permits_addr("10.1.2.3:8000".parse().unwrap()), "another port on the same host");
     }
-
 
     /// The bug this function was written with, and the reason it now hashes.
     ///

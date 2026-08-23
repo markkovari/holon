@@ -88,7 +88,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -154,10 +155,12 @@ fn owned_notes(subject: &str) -> Vec<(String, Value)> {
 }
 
 fn note(id: &str) -> Option<Value> {
-    records::get(NOTES, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(|mut v| {
-        v["id"] = json!(id);
-        v
-    })
+    records::get(NOTES, id).ok().and_then(|e| serde_json::from_str::<Value>(&e.data).ok()).map(
+        |mut v| {
+            v["id"] = json!(id);
+            v
+        },
+    )
 }
 
 fn create_note(request: &IncomingRequest) -> Outcome {
@@ -274,9 +277,8 @@ fn export_zip(request: &IncomingRequest) -> Outcome {
 
     let mut files: Vec<zip::File> = Vec::new();
     // one Markdown file per note (id suffix keeps names unique).
-    let mut index_rows: Vec<csv::Row> = vec![csv::Row {
-        fields: vec!["id".into(), "title".into(), "created".into()],
-    }];
+    let mut index_rows: Vec<csv::Row> =
+        vec![csv::Row { fields: vec!["id".into(), "title".into(), "created".into()] }];
     let mut manifest_notes: Vec<Value> = Vec::new();
     for (id, n) in &notes {
         let title = n["title"].as_str().unwrap_or("untitled");
@@ -287,7 +289,8 @@ fn export_zip(request: &IncomingRequest) -> Outcome {
             name: format!("notes/{}-{}.md", slug(title), short),
             data: format!("# {}\n\n{}\n", title, bodytext).into_bytes(),
         });
-        index_rows.push(csv::Row { fields: vec![id.clone(), title.to_string(), created.to_string()] });
+        index_rows
+            .push(csv::Row { fields: vec![id.clone(), title.to_string(), created.to_string()] });
         manifest_notes.push(json!({ "id": id, "title": title }));
     }
 
@@ -297,7 +300,8 @@ fn export_zip(request: &IncomingRequest) -> Outcome {
     files.push(zip::File { name: "index.csv".into(), data: index_csv.into_bytes() });
 
     // manifest.json.
-    let manifest = json!({ "app": "stash", "exported": now(), "count": notes.len(), "notes": manifest_notes });
+    let manifest =
+        json!({ "app": "stash", "exported": now(), "count": notes.len(), "notes": manifest_notes });
     files.push(zip::File { name: "manifest.json".into(), data: manifest.to_string().into_bytes() });
 
     // assemble the archive.
@@ -399,7 +403,13 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     respond(response_out, code, "application/json", None, body.as_bytes());
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, disposition: Option<&str>, body: &[u8]) {
+fn respond(
+    response_out: ResponseOutparam,
+    status: u16,
+    ctype: &str,
+    disposition: Option<&str>,
+    body: &[u8],
+) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {

@@ -114,10 +114,7 @@ pub fn verify(token: &str) -> Result<Claims, AuthError> {
     //    allow-list. This blocks algorithm-confusion (e.g. HS256-signed token
     //    forged against an RSA public key when only RS256 is expected).
     if !policy.allowed_algs.iter().any(|a| a == &header.alg) {
-        return Err(AuthError::InvalidToken(format!(
-            "algorithm {} not allowed",
-            header.alg
-        )));
+        return Err(AuthError::InvalidToken(format!("algorithm {} not allowed", header.alg)));
     }
 
     // 2. Verify the signature with the pinned algorithm.
@@ -220,10 +217,7 @@ mod tests {
     #[test]
     fn rejects_expired() {
         let p = payload("https://idp", Aud::None, NOW - 3600, 0);
-        assert_eq!(
-            validate_claims(&p, NOW, &policy("", "")),
-            Err(ClaimError::Expired)
-        );
+        assert_eq!(validate_claims(&p, NOW, &policy("", "")), Err(ClaimError::Expired));
     }
 
     #[test]
@@ -236,10 +230,7 @@ mod tests {
     #[test]
     fn rejects_not_yet_valid() {
         let p = payload("https://idp", Aud::None, NOW + 3600, NOW + 3600);
-        assert_eq!(
-            validate_claims(&p, NOW, &policy("", "")),
-            Err(ClaimError::NotYetValid)
-        );
+        assert_eq!(validate_claims(&p, NOW, &policy("", "")), Err(ClaimError::NotYetValid));
     }
 
     #[test]
@@ -264,12 +255,8 @@ mod tests {
 
     #[test]
     fn accepts_audience_in_array() {
-        let p = payload(
-            "https://idp",
-            Aud::Many(vec!["svc-x".into(), "svc-a".into()]),
-            NOW + 60,
-            0,
-        );
+        let p =
+            payload("https://idp", Aud::Many(vec!["svc-x".into(), "svc-a".into()]), NOW + 60, 0);
         assert!(validate_claims(&p, NOW, &policy("https://idp", "svc-a")).is_ok());
     }
 
@@ -299,15 +286,7 @@ fn payload_to_claims(p: Payload) -> Claims {
             (k.clone(), val)
         })
         .collect();
-    Claims {
-        iss: p.iss,
-        sub: p.sub,
-        aud: p.aud.into_vec(),
-        exp: p.exp,
-        iat: p.iat,
-        scopes,
-        raw,
-    }
+    Claims { iss: p.iss, sub: p.sub, aud: p.aud.into_vec(), exp: p.exp, iat: p.iat, scopes, raw }
 }
 
 // ---- signature verification --------------------------------------------
@@ -365,6 +344,5 @@ fn verify_hs256(signing_input: &str, signature: &[u8]) -> Result<(), AuthError> 
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
         .map_err(|e| AuthError::Internal(format!("hmac key: {e}")))?;
     mac.update(signing_input.as_bytes());
-    mac.verify_slice(signature)
-        .map_err(|_| AuthError::InvalidToken("hs256 verify failed".into()))
+    mac.verify_slice(signature).map_err(|_| AuthError::InvalidToken("hs256 verify failed".into()))
 }

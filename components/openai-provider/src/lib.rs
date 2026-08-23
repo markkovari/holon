@@ -34,10 +34,10 @@
 mod bindings;
 mod codec;
 
+use bindings::comp::secrets::reader as secrets;
 use bindings::exports::llm::inference::inference::{
     Completion, Guest, InferError, Message, Options, Role, Usage,
 };
-use bindings::comp::secrets::reader as secrets;
 use bindings::wasi::config::store as config;
 use bindings::wasi::http::outgoing_handler;
 use bindings::wasi::http::types::{
@@ -93,7 +93,10 @@ fn default_model() -> String {
 /// A zero or unparseable value falls back rather than disabling the timeout: a
 /// misconfigured budget that hangs forever is worse than one that is wrong.
 fn default_max_tokens() -> u32 {
-    cfg("openai:max-tokens").and_then(|s| s.trim().parse().ok()).filter(|&n| n > 0).unwrap_or(DEFAULT_MAX_TOKENS)
+    cfg("openai:max-tokens")
+        .and_then(|s| s.trim().parse().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_MAX_TOKENS)
 }
 
 fn timeout_ns() -> u64 {
@@ -149,10 +152,7 @@ fn post_json(path: &str, body: &[u8]) -> Result<(u16, Vec<u8>), InferError> {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     if let Some(key) = api_key() {
-        let _ = headers.set(
-            "authorization",
-            &[format!("Bearer {key}").into_bytes()],
-        );
+        let _ = headers.set("authorization", &[format!("Bearer {key}").into_bytes()]);
     }
 
     let req = OutgoingRequest::new(headers);
@@ -271,10 +271,7 @@ impl Guest for Component {
             text: p.text,
             finish_reason: p.finish_reason,
             model: p.model,
-            usage: Usage {
-                prompt_tokens: p.prompt_tokens,
-                completion_tokens: p.completion_tokens,
-            },
+            usage: Usage { prompt_tokens: p.prompt_tokens, completion_tokens: p.completion_tokens },
         })
     }
 

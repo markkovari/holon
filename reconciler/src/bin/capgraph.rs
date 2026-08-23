@@ -262,10 +262,9 @@ fn main() -> Result<(), String> {
             println!("{}", surql(&catalog, &apps(&root), generation));
         }
         "mermaid" => println!("{}", mermaid(&by_iface, args.diagram_top)),
-        "md" => println!(
-            "{}",
-            markdown(&catalog, &by_iface, &orphans, args.diagram_top, &apps(&root))
-        ),
+        "md" => {
+            println!("{}", markdown(&catalog, &by_iface, &orphans, args.diagram_top, &apps(&root)))
+        }
         other => return Err(format!("unknown format {other:?} — md, json, mermaid or surql")),
     }
     Ok(())
@@ -291,8 +290,7 @@ fn json(
             out.push_str(",\n");
         }
         first = false;
-        let list =
-            consumers.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let list = consumers.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
         out.push_str(&format!(
             "    {{ \"interface\": \"{iface}\", \"provider\": \"{provider}\", \
              \"consumers\": [{list}], \"consumer_count\": {} }}",
@@ -425,10 +423,7 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
     // the digest it was learned against so that "has this changed underneath the
     // lesson" stays an answerable question rather than an assumption (ADR-0091).
     for name in catalog.names() {
-        let digest = catalog
-            .bytes(name)
-            .map(comp_reconciler::oci::digest_of)
-            .unwrap_or_default();
+        let digest = catalog.bytes(name).map(comp_reconciler::oci::digest_of).unwrap_or_default();
         out.push_str(&format!(
             "UPSERT {} SET name = {}, digest = {}, gen = {generation};\n",
             rid("artifact", name),
@@ -788,11 +783,8 @@ mod tests {
             let Some(rest) = words.next() else { continue };
             // `RELATE a->edge->b` writes to the EDGE table in the middle; every
             // other verb writes to the table it names first.
-            let target = if verb == "RELATE" {
-                rest.split("->").nth(1).unwrap_or_default()
-            } else {
-                rest
-            };
+            let target =
+                if verb == "RELATE" { rest.split("->").nth(1).unwrap_or_default() } else { rest };
             let table = target.split([':', '⟨']).next().unwrap_or_default().trim_start_matches('$');
             mutations += 1;
             assert!(

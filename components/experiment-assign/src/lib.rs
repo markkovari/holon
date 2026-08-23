@@ -16,7 +16,7 @@
 mod bindings;
 
 use bindings::exports::experiment::assign::assigner::{
-    AssignError, Assignment, Context, Guest, Arm,
+    Arm, AssignError, Assignment, Context, Guest,
 };
 use bindings::wasi::keyvalue::store as kv;
 

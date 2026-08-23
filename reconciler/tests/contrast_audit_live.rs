@@ -74,10 +74,7 @@ fn audit_a_palette_and_get_a_report_over_the_lattice() {
     let v: Value = r.json().unwrap_or(Value::Null);
     assert!(status.is_success(), "audit failed: {status} {v}\n{}", fleet.node_log("n1"));
     let report = v["report"].as_str().unwrap_or("");
-    assert!(
-        report.contains("Verdict") || report.contains("Fix first"),
-        "no report came back: {v}"
-    );
+    assert!(report.contains("Verdict") || report.contains("Fix first"), "no report came back: {v}");
     // The model was told the truth about the grey pair, so its report has to be
     // about a failure. A report that only praises means the client's 21:1 reached
     // the prompt.

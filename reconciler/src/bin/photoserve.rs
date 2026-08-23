@@ -1,8 +1,8 @@
 //! Keep the photo-critic app serving. The test fleet tears down when its handle
 //! drops; this holds the handle and blocks, so the app stays up for as long as
 //! this process runs. Prints the ingress port for a front proxy / tailscale.
-use std::time::Duration;
 use comp_reconciler::fleet::{repo_root, Fleet};
+use std::time::Duration;
 
 fn main() {
     let home = std::env::var("HOME").unwrap();

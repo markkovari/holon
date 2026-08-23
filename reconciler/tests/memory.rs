@@ -103,7 +103,8 @@ impl Probe {
             Err(e) => return Value::String(format!("transport: {e}")),
         };
         let (status, text) = (r.status(), r.text().unwrap_or_default());
-        serde_json::from_str(&text).unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
+        serde_json::from_str(&text)
+            .unwrap_or_else(|_| Value::String(format!("HTTP {status}: {text}")))
     }
 }
 
@@ -118,7 +119,10 @@ fn wait_for(fleet: &Fleet, host: &'static str) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
         host,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(20)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .unwrap(),
     };
     fleet.until(
         &format!("asking {host} about a goal nobody has evaluated"),
@@ -185,7 +189,10 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     // here would be pinning it in two places, and the derivation is already covered
     // by a unit test.
     let again = dense.post(
-        &format!("/observe?ns=errors&goal={}&env=env-2&attempt=1", enc(&format!("  MAKE a Slug from a title STRING\n"))),
+        &format!(
+            "/observe?ns=errors&goal={}&env=env-2&attempt=1",
+            enc(&format!("  MAKE a Slug from a title STRING\n"))
+        ),
         "lowercasing the title is not enough — punctuation has to go too, again",
     );
     assert_eq!(
@@ -250,10 +257,7 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     assert!(hits(&r).is_empty(), "k=0 is the cold control arm: {r}");
 
     // --- outcomes move standing, through the whole chain ----------------------
-    let r = dense.post(
-        &format!("/attribute?keys={promoted}&run=run-1&ok=true"),
-        "",
-    );
+    let r = dense.post(&format!("/attribute?keys={promoted}&run=run-1&ok=true"), "");
     assert_eq!(r["ok"], Value::Bool(true), "attribute failed: {r}");
     let r = dense.post(&format!("/attribute?keys={handle}&run=run-2&ok=false"), "");
     assert_eq!(r["ok"], Value::Bool(true), "attribute failed: {r}");
@@ -282,7 +286,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
         "an identical goal is similarity ~1.0: {r}"
     );
     // The floor is what makes this correct: the KNN always returns its nearest row.
-    let r = dense.get(&format!("/already-done?goal={}", enc("parse a csv file into typed records")));
+    let r =
+        dense.get(&format!("/already-done?goal={}", enc("parse a csv file into typed records")));
     assert_eq!(r["found"], Value::Bool(false), "an unrelated goal must not be skipped: {r}");
 
     // --- the same five components with no embedding model ---------------------
@@ -359,7 +364,8 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
             .evaluated(fresh, &run_id(seed, 0, branch), score, accepted, "")
             .expect("a verdict was refused");
     }
-    let prior = client.already_done(fresh, 0.9).expect("the pool answered").expect("now it is done");
+    let prior =
+        client.already_done(fresh, 0.9).expect("the pool answered").expect("now it is done");
     assert_eq!(prior.evaluations, 4, "every branch's verdict is on record: {}", prior.summary());
     assert_eq!(prior.score, 1000, "the winner's score, not the last branch's");
     assert_eq!(prior.run, run_id(seed, 0, "user-first"));
@@ -436,11 +442,7 @@ fn enc(s: &str) -> String {
         .map(|c| match c {
             'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
             ' ' => "+".to_string(),
-            other => other
-                .to_string()
-                .bytes()
-                .map(|b| format!("%{b:02X}"))
-                .collect::<String>(),
+            other => other.to_string().bytes().map(|b| format!("%{b:02X}")).collect::<String>(),
         })
         .collect()
 }

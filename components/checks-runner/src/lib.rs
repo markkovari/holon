@@ -67,10 +67,7 @@ fn endpoint() -> Result<(Scheme, String, String), EvalError> {
 
 fn files_json(files: &[bindings::exports::graph::fitness::evaluator::File]) -> serde_json::Value {
     serde_json::Value::Array(
-        files
-            .iter()
-            .map(|f| serde_json::json!({ "path": f.path, "content": f.content }))
-            .collect(),
+        files.iter().map(|f| serde_json::json!({ "path": f.path, "content": f.content })).collect(),
     )
 }
 

@@ -103,11 +103,7 @@ fn position_of(payload: &str) -> Option<Position> {
     if parts.next().is_some() {
         return None; // trailing junk
     }
-    Some(Position {
-        sort_key,
-        last_id,
-        forward,
-    })
+    Some(Position { sort_key, last_id, forward })
 }
 
 fn decode_field(b64: &str) -> Option<String> {
@@ -117,8 +113,8 @@ fn decode_field(b64: &str) -> Option<String> {
 
 /// Hex-encode the first `TAG_LEN` bytes of HMAC-SHA256(key, payload).
 fn checksum(key: &str, payload: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(key.as_bytes())
-        .expect("HMAC accepts keys of any length");
+    let mut mac =
+        HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC accepts keys of any length");
     mac.update(payload.as_bytes());
     let tag = mac.finalize().into_bytes();
     tag[..TAG_LEN].iter().map(|b| format!("{b:02x}")).collect()
@@ -133,8 +129,8 @@ fn verify(key: &str, payload: &str, expected_hex: &str) -> bool {
     if expected.len() != TAG_LEN {
         return false;
     }
-    let mut mac = HmacSha256::new_from_slice(key.as_bytes())
-        .expect("HMAC accepts keys of any length");
+    let mut mac =
+        HmacSha256::new_from_slice(key.as_bytes()).expect("HMAC accepts keys of any length");
     mac.update(payload.as_bytes());
     // `verify_slice` is constant-time and tolerates a truncated tag.
     mac.verify_truncated_left(&expected).is_ok()
@@ -167,9 +163,7 @@ impl Guest for Component {
     fn decode(cursor: String) -> Result<Position, CursorError> {
         // cursor = base64url(payload) "." checksum_hex
         let (b64_payload, sum) = cursor.split_once('.').ok_or(CursorError::InvalidCursor)?;
-        let payload_bytes = B64URL
-            .decode(b64_payload)
-            .map_err(|_| CursorError::InvalidCursor)?;
+        let payload_bytes = B64URL.decode(b64_payload).map_err(|_| CursorError::InvalidCursor)?;
         let payload = String::from_utf8(payload_bytes).map_err(|_| CursorError::InvalidCursor)?;
         let key = signing_key();
         if !verify(&key, &payload, sum) {
@@ -206,12 +200,7 @@ impl Guest for Component {
             }
             _ => None,
         };
-        PageInfo {
-            next_cursor,
-            prev_cursor,
-            has_next: more_after,
-            has_prev: more_before,
-        }
+        PageInfo { next_cursor, prev_cursor, has_next: more_after, has_prev: more_before }
     }
 }
 

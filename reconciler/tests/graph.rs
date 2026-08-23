@@ -23,7 +23,6 @@ mod harness;
 use harness::{Surreal, SURREAL_IMAGE, SURREAL_PASSWORD};
 use serde_json::Value;
 
-
 fn artifacts() -> Vec<String> {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
@@ -88,7 +87,10 @@ impl Probe {
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(20)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .unwrap(),
     };
     fleet.until("reading a node that was never written", Duration::from_secs(120), || {
         let r = probe.get("/get?kind=readiness&id=nothing-here");
@@ -148,7 +150,10 @@ fn a_component_writes_a_graph_to_a_real_database_and_walks_it() {
     assert_eq!(r["found"], Value::Bool(false), "a node nobody wrote is absent, not an error: {r}");
 
     // --- the hop record:store cannot do --------------------------------------
-    let r = probe.post("/relate?kind=file&id=src%2Flib.rs&edge=defines&to-kind=symbol&to-id=record_id", r#"{"at":102}"#);
+    let r = probe.post(
+        "/relate?kind=file&id=src%2Flib.rs&edge=defines&to-kind=symbol&to-id=record_id",
+        r#"{"at":102}"#,
+    );
     assert_eq!(r["ok"], Value::Bool(true), "relate failed: {r}");
 
     let r = probe.get("/neighbours?kind=file&id=src%2Flib.rs&edge=defines&dir=out");

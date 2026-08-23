@@ -116,7 +116,8 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
@@ -186,7 +187,10 @@ fn account_meta(subject: &str) -> BTreeMap<String, (String, String)> {
         .filter_map(|a| {
             Some((
                 a["code"].as_str()?.to_string(),
-                (a["name"].as_str().unwrap_or("").to_string(), a["type"].as_str().unwrap_or("asset").to_string()),
+                (
+                    a["name"].as_str().unwrap_or("").to_string(),
+                    a["type"].as_str().unwrap_or("asset").to_string(),
+                ),
             ))
         })
         .collect()
@@ -254,12 +258,18 @@ fn to_ledger(id: &str, v: &Value) -> Option<ledger::Entry> {
             side: parse_side(l["side"].as_str()?)?,
         });
     }
-    Some(ledger::Entry { id: id.to_string(), memo: v["memo"].as_str().unwrap_or("").to_string(), lines })
+    Some(ledger::Entry {
+        id: id.to_string(),
+        memo: v["memo"].as_str().unwrap_or("").to_string(),
+        lines,
+    })
 }
 
 fn ledger_err(e: ledger::LedgerError) -> Outcome {
     let msg = match e {
-        ledger::LedgerError::Unbalanced((d, c)) => format!("unbalanced: debits {} != credits {}", money(d), money(c)),
+        ledger::LedgerError::Unbalanced((d, c)) => {
+            format!("unbalanced: debits {} != credits {}", money(d), money(c))
+        }
         ledger::LedgerError::TooFewLines => "an entry needs at least two lines".into(),
         ledger::LedgerError::Nonpositive(a) => format!("line for {a} must have a positive amount"),
     };
@@ -282,7 +292,12 @@ fn create_entry(request: &IncomingRequest) -> Outcome {
     // build + validate the double-entry (the invariant lives in ledger:doubleentry).
     let le = match to_ledger("", &b) {
         Some(e) => e,
-        None => return Outcome::Err(422, "each line needs {account, amount>0, side: debit|credit}".into()),
+        None => {
+            return Outcome::Err(
+                422,
+                "each line needs {account, amount>0, side: debit|credit}".into(),
+            )
+        }
     };
     // every account must exist in the owner's chart.
     let meta = account_meta(&p.subject);
@@ -328,7 +343,10 @@ fn list_entries(request: &IncomingRequest) -> Outcome {
             v
         })
         .collect();
-    items.sort_by(|a, b| (a["date"].as_str(), a["created"].as_u64()).cmp(&(b["date"].as_str(), b["created"].as_u64())));
+    items.sort_by(|a, b| {
+        (a["date"].as_str(), a["created"].as_u64())
+            .cmp(&(b["date"].as_str(), b["created"].as_u64()))
+    });
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
 
@@ -350,7 +368,8 @@ struct Row {
 /// every stored entry was validated on create).
 fn snapshot(subject: &str) -> Option<(Vec<Row>, i64, i64, bool)> {
     let meta = account_meta(subject);
-    let les: Vec<ledger::Entry> = owned_entries(subject).iter().filter_map(|(id, v)| to_ledger(id, v)).collect();
+    let les: Vec<ledger::Entry> =
+        owned_entries(subject).iter().filter_map(|(id, v)| to_ledger(id, v)).collect();
     let trial = ledger::trial_balance(&les).ok()?;
     let rows = trial
         .accounts
@@ -358,7 +377,15 @@ fn snapshot(subject: &str) -> Option<(Vec<Row>, i64, i64, bool)> {
         .map(|a| {
             let (name, kind) = meta.get(&a.account).cloned().unwrap_or_default();
             let balance = natural(&kind, a.net);
-            Row { code: a.account, name, kind, debits: a.debits, credits: a.credits, net: a.net, balance }
+            Row {
+                code: a.account,
+                name,
+                kind,
+                debits: a.debits,
+                credits: a.credits,
+                net: a.net,
+                balance,
+            }
         })
         .collect();
     Some((rows, trial.total_debits, trial.total_credits, trial.balanced))
@@ -475,27 +502,67 @@ fn statement_pdf(request: &IncomingRequest) -> Outcome {
         None => return Outcome::Err(500, "ledger inconsistency".into()),
     };
     let (income, expenses, ti, te, net) = pnl(&rows);
-    let line = |text: String, size: u32, bold: bool, gap: u32| pdf::Block { text, size, bold, gap_before: gap };
+    let line = |text: String, size: u32, bold: bool, gap: u32| pdf::Block {
+        text,
+        size,
+        bold,
+        gap_before: gap,
+    };
     let col = |left: &str, right: String| format!("{:<34}{}", trunc(left, 34), right);
 
     let mut blocks = vec![line("Trial balance".into(), 13, true, 4)];
     for r in &rows {
         blocks.push(line(
-            format!("{:<8}{:<26}Dr {:<12} Cr {}", r.code, trunc(&r.name, 24), money(r.debits), money(r.credits)),
+            format!(
+                "{:<8}{:<26}Dr {:<12} Cr {}",
+                r.code,
+                trunc(&r.name, 24),
+                money(r.debits),
+                money(r.credits)
+            ),
             10,
             false,
             0,
         ));
     }
-    blocks.push(line(col("Totals", format!("Dr {}  Cr {}   {}", money(td), money(tc), if balanced { "BALANCED" } else { "OFF" })), 11, true, 2));
+    blocks.push(line(
+        col(
+            "Totals",
+            format!(
+                "Dr {}  Cr {}   {}",
+                money(td),
+                money(tc),
+                if balanced { "BALANCED" } else { "OFF" }
+            ),
+        ),
+        11,
+        true,
+        2,
+    ));
 
     blocks.push(line("Profit & Loss".into(), 13, true, 14));
     for r in &income {
-        blocks.push(line(col(&format!("  {}", r["name"].as_str().unwrap_or("")), money(r["amount"].as_i64().unwrap_or(0))), 10, false, 0));
+        blocks.push(line(
+            col(
+                &format!("  {}", r["name"].as_str().unwrap_or("")),
+                money(r["amount"].as_i64().unwrap_or(0)),
+            ),
+            10,
+            false,
+            0,
+        ));
     }
     blocks.push(line(col("Total income", money(ti)), 11, true, 0));
     for r in &expenses {
-        blocks.push(line(col(&format!("  {}", r["name"].as_str().unwrap_or("")), money(r["amount"].as_i64().unwrap_or(0))), 10, false, 0));
+        blocks.push(line(
+            col(
+                &format!("  {}", r["name"].as_str().unwrap_or("")),
+                money(r["amount"].as_i64().unwrap_or(0)),
+            ),
+            10,
+            false,
+            0,
+        ));
     }
     blocks.push(line(col("Total expenses", money(te)), 11, true, 0));
     blocks.push(line(col("Net income", money(net)), 12, true, 2));
@@ -516,14 +583,23 @@ fn statement_pdf(request: &IncomingRequest) -> Outcome {
     blocks.push(line(col("Total assets", money(ta)), 11, true, 2));
     blocks.push(line(col("Liabilities + equity + net income", money(tl + teq + net)), 11, true, 0));
     blocks.push(line(
-        if ta == tl + teq + net { "Balance sheet BALANCES".into() } else { "Balance sheet does NOT balance".into() },
+        if ta == tl + teq + net {
+            "Balance sheet BALANCES".into()
+        } else {
+            "Balance sheet does NOT balance".into()
+        },
         11,
         true,
         2,
     ));
 
     let doc = pdf::Document { title: "books — financial statements".to_string(), blocks };
-    Outcome::File(200, "application/pdf".into(), Some("books-statements.pdf".into()), pdf::render(&doc))
+    Outcome::File(
+        200,
+        "application/pdf".into(),
+        Some("books-statements.pdf".into()),
+        pdf::render(&doc),
+    )
 }
 
 fn trunc(s: &str, n: usize) -> String {
@@ -547,7 +623,8 @@ fn seed_demo(subject: &str) {
         ("5100", "Supplies Expense", "expense"),
     ];
     for (code, name, kind) in chart {
-        let d = json!({ "code": code, "name": name, "type": kind, "owner": subject, "created": now() });
+        let d =
+            json!({ "code": code, "name": name, "type": kind, "owner": subject, "created": now() });
         let _ = records::create(ACCOUNTS, &d.to_string(), &["owner".to_string()]);
     }
     let dr = |acct: &str, amt: i64| json!({ "account": acct, "amount": amt, "side": "debit" });
@@ -644,7 +721,13 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     respond(response_out, code, "application/json", None, body.as_bytes());
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, disposition: Option<&str>, body: &[u8]) {
+fn respond(
+    response_out: ResponseOutparam,
+    status: u16,
+    ctype: &str,
+    disposition: Option<&str>,
+    body: &[u8],
+) {
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     if let Some(d) = disposition {

@@ -93,8 +93,7 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
     if wants_csv {
         let mut doc = vec![csv::Row { fields: COLUMNS.iter().map(|c| c.to_string()).collect() }];
         doc.extend(rows.into_iter().map(|fields| csv::Row { fields }));
-        let dialect =
-            csv::Dialect { delimiter: ",".to_string(), has_header: true, trim: false };
+        let dialect = csv::Dialect { delimiter: ",".to_string(), has_header: true, trim: false };
         return Reply::raw(200, "text/csv", csv::format(&doc, &dialect).into_bytes());
     }
 
@@ -124,11 +123,20 @@ mod tests {
         for bad in ["", "2026-8-17", "2026-13-01", "2026-08-32", "2026-08-17T00:00:00Z"] {
             assert!(!valid_day(bad), "{bad}");
         }
-        let rows =
-            vec![row("a", "auth", "open", "high"), row("b", "auth", "closed", ""), row("c", "billing", "open", "high")];
-        assert_eq!(tally(&rows, COMPONENT), BTreeMap::from([("auth".into(), 2), ("billing".into(), 1)]));
+        let rows = vec![
+            row("a", "auth", "open", "high"),
+            row("b", "auth", "closed", ""),
+            row("c", "billing", "open", "high"),
+        ];
+        assert_eq!(
+            tally(&rows, COMPONENT),
+            BTreeMap::from([("auth".into(), 2), ("billing".into(), 1)])
+        );
         // no zero-filled keys, and the blank severity is absent rather than counted
         assert_eq!(tally(&rows, SEVERITY), BTreeMap::from([("high".into(), 2)]));
-        assert_eq!(rows.iter().filter(|r| r[SEVERITY] == "high" && r[STATE] != "closed").count(), 2);
+        assert_eq!(
+            rows.iter().filter(|r| r[SEVERITY] == "high" && r[STATE] != "closed").count(),
+            2
+        );
     }
 }

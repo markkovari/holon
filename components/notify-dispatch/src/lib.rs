@@ -155,8 +155,9 @@ impl Guest for Component {
         match msg.channel {
             Channel::Webhook => post(&msg.target, msg.body.as_bytes()),
             Channel::Email => {
-                let url = gateway("notify:email-url")
-                    .ok_or_else(|| NotifyError::UnsupportedChannel("email: no notify:email-url".into()))?;
+                let url = gateway("notify:email-url").ok_or_else(|| {
+                    NotifyError::UnsupportedChannel("email: no notify:email-url".into())
+                })?;
                 let payload = format!(
                     "{{\"to\":\"{}\",\"subject\":\"{}\",\"body\":\"{}\"}}",
                     esc(&msg.target),
@@ -166,8 +167,9 @@ impl Guest for Component {
                 post(&url, payload.as_bytes())
             }
             Channel::Sms => {
-                let url = gateway("notify:sms-url")
-                    .ok_or_else(|| NotifyError::UnsupportedChannel("sms: no notify:sms-url".into()))?;
+                let url = gateway("notify:sms-url").ok_or_else(|| {
+                    NotifyError::UnsupportedChannel("sms: no notify:sms-url".into())
+                })?;
                 let payload =
                     format!("{{\"to\":\"{}\",\"body\":\"{}\"}}", esc(&msg.target), esc(&msg.body));
                 post(&url, payload.as_bytes())

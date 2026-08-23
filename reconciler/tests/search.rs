@@ -130,7 +130,14 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
 
     // Up, proven by a real search rather than a readiness signal.
     fleet.until("the fleet serving a search", Duration::from_secs(180), || {
-        let s = search(&url, host, &plan("go nowhere"), Bounds { max_rounds: 1, ..bounds }, 9000, timeout);
+        let s = search(
+            &url,
+            host,
+            &plan("go nowhere"),
+            Bounds { max_rounds: 1, ..bounds },
+            9000,
+            timeout,
+        );
         match s.rounds[0].entries.iter().find(|e| !e.note.is_empty()) {
             Some(e) => Err(e.note.clone()),
             None => Ok(()),
@@ -211,14 +218,8 @@ fn a_second_generation_builds_on_the_first_and_one_branch_refuses_to() {
     // --- A SEARCH THAT IS NOT GOING ANYWHERE STOPS ---------------------------
     // Every generation produces the same useless thing, so the best score never
     // improves. Four rounds were allowed; two are spent.
-    let circling = search(
-        &url,
-        host,
-        &plan("go nowhere"),
-        Bounds { patience: 1, ..bounds },
-        SEED,
-        timeout,
-    );
+    let circling =
+        search(&url, host, &plan("go nowhere"), Bounds { patience: 1, ..bounds }, SEED, timeout);
     assert_eq!(circling.stopped, SearchStop::NoProgress, "{circling:?}");
     assert_eq!(
         circling.rounds.len(),

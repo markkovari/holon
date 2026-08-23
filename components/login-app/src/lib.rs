@@ -77,11 +77,7 @@ impl Guest for Component {
         let s = sessions::create(payload.as_bytes(), ttl)
             .map_err(|e| AuthError::Capability(format!("session.create: {e:?}")))?;
 
-        Ok(LoginResult {
-            token: s.id,
-            csrf: s.csrf_token,
-            expires: s.expires,
-        })
+        Ok(LoginResult { token: s.id, csrf: s.csrf_token, expires: s.expires })
     }
 
     fn whoami(token: String) -> Result<Identity, AuthError> {
@@ -98,14 +94,12 @@ impl Guest for Component {
             .and_then(|(_, rest)| rest.split_once('"'))
             .map(|(u, _)| u.to_string())
             .unwrap_or_default();
-        Ok(Identity {
-            user,
-            expires: s.expires,
-        })
+        Ok(Identity { user, expires: s.expires })
     }
 
     fn logout(token: String) -> Result<(), AuthError> {
-        sessions::revoke(&token).map_err(|e| AuthError::Capability(format!("session.revoke: {e:?}")))
+        sessions::revoke(&token)
+            .map_err(|e| AuthError::Capability(format!("session.revoke: {e:?}")))
     }
 }
 

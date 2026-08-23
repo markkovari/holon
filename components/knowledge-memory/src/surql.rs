@@ -250,8 +250,7 @@ fn verdict_edge(key: &str, run: &str) -> String {
 /// ponytail: a traversal per candidate where a stored integer would be one read.
 /// Irrelevant at a pool this size, and the moment it is not, the fix is a
 /// materialised count maintained by the same statement that writes the edge.
-const PRIOR_FIELDS: &str =
-    "goal, score, run, artifact, count(->evaluated_by) AS evaluations";
+const PRIOR_FIELDS: &str = "goal, score, run, artifact, count(->evaluated_by) AS evaluations";
 
 /// A goal counts as done when at least one verdict on it passed. Note this is a
 /// count over EDGES, so it cannot disagree with the trail the way a counter can.
@@ -309,10 +308,7 @@ pub fn rows(body: &str) -> Result<Vec<Value>, String> {
         }
         return Err(msg);
     }
-    Ok(statements
-        .last()
-        .and_then(|s| s["result"].as_array().cloned())
-        .unwrap_or_default())
+    Ok(statements.last().and_then(|s| s["result"].as_array().cloned()).unwrap_or_default())
 }
 
 /// Did the database refuse this vector because the index is a different width?

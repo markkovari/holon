@@ -1,11 +1,9 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::iot::scanner::scanner::{Device, Protocol, Guest};
-use bindings::wasi::http::types::{
-    OutgoingRequest, Headers, Method, Scheme,
-};
+use bindings::exports::iot::scanner::scanner::{Device, Guest, Protocol};
 use bindings::wasi::http::outgoing_handler;
+use bindings::wasi::http::types::{Headers, Method, OutgoingRequest, Scheme};
 use serde_json::Value;
 
 struct Component;
@@ -23,13 +21,13 @@ impl Guest for Component {
             Ok(r) => r,
             Err(_) => return vec![],
         };
-        
+
         res.subscribe().block();
         let incoming = match res.get() {
             Some(Ok(Ok(r))) => r,
             _ => return vec![],
         };
-        
+
         let body = incoming.consume().unwrap();
         let stream = body.stream().unwrap();
         let mut buf = Vec::new();
@@ -41,7 +39,7 @@ impl Guest for Component {
                 Err(_) => break,
             }
         }
-        
+
         let mut devices = vec![];
         if let Ok(json) = serde_json::from_slice::<Value>(&buf) {
             if let Some(arr) = json.as_array() {
@@ -56,7 +54,7 @@ impl Guest for Component {
                 }
             }
         }
-        
+
         devices
     }
 }

@@ -27,7 +27,10 @@ fn auth_reply(e: AuthError) -> Reply {
     }
 }
 
-fn authorize(route: &Route, action: &str) -> Result<crate::bindings::auth::identity::types::Principal, Reply> {
+fn authorize(
+    route: &Route,
+    action: &str,
+) -> Result<crate::bindings::auth::identity::types::Principal, Reply> {
     if route.bearer.is_empty() {
         return Err(Reply::err(401, "unauthenticated"));
     }

@@ -13,8 +13,8 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::demo::shape::pager;
+use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
@@ -78,14 +78,12 @@ impl Guest for Component {
         // list here and every check still went green — the join gate proves the
         // halves LINK, and nothing yet proves the endpoint answers anything. That
         // is the gap `.comp/goals/07` exists for.
-        let ids: Vec<String> =
-            ["a", "b", "c", "d", "e"].iter().map(|s| s.to_string()).collect();
+        let ids: Vec<String> = ["a", "b", "c", "d", "e"].iter().map(|s| s.to_string()).collect();
         let page = pager::paginate(&ids, size, offset);
 
         let body = format!(
             "{{\"hits\":[{}],\"has_more\":{}}}",
-            page
-                .hits
+            page.hits
                 .iter()
                 .map(|h| format!("\"{}\"", h.replace('\\', "\\\\").replace('"', "\\\"")))
                 .collect::<Vec<_>>()

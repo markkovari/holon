@@ -28,10 +28,7 @@ fn authorize(route: &Route, action: &str) -> Result<auth_types::Principal, Reply
     if route.bearer.is_empty() {
         return Err(Reply::err(401, "unauthenticated"));
     }
-    let required = auth_types::Permission {
-        target: "reports".into(),
-        action: action.into(),
-    };
+    let required = auth_types::Permission { target: "reports".into(), action: action.into() };
     authz::authorize(&route.bearer, &required).map_err(auth_err_reply)
 }
 
@@ -70,7 +67,13 @@ fn create_report(route: &Route, body: &str) -> Reply {
     match rl::check(&principal.subject) {
         Ok(_) => {}
         Err(rl::LimitError::Locked(secs)) => {
-            ledger::note(&route.trace, "reports.create", "throttled", &principal.subject, "rate limited");
+            ledger::note(
+                &route.trace,
+                "reports.create",
+                "throttled",
+                &principal.subject,
+                "rate limited",
+            );
             return Reply::json(429, json!({ "error": "rate_limited", "retry_after": secs }));
         }
         Err(rl::LimitError::BackendUnavailable(_)) => {
@@ -109,7 +112,13 @@ fn create_report(route: &Route, body: &str) -> Reply {
         Err(rl::LimitError::Locked(_)) => {}
     }
 
-    ledger::note(&route.trace, "reports.create", "ok", &principal.subject, &format!("created {}", entry.id));
+    ledger::note(
+        &route.trace,
+        "reports.create",
+        "ok",
+        &principal.subject,
+        &format!("created {}", entry.id),
+    );
     Reply::json(201, json!({ "id": entry.id }))
 }
 
@@ -146,10 +155,11 @@ fn list_reports(route: &Route) -> Reply {
             Err(_) => return Reply::err(500, "list_failed"),
         }
     } else {
-        let by_component = match records::find_by("reports", "component", &json!(component).to_string()) {
-            Ok(v) => v,
-            Err(_) => return Reply::err(500, "list_failed"),
-        };
+        let by_component =
+            match records::find_by("reports", "component", &json!(component).to_string()) {
+                Ok(v) => v,
+                Err(_) => return Reply::err(500, "list_failed"),
+            };
         by_component
             .into_iter()
             .filter(|e| {

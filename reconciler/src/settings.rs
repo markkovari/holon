@@ -97,8 +97,8 @@ impl File {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let parsed: Self = toml::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))?;
+        let parsed: Self =
+            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
         eprintln!("config: {}", path.display());
         Ok(parsed)
     }

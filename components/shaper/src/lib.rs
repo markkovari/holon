@@ -19,7 +19,13 @@ use bindings::exports::shaper::limit::limiter::{Bucket, Decision, Guest};
 struct Component;
 
 impl Guest for Component {
-    fn token_bucket(state: Bucket, now_ms: u64, capacity: f64, refill_per_sec: f64, cost: f64) -> (Decision, Bucket) {
+    fn token_bucket(
+        state: Bucket,
+        now_ms: u64,
+        capacity: f64,
+        refill_per_sec: f64,
+        cost: f64,
+    ) -> (Decision, Bucket) {
         // Refill from elapsed time (uninitialized state starts full).
         let tokens = if state.updated_ms == 0 {
             capacity
@@ -37,7 +43,11 @@ impl Guest for Component {
         } else {
             // time to accumulate the shortfall.
             let need = cost - tokens;
-            let retry = if refill_per_sec > 0.0 { (need / refill_per_sec * 1000.0).ceil() as u64 } else { u64::MAX };
+            let retry = if refill_per_sec > 0.0 {
+                (need / refill_per_sec * 1000.0).ceil() as u64
+            } else {
+                u64::MAX
+            };
             (
                 Decision { allowed: false, retry_after_ms: retry, remaining: tokens },
                 // persist the refilled tokens (don't spend on a denial).

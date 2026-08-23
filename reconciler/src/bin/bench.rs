@@ -139,15 +139,13 @@ fn inventory(nats_url: &str, lattice: &str) -> Result<()> {
 }
 
 fn summarise(path: &std::path::Path, label: &str) -> Result<()> {
-    let text = std::fs::read_to_string(path)
-        .with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let d: Value = serde_json::from_str(&text).with_context(|| format!("{}", path.display()))?;
     let s = &d["summary"];
     let p = &d["latencyPercentiles"];
-    let codes: BTreeMap<String, u64> = serde_json::from_value(
-        d["statusCodeDistribution"].clone(),
-    )
-    .unwrap_or_default();
+    let codes: BTreeMap<String, u64> =
+        serde_json::from_value(d["statusCodeDistribution"].clone()).unwrap_or_default();
     let errs: BTreeMap<String, u64> =
         serde_json::from_value(d["errorDistribution"].clone()).unwrap_or_default();
 
@@ -197,7 +195,11 @@ fn coldstart(log: &std::path::Path) -> Result<()> {
             continue;
         }
         let row = (total, nums[0], nums[1], nums[2]);
-        if tail.contains("cache-load") { warm.push(row) } else { cold.push(row) }
+        if tail.contains("cache-load") {
+            warm.push(row)
+        } else {
+            cold.push(row)
+        }
     }
     for (rows, what) in [(&cold, "cold: wasmtime compiles"), (&warm, "warm: loaded from cache")] {
         if rows.is_empty() {
@@ -223,8 +225,10 @@ fn coldstart(log: &std::path::Path) -> Result<()> {
         }
     }
     if !cold.is_empty() && !warm.is_empty() {
-        let (a, b) = (median(cold.iter().map(|r| r.0).collect()),
-                      median(warm.iter().map(|r| r.0).collect()));
+        let (a, b) = (
+            median(cold.iter().map(|r| r.0).collect()),
+            median(warm.iter().map(|r| r.0).collect()),
+        );
         println!(
             "\n  {:.1} ms -> {:.2} ms, a {:.0}x cut ({:.1}% of the start removed).",
             a / 1000.0,
@@ -258,7 +262,6 @@ fn replicas() -> Result<()> {
     Ok(())
 }
 
-
 /// `<unix-seconds> <label>` per line: what happened, and when.
 fn read_events(path: Option<&std::path::Path>) -> Vec<(u64, String)> {
     let Some(path) = path else { return Vec::new() };
@@ -275,10 +278,7 @@ fn read_events(path: Option<&std::path::Path>) -> Vec<(u64, String)> {
 }
 
 fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()
 }
 
 /// Open-loop load, bucketed per second.
@@ -335,7 +335,11 @@ fn load(
                     .map(|r| r.status().is_success())
                     .unwrap_or(false);
                 let b = &buckets[at];
-                if ok { b.0.fetch_add(1, Ordering::Relaxed) } else { b.1.fetch_add(1, Ordering::Relaxed) };
+                if ok {
+                    b.0.fetch_add(1, Ordering::Relaxed)
+                } else {
+                    b.1.fetch_add(1, Ordering::Relaxed)
+                };
             }
         }));
     }
@@ -343,10 +347,8 @@ fn load(
         let _ = h.join();
     }
 
-    let marks: BTreeMap<u64, String> = read_events(events)
-        .into_iter()
-        .map(|(at, what)| (at.saturating_sub(wall), what))
-        .collect();
+    let marks: BTreeMap<u64, String> =
+        read_events(events).into_iter().map(|(at, what)| (at.saturating_sub(wall), what)).collect();
     println!("    sec   ok   fail");
     let (mut total_ok, mut total_bad) = (0u64, 0u64);
     for (i, b) in buckets.iter().enumerate() {
@@ -368,9 +370,8 @@ fn load(
     let ev: Vec<(u64, String)> = marks.into_iter().collect();
     for (i, (at, what)) in ev.iter().enumerate() {
         let end = ev.get(i + 1).map(|(t, _)| *t).unwrap_or(secs);
-        let bad: Vec<u64> = (*at..end)
-            .filter(|s| buckets[*s as usize].1.load(Ordering::Relaxed) > 0)
-            .collect();
+        let bad: Vec<u64> =
+            (*at..end).filter(|s| buckets[*s as usize].1.load(Ordering::Relaxed) > 0).collect();
         match (bad.first(), bad.last()) {
             (Some(f), Some(l)) => println!(
                 "    after {what:?}: errors in seconds {f}..{l} ({}s from the event to the last error)",
@@ -426,7 +427,6 @@ fn converge(samples: &std::path::Path, events: Option<&std::path::Path>, want: u
     }
     Ok(())
 }
-
 
 /// Organisations per node, and how many nodes hold more than one.
 ///

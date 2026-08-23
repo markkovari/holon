@@ -47,7 +47,8 @@ impl Platform {
         let component = if legacy.is_file() {
             legacy
         } else {
-            let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
+            let catalog =
+                comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
             comp_reconciler::plug::compose_to(
                 "platform-domain",
                 &catalog,
@@ -81,10 +82,8 @@ impl Platform {
             .args(["--config", &format!("master-key={key}")]);
         let child = Kill(cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
 
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap();
+        let http =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
         let me = Self { _dir: dir, _child: child, http, port };
         for _ in 0..60 {
             if me.http.get(me.url("/")).send().is_ok() {
@@ -110,25 +109,13 @@ impl Platform {
             "password": format!("correct-horse-{name}"),
         });
         let _ = self.http.post(self.url("/api/register")).json(&body).send();
-        let v: Value = self
-            .http
-            .post(self.url("/api/login"))
-            .json(&body)
-            .send()
-            .unwrap()
-            .json()
-            .unwrap();
+        let v: Value =
+            self.http.post(self.url("/api/login")).json(&body).send().unwrap().json().unwrap();
         v["token"].as_str().unwrap_or_else(|| panic!("no token in {v}")).to_string()
     }
 
     pub fn post(&self, token: &str, path: &str, body: Value) -> (u16, Value) {
-        let r = self
-            .http
-            .post(self.url(path))
-            .bearer_auth(token)
-            .json(&body)
-            .send()
-            .unwrap();
+        let r = self.http.post(self.url(path)).bearer_auth(token).json(&body).send().unwrap();
         let code = r.status().as_u16();
         (code, r.json().unwrap_or(Value::Null))
     }
@@ -156,7 +143,6 @@ pub fn base64(raw: &[u8]) -> String {
     }
     out
 }
-
 
 impl Platform {
     /// A call on the internal API, which takes the applier secret rather than a
@@ -238,10 +224,8 @@ impl Surreal {
             return None;
         }
         let me = Self { name, port };
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .build()
-            .unwrap();
+        let client =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build().unwrap();
         // A container has an image pull and a runtime start in front of it, so
         // this waits longer than a local process would need.
         let deadline = std::time::Instant::now() + Duration::from_secs(90);
@@ -255,7 +239,6 @@ impl Surreal {
         panic!("the {SURREAL_IMAGE} container never became healthy on {port}");
     }
 }
-
 
 /// A SurrealDB with a `holon` namespace and a reader for what it answered.
 ///

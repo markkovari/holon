@@ -124,9 +124,7 @@ fn push_field(row: &mut Vec<String>, field: &mut String, quoted: bool, trim: boo
 
 /// Quote a field per RFC 4180 if it contains the delimiter, a quote, CR or LF.
 fn format_field(value: &str, delimiter: char) -> String {
-    let needs_quote = value
-        .chars()
-        .any(|c| c == delimiter || c == '"' || c == '\n' || c == '\r');
+    let needs_quote = value.chars().any(|c| c == delimiter || c == '"' || c == '\n' || c == '\r');
     if needs_quote {
         let mut out = String::with_capacity(value.len() + 2);
         out.push('"');
@@ -162,11 +160,7 @@ impl Guest for Component {
                 // `data_index` is the 0-based index among DATA rows.
                 return Err(CsvError::RaggedRow(data_index as u32));
             }
-            let pairs = header
-                .iter()
-                .cloned()
-                .zip(data_row.iter().cloned())
-                .collect();
+            let pairs = header.iter().cloned().zip(data_row.iter().cloned()).collect();
             out.push(RecordRow { pairs });
         }
         Ok(out)

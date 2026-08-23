@@ -36,16 +36,16 @@ fn a_second_reconciler_stands_by_and_takes_over_when_the_first_dies() {
 
     // The first one is the leader; nothing else is running yet.
     let first = wait_for(|| fleet.reconciler_log(), "is now the leader", Duration::from_secs(30));
-    assert!(first.contains("is now the leader"), "the only reconciler never took the lease:\n{first}");
+    assert!(
+        first.contains("is now the leader"),
+        "the only reconciler never took the lease:\n{first}"
+    );
 
     // A second one must NOT reconcile. It says who it is waiting for, which is
     // the difference between a standby and a process that is merely broken.
     fleet.second_reconciler("b");
-    let standby = wait_for(
-        || fleet.reconciler_log_named("b"),
-        "standing by",
-        Duration::from_secs(30),
-    );
+    let standby =
+        wait_for(|| fleet.reconciler_log_named("b"), "standing by", Duration::from_secs(30));
     assert!(standby.contains("standing by"), "the second reconciler did not stand by:\n{standby}");
     assert!(
         !standby.contains("is now the leader"),
@@ -60,11 +60,8 @@ fn a_second_reconciler_stands_by_and_takes_over_when_the_first_dies() {
     // Kill the leader. The lease is 6s here (30s in production), so the standby
     // should take over within that plus one interval.
     fleet.kill_first_reconciler();
-    let promoted = wait_for(
-        || fleet.reconciler_log_named("b"),
-        "is now the leader",
-        Duration::from_secs(45),
-    );
+    let promoted =
+        wait_for(|| fleet.reconciler_log_named("b"), "is now the leader", Duration::from_secs(45));
     assert!(
         promoted.contains("is now the leader"),
         "the standby never took over after the leader died — the fleet is now \

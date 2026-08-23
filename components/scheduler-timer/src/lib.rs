@@ -145,14 +145,7 @@ fn parse(key: &str, s: &str) -> Result<Stored, TimerError> {
         .decode(payload_b64)
         .map_err(|_| TimerError::BackendUnavailable("corrupt record: payload".into()))?;
     Ok(Stored {
-        job: Job {
-            key: key.to_string(),
-            payload,
-            kind,
-            run_at,
-            period_seconds,
-            fires,
-        },
+        job: Job { key: key.to_string(), payload, kind, run_at, period_seconds, fires },
         lease_until,
     })
 }
@@ -306,10 +299,8 @@ impl Guest for Component {
                     let period = stored.job.period_seconds.max(1);
                     let behind = now.saturating_sub(stored.job.run_at);
                     let steps = behind / period + 1;
-                    stored.job.run_at = stored
-                        .job
-                        .run_at
-                        .saturating_add(steps.saturating_mul(period));
+                    stored.job.run_at =
+                        stored.job.run_at.saturating_add(steps.saturating_mul(period));
                     stored.job.fires = stored.job.fires.saturating_add(1);
                     store(&bucket, &stored)?;
                     out.push(stored.job);

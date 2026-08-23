@@ -28,8 +28,8 @@ mod tickets;
 use bindings::auth::identity::session as auth_session;
 use bindings::auth::identity::types as auth_types;
 use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::records::store::store as records;
 use bindings::outbox::dispatch::queue as outbox;
+use bindings::records::store::store as records;
 use bindings::session::store::store as sessions;
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::http::types::{
@@ -138,7 +138,6 @@ fn percent(s: &str) -> String {
     }
     String::from_utf8_lossy(&out).into_owned()
 }
-
 
 /// A `wasi:config` value as a number, with a default.
 ///
@@ -266,10 +265,8 @@ fn seed(body: &str) -> Reply {
 /// pass its gate and fail the composition.
 fn enqueue_fixture(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
-    let target = req
-        .get("target")
-        .and_then(Value::as_str)
-        .unwrap_or("webhook:http://127.0.0.1:1/hook");
+    let target =
+        req.get("target").and_then(Value::as_str).unwrap_or("webhook:http://127.0.0.1:1/hook");
     let payload = json!({
         "ticket": req.get("ticket").and_then(Value::as_str).unwrap_or("fixture"),
         "target": target,
@@ -325,10 +322,7 @@ fn read_body(request: &IncomingRequest) -> String {
 fn header(request: &IncomingRequest, name: &str) -> String {
     let fields = request.headers();
     let values = fields.get(name);
-    values
-        .first()
-        .map(|v| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_default()
+    values.first().map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default()
 }
 
 impl Guest for Component {
@@ -380,7 +374,6 @@ impl Guest for Component {
             }
             _ => Reply::err(404, "not_found"),
         };
-
 
         let headers = Fields::new();
         let _ = headers.set("content-type", &[b"application/json".to_vec()]);

@@ -26,9 +26,9 @@ mod agent;
 mod kv;
 mod kvcache;
 mod kvprofile;
+mod rpc;
 mod secrets;
 mod sync;
-mod rpc;
 mod tenant;
 // The gate for `--kv surreal`, kept out of `kv.rs` on purpose: the file that
 // implements a backend must not be the file that judges it.
@@ -220,7 +220,10 @@ impl store::Host for Host {
     /// A miss must never fall back to the default. A fallback would mean a guest
     /// naming its neighbour's bucket gets *a* bucket rather than an error, which is
     /// the same class of bug wearing an apology.
-    fn open(&mut self, identifier: String) -> wasmtime::Result<Result<Resource<HostBucket>, store::Error>> {
+    fn open(
+        &mut self,
+        identifier: String,
+    ) -> wasmtime::Result<Result<Resource<HostBucket>, store::Error>> {
         let Some(id) = self.scope.bucket(&identifier) else {
             return Ok(Err(store::Error::NoSuchStore));
         };
@@ -445,7 +448,8 @@ impl reader::Host for Host {
     fn get(
         &mut self,
         key: String,
-    ) -> wasmtime::Result<Result<Option<Resource<secrets::SecretHandle>>, reader::SecretError>> {
+    ) -> wasmtime::Result<Result<Option<Resource<secrets::SecretHandle>>, reader::SecretError>>
+    {
         let Some(reference) = self.scope.secret(&key).cloned() else {
             return Ok(Ok(None));
         };
@@ -568,8 +572,11 @@ impl WasiHttpHooks for Egress {
         let trace = std::env::var_os("COMP_TRACE_EGRESS").is_some();
         let who = scope.id();
         let handle = wasmtime_wasi::runtime::spawn(async move {
-            let target =
-                if authority.contains(':') { authority.clone() } else { format!("{authority}:{port}") };
+            let target = if authority.contains(':') {
+                authority.clone()
+            } else {
+                format!("{authority}:{port}")
+            };
             match tokio::net::lookup_host(&target).await {
                 Ok(addrs) => {
                     for a in addrs {
@@ -611,7 +618,9 @@ impl WasiHttpHooks for Egress {
                         "comp-host: [egress] {who} {target} -> {} in {ms}ms",
                         r.resp.status()
                     ),
-                    Err(e) => eprintln!("comp-host: [egress] {who} {target} -> ERROR in {ms}ms {e:?}"),
+                    Err(e) => {
+                        eprintln!("comp-host: [egress] {who} {target} -> ERROR in {ms}ms {e:?}")
+                    }
                 }
             }
             Ok(out)
@@ -636,13 +645,19 @@ async fn reqwest_send(
     use http_body_util::{BodyExt, Full};
 
     let (parts, body) = request.into_parts();
-    let path =
-        parts.uri.path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".to_string());
+    let path = parts
+        .uri
+        .path_and_query()
+        .map(|p| p.as_str().to_string())
+        .unwrap_or_else(|| "/".to_string());
     let url = format!("{scheme}://{authority}{path}");
 
     // Collect the request body the guest wrote.
-    let body_bytes =
-        body.collect().await.map(|c| c.to_bytes()).map_err(|_| ErrorCode::HttpRequestBodySize(None))?;
+    let body_bytes = body
+        .collect()
+        .await
+        .map(|c| c.to_bytes())
+        .map_err(|_| ErrorCode::HttpRequestBodySize(None))?;
 
     // Copy the guest's headers, minus the ones a client library owns: host and
     // content-length are set by reqwest from the URL and the body, and the
@@ -652,7 +667,12 @@ async fn reqwest_send(
         let name = k.as_str().to_ascii_lowercase();
         if matches!(
             name.as_str(),
-            "host" | "content-length" | "connection" | "transfer-encoding" | "keep-alive" | "upgrade"
+            "host"
+                | "content-length"
+                | "connection"
+                | "transfer-encoding"
+                | "keep-alive"
+                | "upgrade"
         ) {
             continue;
         }
@@ -691,7 +711,8 @@ async fn reqwest_send(
         }
         builder = builder.header(k, v);
     }
-    let hyper_body = Full::new(bytes).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync();
+    let hyper_body =
+        Full::new(bytes).map_err(|e: std::convert::Infallible| match e {}).boxed_unsync();
     let resp = builder
         .body(hyper_body)
         .map_err(|_| ErrorCode::InternalError(Some("response build".into())))?;
@@ -953,7 +974,11 @@ async fn main() -> Result<()> {
     let sqlite_path = args.sqlite_path.clone().unwrap_or_else(kv::SqliteKv::default_path);
     let lattice_mode = args.lattice_nats.is_some();
     let kv_kind = args.kv.clone().unwrap_or_else(|| {
-        if lattice_mode { kv::DEFAULT_SHARED.into() } else { "memory".into() }
+        if lattice_mode {
+            kv::DEFAULT_SHARED.into()
+        } else {
+            "memory".into()
+        }
     });
     let nats_url = args
         .nats_url
@@ -1110,13 +1135,10 @@ async fn main() -> Result<()> {
             let component = Component::from_file(&engine, &args.component)?;
             let pre = Some(ProxyPre::new(build_linker(&engine)?.instantiate_pre(&component)?)?);
             let id = scope.id();
-            instances
-                .write()
-                .unwrap()
-                .insert(
-                    id.clone(),
-                    Arc::new(Instance { scope, pre, remotes: Default::default(), count: 1 }),
-                );
+            instances.write().unwrap().insert(
+                id.clone(),
+                Arc::new(Instance { scope, pre, remotes: Default::default(), count: 1 }),
+            );
             // The catch-all exists ONLY here. A lattice node routes by Host header
             // and 404s on a miss — a fallback there would send one tenant's traffic
             // into another tenant's component on a bad DNS record.
@@ -1138,13 +1160,10 @@ async fn main() -> Result<()> {
             // Every server in the list, for the same reason the store takes a list:
             // failover only helps a process that managed to connect once.
             let lattice_servers = comp_lattice::nats::servers(nats_url_for_lattice);
-            let raw_nats = Arc::new(
-                async_nats::connect(lattice_servers.clone())
-                    .await
-                    .with_context(|| {
-                        format!("connecting to NATS at {}", lattice_servers.join(", "))
-                    })?,
-            );
+            let raw_nats =
+                Arc::new(async_nats::connect(lattice_servers.clone()).await.with_context(
+                    || format!("connecting to NATS at {}", lattice_servers.join(", ")),
+                )?);
             let ag = Arc::new(agent::Agent {
                 platform_url: args.platform_url.clone(),
                 compiled: Default::default(),
@@ -1158,9 +1177,11 @@ async fn main() -> Result<()> {
                 instances: instances.clone(),
                 routes: routes.clone(),
                 limits: limits.clone(),
-                state_dir: args.state_dir.clone().map(std::path::PathBuf::from).unwrap_or_else(
-                    || std::path::PathBuf::from(state_dir_default()),
-                ),
+                state_dir: args
+                    .state_dir
+                    .clone()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from(state_dir_default())),
                 heartbeat_secs: args.heartbeat_secs,
                 address: args.advertise_addr.clone().unwrap_or_else(|| args.addr.clone()),
                 kv_shared,
@@ -1248,13 +1269,11 @@ async fn main() -> Result<()> {
                     let Some(instance) = resolve(&routes, &instances, &req) else {
                         return Ok(not_found());
                     };
-                    handle_request(engine, instance, kv_backend, cache_backing, platform_url, req).await
+                    handle_request(engine, instance, kv_backend, cache_backing, platform_url, req)
+                        .await
                 }
             });
-            if let Err(e) = http1::Builder::new()
-                .serve_connection(io, service)
-                .await
-            {
+            if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
                 eprintln!("connection error: {e:?}");
             }
         });
@@ -1327,9 +1346,8 @@ fn state_dir_default() -> String {
 }
 
 /// API route prefixes that must go to the wasm component, never to static files.
-const API_PREFIXES: &[&str] = &[
-    "/register", "/login", "/me", "/auth", "/api", "/pets", "/appointments", "/admin", "/i18n",
-];
+const API_PREFIXES: &[&str] =
+    &["/register", "/login", "/me", "/auth", "/api", "/pets", "/appointments", "/admin", "/i18n"];
 
 /// Serve a static file from `dir` for a non-API GET, with an index.html SPA
 /// fallback (client-side routing). Returns None to let the component handle it
@@ -1343,7 +1361,9 @@ fn try_static(
         return None;
     }
     let path = req.uri().path();
-    if API_PREFIXES.iter().any(|p| path == *p || path.starts_with(&format!("{p}/")) || path.starts_with(&format!("{p}?"))) {
+    if API_PREFIXES.iter().any(|p| {
+        path == *p || path.starts_with(&format!("{p}/")) || path.starts_with(&format!("{p}?"))
+    }) {
         return None;
     }
     // resolve a file; "/" -> index.html. Reject path traversal.
@@ -1364,16 +1384,8 @@ fn try_static(
         }
     };
     // wasmtime 47's HyperOutgoingBody is an UnsyncBoxBody, not a BoxBody.
-    let body = Full::new(bytes::Bytes::from(bytes))
-        .map_err(|never| match never {})
-        .boxed_unsync();
-    Some(
-        hyper::Response::builder()
-            .status(200)
-            .header("content-type", ctype)
-            .body(body)
-            .unwrap(),
-    )
+    let body = Full::new(bytes::Bytes::from(bytes)).map_err(|never| match never {}).boxed_unsync();
+    Some(hyper::Response::builder().status(200).header("content-type", ctype).body(body).unwrap())
 }
 
 fn content_type(p: &std::path::Path) -> &'static str {
@@ -1391,7 +1403,6 @@ fn content_type(p: &std::path::Path) -> &'static str {
         _ => "application/octet-stream",
     }
 }
-
 
 /// One `Store` with this instance's scope, limits and egress policy.
 ///
@@ -1425,7 +1436,11 @@ pub(crate) fn store_for(
         fetch_http: reqwest::Client::new(),
         limits: wasmtime::StoreLimits::default(),
         rpc: rpc::RpcCtx::new(
-            if remotes.is_empty() { rpc::Transport::Solo } else { rpc::Transport::Lattice(remotes) },
+            if remotes.is_empty() {
+                rpc::Transport::Solo
+            } else {
+                rpc::Transport::Lattice(remotes)
+            },
             // A wrpc call's budget. 30s is right for a store read; it is far too
             // short for a graph where one guest call fans out to a language model
             // and a test suite over several nested wrpc hops. Raised via env for
@@ -1467,10 +1482,10 @@ async fn handle_request(
 
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // hyper::body::Incoming is already Body<Data=Bytes, Error=hyper::Error>.
-    let req = store.data_mut().http().new_incoming_request(
-        wasmtime_wasi_http::p2::bindings::http::types::Scheme::Http,
-        req,
-    )?;
+    let req = store
+        .data_mut()
+        .http()
+        .new_incoming_request(wasmtime_wasi_http::p2::bindings::http::types::Scheme::Http, req)?;
     let out = store.data_mut().http().new_response_outparam(sender)?;
     let Some(pre) = instance.pre.as_ref() else {
         anyhow::bail!("{} serves no HTTP; it is reachable through links only", instance.scope.id())
@@ -1478,10 +1493,7 @@ async fn handle_request(
     let proxy = pre.instantiate_async(&mut store).await?;
 
     let task = tokio::task::spawn(async move {
-        proxy
-            .wasi_http_incoming_handler()
-            .call_handle(&mut store, req, out)
-            .await
+        proxy.wasi_http_incoming_handler().call_handle(&mut store, req, out).await
     });
 
     match receiver.await {

@@ -46,11 +46,9 @@ const DEFAULT_SECRET: &str = "upload-default-secret";
 /// The configured content-type allow-list (comma-separated). Empty = allow all.
 fn allowed_types() -> Vec<String> {
     match config::get("allowed-types") {
-        Ok(Some(v)) => v
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
+        Ok(Some(v)) => {
+            v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -84,10 +82,7 @@ fn now() -> u64 {
 
 /// 16 hex chars from 8 random bytes — the ticket / object id.
 fn random16hex() -> String {
-    get_random_bytes(8)
-        .iter()
-        .map(|x| format!("{x:02x}"))
-        .collect()
+    get_random_bytes(8).iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// Sanitize a tenant into key-legal chars (same byte scheme as the other
@@ -113,13 +108,7 @@ fn checksum(secret: &str, payload: &str) -> String {
 
 /// Build the signed payload string for an authorized upload.
 fn payload(object_key: &str, content_type: &str, size: u64, expires: u64) -> String {
-    format!(
-        "{}:{}:{}:{}",
-        B64.encode(object_key),
-        B64.encode(content_type),
-        size,
-        expires
-    )
+    format!("{}:{}:{}:{}", B64.encode(object_key), B64.encode(content_type), size, expires)
 }
 
 // ---- guest --------------------------------------------------------------
@@ -145,11 +134,7 @@ impl Guest for Component {
     ) -> Result<Ticket, PolicyError> {
         Self::check(content_type.clone(), size)?;
 
-        let ttl = if ttl_seconds > 0 {
-            ttl_seconds
-        } else {
-            ticket_ttl()
-        };
+        let ttl = if ttl_seconds > 0 { ttl_seconds } else { ticket_ttl() };
         let now = now();
         let expires = now.saturating_add(ttl);
 
@@ -159,24 +144,15 @@ impl Guest for Component {
         let checksum = checksum(&ticket_secret(), &payload);
         let token = format!("{}.{}", B64.encode(payload.as_bytes()), checksum);
 
-        Ok(Ticket {
-            token,
-            object_key,
-            expires,
-        })
+        Ok(Ticket { token, object_key, expires })
     }
 
     fn redeem(token: String) -> Result<Grant, PolicyError> {
         // token = {base64url-nopad payload}.{checksum-hex}
-        let (b64_payload, presented) = token
-            .split_once('.')
-            .ok_or(PolicyError::InvalidTicket)?;
+        let (b64_payload, presented) = token.split_once('.').ok_or(PolicyError::InvalidTicket)?;
 
-        let payload_bytes = B64
-            .decode(b64_payload)
-            .map_err(|_| PolicyError::InvalidTicket)?;
-        let payload =
-            String::from_utf8(payload_bytes).map_err(|_| PolicyError::InvalidTicket)?;
+        let payload_bytes = B64.decode(b64_payload).map_err(|_| PolicyError::InvalidTicket)?;
+        let payload = String::from_utf8(payload_bytes).map_err(|_| PolicyError::InvalidTicket)?;
 
         // Verify signature (constant-time over the hex strings).
         let expected = checksum(&ticket_secret(), &payload);
@@ -196,24 +172,16 @@ impl Guest for Component {
             .and_then(|s| B64.decode(s).ok())
             .and_then(|b| String::from_utf8(b).ok())
             .ok_or(PolicyError::InvalidTicket)?;
-        let size: u64 = parts
-            .next()
-            .and_then(|s| s.parse().ok())
-            .ok_or(PolicyError::InvalidTicket)?;
-        let expires: u64 = parts
-            .next()
-            .and_then(|s| s.parse().ok())
-            .ok_or(PolicyError::InvalidTicket)?;
+        let size: u64 =
+            parts.next().and_then(|s| s.parse().ok()).ok_or(PolicyError::InvalidTicket)?;
+        let expires: u64 =
+            parts.next().and_then(|s| s.parse().ok()).ok_or(PolicyError::InvalidTicket)?;
 
         if expires <= now() {
             return Err(PolicyError::InvalidTicket);
         }
 
-        Ok(Grant {
-            object_key,
-            content_type,
-            max_size: size,
-        })
+        Ok(Grant { object_key, content_type, max_size: size })
     }
 }
 

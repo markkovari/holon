@@ -27,8 +27,8 @@ mod posting;
 use bindings::auth::identity::session as auth_session;
 use bindings::auth::identity::types as auth_types;
 use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::records::store::store as records;
 use bindings::money::amount::arithmetic as money;
+use bindings::records::store::store as records;
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -136,7 +136,6 @@ fn percent(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-
 /// A `wasi:config` value, with a default.
 ///
 /// Scaffold: reading config is plumbing every part would otherwise write out, and the
@@ -195,11 +194,7 @@ fn mint(body: &str) -> Reply {
     let subject = req.get("subject").and_then(Value::as_str).unwrap_or("ada").to_string();
     let scopes: Vec<String> = match req.get("scopes").and_then(Value::as_array) {
         Some(list) => list.iter().filter_map(Value::as_str).map(str::to_string).collect(),
-        None => vec![
-            "invoices:write".into(),
-            "invoices:read".into(),
-            "invoices:post".into(),
-        ],
+        None => vec!["invoices:write".into(), "invoices:read".into(), "invoices:post".into()],
     };
     let principal = auth_types::Principal {
         subject,
@@ -227,7 +222,11 @@ fn seed() -> Reply {
         "customer": "acme-gmbh", "currency": "EUR", "state": "draft",
         "created_at": rfc3339(now_secs()), "lines": [], "total_units": 0,
     });
-    match records::create("invoices", &empty.to_string(), &["state".to_string(), "customer".to_string()]) {
+    match records::create(
+        "invoices",
+        &empty.to_string(),
+        &["state".to_string(), "customer".to_string()],
+    ) {
         Ok(e) => ids.push(e.id),
         Err(_) => return Reply::err(500, "seed_failed"),
     }
@@ -252,7 +251,11 @@ fn seed() -> Reply {
         "lines": lines,
         "total_units": shares.iter().map(|a| a.units).sum::<i64>(),
     });
-    match records::create("invoices", &filled.to_string(), &["state".to_string(), "customer".to_string()]) {
+    match records::create(
+        "invoices",
+        &filled.to_string(),
+        &["state".to_string(), "customer".to_string()],
+    ) {
         Ok(e) => ids.push(e.id),
         Err(_) => return Reply::err(500, "seed_failed"),
     }
@@ -291,10 +294,7 @@ fn read_body(request: &IncomingRequest) -> String {
 fn header(request: &IncomingRequest, name: &str) -> String {
     let fields = request.headers();
     let values = fields.get(name);
-    values
-        .first()
-        .map(|v| String::from_utf8_lossy(v).into_owned())
-        .unwrap_or_default()
+    values.first().map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default()
 }
 
 impl Guest for Component {
@@ -344,7 +344,6 @@ impl Guest for Component {
             ["api", "invoices", ..] => invoices::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),
         };
-
 
         let headers = Fields::new();
         let _ = headers.set("content-type", &[b"application/json".to_vec()]);

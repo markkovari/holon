@@ -8,17 +8,14 @@
 //! This was `bench/adversarial/shared-state.sh`, which shelled out to Python to read
 //! a JSON field. Nothing about it needed shell — it is two assertions about a counter.
 
-
 use std::time::Duration;
 
 use comp_reconciler::fleet::Fleet;
 
 /// The rate limiter's remaining budget for one key, from whichever node answers.
 fn remaining(fleet: &Fleet, host: &str, key: &str) -> Option<f64> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-        .unwrap();
+    let client =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(8)).build().unwrap();
     let r = client
         .post(format!("http://127.0.0.1:{}/api/ratelimit", fleet.ingress_port))
         .header("host", host)

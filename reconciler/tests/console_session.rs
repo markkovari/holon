@@ -175,12 +175,8 @@ fn the_token_lands_in_a_cookie_and_never_in_the_body() {
         .expect("login");
     assert!(r.status().is_success(), "login failed: {}", r.status());
 
-    let cookie = r
-        .headers()
-        .get("set-cookie")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
+    let cookie =
+        r.headers().get("set-cookie").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
     let body = r.text().unwrap_or_default();
 
     assert!(cookie.contains(TOKEN), "the token is not in the cookie: {cookie:?}");
@@ -229,5 +225,7 @@ fn the_token_lands_in_a_cookie_and_never_in_the_body() {
          down that path opens a pull request"
     );
 
-    println!("\n  token in an HttpOnly cookie, bearer to the platform, authoring refused anonymously\n");
+    println!(
+        "\n  token in an HttpOnly cookie, bearer to the platform, authoring refused anonymously\n"
+    );
 }

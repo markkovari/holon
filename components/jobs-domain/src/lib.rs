@@ -164,12 +164,12 @@ fn job_view(d: &Value) -> Value {
 
 fn board_json() -> Value {
     let entries = records::list_records(JOBS, 500, "").map(|p| p.entries).unwrap_or_default();
-    let mut jobs: Vec<Value> = entries
-        .iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
-        .collect();
+    let mut jobs: Vec<Value> =
+        entries.iter().filter_map(|e| serde_json::from_str::<Value>(&e.data).ok()).collect();
     // newest first
-    jobs.sort_by(|a, b| b["created"].as_u64().unwrap_or(0).cmp(&a["created"].as_u64().unwrap_or(0)));
+    jobs.sort_by(|a, b| {
+        b["created"].as_u64().unwrap_or(0).cmp(&a["created"].as_u64().unwrap_or(0))
+    });
     let mut counts = json!({"queued":0,"running":0,"done":0,"dead":0});
     for j in &jobs {
         let s = j["state"].as_str().unwrap_or("");
@@ -205,10 +205,15 @@ fn enqueue(request: &IncomingRequest) -> Outcome {
     if let Some(k) = &key {
         match idem::begin(k, IDEM_TTL) {
             Ok(Some(cached)) => {
-                return Outcome::Json(cached.status, String::from_utf8_lossy(&cached.body).into_owned())
+                return Outcome::Json(
+                    cached.status,
+                    String::from_utf8_lossy(&cached.body).into_owned(),
+                )
             }
             Ok(None) => {}
-            Err(idem::IdemError::InProgress) => return Outcome::Err(409, "duplicate in progress".into()),
+            Err(idem::IdemError::InProgress) => {
+                return Outcome::Err(409, "duplicate in progress".into())
+            }
             Err(idem::IdemError::BackendUnavailable(m)) => return Outcome::Err(503, m),
         }
     }
@@ -240,7 +245,8 @@ fn enqueue(request: &IncomingRequest) -> Outcome {
         "attempts": 0, "cron": cron_expr, "result": "", "error": "",
         "created": now(), "updated": now(),
     });
-    if let Err(e) = records::create(JOBS, &d.to_string(), &["oid".to_string(), "state".to_string()]) {
+    if let Err(e) = records::create(JOBS, &d.to_string(), &["oid".to_string(), "state".to_string()])
+    {
         return store_err(e);
     }
     let resp = json!({ "job": job_view(&d) }).to_string();
@@ -472,8 +478,12 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
-        Outcome::Html(code, body) => respond(response_out, code, "text/html; charset=utf-8", body.as_bytes()),
+        Outcome::Json(code, body) => {
+            respond(response_out, code, "application/json", body.as_bytes())
+        }
+        Outcome::Html(code, body) => {
+            respond(response_out, code, "text/html; charset=utf-8", body.as_bytes())
+        }
         Outcome::Err(code, msg) => respond(
             response_out,
             code,

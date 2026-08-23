@@ -103,9 +103,7 @@ fn items_after(text: &str, marker: &str) -> Vec<String> {
     // first. (Callers' whitespace may be flattened, so we can't rely on a line
     // break alone; a trailing "." ends the field clause, e.g.
     // "fields: a, b. Reply with JSON" -> ["a","b"].)
-    let end = after
-        .find(['.', '\n'])
-        .unwrap_or(after.len());
+    let end = after.find(['.', '\n']).unwrap_or(after.len());
     after[..end]
         .split(',')
         .map(|p| p.trim())
@@ -194,23 +192,13 @@ impl Guest for Component {
         Ok(completion_for(&messages))
     }
 
-    fn complete(
-        prompt: String,
-        system: String,
-        opts: Options,
-    ) -> Result<Completion, InferError> {
+    fn complete(prompt: String, system: String, opts: Options) -> Result<Completion, InferError> {
         // Sugar over chat: an optional system message, then the user prompt.
         let mut messages = Vec::with_capacity(2);
         if !system.is_empty() {
-            messages.push(Message {
-                role: Role::System,
-                content: system,
-            });
+            messages.push(Message { role: Role::System, content: system });
         }
-        messages.push(Message {
-            role: Role::User,
-            content: prompt,
-        });
+        messages.push(Message { role: Role::User, content: prompt });
         Self::chat(messages, opts)
     }
 

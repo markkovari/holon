@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::os::container::docker::Guest;
 struct Component;
-impl Guest for Component { fn ps() -> String { "UNIMPLEMENTED: container-docker cannot talk to dockerd from wasm".to_string() } }
+impl Guest for Component {
+    fn ps() -> String {
+        "UNIMPLEMENTED: container-docker cannot talk to dockerd from wasm".to_string()
+    }
+}
 bindings::export!(Component with_types_in bindings);

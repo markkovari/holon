@@ -18,7 +18,11 @@ use serde_json::{json, Value};
 fn artifacts() -> Vec<String> {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
-    for (id, f) in [("gate", "agent_probe.wasm"), ("agent", "agent_writer.wasm"), ("llm", "mock_provider.wasm")] {
+    for (id, f) in [
+        ("gate", "agent_probe.wasm"),
+        ("agent", "agent_writer.wasm"),
+        ("llm", "mock_provider.wasm"),
+    ] {
         let p = dir.join(f);
         assert!(p.exists(), "missing {} — run `just build`", p.display());
         out.push(format!("{id}={}", p.display()));
@@ -53,14 +57,21 @@ impl Probe {
 fn wait_for_probe(fleet: &Fleet) -> Probe {
     let probe = Probe {
         port: fleet.ingress_port,
-        http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build().unwrap(),
+        http: reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap(),
     };
     fleet.until("an attempt that reaches the model", Duration::from_secs(120), || {
         let r = probe.attempt(json!({
             "text": "make it 42", "writable": ["src/lib.rs"], "seed": 1,
             "context": [{ "path": "src/lib.rs", "content": "pub fn answer() -> u32 { 41 }" }],
         }));
-        if r["files"].is_array() { Ok(()) } else { Err(r.to_string()) }
+        if r["files"].is_array() {
+            Ok(())
+        } else {
+            Err(r.to_string())
+        }
     });
     probe
 }
@@ -103,17 +114,19 @@ fn a_goal_becomes_a_candidate_and_a_repair_uses_the_failure() {
     // scripted provider only answers with 42 when it SEES that text — so a
     // correct answer here is proof the failure reached the model rather than the
     // agent re-rolling.
-    let repaired = probe.attempt(goal(
-        1,
-        json!([{ "id": "the-fix", "detail": "expected 42, found 41" }]),
-    ));
+    let repaired =
+        probe.attempt(goal(1, json!([{ "id": "the-fix", "detail": "expected 42, found 41" }])));
     assert_eq!(
         body_of(&repaired),
         "pub fn answer() -> u32 { 42 }",
         "the repair did not use the failure — same goal, same seed, and the only thing \
          that changed was what the gate found: {repaired}"
     );
-    assert_ne!(body_of(&repaired), body_of(&first), "a repair identical to the attempt is a re-roll");
+    assert_ne!(
+        body_of(&repaired),
+        body_of(&first),
+        "a repair identical to the attempt is a re-roll"
+    );
 
     // --- an answer that writes where it may not is REFUSED -------------------
     // Not filtered. An answer that touched something it may not is not partially

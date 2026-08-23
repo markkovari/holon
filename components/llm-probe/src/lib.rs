@@ -117,13 +117,7 @@ fn err(e: llm::InferError) -> String {
 /// branches asking one question with N seeds is how they explore differently
 /// while staying replayable.
 fn options(seed: u64) -> llm::Options {
-    llm::Options {
-        model: String::new(),
-        temperature: 0,
-        max_tokens: 0,
-        stop: Vec::new(),
-        seed,
-    }
+    llm::Options { model: String::new(), temperature: 0, max_tokens: 0, stop: Vec::new(), seed }
 }
 
 impl Guest for Component {
@@ -161,7 +155,10 @@ impl Guest for Component {
                 let (name, streaming) = llm::describe();
                 format!("{{\"provider\":\"{}\",\"streaming\":{streaming}}}", esc(&name))
             }
-            _ => "{\"service\":\"llm-probe\",\"routes\":[\"/chat?q=\",\"POST /chat\",\"/describe\"]}".to_string(),
+            _ => {
+                "{\"service\":\"llm-probe\",\"routes\":[\"/chat?q=\",\"POST /chat\",\"/describe\"]}"
+                    .to_string()
+            }
         };
 
         let headers = Fields::new();

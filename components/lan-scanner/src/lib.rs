@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::net::lan::scanner::Guest;
 struct Component;
-impl Guest for Component { fn scan() -> String { "UNIMPLEMENTED: lan-scanner cannot scan a LAN from wasm".to_string() } }
+impl Guest for Component {
+    fn scan() -> String {
+        "UNIMPLEMENTED: lan-scanner cannot scan a LAN from wasm".to_string()
+    }
+}
 bindings::export!(Component with_types_in bindings);

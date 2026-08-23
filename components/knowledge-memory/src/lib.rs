@@ -280,13 +280,7 @@ fn dimension_conflict(e: &MemoryError) -> bool {
 }
 
 fn embed_opts() -> llm::Options {
-    llm::Options {
-        model: String::new(),
-        temperature: 0,
-        max_tokens: 0,
-        stop: Vec::new(),
-        seed: 0,
-    }
+    llm::Options { model: String::new(), temperature: 0, max_tokens: 0, stop: Vec::new(), seed: 0 }
 }
 
 /// Embed, or answer `none` and let retrieval stay lexical.
@@ -356,12 +350,8 @@ fn write(e: &Entry, promoted: bool) -> Result<String, MemoryError> {
     // The lexical index is half of recall, so a write that reaches the graph and
     // not the index is an entry nothing will retrieve on a token match. Surfaced,
     // not swallowed.
-    search::index_doc(
-        &h,
-        &embeddable(&e.goal, &text),
-        &[format!("ns:{}", ns_name(e.ns))],
-    )
-    .map_err(search_err)?;
+    search::index_doc(&h, &embeddable(&e.goal, &text), &[format!("ns:{}", ns_name(e.ns))])
+        .map_err(search_err)?;
 
     Ok(h)
 }
@@ -398,8 +388,9 @@ impl Guest for Component {
         // worth less than being third in `patterns`.
         let mut lexical: Vec<(String, usize)> = Vec::new();
         for ns in &pools {
-            let hits = search::query(&goal, search::Mode::Any, &[format!("ns:{}", ns_name(*ns))], per)
-                .map_err(search_err)?;
+            let hits =
+                search::query(&goal, search::Mode::Any, &[format!("ns:{}", ns_name(*ns))], per)
+                    .map_err(search_err)?;
             for (rank, h) in hits.iter().enumerate() {
                 lexical.push((h.id.clone(), rank));
             }
@@ -454,17 +445,15 @@ impl Guest for Component {
 
         // 4. Fuse the two orderings, then weight by what the outcomes decided.
         let dense_order: Vec<&String> = {
-            let mut with_sim: Vec<&Stored> = stored.iter().filter(|s| s.similarity.is_some()).collect();
+            let mut with_sim: Vec<&Stored> =
+                stored.iter().filter(|s| s.similarity.is_some()).collect();
             with_sim.sort_by(|a, b| b.similarity.unwrap().total_cmp(&a.similarity.unwrap()));
             with_sim.iter().map(|s| &s.handle).collect()
         };
         let mut out: Vec<(f64, Hit)> = Vec::new();
         for s in &stored {
-            let mut ranks: Vec<usize> = lexical
-                .iter()
-                .filter(|(h, _)| *h == s.handle)
-                .map(|(_, r)| *r)
-                .collect();
+            let mut ranks: Vec<usize> =
+                lexical.iter().filter(|(h, _)| *h == s.handle).map(|(_, r)| *r).collect();
             if let Some(rank) = dense_order.iter().position(|h| **h == s.handle) {
                 ranks.push(rank);
             }
@@ -584,11 +573,8 @@ impl Guest for Component {
         let Some(row) = rows.first() else {
             return Ok(None);
         };
-        let similarity = if exact {
-            1.0
-        } else {
-            surql::similarity_of(row["dist"].as_f64().unwrap_or(1.0))
-        };
+        let similarity =
+            if exact { 1.0 } else { surql::similarity_of(row["dist"].as_f64().unwrap_or(1.0)) };
         if similarity < floor {
             return Ok(None);
         }
@@ -613,11 +599,7 @@ impl PromotionGuest for Component {
         // The namespace is not the caller's to choose here: promotion means one
         // thing, and a hook that could promote into `errors` would be a hook that
         // could write a lesson nobody can tell from an observation.
-        let promoted = Entry {
-            ns: Namespace::Patterns,
-            score: gate_score,
-            ..e
-        };
+        let promoted = Entry { ns: Namespace::Patterns, score: gate_score, ..e };
         write(&promoted, true)
     }
 }
@@ -666,7 +648,10 @@ mod tests {
 
     #[test]
     fn a_lesson_cannot_carry_surrealql_syntax() {
-        assert_eq!(lit(r#"he said "stop"; DELETE memory;"#), r#""he said \"stop\"; DELETE memory;""#);
+        assert_eq!(
+            lit(r#"he said "stop"; DELETE memory;"#),
+            r#""he said \"stop\"; DELETE memory;""#
+        );
         assert_eq!(lit("a\nb\\c"), r#""a\nb\\c""#);
         assert_eq!(vec_lit(&[0.5, -1.0]), "[0.5,-1.0]");
     }
@@ -720,9 +705,11 @@ mod tests {
 
     #[test]
     fn an_empty_pool_does_not_read_as_a_broken_one() {
-        let absent = r#"[{"status":"ERR","time":"1ms","result":"The table 'memory' does not exist"}]"#;
+        let absent =
+            r#"[{"status":"ERR","time":"1ms","result":"The table 'memory' does not exist"}]"#;
         assert!(rows_of(absent).unwrap().is_empty());
-        let no_ns = r#"[{"status":"ERR","time":"1ms","result":"The namespace 'comp' does not exist"}]"#;
+        let no_ns =
+            r#"[{"status":"ERR","time":"1ms","result":"The namespace 'comp' does not exist"}]"#;
         assert!(rows_of(no_ns).unwrap().is_empty());
         assert!(matches!(
             rows_of(r#"[{"status":"ERR","result":"permission denied"}]"#),

@@ -35,10 +35,8 @@ struct Api {
 
 impl Api {
     fn new(base: String) -> Self {
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(60))
-            .build()
-            .unwrap();
+        let http =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build().unwrap();
         let deadline = Instant::now() + Duration::from_secs(90);
         while Instant::now() < deadline {
             if http.get(&base).send().is_ok() {
@@ -101,8 +99,8 @@ impl Api {
 fn deploy_parent(api: &Api, fleet: &Fleet, name: &str) -> String {
     let wasm = composed_gate();
     assert!(matches!(api.upload("gate", wasm), 200 | 201), "upload failed");
-    let (code, dep) =
-        api.post("/api/deployments", json!({ "name": name, "nodes": [{"id": "gate"}], "edges": [] }));
+    let (code, dep) = api
+        .post("/api/deployments", json!({ "name": name, "nodes": [{"id": "gate"}], "edges": [] }));
     assert_eq!(code, 201, "deploy failed: {dep}");
     let id = dep["id"].as_str().unwrap().to_string();
 
@@ -145,8 +143,9 @@ fn wait_for(fleet: &Fleet, needle: &str, within: Duration) -> bool {
 /// here fail for the wrong reason. It did, once.
 fn running_apps(fleet: &Fleet) -> Vec<String> {
     let path = fleet.state_dir().join("n1/instances.json");
-    let raw = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("no ledger at {} ({e}) — nothing can be measured", path.display()));
+    let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!("no ledger at {} ({e}) — nothing can be measured", path.display())
+    });
     let v: Value = serde_json::from_str(&raw).expect("the ledger should be JSON");
     let obj = v.as_object().unwrap_or_else(|| {
         panic!("the ledger is not an object keyed by instance id — it is {raw}")
@@ -188,22 +187,21 @@ fn a_generation_of_branches_spins_up_together() {
                 let api = &api;
                 let parent = parent.clone();
                 s.spawn(move || {
-                    let (code, body) =
-                        api.post("/api/environments", json!({ "app": parent, "env": format!("b{i}") }));
+                    let (code, body) = api.post(
+                        "/api/environments",
+                        json!({ "app": parent, "env": format!("b{i}") }),
+                    );
                     (i, code, body)
                 })
             })
             .collect();
         handles.into_iter().map(|h| h.join().unwrap()).collect()
     });
-    let accepted: Vec<&(usize, u16, Value)> = results.iter().filter(|(_, c, _)| *c == 201).collect();
+    let accepted: Vec<&(usize, u16, Value)> =
+        results.iter().filter(|(_, c, _)| *c == 201).collect();
     let spawn_time = started.elapsed();
 
-    println!(
-        "    spawn: {}/{WIDTH} accepted in {:.1}s",
-        accepted.len(),
-        spawn_time.as_secs_f64()
-    );
+    println!("    spawn: {}/{WIDTH} accepted in {:.1}s", accepted.len(), spawn_time.as_secs_f64());
     for (i, code, body) in results.iter().filter(|(_, c, _)| *c != 201) {
         println!("      b{i} refused {code}: {body}");
     }
@@ -302,7 +300,11 @@ fn branches_of_branches_find_the_depth_ceiling() {
             ceiling = Some(format!("depth {} accepted but never started", level + 1));
             break;
         }
-        println!("    depth {}: {derived} started in {:.1}s", level + 1, started.elapsed().as_secs_f64());
+        println!(
+            "    depth {}: {derived} started in {:.1}s",
+            level + 1,
+            started.elapsed().as_secs_f64()
+        );
         chain.push(derived.clone());
         current = derived;
     }
@@ -356,13 +358,17 @@ fn branches_of_branches_find_the_depth_ceiling() {
         let deadline = Instant::now() + Duration::from_secs(180);
         let mut left = Vec::new();
         while Instant::now() < deadline {
-            left = running_apps(&fleet).into_iter().filter(|a| a.starts_with("deep-env-")).collect();
+            left =
+                running_apps(&fleet).into_iter().filter(|a| a.starts_with("deep-env-")).collect();
             if left.is_empty() {
                 break;
             }
             std::thread::sleep(Duration::from_secs(1));
         }
-        assert!(left.is_empty(), "descendants are still running after their ancestor closed: {left:?}");
+        assert!(
+            left.is_empty(),
+            "descendants are still running after their ancestor closed: {left:?}"
+        );
         assert!(
             running_apps(&fleet).iter().any(|a| a == "deep"),
             "the cascade took the root deployment with it"

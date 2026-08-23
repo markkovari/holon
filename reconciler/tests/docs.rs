@@ -247,12 +247,15 @@ fn the_readme_counts_what_is_actually_there() {
             "  there are now {apps} showcases and this test has no word for it — add one"
         ));
     } else if !readme.contains(&format!("the {spelled} showcase apps")) {
-        wrong.push(format!("  README does not say \"the {spelled} showcase apps\" ({apps} on disk)"));
+        wrong.push(format!(
+            "  README does not say \"the {spelled} showcase apps\" ({apps} on disk)"
+        ));
     }
 
     let adrs = count("docs/adr");
     if !readme.contains(&format!("{adrs} decisions")) {
-        wrong.push(format!("  README does not say \"{adrs} decisions\" ({adrs} files in docs/adr)"));
+        wrong
+            .push(format!("  README does not say \"{adrs} decisions\" ({adrs} files in docs/adr)"));
     }
 
     // These two are quoted FROM the capability graph, which `contracts.rs` already
@@ -271,7 +274,9 @@ fn the_readme_counts_what_is_actually_there() {
         (" applications composed", "the {} apps composed from them"),
     ] {
         let Some(n) = number_before(needle).filter(|n| !n.is_empty()) else {
-            wrong.push(format!("  could not read the count before `{needle}` in CAPABILITY-GRAPH.md"));
+            wrong.push(format!(
+                "  could not read the count before `{needle}` in CAPABILITY-GRAPH.md"
+            ));
             continue;
         };
         let expect = phrase.replace("{}", &n);
@@ -394,9 +399,8 @@ fn no_script_is_pinned_to_one_machine() {
                 stack.push(path);
                 continue;
             }
-            let is_script = path
-                .extension()
-                .is_some_and(|x| x == "sh" || x == "mjs" || x == "py" || x == "rs");
+            let is_script =
+                path.extension().is_some_and(|x| x == "sh" || x == "mjs" || x == "py" || x == "rs");
             if !(is_script || rel == "Justfile") {
                 continue;
             }
@@ -416,7 +420,11 @@ fn no_script_is_pinned_to_one_machine() {
                 // is one editor session's scratch directory.
                 for needle in ["/Users/", "/home/", "/private/tmp/claude-"] {
                     if line.contains(needle) {
-                        pinned.push(format!("  {rel}:{} -> {}", i + 1, t.chars().take(96).collect::<String>()));
+                        pinned.push(format!(
+                            "  {rel}:{} -> {}",
+                            i + 1,
+                            t.chars().take(96).collect::<String>()
+                        ));
                     }
                 }
             }

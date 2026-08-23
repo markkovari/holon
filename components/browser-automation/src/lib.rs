@@ -15,5 +15,9 @@
 mod bindings;
 use bindings::exports::web::browser::automation::Guest;
 struct Component;
-impl Guest for Component { fn snapshot(url: String) -> String { format!("UNIMPLEMENTED: browser-automation cannot drive a browser from wasm ({})", url) } }
+impl Guest for Component {
+    fn snapshot(url: String) -> String {
+        format!("UNIMPLEMENTED: browser-automation cannot drive a browser from wasm ({})", url)
+    }
+}
 bindings::export!(Component with_types_in bindings);

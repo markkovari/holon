@@ -5,7 +5,6 @@
 //! remove — it was `bench/adversarial/ha-check.py`, whose caller was deleted in the
 //! refactor, which is how a check quietly stops being run.
 
-
 use std::time::Duration;
 
 use comp_reconciler::fleet::Fleet;

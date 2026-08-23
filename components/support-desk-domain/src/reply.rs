@@ -63,9 +63,12 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
     if ticket.get("state").and_then(serde_json::Value::as_str) != Some("open") {
         return Reply::err(409, "already_answered");
     }
-    let subject = ticket.get("subject").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
-    let body_text = ticket.get("body").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
-    let customer = ticket.get("customer").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+    let subject =
+        ticket.get("subject").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+    let body_text =
+        ticket.get("body").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
+    let customer =
+        ticket.get("customer").and_then(serde_json::Value::as_str).unwrap_or("").to_string();
 
     // 3. Budget: per tenant, not per subject.
     let limit = cfg_u64("reply-budget", 50);

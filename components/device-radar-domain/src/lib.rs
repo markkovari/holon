@@ -1,13 +1,13 @@
 #[allow(warnings)]
 mod bindings;
 
-use serde_json::{json, Map, Value};
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::iot::scanner::scanner::{scan, Protocol};
 use bindings::wasi::keyvalue::store;
+use serde_json::{json, Map, Value};
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
@@ -95,13 +95,16 @@ fn bearer(request: &IncomingRequest) -> Option<String> {
 }
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
-    let token = bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
+    let token =
+        bearer(request).ok_or(Outcome::Auth(AuthError::InvalidToken("missing bearer".into())))?;
     authorizer::introspect(&token).map_err(Outcome::Auth)
 }
 
 fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
     let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
-    if raw.is_empty() { return Ok(Value::Object(Map::new())); }
+    if raw.is_empty() {
+        return Ok(Value::Object(Map::new()));
+    }
     serde_json::from_slice(&raw).map_err(|e| Outcome::Err(400, format!("bad json: {e}")))
 }
 
@@ -133,7 +136,10 @@ fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
 }
 
 fn register(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) { Ok(v) => v, Err(o) => return o, };
+    let b = match body(request) {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
     let email = b["email"].as_str().unwrap_or("").trim().to_string();
     let password = b["password"].as_str().unwrap_or("").to_string();
     match accounts::register(&email, &password, TENANT) {
@@ -143,7 +149,10 @@ fn register(request: &IncomingRequest) -> Outcome {
 }
 
 fn login(request: &IncomingRequest) -> Outcome {
-    let b = match body(request) { Ok(v) => v, Err(o) => return o, };
+    let b = match body(request) {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
     let email = b["email"].as_str().unwrap_or("").trim().to_string();
     let password = b["password"].as_str().unwrap_or("").to_string();
     match accounts::login(&email, &password, TENANT) {
@@ -153,7 +162,10 @@ fn login(request: &IncomingRequest) -> Outcome {
 }
 
 fn logout(request: &IncomingRequest) -> Outcome {
-    let token = match bearer(request) { Some(t) => t, None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())), };
+    let token = match bearer(request) {
+        Some(t) => t,
+        None => return Outcome::Auth(AuthError::InvalidToken("missing bearer".into())),
+    };
     match session::revoke(&token) {
         Ok(()) => Outcome::Json(200, json!({ "ok": true }).to_string()),
         Err(e) => Outcome::Auth(e),
@@ -161,7 +173,10 @@ fn logout(request: &IncomingRequest) -> Outcome {
 }
 
 fn me(request: &IncomingRequest) -> Outcome {
-    match introspect(request) { Ok(p) => Outcome::Json(200, json!({ "subject": p.subject, "roles": p.roles }).to_string()), Err(o) => o, }
+    match introspect(request) {
+        Ok(p) => Outcome::Json(200, json!({ "subject": p.subject, "roles": p.roles }).to_string()),
+        Err(o) => o,
+    }
 }
 
 fn list_devices(_request: &IncomingRequest) -> Outcome {

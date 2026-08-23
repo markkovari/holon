@@ -53,10 +53,8 @@ impl Shim {
         let me = Self { child, port };
 
         // Wait for the listener rather than sleeping a guessed interval.
-        let http = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(2))
-            .build()
-            .unwrap();
+        let http =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(2)).build().unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
         while std::time::Instant::now() < deadline {
             // Any answer means it is listening — a 404 on this route is a
@@ -117,10 +115,8 @@ fn a_completion_comes_back_through_claude_code() {
 
     // A question with exactly one sane answer, so a pass cannot come from the
     // shim echoing the prompt or returning boilerplate.
-    let http = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(120))
-        .build()
-        .unwrap();
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(120)).build().unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(300);
     let answer: Value = loop {
         let r = http

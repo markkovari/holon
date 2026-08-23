@@ -1,11 +1,11 @@
 #[allow(warnings)]
 mod bindings;
 
+use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::knowledge::graph::store::{self};
 use bindings::wasi::http::types::{
     IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use serde_json::json;
 
 struct Component;
@@ -517,12 +517,17 @@ impl Guest for Component {
                     let mut bytes = html.as_bytes();
                     while !bytes.is_empty() {
                         let ready = match stream.check_write() {
-                            Ok(0) => { stream.subscribe().block(); continue; }
+                            Ok(0) => {
+                                stream.subscribe().block();
+                                continue;
+                            }
                             Ok(n) => n as usize,
                             Err(_) => break,
                         };
                         let take = ready.min(bytes.len());
-                        if stream.write(&bytes[..take]).is_err() { break; }
+                        if stream.write(&bytes[..take]).is_err() {
+                            break;
+                        }
                         bytes = &bytes[take..];
                     }
                     let _ = stream.blocking_flush();
@@ -541,12 +546,17 @@ impl Guest for Component {
                     let mut bytes = json.as_bytes();
                     while !bytes.is_empty() {
                         let ready = match stream.check_write() {
-                            Ok(0) => { stream.subscribe().block(); continue; }
+                            Ok(0) => {
+                                stream.subscribe().block();
+                                continue;
+                            }
                             Ok(n) => n as usize,
                             Err(_) => break,
                         };
                         let take = ready.min(bytes.len());
-                        if stream.write(&bytes[..take]).is_err() { break; }
+                        if stream.write(&bytes[..take]).is_err() {
+                            break;
+                        }
                         bytes = &bytes[take..];
                     }
                     let _ = stream.blocking_flush();

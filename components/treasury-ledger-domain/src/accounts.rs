@@ -17,10 +17,7 @@ fn authorize(route: &Route, target: &str, action: &str) -> Result<authz::Princip
     if route.bearer.is_empty() {
         return Err(Reply::err(401, "unauthenticated"));
     }
-    let required = authz::Permission {
-        target: target.to_string(),
-        action: action.to_string(),
-    };
+    let required = authz::Permission { target: target.to_string(), action: action.to_string() };
     match authz::authorize(&route.bearer, &required) {
         Ok(p) => Ok(p),
         Err(authz::AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
