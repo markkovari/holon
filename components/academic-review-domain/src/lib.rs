@@ -1,3 +1,5 @@
+//! `academic-review-domain` — keep submitted papers behind a login, with peer review and per-account access
+
 #[allow(warnings)]
 mod bindings;
 
