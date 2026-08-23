@@ -77,6 +77,15 @@ jobs:
         # build of its own.
         run: cargo test --workspace --exclude browser-automation
 
+      # 17 of the 18 suites below drive a fleet through `reconciler/src/fleet.rs`,
+      # which spawns `host/target/release/comp-host`. Building it here costs a
+      # couple of minutes and is the difference between running them and not:
+      # CI reported `missing …/comp-host — cargo build --release in host/`, which
+      # was accurate and something no amount of test-list editing would fix.
+      - name: Build the host the fleet tests spawn
+        working-directory: host
+        run: cargo build --release --bin comp-host
+
       # These reconciler suites read `components/target/wasm32-wasip2/release/*.wasm`,
       # so they belong to the job that BUILT them. Jobs do not share a filesystem,
       # and running them beside the native workspaces failed on a missing artifact
