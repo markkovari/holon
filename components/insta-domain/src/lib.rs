@@ -1,3 +1,5 @@
+//! `insta-domain` — post pictures, follow other people and like what they posted
+
 mod bindings;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;

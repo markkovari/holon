@@ -1,3 +1,5 @@
+//! `fs-watcher-domain` — watch a directory for changes and report them over HTTP
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::wasi::http::incoming_handler::Guest;

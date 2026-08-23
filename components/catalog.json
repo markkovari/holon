@@ -13,15 +13,15 @@
       "metrics:collect/collector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 152181,
-    "wasm_sha256_12": "843140987a7e",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 151889,
+    "wasm_sha256_12": "8ef2dce60fa6",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "academic-review-domain",
     "package": "academic-review:academic-review",
-    "description": "",
+    "description": "`academic-review-domain` \u2014 keep submitted papers behind a login, with peer review and per-account access",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -33,9 +33,47 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149821,
-    "wasm_sha256_12": "165051909530",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 149793,
+    "wasm_sha256_12": "d588731589a8",
+    "reusable_as_is": false,
+    "unimplemented": false
+  },
+  {
+    "name": "accounts-app",
+    "package": "auth:identity@0.1.0",
+    "description": "HTTP JSON register/login app. Owns NO auth logic \u2014 it maps HTTP onto the",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0",
+      "wasi:http/incoming-handler@0.2.0",
+      "types",
+      "jwt",
+      "oidc",
+      "session",
+      "accounts",
+      "rbac",
+      "authorizer"
+    ],
+    "capability_deps": [
+      "accounts",
+      "audit:log/recorder",
+      "authorizer",
+      "ratelimit:guard/limiter",
+      "rbac",
+      "session",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler",
+      "wasi:keyvalue/atomics",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [
+      {
+        "name": "authorization",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 132808,
+    "wasm_sha256_12": "23cdb52db290",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -51,8 +89,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 75368,
-    "wasm_sha256_12": "dafb7699cd98",
+    "wasm_size_bytes": 75354,
+    "wasm_sha256_12": "1179253c69d8",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -68,8 +106,8 @@
       "graph:fitness/evaluator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 71977,
-    "wasm_sha256_12": "f4ae1f0afa10",
+    "wasm_size_bytes": 72023,
+    "wasm_sha256_12": "c2f7a92c3b30",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -84,8 +122,8 @@
       "graph:agent/writer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 115678,
-    "wasm_sha256_12": "6fb7c92fcc05",
+    "wasm_size_bytes": 115664,
+    "wasm_sha256_12": "15a8077ba720",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -100,8 +138,8 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 86018,
-    "wasm_sha256_12": "a99761be0f6e",
+    "wasm_size_bytes": 86496,
+    "wasm_sha256_12": "01700b6b8dc4",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -151,8 +189,8 @@
         "description": "the x-api-key value, granted by reference in the"
       }
     ],
-    "wasm_size_bytes": 179166,
-    "wasm_sha256_12": "63746a8260c8",
+    "wasm_size_bytes": 178901,
+    "wasm_sha256_12": "53b719437aa0",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -168,9 +206,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 166398,
-    "wasm_sha256_12": "cb9626d1ad75",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 166105,
+    "wasm_sha256_12": "9d3e8dba9000",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -196,8 +234,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 86012,
-    "wasm_sha256_12": "d2727a5f0565",
+    "wasm_size_bytes": 86060,
+    "wasm_sha256_12": "4b16b2819f96",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -212,8 +250,8 @@
       "artifact:cache/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 101145,
-    "wasm_sha256_12": "e9d4a0d2e3e8",
+    "wasm_size_bytes": 101118,
+    "wasm_sha256_12": "d028f032de74",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -229,8 +267,82 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 121827,
-    "wasm_sha256_12": "70b08021ce98",
+    "wasm_size_bytes": 121870,
+    "wasm_sha256_12": "cbed63bec736",
+    "reusable_as_is": true,
+    "unimplemented": false
+  },
+  {
+    "name": "auth-guard",
+    "package": "auth:identity@0.1.0",
+    "description": "`auth-guard` \u2014 register and log a user in, hash their password, issue and introspect a session token, and check whether their role grants an action",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0",
+      "wasi:http/incoming-handler@0.2.0",
+      "types",
+      "jwt",
+      "oidc",
+      "session",
+      "accounts",
+      "rbac",
+      "authorizer"
+    ],
+    "capability_deps": [
+      "accounts",
+      "audit:log/recorder",
+      "authorizer",
+      "ratelimit:guard/limiter",
+      "rbac",
+      "session",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler",
+      "wasi:keyvalue/atomics",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [
+      {
+        "name": "session-ttl",
+        "description": ""
+      },
+      {
+        "name": "password-min-len",
+        "description": ""
+      },
+      {
+        "name": "jwks-cache-ttl",
+        "description": ""
+      },
+      {
+        "name": "default-tenant",
+        "description": ""
+      },
+      {
+        "name": "expected-issuer",
+        "description": ""
+      },
+      {
+        "name": "expected-audience",
+        "description": ""
+      },
+      {
+        "name": "allowed-algs",
+        "description": ""
+      },
+      {
+        "name": "clock-skew",
+        "description": ""
+      },
+      {
+        "name": "audit-enabled",
+        "description": ""
+      },
+      {
+        "name": "hs256-secret",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 454539,
+    "wasm_sha256_12": "c6cf0ce87ccb",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -246,8 +358,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 126102,
-    "wasm_sha256_12": "2a4dadb99b10",
+    "wasm_size_bytes": 125686,
+    "wasm_sha256_12": "a268251545cc",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -270,12 +382,12 @@
   {
     "name": "bigadd",
     "package": "demo:bigadd@0.1.0",
-    "description": "",
+    "description": "`bigadd` \u2014 add two integers too large for a machine word, given as decimal strings",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 52090,
-    "wasm_sha256_12": "d7154779f684",
+    "wasm_size_bytes": 52130,
+    "wasm_sha256_12": "e916dc2e3e91",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -295,8 +407,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 183230,
-    "wasm_sha256_12": "9917fda8c979",
+    "wasm_size_bytes": 182909,
+    "wasm_sha256_12": "0183bf5986fd",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -311,8 +423,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 76021,
-    "wasm_sha256_12": "81c149a88668",
+    "wasm_size_bytes": 76065,
+    "wasm_sha256_12": "a0898a6d39a8",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -336,9 +448,9 @@
       "rrule:recur/recur"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 216240,
-    "wasm_sha256_12": "5193b8a98e88",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 216021,
+    "wasm_sha256_12": "6b1d865bc72f",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -359,29 +471,29 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 210284,
-    "wasm_sha256_12": "b477e9bf431b",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 210064,
+    "wasm_sha256_12": "302afa9e12b2",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "browser-automation",
     "package": "web:browser@0.1.0",
-    "description": "`browser-automation` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`browser-automation` \u2014 drive a headless browser and capture a page as PDF or image",
     "exports": [
       "automation"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47431,
-    "wasm_sha256_12": "4203d691ab35",
+    "wasm_size_bytes": 47483,
+    "wasm_sha256_12": "8561dd7af5d9",
     "reusable_as_is": true,
     "unimplemented": true
   },
   {
     "name": "budget-domain",
     "package": "holon:budget",
-    "description": "",
+    "description": "`budget-domain` \u2014 record spending against per-category budgets and report the balance",
     "exports": [
       "add-transaction: func(token: string, amount: f64, category: string, is-income: bool)",
       "get-balance: func(token: string) -> f64",
@@ -394,7 +506,7 @@
     "config_keys": [],
     "wasm_size_bytes": null,
     "wasm_sha256_12": null,
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -413,9 +525,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 206295,
-    "wasm_sha256_12": "a6aefb2b8934",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 206141,
+    "wasm_sha256_12": "4a4f45777467",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -431,8 +543,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 77724,
-    "wasm_sha256_12": "b260d8a226c6",
+    "wasm_size_bytes": 77763,
+    "wasm_sha256_12": "a0dfe97affb3",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -448,20 +560,20 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 63480,
-    "wasm_sha256_12": "b86bcbc6789a",
+    "wasm_size_bytes": 63527,
+    "wasm_sha256_12": "85d91186cf38",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "calc",
     "package": "demo:calc@0.1.0",
-    "description": "",
+    "description": "`calc` \u2014 evaluate the four arithmetic operations on a pair of numbers",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 48332,
-    "wasm_sha256_12": "a4856c75e0d1",
+    "wasm_size_bytes": 48370,
+    "wasm_sha256_12": "5d7adb38ab40",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -482,8 +594,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 146172,
-    "wasm_sha256_12": "3c7ff0b6d965",
+    "wasm_size_bytes": 146160,
+    "wasm_sha256_12": "c5478c0933d2",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -504,15 +616,15 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 203555,
-    "wasm_sha256_12": "30878df8797a",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 203475,
+    "wasm_sha256_12": "e3f836506490",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "clipboard-sync-domain",
     "package": "local:clipboard-sync",
-    "description": "",
+    "description": "`clipboard-sync-domain` \u2014 read and share the desktop clipboard over HTTP, keeping a usage count",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -525,9 +637,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91836,
-    "wasm_sha256_12": "788a729c8ae8",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91832,
+    "wasm_sha256_12": "09c319b9a1d0",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -545,9 +657,9 @@
       "slug:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 232247,
-    "wasm_sha256_12": "4d9cc8effe40",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 232177,
+    "wasm_sha256_12": "88818d228296",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -561,8 +673,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 124472,
-    "wasm_sha256_12": "dd4005791bb7",
+    "wasm_size_bytes": 124518,
+    "wasm_sha256_12": "94639f050c6e",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -575,8 +687,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 408570,
-    "wasm_sha256_12": "4dee584591d9",
+    "wasm_size_bytes": 417850,
+    "wasm_sha256_12": "a8aa6b484332",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -604,22 +716,22 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 180433,
-    "wasm_sha256_12": "cc36e56e3c6f",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 181044,
+    "wasm_sha256_12": "d168de251f98",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "container-docker",
     "package": "os:container@0.1.0",
-    "description": "`container-docker` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`container-docker` \u2014 list and control containers running on the machine",
     "exports": [
       "docker"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 45880,
-    "wasm_sha256_12": "a6ecb3566e06",
+    "wasm_size_bytes": 45930,
+    "wasm_sha256_12": "103483abdd34",
     "reusable_as_is": true,
     "unimplemented": true
   },
@@ -634,8 +746,8 @@
       "contract:registry/registry"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 76081,
-    "wasm_sha256_12": "0c9f75762631",
+    "wasm_size_bytes": 76072,
+    "wasm_sha256_12": "f411a0f28d9f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -650,8 +762,8 @@
       "knowledge:graph/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 127976,
-    "wasm_sha256_12": "539615ded88d",
+    "wasm_size_bytes": 128027,
+    "wasm_sha256_12": "86c2d8d2ed65",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -673,8 +785,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 177014,
-    "wasm_sha256_12": "684405405821",
+    "wasm_size_bytes": 176501,
+    "wasm_sha256_12": "a8341c47ec62",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -687,8 +799,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 214605,
-    "wasm_sha256_12": "46f0f9a926ca",
+    "wasm_size_bytes": 214643,
+    "wasm_sha256_12": "b8f658582e71",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -701,15 +813,15 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 61304,
-    "wasm_sha256_12": "522dfbbc48aa",
+    "wasm_size_bytes": 61342,
+    "wasm_sha256_12": "528dbabc7962",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "cron-scheduler-domain",
     "package": "local:cron-scheduler",
-    "description": "",
+    "description": "`cron-scheduler-domain` \u2014 list and inspect the machine's scheduled jobs over HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -722,9 +834,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91779,
-    "wasm_sha256_12": "af17a7da9d1c",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91775,
+    "wasm_sha256_12": "b31b26a43909",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -736,8 +848,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56844,
-    "wasm_sha256_12": "672eae32220b",
+    "wasm_size_bytes": 56881,
+    "wasm_sha256_12": "2b71bb698a4f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -755,8 +867,8 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 171938,
-    "wasm_sha256_12": "4aeb258b4f87",
+    "wasm_size_bytes": 171844,
+    "wasm_sha256_12": "a6da092b7307",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -777,9 +889,9 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 194218,
-    "wasm_sha256_12": "0a44a322f75c",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 194072,
+    "wasm_sha256_12": "747880a3925c",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -791,8 +903,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56281,
-    "wasm_sha256_12": "5f08163d3994",
+    "wasm_size_bytes": 56319,
+    "wasm_sha256_12": "1114af43da82",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -807,29 +919,29 @@
       "demo:shape/pager"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 60981,
-    "wasm_sha256_12": "9fedca3c94cd",
+    "wasm_size_bytes": 60968,
+    "wasm_sha256_12": "a7ef075b6243",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "desktop-clipboard",
     "package": "os:desktop@0.1.0",
-    "description": "`desktop-clipboard` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`desktop-clipboard` \u2014 read and write the desktop session's clipboard",
     "exports": [
       "clipboard"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 45912,
-    "wasm_sha256_12": "113504629e3a",
+    "wasm_size_bytes": 45963,
+    "wasm_sha256_12": "a5e6022c17a0",
     "reusable_as_is": true,
     "unimplemented": true
   },
   {
     "name": "desktop-notifier-domain",
     "package": "local:desktop-notifier",
-    "description": "",
+    "description": "`desktop-notifier-domain` \u2014 raise a desktop notification from an HTTP call",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -842,9 +954,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91928,
-    "wasm_sha256_12": "ef2953164f26",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91926,
+    "wasm_sha256_12": "61c21474ed2e",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -869,15 +981,15 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 219370,
-    "wasm_sha256_12": "eed5ce61a8b8",
+    "wasm_size_bytes": 219202,
+    "wasm_sha256_12": "98de1a81a8cb",
     "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "device-radar-domain",
     "package": "device-radar:device-radar",
-    "description": "",
+    "description": "`device-radar-domain` \u2014 show which nearby devices a scan found, behind a login",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -890,9 +1002,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 137515,
-    "wasm_sha256_12": "36fe84b08089",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 137484,
+    "wasm_sha256_12": "d837962757cf",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -980,15 +1092,15 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 170113,
-    "wasm_sha256_12": "b2db656b9d86",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 170103,
+    "wasm_sha256_12": "346de2949afb",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "docker-manager-domain",
     "package": "local:docker-manager",
-    "description": "",
+    "description": "`docker-manager-domain` \u2014 list running containers and their state over HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1001,9 +1113,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91811,
-    "wasm_sha256_12": "01d99af3cabb",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91807,
+    "wasm_sha256_12": "85120f142ce3",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1017,8 +1129,8 @@
       "graph:run/driver"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 123571,
-    "wasm_sha256_12": "80f2a4a9fa34",
+    "wasm_size_bytes": 123558,
+    "wasm_sha256_12": "b38080d96152",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1033,8 +1145,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 82176,
-    "wasm_sha256_12": "a9aa36b0c64f",
+    "wasm_size_bytes": 82222,
+    "wasm_sha256_12": "9b7e6bc5fad5",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1052,8 +1164,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 172938,
-    "wasm_sha256_12": "45b2dce151e4",
+    "wasm_size_bytes": 172806,
+    "wasm_sha256_12": "aa11446260ec",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1070,8 +1182,8 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 172553,
-    "wasm_sha256_12": "88a578cad01e",
+    "wasm_size_bytes": 172541,
+    "wasm_sha256_12": "e17666f1f3a2",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1086,8 +1198,8 @@
       "proxy:route/router"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 79712,
-    "wasm_sha256_12": "fe002199a74a",
+    "wasm_size_bytes": 79670,
+    "wasm_sha256_12": "2e0fe50ef9bd",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1111,10 +1223,14 @@
       {
         "name": "grace-period-secs",
         "description": ""
+      },
+      {
+        "name": "authorization",
+        "description": ""
       }
     ],
-    "wasm_size_bytes": 192779,
-    "wasm_sha256_12": "f6444b85fadd",
+    "wasm_size_bytes": 192654,
+    "wasm_sha256_12": "c5ffb107a758",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1135,8 +1251,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 109770,
-    "wasm_sha256_12": "c8b668d2aef0",
+    "wasm_size_bytes": 109668,
+    "wasm_sha256_12": "18dd14e71eb4",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1152,8 +1268,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 88989,
-    "wasm_sha256_12": "4773c1da14db",
+    "wasm_size_bytes": 89032,
+    "wasm_sha256_12": "244a82b1a6ae",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1174,8 +1290,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 51832,
-    "wasm_sha256_12": "4107e2232cb3",
+    "wasm_size_bytes": 51878,
+    "wasm_sha256_12": "ec6a4907e6f5",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1190,20 +1306,20 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 76215,
-    "wasm_sha256_12": "642b8cdff07f",
+    "wasm_size_bytes": 76266,
+    "wasm_sha256_12": "42e4cbad8004",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "expr",
     "package": "demo:expr@0.1.0",
-    "description": "",
+    "description": "`expr` \u2014 parse and evaluate a small arithmetic expression written as text",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 50096,
-    "wasm_sha256_12": "18fee45588f9",
+    "wasm_size_bytes": 50134,
+    "wasm_sha256_12": "338c0614a340",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1219,8 +1335,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 77464,
-    "wasm_sha256_12": "a433768d5602",
+    "wasm_size_bytes": 77511,
+    "wasm_sha256_12": "e05ceeff9359",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1235,8 +1351,8 @@
       "graph:fitness/evaluator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 116685,
-    "wasm_sha256_12": "628d77a18825",
+    "wasm_size_bytes": 116673,
+    "wasm_sha256_12": "acc370235b0d",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1253,9 +1369,9 @@
       "id:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 145266,
-    "wasm_sha256_12": "81c101025862",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 144973,
+    "wasm_sha256_12": "5227085a1b4f",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1269,15 +1385,15 @@
       "git:forge/repo"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 114889,
-    "wasm_sha256_12": "472527e044ed",
+    "wasm_size_bytes": 114875,
+    "wasm_sha256_12": "f5307e7618b1",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "freight-tracker-domain",
     "package": "freight-tracker:freight-tracker",
-    "description": "",
+    "description": "`freight-tracker-domain` \u2014 track shipments behind a login, with per-account access to their history",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1289,29 +1405,29 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149837,
-    "wasm_sha256_12": "519dcd69786e",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 149809,
+    "wasm_sha256_12": "fac12f6e5057",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "fs-watcher",
     "package": "os:fs@0.1.0",
-    "description": "`fs-watcher` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`fs-watcher` \u2014 watch a directory and report file changes as they happen",
     "exports": [
       "watcher"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47276,
-    "wasm_sha256_12": "b95aefd9a6d7",
+    "wasm_size_bytes": 47320,
+    "wasm_sha256_12": "be804a77fcd5",
     "reusable_as_is": true,
     "unimplemented": true
   },
   {
     "name": "fs-watcher-domain",
     "package": "local:fs-watcher",
-    "description": "",
+    "description": "`fs-watcher-domain` \u2014 watch a directory for changes and report them over HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1324,9 +1440,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91819,
-    "wasm_sha256_12": "5ec060bc2601",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91811,
+    "wasm_sha256_12": "ca363c976777",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1340,8 +1456,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 137193,
-    "wasm_sha256_12": "e226ceb54860",
+    "wasm_size_bytes": 137239,
+    "wasm_sha256_12": "9c3eac52349f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1359,9 +1475,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 159749,
-    "wasm_sha256_12": "6e7f8dcfe4e6",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 159654,
+    "wasm_sha256_12": "8fc7bb63442d",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1373,8 +1489,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 61514,
-    "wasm_sha256_12": "56b539cc054e",
+    "wasm_size_bytes": 61551,
+    "wasm_sha256_12": "d5569efc3c5c",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1408,20 +1524,20 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 162536,
-    "wasm_sha256_12": "8099aebe3ffd",
+    "wasm_size_bytes": 162419,
+    "wasm_sha256_12": "c88e57bd69a7",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "glob",
     "package": "demo:glob@0.1.0",
-    "description": "",
+    "description": "`glob` \u2014 test whether a path matches a shell-style wildcard pattern",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47738,
-    "wasm_sha256_12": "e627e57d7009",
+    "wasm_size_bytes": 47776,
+    "wasm_sha256_12": "42fa951624ca",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1450,8 +1566,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 98860,
-    "wasm_sha256_12": "73d396f0c37e",
+    "wasm_size_bytes": 98827,
+    "wasm_sha256_12": "6b50839422ec",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1466,8 +1582,8 @@
       "knowledge:graph/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 68210,
-    "wasm_sha256_12": "974694d1cef5",
+    "wasm_size_bytes": 68198,
+    "wasm_sha256_12": "9fd07991d109",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1482,15 +1598,15 @@
       "git:forge/repo"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 70755,
-    "wasm_sha256_12": "9facb46fef4f",
+    "wasm_size_bytes": 70803,
+    "wasm_sha256_12": "6c0dd4cbd8be",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "graph-viz-domain",
     "package": "comp:graphvizdomain@0.1.0",
-    "description": "",
+    "description": "`graph-viz-domain` \u2014 draw the capability graph as a picture you can pan and read",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1498,15 +1614,15 @@
       "knowledge:graph/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 107467,
-    "wasm_sha256_12": "e879455f6a9a",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 107316,
+    "wasm_sha256_12": "0b1cb953c95b",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "health-records-domain",
     "package": "health-records:health-records",
-    "description": "",
+    "description": "`health-records-domain` \u2014 keep patient records behind a login, with per-account access control",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1518,9 +1634,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149821,
-    "wasm_sha256_12": "cfff5c1c6f98",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 149792,
+    "wasm_sha256_12": "2f9e84199d79",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1542,9 +1658,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 203401,
-    "wasm_sha256_12": "19036a1c0d48",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 203236,
+    "wasm_sha256_12": "0f565d2bfd6c",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1564,8 +1680,8 @@
         "description": "fallback locale tag (default \"en\")."
       }
     ],
-    "wasm_size_bytes": 78023,
-    "wasm_sha256_12": "41ef51d25dfe",
+    "wasm_size_bytes": 78069,
+    "wasm_sha256_12": "b52123a34aea",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1578,8 +1694,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 60945,
-    "wasm_sha256_12": "cba8d027610b",
+    "wasm_size_bytes": 60983,
+    "wasm_sha256_12": "20e4cfd37b2e",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1592,8 +1708,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 58154,
-    "wasm_sha256_12": "e5526f1eb29f",
+    "wasm_size_bytes": 58192,
+    "wasm_sha256_12": "c8c15d2e6b0c",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1606,8 +1722,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56253,
-    "wasm_sha256_12": "ee45481babaa",
+    "wasm_size_bytes": 56298,
+    "wasm_sha256_12": "e330c4f5bb7c",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1628,29 +1744,29 @@
         "description": "reservation / record lifetime, seconds (default 86400)"
       }
     ],
-    "wasm_size_bytes": 83472,
-    "wasm_sha256_12": "968602587729",
+    "wasm_size_bytes": 83523,
+    "wasm_sha256_12": "790a355da0c0",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "image-optimizer",
     "package": "media:image@0.1.0",
-    "description": "`image-optimizer` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`image-optimizer` \u2014 shrink a picture by re-encoding it at lower cost",
     "exports": [
       "optimizer"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47419,
-    "wasm_sha256_12": "08bdc51aa294",
+    "wasm_size_bytes": 47468,
+    "wasm_sha256_12": "c728f58d97de",
     "reusable_as_is": true,
     "unimplemented": true
   },
   {
     "name": "image-optimizer-domain",
     "package": "local:image-optimizer",
-    "description": "",
+    "description": "`image-optimizer-domain` \u2014 shrink an uploaded picture and hand back the smaller one",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1663,9 +1779,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91918,
-    "wasm_sha256_12": "07013a73481e",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91915,
+    "wasm_sha256_12": "804cdf2c2227",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1677,15 +1793,15 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 78412,
-    "wasm_sha256_12": "3069261fd30a",
+    "wasm_size_bytes": 78461,
+    "wasm_sha256_12": "8b296d64a5b6",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "insta-domain",
     "package": "insta:app@0.1.0",
-    "description": "",
+    "description": "`insta-domain` \u2014 post pictures, follow other people and like what they posted",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1693,9 +1809,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 173562,
-    "wasm_sha256_12": "35a2d2499927",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 173588,
+    "wasm_sha256_12": "1df42c4920dc",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1779,15 +1895,15 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 169458,
-    "wasm_sha256_12": "4f70b31d5743",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 169394,
+    "wasm_sha256_12": "ec6e9f6eba21",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "iot-scanner",
     "package": "iot:scanner@0.1.0",
-    "description": "",
+    "description": "`iot-scanner` \u2014 list nearby wireless devices with their signal strength and connection state",
     "exports": [
       "scanner"
     ],
@@ -1795,8 +1911,8 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 83201,
-    "wasm_sha256_12": "17462890c5f9",
+    "wasm_size_bytes": 83246,
+    "wasm_sha256_12": "6850beb903fb",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1815,9 +1931,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 176214,
-    "wasm_sha256_12": "16f5de07707f",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 175922,
+    "wasm_sha256_12": "4db5cb4c02ec",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1829,8 +1945,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 121117,
-    "wasm_sha256_12": "2889f691be48",
+    "wasm_size_bytes": 121160,
+    "wasm_sha256_12": "fb3152c28731",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1868,8 +1984,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 166706,
-    "wasm_sha256_12": "8955bbf157bd",
+    "wasm_size_bytes": 166698,
+    "wasm_sha256_12": "16b09a59c449",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1887,8 +2003,8 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 161850,
-    "wasm_sha256_12": "40f65b6fea7e",
+    "wasm_size_bytes": 161900,
+    "wasm_sha256_12": "1671943ec332",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1904,29 +2020,29 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 75866,
-    "wasm_sha256_12": "fd756aa0e47d",
+    "wasm_size_bytes": 75598,
+    "wasm_sha256_12": "e49dab3ea94a",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "lan-scanner",
     "package": "net:lan@0.1.0",
-    "description": "`lan-scanner` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`lan-scanner` \u2014 find which hosts are reachable on the local network",
     "exports": [
       "scanner"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 45831,
-    "wasm_sha256_12": "69acff6c6e4b",
+    "wasm_size_bytes": 45876,
+    "wasm_sha256_12": "2513cfc54b7f",
     "reusable_as_is": true,
     "unimplemented": true
   },
   {
     "name": "lan-scanner-domain",
     "package": "local:lan-scanner",
-    "description": "",
+    "description": "`lan-scanner-domain` \u2014 find which hosts are reachable on the local network",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1939,9 +2055,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91775,
-    "wasm_sha256_12": "161c030e3c3f",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91768,
+    "wasm_sha256_12": "c76c83b8a573",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1953,8 +2069,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 55696,
-    "wasm_sha256_12": "a2188c36f82a",
+    "wasm_size_bytes": 55736,
+    "wasm_sha256_12": "cabfc7cbef4e",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1975,8 +2091,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 156737,
-    "wasm_sha256_12": "4ec62646f436",
+    "wasm_size_bytes": 156469,
+    "wasm_sha256_12": "2b2ba4b7740f",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1989,22 +2105,22 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 73948,
-    "wasm_sha256_12": "837064737217",
+    "wasm_size_bytes": 74001,
+    "wasm_sha256_12": "a349df325e84",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "llm-local",
-    "package": "ai:inference@0.1.0",
-    "description": "`llm-local` \u2014 a WIT contract with NO implementation behind it",
+    "package": "ai:local@0.1.0",
+    "description": "`llm-local` \u2014 send a prompt to a language model running on this machine",
     "exports": [
       "local"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47345,
-    "wasm_sha256_12": "f0f4cfdbf139",
+    "wasm_size_bytes": 47340,
+    "wasm_sha256_12": "36ad5cfce346",
     "reusable_as_is": true,
     "unimplemented": true
   },
@@ -2019,8 +2135,8 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 64108,
-    "wasm_sha256_12": "f38576a500ca",
+    "wasm_size_bytes": 64094,
+    "wasm_sha256_12": "1247de059171",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2043,20 +2159,20 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 231657,
-    "wasm_sha256_12": "77edd84a2db0",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 231435,
+    "wasm_sha256_12": "70077781d31f",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "local-ai-domain",
     "package": "local:local-ai",
-    "description": "",
+    "description": "`local-ai-domain` \u2014 ask a locally-hosted language model a question over HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
     "capability_deps": [
-      "ai:inference/local",
+      "ai:local/local",
       "auth:identity/accounts",
       "auth:identity/authorizer",
       "auth:identity/session",
@@ -2064,9 +2180,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91866,
-    "wasm_sha256_12": "3e3d1e66565f",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91820,
+    "wasm_sha256_12": "9758490658eb",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2081,8 +2197,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 76506,
-    "wasm_sha256_12": "f8307641e39a",
+    "wasm_size_bytes": 76550,
+    "wasm_sha256_12": "a241ce9c9c03",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2099,8 +2215,8 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 68349,
-    "wasm_sha256_12": "44618e8743e6",
+    "wasm_size_bytes": 68392,
+    "wasm_sha256_12": "a5d9e590d26f",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2113,15 +2229,15 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 82522,
-    "wasm_sha256_12": "b41f62fc8fb3",
+    "wasm_size_bytes": 82564,
+    "wasm_sha256_12": "f285a1b084bc",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "mdns-discoverer-domain",
     "package": "local:mdns-discoverer",
-    "description": "",
+    "description": "`mdns-discoverer-domain` \u2014 discover printers, speakers and other services advertised on the local network",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2134,22 +2250,22 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91834,
-    "wasm_sha256_12": "f90df82c3300",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91831,
+    "wasm_sha256_12": "84198573b739",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "mdns-discovery",
     "package": "net:mdns@0.1.0",
-    "description": "`mdns-discovery` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`mdns-discovery` \u2014 discover printers, speakers and services advertised on the local network",
     "exports": [
       "discovery"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 45907,
-    "wasm_sha256_12": "0f1193dfcf48",
+    "wasm_size_bytes": 45955,
+    "wasm_sha256_12": "cb14eaa7082d",
     "reusable_as_is": true,
     "unimplemented": true
   },
@@ -2165,8 +2281,8 @@
       "knowledge:memory/promotion"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 114979,
-    "wasm_sha256_12": "7d5fac505997",
+    "wasm_size_bytes": 114968,
+    "wasm_sha256_12": "b1a24a2fc8b6",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2183,9 +2299,9 @@
       "resilience:breaker/breaker"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 162384,
-    "wasm_sha256_12": "5c8a4b33723e",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 162289,
+    "wasm_sha256_12": "066974449199",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2200,8 +2316,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 71881,
-    "wasm_sha256_12": "cff371e9bce2",
+    "wasm_size_bytes": 71930,
+    "wasm_sha256_12": "d4f44803fb46",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2220,8 +2336,8 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 170969,
-    "wasm_sha256_12": "b82bd2c8b60a",
+    "wasm_size_bytes": 170875,
+    "wasm_sha256_12": "b1599f260b07",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2241,8 +2357,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 78448,
-    "wasm_sha256_12": "4d83ec3df9eb",
+    "wasm_size_bytes": 78494,
+    "wasm_sha256_12": "2b7a9cd02ac9",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2270,8 +2386,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 118093,
-    "wasm_sha256_12": "3d8358c84b74",
+    "wasm_size_bytes": 118140,
+    "wasm_sha256_12": "5a0b8e63f400",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2359,9 +2475,9 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 180964,
-    "wasm_sha256_12": "79c4180435ea",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 180896,
+    "wasm_sha256_12": "3220c1803c9e",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2373,8 +2489,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 58287,
-    "wasm_sha256_12": "596e9db18d3a",
+    "wasm_size_bytes": 58326,
+    "wasm_sha256_12": "75f9931f634c",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2390,8 +2506,8 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 92440,
-    "wasm_sha256_12": "727789901da0",
+    "wasm_size_bytes": 92432,
+    "wasm_sha256_12": "dc948c4655f6",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2425,20 +2541,20 @@
         "description": "bearer token, granted by reference in the manifest"
       }
     ],
-    "wasm_size_bytes": 175057,
-    "wasm_sha256_12": "89d3281fc250",
+    "wasm_size_bytes": 177722,
+    "wasm_sha256_12": "40bc666f282b",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "ordinal",
     "package": "demo:ordinal@0.1.0",
-    "description": "",
+    "description": "`ordinal` \u2014 turn a number into its English ordinal \u2014 1st, 2nd, 3rd, 111th",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47429,
-    "wasm_sha256_12": "fd59851fd1b3",
+    "wasm_size_bytes": 47470,
+    "wasm_sha256_12": "2633ec3f9d2a",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2451,8 +2567,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 84626,
-    "wasm_sha256_12": "507904a51d99",
+    "wasm_size_bytes": 84663,
+    "wasm_sha256_12": "d7815dedd09b",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2478,8 +2594,8 @@
         "description": "backoff base seconds, doubled per attempt (default 5)"
       }
     ],
-    "wasm_size_bytes": 95435,
-    "wasm_sha256_12": "371d62b63427",
+    "wasm_size_bytes": 95475,
+    "wasm_sha256_12": "cf6229424ab9",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2503,8 +2619,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 76465,
-    "wasm_sha256_12": "72c51d76189d",
+    "wasm_size_bytes": 76509,
+    "wasm_sha256_12": "2cb62dcb4548",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2534,11 +2650,15 @@
       {
         "name": "require-uv",
         "description": "demand the UV flag (biometric/PIN), not just user presence (default false)"
+      },
+      {
+        "name": "authorization",
+        "description": ""
       }
     ],
-    "wasm_size_bytes": 199715,
-    "wasm_sha256_12": "a921e3c63288",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 199645,
+    "wasm_sha256_12": "45dccca8bd73",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2556,8 +2676,8 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149608,
-    "wasm_sha256_12": "eb4bf25ad156",
+    "wasm_size_bytes": 149513,
+    "wasm_sha256_12": "de8e7b968ba1",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2578,9 +2698,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 168676,
-    "wasm_sha256_12": "5ab6bd6b667c",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 168524,
+    "wasm_sha256_12": "2597cbfc4c65",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2592,15 +2712,15 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 56204,
-    "wasm_sha256_12": "f7feb1e822c0",
+    "wasm_size_bytes": 56241,
+    "wasm_sha256_12": "7bf069f0b72c",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "pdf-generator-domain",
     "package": "local:pdf-generator",
-    "description": "",
+    "description": "`pdf-generator-domain` \u2014 render a web page to a PDF and return the bytes",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2613,9 +2733,9 @@
       "web:browser/automation"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91927,
-    "wasm_sha256_12": "6d67de27d81a",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91922,
+    "wasm_sha256_12": "4c109cc7ea11",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2636,8 +2756,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 136277,
-    "wasm_sha256_12": "c4dda96d7ee4",
+    "wasm_size_bytes": 135819,
+    "wasm_sha256_12": "efe08e429384",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2658,9 +2778,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 268150,
-    "wasm_sha256_12": "a6f126bf0a9d",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 268626,
+    "wasm_sha256_12": "2c5a30e7a2cd",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2672,8 +2792,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 75449,
-    "wasm_sha256_12": "953d56051758",
+    "wasm_size_bytes": 75493,
+    "wasm_sha256_12": "0b06f0b9bbef",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2690,9 +2810,9 @@
       "outbox:dispatch/queue"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 144025,
-    "wasm_sha256_12": "ca0d530f6b7a",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 143735,
+    "wasm_sha256_12": "eac517aff438",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2728,6 +2848,10 @@
         "description": "DNS suffix an app is reachable on, e.g. `apps.local`;"
       },
       {
+        "name": "authorization",
+        "description": ""
+      },
+      {
         "name": "config",
         "description": ""
       },
@@ -2737,6 +2861,10 @@
       },
       {
         "name": "tag",
+        "description": ""
+      },
+      {
+        "name": "x-fetch-token",
         "description": ""
       },
       {
@@ -2761,6 +2889,10 @@
       },
       {
         "name": "app",
+        "description": ""
+      },
+      {
+        "name": "x-platform-secret",
         "description": ""
       },
       {
@@ -2796,9 +2928,9 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 577058,
-    "wasm_sha256_12": "ca7beae2d43e",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 576744,
+    "wasm_sha256_12": "ace73ce503d7",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2812,8 +2944,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 154221,
-    "wasm_sha256_12": "9bd181642ad3",
+    "wasm_size_bytes": 154192,
+    "wasm_sha256_12": "5ac9f44fe455",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2831,15 +2963,15 @@
       "svg:chart/charts"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 143038,
-    "wasm_sha256_12": "5c1acc608745",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 142796,
+    "wasm_sha256_12": "54647e8f7f77",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "power-domain",
     "package": "local:power-domain",
-    "description": "",
+    "description": "`power-domain` \u2014 work out what running an appliance costs from its wattage and hours",
     "exports": [
       "calculate-cost: func(wattage: f32, hours: f32, token: string) -> result<f32, string>"
     ],
@@ -2849,9 +2981,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 85837,
-    "wasm_sha256_12": "a4991bc38e98",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 85883,
+    "wasm_sha256_12": "815b906ea210",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2869,10 +3001,14 @@
       {
         "name": "routes",
         "description": ""
+      },
+      {
+        "name": "content-type",
+        "description": ""
       }
     ],
-    "wasm_size_bytes": 104597,
-    "wasm_sha256_12": "ada8e1da8c1c",
+    "wasm_size_bytes": 104465,
+    "wasm_sha256_12": "90b7446fb3a4",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2889,9 +3025,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 156175,
-    "wasm_sha256_12": "6ef5a419d3cf",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 155882,
+    "wasm_sha256_12": "1024a396ab8b",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2903,8 +3039,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 78406,
-    "wasm_sha256_12": "85620a07551f",
+    "wasm_size_bytes": 78442,
+    "wasm_sha256_12": "a07ac1ad12af",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2917,8 +3053,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 52303,
-    "wasm_sha256_12": "1d0269035591",
+    "wasm_size_bytes": 52349,
+    "wasm_sha256_12": "541fbb90e606",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2934,8 +3070,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 69044,
-    "wasm_sha256_12": "3a48fea3fb7b",
+    "wasm_size_bytes": 69083,
+    "wasm_sha256_12": "59dd4e9204d3",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2961,15 +3097,15 @@
         "description": "window / lockout duration, seconds          (default 300)"
       }
     ],
-    "wasm_size_bytes": 69001,
-    "wasm_sha256_12": "8ac01ad883b2",
+    "wasm_size_bytes": 69047,
+    "wasm_sha256_12": "ad18981f1fa2",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "real-estate-escrow-domain",
     "package": "real-estate-escrow:real-estate-escrow",
-    "description": "",
+    "description": "`real-estate-escrow-domain` \u2014 hold property transactions behind a login, with per-account access",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2981,9 +3117,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149853,
-    "wasm_sha256_12": "70c6fd472d83",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 149828,
+    "wasm_sha256_12": "09587c1ccfba",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2999,15 +3135,15 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 210691,
-    "wasm_sha256_12": "0da372f8a2fe",
+    "wasm_size_bytes": 210737,
+    "wasm_sha256_12": "cf50b962d486",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "reddit-domain",
     "package": "local:reddit",
-    "description": "",
+    "description": "`reddit-domain` \u2014 run threaded discussion boards where people post and reply under topics",
     "exports": [
       "reddit"
     ],
@@ -3016,9 +3152,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 133738,
-    "wasm_sha256_12": "c0df93d9e771",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 133785,
+    "wasm_sha256_12": "d27f730c0bb0",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3030,32 +3166,32 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 16541,
-    "wasm_sha256_12": "349f3d2cb3c1",
+    "wasm_size_bytes": 16585,
+    "wasm_sha256_12": "7b66d7e583e9",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "roman",
     "package": "demo:roman@0.1.0",
-    "description": "",
+    "description": "`roman` \u2014 convert a number to Roman numerals and read Roman numerals back",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47693,
-    "wasm_sha256_12": "396f9f7f8ea6",
+    "wasm_size_bytes": 47732,
+    "wasm_sha256_12": "d37e5f9e1d6c",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "rot13",
     "package": "demo:rot13@0.1.0",
-    "description": "",
+    "description": "`rot13` \u2014 obscure text with the ROT13 letter substitution, and reverse it",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47043,
-    "wasm_sha256_12": "56acd1838505",
+    "wasm_size_bytes": 47082,
+    "wasm_sha256_12": "8f7e914807c6",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3068,8 +3204,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 58271,
-    "wasm_sha256_12": "23c3a20e9cd6",
+    "wasm_size_bytes": 58310,
+    "wasm_sha256_12": "0fdc93fa641f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3090,9 +3226,47 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 191212,
-    "wasm_sha256_12": "feff124868d5",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 191128,
+    "wasm_sha256_12": "b7fcf989373f",
+    "reusable_as_is": false,
+    "unimplemented": false
+  },
+  {
+    "name": "sample-consumer",
+    "package": "auth:identity@0.1.0",
+    "description": "Sample HTTP consumer. Proves the auth:identity contract: every request is",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0",
+      "wasi:http/incoming-handler@0.2.0",
+      "types",
+      "jwt",
+      "oidc",
+      "session",
+      "accounts",
+      "rbac",
+      "authorizer"
+    ],
+    "capability_deps": [
+      "accounts",
+      "audit:log/recorder",
+      "authorizer",
+      "ratelimit:guard/limiter",
+      "rbac",
+      "session",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler",
+      "wasi:keyvalue/atomics",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [
+      {
+        "name": "authorization",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 84716,
+    "wasm_sha256_12": "051632f257b7",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3107,8 +3281,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 94164,
-    "wasm_sha256_12": "f0fc3ff2fd8d",
+    "wasm_size_bytes": 94213,
+    "wasm_sha256_12": "2c2b1ff3ae86",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3126,9 +3300,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 176254,
-    "wasm_sha256_12": "6edb45b78b2c",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 175962,
+    "wasm_sha256_12": "a929cea2260b",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3147,9 +3321,9 @@
       "search:index/index"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 153564,
-    "wasm_sha256_12": "1be0790c8f02",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 153471,
+    "wasm_sha256_12": "6fd382354308",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3163,8 +3337,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 98664,
-    "wasm_sha256_12": "32cb13f1fafc",
+    "wasm_size_bytes": 98710,
+    "wasm_sha256_12": "d2f3587c99a9",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3179,8 +3353,8 @@
       "comp:secrets/reader"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 72458,
-    "wasm_sha256_12": "e87d046d3a90",
+    "wasm_size_bytes": 72447,
+    "wasm_sha256_12": "290fa4bff633",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3201,8 +3375,8 @@
         "description": "base64 STANDARD, MUST decode to exactly 32 bytes \u2014 required."
       }
     ],
-    "wasm_size_bytes": 98822,
-    "wasm_sha256_12": "442e76e475dd",
+    "wasm_size_bytes": 98869,
+    "wasm_sha256_12": "c91bad627a6d",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3217,8 +3391,8 @@
       "graph:select/selector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 119520,
-    "wasm_sha256_12": "c92407c1480c",
+    "wasm_size_bytes": 119507,
+    "wasm_sha256_12": "01538565d493",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3239,8 +3413,8 @@
         "description": "session lifetime, seconds (default 86400). The per-call"
       }
     ],
-    "wasm_size_bytes": 86411,
-    "wasm_sha256_12": "316fed8a43d7",
+    "wasm_size_bytes": 86458,
+    "wasm_sha256_12": "53059197b6c4",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3253,8 +3427,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 14878,
-    "wasm_sha256_12": "0f2f52fa68ce",
+    "wasm_size_bytes": 14918,
+    "wasm_sha256_12": "702837af4542",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3267,8 +3441,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 78012,
-    "wasm_sha256_12": "cb716a7b70ae",
+    "wasm_size_bytes": 78050,
+    "wasm_sha256_12": "456f8f5af2f7",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3283,15 +3457,15 @@
       "slug:generate/generator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 68108,
-    "wasm_sha256_12": "081aec9062b8",
+    "wasm_size_bytes": 68095,
+    "wasm_sha256_12": "8eab4866442c",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "smart-home-domain",
     "package": "smart-home:smart-home",
-    "description": "",
+    "description": "`smart-home-domain` \u2014 register household devices behind a login, with per-account access",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3303,9 +3477,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149805,
-    "wasm_sha256_12": "5f5ac6829fec",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 149772,
+    "wasm_sha256_12": "481682a750a8",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3326,9 +3500,9 @@
       "zip:archive/archiver"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 181131,
-    "wasm_sha256_12": "9fd2129ad1bd",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 180911,
+    "wasm_sha256_12": "9f35215e2cc0",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3340,8 +3514,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 659602,
-    "wasm_sha256_12": "edba3c6c2a3a",
+    "wasm_size_bytes": 659649,
+    "wasm_sha256_12": "920df1fd690d",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3361,8 +3535,8 @@
       "wasi:http/outgoing-handler"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 187024,
-    "wasm_sha256_12": "ccee5bf3b589",
+    "wasm_size_bytes": 186922,
+    "wasm_sha256_12": "a616070062bc",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3380,9 +3554,9 @@
       "wit:reflect/inspector"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 196485,
-    "wasm_sha256_12": "8ccce981926c",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 196532,
+    "wasm_sha256_12": "2e2e914130d4",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3450,9 +3624,9 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 174869,
-    "wasm_sha256_12": "70db917e26b9",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 174802,
+    "wasm_sha256_12": "6bb454284719",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3464,22 +3638,22 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 85270,
-    "wasm_sha256_12": "92a412636467",
+    "wasm_size_bytes": 85313,
+    "wasm_sha256_12": "47027b4d91b1",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "system-cron",
     "package": "os:system@0.1.0",
-    "description": "`system-cron` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`system-cron` \u2014 read and write the machine's scheduled jobs",
     "exports": [
       "cron"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 45885,
-    "wasm_sha256_12": "d971df2b4a9c",
+    "wasm_size_bytes": 45930,
+    "wasm_sha256_12": "89cff4e18d0e",
     "reusable_as_is": true,
     "unimplemented": true
   },
@@ -3500,9 +3674,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 255158,
-    "wasm_sha256_12": "81f49106a8ab",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 254938,
+    "wasm_sha256_12": "6f4b7ca81bdd",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3514,8 +3688,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 70257,
-    "wasm_sha256_12": "4b38d2951e09",
+    "wasm_size_bytes": 70299,
+    "wasm_sha256_12": "8817b75fa7ae",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3533,9 +3707,9 @@
       "ratelimit:guard/limiter"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 146701,
-    "wasm_sha256_12": "51375608daf6",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 146411,
+    "wasm_sha256_12": "ee518a29949c",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3547,8 +3721,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 60298,
-    "wasm_sha256_12": "38ead5e24e6d",
+    "wasm_size_bytes": 60344,
+    "wasm_sha256_12": "321e6211b0ed",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3578,9 +3752,9 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 252863,
-    "wasm_sha256_12": "97907c3fc5ff",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 252419,
+    "wasm_sha256_12": "4daa1fbb92de",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3600,9 +3774,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 189833,
-    "wasm_sha256_12": "19a36a71abe3",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 189615,
+    "wasm_sha256_12": "12aed0abdac3",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3685,9 +3859,9 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 197088,
-    "wasm_sha256_12": "fb9a0964e6d1",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 197028,
+    "wasm_sha256_12": "fb6f51e14597",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3710,9 +3884,9 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 160153,
-    "wasm_sha256_12": "4a6a9ddad5ea",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 160087,
+    "wasm_sha256_12": "4d32fe04a281",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3730,22 +3904,22 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 192270,
-    "wasm_sha256_12": "fab6ee08ee65",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 192259,
+    "wasm_sha256_12": "2c9f5a030f23",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "ui-notifier",
     "package": "os:ui@0.1.0",
-    "description": "`ui-notifier` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`ui-notifier` \u2014 raise a notification on the user's desktop",
     "exports": [
       "notifications"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47375,
-    "wasm_sha256_12": "3f4a0fa431c7",
+    "wasm_size_bytes": 47420,
+    "wasm_sha256_12": "ea6db68465b9",
     "reusable_as_is": true,
     "unimplemented": true
   },
@@ -3763,8 +3937,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 149803,
-    "wasm_sha256_12": "9d2e6813b935",
+    "wasm_size_bytes": 149710,
+    "wasm_sha256_12": "ab8aadba131a",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3796,8 +3970,8 @@
         "description": "HMAC key; default \"upload-default-secret\""
       }
     ],
-    "wasm_size_bytes": 79213,
-    "wasm_sha256_12": "814d59fc9da1",
+    "wasm_size_bytes": 79260,
+    "wasm_sha256_12": "d21694ffc82b",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3810,8 +3984,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 102703,
-    "wasm_sha256_12": "abd242b80350",
+    "wasm_size_bytes": 102745,
+    "wasm_sha256_12": "21925b258215",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3831,8 +4005,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 60755,
-    "wasm_sha256_12": "eecd5ee686ec",
+    "wasm_size_bytes": 60745,
+    "wasm_sha256_12": "25c070e7a478",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3873,8 +4047,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 297910,
-    "wasm_sha256_12": "e37245be2ff7",
+    "wasm_size_bytes": 297604,
+    "wasm_sha256_12": "fb283417eaaf",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3891,29 +4065,29 @@
       "vgit:store/worktree"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 128783,
-    "wasm_sha256_12": "0f3ddd5b1224",
+    "wasm_size_bytes": 128768,
+    "wasm_sha256_12": "0c69499eae77",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "video-ffmpeg",
     "package": "media:video@0.1.0",
-    "description": "`video-ffmpeg` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`video-ffmpeg` \u2014 re-encode a video into another format or resolution",
     "exports": [
       "ffmpeg"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 47382,
-    "wasm_sha256_12": "ec688a8c837f",
+    "wasm_size_bytes": 47428,
+    "wasm_sha256_12": "59a461765967",
     "reusable_as_is": true,
     "unimplemented": true
   },
   {
     "name": "video-transcoder-domain",
     "package": "local:video-transcoder",
-    "description": "",
+    "description": "`video-transcoder-domain` \u2014 re-encode an uploaded video into another format",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3926,9 +4100,9 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91926,
-    "wasm_sha256_12": "3056f08ba052",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91924,
+    "wasm_sha256_12": "3ad1b9c916b8",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3951,15 +4125,15 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 136531,
-    "wasm_sha256_12": "69fadab26709",
+    "wasm_size_bytes": 136573,
+    "wasm_sha256_12": "642a0893acb3",
     "reusable_as_is": true,
     "unimplemented": false
   },
   {
     "name": "vpn-manager-domain",
     "package": "local:vpn-manager",
-    "description": "",
+    "description": "`vpn-manager-domain` \u2014 report whether the VPN tunnel is up and who is connected to it",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3972,22 +4146,22 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 91838,
-    "wasm_sha256_12": "f93e8a613810",
-    "reusable_as_is": true,
+    "wasm_size_bytes": 91831,
+    "wasm_sha256_12": "b3cece76e013",
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "vpn-wireguard",
     "package": "net:vpn@0.1.0",
-    "description": "`vpn-wireguard` \u2014 a WIT contract with NO implementation behind it",
+    "description": "`vpn-wireguard` \u2014 report whether the VPN tunnel is up and which peers are connected",
     "exports": [
       "wireguard"
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 45891,
-    "wasm_sha256_12": "f15d34877015",
+    "wasm_size_bytes": 45938,
+    "wasm_sha256_12": "de666b83db07",
     "reusable_as_is": true,
     "unimplemented": true
   },
@@ -4000,8 +4174,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 197041,
-    "wasm_sha256_12": "9f8ad8e6bfe6",
+    "wasm_size_bytes": 197083,
+    "wasm_sha256_12": "df640aee0032",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -4017,8 +4191,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 69779,
-    "wasm_sha256_12": "5caa0c9eba12",
+    "wasm_size_bytes": 69827,
+    "wasm_sha256_12": "884feca304d4",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -4043,8 +4217,8 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 181257,
-    "wasm_sha256_12": "026edd54d97d",
+    "wasm_size_bytes": 180986,
+    "wasm_sha256_12": "59a81556bad7",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4057,8 +4231,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 60762,
-    "wasm_sha256_12": "72d76e663aaf",
+    "wasm_size_bytes": 60799,
+    "wasm_sha256_12": "0c581121ad27",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -4072,8 +4246,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 1100337,
-    "wasm_sha256_12": "ae03ead3a18b",
+    "wasm_size_bytes": 1100382,
+    "wasm_sha256_12": "bedc2865da37",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -4086,8 +4260,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 48904,
-    "wasm_sha256_12": "a0d3f248fc42",
+    "wasm_size_bytes": 48941,
+    "wasm_sha256_12": "dd06f28555d5",
     "reusable_as_is": true,
     "unimplemented": false
   }

@@ -1,3 +1,5 @@
+//! `roman` — convert a number to Roman numerals and read Roman numerals back
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::demo::roman::numerals::Guest;

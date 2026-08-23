@@ -1,3 +1,5 @@
+//! `graph-viz-domain` — draw the capability graph as a picture you can pan and read
+
 #[allow(warnings)]
 mod bindings;
 
