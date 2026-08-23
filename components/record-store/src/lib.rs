@@ -1096,3 +1096,100 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The escape scheme has to be INJECTIVE, and `_` is why.
+    ///
+    /// `_` is both the joiner in every key (`rec_{collection}_{id}`) and the
+    /// escape prefix, so it must never survive a segment unescaped. If it did, a
+    /// collection named `a_b` and a collection `a` holding ids that start with
+    /// `b` would write to the same keys — one tenant's records readable, and
+    /// overwritable, through another's name.
+    #[test]
+    fn the_joiner_cannot_be_forged_from_inside_a_segment() {
+        assert_eq!(sanitize("a_b"), "a_5Fb", "an underscore must be escaped");
+        assert_ne!(rec_key("a_b", "c"), rec_key("a", "b_c"));
+        assert_ne!(rec_key("a", "b"), rec_key("a_b", ""));
+        assert_ne!(ix_key("c", "f_g", "v"), ix_key("c", "f", "g_v"));
+    }
+
+    /// Distinct inputs, distinct keys — checked over the awkward characters
+    /// rather than asserted in prose.
+    #[test]
+    fn distinct_segments_give_distinct_keys() {
+        let segs = ["", "a", "a_", "_a", "a/b", "a=b", "a.b", "a b", "é", "a_5Fb", "A", "0"];
+        let mut seen = std::collections::HashSet::new();
+        for c in segs {
+            for id in segs {
+                assert!(seen.insert(rec_key(c, id)), "collision on ({c:?}, {id:?})");
+            }
+        }
+    }
+
+    /// The bytes that pass through untouched are the ones NATS accepts, and the
+    /// rest become `_XX`. Pinned because widening this set later would silently
+    /// change every existing key and orphan the records behind them.
+    #[test]
+    fn only_nats_legal_bytes_survive_unescaped() {
+        assert_eq!(sanitize("azAZ09-/="), "azAZ09-/=");
+        assert_eq!(sanitize("."), "_2E");
+        assert_eq!(sanitize(" "), "_20");
+        assert_eq!(sanitize("%"), "_25");
+        // Multi-byte UTF-8 is escaped per BYTE, so a key stays ASCII.
+        assert_eq!(sanitize("é"), "_C3_A9");
+        assert!(sanitize("naïve").is_ascii());
+    }
+
+    /// An indexed value is capped, and the cap is allowed to OVER-match.
+    ///
+    /// Two values sharing a long prefix land on one index key, so a reader gets
+    /// a superset and re-verifies. That is the documented trade; this pins that
+    /// it over-matches rather than under-matches, because a miss would silently
+    /// lose records from a query and a hit costs only a re-check.
+    #[test]
+    fn a_long_indexed_value_is_truncated_and_can_only_over_match() {
+        let long = "x".repeat(MAX_INDEXED_VALUE + 50);
+        assert_eq!(sanitize_value(&long).len(), MAX_INDEXED_VALUE);
+        let a = format!("{long}aaa");
+        let b = format!("{long}bbb");
+        assert_eq!(ix_key("c", "f", &a), ix_key("c", "f", &b), "a shared prefix over-matches");
+        // Short values are untouched, so the common case is exact.
+        assert_eq!(sanitize_value("short"), "short");
+        // Escaping happens BEFORE the cap, so the cap is on key bytes and the
+        // key cannot exceed it however many escapes a value needs.
+        assert!(sanitize_value(&"é".repeat(100)).len() <= MAX_INDEXED_VALUE);
+    }
+
+    /// The cursor is exclusive, and an absent cursor resumes where it would be.
+    ///
+    /// The second half matters more than it looks: a caller pages with the last
+    /// id it saw, and that record can be DELETED before the next page is asked
+    /// for. Resuming at the insertion point means the page after a vanished
+    /// cursor is the next one, not the first one — a restart that would repeat
+    /// every record already delivered.
+    #[test]
+    fn paging_is_exclusive_and_survives_a_deleted_cursor() {
+        let ids: Vec<String> = ["a", "c", "e", "g"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(page_start(&ids, ""), 0, "no cursor starts at the beginning");
+        assert_eq!(page_start(&ids, "a"), 1);
+        assert_eq!(page_start(&ids, "g"), 4, "the last id yields an empty page");
+        assert_eq!(page_start(&ids, "b"), 1, "a deleted cursor resumes after where it was");
+        assert_eq!(page_start(&ids, "z"), 4, "a cursor past the end yields nothing");
+        assert_eq!(page_start(&[], "a"), 0);
+    }
+
+    /// Chunk keys must sort in sequence order as STRINGS, because that is how
+    /// they come back from a prefix scan. Without the zero padding `_c10` sorts
+    /// before `_c2` and the id list silently reorders after the tenth chunk.
+    #[test]
+    fn chunk_keys_sort_lexicographically_in_sequence_order() {
+        let mut keys: Vec<String> = [0u32, 2, 9, 10, 11, 100, 12345].iter().map(|n| chunk_key("idx_c", *n)).collect();
+        let ordered = keys.clone();
+        keys.sort();
+        assert_eq!(keys, ordered, "string order must match numeric order");
+        assert_eq!(chunk_key("idx_c", 0), "idx_c_c00000000");
+    }
+}
