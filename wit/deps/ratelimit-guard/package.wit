@@ -38,6 +38,15 @@ interface limiter {
 world rate-limiter {
     export limiter;
     import wasi:keyvalue/store@0.2.0-draft;
+    // Atomic increment for the failure counter — avoids the lost-update race a
+    // load/modify/save would have under concurrent record-failure calls.
+    //
+    // This line was missing here while present in the implementation's own copy
+    // at components/rate-limiter/wit/. Same package name, two different worlds:
+    // budget-domain, power-domain and reddit-domain read THIS file, so what they
+    // were shown was a rate-limiter that needs no atomics — which is not the one
+    // that exists.
+    import wasi:keyvalue/atomics@0.2.0-draft;
     import wasi:clocks/wall-clock@0.2.0;
     import wasi:config/store@0.2.0-rc.1;
 }
