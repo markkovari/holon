@@ -486,6 +486,11 @@ e2e-console: compose-console
 claude-shim port="8787" model="":
     @CLAUDE_MODEL="{{model}}" PORT="{{port}}" node tools/claude-shim.mjs
 
+# An OpenAI-compatible server (vLLM, llama.cpp, Ollama) behind /v1/messages.
+#   OPENAI_BASE=http://csatapaci:8000/v1 just openai-shim
+openai-shim port="8787" model="":
+    @OPENAI_MODEL="{{model}}" PORT="{{port}}" HOST="${SHIM_HOST:-127.0.0.1}" node tools/openai-shim.mjs
+
 gemini-shim port="8788" model="gemini-2.5-flash":
     @GEMINI_MODEL="{{model}}" PORT="{{port}}" node tools/gemini-shim.mjs
 
@@ -2123,6 +2128,39 @@ goal-use app="":
 #   just claude-shim &
 #   CHECKOUT=… REPO=… ANTHROPIC_KEY=… GITHUB_TOKEN=… \
 #   BASE_URL=http://127.0.0.1:8787 COMP_FLEET_ALLOW_PRIVATE_EGRESS=1 just goal-run
+# Drain a project's queue instead of typing `goal run` per goal.
+#
+# A person still starts each goal (console, or `holon goal start`); this picks up
+# what is in `running` and drives it to a PR, MAX_RUNS at a time. Everything after
+# `--` goes to comp-goalrun, so the model/pool/budget flags are the same ones.
+#
+#   set -a; source .comp/csatapaci.env; set +a
+#   just openai-shim &
+#   PROJECT=holon CHECKOUT=$PWD REPO=me/holon just goald
+goald:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${PROJECT:?set PROJECT=<project name>}"
+    : "${CHECKOUT:?set CHECKOUT=/path/to/repo}"
+    : "${REPO:?set REPO=owner/name}"
+    : "${ANTHROPIC_KEY:?set ANTHROPIC_KEY=/path/to/keyfile}"
+    : "${GITHUB_TOKEN:?set GITHUB_TOKEN=/path/to/tokenfile}"
+    cd reconciler && cargo build --release --bins && cd ..
+    ck="${CHECKOUT/#\~/$HOME}"; ak="${ANTHROPIC_KEY/#\~/$HOME}"; gt="${GITHUB_TOKEN/#\~/$HOME}"
+    export COMP_GOALRUN_BIN="$PWD/reconciler/target/release/comp-goalrun"
+    export COMP_FLEET_ALLOW_PRIVATE_EGRESS=1
+    run=(--anthropic-key "$ak" --github-token "$gt" \
+         --model "${OPENAI_MODEL:?source .comp/csatapaci.env}" \
+         --answer-model "$OPENAI_MODEL" \
+         --anthropic-base-url "${HOLON_BASE_URL:-http://127.0.0.1:8787}" \
+         --branches "${BRANCHES:-4}" --rounds "${ROUNDS:-1}" \
+         --timeout "${GOAL_TIMEOUT:-900}")
+    # The shared pool is what makes the goals aware of each other's work.
+    [ -n "${SURREAL_URL:-}" ] && run+=(--surreal-url "$SURREAL_URL")
+    exec reconciler/target/release/comp-goald \
+      --project "$PROJECT" --checkout "$ck" --repo "$REPO" \
+      --max-runs "${MAX_RUNS:-1}" --poll "${POLL:-15}" -- "${run[@]}"
+
 goal-run:
     #!/usr/bin/env bash
     set -euo pipefail

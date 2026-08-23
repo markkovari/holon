@@ -42,9 +42,9 @@ import type { Attempt, Capability, Run } from "./Runs";
 /// just left of its own column: that keeps every edge pointing forwards, which is
 /// what lets these be plain nodes with `Position.Left`/`Right` instead of custom
 /// node types with named handles.
-const COL = 260;
-const ROW = 92;
-const NODE_W = 150;
+export const COL = 260;
+export const ROW = 92;
+export const NODE_W = 150;
 const MARK_W = 76;
 const SPINE_Y = -120;
 /// Where round 0's branches start. Far enough right that its marker clears the
@@ -54,14 +54,14 @@ const FIRST = 260;
 /// Emerald for what passed, red for what did not, amber for interrupted — the
 /// same three tones `Outcome` uses in the list, so a colour means one thing on
 /// this page.
-function tone(outcome?: string): { border: string; text: string } {
+export function tone(outcome?: string): { border: string; text: string } {
   if (outcome === "merged" || outcome === "passed") return { border: "#065f46", text: "#6ee7b7" };
   if (outcome === "interrupted") return { border: "#78350f", text: "#fcd34d" };
   if (outcome) return { border: "#7f1d1d", text: "#fca5a5" };
   return { border: "#334155", text: "#94a3b8" };
 }
 
-function box(border: string, width = NODE_W) {
+export function box(border: string, width = NODE_W) {
   return {
     background: "#0f172a",
     border: `1px solid ${border}`,
@@ -213,23 +213,17 @@ export function build(
 }
 
 function Canvas({
-  run,
-  attempts,
-  capabilities,
+  nodes,
+  edges,
   selected,
   onSelect,
 }: {
-  run: Run | null;
-  attempts: Attempt[];
-  capabilities: Capability[];
+  nodes: Node[];
+  edges: Edge[];
   selected: string | null;
   onSelect: (id: string | null) => void;
 }) {
   const { fitView } = useReactFlow();
-  const { nodes, edges } = useMemo(
-    () => build(run, attempts, capabilities, selected),
-    [run, attempts, capabilities, selected],
-  );
 
   // Refit when the SHAPE changes, not on every poll: a graph that re-centres
   // itself every two seconds is a graph you cannot pan.
@@ -281,25 +275,37 @@ const CONTROLS_CSS = `
 .react-flow__attribution { display: none; }
 `;
 
-export function RunGraph({
+/// The canvas, its panel and the styling they share — for any graph on this page.
+///
+/// Extracted when the queue became the second one. Both are the same picture with
+/// different arithmetic: nodes laid out by column, a panel over the right of the
+/// canvas, and one selection. Two copies of the fitView/ResizeObserver dance is
+/// the kind of duplication that only diverges.
+export function Flow({
+  nodes,
+  edges,
+  selected,
+  onSelect,
   panel,
-  ...props
+  testid,
+  height = "h-[480px]",
 }: {
-  run: Run | null;
-  attempts: Attempt[];
-  capabilities: Capability[];
+  nodes: Node[];
+  edges: Edge[];
   selected: string | null;
   onSelect: (id: string | null) => void;
-  /// The selected branch's detail, laid OVER the graph rather than beside it.
+  /// The selected node's detail, laid OVER the graph rather than beside it.
   /// Beside it, the panel took a third of a container that is 768px wide for
   /// prose reasons, and `fitView` answered by shrinking the graph to unreadable.
   /// An overlay costs the graph nothing when nothing is selected.
   panel?: React.ReactNode;
+  testid: string;
+  height?: string;
 }) {
   return (
     <div
-      data-testid="run-graph"
-      className="relative h-[480px] rounded border border-slate-800 bg-slate-950"
+      data-testid={testid}
+      className={`relative ${height} rounded border border-slate-800 bg-slate-950`}
     >
       <style>{CONTROLS_CSS}</style>
       {/* The canvas GIVES UP the width the panel takes rather than being covered
@@ -309,12 +315,43 @@ export function RunGraph({
           just clicked, which is reliably the one you wanted to see. */}
       <div className={`absolute inset-y-0 left-0 ${panel ? "right-[19rem]" : "right-0"}`}>
         <ReactFlowProvider>
-          <Canvas {...props} />
+          <Canvas nodes={nodes} edges={edges} selected={selected} onSelect={onSelect} />
         </ReactFlowProvider>
       </div>
       {panel && (
         <div className="absolute right-2 top-2 bottom-2 w-72 overflow-y-auto">{panel}</div>
       )}
     </div>
+  );
+}
+
+export function RunGraph({
+  run,
+  attempts,
+  capabilities,
+  selected,
+  onSelect,
+  panel,
+}: {
+  run: Run | null;
+  attempts: Attempt[];
+  capabilities: Capability[];
+  selected: string | null;
+  onSelect: (id: string | null) => void;
+  panel?: React.ReactNode;
+}) {
+  const { nodes, edges } = useMemo(
+    () => build(run, attempts, capabilities, selected),
+    [run, attempts, capabilities, selected],
+  );
+  return (
+    <Flow
+      nodes={nodes}
+      edges={edges}
+      selected={selected}
+      onSelect={onSelect}
+      panel={panel}
+      testid="run-graph"
+    />
   );
 }

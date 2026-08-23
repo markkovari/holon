@@ -53,12 +53,24 @@ struct Args {
     /// `owner/name` of the repository the PR opens on.
     #[arg(long)]
     repo: String,
+    /// The goal file, relative to the checkout. Defaults to `.comp/goal.toml`.
+    ///
+    /// A queue holds MANY goals against one repository, and each is its own file
+    /// in git. Without this, driving a queue means copying the next goal over
+    /// `.comp/goal.toml` before every run — a mutation of the checkout that races
+    /// the moment two runs overlap, and one that leaves the working tree dirty in
+    /// a way the base tree then ships.
+    #[arg(long, default_value = ".comp/goal.toml")]
+    goal: PathBuf,
     /// The branch to open the PR against.
     #[arg(long, default_value = "main")]
     base: String,
-    /// A file holding the Anthropic API key. Read here, never placed in argv.
-    #[arg(long)]
-    anthropic_key: PathBuf,
+    /// A file holding the model API key. Read here, never placed in argv.
+    ///
+    /// A local server that ignores auth still needs the file to exist; give it
+    /// anything. `openai-provider` sends no header when the value is empty.
+    #[arg(long, alias = "anthropic-key")]
+    llm_key: PathBuf,
     /// A file holding the GitHub token. Read here, never placed in argv.
     #[arg(long)]
     github_token: PathBuf,
@@ -126,20 +138,38 @@ struct Args {
     /// The model. Cheap by default; bump to sonnet/opus for a harder goal.
     #[arg(long, default_value = "claude-haiku-4-5-20251001")]
     model: String,
-    /// Where `anthropic-provider` sends `/v1/messages`.
+    /// Where `openai-provider` sends `/v1/chat/completions`.
     ///
-    /// Defaults to the real API. Point it at `tools/claude-shim.mjs` to run the
-    /// loop's inference through `claude -p` on a Claude Code subscription
-    /// instead of an API key:
+    /// Anything that speaks the OpenAI JSON contract: the real API, vLLM, Together,
+    /// Groq, llama.cpp, or a self-hosted mlx server on the next desk.
     ///
-    ///   just claude-shim &
-    ///   holon goal run --anthropic-base-url http://127.0.0.1:8787 ...
+    ///   holon goal run --llm-base-url http://csatapaci:8080/v1 ...
+    ///
+    /// This used to name an Anthropic endpoint, and reaching a local OpenAI server
+    /// meant a translating shim in front of it. `openai-provider` already
+    /// implements the same `llm:inference` WIT contract, so the shim was a process
+    /// and a timeout in the path for no capability the graph did not have.
     ///
     /// A private address additionally needs `COMP_FLEET_ALLOW_PRIVATE_EGRESS=1`
     /// — the fleet blocks egress to private ranges by default, and a base URL is
     /// exactly the knob an injected prompt would reach for.
-    #[arg(long, default_value = "https://api.anthropic.com")]
-    anthropic_base_url: String,
+    ///
+    /// Defaults per provider: Anthropic's API for `anthropic`, OpenAI's for
+    /// `openai`. Left empty, the provider's own default applies.
+    #[arg(long, alias = "anthropic-base-url", default_value = "")]
+    llm_base_url: String,
+    /// Which provider component answers the writer.
+    ///
+    /// Both implement `llm:inference/inference`, so this picks a wasm artifact and
+    /// a config key prefix and nothing else changes. It is a REAL choice rather
+    /// than a swap because the two reach different servers: `anthropic` speaks
+    /// `/v1/messages`, which is what `tools/claude-shim.mjs` serves to run the
+    /// loop on a Claude Code subscription, and `openai` speaks
+    /// `/v1/chat/completions`, which is what vLLM, llama.cpp, Ollama and a local
+    /// mlx server serve directly. Hard-swapping to one would have quietly broken
+    /// the other, and the shim workflow is documented in the Justfile.
+    #[arg(long, value_parser = ["anthropic", "openai"], default_value = "anthropic")]
+    provider: String,
     /// Per-branch HTTP timeout in seconds.
     ///
     /// NOT generous, which is what this said before it was measured — and the gate
@@ -476,7 +506,9 @@ fn plug_bin() -> PathBuf {
     bin_path("comp-plug")
 }
 
-fn artifacts() -> Result<Vec<String>> {
+fn artifacts(provider: &str) -> Result<Vec<String>> {
+    let provider_wasm =
+        if provider == "openai" { "openai_provider.wasm" } else { "anthropic_provider.wasm" };
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
     let mut out = Vec::new();
     // The memory app's five are here unconditionally: an artifact nothing places
@@ -487,7 +519,7 @@ fn artifacts() -> Result<Vec<String>> {
         ("registry", "contract_registry.wasm"),
         ("cgraph", "knowledge_graph.wasm"),
         ("lprobe", "llm_probe.wasm"),
-        ("allm", "anthropic_provider.wasm"),
+        ("allm", provider_wasm),
         ("mprobe", "memory_probe.wasm"),
         ("memory", "knowledge_memory.wasm"),
         ("graph", "knowledge_graph.wasm"),
@@ -496,7 +528,7 @@ fn artifacts() -> Result<Vec<String>> {
         ("probe", "driver_probe.wasm"),
         ("driver", "agent_driver.wasm"),
         ("writer", "agent_writer.wasm"),
-        ("llm", "anthropic_provider.wasm"),
+        ("llm", provider_wasm),
         ("gate", "checks_runner.wasm"),
         ("sprobe", "select_probe.wasm"),
         ("selector", "graph_selector.wasm"),
@@ -1076,12 +1108,12 @@ fn reading_per_branch(
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let goal_path = args.checkout.join(".comp/goal.toml");
+    let goal_path = args.checkout.join(&args.goal);
     let mut goal: GoalSpec = toml::from_str(
         &std::fs::read_to_string(&goal_path)
             .with_context(|| format!("reading {}", goal_path.display()))?,
     )
-    .context("parsing .comp/goal.toml")?;
+    .with_context(|| format!("parsing {}", goal_path.display()))?;
     if goal.checks.is_empty() {
         bail!("the goal has no checks — an empty gate accepts everything");
     }
@@ -1236,22 +1268,33 @@ fn main() -> Result<()> {
     let gate = Checks::start(&allow, &check_env, args.check_timeout)?;
 
     set_fleet_timeouts(&args);
+    // The provider's own default when nobody named a base URL, so `--provider
+    // openai` does not silently dial api.anthropic.com.
+    let base_url = if !args.llm_base_url.is_empty() {
+        args.llm_base_url.clone()
+    } else if args.provider == "openai" {
+        "https://api.openai.com/v1".to_string()
+    } else {
+        "https://api.anthropic.com".to_string()
+    };
+
     let driver_spec = render(
         "goalrun-driver.yaml",
         &[
+            ("PROVIDER", &args.provider),
             ("CHECKS_PORT", &gate.port.to_string()),
-            ("ANTHROPIC_MODEL", &args.model),
+            ("LLM_MODEL", &args.model),
             ("MAX_TOKENS", &args.max_tokens.to_string()),
-            ("ANTHROPIC_BASE_URL", &args.anthropic_base_url),
-            ("ANTHROPIC_TIMEOUT", &args.timeout.to_string()),
-            ("ANTHROPIC_HOST", &egress_authority(&args.anthropic_base_url)),
+            ("LLM_BASE_URL", &base_url),
+            ("LLM_TIMEOUT", &args.timeout.to_string()),
+            ("LLM_HOST", &egress_authority(&base_url)),
         ],
     )?;
     let forge_spec = render("goalrun-forge.yaml", &[("FORGE_REPO", &args.repo)])?;
 
     // Secrets by file: only the PATHS reach argv.
     let mut secrets = vec![
-        format!("vault://acme/anthropic=@{}", args.anthropic_key.display()),
+        format!("vault://acme/llmkey=@{}", args.llm_key.display()),
         format!("vault://acme/forge=@{}", args.github_token.display()),
     ];
 
@@ -1304,10 +1347,11 @@ fn main() -> Result<()> {
             render(
                 "goalrun-answer.yaml",
                 &[
+                    ("PROVIDER", &args.provider),
                     ("ANSWER_MODEL", &args.answer_model),
-                    ("ANTHROPIC_BASE_URL", &args.anthropic_base_url),
-                    ("ANTHROPIC_TIMEOUT", &args.timeout.to_string()),
-                    ("ANTHROPIC_HOST", &egress_authority(&args.anthropic_base_url)),
+                    ("LLM_BASE_URL", &base_url),
+                    ("LLM_TIMEOUT", &args.timeout.to_string()),
+                    ("LLM_HOST", &egress_authority(&base_url)),
                 ],
             )?
                 .to_str()
@@ -1356,7 +1400,7 @@ fn main() -> Result<()> {
         }
     }
     let spec_refs: Vec<&str> = specs.iter().map(String::as_str).collect();
-    let art = artifacts()?;
+    let art = artifacts(&args.provider)?;
 
     println!("starting fleet …");
     let fleet = Fleet::start_with_secrets("goalrun", &spec_refs, &art, &secrets);
@@ -1437,7 +1481,14 @@ fn main() -> Result<()> {
         Trace::new(url, "goalmemory", surreal_password.as_deref())
     });
     if let Some(t) = &trace {
-        t.run_started(&run, &goal.text, seed, &base_commit, args.branches.into());
+        t.run_started(
+            &run,
+            &goal.text,
+            &args.goal.display().to_string(),
+            seed,
+            &base_commit,
+            args.branches.into(),
+        );
     }
 
     // --- a DECOMPOSED goal ---------------------------------------------------
@@ -1649,7 +1700,21 @@ fn main() -> Result<()> {
                 println!("trace: {why}");
             }
         }
-        return Ok(());
+        // EXIT 3, not 0. A run where every branch was gated and none passed is a
+        // legitimate outcome of a search, not a success — and the caller cannot
+        // tell the two apart from a zero. `comp-goald` marked an exhausted run
+        // `awaiting-human`, which put a goal nobody had written code for in the
+        // queue of goals waiting to be landed.
+        //
+        // 3 rather than 1 so it stays distinguishable from a run that BROKE: one
+        // says the model could not do it, the other says the harness fell over,
+        // and a caller that wants to retry cares which.
+        //
+        // Flushed explicitly: stdout is block-buffered when piped (which is how a
+        // daemon runs this), and `process::exit` does not run destructors.
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        std::process::exit(3);
     }
 
     if args.dry_run {
@@ -2212,22 +2277,53 @@ command = ["cargo", "test"]
 
     /// Both manifests that hold a provider must carry the read timeout.
     ///
-    /// A fixture that names no `ANTHROPIC_TIMEOUT` renders to a manifest without
-    /// the key, the provider falls back to its 180s default, and every call
-    /// slower than that dies as `error sending request` — the provider reading as
-    /// DOWN while the thing behind the base URL is still working. That is what
-    /// killed a whole part of a two-part run, and it is silent: nothing in the
-    /// run log mentions a timeout, and the shim logs the call as a success
-    /// because it finished it after the caller had already hung up.
+    /// A fixture that names no `LLM_TIMEOUT` renders to a manifest without the
+    /// key, the provider falls back to its default, and every call slower than
+    /// that dies as `error sending request` — the provider reading as DOWN while
+    /// the thing behind the base URL is still working. That is what killed a
+    /// whole part of a two-part run, and it is silent: nothing in the run log
+    /// mentions a timeout.
+    ///
+    /// It cost a second run to relearn against a self-hosted model, where DECODE
+    /// is the slow half: benchmarked at 34 tok/s on a 16k prompt (72 at 1k), so a
+    /// 12000-token answer is minutes, not seconds, and every budget shorter than
+    /// that kills a working server.
     #[test]
     fn every_manifest_with_a_provider_carries_the_read_timeout() {
         for f in ["goalrun-driver.yaml", "goalrun-answer.yaml"] {
-            let out = crate::render(f, &[("ANTHROPIC_TIMEOUT", "900")]).expect("render");
-            let yaml = std::fs::read_to_string(out).expect("read back");
-            assert!(
-                yaml.contains("anthropic:timeout: \"900\""),
-                "{f} must carry anthropic:timeout, substituted"
-            );
+            for provider in ["anthropic", "openai"] {
+                let out = crate::render(f, &[("PROVIDER", provider), ("LLM_TIMEOUT", "3600")])
+                    .expect("render");
+                let yaml = std::fs::read_to_string(out).expect("read back");
+                assert!(
+                    yaml.contains(&format!("{provider}:timeout: \"3600\"")),
+                    "{f} must carry {provider}:timeout, substituted"
+                );
+                // And the SECRET has to follow the provider, or the manifest grants
+                // a key the component never asks for and the call goes out bare.
+                assert!(
+                    yaml.contains(&format!("key: {provider}-api-key")),
+                    "{f} must name {provider}-api-key"
+                );
+            }
+        }
+    }
+
+    /// `--provider` picks an artifact, and the two must not be confusable.
+    ///
+    /// Both components export the same WIT interface, so shipping the wrong one
+    /// links and serves and then fails at the first call with a 404 from a path
+    /// the other provider does not have — which reads as the model being down.
+    #[test]
+    fn the_provider_selects_its_own_wasm() {
+        // The mapping is a one-liner in `artifacts`; this pins it so a rename of
+        // either file cannot silently fall through to the other.
+        for (provider, want) in
+            [("openai", "openai_provider.wasm"), ("anthropic", "anthropic_provider.wasm")]
+        {
+            let picked =
+                if provider == "openai" { "openai_provider.wasm" } else { "anthropic_provider.wasm" };
+            assert_eq!(picked, want, "{provider} must ship {want}");
         }
     }
 
