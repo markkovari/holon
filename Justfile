@@ -1770,18 +1770,30 @@ selfhost-build-host arch="x86_64":
     @file host/target/{{arch}}-unknown-linux-musl/release/comp-host
     @ls -la host/target/{{arch}}-unknown-linux-musl/release/comp-host | awk '{printf "  %.0f MB\n", $5/1048576}'
 
+# Cross-build a STATIC comp-relay — what makes a pull-based timer or topic fire.
+#
+# Small next to comp-host: it is an HTTP client with a clock and JITs nothing.
+selfhost-build-relay arch="x86_64":
+    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl --bin comp-relay
+    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-relay | awk '{printf "  comp-relay %.0f MB\n", $5/1048576}'
+
 # ONE-TIME per box. Installs the runtime and makes Caddy read what this lane writes.
 #
 # Without this, `selfhost-deploy` would install a unit pointing at a comp-host that
 # does not exist, and drop site files into a directory Caddy never reads — so it would
 # look like it worked and serve nothing.
-selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch)
+selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch) (selfhost-build-relay arch)
     #!/usr/bin/env bash
     set -euo pipefail
     BIN=host/target/{{arch}}-unknown-linux-musl/release/comp-host
     scp "$BIN" {{host}}:/tmp/comp-host
+    # comp-relay too: an app whose spec declares [triggers] gets a second unit, and a
+    # unit pointing at a binary that is not there fails at start rather than at deploy.
+    RELAY=reconciler/target/{{arch}}-unknown-linux-musl/release/comp-relay
+    if [ -f "$RELAY" ]; then scp "$RELAY" {{host}}:/tmp/comp-relay; fi
     ssh {{host}} "set -e; \
       sudo install -m 0755 /tmp/comp-host /usr/local/bin/comp-host; rm -f /tmp/comp-host; \
+      if [ -f /tmp/comp-relay ]; then sudo install -m 0755 /tmp/comp-relay /usr/local/bin/comp-relay; rm -f /tmp/comp-relay; fi; \
       sudo mkdir -p /srv/comp /etc/comp /etc/caddy/comp; \
       sudo chmod 0711 /etc/comp; \
       /usr/local/bin/comp-host --help >/dev/null && echo '  comp-host installed:' && /usr/local/bin/comp-host --help | head -1"
@@ -1847,11 +1859,16 @@ selfhost-deploy app host router="caddy": build-selfhost
     scp "$ART" {{host}}:/tmp/{{app}}.wasm
     scp "$D/comp-{{app}}.service" {{host}}:/tmp/
     scp "$D/{{app}}.env" {{host}}:/tmp/
+    # Rendered only when the spec declares [triggers].
+    if [ -f "$D/comp-{{app}}-relay.service" ]; then scp "$D/comp-{{app}}-relay.service" {{host}}:/tmp/; fi
     scp "$D"/{{app}}.caddy {{host}}:/tmp/ 2>/dev/null || scp "$D"/{{app}}.yml {{host}}:/tmp/
     ssh {{host}} "set -e; \
       sudo install -m 0644 /tmp/{{app}}.wasm /srv/comp/{{app}}/app.wasm; \
       sudo install -m 0600 /tmp/{{app}}.env /etc/comp/{{app}}.env; \
       sudo install -m 0644 /tmp/comp-{{app}}.service /etc/systemd/system/comp-{{app}}.service; \
+      if [ -f /tmp/comp-{{app}}-relay.service ]; then \
+        sudo install -m 0644 /tmp/comp-{{app}}-relay.service /etc/systemd/system/comp-{{app}}-relay.service; \
+      fi; \
       if [ -f /tmp/{{app}}.serve.sh ]; then \
         sudo install -m 0755 /tmp/{{app}}.serve.sh /srv/comp/{{app}}/serve.sh; \
       elif [ -f /tmp/{{app}}.caddy ]; then \
@@ -1862,9 +1879,12 @@ selfhost-deploy app host router="caddy": build-selfhost
       sudo systemctl daemon-reload; \
       sudo systemctl enable --now comp-{{app}}; \
       sudo systemctl restart comp-{{app}}; \
+      if [ -f /etc/systemd/system/comp-{{app}}-relay.service ]; then \
+        sudo systemctl enable --now comp-{{app}}-relay; sudo systemctl restart comp-{{app}}-relay; \
+      fi; \
       if [ -f /srv/comp/{{app}}/serve.sh ]; then sudo /srv/comp/{{app}}/serve.sh; fi; \
-      rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/{{app}}.env \
-            /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh"
+      rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/comp-{{app}}-relay.service \
+            /tmp/{{app}}.env /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh"
     # Only a tailnet app needs TS_IP. Pinning it for a public app would report a
     # missing tailscale on a box that has no reason to have one, which reads as a
     # failed deploy when nothing is wrong.
@@ -1903,8 +1923,10 @@ selfhost-status app host:
 # Remove an app from a box, including its state.
 selfhost-remove app host:
     ssh {{host}} "set -e; \
+      sudo systemctl disable --now comp-{{app}}-relay || true; \
       sudo systemctl disable --now comp-{{app}} || true; \
-      sudo rm -f /etc/systemd/system/comp-{{app}}.service /etc/comp/{{app}}.env \
+      sudo rm -f /etc/systemd/system/comp-{{app}}-relay.service \
+                 /etc/systemd/system/comp-{{app}}.service /etc/comp/{{app}}.env \
                  /etc/caddy/comp/{{app}}.caddy /etc/traefik/comp/{{app}}.yml; \
       sudo rm -rf /srv/comp/{{app}} /var/lib/private/comp/{{app}} /var/lib/comp/{{app}}; \
       sudo systemctl daemon-reload; sudo systemctl reload caddy 2>/dev/null || true"

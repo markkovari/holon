@@ -13,3 +13,11 @@ artifact = "components/target/saga_domain.composed.wasm"
 # sqlite: one file under the unit's StateDirectory, so state survives the
 # restarts `Restart=always` makes routine.
 kv = "sqlite"
+
+# saga-domain imports `sched:timer`, and drains it inside `pump()`. Nothing fires a
+# pull-based timer on its own, so without this table a deployed saga sits at
+# `running` forever — measured: with no relay a failing trip stayed
+# running/[pending,pending,pending]; with one it reached `compensated` in seconds.
+[triggers]
+pump = "/internal/pump"
+interval = 10
