@@ -3,7 +3,14 @@
 What runs today, what is measured, and what is honestly missing. The reasoning lives
 in [96 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0094.
+Last revised after ADR-0096.
+
+This page is about the **runtime and delivery** half of the repository — the thing
+that runs a composed component and gets it onto a machine. For the library it runs,
+see [`CAPABILITY-GRAPH.md`](CAPABILITY-GRAPH.md); for the four ways to deliver an
+app, [`SELFHOST.md`](SELFHOST.md). The agentic loop that was this page's headline is
+**paused** ([README](../README.md#the-agentic-loop--paused-and-kept)) — its machinery
+below still runs and is still measured.
 
 ## Shape
 
@@ -29,10 +36,38 @@ browser ────┘   (orgs, catalogue, market, secrets, deployments, revisi
 | `comp-host` | the runtime. wasmtime 45, one process per node, every tenant inside it |
 | `comp-reconciler` | the loop. A pure `plan()` diff plus command dispatch |
 | `comp-ingress` | the door. Host-header routing, least-outstanding, shedding, activation |
+| `comp-relay` | the clock. Pokes an app's pump so pull-based timers and topics fire ([0096](adr/0096-a-pull-contract-needs-a-relay.md)) |
+| `comp-fswatch` | the first host-capability daemon — a watch syscall a guest has not ([0095](adr/0095-what-is-allowed-to-be-native.md)) |
 | `comp-stub` | a stand-in control plane for tests and benchmarks |
 | `comp-bench` | reads benchmark output; the only thing that interprets a number |
 | `comp-planscale` | times `plan()` over synthetic fleets — control-loop scaling |
 | `holon` | the CLI |
+
+## Getting an app onto a machine
+
+The diagram above is one of four lanes, and the heaviest. One
+`apps/<name>.toml` renders to all of them; moving between them is an edit and a
+different recipe, never a rewrite ([`SELFHOST.md`](SELFHOST.md)).
+
+| lane | control plane per box | verified against |
+|---|---|---|
+| `comp-host` + systemd + Caddy | **none** | a rendered unit, tested to bind loopback only |
+| the lattice above | reconciler + ingress | two-node fleet, a killed node, ADR-0035 |
+| wasmCloud 1.x (wadm, over NATS) | wadm + operator | wadm 0.21.0, wasmCloud 1.6.0 |
+| wasmCloud 2.x (Kubernetes `Workload`) | runtime-operator | runtime-operator 2.8.0, wash 2.8.0 |
+
+**Triggers.** HTTP is the entrypoint for 94 component worlds. `sched:timer`,
+`event:bus` and `cron:expr` are pull-based on purpose — it is what keeps them pure
+WASI — so `comp-relay` drives them, and an app declares `[triggers]` rather than
+changing its exported WIT. Measured: a `saga-domain` trip whose leg fails sits at
+`running` forever with no relay, and reaches `compensated` in seconds with one.
+
+**The honest limit of the fourth lane.** A wasmCloud 2.x release host provides
+standard WASI plus `wasmcloud:messaging` and nothing else — no keyvalue backend,
+no `wasi:config` store, nothing `comp:`. Custom interfaces need host component
+plugins that release images are not built with, so an app importing
+`comp:secrets/reader` or `comp:store/cas` is refused at render time with the
+reason rather than applying cleanly and running nothing.
 
 ## The one rule everything else is an application of
 
