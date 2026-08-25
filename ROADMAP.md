@@ -1,20 +1,50 @@
 # Roadmap — the showcase worklist
 
-> **What this file is, and is not.** It was written when this repository was a
-> library of WASI capability components, and its opening section still evaluates
-> it as one: an auth + RBAC contract with a reference implementation. That is no
-> longer what the repository is *for* — Holon is an agentic engineering loop built
-> out of that library (see [`README.md`](README.md)) — but the per-showcase
-> worklist below is still live and still accurate about what is done.
+> **What this file is.** One section per showcase app: what is built, and what is
+> left. It was written when this repository was a library of WASI capability
+> components, and for a while that framing was stale — the front page had become an
+> agentic engineering loop. It is accurate again: the library and its **delivery**
+> are the current focus, and the loop is
+> [paused](README.md#the-agentic-loop--paused-and-kept).
 >
 > For the current state, in order of usefulness:
-> [`docs/CURRENT.md`](docs/CURRENT.md) (what runs, measured, and honestly
-> missing), [`docs/SCENARIOS.md`](docs/SCENARIOS.md) (how a run succeeds and every
-> way it fails), [`.comp/goals/`](.comp/goals/) (the worklist a person writes), and
-> [`docs/adr/`](docs/adr/) (why any of it is shaped this way).
->
-> Kept rather than deleted for the same reason `docs/PLATFORM.md` is: its reasoning is
-> the record of how the substrate got here.
+> [`docs/CURRENT.md`](docs/CURRENT.md) (what runs, measured, and honestly missing),
+> [`docs/SELFHOST.md`](docs/SELFHOST.md) (the four ways to deliver an app),
+> [`docs/CAPABILITY-GRAPH.md`](docs/CAPABILITY-GRAPH.md) (what is using what, derived
+> from the built artifacts), and [`docs/adr/`](docs/adr/) (why any of it is shaped
+> this way).
+
+## Where the work is now
+
+**1. The library.** 197 components, 93 interfaces with a provider and at least one
+consumer. The per-showcase list below is the live worklist for this.
+
+**2. Delivery.** Four lanes from one `apps/<name>.toml`, all verified against real
+infrastructure. What is left is narrower than what is done:
+
+- [ ] **Tier 2 — many apps per host.** Designed, not built. The blocker is naming,
+      not the runtime: every storage component hardcodes `open("default")`, so apps
+      sharing one host would share one bucket. Needs `record-store` and its siblings
+      to read their bucket from `wasi:config`. Worth doing when RAM pressure says so,
+      not for neatness — one crash takes every app on that box
+      ([`docs/SELFHOST.md`](docs/SELFHOST.md)).
+- [ ] **The remaining eleven contract-only capabilities.** `comp-fswatch` was the
+      first to get a daemon under [ADR-0095](docs/adr/0095-what-is-allowed-to-be-native.md);
+      `browser-automation`, `container-docker`, `desktop-clipboard`,
+      `image-optimizer`, `lan-scanner`, `llm-local`, `mdns-discovery`, `system-cron`,
+      `ui-notifier`, `video-ffmpeg` and `vpn-wireguard` still return
+      `UNIMPLEMENTED:`. One daemon each, deliberately — `container-docker` and
+      `ui-notifier` do not deserve the same blast radius.
+- [ ] **`comp:` interfaces on wasmCloud 2.x.** Currently impossible: a release host
+      has no host component plugins. Either upstream ships them enabled, or these
+      apps stay on the first two lanes. Not a bug to fix here; a constraint to track.
+
+**3. The agentic loop — paused.** Nothing deleted, nothing progressing. The blocker
+is that nothing criticises a gate
+([`.comp/goals/07-nothing-criticises-a-gate.md`](.comp/goals/07-nothing-criticises-a-gate.md)):
+a gate that already passes on the base tree accepts anything. Resume it when that
+goal lands; until then more search buys less than better contracts and a way to ship
+them.
 
 ## What this covers
 
@@ -24,11 +54,16 @@ are in git history rather than above, because a finished roadmap that still read
 as a plan is the kind of document people act on by mistake.
 
 The native wRPC-to-Golem capability provider headed this list until 2026-08-16 and
-is retired with it: **this repository is no longer connected to wasmCloud.** The
-provider was live-verified against a real Golem worker and its two hard-won
-findings are still in `docs/capabilities/GOLEM.md`; the work brief and the
-remaining lattice half are in git history, for the same reason the tiers above
-are.
+is retired with it. Its two hard-won findings are still in
+`docs/capabilities/GOLEM.md`; the work brief and the remaining lattice half are in
+git history, for the same reason the tiers above are.
+
+*A correction to what this paragraph used to say.* It read "this repository is no
+longer connected to wasmCloud", which stopped being true: `holon wadm render` emits
+manifests for both wasmCloud 1.x and 2.x, verified against live clusters
+([`docs/SELFHOST.md`](docs/SELFHOST.md)). wasmCloud is not on the *runtime* path —
+[ADR-0021](docs/adr/0021-there-is-no-kubernetes.md) took it off deliberately and
+priced it — but it is a supported delivery target, which is a different claim.
 
 ## TODO — next up
 
