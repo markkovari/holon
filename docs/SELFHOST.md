@@ -27,8 +27,8 @@ different recipe, never a rewrite — which is the property the whole spec exist
 |---|---|---|---|
 | **1. one box** | `comp-host` + systemd + Caddy | your own machine, no control plane at all | `just selfhost-deploy <app> <host>` |
 | **2. a lattice** | `comp-host` per node + `comp-reconciler` + `comp-ingress` over NATS | several boxes, where *which* box is no longer your decision | `just lattice-deploy` |
-| **3. a wasmCloud host** | wadm, driven over NATS | somebody else's wasmCloud | `just wasmcloud-deploy <app>` |
-| **4. wasmCloud on k8s** | the operator + wadm | a cluster somebody else already operates | `just wasmcloud-host` then lane 3 |
+| **3. wasmCloud 1.x** | wadm, driven over NATS | somebody else's wasmCloud, or the k8s operator | `just wasmcloud-deploy <app>` |
+| **4. wasmCloud 2.x** | the runtime-operator, over the Kubernetes API | current wasmCloud — no wadm, no OAM | `just wasmcloud-v2-deploy <app>` |
 
 Lanes 3 and 4 are **interop, not a recommendation.** [ADR-0021](adr/0021-there-is-no-kubernetes.md)
 took Kubernetes off this platform's runtime path deliberately and priced it: 70 Mi
@@ -76,12 +76,50 @@ So the useful default for a large graph is the hybrid: fuse the pure-compute
 capabilities, link only the stateful ones. `holon wadm render --topology linked` does
 that on its own and prints what it fused in.
 
-**A trap worth knowing about.** wadm accepts a manifest whose trait types it does not
-understand. A `--api v2` manifest deployed to a v1 wadm returns
-`"result":"acknowledged"`, creates **no scalers at all**, and runs nothing — measured
-against wadm 0.21. The renderer stamps `holon.dev/api` in the metadata and
-`just wasmcloud-status` says so when a deployment has no scalers, because the cluster
-will not.
+### v1 and v2 are different systems, not two versions of one manifest
+
+This page previously implied `--api v2` was a newer envelope around the same OAM
+document. It is not, and the correction is worth stating because the wrong version
+**deploys cleanly and runs nothing**:
+
+- **wasmCloud 1.x** — an OAM `Application` (`core.oam.dev/v1beta1`) submitted to
+  **wadm** over NATS. Traits are `spreadscaler` / `daemonscaler` / `link`. wadm's own
+  source has never used another `apiVersion`.
+- **wasmCloud 2.x** — **there is no wadm and no OAM.** A `Workload`
+  (`runtime.wasmcloud.dev/v1alpha1`) is applied to the **Kubernetes API** and the
+  runtime-operator schedules it onto a host in a host group. `wash` 2.x has no `app`
+  command at all; the host is `wash host`.
+
+The trap: wadm ignores a trait type it does not recognise rather than refusing it.
+A wrong-shaped manifest returns `"result":"acknowledged"`, creates **no scalers**,
+and serves nothing. Measured against wadm 0.21. So the renderer stamps
+`holon.dev/api`, and `just wasmcloud-status` says so when a deployment has no
+scalers — because the cluster will not.
+
+### What a 2.x host will and will not run
+
+Measured from a 2.8.0 host's own startup log: it provides **standard WASI plus
+`wasmcloud:messaging`, and nothing else.** There is no keyvalue backend, no
+`wasi:config` store, and nothing in the `comp:` namespace — custom interfaces need
+host component plugins, which release images are not built with.
+
+Declaring an import in `hostInterfaces` is what satisfies the ones that *are*
+supported; an undeclared `wasi:keyvalue` fails at link time, not at first use. So:
+
+| app imports | 2.x |
+|---|---|
+| WASI only, plus declared `wasi:keyvalue` / `wasi:config` | runs |
+| anything `comp:` (`comp:secrets/reader`, `comp:store/cas`) | **cannot run** — use tier 1, the lattice, or v1 |
+
+`holon wadm render --api v2` reads the artifact and refuses the second case with the
+reason, rather than letting it apply and sit at `READY=False` with the explanation
+buried in a host log. Verified both ways: `lan-scanner` reached `READY=True` on
+wasmCloud 2.8.0 and served; `graphviz` is refused for `comp:secrets/reader@0.1.0`.
+
+Three more things a 2.x host refused before they were right, each now in the
+renderer: the image must carry **no `oci://` prefix** (v1 requires it), a workload
+must declare a **hostname** (the host routes by `Host` header on one shared port, as
+`comp-ingress` does), and **every** non-standard import must be declared.
 
 ---
 
