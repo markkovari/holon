@@ -1,7 +1,11 @@
 # Rust / cargo-component build output
 /components/target/
-# rendered units/routes — output, not source
+# rendered units/routes/manifests — output, not source. One rule per lane rather
+# than a bare `/target/`, so a stray source file under it is still noticed.
 /target/selfhost/
+/target/fleet/
+/target/wadm/
+/target/capgraph.json
 /components/bench-suite-p3/target/
 **/*.wasm
 
