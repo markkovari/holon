@@ -1,0 +1,81 @@
+# A lattice, as a person writes it — the tier-2/3 analogue of `apps/<name>.toml`.
+#
+# Copy to `fleet.toml`, edit the addresses, then:
+#
+#   just lattice-bootstrap my-vps        # ONCE per box: install the three binaries
+#   just lattice-render                  # read the units before trusting them to a server
+#   just lattice-deploy                  # ship them
+#   just lattice-status
+#
+# This is the tier ABOVE self-hosting. Reach for it when deciding WHICH box an app
+# runs on has become a chore — with two or three machines that decision is one
+# argument to a deploy recipe, and `docs/SELFHOST.md` tier 1 is the cheaper answer.
+
+# The first subject token after `comp.`. Two lattices on one NATS never see each
+# other's commands, so this is what separates staging from production.
+lattice = "prod"
+
+# Every node, the reconciler and the ingress dial this. JetStream must be enabled
+# (`nats-server -js`): the inventory, the artifact object store and the leader lease
+# are all JetStream, not core NATS.
+nats_url = "nats://10.0.0.1:4222"
+
+# The control plane the reconciler polls for desired state.
+platform_url = "http://10.0.0.1:8080"
+
+# Seconds between reconcile passes. Also the floor on how fast anything is noticed,
+# other than an activation, which bypasses this loop entirely (ADR-0042).
+interval = 10
+
+# Seconds an inventory entry survives without a heartbeat — the failover detection
+# time. ADR-0035 measured a dead machine noticed 11-12s after the kill with this at
+# 15. Lower it and a slow node looks dead; raise it and traffic keeps being offered
+# to a corpse for longer.
+inventory_ttl = 15
+
+# ---- the boxes that run workloads -------------------------------------------
+# One `comp-host` per node, holding every tenant placed on it. `addr` must be an
+# address the INGRESS can dial — a node advertising loopback is refused, because it
+# would deploy clean and fail at the first request.
+
+[[nodes]]
+name = "node-1"
+addr = "10.0.0.2:3401"
+# nats is the default and what a real fleet wants: `sqlite` and `memory` are
+# node-local, so two replicas of one app on two nodes get two stores under one
+# bucket name. The reconciler refuses to spread a stateful app onto them (ADR-0027).
+kv = "nats"
+
+[[nodes]]
+name = "node-2"
+addr = "10.0.0.3:3401"
+kv = "nats"
+
+# ---- the door ----------------------------------------------------------------
+# The only process that faces anything. Routes by `Host` header from inventory, so
+# it needs no platform credential and keeps routing while the control plane is down.
+
+[ingress]
+host = "edge"
+# Loopback, with Caddy in front doing ACME — TLS is not terminated by the ingress.
+# `holon node ingress <domain>` renders that Caddy site.
+addr = "127.0.0.1:8088"
+# Requests in flight to ONE NODE before shedding with 503; 0 disables shedding.
+# ADR-0041 measured the difference: with no bound, an overloaded node answered p99
+# 42 SECONDS with zero errors; with 64, p99 747ms and more useful work done.
+max_inflight = 64
+
+# ---- the control loop --------------------------------------------------------
+# TWO entries is the supported shape, not a mistake. They contend for a JetStream KV
+# lease whose expiry IS the lease, so exactly one acts and the other waits — which is
+# the standby ADR-0072 names as the real gap, closed by a unit rather than by code.
+
+[[reconcilers]]
+host = "control-1"
+# Failover takes up to this plus one interval. Must be comfortably longer than
+# `interval`, since the lease is renewed once per pass — a shorter one is refused.
+lease_ttl = 30
+
+[[reconcilers]]
+host = "control-2"
+lease_ttl = 30
