@@ -1940,6 +1940,108 @@ selfhost-deploy-all host router="caddy":
       just selfhost-deploy "$(basename "$f" .toml)" {{host}} {{router}}
     done
 
+# ---- the wasmCloud lanes: same app, someone else's runtime -------------------
+#
+# For a cluster somebody else already operates. ADR-0021 took Kubernetes off this
+# platform's runtime path deliberately and priced it, so this is interop, not a
+# recommendation — `docs/SELFHOST.md` still says start at tier 1.
+#
+# Two axes, four manifests, one app spec:
+#   --topology fused|linked    one wac-composed artifact, or components wired by links
+#   --api      v1|v2           core.oam.dev/v1beta1 (wadm 0.21), or wasmcloud.dev/v1alpha1
+#
+# No `wash`: wash 2.x removed `wash app put`, but the API underneath it is a set of
+# NATS subjects both versions still serve, and those are what these recipes use.
+
+wasmcloud_lattice := env_var_or_default("WASMCLOUD_LATTICE", "default")
+wasmcloud_registry := env_var_or_default("WASMCLOUD_REGISTRY", "registry.wasmcloud.svc.cluster.local:5000")
+# Where THIS machine reaches the registry to push. In-cluster the host pulls from
+# the name above; from a laptop that name does not resolve, so pushes go via the
+# NodePort. Two names for one registry, and conflating them is why a push succeeds
+# and a pull then fails.
+wasmcloud_push_registry := env_var_or_default("WASMCLOUD_PUSH_REGISTRY", "localhost:30500")
+
+# The capability graph, derived from the BUILT artifacts. A linked render needs it:
+# a wadm link carries the WIT namespace, package and interfaces that say which import
+# it satisfies, and wadm refuses one that names only a target.
+capgraph-json:
+    @mkdir -p target
+    @cd reconciler && cargo build --release --quiet --bin comp-capgraph
+    ./reconciler/target/release/comp-capgraph --format json > target/capgraph.json
+
+# Render one app as a wadm manifest. Touches no cluster.
+#
+#   just wasmcloud-render gate                     # fused, v1
+#   just wasmcloud-render gate linked v2
+wasmcloud-render app topology="fused" api="v1" addr="0.0.0.0:8080": build-selfhost capgraph-json
+    ./cli/target/release/holon wadm render apps/{{app}}.toml \
+      --topology {{topology}} --api {{api}} --graph target/capgraph.json \
+      --registry {{wasmcloud_registry}} --addr {{addr}} \
+      --out target/wadm/{{app}}.yaml
+    @cat target/wadm/{{app}}.yaml
+
+# Push an app's artifact to the cluster registry, by digest.
+#
+# `wkg` rather than a bundled pusher: reconciler/src/oci.rs exists and is proven, but
+# it is on the reconciler's distribution path, and this lane wants one artifact now.
+# The media types match either way — that is what oci.rs was written to guarantee.
+wasmcloud-push app: build-selfhost
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ART=$(python3 -c "import tomllib;print(tomllib.load(open('apps/{{app}}.toml','rb'))['artifact'])")
+    if [ ! -f "$ART" ]; then
+      echo "missing $ART — run: just compose-{{app}}" >&2
+      exit 1
+    fi
+    wkg oci push {{wasmcloud_push_registry}}/{{app}}:latest "$ART" --insecure {{wasmcloud_push_registry}}
+
+# Render, push and deploy one app to a wasmCloud lattice.
+#
+#   WASMCLOUD_LATTICE=vet-clinic just wasmcloud-deploy graphviz
+#
+# The lattice must have a host in it: wadm answers "0/1 eligible hosts found" when
+# the manifest lands somewhere no host is listening, which looks like a manifest
+# error and is not one.
+wasmcloud-deploy app topology="fused" api="v1" addr="0.0.0.0:8080": (wasmcloud-render app topology api addr) (wasmcloud-push app)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    L={{wasmcloud_lattice}}
+    python3 -c "import json,yaml;print(json.dumps(yaml.safe_load(open('target/wadm/{{app}}.yaml'))))" \
+      > target/wadm/{{app}}.json
+    tools/wadm.sh "wadm.api.$L.model.put" target/wadm/{{app}}.json | head -2
+    tools/wadm.sh "wadm.api.$L.model.deploy.{{app}}" | head -2
+    echo "deployed {{app}} to lattice $L — just wasmcloud-status {{app}}"
+
+# What did the cluster make of it? One line per scaler.
+wasmcloud-status app:
+    @tools/wadm.sh "wadm.api.{{wasmcloud_lattice}}.model.status.{{app}}" | python3 tools/wadm-status.py
+
+wasmcloud-remove app:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    L={{wasmcloud_lattice}}
+    tools/wadm.sh "wadm.api.$L.model.undeploy.{{app}}" | head -1
+    printf '{}' > target/wadm/.del.json
+    tools/wadm.sh "wadm.api.$L.model.del.{{app}}" target/wadm/.del.json | head -1
+
+# Render the operator's host, for the Kubernetes lane. The Application manifest is
+# the SAME one wash would deploy — only the driver differs, which is what makes this
+# lane one extra file rather than a second renderer.
+wasmcloud-host namespace="holon" lattice="holon" version="1.6.0": build-selfhost
+    ./cli/target/release/holon wadm host --namespace {{namespace}} --lattice {{lattice}} \
+      --version {{version}} --registry {{wasmcloud_registry}}
+
+# Talk to wadm over NATS from inside the cluster, since `wash` may not be installed
+# and wash 2.x removed the command the old manifests still document.
+#
+# A shell script rather than a `just` recipe, because a manifest is JSON full of
+# quotes and braces: interpolating it into a command line hands it to the shell to
+# re-parse (it fails on the first `(` in a description), and `just` does not forward
+# stdin to a recipe either. So the payload goes through a file, which has neither
+# problem.
+#
+#   tools/wadm.sh <subject> [payload-file]
+
 # ---- the lattice lane (tier 2/3): many boxes, one control loop ---------------
 #
 # Tier 1 above puts ONE app in one comp-host behind a proxy, with no control plane

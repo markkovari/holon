@@ -16,6 +16,7 @@
 
 mod fleet;
 mod platform;
+mod wadm;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -470,6 +471,9 @@ enum Cmd {
     /// Fleets: the lattice lane — nodes, a reconciler and an ingress across boxes.
     #[command(subcommand)]
     Fleet(FleetCmd),
+    /// wasmCloud: render an app as a wadm manifest, fused or linked, v1 or v2.
+    #[command(subcommand)]
+    Wadm(WadmCmd),
     /// Organisations: who owns a deployment, when a person belongs to several.
     #[command(subcommand)]
     Org(OrgCmd),
@@ -720,6 +724,57 @@ enum NodeCmd {
 }
 
 #[derive(Subcommand)]
+enum WadmCmd {
+    /// Render the wadm Application for one app.
+    ///
+    /// Topology and API version are flags rather than spec fields on purpose: which
+    /// wasmCloud a cluster runs, and whether a graph is small enough to fuse, are
+    /// facts about the DEPLOYMENT. The same app spec renders all four.
+    Render {
+        spec: PathBuf,
+        #[arg(long, value_enum, default_value_t = wadm::Topology::Fused)]
+        topology: wadm::Topology,
+        #[arg(long, value_enum, default_value_t = wadm::ApiVersion::V1)]
+        api: wadm::ApiVersion,
+        /// Registry the host pulls artifacts from.
+        #[arg(long, default_value = "registry.wasmcloud.svc.cluster.local:5000")]
+        registry: String,
+        /// In-cluster NATS, for the keyvalue provider.
+        #[arg(long, default_value = "nats://nats.wasmcloud.svc.cluster.local:4222")]
+        nats: String,
+        /// Where the http-server provider listens.
+        #[arg(long, default_value = "0.0.0.0:8080")]
+        addr: String,
+        #[arg(long, default_value_t = 1)]
+        replicas: u32,
+        /// The capability graph, from `comp-capgraph --format json`.
+        ///
+        /// Required for `--topology linked`: a wadm link carries the WIT namespace,
+        /// package and interfaces that say WHICH import it satisfies, and those are
+        /// derived from the built artifacts rather than typed out.
+        #[arg(long)]
+        graph: Option<PathBuf>,
+        /// Write here instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Render the operator's WasmCloudHostConfig — the Kubernetes lane's one extra file.
+    Host {
+        #[arg(long, default_value = "holon")]
+        namespace: String,
+        #[arg(long, default_value = "holon")]
+        lattice: String,
+        /// The wasmCloud host version to run. Match the cluster you are deploying to.
+        #[arg(long, default_value = "1.6.0")]
+        version: String,
+        #[arg(long, default_value = "registry.wasmcloud.svc.cluster.local:5000")]
+        registry: String,
+        #[arg(long, default_value = "nats://nats.wasmcloud.svc.cluster.local:4222")]
+        nats: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum FleetCmd {
     /// Write the units and env file every box in a lattice needs.
     ///
@@ -895,6 +950,48 @@ fn main() -> Result<()> {
             println!("{} spec(s) ok, no port/domain/name collisions", specs.len());
         }
         Cmd::Node(NodeCmd::Port { spec }) => println!("{}", port_of(&load(&spec)?)),
+        Cmd::Wadm(WadmCmd::Render {
+            spec,
+            topology,
+            api,
+            registry,
+            nats,
+            addr,
+            replicas,
+            graph,
+            out,
+        }) => {
+            let s = load(&spec)?;
+            let t = wadm::Target { registry, nats, addr, replicas };
+            // Refused HERE rather than as a start-time trap on the cluster.
+            wadm::check_fusable(&s, topology)?;
+            let g = graph.as_deref().map(wadm::Graph::read).transpose()?;
+            let y = wadm::render(&s, topology, api, &t, g.as_ref())?;
+            match out {
+                Some(p) => {
+                    if let Some(d) = p.parent() {
+                        std::fs::create_dir_all(d)?;
+                    }
+                    std::fs::write(&p, &y)?;
+                    println!("{}", p.display());
+                }
+                None => print!("{y}"),
+            }
+            eprintln!("wadm: {} [{:?}/{:?}]", s.name, topology, api);
+            if topology == wadm::Topology::Linked {
+                let fused = wadm::fusable(&s.components);
+                if !fused.is_empty() {
+                    // The hybrid gen-manifest.py reached with LATTICE=1, derived
+                    // rather than typed: pure compute costs nothing to fuse and saves
+                    // a hop each — 1.2ms apiece on v1.
+                    eprintln!("  fused in (pure compute, no hop): {}", fused.join(" "));
+                }
+            }
+        }
+        Cmd::Wadm(WadmCmd::Host { namespace, lattice, version, registry, nats }) => {
+            let t = wadm::Target { registry, nats, ..wadm::Target::default() };
+            print!("{}", wadm::render_host_config(&namespace, &lattice, &version, &t));
+        }
         Cmd::Fleet(FleetCmd::Render { spec, out }) => {
             let f = load_fleet(&spec)?;
             let layout = fleet::FleetLayout::default();
