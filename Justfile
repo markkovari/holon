@@ -2024,6 +2024,45 @@ wasmcloud-remove app:
     printf '{}' > target/wadm/.del.json
     tools/wadm.sh "wadm.api.$L.model.del.{{app}}" target/wadm/.del.json | head -1
 
+# ---- wasmCloud 2.x: a Workload, not a manifest -------------------------------
+#
+# 2.x dropped wadm and OAM entirely, so this lane does not go through wadm at all:
+# `holon wadm render --api v2` emits a `runtime.wasmcloud.dev/v1alpha1` Workload and
+# kubectl applies it. The operator schedules it onto a host in a host group.
+#
+# Install the stack once:
+#   helm install wasmcloud-v2 oci://ghcr.io/wasmcloud/charts/runtime-operator \
+#     --version 2.8.0 --namespace wasmcloud-v2 --create-namespace
+#
+# A release 2.x host provides standard WASI and wasmcloud:messaging and nothing
+# else — no keyvalue backend, no wasi:config store, and no `comp:` interface, which
+# needs a host component plugin that release images are not built with. An app that
+# imports one is REFUSED at render time with the reason.
+
+wasmcloud_v2_namespace := env_var_or_default("WASMCLOUD_V2_NAMESPACE", "wasmcloud-v2")
+
+# Render an app as a wasmCloud 2.x Workload. Touches no cluster.
+wasmcloud-v2-render app: build-selfhost capgraph-json
+    ./cli/target/release/holon wadm render apps/{{app}}.toml --api v2 \
+      --namespace {{wasmcloud_v2_namespace}} --graph target/capgraph.json \
+      --registry {{wasmcloud_registry}} --out target/wadm/{{app}}.v2.yaml
+    @cat target/wadm/{{app}}.v2.yaml
+
+# Push and apply one app to the 2.x stack.
+wasmcloud-v2-deploy app: (wasmcloud-v2-render app) (wasmcloud-push app)
+    kubectl apply -f target/wadm/{{app}}.v2.yaml
+    @echo "applied — just wasmcloud-v2-status {{app}}"
+
+# READY says whether the host actually linked and started it. False with no error
+# above usually means an import the host cannot satisfy; the host log has the reason.
+wasmcloud-v2-status app:
+    @kubectl get workload {{app}} -n {{wasmcloud_v2_namespace}} 2>&1 || true
+    @kubectl logs -n {{wasmcloud_v2_namespace}} deploy/hostgroup-default --since=2m 2>/dev/null \
+      | grep -i "{{app}}" | grep -iE "error|warn" | tail -3 || true
+
+wasmcloud-v2-remove app:
+    kubectl delete workload {{app}} -n {{wasmcloud_v2_namespace}} --ignore-not-found
+
 # Render the operator's host, for the Kubernetes lane. The Application manifest is
 # the SAME one wash would deploy — only the driver differs, which is what makes this
 # lane one extra file rather than a second renderer.

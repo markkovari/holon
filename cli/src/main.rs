@@ -747,6 +747,10 @@ enum WadmCmd {
         addr: String,
         #[arg(long, default_value_t = 1)]
         replicas: u32,
+        /// Kubernetes namespace for `--api v2`. Ignored for v1, whose manifest goes
+        /// to wadm over NATS rather than to a cluster.
+        #[arg(long, default_value = "wasmcloud-v2")]
+        namespace: String,
         /// The capability graph, from `comp-capgraph --format json`.
         ///
         /// Required for `--topology linked`: a wadm link carries the WIT namespace,
@@ -958,6 +962,7 @@ fn main() -> Result<()> {
             nats,
             addr,
             replicas,
+            namespace,
             graph,
             out,
         }) => {
@@ -966,7 +971,39 @@ fn main() -> Result<()> {
             // Refused HERE rather than as a start-time trap on the cluster.
             wadm::check_fusable(&s, topology)?;
             let g = graph.as_deref().map(wadm::Graph::read).transpose()?;
-            let y = wadm::render(&s, topology, api, &t, g.as_ref())?;
+            let y = match api {
+                // v2 is a different KIND of document, not a different envelope:
+                // wasmCloud 2.x dropped wadm, so this goes to the Kubernetes API.
+                wadm::ApiVersion::V2 => {
+                    // Read from the artifact, not the graph: `comp:` imports are
+                    // host imports and the capability graph does not record them, so
+                    // asking it would always answer "fine". Skipped when the artifact
+                    // has not been composed yet — that is `compose-<app>`'s error to
+                    // give, not this one's.
+                    let art = std::path::Path::new(&s.artifact);
+                    if art.exists() {
+                        let blocked = wadm::unsupported_on_v2(art)?;
+                        if !blocked.is_empty() {
+                            bail!(
+                                "`{}` imports {} — a wasmCloud 2.x release host provides standard \
+                                 WASI and wasmcloud:messaging only, and anything else needs a host \
+                                 component plugin, which release images are not built with. \
+                                 Deploy this one to tier 1, the lattice, or --api v1.",
+                                s.name,
+                                blocked.join(", ")
+                            );
+                        }
+                    } else {
+                        eprintln!(
+                            "  note: {} is not composed, so its imports were not checked against \
+                             what a 2.x host provides",
+                            s.artifact
+                        );
+                    }
+                    wadm::render_workload(&s, &namespace, &t, g.as_ref())?
+                }
+                wadm::ApiVersion::V1 => wadm::render(&s, topology, api, &t, g.as_ref())?,
+            };
             match out {
                 Some(p) => {
                     if let Some(d) = p.parent() {
