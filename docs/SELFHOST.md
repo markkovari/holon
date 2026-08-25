@@ -14,9 +14,74 @@ copies it.
 |---|---|---|---|
 | **tier 1** — `comp-host` + systemd + Caddy | you pick the box | **0** (fused, in-process) | **none** |
 | **tier 2** — many apps per host | you pick the box | 0 (in-process) | ~200 Mi |
-| **tier 3** — k3s + wasmCloud operator | declarative, cross-machine | 0 (in-process) | ~800 Mi – 1 GB |
+| **tier 3** — k3s + wasmCloud operator | declarative, cross-machine | 0 fused / ~1.2 ms linked | ~800 Mi – 1 GB |
 
 Start at tier 1. Go up when a measurement tells you to, not before.
+
+## The four lanes, and what each costs
+
+One `apps/<name>.toml` renders to all four. Moving between them is an edit and a
+different recipe, never a rewrite — which is the property the whole spec exists for.
+
+| lane | what runs it | what it is for | recipe |
+|---|---|---|---|
+| **1. one box** | `comp-host` + systemd + Caddy | your own machine, no control plane at all | `just selfhost-deploy <app> <host>` |
+| **2. a lattice** | `comp-host` per node + `comp-reconciler` + `comp-ingress` over NATS | several boxes, where *which* box is no longer your decision | `just lattice-deploy` |
+| **3. a wasmCloud host** | wadm, driven over NATS | somebody else's wasmCloud | `just wasmcloud-deploy <app>` |
+| **4. wasmCloud on k8s** | the operator + wadm | a cluster somebody else already operates | `just wasmcloud-host` then lane 3 |
+
+Lanes 3 and 4 are **interop, not a recommendation.** [ADR-0021](adr/0021-there-is-no-kubernetes.md)
+took Kubernetes off this platform's runtime path deliberately and priced it: 70 Mi
+per pod against 2.3 Mi per extra component. They exist so a Holon app can run where
+a team already runs wasmCloud, and the generated host config says so in its header.
+
+### Triggers: HTTP is not the only one
+
+`sched:timer`, `event:bus` and `cron:expr` are all **pull** — each says in its own
+WIT that a relay must drive it, which is what keeps them pure WASI and portable.
+Something outside has to poke the app, and `comp-relay` is that something in every
+lane. An app declares it wants one:
+
+```toml
+[triggers]
+pump = "/internal/pump"   # the convention: saga-domain and the four eshop-* services
+interval = 10             # the completeness path
+```
+
+Tier 1 renders a second unit for it; on wasmCloud, `event-pusher` does the same job
+through `wasmcloud:messaging`. The app's exported WIT does not change either way.
+
+Measured rather than asserted — a `saga-domain` trip whose hotel leg fails:
+
+| | after 6s |
+|---|---|
+| no relay | `running` — `[pending, pending, pending]` |
+| relay, 1s interval | `compensated` — `[compensated, failed, pending]` |
+
+### Fused or linked, and what the hop costs
+
+Both topologies render from the same spec (`--topology`), and the choice is forced
+more often than it is chosen:
+
+- **fused** is one artifact and no hop, but wasmtime allows **30 nested instances per
+  component**. The full vet-clinic is 104 core modules, so it cannot fuse — that wall
+  is why the linked manifest exists. `holon wadm render` refuses an over-size fused
+  render rather than letting it fail at start on the cluster.
+- **linked** deploys at any size and pays a hop per boundary: **57 µs** on comp's own
+  wrpc lattice ([ADR-0032](adr/0032-cross-node-invocation-and-what-the-hop-costs.md)),
+  **~1.2 ms** on wasmCloud v1, where links go over NATS. Quote the microseconds, not a
+  percentage — `docs/CURRENT.md` warns the ratio is not a platform property.
+
+So the useful default for a large graph is the hybrid: fuse the pure-compute
+capabilities, link only the stateful ones. `holon wadm render --topology linked` does
+that on its own and prints what it fused in.
+
+**A trap worth knowing about.** wadm accepts a manifest whose trait types it does not
+understand. A `--api v2` manifest deployed to a v1 wadm returns
+`"result":"acknowledged"`, creates **no scalers at all**, and runs nothing — measured
+against wadm 0.21. The renderer stamps `holon.dev/api` in the metadata and
+`just wasmcloud-status` says so when a deployment has no scalers, because the cluster
+will not.
 
 ---
 
@@ -224,10 +289,25 @@ k8s control plane   ~500 Mi+ (apiserver, etcd, scheduler — k3s on a real VPS)
 Worth it when you have enough machines that deciding *where* an app runs is a chore. With
 two or three, that decision is one argument to a deploy recipe.
 
-**Do not use wadm for this.** `infra/wadm.yaml` in this repo is the v1 OAM lane, driven by
-`wash app put` — a command wash 2.x removed. More importantly, v1 links components over
-NATS/wrpc, so **every component boundary becomes a network hop** (measured: 1.2 ms), which
-forfeits the one advantage the whole approach is for. Tier 3 is the v2 operator, not wadm.
+**About wadm, corrected.** An earlier version of this page said "do not use wadm" on two
+grounds. One of them survives and one does not, so both are worth stating plainly.
+
+*The `wash` objection does not survive.* `wash app put` was indeed removed in wash 2.x,
+and the manifests in `examples/vet-clinic-wasmcloud/` still instruct it. But that is a
+CLI problem, not a server one: wadm's actual API is a set of NATS subjects
+(`wadm.api.<lattice>.model.<verb>`) which are still served, and `tools/wadm.sh` uses
+them directly. `just wasmcloud-deploy` needs no `wash` at all, and was verified against
+a live wadm 0.21 + operator 0.4.0 + wasmCloud 1.6.0 — render, push, deploy, serve.
+
+*The hop objection survives, and is the real one.* v1 links components over NATS, so
+**every component boundary becomes a network hop — measured at 1.2 ms**, against 57 µs
+for the same boundary on comp's own wrpc lattice. For a graph of any size that forfeits
+the advantage the component model is for.
+
+The answer is not "avoid wadm", it is **do not link what you can fuse**: render fused
+when the graph fits under wasmtime's 30 nested instances, and hybrid when it does not,
+so only stateful capabilities pay the hop. `holon wadm render --topology linked` fuses
+the pure-compute ones automatically and prints which.
 
 ---
 
