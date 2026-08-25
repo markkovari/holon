@@ -1803,6 +1803,16 @@ selfhost-render app router="caddy": build-selfhost
     @echo "--- unit ---";  cat target/selfhost/{{app}}/comp-{{app}}.service
     @echo "--- route ---"; cat target/selfhost/{{app}}/{{app}}.*
 
+# Derive a spec for every app that has a `host-<app>` recipe but no `apps/*.toml`.
+#
+# The recipe already names the artifact, the port and the SPA directory — a spec is
+# those three facts plus a hostname. What the generator cannot know it does not
+# guess: `domain` is a placeholder to edit, and `access` is left at its
+# fail-closed default. An existing spec is never overwritten.
+selfhost-specs:
+    python3 tools/gen-app-specs.py
+    @just selfhost-check
+
 # Refuse the collisions a single spec cannot see: two apps on one port, one
 # domain, or one name. Run it in CI over apps/*.toml.
 selfhost-check: build-selfhost
@@ -1855,9 +1865,13 @@ selfhost-deploy app host router="caddy": build-selfhost
       if [ -f /srv/comp/{{app}}/serve.sh ]; then sudo /srv/comp/{{app}}/serve.sh; fi; \
       rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/{{app}}.env \
             /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh"
-    just selfhost-tsip {{host}}
+    # Only a tailnet app needs TS_IP. Pinning it for a public app would report a
+    # missing tailscale on a box that has no reason to have one, which reads as a
+    # failed deploy when nothing is wrong.
+    ACCESS=$(python3 -c "import tomllib;print(tomllib.load(open('apps/{{app}}.toml','rb')).get('access','tailnet'))")
+    if [ "$ACCESS" = "tailnet" ]; then just selfhost-tsip {{host}}; fi
     ssh {{host}} "sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy 2>/dev/null || true"
-    @echo "deployed {{app}} to {{host}}"
+    @echo "deployed {{app}} to {{host}} [$ACCESS]"
 
 # Pin Caddy's TS_IP to this box's Tailscale address, so that `bind {$TS_IP}` in a
 # tailnet route means what it says.
@@ -1903,6 +1917,117 @@ selfhost-deploy-all host router="caddy":
     for f in apps/*.toml; do
       just selfhost-deploy "$(basename "$f" .toml)" {{host}} {{router}}
     done
+
+# ---- the lattice lane (tier 2/3): many boxes, one control loop ---------------
+#
+# Tier 1 above puts ONE app in one comp-host behind a proxy, with no control plane
+# at all. This is the tier where placement stops being your decision: a comp-host
+# per node holding every app, a reconciler converging them, an ingress routing by
+# Host header. Reach for it when choosing which box an app runs on has become a
+# chore — with two or three machines, tier 1 is the cheaper answer.
+#
+# `just host-platform` is this same topology on localhost. These recipes are that
+# recipe with `trap kill` replaced by `Restart=always`.
+
+# Cross-build the two control binaries, static, for a Linux box. `comp-host` comes
+# from `selfhost-build-host` — it is the same binary in both tiers, and building it
+# twice would be two answers to one question.
+lattice-build arch="x86_64":
+    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl \
+      --bin comp-reconciler --bin comp-ingress
+    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-reconciler | awk '{printf "  comp-reconciler %.0f MB\n", $5/1048576}'
+    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-ingress | awk '{printf "  comp-ingress    %.0f MB\n", $5/1048576}'
+
+# Read the units before trusting them to a server. Touches no box.
+lattice-render spec="fleet.toml" out="target/fleet": build-selfhost
+    ./cli/target/release/holon fleet render {{spec}} --out {{out}}
+    @for d in {{out}}/*/; do echo "--- $d"; for f in "$d"*.service; do echo "  $(basename $f)"; done; done
+
+# Check a fleet spec: node names, reachable addresses, and a lease that outlives a
+# pass. Run it in CI beside `selfhost-check`.
+lattice-check spec="fleet.toml": build-selfhost
+    ./cli/target/release/holon fleet validate {{spec}}
+
+# ONE-TIME per box. Installs the three binaries every lattice role might need.
+#
+# All three go on every box on purpose: which role a box plays is the fleet spec's
+# decision, and a box that gains a reconciler later should not need a second visit.
+lattice-bootstrap host arch="x86_64": (selfhost-build-host arch) (lattice-build arch)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    R=reconciler/target/{{arch}}-unknown-linux-musl/release
+    scp host/target/{{arch}}-unknown-linux-musl/release/comp-host "$R/comp-reconciler" "$R/comp-ingress" {{host}}:/tmp/
+    ssh {{host}} "set -e; \
+      sudo install -m 0755 /tmp/comp-host /tmp/comp-reconciler /tmp/comp-ingress /usr/local/bin/; \
+      rm -f /tmp/comp-host /tmp/comp-reconciler /tmp/comp-ingress; \
+      sudo mkdir -p /etc/comp; sudo chmod 0711 /etc/comp; \
+      /usr/local/bin/comp-reconciler --help >/dev/null && echo '  three binaries installed'"
+    @echo "  bootstrapped {{host}} — it can now play any lattice role"
+
+# Ship the rendered units to the boxes the fleet spec names.
+#
+# The BOX NAME in the spec is what gets ssh'd to, so `host = "edge"` means an ssh
+# host called `edge`. That is deliberate: it is the same string you already type.
+lattice-deploy spec="fleet.toml" out="target/fleet": build-selfhost
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./cli/target/release/holon fleet validate {{spec}}
+    ./cli/target/release/holon fleet render {{spec}} --out {{out}} >/dev/null
+    for d in {{out}}/*/; do
+      BOX=$(basename "$d")
+      if ! ssh "$BOX" "test -x /usr/local/bin/comp-reconciler"; then
+        echo "$BOX is not bootstrapped — run: just lattice-bootstrap $BOX" >&2
+        exit 1
+      fi
+      for f in "$d"*.service; do
+        scp "$f" "$BOX:/tmp/$(basename "$f")"
+      done
+      # 0600 and root-owned: systemd reads it before dropping privileges, and it
+      # holds the platform secret. Never overwritten — a re-deploy must not blank a
+      # secret somebody filled in on the box.
+      if [ -f "$d/reconciler.env" ]; then
+        scp "$d/reconciler.env" "$BOX:/tmp/reconciler.env"
+        ssh "$BOX" "test -f /etc/comp/reconciler.env || sudo install -m 0600 /tmp/reconciler.env /etc/comp/reconciler.env; rm -f /tmp/reconciler.env"
+      fi
+      ssh "$BOX" "set -e; \
+        for u in /tmp/*.service; do sudo install -m 0644 \"\$u\" /etc/systemd/system/; done; \
+        sudo systemctl daemon-reload; \
+        for u in /tmp/*.service; do n=\$(basename \"\$u\"); sudo systemctl enable --now \"\$n\"; sudo systemctl restart \"\$n\"; done; \
+        rm -f /tmp/*.service"
+      echo "  deployed $(ls "$d"*.service | xargs -n1 basename | tr '\n' ' ') to $BOX"
+    done
+    @echo "fleet deployed. A reconciler with an empty PLATFORM_SECRET will not converge —"
+    @echo "fill /etc/comp/reconciler.env on each control box, then: systemctl restart comp-reconciler"
+
+# Is it up, and which reconciler holds the lease?
+lattice-status spec="fleet.toml" out="target/fleet": build-selfhost
+    #!/usr/bin/env bash
+    set -uo pipefail
+    ./cli/target/release/holon fleet render {{spec}} --out {{out}} >/dev/null 2>&1
+    for d in {{out}}/*/; do
+      BOX=$(basename "$d")
+      echo "== $BOX"
+      for f in "$d"*.service; do
+        ssh "$BOX" "systemctl is-active $(basename "$f") 2>/dev/null | sed 's/^/   $(basename "$f"): /'" || true
+      done
+    done
+
+# Remove every lattice unit from every box the spec names. Leaves the binaries.
+lattice-remove spec="fleet.toml" out="target/fleet": build-selfhost
+    #!/usr/bin/env bash
+    set -uo pipefail
+    ./cli/target/release/holon fleet render {{spec}} --out {{out}} >/dev/null 2>&1
+    for d in {{out}}/*/; do
+      BOX=$(basename "$d")
+      for f in "$d"*.service; do
+        n=$(basename "$f")
+        ssh "$BOX" "sudo systemctl disable --now $n 2>/dev/null; sudo rm -f /etc/systemd/system/$n" || true
+      done
+      ssh "$BOX" "sudo systemctl daemon-reload" || true
+      echo "  removed lattice units from $BOX"
+    done
+    @echo "-- left behind ON PURPOSE: /etc/comp/reconciler.env (a secret you filled in)"
+    @echo "   and the binaries in /usr/local/bin."
 
 # ADR-0023's falsifying measurement, ADR-0026's numbers: two tenants in ONE
 # comp-host process, one of them hostile, isolation and throughput from the SAME

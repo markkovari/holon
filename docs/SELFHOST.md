@@ -236,9 +236,11 @@ forfeits the one advantage the whole approach is for. Tier 3 is the v2 operator,
 | | |
 |---|---|
 | `apps/<name>.toml` | the app spec — the only file you write |
+| `just selfhost-specs` | derive a spec for every app that has a `host-<app>` recipe and no spec yet |
 | `just selfhost-bootstrap <host>` | one-time box prep: static comp-host, dirs, Caddy import, TS_IP |
 | `just selfhost-deploy-all <host>` | every app in `apps/` to one box |
-| `selfhost/` | tier-1 renderer, pure and tested (10 tests, incl. one that checks the flags it emits actually exist on `comp-host`) |
+| `cli/src/main.rs` | tier-1 renderer, pure and tested (19 tests, incl. one that checks the flags it emits actually exist on `comp-host`). Reached as `holon node render|validate|port|ingress` |
+| `tools/gen-app-specs.py` | the spec generator behind `just selfhost-specs` |
 | `host/` | `comp-host` — the runtime for tiers 1 and 2 |
 | `components/platform-domain/src/render.rs` | the tier-3 renderer |
-| `applier/` | tier-3 apply, reconcile, prune, registry push |
+| `reconciler/` | the tier-3 lane: reconcile, distribute, and `src/oci.rs` for registry push |
