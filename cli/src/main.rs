@@ -14,6 +14,7 @@
 //! are the same kind — a port collision, an unescaped value, a route pointing at the
 //! wrong process.
 
+mod fleet;
 mod platform;
 
 use std::collections::BTreeMap;
@@ -390,6 +391,9 @@ enum Cmd {
     /// Nodes: render the files a bare-metal box needs to run one.
     #[command(subcommand)]
     Node(NodeCmd),
+    /// Fleets: the lattice lane — nodes, a reconciler and an ingress across boxes.
+    #[command(subcommand)]
+    Fleet(FleetCmd),
     /// Organisations: who owns a deployment, when a person belongs to several.
     #[command(subcommand)]
     Org(OrgCmd),
@@ -639,6 +643,30 @@ enum NodeCmd {
     Port { spec: PathBuf },
 }
 
+#[derive(Subcommand)]
+enum FleetCmd {
+    /// Write the units and env file every box in a lattice needs.
+    ///
+    /// One directory per box, so a deploy is `scp` of a directory rather than a
+    /// list of paths to remember. Read it before you trust it to a server.
+    Render {
+        spec: PathBuf,
+        #[arg(long, default_value = "target/fleet")]
+        out: PathBuf,
+    },
+    /// Check a fleet spec: names, addresses, and a lease that outlives a pass.
+    Validate { spec: PathBuf },
+}
+
+fn load_fleet(path: &Path) -> Result<fleet::Fleet> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let f: fleet::Fleet =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    fleet::check(&f).with_context(|| format!("in {}", path.display()))?;
+    Ok(f)
+}
+
 fn load(path: &Path) -> Result<Spec> {
     let text =
         std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
@@ -780,6 +808,65 @@ fn main() -> Result<()> {
             println!("{} spec(s) ok, no port/domain/name collisions", specs.len());
         }
         Cmd::Node(NodeCmd::Port { spec }) => println!("{}", port_of(&load(&spec)?)),
+        Cmd::Fleet(FleetCmd::Render { spec, out }) => {
+            let f = load_fleet(&spec)?;
+            let layout = fleet::FleetLayout::default();
+
+            // One directory per BOX, not per unit: a box is what gets scp'd to, and
+            // a reconciler standby sharing a box with a node is normal.
+            for n in &f.nodes {
+                let dir = out.join(&n.name);
+                std::fs::create_dir_all(&dir)?;
+                std::fs::write(
+                    dir.join(format!("comp-node-{}.service", n.name)),
+                    fleet::render_node_unit(&f, n, &layout),
+                )?;
+                println!("{}", dir.display());
+            }
+            for r in &f.reconcilers {
+                let dir = out.join(&r.host);
+                std::fs::create_dir_all(&dir)?;
+                std::fs::write(
+                    dir.join("comp-reconciler.service"),
+                    fleet::render_reconciler_unit(&f, r, &layout),
+                )?;
+                // Rendered empty and installed 0600. A secret that lives in a file
+                // you commit is not a secret (ADR-0010).
+                std::fs::write(dir.join("reconciler.env"), fleet::render_reconciler_env())?;
+                println!("{}", dir.display());
+            }
+            let dir = out.join(&f.ingress.host);
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join("comp-ingress.service"), fleet::render_ingress_unit(&f, &layout))?;
+            println!("{}", dir.display());
+
+            eprintln!(
+                "fleet: lattice {} — {} node(s), {} reconciler(s), ingress on {} at {}",
+                f.lattice,
+                f.nodes.len(),
+                f.reconcilers.len(),
+                f.ingress.host,
+                f.ingress.addr
+            );
+            if f.reconcilers.is_empty() {
+                eprintln!(
+                    "  note: no reconciler — nothing will converge this lattice. Add [[reconcilers]]."
+                );
+            } else if f.reconcilers.len() == 1 {
+                eprintln!(
+                    "  note: one reconciler, so nothing takes over if it dies. A second is a standby, not a conflict (ADR-0072)."
+                );
+            }
+        }
+        Cmd::Fleet(FleetCmd::Validate { spec }) => {
+            let f = load_fleet(&spec)?;
+            println!(
+                "fleet ok: {} node(s), {} reconciler(s), ingress on {}",
+                f.nodes.len(),
+                f.reconcilers.len(),
+                f.ingress.host
+            );
+        }
         Cmd::Node(NodeCmd::Ingress { domain, upstream, tailnet }) => {
             print!("{}", render_ingress_route(&domain, &upstream, tailnet))
         }

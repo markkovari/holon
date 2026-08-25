@@ -172,6 +172,24 @@ jobs:
         # local and deliberate act.
         run: cargo test --release ${{ matrix.test-args }}
 
+      # Every app spec, checked against the renderer that will deploy it. This is
+      # the one collision a single spec cannot see — two apps landing on one port,
+      # domain or name — and it is cheap: a pure parse, no box and no network.
+      # Rendering a spec is not deploying one, so this stays inside what the
+      # header above allows.
+      - name: Validate the app specs
+        if: matrix.workspace == 'cli'
+        working-directory: ${{ github.workspace }}
+        run: ./cli/target/release/holon node validate apps/*.toml
+
+      # The lattice lane's spec, checked the same way and for the same reason. The
+      # example is the only one committed; a real `fleet.toml` names real boxes and
+      # does not belong in the tree.
+      - name: Validate the fleet spec
+        if: matrix.workspace == 'cli'
+        working-directory: ${{ github.workspace }}
+        run: ./cli/target/release/holon fleet validate fleet.example.toml
+
   lint:
     name: clippy
     runs-on: ubuntu-latest
