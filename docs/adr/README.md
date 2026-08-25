@@ -20,6 +20,22 @@ component in its own pod, and 1.2 ms saved per network hop avoided** — and und
 decomposing one app into many components, not packing many tenants onto one host — and a
 single-component app should be a container, not a wasm workload.
 
+## Where to start, by what you are doing
+
+Ninety-six decisions is not a reading list. Four paths through it:
+
+| you want to | read |
+|---|---|
+| understand the **isolation** claim | [0023](0023-isolation-is-a-linker-boundary.md) → [0015](0015-a-bucket-name-is-not-a-boundary.md) → [0047](0047-config-is-declared-and-checked.md) → [0051](0051-the-secret-reader.md), [0061](0061-the-secret-reader-was-never-linked.md) |
+| **compose** components into an app | [0005](0005-deployment-strategy-is-a-tenant-choice.md) → [0048](0048-does-this-plug-fit.md) → [0087](0087-a-composition-is-derived-not-written.md) |
+| **deliver** an app to machines | [0021](0021-there-is-no-kubernetes.md) → [0022](0022-desired-state-is-a-manifest.md) → [0024](0024-artifacts-are-content-addressed.md) → [0029](0029-one-address-in-front-of-n-replicas.md) → [0095](0095-what-is-allowed-to-be-native.md), [0096](0096-a-pull-contract-needs-a-relay.md) |
+| know why the **agentic loop** is shaped as it is (paused) | [0078](0078-an-environment-is-a-derived-app.md) → [0086](0086-parts-negotiate-a-contract.md) → [0089](0089-capability-accumulation.md) → [0091](0091-one-store-one-schema.md) |
+
+The last path is history rather than active work — the loop is
+[paused](../../README.md#the-agentic-loop--paused-and-kept), and its ADRs are kept
+under the same rule as every other superseded-but-instructive decision here: nothing
+is deleted, because how it got here is the point.
+
 **This table is what is in force.** Superseded decisions are kept — they are how it
 got here — and listed separately at the end so that reading the list top to bottom
 tells you what is true now rather than what was once believed.
