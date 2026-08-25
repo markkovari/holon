@@ -184,3 +184,42 @@ impl Artifacts for NatsLattice {
         self.objects.info(name).await.is_ok()
     }
 }
+
+/// Watch a KV bucket's keys for changes, as a stream of notifications.
+///
+/// Added for `comp-relay`, which needs to know that SOMETHING was published without
+/// caring what: `event-bus` bumps a dotted sequence key per topic on every publish
+/// (`eb.seq.<topic>`), so a watch on `eb.seq.>` is a change feed of bus activity.
+/// `components/event-pusher` does the same thing from the other side, on hosts that
+/// have a `wasmcloud:messaging` plugin to invoke it.
+///
+/// It lives here rather than in the caller for the reason the module header gives:
+/// everything that dials NATS in this workspace goes through this file, so a second
+/// place that knows how to connect is a second place to get failover wrong.
+///
+/// The item type is deliberately `()`. A caller that reacted to WHICH key changed
+/// would be reimplementing the consumer-group offsets that `event:bus` already owns;
+/// all a poller needs is "go look now".
+pub async fn watch_bucket(
+    url: &str,
+    bucket: &str,
+    subject: &str,
+) -> Result<impl futures::Stream<Item = ()>> {
+    let urls = servers(url);
+    let client = async_nats::connect(urls.clone())
+        .await
+        .with_context(|| format!("connecting to NATS at {}", urls.join(", ")))?;
+    let js = async_nats::jetstream::new(client);
+    // `get`, not `create`: the bucket belongs to whatever wrote it. Creating it here
+    // would invent an empty one and then report no activity forever, which looks
+    // exactly like a quiet system.
+    let store = js
+        .get_key_value(bucket)
+        .await
+        .with_context(|| format!("opening the key-value bucket {bucket:?}"))?;
+    let watch = store
+        .watch(subject)
+        .await
+        .with_context(|| format!("watching {subject:?} in {bucket:?}"))?;
+    Ok(watch.filter_map(|e| async move { e.ok().map(|_| ()) }))
+}
