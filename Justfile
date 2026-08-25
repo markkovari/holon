@@ -1770,18 +1770,30 @@ selfhost-build-host arch="x86_64":
     @file host/target/{{arch}}-unknown-linux-musl/release/comp-host
     @ls -la host/target/{{arch}}-unknown-linux-musl/release/comp-host | awk '{printf "  %.0f MB\n", $5/1048576}'
 
+# Cross-build a STATIC comp-relay — what makes a pull-based timer or topic fire.
+#
+# Small next to comp-host: it is an HTTP client with a clock and JITs nothing.
+selfhost-build-relay arch="x86_64":
+    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl --bin comp-relay
+    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-relay | awk '{printf "  comp-relay %.0f MB\n", $5/1048576}'
+
 # ONE-TIME per box. Installs the runtime and makes Caddy read what this lane writes.
 #
 # Without this, `selfhost-deploy` would install a unit pointing at a comp-host that
 # does not exist, and drop site files into a directory Caddy never reads — so it would
 # look like it worked and serve nothing.
-selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch)
+selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch) (selfhost-build-relay arch)
     #!/usr/bin/env bash
     set -euo pipefail
     BIN=host/target/{{arch}}-unknown-linux-musl/release/comp-host
     scp "$BIN" {{host}}:/tmp/comp-host
+    # comp-relay too: an app whose spec declares [triggers] gets a second unit, and a
+    # unit pointing at a binary that is not there fails at start rather than at deploy.
+    RELAY=reconciler/target/{{arch}}-unknown-linux-musl/release/comp-relay
+    if [ -f "$RELAY" ]; then scp "$RELAY" {{host}}:/tmp/comp-relay; fi
     ssh {{host}} "set -e; \
       sudo install -m 0755 /tmp/comp-host /usr/local/bin/comp-host; rm -f /tmp/comp-host; \
+      if [ -f /tmp/comp-relay ]; then sudo install -m 0755 /tmp/comp-relay /usr/local/bin/comp-relay; rm -f /tmp/comp-relay; fi; \
       sudo mkdir -p /srv/comp /etc/comp /etc/caddy/comp; \
       sudo chmod 0711 /etc/comp; \
       /usr/local/bin/comp-host --help >/dev/null && echo '  comp-host installed:' && /usr/local/bin/comp-host --help | head -1"
@@ -1802,6 +1814,16 @@ selfhost-render app router="caddy": build-selfhost
       --out target/selfhost --router {{router}}
     @echo "--- unit ---";  cat target/selfhost/{{app}}/comp-{{app}}.service
     @echo "--- route ---"; cat target/selfhost/{{app}}/{{app}}.*
+
+# Derive a spec for every app that has a `host-<app>` recipe but no `apps/*.toml`.
+#
+# The recipe already names the artifact, the port and the SPA directory — a spec is
+# those three facts plus a hostname. What the generator cannot know it does not
+# guess: `domain` is a placeholder to edit, and `access` is left at its
+# fail-closed default. An existing spec is never overwritten.
+selfhost-specs:
+    python3 tools/gen-app-specs.py
+    @just selfhost-check
 
 # Refuse the collisions a single spec cannot see: two apps on one port, one
 # domain, or one name. Run it in CI over apps/*.toml.
@@ -1837,11 +1859,16 @@ selfhost-deploy app host router="caddy": build-selfhost
     scp "$ART" {{host}}:/tmp/{{app}}.wasm
     scp "$D/comp-{{app}}.service" {{host}}:/tmp/
     scp "$D/{{app}}.env" {{host}}:/tmp/
+    # Rendered only when the spec declares [triggers].
+    if [ -f "$D/comp-{{app}}-relay.service" ]; then scp "$D/comp-{{app}}-relay.service" {{host}}:/tmp/; fi
     scp "$D"/{{app}}.caddy {{host}}:/tmp/ 2>/dev/null || scp "$D"/{{app}}.yml {{host}}:/tmp/
     ssh {{host}} "set -e; \
       sudo install -m 0644 /tmp/{{app}}.wasm /srv/comp/{{app}}/app.wasm; \
       sudo install -m 0600 /tmp/{{app}}.env /etc/comp/{{app}}.env; \
       sudo install -m 0644 /tmp/comp-{{app}}.service /etc/systemd/system/comp-{{app}}.service; \
+      if [ -f /tmp/comp-{{app}}-relay.service ]; then \
+        sudo install -m 0644 /tmp/comp-{{app}}-relay.service /etc/systemd/system/comp-{{app}}-relay.service; \
+      fi; \
       if [ -f /tmp/{{app}}.serve.sh ]; then \
         sudo install -m 0755 /tmp/{{app}}.serve.sh /srv/comp/{{app}}/serve.sh; \
       elif [ -f /tmp/{{app}}.caddy ]; then \
@@ -1852,12 +1879,19 @@ selfhost-deploy app host router="caddy": build-selfhost
       sudo systemctl daemon-reload; \
       sudo systemctl enable --now comp-{{app}}; \
       sudo systemctl restart comp-{{app}}; \
+      if [ -f /etc/systemd/system/comp-{{app}}-relay.service ]; then \
+        sudo systemctl enable --now comp-{{app}}-relay; sudo systemctl restart comp-{{app}}-relay; \
+      fi; \
       if [ -f /srv/comp/{{app}}/serve.sh ]; then sudo /srv/comp/{{app}}/serve.sh; fi; \
-      rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/{{app}}.env \
-            /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh"
-    just selfhost-tsip {{host}}
+      rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/comp-{{app}}-relay.service \
+            /tmp/{{app}}.env /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh"
+    # Only a tailnet app needs TS_IP. Pinning it for a public app would report a
+    # missing tailscale on a box that has no reason to have one, which reads as a
+    # failed deploy when nothing is wrong.
+    ACCESS=$(python3 -c "import tomllib;print(tomllib.load(open('apps/{{app}}.toml','rb')).get('access','tailnet'))")
+    if [ "$ACCESS" = "tailnet" ]; then just selfhost-tsip {{host}}; fi
     ssh {{host}} "sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy 2>/dev/null || true"
-    @echo "deployed {{app}} to {{host}}"
+    @echo "deployed {{app}} to {{host}} [$ACCESS]"
 
 # Pin Caddy's TS_IP to this box's Tailscale address, so that `bind {$TS_IP}` in a
 # tailnet route means what it says.
@@ -1889,8 +1923,10 @@ selfhost-status app host:
 # Remove an app from a box, including its state.
 selfhost-remove app host:
     ssh {{host}} "set -e; \
+      sudo systemctl disable --now comp-{{app}}-relay || true; \
       sudo systemctl disable --now comp-{{app}} || true; \
-      sudo rm -f /etc/systemd/system/comp-{{app}}.service /etc/comp/{{app}}.env \
+      sudo rm -f /etc/systemd/system/comp-{{app}}-relay.service \
+                 /etc/systemd/system/comp-{{app}}.service /etc/comp/{{app}}.env \
                  /etc/caddy/comp/{{app}}.caddy /etc/traefik/comp/{{app}}.yml; \
       sudo rm -rf /srv/comp/{{app}} /var/lib/private/comp/{{app}} /var/lib/comp/{{app}}; \
       sudo systemctl daemon-reload; sudo systemctl reload caddy 2>/dev/null || true"
@@ -1903,6 +1939,258 @@ selfhost-deploy-all host router="caddy":
     for f in apps/*.toml; do
       just selfhost-deploy "$(basename "$f" .toml)" {{host}} {{router}}
     done
+
+# ---- the wasmCloud lanes: same app, someone else's runtime -------------------
+#
+# For a cluster somebody else already operates. ADR-0021 took Kubernetes off this
+# platform's runtime path deliberately and priced it, so this is interop, not a
+# recommendation — `docs/SELFHOST.md` still says start at tier 1.
+#
+# Two axes, four manifests, one app spec:
+#   --topology fused|linked    one wac-composed artifact, or components wired by links
+#   --api      v1|v2           core.oam.dev/v1beta1 (wadm 0.21), or wasmcloud.dev/v1alpha1
+#
+# No `wash`: wash 2.x removed `wash app put`, but the API underneath it is a set of
+# NATS subjects both versions still serve, and those are what these recipes use.
+
+wasmcloud_lattice := env_var_or_default("WASMCLOUD_LATTICE", "default")
+wasmcloud_registry := env_var_or_default("WASMCLOUD_REGISTRY", "registry.wasmcloud.svc.cluster.local:5000")
+# Where THIS machine reaches the registry to push. In-cluster the host pulls from
+# the name above; from a laptop that name does not resolve, so pushes go via the
+# NodePort. Two names for one registry, and conflating them is why a push succeeds
+# and a pull then fails.
+wasmcloud_push_registry := env_var_or_default("WASMCLOUD_PUSH_REGISTRY", "localhost:30500")
+
+# The capability graph, derived from the BUILT artifacts. A linked render needs it:
+# a wadm link carries the WIT namespace, package and interfaces that say which import
+# it satisfies, and wadm refuses one that names only a target.
+capgraph-json:
+    @mkdir -p target
+    @cd reconciler && cargo build --release --quiet --bin comp-capgraph
+    ./reconciler/target/release/comp-capgraph --format json > target/capgraph.json
+
+# Render one app as a wadm manifest. Touches no cluster.
+#
+#   just wasmcloud-render gate                     # fused, v1
+#   just wasmcloud-render gate linked v2
+wasmcloud-render app topology="fused" api="v1" addr="0.0.0.0:8080": build-selfhost capgraph-json
+    ./cli/target/release/holon wadm render apps/{{app}}.toml \
+      --topology {{topology}} --api {{api}} --graph target/capgraph.json \
+      --registry {{wasmcloud_registry}} --addr {{addr}} \
+      --out target/wadm/{{app}}.yaml
+    @cat target/wadm/{{app}}.yaml
+
+# Push an app's artifact to the cluster registry, by digest.
+#
+# `wkg` rather than a bundled pusher: reconciler/src/oci.rs exists and is proven, but
+# it is on the reconciler's distribution path, and this lane wants one artifact now.
+# The media types match either way — that is what oci.rs was written to guarantee.
+wasmcloud-push app: build-selfhost
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ART=$(python3 -c "import tomllib;print(tomllib.load(open('apps/{{app}}.toml','rb'))['artifact'])")
+    if [ ! -f "$ART" ]; then
+      echo "missing $ART — run: just compose-{{app}}" >&2
+      exit 1
+    fi
+    wkg oci push {{wasmcloud_push_registry}}/{{app}}:latest "$ART" --insecure {{wasmcloud_push_registry}}
+
+# Render, push and deploy one app to a wasmCloud lattice.
+#
+#   WASMCLOUD_LATTICE=vet-clinic just wasmcloud-deploy graphviz
+#
+# The lattice must have a host in it: wadm answers "0/1 eligible hosts found" when
+# the manifest lands somewhere no host is listening, which looks like a manifest
+# error and is not one.
+wasmcloud-deploy app topology="fused" api="v1" addr="0.0.0.0:8080": (wasmcloud-render app topology api addr) (wasmcloud-push app)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    L={{wasmcloud_lattice}}
+    python3 -c "import json,yaml;print(json.dumps(yaml.safe_load(open('target/wadm/{{app}}.yaml'))))" \
+      > target/wadm/{{app}}.json
+    tools/wadm.sh "wadm.api.$L.model.put" target/wadm/{{app}}.json | head -2
+    tools/wadm.sh "wadm.api.$L.model.deploy.{{app}}" | head -2
+    echo "deployed {{app}} to lattice $L — just wasmcloud-status {{app}}"
+
+# What did the cluster make of it? One line per scaler.
+wasmcloud-status app:
+    @tools/wadm.sh "wadm.api.{{wasmcloud_lattice}}.model.status.{{app}}" | python3 tools/wadm-status.py
+
+wasmcloud-remove app:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    L={{wasmcloud_lattice}}
+    tools/wadm.sh "wadm.api.$L.model.undeploy.{{app}}" | head -1
+    printf '{}' > target/wadm/.del.json
+    tools/wadm.sh "wadm.api.$L.model.del.{{app}}" target/wadm/.del.json | head -1
+
+# ---- wasmCloud 2.x: a Workload, not a manifest -------------------------------
+#
+# 2.x dropped wadm and OAM entirely, so this lane does not go through wadm at all:
+# `holon wadm render --api v2` emits a `runtime.wasmcloud.dev/v1alpha1` Workload and
+# kubectl applies it. The operator schedules it onto a host in a host group.
+#
+# Install the stack once:
+#   helm install wasmcloud-v2 oci://ghcr.io/wasmcloud/charts/runtime-operator \
+#     --version 2.8.0 --namespace wasmcloud-v2 --create-namespace
+#
+# A release 2.x host provides standard WASI and wasmcloud:messaging and nothing
+# else — no keyvalue backend, no wasi:config store, and no `comp:` interface, which
+# needs a host component plugin that release images are not built with. An app that
+# imports one is REFUSED at render time with the reason.
+
+wasmcloud_v2_namespace := env_var_or_default("WASMCLOUD_V2_NAMESPACE", "wasmcloud-v2")
+
+# Render an app as a wasmCloud 2.x Workload. Touches no cluster.
+wasmcloud-v2-render app: build-selfhost capgraph-json
+    ./cli/target/release/holon wadm render apps/{{app}}.toml --api v2 \
+      --namespace {{wasmcloud_v2_namespace}} --graph target/capgraph.json \
+      --registry {{wasmcloud_registry}} --out target/wadm/{{app}}.v2.yaml
+    @cat target/wadm/{{app}}.v2.yaml
+
+# Push and apply one app to the 2.x stack.
+wasmcloud-v2-deploy app: (wasmcloud-v2-render app) (wasmcloud-push app)
+    kubectl apply -f target/wadm/{{app}}.v2.yaml
+    @echo "applied — just wasmcloud-v2-status {{app}}"
+
+# READY says whether the host actually linked and started it. False with no error
+# above usually means an import the host cannot satisfy; the host log has the reason.
+wasmcloud-v2-status app:
+    @kubectl get workload {{app}} -n {{wasmcloud_v2_namespace}} 2>&1 || true
+    @kubectl logs -n {{wasmcloud_v2_namespace}} deploy/hostgroup-default --since=2m 2>/dev/null \
+      | grep -i "{{app}}" | grep -iE "error|warn" | tail -3 || true
+
+wasmcloud-v2-remove app:
+    kubectl delete workload {{app}} -n {{wasmcloud_v2_namespace}} --ignore-not-found
+
+# Render the operator's host, for the Kubernetes lane. The Application manifest is
+# the SAME one wash would deploy — only the driver differs, which is what makes this
+# lane one extra file rather than a second renderer.
+wasmcloud-host namespace="holon" lattice="holon" version="1.6.0": build-selfhost
+    ./cli/target/release/holon wadm host --namespace {{namespace}} --lattice {{lattice}} \
+      --version {{version}} --registry {{wasmcloud_registry}}
+
+# Talk to wadm over NATS from inside the cluster, since `wash` may not be installed
+# and wash 2.x removed the command the old manifests still document.
+#
+# A shell script rather than a `just` recipe, because a manifest is JSON full of
+# quotes and braces: interpolating it into a command line hands it to the shell to
+# re-parse (it fails on the first `(` in a description), and `just` does not forward
+# stdin to a recipe either. So the payload goes through a file, which has neither
+# problem.
+#
+#   tools/wadm.sh <subject> [payload-file]
+
+# ---- the lattice lane (tier 2/3): many boxes, one control loop ---------------
+#
+# Tier 1 above puts ONE app in one comp-host behind a proxy, with no control plane
+# at all. This is the tier where placement stops being your decision: a comp-host
+# per node holding every app, a reconciler converging them, an ingress routing by
+# Host header. Reach for it when choosing which box an app runs on has become a
+# chore — with two or three machines, tier 1 is the cheaper answer.
+#
+# `just host-platform` is this same topology on localhost. These recipes are that
+# recipe with `trap kill` replaced by `Restart=always`.
+
+# Cross-build the two control binaries, static, for a Linux box. `comp-host` comes
+# from `selfhost-build-host` — it is the same binary in both tiers, and building it
+# twice would be two answers to one question.
+lattice-build arch="x86_64":
+    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl \
+      --bin comp-reconciler --bin comp-ingress
+    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-reconciler | awk '{printf "  comp-reconciler %.0f MB\n", $5/1048576}'
+    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-ingress | awk '{printf "  comp-ingress    %.0f MB\n", $5/1048576}'
+
+# Read the units before trusting them to a server. Touches no box.
+lattice-render spec="fleet.toml" out="target/fleet": build-selfhost
+    ./cli/target/release/holon fleet render {{spec}} --out {{out}}
+    @for d in {{out}}/*/; do echo "--- $d"; for f in "$d"*.service; do echo "  $(basename $f)"; done; done
+
+# Check a fleet spec: node names, reachable addresses, and a lease that outlives a
+# pass. Run it in CI beside `selfhost-check`.
+lattice-check spec="fleet.toml": build-selfhost
+    ./cli/target/release/holon fleet validate {{spec}}
+
+# ONE-TIME per box. Installs the three binaries every lattice role might need.
+#
+# All three go on every box on purpose: which role a box plays is the fleet spec's
+# decision, and a box that gains a reconciler later should not need a second visit.
+lattice-bootstrap host arch="x86_64": (selfhost-build-host arch) (lattice-build arch)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    R=reconciler/target/{{arch}}-unknown-linux-musl/release
+    scp host/target/{{arch}}-unknown-linux-musl/release/comp-host "$R/comp-reconciler" "$R/comp-ingress" {{host}}:/tmp/
+    ssh {{host}} "set -e; \
+      sudo install -m 0755 /tmp/comp-host /tmp/comp-reconciler /tmp/comp-ingress /usr/local/bin/; \
+      rm -f /tmp/comp-host /tmp/comp-reconciler /tmp/comp-ingress; \
+      sudo mkdir -p /etc/comp; sudo chmod 0711 /etc/comp; \
+      /usr/local/bin/comp-reconciler --help >/dev/null && echo '  three binaries installed'"
+    @echo "  bootstrapped {{host}} — it can now play any lattice role"
+
+# Ship the rendered units to the boxes the fleet spec names.
+#
+# The BOX NAME in the spec is what gets ssh'd to, so `host = "edge"` means an ssh
+# host called `edge`. That is deliberate: it is the same string you already type.
+lattice-deploy spec="fleet.toml" out="target/fleet": build-selfhost
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./cli/target/release/holon fleet validate {{spec}}
+    ./cli/target/release/holon fleet render {{spec}} --out {{out}} >/dev/null
+    for d in {{out}}/*/; do
+      BOX=$(basename "$d")
+      if ! ssh "$BOX" "test -x /usr/local/bin/comp-reconciler"; then
+        echo "$BOX is not bootstrapped — run: just lattice-bootstrap $BOX" >&2
+        exit 1
+      fi
+      for f in "$d"*.service; do
+        scp "$f" "$BOX:/tmp/$(basename "$f")"
+      done
+      # 0600 and root-owned: systemd reads it before dropping privileges, and it
+      # holds the platform secret. Never overwritten — a re-deploy must not blank a
+      # secret somebody filled in on the box.
+      if [ -f "$d/reconciler.env" ]; then
+        scp "$d/reconciler.env" "$BOX:/tmp/reconciler.env"
+        ssh "$BOX" "test -f /etc/comp/reconciler.env || sudo install -m 0600 /tmp/reconciler.env /etc/comp/reconciler.env; rm -f /tmp/reconciler.env"
+      fi
+      ssh "$BOX" "set -e; \
+        for u in /tmp/*.service; do sudo install -m 0644 \"\$u\" /etc/systemd/system/; done; \
+        sudo systemctl daemon-reload; \
+        for u in /tmp/*.service; do n=\$(basename \"\$u\"); sudo systemctl enable --now \"\$n\"; sudo systemctl restart \"\$n\"; done; \
+        rm -f /tmp/*.service"
+      echo "  deployed $(ls "$d"*.service | xargs -n1 basename | tr '\n' ' ') to $BOX"
+    done
+    @echo "fleet deployed. A reconciler with an empty PLATFORM_SECRET will not converge —"
+    @echo "fill /etc/comp/reconciler.env on each control box, then: systemctl restart comp-reconciler"
+
+# Is it up, and which reconciler holds the lease?
+lattice-status spec="fleet.toml" out="target/fleet": build-selfhost
+    #!/usr/bin/env bash
+    set -uo pipefail
+    ./cli/target/release/holon fleet render {{spec}} --out {{out}} >/dev/null 2>&1
+    for d in {{out}}/*/; do
+      BOX=$(basename "$d")
+      echo "== $BOX"
+      for f in "$d"*.service; do
+        ssh "$BOX" "systemctl is-active $(basename "$f") 2>/dev/null | sed 's/^/   $(basename "$f"): /'" || true
+      done
+    done
+
+# Remove every lattice unit from every box the spec names. Leaves the binaries.
+lattice-remove spec="fleet.toml" out="target/fleet": build-selfhost
+    #!/usr/bin/env bash
+    set -uo pipefail
+    ./cli/target/release/holon fleet render {{spec}} --out {{out}} >/dev/null 2>&1
+    for d in {{out}}/*/; do
+      BOX=$(basename "$d")
+      for f in "$d"*.service; do
+        n=$(basename "$f")
+        ssh "$BOX" "sudo systemctl disable --now $n 2>/dev/null; sudo rm -f /etc/systemd/system/$n" || true
+      done
+      ssh "$BOX" "sudo systemctl daemon-reload" || true
+      echo "  removed lattice units from $BOX"
+    done
+    @echo "-- left behind ON PURPOSE: /etc/comp/reconciler.env (a secret you filled in)"
+    @echo "   and the binaries in /usr/local/bin."
 
 # ADR-0023's falsifying measurement, ADR-0026's numbers: two tenants in ONE
 # comp-host process, one of them hostile, isolation and throughput from the SAME

@@ -41,6 +41,10 @@ path = "src/bin/traceseed.rs"
 name = "comp-fswatch"
 path = "src/bin/fswatch.rs"
 
+[[bin]]
+name = "comp-relay"
+path = "src/bin/relay.rs"
+
 # Drains a project's goal queue, N runs at a time (ADR-0082's missing loop).
 [[bin]]
 name = "comp-goald"
