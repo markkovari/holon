@@ -1,7 +1,7 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [94 ADRs](adr/); this page is the map.
+in [96 ADRs](adr/); this page is the map.
 
 Last revised after ADR-0094.
 
