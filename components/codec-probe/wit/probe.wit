@@ -1,0 +1,13 @@
+// comp:codecprobe — front `bytes:codec` over HTTP so its specification can be run
+// against the ARTIFACT rather than against a Rust function.
+//
+// That is the whole reason this exists. `bytes-codec/tests/codec.rs` calls the Rust
+// crate directly, which is a fine unit test and cannot judge a component built from
+// any other language — or one fetched by digest and never built here at all. Driven
+// through this probe, the same cases judge whatever satisfies the contract.
+package comp:codecprobe@0.1.0;
+
+world codec-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import bytes:codec/codec@0.1.0;
+}
