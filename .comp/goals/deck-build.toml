@@ -1,0 +1,74 @@
+# Fourteen tests in three groups. The weight says which mistake is expensive: the
+# four-copy rule counts NAMES across printings, and an implementation that counts the
+# id the collection is keyed on passes every casual test while allowing a deck of
+# sixteen Pikachu.
+title = "deck:build — is this deck legal, and what is missing to build it"
+
+text = """
+Implement `legality` and `shortfall` in components/deck-build/src/lib.rs. Neither is
+implemented today.
+
+`tests/legality.rs` is the specification. You can read it and you may NOT edit it.
+
+The module header states the rules. The one that decides this goal: **the four-copy
+rule counts NAMES, not printings.** Four `Pikachu` total, across every set and every
+printing — a Base Set Pikachu and an Obsidian Flames Pikachu are the same card for
+this rule and different cards for everything else in the app. Counting by `card_id`
+is the obvious implementation and it is wrong.
+
+Three more a first attempt gets wrong:
+
+  * Basic Energy is UNCAPPED; Special Energy is capped at four like everything else.
+    One word apart, and the whole rule;
+  * a deck is EXACTLY sixty cards, not at least sixty, and it needs at least one
+    Basic Pokémon or it cannot put anything into play;
+  * every reason a deck is illegal is reported, not the first one found. A builder
+    that surfaces one problem per attempt makes you submit five times.
+
+And in `shortfall`: the shopping list is BY PRINTING even though the cap is by name,
+because two printings are two different things to buy. A card nothing has priced is
+listed, counted in `unpriced`, and carries `cost_minor: None` — never `Some(0)`,
+which would say it was free.
+"""
+
+component = "deck-build"
+
+base_paths = [
+  "components/deck-build/",
+  "components/Cargo.toml",
+  "components/spec-gate.sh",
+]
+writable = ["components/deck-build/src/lib.rs"]
+context = ["components/deck-build/tests/legality.rs"]
+
+# THE goal: the cap, and what it counts.
+[[check]]
+id = "the-four-copy-rule"
+weight = 3
+command = ["bash", "components/spec-gate.sh", "deck-build", "legality",
+  "four_copies_counts_names_not_printings",
+  "basic_energy_is_uncapped",
+  "special_energy_is_capped_like_everything_else"]
+
+# The rest of legality.
+[[check]]
+id = "legality"
+weight = 2
+command = ["bash", "components/spec-gate.sh", "deck-build", "legality",
+  "a_sixty_card_deck_with_a_basic_and_no_fifth_copy_is_legal",
+  "a_deck_is_exactly_sixty_cards",
+  "a_deck_needs_at_least_one_basic_pokemon",
+  "every_reason_is_reported_not_just_the_first",
+  "a_zero_quantity_slot_is_refused"]
+
+# What you still have to buy, and what it honestly costs.
+[[check]]
+id = "shortfall"
+weight = 2
+command = ["bash", "components/spec-gate.sh", "deck-build", "legality",
+  "the_shortfall_is_what_you_do_not_already_own",
+  "owning_enough_leaves_nothing_to_buy",
+  "a_missing_card_with_no_price_is_counted_not_costed",
+  "a_price_in_another_currency_does_not_count",
+  "the_shopping_list_is_by_printing_even_though_the_cap_is_by_name",
+  "an_empty_deck_needs_nothing"]
