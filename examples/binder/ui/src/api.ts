@@ -56,6 +56,11 @@ export type Portfolio = {
   /** Cards nothing has priced. They are inside market value AT COST. */
   unquoted: number;
   series: Point[]; empty?: boolean;
+  /** Why the collection cannot be valued, in words, or absent. One bad event must
+   *  not take out every screen, so this comes back with a 200 and zeroes. */
+  blocked?: string;
+  /** The card to go and look at, when there is one. */
+  blocked_card?: string;
   /** The window the server actually computed, so the client is not guessing. */
   since?: number; until?: number; step?: number;
   /** The first thing that ever happened, so "All" can be offered honestly. */
