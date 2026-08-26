@@ -1,0 +1,100 @@
+// price:history — sparse, duplicated, disagreeing quotes into the series a chart is
+// drawn from.
+//
+// The shaping half of a price feed, with the FETCHING deliberately out of the
+// contract: whoever gathers the quotes — a market API, a scraper, a person typing
+// what they paid — hands them here, and this decides what the price WAS at an
+// instant. That split is the same one `llm:inference` makes, and for the same
+// reason: the part that must be right is testable offline, and the part that needs a
+// key is not.
+//
+// Pure compute: quotes in, series out. No clock, no network, no store.
+package price:history@0.1.0;
+
+/// What a price was, at an instant and across a window.
+interface history {
+    /// Which number a source was asked for. A market price and a lowest listing are
+    /// different questions, one systematically below the other, and a series that
+    /// mixes them is answering neither.
+    enum quote-kind {
+        /// What copies are actually changing hands at.
+        market,
+        /// The cheapest current listing.
+        low,
+        /// The dearest current listing.
+        high,
+        /// The last completed sale.
+        last-sold,
+    }
+
+    /// One observation of a price.
+    record quote {
+        unit-minor: s64,
+        /// ISO-4217, compared exactly and never converted.
+        currency: string,
+        kind: quote-kind,
+        /// Where it came from. Two sources may disagree about one instant, and
+        /// resolving that needs to know which is which.
+        source: string,
+        /// Unix seconds observed.
+        at: u64,
+    }
+
+    /// A price at an instant, and how much to trust it.
+    record observed {
+        unit-minor: s64,
+        currency: string,
+        source: string,
+        /// When the underlying quote was observed — NOT the instant asked about.
+        observed-at: u64,
+        /// How old the quote was at the instant asked about. Zero means it was
+        /// observed exactly then. A four-month-old quote is the best information
+        /// available and also barely information; it is returned WITH its age
+        /// rather than refused or passed off as fresh.
+        age-seconds: u64,
+        /// True when this is a previous quote carried forward across a gap.
+        carried: bool,
+    }
+
+    /// One sample on a price chart.
+    record point {
+        at: u64,
+        unit-minor: s64,
+        /// Carried forward rather than observed here. A caller that wants to draw a
+        /// carried segment differently has what it needs; one that ignores this is
+        /// still not lied to.
+        carried: bool,
+    }
+
+    /// Why a lookup produced nothing.
+    variant price-error {
+        /// No quote of this kind at or before the instant. DISTINCT from a price of
+        /// zero: a chart that starts at zero and jumps shows a gain nobody made.
+        not-yet-priced,
+        /// Quotes in more than one currency. Refused, never converted. Carries
+        /// expected and found.
+        mixed-currency(tuple<string, string>),
+        /// A step of zero does not terminate.
+        zero-step,
+    }
+
+    /// The latest quote of `kind` at or before `at`, carried forward if older.
+    ///
+    /// Two sources at one instant resolve newest-first, then by source name, so the
+    /// answer does not depend on the order they were fetched in.
+    at: func(quotes: list<quote>, kind: quote-kind, at: u64) -> result<observed, price-error>;
+
+    /// The series over `since`..=`until`, sampled every `step` seconds.
+    ///
+    /// A gap CARRIES THE LAST PRICE FORWARD and never interpolates: a market has no
+    /// price on a day nobody traded, and a straight line across a quiet week invents
+    /// most of a five-year chart. Samples before the first quote are ABSENT rather
+    /// than zero, so an empty result means "never priced in this window".
+    series: func(quotes: list<quote>, kind: quote-kind, since: u64, until: u64, step: u64)
+        -> result<list<point>, price-error>;
+}
+
+/// `price-history` provides the shaping; pure compute, no host imports.
+world price-history {
+    export history;
+}
