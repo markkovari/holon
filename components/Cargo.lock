@@ -297,6 +297,13 @@ name = "capman"
 version = "0.1.0"
 
 [[package]]
+name = "card-identify"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1587,6 +1594,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "portfolio-value"
+version = "0.1.0"
+
+[[package]]
 name = "power-domain"
 version = "0.1.0"
 dependencies = [
@@ -1602,6 +1613,10 @@ checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
 dependencies = [
  "zerocopy",
 ]
+
+[[package]]
+name = "price-history"
+version = "0.1.0"
 
 [[package]]
 name = "primeorder"
