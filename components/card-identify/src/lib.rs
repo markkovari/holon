@@ -343,3 +343,73 @@ Otherwise reply with these fields, using an empty string or omitting a field you
   "uncertain": ["field names you are not sure about"]
 }"#
 }
+
+// ---- the component -----------------------------------------------------
+//
+// A mapping between the WIT types and the ones above. `tests/guess.rs` judges the
+// plain `parse`; this adds no behaviour, which is the only way the specification
+// keeps covering what actually ships.
+//
+// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's
+// exports does not link natively, and the held-out gate builds every crate-type
+// before it runs.
+
+#[cfg(target_arch = "wasm32")]
+#[allow(warnings)]
+mod bindings;
+
+#[cfg(target_arch = "wasm32")]
+use bindings::exports::card::identify::identifier as w;
+
+#[cfg(target_arch = "wasm32")]
+struct Component;
+
+#[cfg(target_arch = "wasm32")]
+impl w::Guest for Component {
+    fn parse(answer: String) -> Result<w::Guess, w::IdentifyError> {
+        crate::parse(&answer)
+            .map(|g| w::Guess {
+                name: g.name,
+                set_name: g.set_name,
+                set_code: g.set_code,
+                number: g.number,
+                rarity: g.rarity,
+                language: g.language,
+                // `variant` is a WIT keyword, so the field is `printing` there — the
+                // word a collector uses for the same thing.
+                printing: g.variant.map(|v| match v {
+                    Variant::Normal => w::VariantKind::Normal,
+                    Variant::Holo => w::VariantKind::Holo,
+                    Variant::ReverseHolo => w::VariantKind::ReverseHolo,
+                    Variant::FirstEdition => w::VariantKind::FirstEdition,
+                    Variant::Shadowless => w::VariantKind::Shadowless,
+                    Variant::Special => w::VariantKind::Special,
+                }),
+                condition: g.condition.map(|c| match c {
+                    Condition::Mint => w::Condition::Mint,
+                    Condition::NearMint => w::Condition::NearMint,
+                    Condition::LightlyPlayed => w::Condition::LightlyPlayed,
+                    Condition::ModeratelyPlayed => w::Condition::ModeratelyPlayed,
+                    Condition::HeavilyPlayed => w::Condition::HeavilyPlayed,
+                    Condition::Damaged => w::Condition::Damaged,
+                }),
+                graded: g.graded.map(|gr| w::Grade { grader: gr.grader, tenths: gr.tenths }),
+                confidence: g.confidence,
+                needs_review: g.needs_review,
+            })
+            .map_err(|e| match e {
+                IdentifyError::NoCard(r) => w::IdentifyError::NoCard(r),
+                IdentifyError::MoreThanOneCard => w::IdentifyError::MoreThanOneCard,
+                IdentifyError::Refused(r) => w::IdentifyError::Refused(r),
+                IdentifyError::Unparseable(r) => w::IdentifyError::Unparseable(r),
+                IdentifyError::NoName => w::IdentifyError::NoName,
+            })
+    }
+
+    fn prompt() -> String {
+        crate::prompt().to_string()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+bindings::export!(Component with_types_in bindings);

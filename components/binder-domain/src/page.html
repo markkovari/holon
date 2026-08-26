@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>binder</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --line: #8883; --dim: #8888; }
+  body { font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; margin: 0 auto; max-width: 60rem; padding: 2rem 1rem; }
+  h1 { font-size: 1.3rem; margin: 0 0 .2rem; }
+  .sub { color: var(--dim); margin: 0 0 1.5rem; }
+  .totals { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-bottom: 1rem; }
+  .t b { display: block; font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+  .t span { color: var(--dim); font-size: .8rem; }
+  .up { color: #17803d } .down { color: #b91c1c }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); }
+  th { color: var(--dim); font-weight: 500; font-size: .8rem; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .flag { font-size: .75rem; color: #b45309; }
+  svg { width: 100%; height: 140px; display: block; margin-top: 1rem; border-bottom: 1px solid var(--line); }
+  .empty { color: var(--dim); padding: 2rem 0; }
+</style>
+<h1>binder</h1>
+<p class="sub">A Pokémon collection. Every number below comes from a composed capability —
+  <code>card:identify</code>, <code>price:history</code>, <code>portfolio:value</code> — over WIT.</p>
+
+<div class="totals" id="totals"></div>
+<svg id="chart" viewBox="0 0 600 140" preserveAspectRatio="none"></svg>
+<table><thead><tr>
+  <th>card</th><th>set</th><th>№</th><th>printing</th><th>condition</th><th class="n">conf.</th>
+</tr></thead><tbody id="cards"></tbody></table>
+<p class="empty" id="empty" hidden>Nothing scanned yet.</p>
+
+<script>
+const money = (m, c) => new Intl.NumberFormat(undefined, { style: 'currency', currency: c || 'EUR' }).format(m / 100)
+
+async function load () {
+  const [p, c] = await Promise.all([
+    fetch('/api/portfolio').then(r => r.json()),
+    fetch('/api/cards').then(r => r.json()),
+  ])
+
+  const gain = p.unrealised_minor
+  document.getElementById('totals').innerHTML = [
+    ['market value', money(p.market_value_minor, p.currency), ''],
+    ['cost basis', money(p.cost_basis_minor, p.currency), ''],
+    ['unrealised', money(gain, p.currency), gain > 0 ? 'up' : gain < 0 ? 'down' : ''],
+    ['realised', money(p.realised_minor, p.currency), p.realised_minor > 0 ? 'up' : p.realised_minor < 0 ? 'down' : ''],
+    // Named rather than folded into the total: cards nothing has priced are carried
+    // at cost, and a screen that hides that is showing a number pretending to be
+    // complete.
+    ...(p.unquoted ? [['unpriced', p.unquoted + ' card(s)', '']] : []),
+  ].map(([k, v, cls]) => `<div class="t"><b class="${cls}">${v}</b><span>${k}</span></div>`).join('')
+
+  const pts = p.series || []
+  if (pts.length > 1) {
+    const vals = pts.map(s => s.market_value_minor)
+    const lo = Math.min(...vals, 0), hi = Math.max(...vals, 1)
+    const x = i => (i / (pts.length - 1)) * 600
+    const y = v => 135 - ((v - lo) / (hi - lo || 1)) * 130
+    const line = pts.map((s, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(s.market_value_minor).toFixed(1)}`).join('')
+    const cost = pts.map((s, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(s.cost_basis_minor).toFixed(1)}`).join('')
+    document.getElementById('chart').innerHTML =
+      `<path d="${cost}" fill="none" stroke="currentColor" stroke-opacity=".25" stroke-width="1.5" stroke-dasharray="4 3"/>` +
+      `<path d="${line}" fill="none" stroke="currentColor" stroke-width="2"/>`
+  }
+
+  const cards = c.cards || []
+  document.getElementById('empty').hidden = cards.length > 0
+  document.getElementById('cards').innerHTML = cards.map(card => {
+    // A field the AI guessed and nobody has confirmed is marked, every time it is
+    // shown. That is the whole point of `needs_review` surviving storage.
+    const f = k => (card.needs_review || []).includes(k)
+      ? `<span class="flag">${card[k] || '—'} · check</span>` : (card[k] || '—')
+    return `<tr><td>${card.name}</td><td>${f('set_name')}</td><td>${f('number')}</td>` +
+           `<td>${f('printing')}</td><td>${f('condition')}</td><td class="n">${card.confidence}%</td></tr>`
+  }).join('')
+}
+load()
+</script>

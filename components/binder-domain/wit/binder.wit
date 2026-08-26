@@ -1,0 +1,32 @@
+// binder:app — a Pokémon card binder: scan, price, and what the collection is worth.
+//
+// The app is the composition. Every number it reports comes from a capability it
+// imports and none of the arithmetic lives here: `card:identify` reads a vision
+// model's answer into fields, `price:history` decides what a card was worth at an
+// instant, and `portfolio:value` turns the buy/sell log into cost basis, realised
+// and unrealised gain. This component owns the HTTP surface and the storage, which
+// is the part that is genuinely about being an app.
+//
+// That split is the repository's rule rather than a preference (ADR-0095): the
+// pieces meet through WIT, so each of them is testable — and tested — on its own,
+// and none of them can be reached except through its contract.
+package binder:app@0.1.0;
+
+world binder-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// A photographed card into typed fields, plus what a person should check.
+    import card:identify/identifier@0.1.0;
+    /// What a card was worth at an instant, across gaps in the quotes.
+    import price:history/history@0.1.0;
+    /// Cost basis, realised and unrealised gain, and the value series.
+    import portfolio:value/valuation@0.1.0;
+
+    /// The collection itself. A bucket per app, named by the app (ADR-0023), so
+    /// isolation is the linker's rather than a naming convention's.
+    import wasi:keyvalue/store@0.2.0-draft;
+    /// `at` is a parameter everywhere in the capabilities above, so the app is the
+    /// only thing that needs to know what "now" is.
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+}
