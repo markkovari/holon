@@ -8,6 +8,7 @@ type Detail = {
   card: Card;
   held: number;
   cost_basis_minor: number;
+  realised_minor: number;
   price_minor: number | null;
   currency: string;
   price_age_days: number | null;
@@ -140,6 +141,10 @@ export function CardDetailPage({ store }: { store: Store }) {
                     <span className="text-muted-foreground text-xs"> · {d.price_age_days}d old</span>
                   )}</>}
           />
+          <Row label="realised" value={
+            <span className={d.realised_minor > 0 ? "text-emerald-600" : d.realised_minor < 0 ? "text-destructive" : ""}>
+              {money(d.realised_minor, d.currency)}
+            </span>} />
           <Row label="value" value={d.value_minor === null
             ? <span className="text-muted-foreground">—</span> : money(d.value_minor, d.currency)} />
           <div className="flex gap-2 mt-3">
@@ -213,6 +218,20 @@ export function CardDetailPage({ store }: { store: Store }) {
                   at: e.at,
                   what: `${e.kind === "disposed" ? "sold" : "bought"} ${e.quantity} at ${money(e.unit_minor, e.currency)}`,
                   tone: e.kind === "disposed" ? "text-emerald-600" : "",
+                  // Only an event can be removed. A quote is an observation and a
+                  // correction is history; a buy or sell is the one thing here that
+                  // can be simply WRONG, and a log that cannot be valued needs a way
+                  // back.
+                  drop: async () => {
+                    // The WHOLE event, not just when: a buy and a sell can share a
+                    // second, and naming only the instant would take both.
+                    await api("/events", "DELETE", {
+                      card_id: c.id, at: e.at, kind: e.kind,
+                      quantity: e.quantity, unit_minor: e.unit_minor,
+                    });
+                    await load();
+                    await store.reload();
+                  },
                 })),
                 ...d.quotes.map((q) => ({
                   at: q.at, what: `priced at ${money(q.unit_minor, q.currency)}`, tone: "text-muted-foreground",
@@ -229,9 +248,17 @@ export function CardDetailPage({ store }: { store: Store }) {
               ]
                 .sort((a, b) => b.at - a.at)
                 .map((r, i) => (
-                  <tr key={i} className="border-b">
+                  <tr key={i} className="border-b group">
                     <td className="p-2 text-muted-foreground whitespace-nowrap">{when(r.at)}</td>
                     <td className={`p-2 ${r.tone}`}>{r.what}</td>
+                    <td className="p-2 text-right">
+                      {"drop" in r && (
+                        <button onClick={(r as any).drop} title="remove this buy or sell"
+                          className="text-xs text-destructive opacity-0 group-hover:opacity-100 transition-opacity">
+                          ✕
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               {!d.events.length && !d.quotes.length && !d.changes.length && (
