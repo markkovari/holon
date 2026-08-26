@@ -420,14 +420,18 @@
       "wasi:http/incoming-handler@0.2.0"
     ],
     "capability_deps": [
+      "auth:identity/accounts",
+      "auth:identity/authorizer",
+      "auth:identity/types",
       "card:identify/identifier",
+      "deck:build/builder",
       "portfolio:value/valuation",
       "price:history/history",
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 221166,
-    "wasm_sha256_12": "6c75bcbbe3a2",
+    "wasm_size_bytes": 303115,
+    "wasm_sha256_12": "3a9d4dd34016",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -925,6 +929,20 @@
     "wasm_size_bytes": 194218,
     "wasm_sha256_12": "dbd00ec1ad3f",
     "reusable_as_is": false,
+    "unimplemented": false
+  },
+  {
+    "name": "deck-build",
+    "package": "deck:build@0.1.0",
+    "description": "`deck-build` \u2014 is this deck legal to play, and what is missing from your collection to build it",
+    "exports": [
+      "builder"
+    ],
+    "capability_deps": [],
+    "config_keys": [],
+    "wasm_size_bytes": 77107,
+    "wasm_sha256_12": "4a56781d1be9",
+    "reusable_as_is": true,
     "unimplemented": false
   },
   {

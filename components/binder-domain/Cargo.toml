@@ -22,6 +22,13 @@ path = "wit"
 world = "binder-domain"
 
 [package.metadata.component.target.dependencies]
+"auth:identity" = { path = "../../wit" }
+# auth.wit's own world imports these; needed to merge the auth:identity package.
+"ratelimit:guard" = { path = "../rate-limiter/wit" }
+"audit:log" = { path = "../audit-log/wit" }
+"records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
+"deck:build" = { path = "../deck-build/wit" }
 "card:identify" = { path = "../card-identify/wit" }
 "price:history" = { path = "../price-history/wit" }
 "portfolio:value" = { path = "../portfolio-value/wit" }
@@ -31,3 +38,5 @@ world = "binder-domain"
 "wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
 "wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
 "wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+# auth.wit's world reaches these; needed to merge the auth:identity package.
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
