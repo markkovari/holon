@@ -109,6 +109,22 @@ struct StoredEvent {
     at: u64,
 }
 
+/// One correction to a card, kept.
+///
+/// A field edit overwrites the card, and that is right — the card is what it IS. But
+/// "who said Near Mint, and when did that change" is a different question, and the
+/// row alone cannot answer it. So every change is appended: what the field was, what
+/// it became, and when. `from` empty means it was never established, which is the
+/// ordinary case for a field the AI left flagged.
+#[derive(Serialize, Deserialize, Clone)]
+struct Change {
+    card_id: String,
+    field: String,
+    from: String,
+    to: String,
+    at: u64,
+}
+
 /// One observed price for a card.
 #[derive(Serialize, Deserialize, Clone)]
 struct StoredQuote {
@@ -767,6 +783,95 @@ impl Guest for Component {
                 }
             }
 
+            // One card, and how it got here: what it is, what is held, every
+            // correction anyone made, and what it has been worth.
+            (Method::Get, p) if p.starts_with("/api/cards/") => {
+                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let ns = ns(&who);
+                let id = percent_decode(p.trim_start_matches("/api/cards/"));
+                let Some(card) = get_json::<Card>(&bucket, &format!("{ns}card:{id}")) else {
+                    return fail(out, 404, "no such card");
+                };
+
+                let events: Vec<StoredEvent> = scan::<StoredEvent>(&bucket, &format!("{ns}event:"))
+                    .into_iter()
+                    .filter(|e| e.card_id == id)
+                    .collect();
+                let held: i64 = events
+                    .iter()
+                    .map(|e| if e.kind == "disposed" { -(e.quantity as i64) } else { e.quantity as i64 })
+                    .sum();
+                let basis: i64 = events
+                    .iter()
+                    .filter(|e| e.kind != "disposed")
+                    .map(|e| e.quantity as i64 * e.unit_minor)
+                    .sum();
+
+                let stored: Vec<StoredQuote> = scan::<StoredQuote>(&bucket, &format!("quote:{id}:"));
+                let quotes: Vec<ph::Quote> = stored
+                    .iter()
+                    .map(|q| ph::Quote {
+                        unit_minor: q.unit_minor,
+                        currency: q.currency.clone(),
+                        kind: ph::QuoteKind::Market,
+                        source: "binder".into(),
+                        at: q.at,
+                    })
+                    .collect();
+
+                let until = now();
+                let days = param(&query, "days").and_then(|d| d.parse::<u64>().ok()).unwrap_or(90);
+                let earliest = stored.iter().map(|q| q.at).min().unwrap_or(until);
+                let window = if days == 0 { until.saturating_sub(earliest) } else { days * 86_400 };
+                let step = if window > 400 * 86_400 { 7 * 86_400 } else { 86_400 };
+                let series = ph::series(
+                    &quotes,
+                    ph::QuoteKind::Market,
+                    until.saturating_sub(window.max(step)),
+                    until,
+                    step,
+                )
+                .unwrap_or_default();
+                let price = ph::at(&quotes, ph::QuoteKind::Market, until).ok();
+
+                let mut changes: Vec<Change> = scan::<Change>(&bucket, &format!("{ns}change:"))
+                    .into_iter()
+                    .filter(|c| c.card_id == id)
+                    .collect();
+                // Newest first: a history is read from what just happened backwards.
+                changes.sort_by(|a, b| b.at.cmp(&a.at));
+
+                let mut evs = events;
+                evs.sort_by(|a, b| b.at.cmp(&a.at));
+
+                json_out(
+                    out,
+                    200,
+                    &json!({
+                        "card": card,
+                        "held": held.max(0),
+                        "cost_basis_minor": basis,
+                        "price_minor": price.as_ref().map(|o| o.unit_minor),
+                        "currency": price.as_ref().map(|o| o.currency.clone()).unwrap_or_else(|| "EUR".into()),
+                        "price_age_days": price.as_ref().map(|o| o.age_seconds / 86_400),
+                        "value_minor": price.as_ref().map(|o| held.max(0) * o.unit_minor),
+                        // Each point says whether it was CARRIED, so a flat stretch
+                        // reads as "nobody quoted it" rather than "it did not move".
+                        "series": series.iter().map(|s| json!({
+                            "at": s.at, "unit_minor": s.unit_minor, "carried": s.carried
+                        })).collect::<Vec<_>>(),
+                        "quotes": stored.iter().map(|q| json!({
+                            "at": q.at, "unit_minor": q.unit_minor, "currency": q.currency
+                        })).collect::<Vec<_>>(),
+                        "events": evs.iter().map(|e| json!({
+                            "at": e.at, "kind": e.kind, "quantity": e.quantity,
+                            "unit_minor": e.unit_minor, "currency": e.currency
+                        })).collect::<Vec<_>>(),
+                        "changes": changes,
+                    }),
+                )
+            }
+
             (Method::Get, "/api/cards") => {
                 let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
                 let ns = ns(&who);
@@ -863,6 +968,8 @@ impl Guest for Component {
                 let Some(mut card) = get_json::<Card>(&bucket, &format!("{ns}card:{id}")) else {
                     return fail(out, 404, "no such card");
                 };
+                let at = now();
+                let mut changes: Vec<Change> = Vec::new();
                 for (field, slot) in [
                     ("name", &mut card.name),
                     ("set_name", &mut card.set_name),
@@ -875,9 +982,33 @@ impl Guest for Component {
                     ("graded", &mut card.graded),
                 ] {
                     if let Some(v) = patch.get(field).and_then(Value::as_str) {
+                        // Only an actual change. Saving a row without touching a
+                        // field would otherwise write a history entry saying it
+                        // became what it already was.
+                        if slot.as_str() != v {
+                            changes.push(Change {
+                                card_id: id.to_string(),
+                                field: field.to_string(),
+                                from: slot.clone(),
+                                to: v.to_string(),
+                                at,
+                            });
+                        }
                         *slot = v.to_string();
                         card.needs_review.retain(|r| r != field);
                     }
+                }
+                for c in &changes {
+                    // Keyed by FIELD, not by an index within this save: an index
+                    // restarts at zero on the next save, so correcting two fields and
+                    // then one more in the same second silently overwrote the first
+                    // one's history. A field can only meaningfully change once in a
+                    // second anyway.
+                    let _ = put_json(
+                        &bucket,
+                        &format!("{ns}change:{at:020}:{id}:{}", c.field),
+                        c,
+                    );
                 }
                 if let Err(e) = put_json(&bucket, &format!("{ns}card:{id}"), &card) {
                     return fail(out, 500, &e);
