@@ -2,6 +2,8 @@
 
 *Where the repo, the credentials and the work-to-be-done finally live.*
 
+**Status:** accepted; the project model and the queue are built, the runner deliberately is not — see *What is deliberately not built here*.
+
 ## The gap
 
 Everything the graph loop needs now exists — environments that nest, a git object
