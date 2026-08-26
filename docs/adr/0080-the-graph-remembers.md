@@ -2,6 +2,8 @@
 
 *A knowledge graph over SurrealDB's HTTP API, as a component.*
 
+**Status:** accepted, and built — proven against a live database. Retention, and whether a fork inherits its parent's memory, are named unsolved at the end.
+
 ## The gap
 
 An environment can now fork itself (ADR-0078, 0079). What it cannot do is

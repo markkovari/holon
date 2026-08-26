@@ -138,8 +138,8 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 86496,
-    "wasm_sha256_12": "01700b6b8dc4",
+    "wasm_size_bytes": 89272,
+    "wasm_sha256_12": "93b9448a0f24",
     "reusable_as_is": true,
     "unimplemented": false
   },
