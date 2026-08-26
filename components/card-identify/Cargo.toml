@@ -1,0 +1,24 @@
+[package]
+name = "card-identify"
+description = "A vision model's answer about a Pokemon card into typed fields (card:identify)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# `rlib` as well as `cdylib`, so `tests/` can still link the crate. The held-out
+# specification tests the pure core directly; the component is a thin mapping over
+# it, and testing through generated bindings would test wit-bindgen.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "card:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "card-identify"

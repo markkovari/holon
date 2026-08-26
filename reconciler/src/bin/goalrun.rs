@@ -191,8 +191,12 @@ struct Args {
     /// number being too small.
     ///
     /// 900 leaves ~2.5x headroom over the slowest pair observed. That, not a bigger
-    /// machine, is the fix.
-    #[arg(long, default_value_t = 300)]
+    /// machine, is the fix — and it is now the default, because it was written here
+    /// as the answer and left at 300. A `card-identify` run through the Claude CLI
+    /// shim, where calls are slower still (90-135s each, vs the 64s median above),
+    /// lost branch-0 to this in BOTH generations: two of six branch-runs, a third
+    /// of the budget, zero attempts made, reported as `error sending request`.
+    #[arg(long, default_value_t = 900)]
     timeout: u64,
     /// Open the PR at the end. Off leaves a dry run: search and rank, propose
     /// nothing — for checking the loop without spending a branch on the forge.
@@ -234,6 +238,21 @@ struct GoalSpec {
     /// needs (and get them subtly wrong). An explicitly-set field always wins.
     #[serde(default)]
     component: Option<String>,
+    /// Files a branch is SHOWN but may not write — its held-out tests, most
+    /// usefully.
+    ///
+    /// `PartSpec` has had this since the first decomposed run wrote blind; an
+    /// ordinary goal never did, so a branch was told "a held-out spec judges you"
+    /// and handed the spec's filename. The winning run of `card-identify` proves
+    /// what that costs: attempt-0 failed on every branch, and the one that passed
+    /// did so on attempt-1, after the GATE told it what the tests actually assert.
+    /// Showing the file up front buys the same information for one prompt instead
+    /// of one whole generation.
+    ///
+    /// Not writable, and not enforced here — `writable` is the allow-list the
+    /// applier checks, so naming a file here grants no write.
+    #[serde(default)]
+    context: Vec<String>,
     #[serde(rename = "check")]
     checks: Vec<CheckSpec>,
     /// A file in the checkout holding the interface both parts build against.
@@ -292,12 +311,45 @@ fn component_scope(name: &str) -> (Vec<String>, String, Vec<String>) {
 /// A flat string edit rather than a toml round-trip, so the rest of the manifest
 /// — `[workspace.package]`, `[workspace.dependencies]`, `[profile]`, every comment
 /// — survives untouched; only the one array the gate needs narrowed is changed.
+/// The index of the `]` that closes the array opened at `open`, ignoring any inside
+/// a `#` comment.
+///
+/// TOML has no block comments and no escapes to worry about here: a `#` runs to the
+/// end of the line, and a member is a quoted string that cannot contain a newline. A
+/// `#` inside a quoted string is not a comment, so quotes are tracked too — a crate
+/// named `"a#b"` is legal and would otherwise blind the rest of the line.
+fn closing_bracket(text: &str, open: usize) -> Option<usize> {
+    let mut in_comment = false;
+    let mut in_string = false;
+    for (i, c) in text.char_indices().skip_while(|(i, _)| *i <= open) {
+        match c {
+            '\n' => in_comment = false,
+            '"' if !in_comment => in_string = !in_string,
+            '#' if !in_string => in_comment = true,
+            ']' if !in_comment && !in_string => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn trim_members(manifest: &str, keep: &[String]) -> String {
     let Some(start) = manifest.find("members") else { return manifest.to_string() };
     let Some(open) = manifest[start..].find('[').map(|i| start + i) else {
         return manifest.to_string();
     };
-    let Some(close) = manifest[open..].find(']').map(|i| open + i) else {
+    // The first `]` after the opening bracket is NOT necessarily the array's — a
+    // comment inside the list can hold one, and `components/Cargo.toml`'s does:
+    //
+    //     members = [
+    //         # `bench-suite-p3` stays out: it declares its own `[workspace]`, so …
+    //         "ai-inference",
+    //
+    // Closing on that `]` rewrote the manifest to `members = ["card-identify"]`,
+    // so adding them is "multiple …` — invalid TOML. Every branch of every goal
+    // scoped to this workspace then got a tree cargo refuses to load, scored zero,
+    // and the gate had nothing to say about why. So: skip what a `#` comments out.
+    let Some(close) = closing_bracket(manifest, open) else {
         return manifest.to_string();
     };
     let list = keep.iter().map(|m| format!("\"{m}\"")).collect::<Vec<_>>().join(", ");
@@ -644,6 +696,146 @@ fn wait_serving(port: u16, host: &str, within: Duration) -> Result<()> {
     bail!("{host} never served within {within:?} — last: {last}");
 }
 
+/// The files a branch is shown: what it may write, then what it may only read.
+///
+/// One function because `run_parts` builds the same thing for a part, and two
+/// builders drift — the rehearsal and `goalrun` disagreeing about `component =` is
+/// what that looks like when it happens.
+///
+/// Writable files keep every comment: there the comments are the brief. Read-only
+/// `.wit` context is trimmed by `lean_context`; a `.rs` held-out test is not, because
+/// its doc comments are the specification.
+///
+/// Deduped, and `writable` wins. A path in both lists would otherwise be sent twice
+/// — paid for on every attempt, and the second copy stripped differently from the
+/// first, which is a worse bug than the cost.
+fn branch_context(checkout: &std::path::Path, writable: &[String], readonly: &[String]) -> Vec<Value> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for (path, strip) in
+        writable.iter().map(|w| (w, false)).chain(readonly.iter().map(|r| (r, true)))
+    {
+        if !seen.insert(path.as_str()) {
+            continue;
+        }
+        match std::fs::read_to_string(checkout.join(path)) {
+            Ok(c) => out.push(json!({
+                "path": path,
+                "content": if strip { lean_context(path, c) } else { c },
+            })),
+            // Loud, because a typo'd context path is otherwise silent: the branch is
+            // simply not shown the file and writes blind again, which is the failure
+            // the field exists to remove.
+            Err(e) => println!("context: `{path}` could not be read ({e}) — the branch will not see it"),
+        }
+    }
+    out
+}
+
+/// The first line of a multi-line failure, for a one-line report.
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or(s).trim()
+}
+
+/// Which part a join failure is about.
+///
+/// A join failure is the one verdict in a decomposed run that no part owns: the
+/// halves each passed, the whole did not, and the run ends there. Naming an owner is
+/// the first half of making it addressable — without it the reader is handed "the
+/// halves pass alone and not together" and a diff of three parts.
+///
+/// Attribution is by evidence only: a part owns the failure if the text names one of
+/// its writable paths, or names the part itself. A failure that names nothing owned
+/// belongs to the JOIN — the contract, or the composition check — and saying so is
+/// more useful than picking the likeliest part.
+fn join_failure_owners(failure: &str, parts: &[PartSpec]) -> Vec<String> {
+    let owners: Vec<String> = parts
+        .iter()
+        .filter(|p| {
+            p.writable.iter().any(|w| failure.contains(w.as_str())) || failure.contains(&p.name)
+        })
+        .map(|p| p.name.clone())
+        .collect();
+    owners
+}
+
+/// Write a candidate's files under `target/goalrun/candidate/`, mirroring paths.
+///
+/// Returns the directory. The tree it was run against is never touched — the point
+/// is to be able to diff, not to have been changed.
+fn write_candidate(checkout: &std::path::Path, files: &Value) -> std::io::Result<PathBuf> {
+    let dir = checkout.join("target/goalrun/candidate");
+    // Cleared rather than merged: a stale file from an earlier run sitting beside a
+    // fresh one is indistinguishable from the candidate having written it.
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir)?;
+    }
+    for f in files.as_array().map(Vec::as_slice).unwrap_or_default() {
+        let (Some(path), Some(content)) =
+            (f.get("path").and_then(Value::as_str), f.get("content").and_then(Value::as_str))
+        else {
+            continue;
+        };
+        // A candidate's paths are checked by the applier before it can land; this is
+        // a second look, because writing one to disk is the moment a `../` would
+        // escape the directory.
+        if path.contains("..") || std::path::Path::new(path).is_absolute() {
+            continue;
+        }
+        let target = dir.join(path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(target, content)?;
+    }
+    Ok(dir)
+}
+
+/// Gate commands whose script is not in the shipped tree.
+///
+/// The third state the critic could not see. A check that fails because its script
+/// is missing looks EXACTLY like a check that fails because the work is not done:
+/// both are a non-zero exit on the base tree, so the critic says "every check can
+/// judge" and the run proceeds to score every branch zero for the operator's
+/// reason. `gate.sh` was untracked once and cost a smoke cycle to find; a real run
+/// would have cost four branches and a repair round.
+///
+/// Unlike "did this fail because the tree cannot build", this needs no heuristic on
+/// the words in a log. The tree is a list of paths and the command names one, so the
+/// question is answered by looking.
+///
+/// Only arguments that are unambiguously a repo file are considered — a path-shaped
+/// argument with a script extension, no URL scheme, not a flag. `cargo test -p x`
+/// names no path and is left alone.
+fn gates_missing_from_the_tree(goal: &GoalSpec, tree: &[Value]) -> Vec<String> {
+    let shipped: std::collections::BTreeSet<&str> =
+        tree.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).collect();
+
+    let looks_like_a_repo_script = |arg: &String| -> bool {
+        !arg.starts_with('-')
+            && arg.contains('/')
+            && !arg.contains("://")
+            && [".sh", ".py", ".mjs", ".js"].iter().any(|ext| arg.ends_with(ext))
+    };
+
+    goal.checks
+        .iter()
+        .chain(goal.parts.iter().flat_map(|p| p.checks.iter()))
+        .flat_map(|c| c.command.iter().filter(|a| looks_like_a_repo_script(a)).map(move |a| (c, a)))
+        .filter(|(_, arg)| !shipped.contains(arg.as_str()))
+        .map(|(c, arg)| {
+            let on_disk = std::path::Path::new(arg.as_str()).exists();
+            let why = if on_disk {
+                "it exists in the checkout but was not shipped — an UNTRACKED file is not in the \
+                 base tree, and `base_paths` only ships tracked files. `git add` it"
+            } else {
+                "no such file in the checkout either — check the path"
+            };
+            format!("`{}` runs `{}`, which is not in the tree: {}", c.id, arg, why)
+        })
+        .collect()
+}
+
 /// Can this gate judge anything at all?
 ///
 /// A check that already passes on the base tree cannot judge a candidate: one that
@@ -664,6 +856,17 @@ fn gate_can_judge(
     tree: &[Value],
     timeout: u64,
 ) -> bool {
+
+    let missing = gates_missing_from_the_tree(goal, tree);
+    if !missing.is_empty() {
+        println!("\nREFUSED — a gate that cannot run cannot judge:\n");
+        for m in &missing {
+            println!("  · {m}");
+        }
+        println!("\nNothing was spent. Every branch would have scored zero for this reason.");
+        return false;
+    }
+
     let excused: Vec<String> = goal
         .checks
         .iter()
@@ -1236,15 +1439,7 @@ fn main() -> Result<()> {
         }
     }
     let base_commit = head_commit(&args.checkout)?;
-    let context: Vec<Value> = goal
-        .writable
-        .iter()
-        .filter_map(|w| {
-            std::fs::read_to_string(args.checkout.join(w))
-                .ok()
-                .map(|c| json!({ "path": w, "content": lean_context(w, c) }))
-        })
-        .collect();
+    let context = branch_context(&args.checkout, &goal.writable, &goal.context);
 
     let checks: Vec<Value> = goal
         .checks
@@ -1274,6 +1469,22 @@ fn main() -> Result<()> {
         args.repo, args.base, args.branches, args.rounds, args.model
     );
     println!("gate allows: {allow:?}");
+    // A branch makes up to `attempts` model calls IN SEQUENCE, so the per-branch
+    // timeout has to hold all of them. When it cannot, the branch dies with
+    // `error sending request` and zero attempts — which reads as a fleet fault, and
+    // did, for two of six branch-runs on the run that prompted this line. Said out
+    // loud rather than corrected: how slow a call is depends on the provider, and a
+    // silently-raised timeout is its own surprise.
+    //
+    // 150s per call is the slow tail of the Claude CLI shim, which is the slowest
+    // provider here. A faster one simply never trips this.
+    let needed = args.attempts as u64 * 150 + 30;
+    if args.timeout < needed {
+        println!(
+            "WARNING: --timeout {}s cannot hold {} sequential model calls (~{}s needed).\n                      A branch that runs out dies with `error sending request` and NO attempts.\n                      Raise --timeout or lower --attempts.",
+            args.timeout, args.attempts, needed
+        );
+    }
     // Said out loud, because a gate that cannot find the host reports the same
     // thing as a candidate that does not work — and this run spent 280k tokens
     // learning that once.
@@ -1817,6 +2028,21 @@ fn main() -> Result<()> {
     if args.dry_run {
         let best = found.best.as_ref().unwrap();
         println!("\n[dry run] a candidate passed (score {}); not opening a PR.", best.score);
+        // And it is WRITTEN OUT, because a dry run that discards the winner is a
+        // search you paid for and kept nothing from. This is not hypothetical: a
+        // `card-identify` run spent 42 model calls, passed all 19 held-out tests,
+        // printed this line, returned, and left the stub exactly as it was.
+        //
+        // Into a directory rather than the checkout: a dry run must not mutate the
+        // tree it was pointed at, and diffing a directory is one command.
+        match write_candidate(&args.checkout, &best.files) {
+            Ok(dir) => {
+                println!("  the winning files are in {}", dir.display());
+                println!("  apply:   rsync -a {}/ .", dir.display());
+                println!("  inspect: diff -ru . {} | head -n 100", dir.display());
+            }
+            Err(e) => println!("  WARNING: the winner could not be written out ({e}) — it is lost"),
+        }
         if let Some(t) = &trace {
             t.run_resolved(&run, "dry-run", winner.as_ref().map(|(w, _)| w.as_str()), "");
             if let Some(why) = t.report() {
@@ -1996,12 +2222,7 @@ fn decomposed(
                 // nothing writes blind.
                 // Writable files (the part's own stub) keep every comment — there the comments
                 // are the brief. Read-only `.wit` context is trimmed by `lean_context`.
-                "context": p.writable.iter().map(|f| (f, false))
-                    .chain(p.context.iter().map(|f| (f, true)))
-                    .filter_map(|(f, strip)| std::fs::read_to_string(args.checkout.join(f))
-                        .ok()
-                        .map(|c| json!({ "path": f, "content": if strip { lean_context(f, c) } else { c } })))
-                    .collect::<Vec<_>>(),
+                "context": branch_context(&args.checkout, &p.writable, &p.context),
                 "previous": [],
                 "checks": p.checks.iter().map(|c| json!({
                     "id": c.id, "required": c.required, "weight": c.weight, "command": c.command,
@@ -2157,6 +2378,32 @@ fn decomposed(
                 }
             }
         }
+        // WHO a join failure is about. The halves each passed and the whole did not,
+        // so no part's own gate has anything to say — and the run used to end with
+        // "the halves pass alone and not together" and no further address.
+        if run.report.is_some() || run.changes.is_some() {
+            for b in &run.blocked {
+                let owners = join_failure_owners(b, &goal.parts);
+                if owners.is_empty() {
+                    println!("  · the JOIN owns this, not a part: {}", first_line(b));
+                } else {
+                    println!("  · owned by {}: {}", owners.join(" and "), first_line(b));
+                }
+            }
+        }
+
+        // And the merged tree is WRITTEN OUT, because a join failure discards the
+        // work of every part otherwise. `changes` is already carried on this path —
+        // three parts' worth of accepted code — and nothing ever read it. Losing a
+        // whole decomposed run to a verdict about the join is the most expensive
+        // discard in the loop.
+        if let Some(changes) = &run.changes {
+            match write_candidate(&args.checkout, changes) {
+                Ok(dir) => println!("\n  the merged tree is in {} (it did not pass the join)", dir.display()),
+                Err(e) => println!("\n  WARNING: the merged tree could not be written out ({e})"),
+            }
+        }
+
         resolve("exhausted", "");
         return Ok(());
     }
@@ -2171,6 +2418,13 @@ fn decomposed(
 
     if args.dry_run {
         println!("\n[dry run] the join passed; not opening a PR.");
+        match write_candidate(&args.checkout, &changes) {
+            Ok(dir) => {
+                println!("  the joined tree is in {}", dir.display());
+                println!("  apply: rsync -a {}/ .", dir.display());
+            }
+            Err(e) => println!("  WARNING: the joined tree could not be written out ({e}) — it is lost"),
+        }
         resolve("dry-run", "");
         return Ok(());
     }
@@ -2243,7 +2497,11 @@ fn decomposed(
 
 #[cfg(test)]
 mod tests {
-    use super::{component_scope, egress_authority, new_capabilities, trim_members, GoalSpec};
+    use super::{
+        branch_context, component_scope, egress_authority, gates_missing_from_the_tree,
+        join_failure_owners, new_capabilities, trim_members, CheckSpec, GoalSpec, PartSpec,
+    };
+    use serde_json::json;
 
     /// The goal spec for a decomposed run, as a person writes it.
     ///
@@ -2334,6 +2592,170 @@ command = ["cargo", "test"]
         let out = trim_members(m, &["b".to_string()]);
         assert!(out.contains("members = [\"b\"]"), "trimmed to the one member");
         assert!(out.contains("resolver = \"2\""), "the rest survives");
+    }
+
+    /// The real `components/Cargo.toml`, whose members list opens with a comment
+    /// containing `[workspace]` — so the first `]` after the bracket is not the
+    /// array's. Closing on it produced invalid TOML, and every branch of every goal
+    /// scoped to that workspace was handed a tree cargo refuses to load.
+    #[test]
+    fn a_bracket_inside_a_comment_does_not_close_the_members_list() {
+        let manifest = concat!(
+            "[workspace]\n",
+            "resolver = \"2\"\n",
+            "members = [\n",
+            "    # `bench-suite-p3` stays out: it declares its own `[workspace]`, so\n",
+            "    # adding it is \"multiple workspace roots\".\n",
+            "    \"ai-inference\",\n",
+            "    \"card-identify\",\n",
+            "]\n",
+            "[workspace.package]\n",
+            "version = \"0.1.0\"\n",
+        );
+        let out = trim_members(manifest, &["card-identify".to_string()]);
+        assert!(out.contains("members = [\"card-identify\"]"), "{out}");
+        assert!(!out.contains("ai-inference"), "the other members are gone: {out}");
+        assert!(out.contains("[workspace.package]"), "the rest of the manifest survives: {out}");
+        assert!(
+            !out.contains("adding it is"),
+            "the comment inside the list went with the list, leaving no dangling prose: {out}"
+        );
+        // The whole point: what comes out has to be loadable.
+        toml_is_parseable(&out);
+    }
+
+    /// Parsed with the same crate cargo would use, so "valid TOML" is not an opinion.
+    fn toml_is_parseable(text: &str) {
+        let parsed: Result<toml::Value, _> = toml::from_str(text);
+        assert!(parsed.is_ok(), "the trimmed manifest is not valid TOML: {:?}\n{text}", parsed.err());
+    }
+
+    /// A path in both `writable` and `context` is sent once, and as the WRITABLE
+    /// copy — the untrimmed one. Sent twice it is paid for on every attempt, and the
+    /// two copies are stripped differently, which is worse than the cost.
+    #[test]
+    fn a_path_in_both_lists_is_shown_once_and_unstripped() {
+        let dir = std::env::temp_dir().join("holon-branch-context-test");
+        let wit = dir.join("a.wit");
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        std::fs::write(&wit, "// a comment\npackage a:b@0.1.0;\n").expect("write");
+
+        let both = vec!["a.wit".to_string()];
+        let out = branch_context(&dir, &both, &both);
+        assert_eq!(out.len(), 1, "shown once: {out:?}");
+        assert!(
+            out[0]["content"].as_str().expect("content").contains("// a comment"),
+            "the writable copy keeps its comments: {out:?}"
+        );
+
+        // Read-only only: `lean_context` strips a `.wit`'s comments.
+        let readonly = branch_context(&dir, &[], &both);
+        assert!(!readonly[0]["content"].as_str().expect("content").contains("// a comment"));
+
+        // A `.rs` held-out test is never stripped, in either position: its doc
+        // comments are the specification.
+        std::fs::write(dir.join("t.rs"), "//! the spec\nfn x() {}\n").expect("write");
+        let rs = branch_context(&dir, &[], &["t.rs".to_string()]);
+        assert!(rs[0]["content"].as_str().expect("content").contains("//! the spec"));
+
+        // A path that does not exist is skipped, not fatal, and not an empty entry.
+        assert!(branch_context(&dir, &[], &["nope.rs".to_string()]).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A join failure is attributed by EVIDENCE — a path the part owns, or its name —
+    /// and a failure naming neither belongs to the join itself. Guessing the likeliest
+    /// part would be worse than saying so: the reader would go and read the wrong diff.
+    #[test]
+    fn a_join_failure_names_the_part_that_owns_it_or_says_it_owns_none() {
+        let part = |name: &str, w: &str| PartSpec {
+            name: name.into(),
+            text: "t".into(),
+            writable: vec![w.into()],
+            context: vec![],
+            checks: vec![],
+        };
+        let parts = vec![
+            part("backend", "components/x/src/api.rs"),
+            part("frontend", "components/x/ui/app.tsx"),
+        ];
+
+        assert_eq!(
+            join_failure_owners("assertion failed at components/x/src/api.rs:22", &parts),
+            vec!["backend"],
+            "a path it owns"
+        );
+        assert_eq!(
+            join_failure_owners("the frontend never called /api/total", &parts),
+            vec!["frontend"],
+            "its own name"
+        );
+        assert_eq!(
+            join_failure_owners(
+                "components/x/src/api.rs disagrees with components/x/ui/app.tsx",
+                &parts
+            ),
+            vec!["backend", "frontend"],
+            "both, when both are named — a boundary disagreement is not one part's"
+        );
+        assert!(
+            join_failure_owners("the halves pass alone and not together (score 400)", &parts)
+                .is_empty(),
+            "names no part, so the JOIN owns it"
+        );
+    }
+
+    /// A gate whose script is not in the shipped tree must be refused BEFORE a
+    /// branch is spent, because a missing script and unfinished work are the same
+    /// exit code — and the run would score every candidate zero for the operator's
+    /// reason. This is the case `gate.sh` being untracked actually produced.
+    #[test]
+    fn a_gate_script_missing_from_the_tree_is_refused() {
+        let goal = |cmd: Vec<&str>| GoalSpec {
+            text: "t".into(),
+            writable: vec![],
+            title: None,
+            base_paths: vec![],
+            workspace_manifest: None,
+            keep_members: vec![],
+            component: None,
+            context: vec![],
+            checks: vec![CheckSpec {
+                id: "spec".into(),
+                may_pass_base: false,
+                required: true,
+                weight: 1,
+                command: cmd.into_iter().map(String::from).collect(),
+            }],
+            contract: None,
+            parts: vec![],
+        };
+        let tree = vec![json!({ "path": "components/x/shipped.sh", "content": "" })];
+
+        assert!(
+            gates_missing_from_the_tree(&goal(vec!["bash", "components/x/shipped.sh"]), &tree)
+                .is_empty(),
+            "a shipped script is fine"
+        );
+
+        let missing = gates_missing_from_the_tree(&goal(vec!["bash", "components/x/absent.sh"]), &tree);
+        assert_eq!(missing.len(), 1, "{missing:?}");
+        assert!(missing[0].contains("absent.sh"), "{}", missing[0]);
+        assert!(missing[0].contains("no such file"), "not on disk either, so say so: {}", missing[0]);
+
+        // The discriminator has to leave ordinary commands alone. None of these
+        // names a repo script, and refusing any of them would break real goals.
+        for cmd in [
+            vec!["cargo", "test", "-p", "card-identify"],
+            vec!["curl", "-sf", "http://127.0.0.1:8080/health"],
+            vec!["just", "e2e-binder"],
+            vec!["bash", "-c", "cd components && cargo test"],
+        ] {
+            assert!(
+                gates_missing_from_the_tree(&goal(cmd.clone()), &tree).is_empty(),
+                "{cmd:?} names no repo script and must not be refused"
+            );
+        }
     }
 
     /// The egress allow-list is derived from the base URL, so a mismatch is

@@ -1,0 +1,94 @@
+# The first goal in this repository whose gate is SPLIT, and the reason is the score.
+#
+# `checks-runner` scores a candidate `(won * 1000) / total` over the checks. With one
+# check that is 0 or 1000 — no gradient, and a candidate that got thirteen of sixteen
+# tests right is indexed identically to one that got none. `card-identify` ran that
+# way and it worked, but it worked because the goal is small enough to one-shot.
+#
+# Sixteen tests in four groups, weighted by what they cost to get wrong. FIFO is the
+# goal; the rest is bookkeeping around it. A candidate that lands the refusals and
+# misses the lots scores 400 and is correctly ranked below one that does the reverse.
+title = "portfolio:value — what a collection is worth, cost, and made"
+
+text = """
+Implement `value_at` and `series` in components/portfolio-value/src/lib.rs. Nothing
+is implemented: both return an error today.
+
+`tests/valuation.rs` is the specification. You can read it and you may NOT edit it.
+Every case in it is a way a portfolio chart lies, and the test names say which.
+
+The module header in src/lib.rs states the four rules the tests encode. The one that
+decides this goal is FIFO: a sale consumes the OLDEST unsold lot, at that lot's own
+cost. Average cost is easier and produces a plausible wrong answer to the only
+question the owner is asking, which is whether they did well on a specific purchase.
+
+Three more that a first attempt usually gets wrong:
+
+  * an unpriced holding is carried at COST and counted in `unquoted` — not zero,
+    which makes the chart dip, and not dropped, which makes it climb;
+  * two currencies are an error, never a conversion, and a quote in the wrong
+    currency does not price a holding at all;
+  * events are sorted by time rather than trusted in order, because backfilling a
+    purchase from 2019 must not change the answer.
+
+Money is `i64` minor units throughout. There is no float in the contract and there
+should be none in the implementation.
+"""
+
+component = "portfolio-value"
+
+# `component` derives base_paths as the crate plus the workspace manifest, and the
+# shared gate lives beside them rather than inside the crate — so it must be named or
+# it is not in the sandbox. `goal-rehearse.sh` caught exactly that here, with
+# "CANNOT RUN (exit 127)", before a single call was spent.
+base_paths = [
+  "components/portfolio-value/",
+  "components/Cargo.toml",
+  "components/spec-gate.sh",
+]
+writable = ["components/portfolio-value/src/lib.rs"]
+
+# SHOWN, not writable. Leaving this out is what made `card-identify` take a whole
+# wasted generation before the gate told it what the assertions say.
+context = ["components/portfolio-value/tests/valuation.rs"]
+
+# THE goal. Which lot a sale consumes, and what that does to realised gain.
+[[check]]
+id = "fifo-lots"
+weight = 3
+command = ["bash", "components/spec-gate.sh", "portfolio-value", "valuation",
+  "a_sale_consumes_the_oldest_lot_first",
+  "a_fully_sold_position_leaves_realised_gain_and_no_basis",
+  "a_loss_is_negative_rather_than_clamped",
+  "a_later_quote_does_not_move_realised_gain",
+  "events_out_of_order_give_the_same_answer_as_events_in_order"]
+
+# What a holding is worth at an instant, including when nothing priced it.
+[[check]]
+id = "valuing-holdings"
+weight = 2
+command = ["bash", "components/spec-gate.sh", "portfolio-value", "valuation",
+  "a_holding_is_valued_at_the_latest_quote_at_or_before_the_instant",
+  "unpriced_holdings_are_carried_at_cost_and_counted",
+  "a_quote_in_another_currency_does_not_price_a_holding",
+  "the_valuation_reports_its_currency"]
+
+# The inputs that must be refused rather than absorbed. Each one is a silent wrong
+# number if it is not.
+[[check]]
+id = "refusals"
+weight = 2
+command = ["bash", "components/spec-gate.sh", "portfolio-value", "valuation",
+  "two_currencies_are_an_error_and_not_a_conversion",
+  "selling_more_than_is_held_is_refused",
+  "a_zero_quantity_event_is_refused",
+  "an_empty_event_log_has_no_answer",
+  "a_zero_step_is_refused"]
+
+# The chart itself.
+[[check]]
+id = "series"
+weight = 2
+command = ["bash", "components/spec-gate.sh", "portfolio-value", "valuation",
+  "the_series_samples_the_valuation_at_each_step",
+  "the_series_always_ends_at_until"]

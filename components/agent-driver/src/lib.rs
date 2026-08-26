@@ -213,6 +213,26 @@ impl Guest for Component {
                 // Reachable, and said something that was not a candidate. Another
                 // sample may well be one, so this costs an attempt and not the run.
                 Err(agent::AgentError::UnusableAnswer(m)) => {
+                    // TELL THE NEXT ATTEMPT. The writer already produced a precise
+                    // complaint — "`=== FILE:` block starts but never reaches
+                    // `=== END`" — and this used to record it in the attempt and
+                    // then resample with a new seed against the SAME prompt. The
+                    // model was never told what was malformed, so a branch could
+                    // spend every attempt making the same format mistake: one run
+                    // lost two of six branch-runs exactly that way.
+                    //
+                    // It replaces rather than appends, like the gate failures below
+                    // and for the same reason (see the module comment): the next
+                    // attempt is told what is wrong with what it is being shown, and
+                    // what it is being shown is nothing — there is no candidate. A
+                    // format complaint is the whole of the feedback in that case.
+                    //
+                    // `id` is not a check id; no check ran. Named so the model reads
+                    // it as being about the answer and not about the code.
+                    previous = vec![agent::Failure {
+                        id: "answer-format".into(),
+                        detail: m.clone(),
+                    }];
                     // Cost travels with a candidate, and there is none. What this
                     // burned is invisible to `spent`; `max-attempts` is what
                     // bounds it.

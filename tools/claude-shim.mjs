@@ -21,19 +21,33 @@
 //
 // ## What this speaks
 //
-// Only the subset `anthropic-provider` actually sends and parses — not the
-// Messages API. Requests carry `system` (array of text blocks), `messages`
-// (text blocks only), `model`, `max_tokens`, and sometimes `temperature` /
+// Only the subset the providers actually send and parse — not the Messages API.
+// Requests carry `system` (array of text blocks), `messages` (text and IMAGE
+// blocks), `model`, `max_tokens`, and sometimes `temperature` /
 // `stop_sequences`. Responses need `type`, `content[].text`, `model`,
-// `stop_reason`, and `usage`. No streaming, no tools, no images: the provider
-// asks for none of them, and a shim that pretends to support more would fail
-// somewhere less obvious than here.
+// `stop_reason`, and `usage`. No streaming and no tools: nothing asks for them,
+// and a shim that pretended to support more would fail somewhere less obvious
+// than here.
+//
+// ## Images
+//
+// A base64 image block is written to a temp file and the CLI is told to read it,
+// because `claude -p` takes a path and not a data URI. That means `Read` is
+// allowed for exactly those requests — see `runClaude` — and it is the one hole
+// in the deny-list, opened only when the request carries a picture.
+//
+// This is what lets a vision capability (`card:identify`) run on the same
+// subscription as the loop. Without it the only path to vision was the metered
+// API, so every gate that scans a picture cost money and could not run offline.
 //
 // Token counts are **not** measured — `claude -p` does not report them and this
 // deliberately does not guess. See `usage` below before trusting a cost number.
 
 import { spawn } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const PORT = Number(process.env.PORT || 8787)
 const HOST = process.env.HOST || '127.0.0.1'
@@ -95,11 +109,21 @@ function render(body) {
     .map((b) => b.text)
     .join('\n\n')
 
+  // Images are collected across every turn rather than per-turn: the CLI is
+  // handed paths, and a path has no turn to belong to. Order is preserved, which
+  // is what a prompt saying "the first picture" depends on.
+  const images = []
   const turns = (body.messages || []).map((m) => {
-    const text = (Array.isArray(m.content) ? m.content : [])
+    const blocks = Array.isArray(m.content) ? m.content : []
+    const text = blocks
       .filter((b) => b?.type === 'text')
       .map((b) => b.text)
       .join('')
+    for (const b of blocks) {
+      if (b?.type === 'image' && b.source?.type === 'base64' && b.source.data) {
+        images.push({ media_type: b.source.media_type || 'image/jpeg', data: b.source.data })
+      }
+    }
     return { role: m.role === 'assistant' ? 'assistant' : 'user', text }
   })
 
@@ -110,11 +134,57 @@ function render(body) {
       ? turns[0].text
       : turns.map((t) => `[${t.role}]\n${t.text}`).join('\n\n')
 
-  return { system, prompt }
+  return { system, prompt, images }
+}
+
+/** Extension for the media types Claude's vision accepts. */
+const EXT = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/gif': 'gif',
+  'image/webp': 'webp',
+}
+
+/** Monotonic, so two concurrent requests cannot pick the same directory. */
+let imageSeq = 0
+
+/**
+ * Write the request's images next to each other and return their paths.
+ *
+ * A directory per request, removed in `runClaude`'s `finally`. Rejecting an
+ * unknown media type here rather than guessing an extension: the CLI decides what
+ * a file is from its name, so a `.jpg` holding a webp is a confusing failure two
+ * layers away.
+ */
+function writeImages(images) {
+  const dir = mkdtempSync(join(tmpdir(), `claude-shim-${process.pid}-${imageSeq++}-`))
+  return {
+    dir,
+    paths: images.map((img, i) => {
+      const ext = EXT[img.media_type.toLowerCase()]
+      if (!ext) throw new Error(`unsupported image media_type: ${img.media_type}`)
+      const p = join(dir, `image-${i + 1}.${ext}`)
+      writeFileSync(p, Buffer.from(img.data, 'base64'))
+      return p
+    }),
+  }
 }
 
 /** Run one `claude -p` and resolve with its stdout. */
-function runClaude({ system, prompt }) {
+function runClaude({ system, prompt, images = [] }) {
+  // Written before the promise so a bad media_type rejects the request rather
+  // than killing the server from inside a callback.
+  const staged = images.length ? writeImages(images) : null
+  if (staged) {
+    // The paths go in the prompt because that is the only channel the CLI has
+    // for a picture. Numbered, so a prompt written against "the second image"
+    // still means what it said.
+    prompt =
+      `${prompt}\n\n` +
+      `The image(s) referred to above are files on this machine. Read them:\n` +
+      staged.paths.map((p, i) => `  image ${i + 1}: ${p}`).join('\n')
+  }
   return new Promise((resolve, reject) => {
     const args = ['-p']
     if (MODEL) args.push('--model', MODEL)
@@ -134,13 +204,26 @@ function runClaude({ system, prompt }) {
     // through. `--allowedTools ''` is the future-proof form and does not work —
     // the empty value does not deny anything. Revisit if the CLI grows a real
     // "no tools" switch.
-    args.push('--disallowedTools', ACTING_TOOLS)
+    // With images, `Read` has to be allowed or the CLI cannot open the file it
+    // was just handed. Only `Read`, and only for this request: the rest of the
+    // deny-list stands, so a branch still cannot write, run or fetch anything.
+    args.push(
+      '--disallowedTools',
+      staged ? ACTING_TOOLS.split(',').filter((tool) => tool !== 'Read').join(',') : ACTING_TOOLS,
+    )
 
     const child = spawn('claude', args, { stdio: ['pipe', 'pipe', 'pipe'] })
     let out = ''
     let err = ''
+    // Every exit path goes through here, including the timeout kill: a leaked
+    // directory holds a picture somebody uploaded, which is worse than a leaked
+    // file descriptor.
+    const cleanup = () => {
+      if (staged) rmSync(staged.dir, { recursive: true, force: true })
+    }
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
+      cleanup()
       reject(new Error(`claude -p exceeded ${TIMEOUT_MS}ms`))
     }, TIMEOUT_MS)
 
@@ -148,10 +231,12 @@ function runClaude({ system, prompt }) {
     child.stderr.on('data', (d) => (err += d))
     child.on('error', (e) => {
       clearTimeout(timer)
+      cleanup()
       reject(new Error(`could not spawn \`claude\`: ${e.message}`))
     })
     child.on('close', (code) => {
       clearTimeout(timer)
+      cleanup()
       if (code !== 0) {
         reject(new Error(`claude -p exited ${code}: ${err.trim().slice(0, 300)}`))
         return
@@ -192,11 +277,13 @@ const server = createServer((req, res) => {
     await acquire()
     const started = Date.now()
     try {
-      const text = await runClaude(render(body))
+      const rendered = render(body)
+      const text = await runClaude(rendered)
       const model = MODEL || body.model || 'claude-code'
       console.error(
         `[shim] ${model} ${Date.now() - started}ms ${text.length}B` +
           ` <- ${(body.messages || []).length} turn(s)` +
+          (rendered.images.length ? ` +${rendered.images.length} image(s)` : '') +
           ` [queued ${started - arrived}ms, ${active}/${LIMIT} busy, ${waiting.length} waiting]`,
       )
       send(

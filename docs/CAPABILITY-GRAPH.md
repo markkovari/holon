@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**197 components, 93 interfaces with a provider and at least one consumer, 422 import edges, 15 interfaces exported but unconsumed in-tree, 67 applications composed from them.**
+**205 components, 99 interfaces with a provider and at least one consumer, 431 import edges, 15 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -18,10 +18,10 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | consumers | interface | provider | who imports it |
 | --: | --- | --- | --- |
 | 51 | `records:store/store` | `record-store` | `academic-review-domain`, `arena-domain`, `billing-ledger`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `csv-report`, `dashboards-domain`, `dev-portal`, `doc-search-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `freight-tracker-domain`, `gate-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `jobs-domain`, `link-shortener`, `lms-domain`, `mesh-domain`, `mfa-authgate`, `moderation-domain`, `passkey-domain`, `paste-bin`, `payees-domain`, `photosocial-domain`, `platform-domain`, `poll-domain`, `pulse-domain`, `real-estate-escrow-domain`, `saga-domain`, `scribe-domain`, `search-domain`, `smart-home-domain`, `stash-domain`, `status-page`, `studio-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `triage-domain`, `upload-drop`, `vet-domain`, `webhook-relay` |
-| 35 | `auth:identity/types` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
-| 34 | `auth:identity/authorizer` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
+| 36 | `auth:identity/types` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
+| 35 | `auth:identity/authorizer` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
 | 28 | `auth:identity/session` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
-| 24 | `auth:identity/accounts` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
+| 25 | `auth:identity/accounts` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
 | 14 | `event:bus/bus` | `event-bus` | `abtest-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `eshop-payment`, `flags-domain`, `moderation-domain`, `pipeline-domain`, `pulse-domain`, `saga-domain`, `status-page`, `throttle-domain`, `track-domain`, `vet-domain` |
 | 13 | `id:generate/generator` | `id-generate` | `abtest-domain`, `arena-domain`, `clinic-domain`, `dev-portal`, `flags-domain`, `helpdesk-domain`, `link-shortener`, `pipeline-domain`, `poll-domain`, `pulse-domain`, `saga-domain`, `scribe-domain`, `throttle-domain` |
 | 10 | `auth:identity/rbac` | `auth-guard` | `accounts-app`, `booked-domain`, `dev-portal`, `helpdesk-domain`, `lms-domain`, `photosocial-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
@@ -68,12 +68,15 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 2 | `wit:reflect/inspector` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 1 | `ai:local/local` | `llm-local` | `local-ai-domain` |
 | 1 | `artifact:cache/store` | `artifact-cache` | `artifact-probe` |
+| 1 | `bytes:codec/codec` | `bytes-codec` | `codec-probe` |
 | 1 | `cache:store/sink` | `cache-backing` | `cache` |
 | 1 | `cache:store/source` | `cache-backing` | `cache` |
+| 1 | `card:identify/identifier` | `card-identify` | `binder-domain` |
 | 1 | `config:store/store` | `config-store` | `login-app` |
 | 1 | `contract:registry/registry` | `contract-registry` | `contract-probe` |
 | 1 | `crdt:merge/merger` | `crdt` | `scribe-domain` |
 | 1 | `cron:expr/parser` | `cron` | `jobs-domain` |
+| 1 | `deck:build/builder` | `deck-build` | `binder-domain` |
 | 1 | `demo:shape/pager` | `demo` | `demo-probe` |
 | 1 | `diff:text/differ` | `textdiff` | `scribe-domain` |
 | 1 | `durable:workflow/orchestrator` | `golem-bridge` | `jobs-domain` |
@@ -99,6 +102,8 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `os:fs/watcher` | `fs-watcher` | `fs-watcher-domain` |
 | 1 | `os:system/cron` | `system-cron` | `cron-scheduler-domain` |
 | 1 | `os:ui/notifications` | `ui-notifier` | `desktop-notifier-domain` |
+| 1 | `portfolio:value/valuation` | `portfolio-value` | `binder-domain` |
+| 1 | `price:history/history` | `price-history` | `binder-domain` |
 | 1 | `quiz:grade/grader` | `quiz-grade` | `lms-domain` |
 | 1 | `resilience:breaker/breaker` | `resilience` | `mesh-domain` |
 | 1 | `rrule:recur/recur` | `rrule` | `booked-domain` |
@@ -106,6 +111,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `vgit:store/objects` | `virt-git` | `vgit-probe` |
 | 1 | `vgit:store/refs` | `virt-git` | `vgit-probe` |
 | 1 | `vgit:store/worktree` | `virt-git` | `vgit-probe` |
+| 1 | `vision:describe/describer` | `anthropic-vision` | `binder-domain` |
 | 1 | `web:browser/automation` | `browser-automation` | `pdf-generator-domain` |
 | 1 | `webauthn:verify/verifier` | `webauthn` | `passkey-domain` |
 | 1 | `webhook:ingest/verifier` | `webhook-ingest` | `webhook-relay` |
@@ -120,16 +126,16 @@ graph LR
   records_store_store --> many_records_store_store["51 consumers"]
   auth_identity_types(["auth:identity/types"])
   auth_guard[auth-guard] --> auth_identity_types
-  auth_identity_types --> many_auth_identity_types["35 consumers"]
+  auth_identity_types --> many_auth_identity_types["36 consumers"]
   auth_identity_authorizer(["auth:identity/authorizer"])
   auth_guard[auth-guard] --> auth_identity_authorizer
-  auth_identity_authorizer --> many_auth_identity_authorizer["34 consumers"]
+  auth_identity_authorizer --> many_auth_identity_authorizer["35 consumers"]
   auth_identity_session(["auth:identity/session"])
   auth_guard[auth-guard] --> auth_identity_session
   auth_identity_session --> many_auth_identity_session["28 consumers"]
   auth_identity_accounts(["auth:identity/accounts"])
   auth_guard[auth-guard] --> auth_identity_accounts
-  auth_identity_accounts --> many_auth_identity_accounts["24 consumers"]
+  auth_identity_accounts --> many_auth_identity_accounts["25 consumers"]
   event_bus_bus(["event:bus/bus"])
   event_bus[event-bus] --> event_bus_bus
   event_bus_bus --> many_event_bus_bus["14 consumers"]
@@ -162,9 +168,9 @@ This is the number to look at before changing a component, and before deleting o
 | apps | component | which |
 | --: | --- | --- |
 | 45 | `record-store` | `academic-review`, `arena`, `authgate`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `drop`, `eshop`, `eshop-catalog`, `freight-tracker`, `gate`, `health-records`, `helpdesk`, `jobs`, `jobs-golem`, `ledger`, `lms`, `mesh`, `passkey`, `paste`, `payees`, `photosocial`, `platform`, `poll`, `portal`, `pulse`, `real-estate-escrow`, `relay`, `report`, `saga`, `scribe`, `search`, `shortlink`, `smart-home`, `stash`, `status`, `studio`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 29 | `rate-limiter` | `academic-review`, `auth-guard`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `ratelimit`, `real-estate-escrow`, `relay`, `shortlink`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 27 | `audit-log` | `academic-review`, `auth-guard`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `relay`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 25 | `auth-guard` | `academic-review`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 30 | `rate-limiter` | `academic-review`, `auth-guard`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `ratelimit`, `real-estate-escrow`, `relay`, `shortlink`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 28 | `audit-log` | `academic-review`, `auth-guard`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `relay`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 26 | `auth-guard` | `academic-review`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
 | 13 | `event-bus` | `abtest`, `eshop`, `eshop-catalog`, `flags`, `pipeline`, `pulse`, `ratelimit`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 12 | `id-generate` | `abtest`, `arena`, `flags`, `helpdesk`, `pipeline`, `poll`, `portal`, `pulse`, `ratelimit`, `saga`, `scribe`, `shortlink` |
 | 8 | `fsm-workflow` | `eshop`, `helpdesk`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
@@ -204,8 +210,11 @@ This is the number to look at before changing a component, and before deleting o
 | 2 | `metrics-collect` | `abtest`, `search` |
 | 2 | `proxy-route` | `eshop`, `mesh` |
 | 2 | `wit-reflect` | `platform`, `studio` |
+| 1 | `anthropic-vision` | `binder` |
+| 1 | `card-identify` | `binder` |
 | 1 | `config-store` | `login` |
 | 1 | `crdt` | `scribe` |
+| 1 | `deck-build` | `binder` |
 | 1 | `email-render` | `booked` |
 | 1 | `experiment-assign` | `abtest` |
 | 1 | `feature-flags` | `flags` |
@@ -215,6 +224,8 @@ This is the number to look at before changing a component, and before deleting o
 | 1 | `iot-scanner` | `device-radar` |
 | 1 | `jsonpatch` | `relay` |
 | 1 | `ledger` | `books` |
+| 1 | `portfolio-value` | `binder` |
+| 1 | `price-history` | `binder` |
 | 1 | `quiz-grade` | `lms` |
 | 1 | `resilience` | `mesh` |
 | 1 | `rrule` | `booked` |
@@ -237,6 +248,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **arena** | `arena-domain` | 2 | `arena_domain.composed.wasm` |
 | **auth-guard** | `auth-guard` | 2 | `auth_guard.composed.wasm` |
 | **authgate** | `mfa-authgate` | 5 | `mfa_authgate.composed.wasm` |
+| **binder** | `binder-domain` | 8 | `binder-domain.composed.wasm` |
 | **booked** | `booked-domain` | 8 | `booked_domain.composed.wasm` |
 | **books** | `books-domain` | 6 | `books_domain.composed.wasm` |
 | **buzz** | `buzz-domain` | 4 | `buzz_domain.composed.wasm` |
@@ -323,6 +335,10 @@ graph LR
   app_authgate["authgate"]
   app_authgate --> record_store([record-store])
   app_authgate --> secrets_vault([secrets-vault])
+  app_binder["binder"]
+  app_binder --> audit_log([audit-log])
+  app_binder --> auth_guard([auth-guard])
+  app_binder --> rate_limiter([rate-limiter])
   app_booked["booked"]
   app_booked --> audit_log([audit-log])
   app_booked --> auth_guard([auth-guard])
@@ -349,10 +365,6 @@ graph LR
   app_dashboards --> auth_guard([auth-guard])
   app_dashboards --> rate_limiter([rate-limiter])
   app_dashboards --> record_store([record-store])
-  app_device_radar["device-radar"]
-  app_device_radar --> audit_log([audit-log])
-  app_device_radar --> auth_guard([auth-guard])
-  app_device_radar --> rate_limiter([rate-limiter])
 ```
 
 

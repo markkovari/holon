@@ -1,0 +1,77 @@
+# Found by asking what the components already duplicate: FIVE had written base64 by
+# hand, in five different shapes — two encode-only, three decode-only, two URL-safe,
+# three standard, one reaching for a crate. None reusable by any other, and the one
+# in an authentication path is the one it matters most to get right.
+#
+# Thirteen tests in three groups. The weight is on the alphabets, because decoding
+# with the wrong table does not fail — it returns different bytes and reports nothing.
+title = "bytes:codec — base64 and hex, both alphabets, as a capability"
+
+text = """
+Implement `encode`, `decode`, `to_hex` and `from_hex` in
+components/bytes-codec/src/lib.rs. None of them is implemented.
+
+`tests/codec.rs` is the specification. You can read it and you may NOT edit it. Its
+base64 vectors are RFC 4648's own.
+
+The rule that decides this goal: THE TWO ALPHABETS ARE NOT INTERCHANGEABLE. Standard
+ends `+` and `/`; URL-safe ends `-` and `_`. Decoding one with the other's table does
+not fail — it produces different bytes and says nothing — so a character that is not
+in the requested alphabet must be REFUSED, not quietly accepted because the other
+table has it.
+
+Three more a first attempt gets wrong:
+
+  * URL-safe does not pad on the way OUT, and accepts padding on the way IN. `=` on
+    URL-safe text is wrong per the specification and unambiguous in practice, and a
+    decoder that refuses it fails on real tokens;
+  * padding belongs at the end and nowhere else — `Zg==Zg==` is two padded groups
+    glued together, not eight characters of base64;
+  * an orphan character is a truncated group. Five characters is one group of four
+    and one character that encodes no byte.
+
+Hex is lowercase out, either case in, zero-padded per byte.
+
+No dependencies. There is no base64 crate in this crate's manifest and adding one is
+not the goal — this exists so the repository stops hand-rolling it in five places.
+"""
+
+component = "bytes-codec"
+
+base_paths = [
+  "components/bytes-codec/",
+  "components/Cargo.toml",
+  "components/spec-gate.sh",
+]
+writable = ["components/bytes-codec/src/lib.rs"]
+context = ["components/bytes-codec/tests/codec.rs"]
+
+# THE goal: the alphabets, and refusing the wrong one.
+[[check]]
+id = "the-two-alphabets"
+weight = 3
+command = ["bash", "components/spec-gate.sh", "bytes-codec", "codec",
+  "the_two_alphabets_are_not_interchangeable",
+  "url_safe_does_not_pad",
+  "padding_is_optional_on_the_way_in",
+  "a_character_in_neither_alphabet_is_refused"]
+
+# The table itself, against the RFC.
+[[check]]
+id = "base64"
+weight = 2
+command = ["bash", "components/spec-gate.sh", "bytes-codec", "codec",
+  "the_rfc_vectors",
+  "every_byte_survives_a_round_trip",
+  "the_encoded_length_follows_the_input",
+  "an_orphan_character_is_refused",
+  "padding_in_the_middle_is_refused",
+  "empty_round_trips"]
+
+[[check]]
+id = "hex"
+weight = 1
+command = ["bash", "components/spec-gate.sh", "bytes-codec", "codec",
+  "hex_is_lowercase_out_and_either_case_in",
+  "hex_refuses_what_is_not_hex",
+  "every_byte_survives_hex"]
