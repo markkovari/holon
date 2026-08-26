@@ -18,6 +18,23 @@ The honest state of the engine is in [`docs/CURRENT.md`](../../docs/CURRENT.md)
 and [`docs/SCENARIOS.md`](../../docs/SCENARIOS.md); every goal here traces to a
 line in the "honestly missing" column of one of them.
 
+## The goals
+
+| # | goal | readiness |
+|---|---|---|
+| [01](01-fuel-is-money.md) | fuel is money | |
+| [02](02-drive-the-queue.md) | drive the queue | |
+| [03](03-diversity-beyond-seed.md) | diversity beyond seed | |
+| [04](04-the-base-moved.md) | the base moved | |
+| [05](05-become-holon.md) | become Holon | |
+| [06](06-a-two-part-goal.md) | a two-part goal | ✅ done; its gate is now vacuous |
+| [07](07-nothing-criticises-a-gate.md) | nothing criticises a gate | the one the loop is paused on |
+| [08](08-a-branch-reads-what-the-swarm-learned.md) | a branch reads what the swarm learned | |
+| [09](09-a-collection-that-prices-itself.md) | a collection that prices itself — a Pokémon TCG portfolio | 🟢 three agent-ready goals, 43 red tests |
+
+Each file carries its own tag and its `writable`/`check` block; the table is only
+so the list is visible without an `ls`.
+
 To run one, copy its `writable` and `checks` into a `.comp/goal.toml` and:
 
 ```bash

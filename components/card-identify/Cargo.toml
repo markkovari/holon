@@ -1,0 +1,9 @@
+[package]
+name = "card-identify"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The model answers in JSON; parsing it by hand would be the interesting kind of
+# bug. Already a workspace dependency, so this adds nothing to the tree.
+serde_json = { workspace = true }
