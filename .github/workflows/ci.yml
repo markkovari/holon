@@ -68,8 +68,11 @@ jobs:
       # The project's own entry point, not an approximation of it. CI that
       # builds differently from the repo is CI that answers a question nobody
       # asked.
+      # `force=1`: the incremental path keys on stamp markers under `target/`, and a
+      # cache restore can bring those back alongside artifacts it did not verify.
+      # CI is the one place that should always do the whole thing.
       - name: Build
-        run: just build
+        run: just build force=1
 
       - name: Test
         working-directory: components
