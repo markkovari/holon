@@ -12,6 +12,7 @@ artifact = "components/target/binder-domain.composed.wasm"
 # The port this app is run on locally, kept so a deployed app matches the
 # recipe. Omit it and one is derived from the name, stably.
 port = 3210
+static_dir = "examples/binder/dist"
 
 # sqlite: one file under the unit's StateDirectory, so state survives the
 # restarts `Restart=always` makes routine.
