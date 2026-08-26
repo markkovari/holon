@@ -7,6 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+guestio = { path = "../guestio" }
 wit-bindgen-rt = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

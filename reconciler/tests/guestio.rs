@@ -176,9 +176,33 @@ fn a_read_loop_tells_end_of_body_from_a_failed_read() {
 /// A `write_all` that loops on a constant would pass the test above while
 /// reintroducing the flush-per-4KB it was written to avoid — and one that forgets
 /// the `Ok(0)` case would spin instead of waiting.
+///
+/// Most components no longer write their own: `guestio::guest_write_all!()` expands
+/// it, and 49 byte-identical copies collapsed into that one definition. So the
+/// definition is checked FIRST and by name — without this, a file that stopped
+/// containing `fn write_all(` would simply stop being checked, and the guard would
+/// have lapsed at exactly the moment it became load-bearing for fifty crates.
 #[test]
 fn every_write_all_asks_the_stream_how_much_it_will_take() {
     let mut wrong = Vec::new();
+
+    let macro_src = repo_root().join("components/guestio/src/lib.rs");
+    match std::fs::read_to_string(&macro_src) {
+        Ok(text) => {
+            let body: String =
+                text.split("macro_rules! guest_write_all").nth(1).unwrap_or_default().chars().take(1600).collect();
+            if !body.contains("check_write") {
+                wrong.push("  components/guestio: the macro does not call check_write".to_string());
+            }
+            if !body.contains("subscribe") {
+                wrong.push("  components/guestio: the macro does not wait when the stream is full".to_string());
+            }
+        }
+        // Not "no macro, nothing to check": fifty components expand it, so its
+        // absence is a broken tree rather than a component that opted out.
+        Err(e) => wrong.push(format!("  components/guestio/src/lib.rs is unreadable ({e})")),
+    }
+
     for path in guest_sources() {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
         if !text.contains("fn write_all(") {

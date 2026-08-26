@@ -22,12 +22,13 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **anthropic-provider** | `anthropic:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `seed`, `cache_control`, `anthropic-api-key` | 174 KiB |
 | **artifact-cache** | `artifact:cache@0.1.0` | blob:store/blobstore, comp:store/cas, config/store, kv:store | `artifact-container`, `artifact-claim-secs` | 84 KiB |
 | **audit-log** | `audit:log@0.1.0` | kv:store | — | 119 KiB |
-| **auth-guard** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `session-ttl`, `password-min-len`, `jwks-cache-ttl`, `default-tenant`, `expected-issuer`, `expected-audience`, `allowed-algs`, `clock-skew`, `audit-enabled`, `hs256-secret` | 443 KiB |
+| **auth-guard** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `session-ttl`, `password-min-len`, `jwks-cache-ttl`, `default-tenant`, `expected-issuer`, `expected-audience`, `allowed-algs`, `clock-skew`, `audit-enabled`, `hs256-secret` | 444 KiB |
 | **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — |
 | **blob-store** | `blob:store@0.1.0` | kv:store | — | 74 KiB |
 | **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 75 KiB |
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 62 KiB |
 | **calc** | `demo:calc@0.1.0` | pure compute | — | 47 KiB |
+| **card-identify** | `card:identify@0.1.0` | pure compute | — | 142 KiB |
 | **checks-runner** | `checks:runner@0.1.0` | config/store, http/outgoing-handler | `checks-url` | 142 KiB |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB |
 | **console-assets** | `ui:assets@0.1.0` | pure compute | — | 408 KiB |
@@ -83,6 +84,8 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **photo-critic** | `demo:photocritic@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `anthropic-api-key` | 132 KiB |
 | **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 73 KiB |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 150 KiB |
+| **portfolio-value** | `portfolio:value@0.1.0` | pure compute | — | 77 KiB |
+| **price-history** | `price:history@0.1.0` | pure compute | — | 60 KiB |
 | **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes`, `content-type` | 102 KiB |
 | **qr** | `qr:encode@0.1.0` | pure compute | — | 76 KiB |
 | **quiz-grade** | `quiz:grade@0.1.0` | pure compute | — | 51 KiB |
@@ -124,8 +127,9 @@ A whole app, or a demo of one. Listed because it is in the tree and because its 
 | **accounts-app** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `authorization` | 129 KiB |
 | **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 162 KiB |
 | **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 122 KiB |
-| **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 178 KiB |
-| **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 210 KiB |
+| **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 179 KiB |
+| **binder-domain** | `binder:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, card:identify/identifier, deck:build/builder, portfolio:value/valuation, price:history/history, vision:describe/describer, kv:store | — | 335 KiB |
+| **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 211 KiB |
 | **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 205 KiB |
 | **budget-domain** | `holon:budget` | auth:identity/authorizer, kv:store | — | — |
 | **buzz-domain** | `buzz:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, records:store/store | — | 201 KiB |
@@ -174,10 +178,10 @@ A whole app, or a demo of one. Listed because it is in the tree and because its 
 | **sample-consumer** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `authorization` | 82 KiB |
 | **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 171 KiB |
 | **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 149 KiB |
-| **smart-home-domain** | `smart-home:smart-home` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 145 KiB |
-| **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 176 KiB |
-| **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 182 KiB |
-| **studio-domain** | `studio:app@0.1.0` | blob:store/blobstore, records:store/store, wit:reflect/composer, wit:reflect/inspector | — | 191 KiB |
+| **smart-home-domain** | `smart-home:smart-home` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB |
+| **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 177 KiB |
+| **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 183 KiB |
+| **studio-domain** | `studio:app@0.1.0` | blob:store/blobstore, records:store/store, wit:reflect/composer, wit:reflect/inspector | — | 192 KiB |
 | **support-desk-domain** | `support:desk@0.1.0` | ai:inference/inference, auth:identity/authorizer, auth:identity/session, auth:identity/types, notify:dispatch/dispatcher, outbox:dispatch/queue, quota:meter/meter, records:store/store, session:store/store, config/store | `target`, `subject`, `tenant`, `scopes`, `ticket`, `body`, `tickets`, `state`, `customer`, `reply-budget`, `reply-period-secs` | 170 KiB |
 | **tempo-domain** | `tempo:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, pdf:codec/codec, records:store/store | — | 248 KiB |
 | **throttle-domain** | `throttle:app@0.1.0` | event:bus/bus, id:generate/generator, quota:meter/meter, ratelimit:guard/limiter | — | 142 KiB |
