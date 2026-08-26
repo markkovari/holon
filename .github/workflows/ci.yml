@@ -121,6 +121,32 @@ jobs:
           cargo test --release
           --test capsearch --test contracts --test publish --test secrets
 
+  # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
+  # the run named after the file path, and the log is "log not found" — which is
+  # what `publish-components.yml` did on its first push, because an expression in a
+  # `workflow_dispatch` input default is not allowed and nothing said so.
+  #
+  # `actionlint` catches exactly that, in under a second.
+  workflows:
+    name: workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      # NOT `taiki-e/install-action`: it does not carry actionlint, falls back to
+      # cargo-binstall, and actionlint is a Go program with no crates.io package —
+      # so that path dies at "actionlint is not found" and the lint never runs.
+      # Go is preinstalled on this runner. Pinned, so a new release cannot turn
+      # this job red on a morning nobody touched a workflow.
+      - name: Install actionlint
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # shellcheck is preinstalled here and actionlint finds it on PATH, so this
+      # also lints every `run:` block — which is where the first real finding was.
+      - name: Lint every workflow
+        run: actionlint
+
   native:
     name: native workspaces
     runs-on: ubuntu-latest
