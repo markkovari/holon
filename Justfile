@@ -181,7 +181,7 @@ wit-check:
 #
 # To attempt one: `holon goal run` with that crate's goal spec. To see it fail on
 # purpose: `cargo test -p semver-range` in components/.
-GOAL_STUBS := "semver-range portfolio-value price-history"
+GOAL_STUBS := "semver-range"
 
 test:
     #!/usr/bin/env bash

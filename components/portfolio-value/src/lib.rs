@@ -32,6 +32,8 @@
 //! carried at COST and counted, so the caller can say "plus 340 cards not
 //! priced" instead of showing a number that pretends to be complete.
 
+use std::collections::{HashMap, VecDeque};
+
 /// A currency, ISO-4217, as it arrives — compared exactly, never converted.
 pub type Currency = String;
 
@@ -122,17 +124,132 @@ pub enum ValueError {
 /// What the collection is worth at `at`, over `events` priced by `quotes`.
 ///
 /// Events after `at` are ignored, so this is also how the history is walked.
-pub fn value_at(_events: &[Event], _quotes: &[Quote], _at: u64) -> Result<Valuation, ValueError> {
-    Err(ValueError::Empty)
+pub fn value_at(events: &[Event], quotes: &[Quote], at: u64) -> Result<Valuation, ValueError> {
+    if events.is_empty() {
+        return Err(ValueError::Empty);
+    }
+
+    let currency = events[0].currency.clone();
+    for e in events {
+        if e.quantity == 0 {
+            return Err(ValueError::ZeroQuantity { card_id: e.card_id.clone(), at: e.at });
+        }
+        if e.currency != currency {
+            return Err(ValueError::MixedCurrency { expected: currency, found: e.currency.clone() });
+        }
+    }
+
+    // Sorted by time, never trusted in the order given — a backfilled purchase
+    // must land where it happened, not where it was recorded.
+    let mut sorted: Vec<&Event> = events.iter().collect();
+    sorted.sort_by_key(|e| e.at);
+
+    let mut lots: HashMap<&str, VecDeque<(u32, i64)>> = HashMap::new();
+    let mut realised: i64 = 0;
+
+    for e in &sorted {
+        if e.at > at {
+            continue;
+        }
+        match e.kind {
+            EventKind::Acquired => {
+                lots.entry(&e.card_id).or_default().push_back((e.quantity, e.unit_minor));
+            }
+            EventKind::Disposed => {
+                let dq = lots.entry(&e.card_id).or_default();
+                let held: u32 = dq.iter().map(|(q, _)| *q).sum();
+                if held < e.quantity {
+                    return Err(ValueError::OversoldAt {
+                        card_id: e.card_id.clone(),
+                        at: e.at,
+                        held,
+                        disposed: e.quantity,
+                    });
+                }
+                let mut remaining = e.quantity;
+                let mut cost = 0i64;
+                while remaining > 0 {
+                    let (q, unit) = dq.front_mut().expect("held covers disposed");
+                    if *q <= remaining {
+                        cost += *q as i64 * *unit;
+                        remaining -= *q;
+                        dq.pop_front();
+                    } else {
+                        cost += remaining as i64 * *unit;
+                        *q -= remaining;
+                        remaining = 0;
+                    }
+                }
+                realised += e.quantity as i64 * e.unit_minor - cost;
+            }
+        }
+    }
+
+    let mut cost_basis = 0i64;
+    let mut market_value = 0i64;
+    let mut unquoted = 0u32;
+    for (card_id, dq) in &lots {
+        let held: u32 = dq.iter().map(|(q, _)| *q).sum();
+        if held == 0 {
+            continue;
+        }
+        let lot_cost: i64 = dq.iter().map(|(q, u)| *q as i64 * *u).sum();
+        cost_basis += lot_cost;
+
+        let best_quote = quotes
+            .iter()
+            .filter(|q| q.card_id == *card_id && q.at <= at && q.currency == currency)
+            .max_by_key(|q| q.at);
+
+        match best_quote {
+            Some(q) => market_value += held as i64 * q.unit_minor,
+            None => {
+                market_value += lot_cost;
+                unquoted += held;
+            }
+        }
+    }
+
+    Ok(Valuation {
+        cost_basis_minor: cost_basis,
+        market_value_minor: market_value,
+        unrealised_minor: market_value - cost_basis,
+        realised_minor: realised,
+        currency,
+        unquoted,
+    })
 }
 
 /// `value_at` sampled every `step` seconds over `from..=until`, for a chart.
 pub fn series(
-    _events: &[Event],
-    _quotes: &[Quote],
-    _from: u64,
-    _until: u64,
-    _step: u64,
+    events: &[Event],
+    quotes: &[Quote],
+    from: u64,
+    until: u64,
+    step: u64,
 ) -> Result<Vec<Point>, ValueError> {
-    Err(ValueError::ZeroStep)
+    if step == 0 {
+        return Err(ValueError::ZeroStep);
+    }
+
+    let mut points = Vec::new();
+    let mut t = from;
+    loop {
+        let v = value_at(events, quotes, t)?;
+        points.push(Point {
+            at: t,
+            market_value_minor: v.market_value_minor,
+            cost_basis_minor: v.cost_basis_minor,
+            realised_minor: v.realised_minor,
+            unquoted: v.unquoted,
+        });
+        if t >= until {
+            break;
+        }
+        t = t.saturating_add(step);
+        if t > until {
+            t = until;
+        }
+    }
+    Ok(points)
 }
