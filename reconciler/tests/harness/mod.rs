@@ -21,6 +21,17 @@ impl Drop for Kill {
     }
 }
 
+/// The last of a log file, for a panic message. Bounded, because a component that
+/// fails to instantiate can print a great deal and the useful part is the end.
+fn tail(path: &std::path::Path) -> String {
+    match std::fs::read_to_string(path) {
+        Ok(s) if s.trim().is_empty() => "  (it wrote nothing to stderr)".into(),
+        Ok(s) => s.lines().rev().take(40).collect::<Vec<_>>().into_iter().rev()
+            .map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n"),
+        Err(e) => format!("  (could not read its stderr: {e})"),
+    }
+}
+
 pub fn repo_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
@@ -80,18 +91,40 @@ impl Platform {
             .args(["--config", "applier-secret=s3cret"])
             .args(["--config", "ingress-suffix=sec.test"])
             .args(["--config", &format!("master-key={key}")]);
-        let child = Kill(cmd.stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+        // stderr to a FILE, not /dev/null. This used to be `Stdio::null()`, and the
+        // one thing the harness could then say about a failure was "the control
+        // plane never came up" — which is every cause at once: a crash on startup,
+        // a bad artifact, a port already taken, a key the vault refused. CI hit it
+        // and the log had nothing in it to act on.
+        let log_path = dir.path().join("control-plane.stderr");
+        let log = std::fs::File::create(&log_path).unwrap();
+        let child = Kill(cmd.stdout(Stdio::null()).stderr(log).spawn().unwrap());
 
         let http =
             reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().unwrap();
-        let me = Self { _dir: dir, _child: child, http, port };
-        for _ in 0..60 {
+        let mut me = Self { _dir: dir, _child: child, http, port };
+
+        // Generous, because this is the cold path: a fresh checkout has no
+        // `platform_domain.composed.wasm`, so the first caller composes it AND
+        // wasmtime compiles 2.8 MB of component before the socket opens. Locally
+        // that is about a second; on a loaded CI runner it is not, and the old
+        // fifteen-second budget was being spent rather than wasted.
+        let deadline = std::time::Instant::now() + Duration::from_secs(90);
+        while std::time::Instant::now() < deadline {
             if me.http.get(me.url("/")).send().is_ok() {
                 return me;
             }
+            // A process that has already exited is never going to answer, so say so
+            // now with its status rather than after the full budget.
+            if let Ok(Some(status)) = me._child.0.try_wait() {
+                panic!(
+                    "the control plane exited with {status} before serving:\n{}",
+                    tail(&log_path)
+                );
+            }
             std::thread::sleep(Duration::from_millis(250));
         }
-        panic!("the control plane never came up");
+        panic!("the control plane never came up within 90s:\n{}", tail(&log_path));
     }
 
     pub fn url(&self, path: &str) -> String {
