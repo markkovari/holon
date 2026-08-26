@@ -1,0 +1,107 @@
+// card:identify — read a vision model's description of a Pokémon card into typed
+// fields, and say which of them a person should check.
+//
+// The DETERMINISTIC half of photographing a card. The vision call itself is not in
+// this contract and is not in this component: a model call cannot be gated, and this
+// can. A provider does the looking (the shape `components/photo-critic` proves —
+// egress, key from the vault, an image block) and hands the answer here.
+//
+// The prompt is part of the contract, and that is the point of `prompt`: the shape
+// this parses and the shape the model is asked for are ONE decision, and a prompt
+// living in the provider is a second place to change it.
+package card:identify@0.1.0;
+
+/// A model's answer, into fields an app can store.
+interface identifier {
+    /// How the card is printed (its `printing`). Drives price more than anything except condition: a
+    /// reverse holo and a normal copy of one card are different markets.
+    enum variant-kind {
+        normal,
+        holo,
+        reverse-holo,
+        first-edition,
+        shadowless,
+        /// Full art, alt art, secret rare. Coarse on purpose — the fine
+        /// distinctions are set-specific and a photo often cannot settle them.
+        special,
+    }
+
+    /// Condition, on the scale the singles market uses.
+    enum condition {
+        mint,
+        near-mint,
+        lightly-played,
+        moderately-played,
+        heavily-played,
+        damaged,
+    }
+
+    /// A professional grade, when the card is in a slab.
+    record grade {
+        /// `PSA`, `BGS`, `CGC` — uppercased.
+        grader: string,
+        /// TENTHS, so BGS 9.5 is 95 and PSA 10 is 100. Integer, because the grade
+        /// is the whole basis of the price and a float here would round it.
+        tenths: u16,
+    }
+
+    /// What the model thought it saw.
+    ///
+    /// An empty string means NOT ESTABLISHED for every text field. There is no
+    /// sentinel and no default: a collection where three hundred cards silently say
+    /// "Near Mint" is worth an unknown amount of money, and no screen will ever show
+    /// you which three hundred.
+    record guess {
+        name: string,
+        /// As printed: `Obsidian Flames`.
+        set-name: string,
+        /// The lookup key, lowercased: `sv3`, `base1`, `sv3pt5`.
+        set-code: string,
+        /// Zero-padded to the set total when it is known: `058/165`. Bare when it is
+        /// not. Normalising is a lookup requirement, not inference — a price source
+        /// keyed on `058/165` finds nothing for `#58` — so it does not lower
+        /// confidence.
+        number: string,
+        rarity: string,
+        /// ISO-639-1, lowercased. Empty when nothing on the card settles it.
+        language: string,
+        printing: option<variant-kind>,
+        condition: option<condition>,
+        graded: option<grade>,
+        /// 0..=100, the model's own confidence in the identification.
+        confidence: u8,
+        /// Field names a person should check: sorted, no duplicates, every absent
+        /// field plus any the model flagged itself. The app's job is to ask; this
+        /// component's job is to know what to ask about.
+        needs-review: list<string>,
+    }
+
+    /// Why no guess could be made. Refusing IS a valid answer — the blank-card row
+    /// is how a collection quietly fills with garbage nobody deletes.
+    variant identify-error {
+        /// The model says there is no card in the picture.
+        no-card(string),
+        /// More than one card is visible, so the fields cannot describe either.
+        more-than-one-card,
+        /// The model declined, or answered with nothing usable.
+        refused(string),
+        /// No JSON object could be read out of the answer.
+        unparseable(string),
+        /// JSON with no name in it — the one field a person cannot review into
+        /// existence later without identifying the card themselves, which is the
+        /// thing they were avoiding.
+        no-name,
+    }
+
+    /// Read a vision model's answer: bare JSON, fenced, or with prose either side.
+    parse: func(answer: string) -> result<guess, identify-error>;
+
+    /// The prompt a vision provider should send. Lives here so it cannot drift from
+    /// the parser that reads its output.
+    prompt: func() -> string;
+}
+
+/// `card-identify` provides the parse; pure compute, no host imports.
+world card-identify {
+    export identifier;
+}

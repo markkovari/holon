@@ -1,4 +1,23 @@
 [package]
 name = "price-history"
-version = "0.1.0"
-edition = "2021"
+description = "Sparse quotes into a price series, carried never interpolated (price:history)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# `rlib` as well as `cdylib`, so `tests/` can still link the crate. The held-out
+# specification tests the pure core directly; the component is a thin mapping over
+# it, and testing through generated bindings would test wit-bindgen.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "price:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "price-history"

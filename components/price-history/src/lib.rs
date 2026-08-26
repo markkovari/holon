@@ -183,3 +183,90 @@ pub fn series(
     }
     Ok(points)
 }
+
+// ---- the component -----------------------------------------------------
+//
+// A mapping between the WIT types and the ones above, and nothing else: the logic is
+// judged by `tests/history.rs` against the plain functions, and a component that
+// re-derived any of it would be untested by its own specification.
+//
+// Gated on the target like `components/demo`: a `cdylib` carrying wit-bindgen's
+// exports does not link natively, and `cargo test` builds every crate-type before it
+// runs a test — so without this the held-out gate dies at the linker.
+
+#[cfg(target_arch = "wasm32")]
+#[allow(warnings)]
+mod bindings;
+
+#[cfg(target_arch = "wasm32")]
+use bindings::exports::price::history::history as w;
+
+#[cfg(target_arch = "wasm32")]
+struct Component;
+
+#[cfg(target_arch = "wasm32")]
+fn kind_in(k: w::QuoteKind) -> QuoteKind {
+    match k {
+        w::QuoteKind::Market => QuoteKind::Market,
+        w::QuoteKind::Low => QuoteKind::Low,
+        w::QuoteKind::High => QuoteKind::High,
+        w::QuoteKind::LastSold => QuoteKind::LastSold,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn quotes_in(qs: &[w::Quote]) -> Vec<Quote> {
+    qs.iter()
+        .map(|q| Quote {
+            unit_minor: q.unit_minor,
+            currency: q.currency.clone(),
+            kind: kind_in(q.kind),
+            source: q.source.clone(),
+            at: q.at,
+        })
+        .collect()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn err_out(e: PriceError) -> w::PriceError {
+    match e {
+        PriceError::NotYetPriced => w::PriceError::NotYetPriced,
+        PriceError::MixedCurrency { expected, found } => w::PriceError::MixedCurrency((expected, found)),
+        PriceError::ZeroStep => w::PriceError::ZeroStep,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl w::Guest for Component {
+    fn at(quotes: Vec<w::Quote>, kind: w::QuoteKind, at: u64) -> Result<w::Observed, w::PriceError> {
+        crate::at(&quotes_in(&quotes), kind_in(kind), at)
+            .map(|o| w::Observed {
+                unit_minor: o.unit_minor,
+                currency: o.currency,
+                source: o.source,
+                observed_at: o.observed_at,
+                age_seconds: o.age_seconds,
+                carried: o.carried,
+            })
+            .map_err(err_out)
+    }
+
+    fn series(
+        quotes: Vec<w::Quote>,
+        kind: w::QuoteKind,
+        since: u64,
+        until: u64,
+        step: u64,
+    ) -> Result<Vec<w::Point>, w::PriceError> {
+        crate::series(&quotes_in(&quotes), kind_in(kind), since, until, step)
+            .map(|ps| {
+                ps.into_iter()
+                    .map(|p| w::Point { at: p.at, unit_minor: p.unit_minor, carried: p.carried })
+                    .collect()
+            })
+            .map_err(err_out)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+bindings::export!(Component with_types_in bindings);

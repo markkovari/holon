@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**197 components, 93 interfaces with a provider and at least one consumer, 422 import edges, 15 interfaces exported but unconsumed in-tree, 67 applications composed from them.**
+**201 components, 96 interfaces with a provider and at least one consumer, 425 import edges, 15 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -70,6 +70,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `artifact:cache/store` | `artifact-cache` | `artifact-probe` |
 | 1 | `cache:store/sink` | `cache-backing` | `cache` |
 | 1 | `cache:store/source` | `cache-backing` | `cache` |
+| 1 | `card:identify/identifier` | `card-identify` | `binder-domain` |
 | 1 | `config:store/store` | `config-store` | `login-app` |
 | 1 | `contract:registry/registry` | `contract-registry` | `contract-probe` |
 | 1 | `crdt:merge/merger` | `crdt` | `scribe-domain` |
@@ -99,6 +100,8 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `os:fs/watcher` | `fs-watcher` | `fs-watcher-domain` |
 | 1 | `os:system/cron` | `system-cron` | `cron-scheduler-domain` |
 | 1 | `os:ui/notifications` | `ui-notifier` | `desktop-notifier-domain` |
+| 1 | `portfolio:value/valuation` | `portfolio-value` | `binder-domain` |
+| 1 | `price:history/history` | `price-history` | `binder-domain` |
 | 1 | `quiz:grade/grader` | `quiz-grade` | `lms-domain` |
 | 1 | `resilience:breaker/breaker` | `resilience` | `mesh-domain` |
 | 1 | `rrule:recur/recur` | `rrule` | `booked-domain` |
@@ -204,6 +207,7 @@ This is the number to look at before changing a component, and before deleting o
 | 2 | `metrics-collect` | `abtest`, `search` |
 | 2 | `proxy-route` | `eshop`, `mesh` |
 | 2 | `wit-reflect` | `platform`, `studio` |
+| 1 | `card-identify` | `binder` |
 | 1 | `config-store` | `login` |
 | 1 | `crdt` | `scribe` |
 | 1 | `email-render` | `booked` |
@@ -215,6 +219,8 @@ This is the number to look at before changing a component, and before deleting o
 | 1 | `iot-scanner` | `device-radar` |
 | 1 | `jsonpatch` | `relay` |
 | 1 | `ledger` | `books` |
+| 1 | `portfolio-value` | `binder` |
+| 1 | `price-history` | `binder` |
 | 1 | `quiz-grade` | `lms` |
 | 1 | `resilience` | `mesh` |
 | 1 | `rrule` | `booked` |
@@ -237,6 +243,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **arena** | `arena-domain` | 2 | `arena_domain.composed.wasm` |
 | **auth-guard** | `auth-guard` | 2 | `auth_guard.composed.wasm` |
 | **authgate** | `mfa-authgate` | 5 | `mfa_authgate.composed.wasm` |
+| **binder** | `binder-domain` | 3 | `binder-domain.composed.wasm` |
 | **booked** | `booked-domain` | 8 | `booked_domain.composed.wasm` |
 | **books** | `books-domain` | 6 | `books_domain.composed.wasm` |
 | **buzz** | `buzz-domain` | 4 | `buzz_domain.composed.wasm` |
@@ -323,6 +330,7 @@ graph LR
   app_authgate["authgate"]
   app_authgate --> record_store([record-store])
   app_authgate --> secrets_vault([secrets-vault])
+  app_binder["binder"]
   app_booked["booked"]
   app_booked --> audit_log([audit-log])
   app_booked --> auth_guard([auth-guard])
@@ -349,10 +357,6 @@ graph LR
   app_dashboards --> auth_guard([auth-guard])
   app_dashboards --> rate_limiter([rate-limiter])
   app_dashboards --> record_store([record-store])
-  app_device_radar["device-radar"]
-  app_device_radar --> audit_log([audit-log])
-  app_device_radar --> auth_guard([auth-guard])
-  app_device_radar --> rate_limiter([rate-limiter])
 ```
 
 

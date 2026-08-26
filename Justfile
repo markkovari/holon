@@ -9,6 +9,7 @@ wit_dir := "wit"
 components := "components"
 rel := components / "target/wasm32-wasip2/release"
 iot_scanner_composed := "components/target/iot-scanner.composed.wasm"
+binder_composed := "components/target/binder-domain.composed.wasm"
 device_radar_composed := "components/target/device-radar.composed.wasm"
 health_records_composed := "components/target/health-records.composed.wasm"
 freight_tracker_composed := "components/target/freight-tracker.composed.wasm"
@@ -1526,6 +1527,34 @@ host-track: compose-track
 # Track e2e: compose + build host + a Rust test driving all five axes — auth +
 # RBAC (admin creates a project, a member writes, a non-member is 403), issue
 # lifecycle over the fsm, full-text search, an SSE activity frame, the background
+# Compose binder-domain (docs/apps/BINDER.md — a Pokemon card binder) with the three
+# capabilities it imports: card:identify (a vision model's answer into typed fields),
+# price:history (what a card was worth, carried across gaps) and portfolio:value
+# (FIFO cost basis, realised and unrealised gain). Remaining imports are WASI.
+#
+# Derived from the component's own imports (ADR-0087) rather than a hand-written
+# `wac plug` line, so adding a capability to the world is the only edit needed.
+compose-binder: build
+    @just _derive binder-domain {{binder_composed}}
+
+# Run the binder on the native host. Bound to 0.0.0.0 on purpose: this is the app
+# you open from another machine on the tailnet, so `http://<this-host>:3210` works
+# without a tunnel. The store is in memory — restart it and the collection is gone,
+# which is the right default for something you are trying out.
+host-binder: compose-binder
+    cd host && cargo run --release --bin comp-host -- \
+      --app binder --component ../{{binder_composed}} --addr 0.0.0.0:3210
+
+# Binder e2e: a fenced model answer becomes a typed card; an incomplete one is
+# flagged rather than defaulted; a photo that is not a card is refused; and the
+# money is checked as ARITHMETIC — buy 2 @ 10.00, buy 1 @ 40.00, sell 1 @ 30.00
+# realises 20.00 under FIFO and 10.00 under average cost, so the assertion fails
+# for a plausible wrong answer rather than only for a broken one.
+e2e-binder: compose-binder
+    cd host && cargo build --release --bin comp-host
+    cd reconciler && cargo build --release --bin comp-plug
+    cd examples/binder && cargo test --release
+
 # stale-sweep tick, and the AI thread summary.
 e2e-track: compose-track
     cd host && cargo build --release --bin comp-host

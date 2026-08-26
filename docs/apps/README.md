@@ -17,6 +17,7 @@ built out of, ask the component rather than this table — `just plug-wiring
 | --- | --- | --- |
 | [ARENA](ARENA.md) | `arena` | a multiplayer game (authoritative, rule-enforced interactive state) |
 | [AUTHGATE](AUTHGATE.md) | `authgate` | TOTP two-factor enrollment + challenge-response login |
+| [BINDER](BINDER.md) | `binder` | a Pokémon card collection: photograph a card, correct what the AI got wrong, and watch what it is worth |
 | [BOOKED](BOOKED.md) | `booked` | a Calendly-lite booking service (no double-books) |
 | [BOOKS](BOOKS.md) | `books` | double-entry bookkeeping (the books always balance) |
 | [BUZZ](BUZZ.md) | `buzz` | a live multiplayer quiz game (Kahoot-style) |

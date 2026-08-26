@@ -207,6 +207,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "binder-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -301,6 +310,7 @@ name = "card-identify"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -1596,6 +1606,9 @@ dependencies = [
 [[package]]
 name = "portfolio-value"
 version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
 
 [[package]]
 name = "power-domain"
@@ -1617,6 +1630,9 @@ dependencies = [
 [[package]]
 name = "price-history"
 version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
 
 [[package]]
 name = "primeorder"

@@ -253,3 +253,127 @@ pub fn series(
     }
     Ok(points)
 }
+
+// ---- the component -----------------------------------------------------
+//
+// A thin mapping between the WIT types and the ones above, and nothing else. The
+// logic is not repeated here and must not be: `tests/valuation.rs` judges the plain
+// Rust functions, and a component that re-derived anything would be untested by the
+// suite that is supposed to be its specification.
+//
+// ADR-0095's rule is why this mapping exists at all rather than a shared crate:
+// components meet through WIT, so the price of reuse is a conversion at the edge.
+//
+// Gated on the target, the way `components/demo` already does it: a `cdylib` with
+// wit-bindgen's exports does not LINK natively, so `cargo test` — which builds every
+// crate-type before it runs a test — dies at the linker and the held-out gate cannot
+// run at all. Natively this crate is the plain functions the specification judges;
+// for wasm32 it is the whole component. Neither one's behaviour changes.
+
+#[cfg(target_arch = "wasm32")]
+#[allow(warnings)]
+mod bindings;
+
+#[cfg(target_arch = "wasm32")]
+use bindings::exports::portfolio::value::valuation as w;
+
+#[cfg(target_arch = "wasm32")]
+struct Component;
+
+#[cfg(target_arch = "wasm32")]
+impl From<&w::Event> for Event {
+    fn from(e: &w::Event) -> Self {
+        Event {
+            card_id: e.item_id.clone(),
+            kind: match e.kind {
+                w::EventKind::Acquired => EventKind::Acquired,
+                w::EventKind::Disposed => EventKind::Disposed,
+            },
+            quantity: e.quantity,
+            unit_minor: e.unit_minor,
+            currency: e.currency.clone(),
+            at: e.at,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<&w::Quote> for Quote {
+    fn from(q: &w::Quote) -> Self {
+        Quote {
+            card_id: q.item_id.clone(),
+            unit_minor: q.unit_minor,
+            currency: q.currency.clone(),
+            at: q.at,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<ValueError> for w::ValueError {
+    fn from(e: ValueError) -> Self {
+        match e {
+            ValueError::MixedCurrency { expected, found } => w::ValueError::MixedCurrency((expected, found)),
+            ValueError::OversoldAt { card_id, at, held, disposed } => {
+                w::ValueError::OversoldAt((card_id, at, held, disposed))
+            }
+            ValueError::ZeroQuantity { card_id, at } => w::ValueError::ZeroQuantity((card_id, at)),
+            ValueError::ZeroStep => w::ValueError::ZeroStep,
+            ValueError::Empty => w::ValueError::Empty,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl From<Valuation> for w::Valuation {
+    fn from(v: Valuation) -> Self {
+        w::Valuation {
+            cost_basis_minor: v.cost_basis_minor,
+            market_value_minor: v.market_value_minor,
+            unrealised_minor: v.unrealised_minor,
+            realised_minor: v.realised_minor,
+            currency: v.currency,
+            unquoted: v.unquoted,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl w::Guest for Component {
+    fn value_at(
+        events: Vec<w::Event>,
+        quotes: Vec<w::Quote>,
+        at: u64,
+    ) -> Result<w::Valuation, w::ValueError> {
+        let events: Vec<Event> = events.iter().map(Into::into).collect();
+        let quotes: Vec<Quote> = quotes.iter().map(Into::into).collect();
+        value_at(&events, &quotes, at).map(Into::into).map_err(Into::into)
+    }
+
+    fn series(
+        events: Vec<w::Event>,
+        quotes: Vec<w::Quote>,
+        since: u64,
+        until: u64,
+        step: u64,
+    ) -> Result<Vec<w::Point>, w::ValueError> {
+        let events: Vec<Event> = events.iter().map(Into::into).collect();
+        let quotes: Vec<Quote> = quotes.iter().map(Into::into).collect();
+        series(&events, &quotes, since, until, step)
+            .map(|ps| {
+                ps.into_iter()
+                    .map(|p| w::Point {
+                        at: p.at,
+                        market_value_minor: p.market_value_minor,
+                        cost_basis_minor: p.cost_basis_minor,
+                        realised_minor: p.realised_minor,
+                        unquoted: p.unquoted,
+                    })
+                    .collect()
+            })
+            .map_err(Into::into)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+bindings::export!(Component with_types_in bindings);

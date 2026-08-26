@@ -1,4 +1,23 @@
 [package]
 name = "portfolio-value"
-version = "0.1.0"
-edition = "2021"
+description = "What a collection is worth, its cost basis and its value series (portfolio:value)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# `rlib` as well as `cdylib`, so `tests/` can still link the crate. The held-out
+# specification tests the pure core directly; the component is a thin mapping over
+# it, and testing through generated bindings would test wit-bindgen.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "portfolio:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "portfolio-value"
