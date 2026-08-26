@@ -102,9 +102,13 @@ export function CardsPage({ store }: { store: Store }) {
       // EventSource cannot carry an Authorization header, so the stream is read as a
       // fetch and split on the blank line between SSE frames. Fewer moving parts than
       // a token in a query string, which would also put it in a server log.
-      const resp = await fetch(`/api${r.data.events}`, {
+      // `events` is already a complete path — prefixing `/api` again fetched
+      // `/api/api/...`, which 404s and leaves the upload looking like it hung.
+      const resp = await fetch(r.data.events, {
         headers: { authorization: `Bearer ${localStorage.getItem("binder-tok")}` },
       });
+      if (!resp.ok) { setPhotoErr(`the stream would not open (${resp.status})`); setBusy(false); return; }
+      let settled = false;
       const reader = resp.body!.getReader();
       const dec = new TextDecoder();
       let buf = "";
@@ -119,21 +123,31 @@ export function CardsPage({ store }: { store: Store }) {
           if (!line) continue;
           const ev = JSON.parse(line.slice(6));
           if (ev.stage === "done") {
+            settled = true;
             setStage(""); setPreview(""); await store.reload();
           } else if (ev.stage === "refused") {
+            settled = true;
             // What the model actually said — "that is a booster wrapper" is worth
             // showing the person holding the phone.
             setStage("");
             setPhotoErr(ev.said ? `${ev.error} — it said: ${ev.said}` : ev.error);
           } else if (ev.stage === "failed") {
-            setStage(""); setPhotoErr(ev.error);
+            settled = true;
+            setStage(""); setPreview(""); setPhotoErr(ev.error);
           } else {
             setStage(ev.detail ?? ev.stage);
           }
         }
       }
+      // A stream that ended without saying how is a failure, not a success. Left
+      // unsaid it looks like the upload hung: the preview stays and nothing moves.
+      if (!settled) {
+        setPreview("");
+        setPhotoErr("the stream ended before the model answered");
+      }
     } catch (e) {
       setPhotoErr(String(e));
+      setPreview("");
     } finally {
       setBusy(false);
       setStage("");
