@@ -118,6 +118,12 @@ said Near Mint, and when did that change" is a different question the row cannot
 answer, so every edit is appended with what the field was, what it became, and when.
 An unchanged field writes nothing.
 
+**The roster narrows by deck.** The collection is one list and a deck is a view of
+it, so `/cards` filters in place — `all 3 · fire 2 · spare 1 · in no deck 0` — with a
+live read on the chosen deck (size, legality, what finishing it costs) taken from the
+SAME route the deck page uses, so the two verdicts cannot disagree. Every deck name
+on a card links through to it.
+
 **A card belongs to many decks.** A deck is a list that refers to the collection, so
 building one does not take a card out of the binder — `GET /api/cards` reports
 `in_decks` per card, and deleting a deck deletes the list and nothing else.
