@@ -104,9 +104,51 @@ for (const [card_id, quantity, kind] of [
   await call("/api/decks/charizard%20ex/slots", "POST", { card_id, quantity, kind });
 }
 
+// --- a card to photograph ---------------------------------------------------
+//
+// Drawn here and screenshotted, rather than shipping a scan of a real card: the art
+// on a Pokémon card is somebody's, and a repository does not need a copy of it to
+// demonstrate that a model can read one. The fields the app cares about — name, set,
+// number, HP — are exactly what a photograph would show, which is the whole of what
+// `card:identify` reads.
+const CARD_MOCK = `<!doctype html><meta charset="utf-8"><style>
+  body { margin: 0; }
+  .card { width: 340px; height: 476px; border-radius: 16px; padding: 12px;
+          background: linear-gradient(160deg, #f7d84a, #e8b923); font: 14px/1.3 Helvetica, Arial, sans-serif;
+          box-sizing: border-box; color: #221c07; }
+  .inner { background: #fffdf2; border-radius: 8px; height: 100%; padding: 10px; box-sizing: border-box;
+           display: flex; flex-direction: column; border: 2px solid #cfa60d; }
+  .top { display: flex; align-items: baseline; }
+  .name { font-size: 21px; font-weight: 800; }
+  .hp { margin-left: auto; font-size: 17px; font-weight: 800; color: #b0161b; }
+  .art { flex: 1; margin: 8px 0; border: 3px solid #cfa60d; border-radius: 4px;
+         background: radial-gradient(circle at 50% 42%, #ffe98a, #f2c53d 62%, #d9a520);
+         display: grid; place-items: center; font-size: 74px; }
+  .box { border: 1px solid #d9c680; border-radius: 4px; padding: 7px; background: #fffbe8; }
+  .move { display: flex; align-items: baseline; font-weight: 700; }
+  .move .dmg { margin-left: auto; font-size: 19px; }
+  .txt { font-weight: 400; font-size: 11.5px; color: #4a412a; margin-top: 3px; }
+  .foot { display: flex; font-size: 11px; margin-top: 8px; color: #5b5232; }
+  .foot .no { margin-left: auto; font-weight: 700; }
+</style><div class="card"><div class="inner">
+  <div class="top"><span class="name">Pikachu</span><span class="hp">60 HP</span></div>
+  <div class="art">⚡</div>
+  <div class="box"><div class="move">Thunder Jolt <span class="dmg">30</span></div>
+    <div class="txt">Flip a coin. If tails, Pikachu does 10 damage to itself.</div></div>
+  <div class="foot"><span>Base Set · Common</span><span class="no">058/102</span></div>
+</div></div>`;
+
 // --- record -----------------------------------------------------------------
 
 const browser = await chromium.launch({ headless: true });
+// A throwaway context for the card mock, so the recording only holds the app.
+const ctx0 = await browser.newContext();
+const shotPage = await ctx0.newPage();
+await shotPage.setViewportSize({ width: 340, height: 476 });
+await shotPage.setContent(CARD_MOCK);
+const CARD_PNG = await shotPage.screenshot({ type: "png" });
+await shotPage.close();
+
 const ctx = await browser.newContext({
   viewport: { width: 1000, height: 720 },
   recordVideo: { dir: OUT, size: { width: 1000, height: 720 } },
@@ -144,9 +186,18 @@ try {
   await sleep(1200);
 
   await page.getByRole("link", { name: "Cards" }).click();
-  await sleep(2000);
-  await page.mouse.wheel(0, 320);
-  await sleep(1800);
+  await sleep(1600);
+
+  // The photograph. The upload answers immediately with a job and the stream says
+  // what is happening while the model looks — `looking`, then `reading`, then the
+  // card. That is the part worth seeing: nothing here is a spinner.
+  await page.setInputFiles('input[type="file"]', {
+    name: "pikachu.png", mimeType: "image/png", buffer: CARD_PNG,
+  });
+  // Long enough for a real vision call to finish and the row to appear.
+  await sleep(22000);
+  await page.mouse.wheel(0, 340);
+  await sleep(2200);
 
   await page.getByRole("link", { name: "Decks" }).click();
   await sleep(1400);

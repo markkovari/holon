@@ -2,6 +2,15 @@
 
 ![binder](../media/binder.gif)
 
+**The recording is the real app**, seeded through its own routes: hovering the chart
+for the numbers behind any day, switching the range (a server query, not a crop),
+turning series on and off, then photographing a card — the upload answers in 0.00s
+and the stream says `looking`, `reading`, and finally the row at the bottom of the
+collection: *Pikachu · Base Set · 058/102 · 70%*, with `check` on the two fields the
+model would not commit to. The card in it is drawn by the screencast, not scanned:
+the art on a real card is somebody's, and a repository does not need a copy of it to
+show that a model can read one.
+
 Photograph a card instead of typing it in. A vision model describes what it sees,
 `card:identify` turns that into typed fields and says which of them are still a
 guess, and you correct the ones it got wrong. From there it is a portfolio: what
