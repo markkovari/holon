@@ -279,6 +279,9 @@ dependencies = [
 [[package]]
 name = "bytes-codec"
 version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
 
 [[package]]
 name = "cache"
@@ -370,6 +373,15 @@ version = "0.1.0"
 dependencies = [
  "guestio",
  "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "codec-probe"
+version = "0.1.0"
+dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]

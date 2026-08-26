@@ -1,4 +1,22 @@
 [package]
 name = "bytes-codec"
-version = "0.1.0"
-edition = "2021"
+description = "base64 (both alphabets) and hex, so five components stop hand-rolling it (bytes:codec)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# See `components/demo`: the bindings are gated on wasm32 so `cargo test` can link
+# the crate for the held-out specification.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "bytes:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "bytes-codec"

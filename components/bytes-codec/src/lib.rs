@@ -204,3 +204,57 @@ pub fn from_hex(text: &str) -> Result<Vec<u8>, DecodeError> {
     }
     Ok(out)
 }
+
+// ---- the component -----------------------------------------------------
+//
+// A mapping between the WIT types and the ones above. `tests/codec.rs` judges the
+// plain functions; this adds no behaviour, which is the only way that specification
+// keeps covering what actually ships.
+
+#[cfg(target_arch = "wasm32")]
+#[allow(warnings)]
+mod bindings;
+
+#[cfg(target_arch = "wasm32")]
+use bindings::exports::bytes::codec::codec as w;
+
+#[cfg(target_arch = "wasm32")]
+struct Component;
+
+#[cfg(target_arch = "wasm32")]
+fn alphabet_in(a: w::Alphabet) -> Alphabet {
+    match a {
+        w::Alphabet::Standard => Alphabet::Standard,
+        w::Alphabet::UrlSafe => Alphabet::UrlSafe,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn err_out(e: DecodeError) -> w::DecodeError {
+    match e {
+        DecodeError::NotInAlphabet { at, found } => {
+            w::DecodeError::NotInAlphabet((at as u32, found.to_string()))
+        }
+        DecodeError::TruncatedGroup { length } => w::DecodeError::TruncatedGroup(length as u32),
+        DecodeError::MisplacedPadding { at } => w::DecodeError::MisplacedPadding(at as u32),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl w::Guest for Component {
+    fn encode(bytes: Vec<u8>, alphabet: w::Alphabet) -> String {
+        crate::encode(&bytes, alphabet_in(alphabet))
+    }
+    fn decode(text: String, alphabet: w::Alphabet) -> Result<Vec<u8>, w::DecodeError> {
+        crate::decode(&text, alphabet_in(alphabet)).map_err(err_out)
+    }
+    fn to_hex(bytes: Vec<u8>) -> String {
+        crate::to_hex(&bytes)
+    }
+    fn from_hex(text: String) -> Result<Vec<u8>, w::DecodeError> {
+        crate::from_hex(&text).map_err(err_out)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+bindings::export!(Component with_types_in bindings);

@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**197 components, 93 interfaces with a provider and at least one consumer, 422 import edges, 15 interfaces exported but unconsumed in-tree, 67 applications composed from them.**
+**205 components, 99 interfaces with a provider and at least one consumer, 431 import edges, 15 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -68,6 +68,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 2 | `wit:reflect/inspector` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 1 | `ai:local/local` | `llm-local` | `local-ai-domain` |
 | 1 | `artifact:cache/store` | `artifact-cache` | `artifact-probe` |
+| 1 | `bytes:codec/codec` | `bytes-codec` | `codec-probe` |
 | 1 | `cache:store/sink` | `cache-backing` | `cache` |
 | 1 | `cache:store/source` | `cache-backing` | `cache` |
 | 1 | `config:store/store` | `config-store` | `login-app` |
