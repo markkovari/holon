@@ -2929,3 +2929,39 @@ e2e-binder-poly-all:
     just e2e-binder-poly go price-history
     just e2e-binder-poly js price-history
     just e2e-binder-poly py price-history
+
+# Fetch ONE component from a registry, by name or by digest.
+#
+#     just pull portfolio-value-c
+#     just pull portfolio-value-c@sha256:…
+#     just pull price-history-py /tmp/ph.wasm      # second arg is the output path
+#
+# Why this exists: building every component now means five toolchains, one of them
+# a 200 MB wasi-sdk (docs/POLYGLOT.md), and `just fetch-components` reads GitHub
+# Actions artifacts — which expire after thirty days, need a green run for that
+# exact commit, and arrive as all 205 or none. This gets one, from bytes that do
+# not expire, and verifies the digest before writing the file.
+#
+# Anonymous by default. Set OCI_USER/OCI_PASSWORD for a private registry.
+pull name out="": (_cargo_bin "comp-oci")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    out="{{out}}"
+    [ -n "$out" ] || out="{{rel}}/$(echo "{{name}}" | sed 's/@.*//; s/:.*//' | tr - _).wasm"
+    ./reconciler/target/release/comp-oci pull "${OCI_REGISTRY:-ghcr.io/{{ghcr_owner}}/holon}" "{{name}}" -o "$out"
+
+# Push every built component to a registry, by digest. Needs OCI_USER/OCI_PASSWORD.
+#
+# CI does this from `.github/workflows/publish-components.yml`; this is the same
+# command for a local registry or a dry run against your own namespace.
+push-components registry="": (_cargo_bin "comp-oci")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    reg="{{registry}}"
+    [ -n "$reg" ] || reg="${OCI_REGISTRY:-ghcr.io/{{ghcr_owner}}/holon}"
+    ./reconciler/target/release/comp-oci push "$reg" "{{rel}}" --lock components.lock
+
+_cargo_bin bin:
+    @cd reconciler && cargo build --release --quiet --bin {{bin}}

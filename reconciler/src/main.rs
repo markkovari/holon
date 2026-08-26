@@ -682,6 +682,7 @@ async fn push_pass(args: &Args, http: &reqwest::Client, store: &dyn Artifacts) -
                 &bytes,
                 &strings(&row["exports"]),
                 &strings(&row["imports"]),
+                oci::Creds::from_env().as_ref(),
             )
             .await
             {
