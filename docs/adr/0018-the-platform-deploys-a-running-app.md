@@ -1,6 +1,6 @@
 # ADR-0018 — The platform deploys a running app, and what that took
 
-- **Status:** accepted
+- **Status:** historical — accepted, and still the record of the first end-to-end deploy, but every mechanism it proved (Kubernetes, the applier, rendered host pods) was replaced by [ADR-0021](0021-there-is-no-kubernetes.md) and [ADR-0022](0022-desired-state-is-a-manifest.md). The same claim was re-met on the lattice by [ADR-0025](0025-slice-one-on-the-lattice.md). Read it for the three bugs it found, not for how deployment works.
 - **Date:** 2026-07-28
 - **Confirms:** [ADR-0014](0014-an-application-owns-a-host.md), [ADR-0016](0016-deleting-an-app-is-reconciled-not-remembered.md), [ADR-0017](0017-the-applier-pushes-and-the-registry-is-a-cache.md)
 

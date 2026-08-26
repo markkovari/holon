@@ -1,6 +1,6 @@
 # ADR-0017 — The applier pushes, and the registry is a cache
 
-- **Status:** accepted
+- **Status:** superseded by [ADR-0022](0022-desired-state-is-a-manifest.md) — the push applier this ADR is about is gone from the tree; the reconciler pulls. What survives is the rule that the registry is a cache, restated as [ADR-0024](0024-artifacts-are-content-addressed.md).
 - **Date:** 2026-07-28
 - **Revises:** [ADR-0006](0006-artifacts-are-digest-pinned-oci.md) — durability and authentication, not digest pinning
 
