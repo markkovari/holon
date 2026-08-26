@@ -1626,61 +1626,6 @@ fetch-components ref="":
     echo "fetched $n component(s) from run $run into $out"
     echo "  they are the bytes that run tested; `just build` still rebuilds anything you edit."
 
-# Compose binder-domain (docs/apps/BINDER.md — a Pokemon card binder) with the three
-# capabilities it imports: card:identify (a vision model's answer into typed fields),
-# price:history (what a card was worth, carried across gaps) and portfolio:value
-# (FIFO cost basis, realised and unrealised gain). Remaining imports are WASI.
-#
-# Derived from the component's own imports (ADR-0087) rather than a hand-written
-# `wac plug` line, so adding a capability to the world is the only edit needed.
-compose-binder: build
-    @just _derive binder-domain {{binder_composed}}
-
-# Build the React + Vite SPA (router, recharts) to examples/binder/dist.
-build-binder-ui:
-    cd examples/binder/ui && npm ci && npm run build
-
-# Run the binder on the native host. Bound to 0.0.0.0 on purpose: this is the app
-# you open from another machine on the tailnet, so `http://<this-host>:3210` works
-# without a tunnel. The store is in memory — restart it and the collection is gone,
-# which is the right default for something you are trying out.
-host-binder: compose-binder build-binder-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app binder --component ../{{binder_composed}} --addr 0.0.0.0:3210 \
-      --config default-tenant=binder --static-dir ../examples/binder/dist \
-      --config vision:base-url=http://127.0.0.1:8787 \
-      --egress 127.0.0.1:8787 --allow-private-egress
-
-# The camera works with NO key in the tenant, because it goes through the shim.
-#
-# `host-binder` points `vision:base-url` at `tools/claude-shim.mjs`, which speaks the
-# same `/v1/messages` subset (images included) and runs on a subscription. So start
-# the shim first and the photo button works:
-#
-#     node tools/claude-shim.mjs &
-#     just host-binder
-#
-# Why this and not a granted secret: a single `comp-host` has no platform to fetch one
-# FROM (ADR-0051), and more to the point a tenant should not be holding an API key at
-# all. `components/anthropic-vision` requires one only when it is pointed at
-# `anthropic.com` — the interface a guest sees is identical either way, which is what
-# makes it a deploy-time choice.
-#
-# To use the metered API instead, point it back and grant the secret through a
-# deployment (`fixtures/photo-critic.yaml` is the shape):
-#
-#     --config vision:base-url=https://api.anthropic.com --egress api.anthropic.com
-
-# Binder e2e: a fenced model answer becomes a typed card; an incomplete one is
-# flagged rather than defaulted; a photo that is not a card is refused; and the
-# money is checked as ARITHMETIC — buy 2 @ 10.00, buy 1 @ 40.00, sell 1 @ 30.00
-# realises 20.00 under FIFO and 10.00 under average cost, so the assertion fails
-# for a plausible wrong answer rather than only for a broken one.
-e2e-binder: compose-binder
-    cd host && cargo build --release --bin comp-host
-    cd reconciler && cargo build --release --bin comp-plug
-    cd examples/binder && cargo test --release
-
 # stale-sweep tick, and the AI thread summary.
 e2e-track: compose-track
     cd host && cargo build --release --bin comp-host

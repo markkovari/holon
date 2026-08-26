@@ -14,7 +14,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 152005,
-    "wasm_sha256_12": "938fb676edce",
+    "wasm_sha256_12": "f6119a0a7e43",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -34,7 +34,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 149658,
-    "wasm_sha256_12": "e537ca57d81a",
+    "wasm_sha256_12": "6b4c78de14bd",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -106,8 +106,8 @@
       "graph:fitness/evaluator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 72240,
-    "wasm_sha256_12": "c3618377ba2a",
+    "wasm_size_bytes": 72064,
+    "wasm_sha256_12": "645b1e9da80f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -122,8 +122,8 @@
       "graph:agent/writer"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 115745,
-    "wasm_sha256_12": "b8fb0547b1f4",
+    "wasm_size_bytes": 115744,
+    "wasm_sha256_12": "bc81ab321bf8",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -190,31 +190,7 @@
       }
     ],
     "wasm_size_bytes": 180009,
-    "wasm_sha256_12": "aa3171b63c5e",
-    "reusable_as_is": true,
-    "unimplemented": false
-  },
-  {
-    "name": "anthropic-vision",
-    "package": "vision:describe@0.1.0",
-    "description": "`anthropic-vision` \u2014 show a model a picture and get back what it says, over Anthropic's Messages API",
-    "exports": [
-      "describer",
-      "describer"
-    ],
-    "capability_deps": [
-      "comp:secrets/reader",
-      "wasi:config/store",
-      "wasi:http/outgoing-handler"
-    ],
-    "config_keys": [
-      {
-        "name": "anthropic-api-key",
-        "description": ""
-      }
-    ],
-    "wasm_size_bytes": 131789,
-    "wasm_sha256_12": "ae7b3d94791f",
+    "wasm_sha256_12": "3c3658250bee",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -231,7 +207,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 166197,
-    "wasm_sha256_12": "cd5b5c77e7c4",
+    "wasm_sha256_12": "ecada045858c",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -275,7 +251,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 101228,
-    "wasm_sha256_12": "b522a361de89",
+    "wasm_sha256_12": "4bdd7c2e11e6",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -292,7 +268,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 122286,
-    "wasm_sha256_12": "433b48442fe5",
+    "wasm_sha256_12": "d23ba482fb16",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -365,8 +341,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 455680,
-    "wasm_sha256_12": "3e4dc099cede",
+    "wasm_size_bytes": 455689,
+    "wasm_sha256_12": "1405ec128c83",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -383,7 +359,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 125825,
-    "wasm_sha256_12": "e4e9e55ab4ea",
+    "wasm_sha256_12": "3e3a9a524abb",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -432,31 +408,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 183662,
-    "wasm_sha256_12": "41bce928d104",
-    "reusable_as_is": false,
-    "unimplemented": false
-  },
-  {
-    "name": "binder-domain",
-    "package": "binder:app@0.1.0",
-    "description": "`binder-domain` \u2014 keep a Pok\u00e9mon card collection: scan a photo into fields, record what you paid, and see what it is worth",
-    "exports": [
-      "wasi:http/incoming-handler@0.2.0"
-    ],
-    "capability_deps": [
-      "auth:identity/accounts",
-      "auth:identity/authorizer",
-      "auth:identity/types",
-      "card:identify/identifier",
-      "deck:build/builder",
-      "portfolio:value/valuation",
-      "price:history/history",
-      "vision:describe/describer",
-      "wasi:keyvalue/store"
-    ],
-    "config_keys": [],
-    "wasm_size_bytes": 343975,
-    "wasm_sha256_12": "252110d6c6a7",
+    "wasm_sha256_12": "b6825565dee4",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -497,7 +449,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 216540,
-    "wasm_sha256_12": "d04fe4f87c9e",
+    "wasm_sha256_12": "eae0baa55bf1",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -520,7 +472,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 210210,
-    "wasm_sha256_12": "cc680b21b6d3",
+    "wasm_sha256_12": "6820d7340ac4",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -574,7 +526,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 206281,
-    "wasm_sha256_12": "6a629a220b36",
+    "wasm_sha256_12": "5d34e7b2ac13",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -587,8 +539,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 64919,
-    "wasm_sha256_12": "089918bf3752",
+    "wasm_size_bytes": 64964,
+    "wasm_sha256_12": "b89f6f3eec12",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -640,20 +592,6 @@
     "unimplemented": false
   },
   {
-    "name": "card-identify",
-    "package": "card:identify@0.1.0",
-    "description": "`card-identify` \u2014 read a photo of a Pok\u00e9mon card into its name, set, number and condition, and say which parts are a guess",
-    "exports": [
-      "identifier"
-    ],
-    "capability_deps": [],
-    "config_keys": [],
-    "wasm_size_bytes": 146464,
-    "wasm_sha256_12": "8c2d73f9650a",
-    "reusable_as_is": true,
-    "unimplemented": false
-  },
-  {
     "name": "checks-runner",
     "package": "checks:runner@0.1.0",
     "description": "`checks-runner` \u2014 `graph:fitness` over the native check runner",
@@ -671,7 +609,7 @@
       }
     ],
     "wasm_size_bytes": 146450,
-    "wasm_sha256_12": "de4f7d9c4540",
+    "wasm_sha256_12": "cb22ca974978",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -693,7 +631,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 203573,
-    "wasm_sha256_12": "4cd83680e5b8",
+    "wasm_sha256_12": "2a5d026942e0",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -714,7 +652,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91632,
-    "wasm_sha256_12": "428b66bfaa63",
+    "wasm_sha256_12": "fae9d8d47f3d",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -729,8 +667,8 @@
       "bytes:codec/codec"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 89268,
-    "wasm_sha256_12": "00afa6d5933d",
+    "wasm_size_bytes": 92474,
+    "wasm_sha256_12": "f5e493a5fceb",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -750,7 +688,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 232323,
-    "wasm_sha256_12": "a81d71035b4f",
+    "wasm_sha256_12": "aeee34fe0348",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -809,7 +747,7 @@
       }
     ],
     "wasm_size_bytes": 181197,
-    "wasm_sha256_12": "6d0eaa3599ce",
+    "wasm_sha256_12": "6daecb1b63c4",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -855,7 +793,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 128070,
-    "wasm_sha256_12": "291ee01064b4",
+    "wasm_sha256_12": "5aef076e5054",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -878,7 +816,7 @@
       }
     ],
     "wasm_size_bytes": 176647,
-    "wasm_sha256_12": "7c9451d38594",
+    "wasm_sha256_12": "e09b7175d27f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -892,7 +830,7 @@
     "capability_deps": [],
     "config_keys": [],
     "wasm_size_bytes": 215200,
-    "wasm_sha256_12": "71f6f7be4219",
+    "wasm_sha256_12": "426dd9e90ac2",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -927,7 +865,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91575,
-    "wasm_sha256_12": "22440c355afb",
+    "wasm_sha256_12": "b6a6b670cc6c",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -960,7 +898,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 171928,
-    "wasm_sha256_12": "5fe6beea406b",
+    "wasm_sha256_12": "3eb995780eae",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -982,22 +920,8 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 194218,
-    "wasm_sha256_12": "dbd00ec1ad3f",
+    "wasm_sha256_12": "1178cdc8572e",
     "reusable_as_is": false,
-    "unimplemented": false
-  },
-  {
-    "name": "deck-build",
-    "package": "deck:build@0.1.0",
-    "description": "`deck-build` \u2014 is this deck legal to play, and what is missing from your collection to build it",
-    "exports": [
-      "builder"
-    ],
-    "capability_deps": [],
-    "config_keys": [],
-    "wasm_size_bytes": 77107,
-    "wasm_sha256_12": "4a56781d1be9",
-    "reusable_as_is": true,
     "unimplemented": false
   },
   {
@@ -1061,7 +985,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91726,
-    "wasm_sha256_12": "bca6266221ca",
+    "wasm_sha256_12": "389e89df9892",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1088,7 +1012,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 219904,
-    "wasm_sha256_12": "8d1c00ff6807",
+    "wasm_sha256_12": "ad5fe46c09a3",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1109,7 +1033,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 137337,
-    "wasm_sha256_12": "3c44527f88ab",
+    "wasm_sha256_12": "fff578a3f006",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1199,7 +1123,7 @@
       }
     ],
     "wasm_size_bytes": 170265,
-    "wasm_sha256_12": "dea51e811ec2",
+    "wasm_sha256_12": "2d9e3d073fe3",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1220,7 +1144,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91607,
-    "wasm_sha256_12": "c70e03424b9d",
+    "wasm_sha256_12": "5f815ef43a97",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1236,7 +1160,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 123629,
-    "wasm_sha256_12": "430bec94fbe2",
+    "wasm_sha256_12": "ce2f6bd3ae35",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1271,7 +1195,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 173426,
-    "wasm_sha256_12": "787621164e75",
+    "wasm_sha256_12": "4f03838d6c17",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1289,7 +1213,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 173216,
-    "wasm_sha256_12": "ded2b1e46a85",
+    "wasm_sha256_12": "8aa26b2edb7a",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1336,7 +1260,7 @@
       }
     ],
     "wasm_size_bytes": 193298,
-    "wasm_sha256_12": "1e2b9bde6963",
+    "wasm_sha256_12": "a38bd606f728",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1358,7 +1282,7 @@
       }
     ],
     "wasm_size_bytes": 109737,
-    "wasm_sha256_12": "cc710986b32a",
+    "wasm_sha256_12": "4946d57a8e49",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1458,7 +1382,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 116754,
-    "wasm_sha256_12": "b64590001208",
+    "wasm_sha256_12": "bca37688363f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1476,7 +1400,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 145057,
-    "wasm_sha256_12": "40c5dc3c0af2",
+    "wasm_sha256_12": "c5ca6d45c069",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1491,8 +1415,8 @@
       "git:forge/repo"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 114967,
-    "wasm_sha256_12": "f50c2bbee48c",
+    "wasm_size_bytes": 114966,
+    "wasm_sha256_12": "5aece33719b5",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1512,7 +1436,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 149674,
-    "wasm_sha256_12": "ca6540ab9b68",
+    "wasm_sha256_12": "f0566d97ca90",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1555,7 +1479,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 101845,
-    "wasm_sha256_12": "37bad71ac614",
+    "wasm_sha256_12": "fb9ff1eb3096",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1590,7 +1514,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 159806,
-    "wasm_sha256_12": "9c83157d9c64",
+    "wasm_sha256_12": "c1c362d434f5",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1639,7 +1563,7 @@
       }
     ],
     "wasm_size_bytes": 162762,
-    "wasm_sha256_12": "cc98c862c370",
+    "wasm_sha256_12": "2d770f042543",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1729,7 +1653,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 107146,
-    "wasm_sha256_12": "4e49db1d2d41",
+    "wasm_sha256_12": "57dc0d17b9e3",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1749,7 +1673,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 149657,
-    "wasm_sha256_12": "fd9f1d9bd451",
+    "wasm_sha256_12": "50c8ce17209f",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1773,7 +1697,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 203918,
-    "wasm_sha256_12": "b9a735c23347",
+    "wasm_sha256_12": "7dc03b541b85",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1894,7 +1818,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91715,
-    "wasm_sha256_12": "b0046751a49a",
+    "wasm_sha256_12": "f3cecd95c332",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1908,7 +1832,7 @@
     "capability_deps": [],
     "config_keys": [],
     "wasm_size_bytes": 78489,
-    "wasm_sha256_12": "2ccb622db0ba",
+    "wasm_sha256_12": "0a48e10077a5",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1924,7 +1848,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 172238,
-    "wasm_sha256_12": "c765a823dcd3",
+    "wasm_sha256_12": "238177075303",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2010,7 +1934,7 @@
       }
     ],
     "wasm_size_bytes": 169556,
-    "wasm_sha256_12": "c16912a6f273",
+    "wasm_sha256_12": "4fc6f99fc360",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2026,7 +1950,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 83315,
-    "wasm_sha256_12": "dadf7caef60c",
+    "wasm_sha256_12": "baf4e1330561",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2046,7 +1970,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 176074,
-    "wasm_sha256_12": "daa1a0574bfb",
+    "wasm_sha256_12": "d2326f6dfd9f",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2060,7 +1984,7 @@
     "capability_deps": [],
     "config_keys": [],
     "wasm_size_bytes": 121292,
-    "wasm_sha256_12": "af2981416189",
+    "wasm_sha256_12": "57f92e43c4cc",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2099,7 +2023,7 @@
       }
     ],
     "wasm_size_bytes": 167035,
-    "wasm_sha256_12": "acb4ddb07f65",
+    "wasm_sha256_12": "f10d9a90f4ad",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2170,7 +2094,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91568,
-    "wasm_sha256_12": "927ee45101ff",
+    "wasm_sha256_12": "28a7f9eabb41",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2206,7 +2130,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 157133,
-    "wasm_sha256_12": "287b08fb31c5",
+    "wasm_sha256_12": "50a0a2328943",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2274,7 +2198,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 231561,
-    "wasm_sha256_12": "11318a2ed56e",
+    "wasm_sha256_12": "4ca85aad12cc",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2295,7 +2219,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91620,
-    "wasm_sha256_12": "a586896881f0",
+    "wasm_sha256_12": "12d3950afad3",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2365,7 +2289,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91631,
-    "wasm_sha256_12": "1130a3f4b913",
+    "wasm_sha256_12": "0b8018a0e1e4",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2414,7 +2338,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 162387,
-    "wasm_sha256_12": "910b210f3bac",
+    "wasm_sha256_12": "d626eb7d44a1",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2451,7 +2375,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 171017,
-    "wasm_sha256_12": "102036d55c48",
+    "wasm_sha256_12": "3bf9e13633e2",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2472,7 +2396,7 @@
       }
     ],
     "wasm_size_bytes": 78655,
-    "wasm_sha256_12": "615824599276",
+    "wasm_sha256_12": "ad1f781c5306",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2501,7 +2425,7 @@
       }
     ],
     "wasm_size_bytes": 118327,
-    "wasm_sha256_12": "1004f4ba48fb",
+    "wasm_sha256_12": "71b6e5d53d34",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2590,7 +2514,7 @@
       }
     ],
     "wasm_size_bytes": 181051,
-    "wasm_sha256_12": "70484cf397d8",
+    "wasm_sha256_12": "458b08b04b90",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2656,7 +2580,7 @@
       }
     ],
     "wasm_size_bytes": 178117,
-    "wasm_sha256_12": "f55da68b9dbf",
+    "wasm_sha256_12": "5460550cddf0",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2771,7 +2695,7 @@
       }
     ],
     "wasm_size_bytes": 199811,
-    "wasm_sha256_12": "2604932f2e1f",
+    "wasm_sha256_12": "e2014b37c73a",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2791,7 +2715,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 149647,
-    "wasm_sha256_12": "b7d70bdac163",
+    "wasm_sha256_12": "e3012b3b77d1",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2813,7 +2737,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 168670,
-    "wasm_sha256_12": "801f235b195b",
+    "wasm_sha256_12": "cccd583f4cfb",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2848,7 +2772,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91722,
-    "wasm_sha256_12": "b1be17bda9df",
+    "wasm_sha256_12": "c14751b17791",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2871,7 +2795,7 @@
       }
     ],
     "wasm_size_bytes": 135965,
-    "wasm_sha256_12": "2c3cc2afe80a",
+    "wasm_sha256_12": "81f20d6799aa",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2893,7 +2817,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 268766,
-    "wasm_sha256_12": "c59f8c5dab28",
+    "wasm_sha256_12": "5097363ea6b4",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2925,7 +2849,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 143851,
-    "wasm_sha256_12": "8188d3f56cd8",
+    "wasm_sha256_12": "d48c7848ade7",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3042,8 +2966,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 578417,
-    "wasm_sha256_12": "ca7f512a8d83",
+    "wasm_size_bytes": 578396,
+    "wasm_sha256_12": "23e76cf5c30a",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3059,7 +2983,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 154532,
-    "wasm_sha256_12": "c922896b1123",
+    "wasm_sha256_12": "94560a33c48a",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3078,22 +3002,8 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 142912,
-    "wasm_sha256_12": "bca0b6c3b867",
+    "wasm_sha256_12": "577ec70d383a",
     "reusable_as_is": false,
-    "unimplemented": false
-  },
-  {
-    "name": "portfolio-value",
-    "package": "portfolio:value@0.1.0",
-    "description": "`portfolio-value` \u2014 what a collection is worth now, what it cost, and what selling has already made",
-    "exports": [
-      "valuation"
-    ],
-    "capability_deps": [],
-    "config_keys": [],
-    "wasm_size_bytes": 79045,
-    "wasm_sha256_12": "16f527a66d55",
-    "reusable_as_is": true,
     "unimplemented": false
   },
   {
@@ -3112,20 +3022,6 @@
     "wasm_size_bytes": 85936,
     "wasm_sha256_12": "8350d171db8a",
     "reusable_as_is": false,
-    "unimplemented": false
-  },
-  {
-    "name": "price-history",
-    "package": "price:history@0.1.0",
-    "description": "`price-history` \u2014 what a card sold for over time, from quotes that arrive late, out of order and in gaps",
-    "exports": [
-      "history"
-    ],
-    "capability_deps": [],
-    "config_keys": [],
-    "wasm_size_bytes": 62478,
-    "wasm_sha256_12": "5937236a0cd9",
-    "reusable_as_is": true,
     "unimplemented": false
   },
   {
@@ -3168,7 +3064,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 155998,
-    "wasm_sha256_12": "b9bc8330ec0b",
+    "wasm_sha256_12": "31906a3d333c",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3260,7 +3156,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 149693,
-    "wasm_sha256_12": "c34ebf7d7c86",
+    "wasm_sha256_12": "e31a1b3e5411",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3278,7 +3174,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 212375,
-    "wasm_sha256_12": "26a846ee7fcd",
+    "wasm_sha256_12": "7329c24202e8",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3369,7 +3265,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 191348,
-    "wasm_sha256_12": "2d0b5558d262",
+    "wasm_sha256_12": "3e893e12a866",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3443,7 +3339,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 176114,
-    "wasm_sha256_12": "889b6e3a25fe",
+    "wasm_sha256_12": "08be83429dd6",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3464,7 +3360,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 153603,
-    "wasm_sha256_12": "de4e27c6743c",
+    "wasm_sha256_12": "61448e8ab4bd",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3534,7 +3430,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 119594,
-    "wasm_sha256_12": "6b20dff47f9d",
+    "wasm_sha256_12": "adca89251605",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3620,7 +3516,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 149637,
-    "wasm_sha256_12": "b41eb76e2cae",
+    "wasm_sha256_12": "379b725eb988",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3643,7 +3539,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 181407,
-    "wasm_sha256_12": "495be3136aaa",
+    "wasm_sha256_12": "115dd25f3573",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3678,7 +3574,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 187640,
-    "wasm_sha256_12": "1229f1c5c50b",
+    "wasm_sha256_12": "4d19b41fc7b6",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3697,7 +3593,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 196686,
-    "wasm_sha256_12": "565667d0f5ee",
+    "wasm_sha256_12": "84751d9549b9",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3767,7 +3663,7 @@
       }
     ],
     "wasm_size_bytes": 175002,
-    "wasm_sha256_12": "8e639f932b98",
+    "wasm_sha256_12": "f15e1f83c08c",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3817,7 +3713,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 255084,
-    "wasm_sha256_12": "c8cd4076012a",
+    "wasm_sha256_12": "98d10ea645fc",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3850,7 +3746,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 146527,
-    "wasm_sha256_12": "6deefd1f1d85",
+    "wasm_sha256_12": "1d755297b286",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3895,7 +3791,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 253204,
-    "wasm_sha256_12": "30695c432fad",
+    "wasm_sha256_12": "96c1ba217d89",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -3917,7 +3813,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 189739,
-    "wasm_sha256_12": "ffbe763af835",
+    "wasm_sha256_12": "bea48f85b75f",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4002,7 +3898,7 @@
       }
     ],
     "wasm_size_bytes": 197204,
-    "wasm_sha256_12": "0a7a603e00df",
+    "wasm_sha256_12": "695b291043c1",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4027,7 +3923,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 160235,
-    "wasm_sha256_12": "e86422f5b4ca",
+    "wasm_sha256_12": "b7e8021bb526",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4047,7 +3943,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 192334,
-    "wasm_sha256_12": "47f83f72874c",
+    "wasm_sha256_12": "d8325f3ea325",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4080,7 +3976,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 149836,
-    "wasm_sha256_12": "34f891d7e809",
+    "wasm_sha256_12": "a1c0d1d728bb",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -4127,7 +4023,7 @@
     "capability_deps": [],
     "config_keys": [],
     "wasm_size_bytes": 102773,
-    "wasm_sha256_12": "ab4909f415b8",
+    "wasm_sha256_12": "45aca8856de0",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -4190,7 +4086,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 299232,
-    "wasm_sha256_12": "063a4bf29061",
+    "wasm_sha256_12": "0f5e654dc112",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4207,8 +4103,8 @@
       "vgit:store/worktree"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 128896,
-    "wasm_sha256_12": "3665e57f62cf",
+    "wasm_size_bytes": 128895,
+    "wasm_sha256_12": "d38e85b0785f",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -4243,7 +4139,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91724,
-    "wasm_sha256_12": "18e150eba1e3",
+    "wasm_sha256_12": "5177f9ce4d42",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4289,7 +4185,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 91631,
-    "wasm_sha256_12": "238c52537ae4",
+    "wasm_sha256_12": "624a6f856f5c",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4317,7 +4213,7 @@
     "capability_deps": [],
     "config_keys": [],
     "wasm_size_bytes": 197577,
-    "wasm_sha256_12": "1f3af8fb81d5",
+    "wasm_sha256_12": "0e8b9a5be4fd",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -4360,7 +4256,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 181658,
-    "wasm_sha256_12": "bf04616f1e6a",
+    "wasm_sha256_12": "201ed3ede0e1",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -4388,8 +4284,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 1099945,
-    "wasm_sha256_12": "2501652f4e59",
+    "wasm_size_bytes": 1097012,
+    "wasm_sha256_12": "5665d15b57ff",
     "reusable_as_is": true,
     "unimplemented": false
   },
