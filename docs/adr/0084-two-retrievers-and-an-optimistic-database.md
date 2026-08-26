@@ -4,6 +4,8 @@
 happens, how duplicated work is skipped, and what 20-way concurrency on one hot
 key actually does.*
 
+**Status:** accepted, and built — slice one of three. Nine scenarios and a five-component composed e2e pass; retrieval into a branch's prompt (slices two and three) is not wired.
+
 ## The gap this closes
 
 ADR-0080 gave the loop a place to remember. ADR-0081 designed what should be
