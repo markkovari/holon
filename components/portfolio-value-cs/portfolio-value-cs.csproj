@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>wasi-wasm</RuntimeIdentifier>
+    <!-- LIBRARY mode, not Exe. `ManagedToNativeGenerator` only emits the
+         native-to-managed thunks for `[UnmanagedCallersOnly]` methods when
+         IsLibraryMode is set (WasmApp.Common.targets:779) — without it the
+         generated interop compiles fine and the exports are simply absent from
+         the module, and the link fails with "failed to find export of interface
+         portfolio:value/valuation@0.1.0 function value-at". The wasi SDK only
+         sets it for the browser SDK, so it is forced here. -->
+    <OutputType>Exe</OutputType>
+    <_IsLibraryMode>true</_IsLibraryMode>
+    <!-- mono only emits the native-to-interp thunks an [UnmanagedCallersOnly]
+         export needs when the assembly is AOT-compiled. -->
+    <RunAOTCompilation>true</RunAOTCompilation>
+    <WasmNativeStrip>false</WasmNativeStrip>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <PublishTrimmed>true</PublishTrimmed>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <WasmSingleFileBundle>true</WasmSingleFileBundle>
+    <!-- The world the generated interop was produced for. -->
+    <WasmComponent>true</WasmComponent>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The .NET wasi-wasm SDK hard-codes its OWN world into the link
+         (`WasiHttpWorld_component_type.wit`, WasiApp.targets:417) with no property
+         to override it, so without this the artifact is a `wasi:cli/run` command
+         and `portfolio:value/valuation` is nowhere in it. `LinkerArg` is appended
+         AFTER the SDK's flags, and `wasm-component-ld` merges the worlds. -->
+    <LinkerArg Include="-Wl,--component-type,$(MSBuildProjectDirectory)/PortfolioValueWorld_component_type.wit" />
+    <!-- The WIT the bindings were generated from, embedded into the module so
+         `wasm-tools component new` knows the world. -->
+    <None Include="PortfolioValueWorld_component_type.wit" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

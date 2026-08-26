@@ -2885,3 +2885,47 @@ compose-cron-scheduler:
 
 host-cron-scheduler:
     cd host && cargo run --release --bin comp-host -- --app cron-scheduler --config-file ../examples/defaults.conf --config default-tenant=cron-scheduler --component ../components/target/cron-scheduler.composed.wasm --addr 0.0.0.0:3056
+
+# The binder's own e2e, run against a composition built in another LANGUAGE.
+#
+#     just e2e-binder-poly go portfolio-value
+#     just e2e-binder-poly c  portfolio-value
+#     just e2e-binder-poly js price-history
+#     just e2e-binder-poly py price-history
+#     just e2e-binder-poly go price-history
+#
+# `portfolio:value` (FIFO cost basis, realised and unrealised gain, the chart
+# series) and `price:history` (carry-forward, staleness, absent-before-first-quote)
+# are re-derived under `components/<capability>-<lang>`, built through
+# `tools/build-polyglot.sh`, and swapped in for the Rust builds by filename.
+# Nothing in `examples/binder/tests/binder.rs` is edited: the same 122 assertions
+# judge whichever artifact satisfies the contract, which is the claim.
+#
+# The Rust build is put back afterwards even when the test fails — it is what
+# `just build` produces and what everything else composes against.
+e2e-binder-poly lang cap: build
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cd "{{justfile_directory()}}"
+    ./tools/build-polyglot.sh {{lang}} {{cap}} || exit 1
+    snake=$(echo {{cap}} | tr - _)
+    cp "{{rel}}/$snake.wasm" "/tmp/$snake.rust.wasm"
+    restore() {
+      cp "/tmp/$snake.rust.wasm" "{{rel}}/$snake.wasm"
+      just _derive binder-domain {{binder_composed}} >/dev/null
+      echo "restored the Rust build of {{cap}}"
+    }
+    trap restore EXIT
+    cp "components/target/${snake}_{{lang}}.wasm" "{{rel}}/$snake.wasm"
+    just _derive binder-domain {{binder_composed}}
+    (cd host && cargo build --release --quiet --bin comp-host)
+    (cd examples/binder && cargo test --release)
+
+# Every language, one after another. The table in
+# components/portfolio-value-go/README.md is generated from exactly these runs.
+e2e-binder-poly-all:
+    just e2e-binder-poly c  portfolio-value
+    just e2e-binder-poly go portfolio-value
+    just e2e-binder-poly go price-history
+    just e2e-binder-poly js price-history
+    just e2e-binder-poly py price-history

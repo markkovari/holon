@@ -1,0 +1,17 @@
+
+// The world Go can build. See ../portfolio-value-go/wit/world.wit — same reason,
+// same shape: `price-history`'s own world imports nothing, and a Go component
+// cannot, so this one exports the SAME interface and admits the runtime's imports.
+world price-history-go {
+    import wasi:io/error@0.2.0;
+    import wasi:io/streams@0.2.0;
+    import wasi:io/poll@0.2.0;
+    import wasi:cli/stdout@0.2.0;
+    import wasi:cli/stderr@0.2.0;
+    import wasi:cli/stdin@0.2.0;
+    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+
+    export history;
+}
