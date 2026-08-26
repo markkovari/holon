@@ -775,6 +775,24 @@ impl Guest for Component {
                 // this is a list and not a flag — and seeing "in 3 decks" on a card
                 // you are about to sell is the point.
                 let decks: Vec<Deck> = scan(&bucket, &format!("{ns}deck:"));
+
+                // How many are held, and what they cost. Both come from the SAME
+                // event log the portfolio is valued from, so a row can never
+                // disagree with the total above it.
+                let mut held: std::collections::BTreeMap<String, (i64, i64)> = Default::default();
+                for e in scan::<StoredEvent>(&bucket, &format!("{ns}event:")) {
+                    let n = e.quantity as i64;
+                    let slot = held.entry(e.card_id).or_insert((0, 0));
+                    if e.kind == "disposed" {
+                        slot.0 -= n;
+                    } else {
+                        slot.0 += n;
+                        slot.1 += n * e.unit_minor;
+                    }
+                }
+
+                let all_quotes = scan::<StoredQuote>(&bucket, "quote:");
+                let at = now();
                 json_out(
                     out,
                     200,
@@ -786,6 +804,44 @@ impl Guest for Component {
                                 .map(|d| d.name.as_str())
                                 .collect();
                             v["in_decks"] = json!(used);
+
+                            let (qty, basis) = held.get(&c.id).copied().unwrap_or((0, 0));
+                            v["held"] = json!(qty.max(0));
+                            v["cost_basis_minor"] = json!(basis);
+
+                            // The price is `price:history`'s answer, not the newest
+                            // row: the same carry-forward rule the chart uses, so a
+                            // card priced last week reads as last week's price rather
+                            // than as unpriced.
+                            let quotes: Vec<ph::Quote> = all_quotes
+                                .iter()
+                                .filter(|q| q.card_id == c.id)
+                                .map(|q| ph::Quote {
+                                    unit_minor: q.unit_minor,
+                                    currency: q.currency.clone(),
+                                    kind: ph::QuoteKind::Market,
+                                    source: "binder".into(),
+                                    at: q.at,
+                                })
+                                .collect();
+                            match ph::at(&quotes, ph::QuoteKind::Market, at) {
+                                Ok(o) => {
+                                    v["price_minor"] = json!(o.unit_minor);
+                                    v["currency"] = json!(o.currency);
+                                    v["priced_at"] = json!(o.observed_at);
+                                    // How stale, and whether this is a carried price.
+                                    // A four-month-old quote is the best information
+                                    // there is and also barely information.
+                                    v["price_age_days"] = json!(o.age_seconds / 86_400);
+                                    v["value_minor"] = json!(qty.max(0) * o.unit_minor);
+                                }
+                                // Absent, not zero. A card nothing has priced is not
+                                // worth nothing, and the row says so.
+                                Err(_) => {
+                                    v["price_minor"] = Value::Null;
+                                    v["value_minor"] = Value::Null;
+                                }
+                            }
                             v
                         }).collect::<Vec<_>>()
                     }),

@@ -478,4 +478,46 @@ fn a_photographed_collection_prices_itself() {
     assert!(s == 200 || s == 502, "the first read runs the job: {s}");
     let (s, gone) = auth_req("GET", &stream, None, &token);
     assert_eq!(s, 404, "the job was claimed and is not there twice: {gone}");
+
+    // --- a card carries its own price -------------------------------------
+    //
+    // The row and the total above it come from ONE event log and one set of quotes,
+    // so they cannot disagree — which is the failure this asserts against: a card
+    // list that computes its own holdings would drift from the portfolio silently.
+    let (_, priced) = auth_req("GET", "/api/cards", None, &token);
+    let cards = priced["cards"].as_array().expect("array");
+
+    let chz = cards.iter().find(|c| c["id"] == json!(charizard)).expect("the charizard");
+    assert_eq!(chz["held"], 2, "bought three, sold one: {chz}");
+    assert_eq!(chz["cost_basis_minor"], 6000, "2 @ 10.00 and 1 @ 40.00 acquired: {chz}");
+    // The newest quote is 90.00, and `price:history` carries it forward.
+    assert_eq!(chz["price_minor"], 9000, "{chz}");
+    assert_eq!(chz["value_minor"], 18_000, "held × price: {chz}");
+    assert!(chz["price_age_days"].as_u64().is_some(), "and says how stale it is: {chz}");
+
+    // A card nothing has priced is NOT worth zero, and the row has to be able to say
+    // so — `null`, never 0, because a screen cannot tell those apart afterwards.
+    let bulk = cards.iter().find(|c| c["id"] == json!(commons)).expect("the commons");
+    assert_eq!(bulk["price_minor"], Value::Null, "unpriced is absent, not zero: {bulk}");
+    assert_eq!(bulk["value_minor"], Value::Null, "{bulk}");
+    assert_eq!(bulk["held"], 40, "still counted, though: {bulk}");
+
+    // Recording a price is a QUOTE with a date, not a field on the card: overwriting
+    // one number would throw away the history the chart is drawn from.
+    let (s, _) = auth_req(
+        "POST",
+        "/api/quotes",
+        Some(json!({ "card_id": commons, "unit_minor": 25, "at": now })),
+        &token,
+    );
+    assert_eq!(s, 201);
+    let (_, after_quote) = auth_req("GET", "/api/cards", None, &token);
+    let bulk = after_quote["cards"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|c| c["id"] == json!(commons))
+        .expect("the commons");
+    assert_eq!(bulk["price_minor"], 25, "priced now: {bulk}");
+    assert_eq!(bulk["value_minor"], 40 * 25, "and worth what forty of them come to: {bulk}");
 }

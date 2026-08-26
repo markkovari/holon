@@ -28,6 +28,20 @@ export type Card = {
   needs_review: string[];
   /** A card is not consumed by a deck, so this is a list rather than a flag. */
   in_decks: string[];
+  /** Copies still held, from the same event log the portfolio is valued from. */
+  held: number;
+  /** What those copies cost. */
+  cost_basis_minor: number;
+  /** The market price, carried forward. NULL when nothing has priced it — which is
+   *  not the same as zero, and the row has to be able to say so. */
+  price_minor: number | null;
+  /** `held × price`, or null for the same reason. */
+  value_minor: number | null;
+  currency?: string;
+  priced_at?: number;
+  /** How stale the quote is. A four-month-old price is the best information there
+   *  is and also barely information. */
+  price_age_days?: number;
 };
 
 /** Every field the valuation computed for that instant — not just a height. */

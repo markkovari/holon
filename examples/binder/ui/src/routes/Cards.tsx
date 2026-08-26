@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { api, type Card } from "../api";
+import { api, money, type Card } from "../api";
 import { downscale } from "../photo";
 import type { Store } from "../App";
 
@@ -17,6 +17,7 @@ function Field({ card, k }: { card: Card; k: string }) {
 function Row({ card, reload }: { card: Card; reload: () => Promise<void> }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [price, setPrice] = useState("");
 
   if (!editing) {
     return (
@@ -27,6 +28,26 @@ function Row({ card, reload }: { card: Card; reload: () => Promise<void> }) {
         <td className="p-2"><Field card={card} k="number" /></td>
         <td className="p-2"><Field card={card} k="printing" /></td>
         <td className="p-2"><Field card={card} k="condition" /></td>
+        <td className="p-2 text-right tabular-nums">{card.held || "—"}</td>
+        <td className="p-2 text-right tabular-nums">
+          {card.price_minor === null ? (
+            <span className="text-muted-foreground">unpriced</span>
+          ) : (
+            <span title={card.price_age_days ? `quoted ${card.price_age_days} day(s) ago` : "quoted today"}>
+              {money(card.price_minor, card.currency)}
+              {/* A price older than a month is still the price, and saying how old
+                  is the difference between a number and a confident number. */}
+              {(card.price_age_days ?? 0) > 30 && (
+                <span className="text-muted-foreground text-xs"> · {card.price_age_days}d</span>
+              )}
+            </span>
+          )}
+        </td>
+        <td className="p-2 text-right tabular-nums">
+          {card.value_minor === null
+            ? <span className="text-muted-foreground">—</span>
+            : money(card.value_minor, card.currency)}
+        </td>
         <td className="p-2 text-right tabular-nums">{card.confidence}%</td>
         <td className="p-2">
           {card.in_decks?.length
@@ -41,6 +62,14 @@ function Row({ card, reload }: { card: Card; reload: () => Promise<void> }) {
 
   const save = async () => {
     await api("/cards", "PATCH", { id: card.id, ...draft });
+    if (price) {
+      await api("/quotes", "POST", {
+        card_id: card.id,
+        unit_minor: Math.round(Number(price) * 100),
+        currency: card.currency ?? "EUR",
+      });
+    }
+    setPrice("");
     setEditing(false);
     await reload();
   };
@@ -59,6 +88,13 @@ function Row({ card, reload }: { card: Card; reload: () => Promise<void> }) {
             onChange={(e) => setDraft({ ...draft, [k]: e.target.value })} />
         </td>
       ))}
+      <td className="p-1 text-right" colSpan={2}>
+        {/* Recording a price is a QUOTE, not a field on the card: what a card sold
+            for is a fact about the market with a date on it, and overwriting one
+            number would throw away the history the chart is drawn from. */}
+        <input className="w-24 rounded border bg-background px-2 py-1 text-sm text-right"
+          placeholder="price" value={price} onChange={(e) => setPrice(e.target.value)} />
+      </td>
       <td className="p-2 text-right tabular-nums">{card.confidence}%</td>
       <td className="p-1 whitespace-nowrap">
         <button onClick={save} className="rounded border px-2 py-1 text-xs hover:bg-secondary">Save</button>{" "}
@@ -189,7 +225,8 @@ export function CardsPage({ store }: { store: Store }) {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Cards</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Click a row to correct it. A field the AI guessed and nobody has confirmed stays flagged.
+          Click a row to correct it, or to record what it is worth today. A field the AI guessed and
+          nobody has confirmed stays flagged.
         </p>
       </div>
 
@@ -270,14 +307,18 @@ export function CardsPage({ store }: { store: Store }) {
           <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground border-b">
             <th className="p-2 font-medium">card</th><th className="p-2 font-medium">set</th>
             <th className="p-2 font-medium">№</th><th className="p-2 font-medium">printing</th>
-            <th className="p-2 font-medium">condition</th><th className="p-2 font-medium text-right">conf.</th>
+            <th className="p-2 font-medium">condition</th>
+            <th className="p-2 font-medium text-right">held</th>
+            <th className="p-2 font-medium text-right">price</th>
+            <th className="p-2 font-medium text-right">value</th>
+            <th className="p-2 font-medium text-right">conf.</th>
             <th className="p-2 font-medium">in decks</th>
           </tr>
         </thead>
         <tbody>
           {store.cards.length
             ? store.cards.map((c) => <Row key={c.id} card={c} reload={store.reload} />)
-            : <tr><td colSpan={7} className="p-4 text-muted-foreground">Nothing here yet — scan one or type one in.</td></tr>}
+            : <tr><td colSpan={10} className="p-4 text-muted-foreground">Nothing here yet — scan one or type one in.</td></tr>}
         </tbody>
       </table>
     </div>
