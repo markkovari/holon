@@ -25,6 +25,9 @@ world binder-domain {
     /// Is this deck legal, and what is missing from the collection to build it.
     import deck:build/builder@0.1.0;
 
+    /// Show a model the photograph. WHICH model is a deployment choice — this app
+    /// names no vendor, and swapping in a local one changes nothing here.
+    import vision:describe/describer@0.1.0;
     /// A photographed card into typed fields, plus what a person should check.
     import card:identify/identifier@0.1.0;
     /// What a card was worth at an instant, across gaps in the quotes.

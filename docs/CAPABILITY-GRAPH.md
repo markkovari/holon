@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**202 components, 97 interfaces with a provider and at least one consumer, 429 import edges, 15 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
+**203 components, 98 interfaces with a provider and at least one consumer, 430 import edges, 15 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -110,6 +110,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `vgit:store/objects` | `virt-git` | `vgit-probe` |
 | 1 | `vgit:store/refs` | `virt-git` | `vgit-probe` |
 | 1 | `vgit:store/worktree` | `virt-git` | `vgit-probe` |
+| 1 | `vision:describe/describer` | `anthropic-vision` | `binder-domain` |
 | 1 | `web:browser/automation` | `browser-automation` | `pdf-generator-domain` |
 | 1 | `webauthn:verify/verifier` | `webauthn` | `passkey-domain` |
 | 1 | `webhook:ingest/verifier` | `webhook-ingest` | `webhook-relay` |
@@ -208,6 +209,7 @@ This is the number to look at before changing a component, and before deleting o
 | 2 | `metrics-collect` | `abtest`, `search` |
 | 2 | `proxy-route` | `eshop`, `mesh` |
 | 2 | `wit-reflect` | `platform`, `studio` |
+| 1 | `anthropic-vision` | `binder` |
 | 1 | `card-identify` | `binder` |
 | 1 | `config-store` | `login` |
 | 1 | `crdt` | `scribe` |
@@ -245,7 +247,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **arena** | `arena-domain` | 2 | `arena_domain.composed.wasm` |
 | **auth-guard** | `auth-guard` | 2 | `auth_guard.composed.wasm` |
 | **authgate** | `mfa-authgate` | 5 | `mfa_authgate.composed.wasm` |
-| **binder** | `binder-domain` | 7 | `binder-domain.composed.wasm` |
+| **binder** | `binder-domain` | 8 | `binder-domain.composed.wasm` |
 | **booked** | `booked-domain` | 8 | `booked_domain.composed.wasm` |
 | **books** | `books-domain` | 6 | `books_domain.composed.wasm` |
 | **buzz** | `buzz-domain` | 4 | `buzz_domain.composed.wasm` |

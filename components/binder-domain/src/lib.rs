@@ -10,6 +10,10 @@
 //! * `portfolio:value` turns the buy/sell log into cost basis, realised and
 //!   unrealised gain, and the series a chart is drawn from.
 //!
+//! The UI is a React SPA in `examples/binder/ui`, served by the host from
+//! `--static-dir` — this component answers `/api/*` and nothing else, so the two can
+//! be developed and deployed apart. `just host-binder` builds and serves both.
+//!
 //! What is genuinely this component's is the HTTP surface and the storage. That is
 //! the split ADR-0095 requires — the pieces meet through WIT, so each is testable on
 //! its own, and each of those three is tested by a held-out specification that was
@@ -43,6 +47,7 @@ use bindings::auth::identity::authorizer;
 use bindings::auth::identity::types::Principal;
 use bindings::card::identify::identifier as ident;
 use bindings::deck::build::builder as deck;
+use bindings::vision::describe::describer as vision;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::portfolio::value::valuation as pv;
 use bindings::price::history::history as ph;
@@ -61,7 +66,6 @@ struct Component;
 // choose the isolation boundary, which is the whole point of ADR-0015. An empty name
 // is simply not a bucket the host has.
 const BUCKET: &str = "default";
-const PAGE: &str = include_str!("page.html");
 
 /// A card as the collection holds it: what the model guessed, plus whatever a person
 /// has since corrected. `needs_review` survives the round trip so a screen can keep
@@ -141,6 +145,74 @@ fn condition_name(c: ident::Condition) -> String {
     .to_string()
 }
 
+/// Store a guess as a card. Shared by `/api/scan` and `/api/photo` so a card that
+/// arrived as a photograph and one that arrived as pasted text are the same row.
+fn store_guess(b: &store::Bucket, ns: &str, g: ident::Guess) -> Result<Card, String> {
+    let id = format!(
+        "{}-{}",
+        if g.set_code.is_empty() { "unknown" } else { &g.set_code },
+        if g.number.is_empty() { g.name.replace(' ', "-").to_lowercase() } else { g.number.replace('/', "-") }
+    );
+    let card = Card {
+        id: id.clone(),
+        name: g.name,
+        set_name: g.set_name,
+        set_code: g.set_code,
+        number: g.number,
+        rarity: g.rarity,
+        language: g.language,
+        printing: g.printing.map(printing_name).unwrap_or_default(),
+        condition: g.condition.map(condition_name).unwrap_or_default(),
+        graded: g.graded.map(|gr| format!("{} {}", gr.grader, gr.tenths as f64 / 10.0)).unwrap_or_default(),
+        confidence: g.confidence,
+        // The capability calls the field `variant`; `variant` is a WIT keyword, so
+        // the contract calls it `printing` and so does this app.
+        needs_review: g
+            .needs_review
+            .into_iter()
+            .map(|f| if f == "variant" { "printing".to_string() } else { f })
+            .collect(),
+    };
+    put_json(b, &format!("{ns}card:{id}"), &card)?;
+    Ok(card)
+}
+
+/// Decode base64, the half of it a `data:` URL from a browser produces.
+///
+/// Written out for the same reason the encoder in `anthropic-vision` is: this is the
+/// whole of what is needed, and a crate for one alphabet is another thing to keep in
+/// step. Whitespace is skipped because a data URL may arrive wrapped.
+fn decode_b64(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a') as u32 + 26,
+            b'0'..=b'9' => (c - b'0') as u32 + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        })
+    };
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut acc = 0u32;
+    let mut bits = 0u32;
+    for c in s.bytes() {
+        if c == b'=' {
+            break;
+        }
+        if c.is_ascii_whitespace() {
+            continue;
+        }
+        acc = (acc << 6) | val(c)?;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
 /// Percent-decode one path segment.
 ///
 /// A deck called "some deck" is stored under that name and asked for as
@@ -148,6 +220,18 @@ fn condition_name(c: ident::Condition) -> String {
 /// is a 404, and the name looks right in both places. Written out rather than pulled
 /// in — this is the whole of what the app needs, and a URL crate is a dependency for
 /// six lines.
+/// One `key=value` out of a query string, decoded.
+///
+/// Six lines rather than a URL crate, for the same reason as `percent_decode`: this
+/// is the whole of what the app asks of a query string.
+fn param(query: &str, key: &str) -> Option<String> {
+    query
+        .split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| percent_decode(v))
+}
+
 fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
@@ -291,6 +375,77 @@ fn kind_name(k: deck::CardKind) -> &'static str {
     }
 }
 
+// ---- the photo stream ---------------------------------------------------
+
+/// Do the work and narrate it as Server-Sent Events.
+///
+/// One event per stage, each a JSON object with a `stage` — so a client renders
+/// progress without parsing prose, and a stage added later does not break one that
+/// only knows the old ones.
+fn stream_photo(
+    out: ResponseOutparam,
+    bucket: &store::Bucket,
+    ns: &str,
+    bytes: Vec<u8>,
+    media_type: String,
+) {
+    let headers = Fields::new();
+    let _ = headers.set(&"content-type".to_string(), &[b"text/event-stream".to_vec()]);
+    let _ = headers.set(&"cache-control".to_string(), &[b"no-cache".to_vec()]);
+    let response = OutgoingResponse::new(headers);
+    let _ = response.set_status_code(200);
+    let body = response.body().expect("outgoing body");
+    // Set BEFORE the work starts, so the browser has the connection and the first
+    // event arrives while the model is still looking rather than after it.
+    ResponseOutparam::set(out, Ok(response));
+
+    {
+        let stream = body.write().expect("write stream");
+        let send = |v: Value| -> bool {
+            stream.blocking_write_and_flush(format!("data: {v}\n\n").as_bytes()).is_ok()
+        };
+
+        if !send(json!({ "stage": "looking", "detail": "showing the card to the model" })) {
+            return;
+        }
+
+        match vision::describe(&bytes, &media_type, &ident::prompt()) {
+            Ok(answer) => {
+                let _ = send(json!({ "stage": "reading", "detail": "reading the answer into fields" }));
+                match ident::parse(&answer) {
+                    Ok(g) => match store_guess(bucket, ns, g) {
+                        Ok(card) => {
+                            let _ = send(json!({
+                                "stage": "done",
+                                "card": serde_json::to_value(&card).unwrap_or(Value::Null),
+                            }));
+                        }
+                        Err(e) => {
+                            let _ = send(json!({ "stage": "failed", "error": e }));
+                        }
+                    },
+                    // Not a card, several cards, or no name. The model's own words go
+                    // with it: "that is a booster wrapper" is worth showing the person
+                    // who took the photograph.
+                    Err(e) => {
+                        let _ = send(json!({
+                            "stage": "refused",
+                            "error": format!("{e:?}"),
+                            "said": answer.chars().take(400).collect::<String>(),
+                        }));
+                    }
+                }
+            }
+            // The provider's own words. A model that refused and a provider that is
+            // down are different problems for the person holding the phone.
+            Err(e) => {
+                let _ = send(json!({ "stage": "failed", "error": format!("{e:?}") }));
+            }
+        }
+    }
+    let _ = OutgoingBody::finish(body, None);
+}
+
 // ---- HTTP ---------------------------------------------------------------
 
 fn respond(out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
@@ -360,8 +515,11 @@ fn read_body(req: &IncomingRequest) -> Vec<u8> {
 
 impl Guest for Component {
     fn handle(req: IncomingRequest, out: ResponseOutparam) {
-        let path = req.path_with_query().unwrap_or_else(|| "/".into());
-        let path = path.split('?').next().unwrap_or("/").to_string();
+        let full = req.path_with_query().unwrap_or_else(|| "/".into());
+        let (path, query) = match full.split_once('?') {
+            Some((p, q)) => (p.to_string(), q.to_string()),
+            None => (full.clone(), String::new()),
+        };
         let method = req.method();
 
         let bucket = match open() {
@@ -370,8 +528,6 @@ impl Guest for Component {
         };
 
         match (&method, path.as_str()) {
-            (Method::Get, "/") => respond(out, 200, "text/html; charset=utf-8", PAGE.as_bytes()),
-
             (Method::Get, "/health") => json_out(out, 200, &json!({ "ok": true })),
 
             // The prompt a vision provider should send, straight from the capability
@@ -414,6 +570,75 @@ impl Guest for Component {
                 Some(p) => json_out(out, 200, &json!({ "subject": p.subject, "roles": p.roles })),
                 None => fail(out, 401, "sign in"),
             },
+
+            // A PHOTOGRAPH in, a card row out. The whole point of the app: nobody
+            // types a card in.
+            //
+            // ASYNC, in two halves. A vision call takes seconds to a minute, and a
+            // POST that holds the connection open that long is a request the browser
+            // may give up on, a proxy may cut, and a person cannot be told anything
+            // about. So the upload only STORES the picture and answers immediately
+            // with a job; the work happens on the event stream below, which can say
+            // what it is doing while it does it.
+            (Method::Post, "/api/photo") => {
+                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let ns = ns(&who);
+                let body = read_body(&req);
+                let Ok(v) = serde_json::from_slice::<Value>(&body) else {
+                    return fail(out, 400, "not json");
+                };
+                let media_type =
+                    v.get("media_type").and_then(Value::as_str).unwrap_or("image/jpeg").to_string();
+                let Some(data) = v.get("data").and_then(Value::as_str) else {
+                    return fail(out, 400, "no image");
+                };
+                if decode_b64(data).is_none() {
+                    // Checked HERE rather than on the stream: a picture that is not
+                    // base64 is the caller's mistake and should be a 400 on the
+                    // request that made it, not an error event a minute later.
+                    return fail(out, 400, "the image is not base64");
+                }
+                // The instant, plus how long the payload is: unique per upload
+                // without a random source, and the job is read back by exactly one
+                // stream immediately afterwards.
+                let id = format!("{}-{}", now(), data.len());
+                let job = json!({ "media_type": media_type, "data": data });
+                if let Err(e) = put_json(&bucket, &format!("{ns}job:{id}"), &job) {
+                    return fail(out, 500, &e);
+                }
+                json_out(out, 202, &json!({ "job": id, "events": format!("/api/photo/{id}/events") }))
+            }
+
+            // The work, reported as it happens.
+            //
+            // The vision call runs INSIDE this request rather than in a background
+            // worker, because a component instance is per-request (ADR-0037) and
+            // there is nothing to run a job on afterwards. What the stream buys is
+            // not parallelism — it is that the person watching is told `looking`,
+            // then `reading`, then the answer, instead of a spinner and a timeout.
+            (Method::Get, p) if p.starts_with("/api/photo/") && p.ends_with("/events") => {
+                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let ns = ns(&who);
+                let id = percent_decode(
+                    p.trim_start_matches("/api/photo/").trim_end_matches("/events"),
+                );
+                let Some(job) = get_json::<Value>(&bucket, &format!("{ns}job:{id}")) else {
+                    return fail(out, 404, "no such job");
+                };
+                // Claimed by deleting it: a stream that reconnects must not spend a
+                // second vision call on the same picture.
+                let _ = bucket.delete(&format!("{ns}job:{id}"));
+
+                let media_type =
+                    job.get("media_type").and_then(Value::as_str).unwrap_or("image/jpeg").to_string();
+                let bytes = job
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .and_then(decode_b64)
+                    .unwrap_or_default();
+
+                stream_photo(out, &bucket, &ns, bytes, media_type)
+            }
 
             // A model's answer in, a card row out. The parse is the capability's; the
             // id and the storage are the app's.
@@ -693,10 +918,29 @@ impl Guest for Component {
                 let events = events_for(&bucket, &ns(&who));
                 let quotes = quotes_for(&bucket);
                 let until = now();
+                // The window is the CALLER's, because a range selector that only
+                // slices what the server already sent cannot show anything older
+                // than the default — and "all" is a real answer that needs the
+                // earliest event to compute.
+                let days = param(&query, "days").and_then(|d| d.parse::<u64>().ok());
+                let earliest = events.iter().map(|e| e.at).min().unwrap_or(until);
+                let window = match days {
+                    // `days=0` means everything, from the first thing that happened.
+                    Some(0) => until.saturating_sub(earliest),
+                    Some(d) => d * 86_400,
+                    None => 90 * 86_400,
+                };
+                // One sample per day up to a quarter, then coarser: a five-year
+                // series at daily resolution is 1800 points nobody can see, and the
+                // step is what the caller is really choosing.
+                let step = param(&query, "step")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .filter(|s| *s > 0)
+                    .unwrap_or_else(|| if window > 400 * 86_400 { 7 * 86_400 } else { 86_400 });
                 match pv::value_at(&events, &quotes, until) {
                     Ok(v) => {
-                        let since = until.saturating_sub(90 * 86_400);
-                        let points = pv::series(&events, &quotes, since, until, 86_400).unwrap_or_default();
+                        let since = until.saturating_sub(window.max(step));
+                        let points = pv::series(&events, &quotes, since, until, step).unwrap_or_default();
                         json_out(
                             out,
                             200,
@@ -707,6 +951,12 @@ impl Guest for Component {
                                 "realised_minor": v.realised_minor,
                                 "currency": v.currency,
                                 "unquoted": v.unquoted,
+                                "since": until.saturating_sub(window.max(step)),
+                                "until": until,
+                                "step": step,
+                                // So a range selector can offer "all" without
+                                // guessing how far back there is anything to show.
+                                "earliest_event": earliest,
                                 // Every field the valuation computed for that
                                 // instant, not just the height of the line: a point
                                 // you can hover needs the numbers behind the pixel,

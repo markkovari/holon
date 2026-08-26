@@ -437,4 +437,45 @@ fn a_photographed_collection_prices_itself() {
         decks["decks"].as_array().expect("array").iter().map(|d| d["name"].as_str().unwrap()).collect();
     assert!(!names.contains(&"second"), "the deleted one is gone: {names:?}");
     assert!(names.contains(&"some deck"), "and the others are not: {names:?}");
+
+    // --- the photo path is async ------------------------------------------
+    //
+    // The upload STORES and answers; the vision call happens on the event stream.
+    // Asserted without a model: the upload must be immediate and must validate what
+    // it can, because those are the parts that must not wait for a provider.
+    let (s, bad) = auth_req("POST", "/api/photo", Some(json!({ "media_type": "image/png" })), &token);
+    assert_eq!(s, 400, "no image is the caller's mistake, on the request that made it: {bad}");
+    let (s, bad) = auth_req(
+        "POST",
+        "/api/photo",
+        Some(json!({ "media_type": "image/png", "data": "not base64!!" })),
+        &token,
+    );
+    assert_eq!(s, 400, "and so is a payload that is not base64: {bad}");
+
+    // A 1x1 PNG, so the upload has something real to store.
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let (s, job) = auth_req(
+        "POST",
+        "/api/photo",
+        Some(json!({ "media_type": "image/png", "data": png })),
+        &token,
+    );
+    assert_eq!(s, 202, "accepted, not done: {job}");
+    assert!(job["job"].is_string(), "{job}");
+    assert_eq!(
+        job["events"].as_str().expect("a stream url"),
+        format!("/api/photo/{}/events", job["job"].as_str().unwrap()),
+        "and it says where to watch"
+    );
+
+    // The stream is the only thing that can spend a vision call, so a job is claimed
+    // once: a reconnect must not pay twice for one picture.
+    let stream = job["events"].as_str().expect("url").to_string();
+    let (s, _) = auth_req("GET", &stream, None, &token);
+    // Either it streamed (200) or the provider was unreachable — both are fine here;
+    // what matters is the SECOND read.
+    assert!(s == 200 || s == 502, "the first read runs the job: {s}");
+    let (s, gone) = auth_req("GET", &stream, None, &token);
+    assert_eq!(s, 404, "the job was claimed and is not there twice: {gone}");
 }

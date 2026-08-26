@@ -195,6 +195,30 @@
     "unimplemented": false
   },
   {
+    "name": "anthropic-vision",
+    "package": "vision:describe@0.1.0",
+    "description": "`anthropic-vision` \u2014 show a model a picture and get back what it says, over Anthropic's Messages API",
+    "exports": [
+      "describer",
+      "describer"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "anthropic-api-key",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 131789,
+    "wasm_sha256_12": "ae7b3d94791f",
+    "reusable_as_is": true,
+    "unimplemented": false
+  },
+  {
     "name": "arena-domain",
     "package": "arena:app@0.1.0",
     "description": "arena:app \u2014 multiplayer Connect Four over composed contracts",
@@ -427,11 +451,12 @@
       "deck:build/builder",
       "portfolio:value/valuation",
       "price:history/history",
+      "vision:describe/describer",
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 303115,
-    "wasm_sha256_12": "3a9d4dd34016",
+    "wasm_size_bytes": 306550,
+    "wasm_sha256_12": "d934f1667562",
     "reusable_as_is": false,
     "unimplemented": false
   },

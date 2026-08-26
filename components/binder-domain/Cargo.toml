@@ -29,6 +29,7 @@ world = "binder-domain"
 "records:store" = { path = "../record-store/wit" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }
 "deck:build" = { path = "../deck-build/wit" }
+"vision:describe" = { path = "../vision-describe/wit" }
 "card:identify" = { path = "../card-identify/wit" }
 "price:history" = { path = "../price-history/wit" }
 "portfolio:value" = { path = "../portfolio-value/wit" }
