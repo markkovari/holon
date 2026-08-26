@@ -31,8 +31,12 @@ on:
   workflow_dispatch:
     inputs:
       registry:
-        description: "Registry prefix to push to"
-        default: "ghcr.io/${{ github.repository_owner }}/holon"
+        # No `${{ }}` here. An input default is a literal — an expression in one
+        # makes the whole workflow file invalid, which GitHub reports as a run that
+        # fails instantly with no jobs, not as a syntax error you can see. Blank
+        # means the owner's own namespace; the step below fills it in.
+        description: "Registry prefix. Blank = ghcr.io/<owner>/holon"
+        default: ""
         required: false
   push:
     tags: ["v*"]
@@ -79,11 +83,16 @@ jobs:
         env:
           OCI_USER: ${{ github.actor }}
           OCI_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY: ${{ inputs.registry || format('ghcr.io/{0}/holon', github.repository_owner) }}
-        run: >-
-          ./reconciler/target/release/comp-oci push "$REGISTRY"
-          components/target/wasm32-wasip2/release
-          --lock components.lock
+          # Through the environment rather than interpolated into the command, so a
+          # registry name can never be read as shell.
+          INPUT_REGISTRY: ${{ github.event.inputs.registry }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          reg="${INPUT_REGISTRY:-}"
+          [ -n "$reg" ] || reg="ghcr.io/$OWNER/holon"
+          echo "pushing to $reg"
+          ./reconciler/target/release/comp-oci push "$reg" \
+            components/target/wasm32-wasip2/release --lock components.lock
 
       # The digests, not the tags. This is the file a consumer pins against.
       - name: Keep the digests
