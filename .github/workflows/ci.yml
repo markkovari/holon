@@ -121,6 +121,23 @@ jobs:
           cargo test --release
           --test capsearch --test contracts --test publish --test secrets
 
+  # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
+  # the run named after the file path, and the log is "log not found" — which is
+  # what `publish-components.yml` did on its first push, because an expression in a
+  # `workflow_dispatch` input default is not allowed and nothing said so.
+  #
+  # `actionlint` catches exactly that, in under a second.
+  workflows:
+    name: workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: actionlint
+      - run: actionlint
+
   native:
     name: native workspaces
     runs-on: ubuntu-latest
