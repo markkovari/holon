@@ -532,6 +532,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "deck-build"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "demo"
 version = "0.1.0"
 dependencies = [

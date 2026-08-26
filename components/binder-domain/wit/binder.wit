@@ -15,6 +15,16 @@ package binder:app@0.1.0;
 world binder-domain {
     export wasi:http/incoming-handler@0.2.0;
 
+    /// Accounts, sessions and token introspection. A collection belongs to
+    /// somebody, and "somebody" has to be a subject the app did not invent —
+    /// which is also what makes selling a card to another person possible later.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    /// Is this deck legal, and what is missing from the collection to build it.
+    import deck:build/builder@0.1.0;
+
     /// A photographed card into typed fields, plus what a person should check.
     import card:identify/identifier@0.1.0;
     /// What a card was worth at an instant, across gaps in the quotes.
