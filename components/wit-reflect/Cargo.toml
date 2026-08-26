@@ -14,8 +14,8 @@ wit-bindgen-rt = { workspace = true }
 sha2 = { workspace = true }
 # The component model, read from the binary. Pinned to the version wac-graph
 # uses so there is exactly one copy of it in the artifact.
-wasmparser = "0.202"
+wasmparser = "0.244"
 # `wac`'s own composition graph — the same code path the CLI runs, including the
 # SubtypeChecker that decides whether a plug actually fits a socket. Builds clean
 # for wasm32-wasip2 (pure Rust: wasm-encoder, wasm-metadata, petgraph, indexmap).
-wac-graph = "0.6"
+wac-graph = "0.10"
