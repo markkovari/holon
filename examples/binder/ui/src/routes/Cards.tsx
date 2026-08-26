@@ -1,8 +1,42 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, money, type Card } from "../api";
+import { api, money, type Card, type DeckCheck } from "../api";
 import { downscale } from "../photo";
 import type { Store } from "../App";
+
+/**
+ * A one-line read on the deck the roster is narrowed to.
+ *
+ * Read from the SAME route the deck page uses, so the verdict here and the verdict
+ * there are one answer rather than two that can disagree.
+ */
+function DeckSummary({ name }: { name: string }) {
+  const [d, setD] = useState<DeckCheck | null>(null);
+  useEffect(() => {
+    let live = true;
+    api<DeckCheck>(`/decks/${encodeURIComponent(name)}`).then((r) => { if (live && r.ok) setD(r.data); });
+    return () => { live = false; };
+  }, [name]);
+  if (!d) return null;
+  return (
+    <div className="rounded-lg border bg-card px-4 py-2.5 text-sm flex flex-wrap items-center gap-x-4 gap-y-1">
+      <b>{d.name}</b>
+      <span className="tabular-nums text-muted-foreground">{d.cards} cards</span>
+      {d.legal
+        ? <span className="text-emerald-600">legal</span>
+        : <span className="text-destructive">{d.illegal[0]?.detail ?? "not legal"}</span>}
+      {d.missing.length > 0 && (
+        <span className="text-muted-foreground">
+          still to buy {money(d.cost_minor, d.currency)}
+          {d.unpriced > 0 && ` + ${d.unpriced} unpriced`}
+        </span>
+      )}
+      <Link to={`/decks/${encodeURIComponent(d.name)}`} className="ml-auto text-xs underline text-muted-foreground hover:text-foreground">
+        deck details →
+      </Link>
+    </div>
+  );
+}
 
 const EDITABLE = ["name", "set_name", "number", "printing", "condition"] as const;
 const PRINTINGS = ["", "normal", "holo", "reverse holo", "1st edition", "shadowless", "special"];
@@ -58,7 +92,10 @@ function Row({ card, reload }: { card: Card; reload: () => Promise<void> }) {
         <td className="p-2">
           {card.in_decks?.length
             ? card.in_decks.map((d) => (
-                <span key={d} className="text-xs border rounded-full px-2 py-0.5 mr-1 text-muted-foreground">{d}</span>
+                <Link key={d} to={`/decks/${encodeURIComponent(d)}`} onClick={(e) => e.stopPropagation()}
+                  className="text-xs border rounded-full px-2 py-0.5 mr-1 text-muted-foreground hover:text-foreground hover:border-foreground/40">
+                  {d}
+                </Link>
               ))
             : <span className="text-muted-foreground">—</span>}
         </td>
@@ -112,6 +149,8 @@ function Row({ card, reload }: { card: Card; reload: () => Promise<void> }) {
 }
 
 export function CardsPage({ store }: { store: Store }) {
+  /** Which deck the roster is narrowed to. "" is everything, "-" is the loose cards. */
+  const [deck, setDeck] = useState("");
   const [answer, setAnswer] = useState("");
   const [scanErr, setScanErr] = useState("");
   const [prompt, setPrompt] = useState("");
@@ -215,6 +254,9 @@ export function CardsPage({ store }: { store: Store }) {
     setForm({}); await store.reload();
   };
 
+  const shown = store.cards.filter((c) =>
+    deck === "" ? true : deck === "-" ? !c.in_decks?.length : c.in_decks?.includes(deck));
+
   const field = (k: string, ph: string, extra = "") => (
     <input className={`rounded-md border bg-background px-2 py-1.5 text-sm ${extra}`} placeholder={ph}
       value={form[k] ?? ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })} />
@@ -308,6 +350,34 @@ export function CardsPage({ store }: { store: Store }) {
         </div>
       </div>
 
+      {/* The roster, narrowed. A collection is one list and a deck is a view of it,
+          so filtering here beats a second page that could disagree with this one. */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs uppercase tracking-wide text-muted-foreground mr-1">show</span>
+        {[
+          { key: "", label: `all ${store.cards.length}` },
+          ...store.decks.map((d) => ({
+            key: d.name,
+            label: `${d.name} ${store.cards.filter((c) => c.in_decks?.includes(d.name)).length}`,
+          })),
+          { key: "-", label: `in no deck ${store.cards.filter((c) => !c.in_decks?.length).length}` },
+        ].map((o) => (
+          <button key={o.key} onClick={() => setDeck(o.key)}
+            className={"rounded-full border px-2.5 py-1 text-xs transition-colors " +
+              (deck === o.key ? "bg-secondary font-medium" : "text-muted-foreground hover:bg-secondary/60")}>
+            {o.label}
+          </button>
+        ))}
+        {deck && deck !== "-" && (
+          <Link to={`/decks/${encodeURIComponent(deck)}`}
+            className="ml-auto text-xs underline text-muted-foreground hover:text-foreground">
+            open {deck} →
+          </Link>
+        )}
+      </div>
+
+      {deck && deck !== "-" && <DeckSummary name={deck} />}
+
       <table className="w-full text-sm">
         <thead>
           <tr className="text-left text-xs uppercase tracking-wide text-muted-foreground border-b">
@@ -322,9 +392,11 @@ export function CardsPage({ store }: { store: Store }) {
           </tr>
         </thead>
         <tbody>
-          {store.cards.length
-            ? store.cards.map((c) => <Row key={c.id} card={c} reload={store.reload} />)
-            : <tr><td colSpan={10} className="p-4 text-muted-foreground">Nothing here yet — scan one or type one in.</td></tr>}
+          {shown.length
+            ? shown.map((c) => <Row key={c.id} card={c} reload={store.reload} />)
+            : <tr><td colSpan={10} className="p-4 text-muted-foreground">
+                {store.cards.length ? "No cards in that deck." : "Nothing here yet — scan one or type one in."}
+              </td></tr>}
         </tbody>
       </table>
     </div>
