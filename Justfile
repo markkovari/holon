@@ -1537,13 +1537,40 @@ host-track: compose-track
 compose-binder: build
     @just _derive binder-domain {{binder_composed}}
 
+# Build the React + Vite SPA (router, recharts) to examples/binder/dist.
+build-binder-ui:
+    cd examples/binder/ui && npm ci && npm run build
+
 # Run the binder on the native host. Bound to 0.0.0.0 on purpose: this is the app
 # you open from another machine on the tailnet, so `http://<this-host>:3210` works
 # without a tunnel. The store is in memory — restart it and the collection is gone,
 # which is the right default for something you are trying out.
-host-binder: compose-binder
+host-binder: compose-binder build-binder-ui
     cd host && cargo run --release --bin comp-host -- \
-      --app binder --component ../{{binder_composed}} --addr 0.0.0.0:3210
+      --app binder --component ../{{binder_composed}} --addr 0.0.0.0:3210 \
+      --config default-tenant=binder --static-dir ../examples/binder/dist \
+      --config vision:base-url=http://127.0.0.1:8787 \
+      --egress 127.0.0.1:8787 --allow-private-egress
+
+# The camera works with NO key in the tenant, because it goes through the shim.
+#
+# `host-binder` points `vision:base-url` at `tools/claude-shim.mjs`, which speaks the
+# same `/v1/messages` subset (images included) and runs on a subscription. So start
+# the shim first and the photo button works:
+#
+#     node tools/claude-shim.mjs &
+#     just host-binder
+#
+# Why this and not a granted secret: a single `comp-host` has no platform to fetch one
+# FROM (ADR-0051), and more to the point a tenant should not be holding an API key at
+# all. `components/anthropic-vision` requires one only when it is pointed at
+# `anthropic.com` — the interface a guest sees is identical either way, which is what
+# makes it a deploy-time choice.
+#
+# To use the metered API instead, point it back and grant the secret through a
+# deployment (`fixtures/photo-critic.yaml` is the shape):
+#
+#     --config vision:base-url=https://api.anthropic.com --egress api.anthropic.com
 
 # Binder e2e: a fenced model answer becomes a typed card; an incomplete one is
 # flagged rather than defaulted; a photo that is not a card is refused; and the
