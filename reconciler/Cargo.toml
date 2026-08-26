@@ -81,8 +81,8 @@ sha2 = "0.10"
 # command. Pinned to the pair `components/wit-reflect` uses — wac-graph carries
 # its own wasmparser, and two versions of the component model in one graph is a
 # type error waiting to happen.
-wac-graph = "0.6"
-wasmparser = "0.202"
+wac-graph = "0.10"
+wasmparser = "0.244"
 
 # comp-ingress: terminates HTTP and spreads it across an app's replicas. A second
 # binary here rather than a sixth crate, because it needs exactly two things this
