@@ -102,9 +102,12 @@ jobs:
           path: components.lock
 
       - name: Say what to do with it
+        # One redirect for the whole block (SC2129), not five.
         run: |
-          echo "### Published by digest" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          head -20 components.lock >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "Pull one with \`just pull <name>\` — see docs/REGISTRY.md." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Published by digest"
+            echo '```'
+            head -20 components.lock
+            echo '```'
+            echo "Pull one with \`just pull <name>\` — see docs/REGISTRY.md."
+          } >> "$GITHUB_STEP_SUMMARY"
