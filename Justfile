@@ -1527,6 +1527,21 @@ host-track: compose-track
 # Track e2e: compose + build host + a Rust test driving all five axes — auth +
 # RBAC (admin creates a project, a member writes, a non-member is 403), issue
 # lifecycle over the fsm, full-text search, an SSE activity frame, the background
+# The `bytes:codec` specification, run against the ARTIFACT rather than the crate.
+#
+# `components/bytes-codec/tests/codec.rs` calls the Rust functions directly. That is a
+# fine unit test and it cannot judge a component built in another language, or one
+# fetched by digest and never built here at all. This drives the same cases through
+# `codec-probe` over HTTP, so what is judged is whatever satisfies the contract.
+#
+# That is the precondition for both polyglot components and prebuilt artifacts: a gate
+# at the WIT boundary does not care what compiled the thing it is judging.
+gate-codec:
+    cd host && cargo build --release --bin comp-host
+    cd reconciler && cargo build --release --bin comp-plug
+    cd components && cargo build --release --target wasm32-wasip2 -p bytes-codec -p codec-probe
+    bash components/bytes-codec/gate.sh
+
 # Fetch the built components instead of building them.
 #
 # `components/target` is 7.1 GB of intermediates for 25 MB of output — a 284:1 ratio
