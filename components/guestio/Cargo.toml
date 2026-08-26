@@ -1,0 +1,12 @@
+[package]
+name = "guestio"
+description = "The wasi:http body helpers every component needs, as macros that expand into the caller (guestio)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# A plain rlib, NOT a component: it exports macros and no WIT. It cannot be a
+# library of functions, because `cargo-component` generates a `bindings.rs` per
+# crate — one component's `OutputStream` is a different type from another's, so
+# there is nothing for a shared function to take. See the crate docs.

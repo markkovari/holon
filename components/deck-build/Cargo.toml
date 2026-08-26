@@ -1,0 +1,22 @@
+[package]
+name = "deck-build"
+description = "Is this Pokemon deck legal, and what is missing from a collection to build it (deck:build)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# See the note in `components/demo`: the bindings are gated on wasm32 so `cargo test`
+# can link the crate for the held-out specification.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "deck:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "deck-build"

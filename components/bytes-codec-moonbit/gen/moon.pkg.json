@@ -1,0 +1,24 @@
+{
+      "warn-list": "-44",
+      "import": [
+      { "path" : "bytes/codec/gen/interface/bytes/codec/codec", "alias" : "codec" }
+      ],
+      "link": {
+            "wasm": {
+                  "export-memory-name": "memory",
+                  "heap-start-address": 16,
+                  "exports": [
+                  "mbt_ffi_cabi_realloc:cabi_realloc",
+                  "wasmExportDecode:bytes:codec/codec@0.1.0#decode",
+                  "wasmExportDecodePostReturn:cabi_post_bytes:codec/codec@0.1.0#decode",
+                  "wasmExportEncode:bytes:codec/codec@0.1.0#encode",
+                  "wasmExportEncodePostReturn:cabi_post_bytes:codec/codec@0.1.0#encode",
+                  "wasmExportFromHex:bytes:codec/codec@0.1.0#from-hex",
+                  "wasmExportFromHexPostReturn:cabi_post_bytes:codec/codec@0.1.0#from-hex",
+                  "wasmExportToHex:bytes:codec/codec@0.1.0#to-hex",
+                  "wasmExportToHexPostReturn:cabi_post_bytes:codec/codec@0.1.0#to-hex"
+                  ]
+            }
+      }
+
+}

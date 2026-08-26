@@ -1,0 +1,110 @@
+// deck:build — is this deck legal to play, and what is missing from a collection to
+// build it.
+//
+// Two questions a deck builder has to answer, neither of which is arithmetic on a
+// list. Pure compute: a deck, a collection and some prices in; a verdict and a
+// shopping list out.
+//
+// The format is Pokémon TCG. That is a deliberate narrowing rather than a gap —
+// Magic's cap is four in a sixty-card minimum with no maximum, Yu-Gi-Oh's is three in
+// forty-to-sixty, and a "generic" version of this would take the format as data and
+// be wrong about all three in a different way.
+package deck:build@0.1.0;
+
+/// Legality, and the shopping list.
+interface builder {
+    /// What a card is, for the rules that care. The collection knows far more about
+    /// a card than this; a deck only needs what the format restricts.
+    enum card-kind {
+        /// Can be played on turn one. A deck needs at least one.
+        basic-pokemon,
+        /// Evolves from something, so it cannot start the game on its own.
+        evolved-pokemon,
+        trainer,
+        /// UNCAPPED: play as many as you like.
+        basic-energy,
+        /// An ordinary card that happens to be energy. Capped at four, and one word
+        /// away from the line above.
+        special-energy,
+    }
+
+    /// One line of a deck list.
+    record slot {
+        /// The printing, as a collection keys it: `sv3-125/197`.
+        card-id: string,
+        /// The printed NAME, which is what the four-copy rule counts — across every
+        /// set and every printing of it.
+        name: string,
+        kind: card-kind,
+        quantity: u32,
+    }
+
+    /// What you already own, by printing.
+    record owned {
+        card-id: string,
+        quantity: u32,
+    }
+
+    /// The market price of one printing, in minor units.
+    record price {
+        card-id: string,
+        unit-minor: s64,
+        currency: string,
+    }
+
+    /// Why a deck is not legal. EVERY applicable one is returned, because a builder
+    /// that reports one problem per attempt makes you submit five times to learn
+    /// five things.
+    variant illegal {
+        /// A deck is exactly sixty cards — not "at least". Carries the count found.
+        wrong-size(u32),
+        /// More than four of one NAME, across every printing. Carries name, count.
+        too-many-of-a-name(tuple<string, u32>),
+        /// Nothing to put into play on turn one.
+        no-basic-pokemon,
+        /// A slot with no cards in it is a typo, not an empty slot.
+        zero-quantity(string),
+    }
+
+    /// One line of what you still have to buy.
+    record missing {
+        card-id: string,
+        name: string,
+        /// How many MORE than you own. A surplus is not a negative line.
+        quantity: u32,
+        /// `quantity` × market price. Absent when nothing has priced it — which is
+        /// not the same as free, and a caller has to be able to tell.
+        cost-minor: option<s64>,
+    }
+
+    /// What it would take to build a deck you do not fully own.
+    /// (`shortfall` is the function's name, so the record carries `-report`.)
+    record shortfall-report {
+        /// Sorted by card id, so one deck always produces one list. BY PRINTING,
+        /// even though the four-copy cap is by name: two printings are two
+        /// different things to buy, at two different prices.
+        missing: list<missing>,
+        /// The total for the lines that HAVE a price.
+        cost-minor: s64,
+        currency: string,
+        /// Missing cards nothing has priced. Not in `cost-minor`, and named here so
+        /// a caller cannot quote a total that is silently short.
+        unpriced: u32,
+    }
+
+    /// Every reason this deck is not legal, or an empty list.
+    legality: func(deck: list<slot>) -> list<illegal>;
+
+    /// What is missing from `owned` to build `deck`, and what that costs.
+    ///
+    /// `currency` is the one to report and the one prices must be in. A price in
+    /// another currency does not count toward the total and its card is `unpriced` —
+    /// refused, never converted, the same rule as everywhere else here.
+    shortfall: func(deck: list<slot>, owned: list<owned>, prices: list<price>, currency: string)
+        -> shortfall-report;
+}
+
+/// `deck-build` provides legality and the shopping list; pure compute.
+world deck-build {
+    export builder;
+}

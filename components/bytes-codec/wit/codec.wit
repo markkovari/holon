@@ -1,0 +1,62 @@
+// bytes:codec — turn bytes into text that survives a URL, a JSON string or a header,
+// and back again.
+//
+// Five components in this repository had written base64 by hand, in five different
+// shapes: two encode-only, three decode-only, two URL-safe, three standard, and one
+// reaching for a crate. None was reusable by any of the others, and the one in an
+// authentication path is the one it matters most to get right.
+//
+// Pure compute: no imports, no state.
+package bytes:codec@0.1.0;
+
+/// base64 and hex, both directions.
+interface codec {
+    /// Which alphabet, and what to do about padding when encoding.
+    ///
+    /// They are NOT interchangeable. Standard ends `+` and `/`; both are meaningful
+    /// inside a URL and neither survives a path segment unescaped, which is why
+    /// WebAuthn, JWTs and every id-in-a-link use `-` and `_` instead. Decoding one
+    /// with the other's table does not fail — it produces different bytes and
+    /// reports nothing. That is the failure this enum exists to make impossible.
+    enum alphabet {
+        /// `+` and `/`, padded with `=`. What a JSON payload or a header carries.
+        standard,
+        /// `-` and `_`, unpadded. What a URL, a JWT and WebAuthn use.
+        url-safe,
+    }
+
+    /// Why some text could not be decoded.
+    variant decode-error {
+        /// A character in neither alphabet: position, then the character. The only
+        /// useful thing to say about a payload nobody should print.
+        not-in-alphabet(tuple<u32, string>),
+        /// A length that cannot be a whole number of bytes — five characters is one
+        /// group of four and one orphan. Carries the length.
+        truncated-group(u32),
+        /// Padding somewhere other than the end, or too much of it. Carries where.
+        misplaced-padding(u32),
+    }
+
+    /// Encode as base64. `standard` pads to a multiple of four; `url-safe` does not,
+    /// because the specifications that use it forbid it.
+    encode: func(bytes: list<u8>, alphabet: alphabet) -> string;
+
+    /// Decode base64.
+    ///
+    /// Padding is accepted whether or not the alphabet would have produced it: `=`
+    /// on URL-safe input is wrong per the specification and unambiguous in practice,
+    /// and a decoder that refuses it fails on real tokens.
+    decode: func(text: string, alphabet: alphabet) -> result<list<u8>, decode-error>;
+
+    /// Lowercase hex, zero-padded per byte.
+    to-hex: func(bytes: list<u8>) -> string;
+
+    /// Hex in either case — a digest printed by one tool and read by another, and
+    /// the two rarely agree on case.
+    from-hex: func(text: string) -> result<list<u8>, decode-error>;
+}
+
+/// `bytes-codec` provides both; pure compute, no host imports.
+world bytes-codec {
+    export codec;
+}
