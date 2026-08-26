@@ -10,38 +10,7 @@ use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
 
-/// Write a whole body, however long it is.
-///
-/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
-/// rather than returning an error: the component dies mid-response and the caller
-/// sees `connection closed before message completed`, three layers from the cause.
-/// This bit a real run — a 4573-byte contract — and cost four failed starts to
-/// find, so it is written the same way everywhere now.
-///
-/// Not a flat 4096-byte loop: `check-write` is the stream saying how much it will
-/// take right now, usually far more, so this writes in whatever bites it offers,
-/// waits on the pollable when it offers none, and flushes ONCE at the end.
-///
-/// Returns false when the stream is gone. For an SSE loop that means the client
-/// hung up, which is ordinary and not an error.
-fn write_all(stream: &bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) -> bool {
-    while !bytes.is_empty() {
-        let ready = match stream.check_write() {
-            Ok(0) => {
-                stream.subscribe().block();
-                continue;
-            }
-            Ok(n) => n as usize,
-            Err(_) => return false,
-        };
-        let take = ready.min(bytes.len());
-        if stream.write(&bytes[..take]).is_err() {
-            return false;
-        }
-        bytes = &bytes[take..];
-    }
-    stream.blocking_flush().is_ok()
-}
+guestio::guest_write_all!();
 
 struct Component;
 
