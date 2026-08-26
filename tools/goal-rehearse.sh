@@ -61,6 +61,21 @@ python3 - "$GOAL" "$WORK" <<'PY' || exit 1
 import os, re, shutil, sys, tomllib
 goal, dst = sys.argv[1], sys.argv[2]
 d = tomllib.load(open(goal, 'rb'))
+
+# `component = "<name>"` derives the build scope in goalrun (component_scope()), so a
+# goal that uses the shorthand lists no base_paths at all — and this script copied
+# nothing, ran the checks against an EMPTY sandbox, and reported "1 check(s) failed on
+# the base tree, which is what should happen". Every check fails when the tree is
+# empty. The guard against a broken sandbox was itself the broken sandbox.
+#
+# Derived identically to goalrun so the two cannot disagree; an explicitly-set field
+# still wins, which is that function's rule too.
+component = d.get('component')
+if component:
+    d.setdefault('base_paths', [f'components/{component}/', 'components/Cargo.toml'])
+    d.setdefault('workspace_manifest', 'components/Cargo.toml')
+    d.setdefault('keep_members', [component])
+
 for p in d.get('base_paths', []):
     src = p.rstrip('/')
     if not os.path.exists(src):
@@ -77,7 +92,34 @@ if manifest and keep:
     path = os.path.join(dst, manifest)
     text = open(path).read()
     members = ', '.join(f'"{k}"' for k in keep)
-    open(path, 'w').write(re.sub(r'members = \[[^\]]*\]', f'members = [{members}]', text, count=1))
+    # `[^\]]*` stopped at the first `]`, and in components/Cargo.toml that one is
+    # inside a comment (`… declares its own `[workspace]`, so …`). The rewrite then
+    # produced invalid TOML and every check failed to build, which this script
+    # reported as a healthy base tree. Walk it instead, honouring `#` and quotes —
+    # the same fix as goalrun's `closing_bracket`.
+    open_at = text.index('[', text.index('members'))
+    i, in_comment, in_string = open_at + 1, False, False
+    while i < len(text):
+        c = text[i]
+        if c == '\n':
+            in_comment = False
+        elif c == '"' and not in_comment:
+            in_string = not in_string
+        elif c == '#' and not in_string:
+            in_comment = True
+        elif c == ']' and not in_comment and not in_string:
+            break
+        i += 1
+    else:
+        print(f"never found the end of the members list in {manifest}")
+        sys.exit(1)
+    text = f'{text[:open_at]}[{members}]{text[i + 1:]}'
+    open(path, 'w').write(text)
+    try:
+        tomllib.loads(text)
+    except Exception as e:
+        print(f"the trimmed {manifest} is not valid TOML, so every check would fail to build: {e}")
+        sys.exit(1)
 # Every WIT dependency path named by a crate the workspace keeps must exist in the
 # sandbox. This is the omission that cost app 1 its first run — `cargo component` cannot
 # build a target world without them, so every branch fails identically, and the message
@@ -170,9 +212,22 @@ while read -r cmd; do
     bash -c "$cmd" >"$out" 2>&1
   status=$?
   tail -3 "$out"
+  # 127 is "command not found" and 126 is "found but not executable". Neither is a
+  # verdict — the shell never reached the gate — and both look exactly like a failing
+  # check to everything downstream. This is how an UNTRACKED `gate.sh` reached a real
+  # run: the sandbox did not contain it, every branch scored zero, and both this script
+  # and the loop's own precheck called that healthy.
+  #
+  # Exact status codes rather than a grep for "No such file", so it holds for a gate
+  # whose interpreter is missing, or one that lost its +x, in any language.
+  if [ "$status" = 127 ] || [ "$status" = 126 ]; then
+    echo "    CANNOT RUN (exit $status) — the shell never reached this gate."
+    echo "    Either the script is not in the sandbox (an untracked file is not in the base"
+    echo "    tree; \`git add\` it, or widen base_paths) or it is not executable."
+    crashed=$((crashed + 1))
   # A gate that raises is a gate that did not judge, whichever direction we are in: the
   # branch is handed a stack trace and told its work failed.
-  if crashed_check "$out"; then
+  elif crashed_check "$out"; then
     echo "    CRASHED — this check raised instead of failing with a sentence."
     echo "    Whatever a branch did, the feedback it gets is a stack trace. Guard the parse"
     echo "    and say what was wrong with what the component answered."

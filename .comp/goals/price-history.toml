@@ -1,0 +1,76 @@
+# Thirteen tests in three groups. The weights say which mistake is expensive: a gap
+# drawn as a straight line is most of a five-year chart, and it is the one an
+# implementation gets wrong while looking finished.
+title = "price:history — sparse, duplicated, disagreeing quotes into a series"
+
+text = """
+Implement `at` and `series` in components/price-history/src/lib.rs. Nothing is
+implemented: both return an error today.
+
+`tests/history.rs` is the specification. You can read it and you may NOT edit it.
+
+The module header states the rules. The one that decides this goal is CARRY FORWARD,
+NEVER INTERPOLATE. A market has no price on a day nobody traded, and the last known
+price is still the price — that is what "the card is worth 40" means on a Sunday.
+Drawing a straight line between Friday and Monday invents two days of movement that
+did not happen. A point that was carried says so, so a caller can render it
+differently.
+
+Three more that a first attempt usually gets wrong:
+
+  * before the first quote there is NO price — not zero. A chart that starts at zero
+    and jumps shows a gain nobody made, and `series` omits those samples entirely
+    rather than emitting them;
+  * a market series must never absorb a `Low` (lowest listing): they answer different
+    questions and one is systematically below the other;
+  * two sources disagreeing about one instant must resolve the same way whichever
+    order they arrived in — fetch order is not information. Newest wins; an exact tie
+    goes to the source that sorts first, so the answer is stable.
+
+Money is `i64` minor units. Two currencies are an error, never a conversion.
+"""
+
+component = "price-history"
+
+# The shared gate lives beside the crate, not inside it, so it has to be named or it
+# is not in the sandbox.
+base_paths = [
+  "components/price-history/",
+  "components/Cargo.toml",
+  "components/spec-gate.sh",
+]
+writable = ["components/price-history/src/lib.rs"]
+
+# SHOWN, not writable.
+context = ["components/price-history/tests/history.rs"]
+
+# THE goal: what happens between quotes, and before the first one.
+[[check]]
+id = "gaps-and-carrying"
+weight = 3
+command = ["bash", "components/spec-gate.sh", "price-history", "history",
+  "a_gap_carries_forward_and_never_interpolates",
+  "samples_before_the_first_quote_are_absent_not_zero",
+  "before_the_first_quote_there_is_no_price",
+  "never_priced_in_the_window_is_an_empty_series"]
+
+# Which quote answers for an instant, and how stale it is.
+[[check]]
+id = "picking-a-quote"
+weight = 3
+command = ["bash", "components/spec-gate.sh", "price-history", "history",
+  "a_price_is_the_latest_quote_at_or_before_the_instant",
+  "a_quote_at_the_exact_instant_is_neither_carried_nor_stale",
+  "kinds_do_not_mix",
+  "the_newest_observation_wins_and_ties_are_broken_deterministically",
+  "an_exact_duplicate_changes_nothing"]
+
+# The shape of the series, and what is refused.
+[[check]]
+id = "series-and-refusals"
+weight = 2
+command = ["bash", "components/spec-gate.sh", "price-history", "history",
+  "the_series_always_ends_at_until",
+  "two_currencies_are_refused",
+  "a_zero_step_is_refused",
+  "no_quotes_is_not_priced"]

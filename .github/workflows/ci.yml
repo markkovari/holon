@@ -68,14 +68,34 @@ jobs:
       # The project's own entry point, not an approximation of it. CI that
       # builds differently from the repo is CI that answers a question nobody
       # asked.
+      # `force=1`: the incremental path keys on stamp markers under `target/`, and a
+      # cache restore can bring those back alongside artifacts it did not verify.
+      # CI is the one place that should always do the whole thing.
       - name: Build
-        run: just build
+        run: just build force=1
 
       - name: Test
         working-directory: components
         # `browser-automation` needs bindings that only exist after a component
         # build of its own.
         run: cargo test --workspace --exclude browser-automation
+
+      # The 25 MB this job actually produced, kept so no other machine has to
+      # rebuild 7.1 GB of intermediates to get them.
+      #
+      # These are the bytes `just build` makes — the same entry point, with the
+      # `wasm-tools metadata add` name stamp already applied — so a fetched tree is
+      # the one this workflow tested, not an approximation of it. `just
+      # fetch-components` pulls them by commit.
+      - name: Keep the artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: components-wasm32-wasip2
+          path: components/target/wasm32-wasip2/release/*.wasm
+          # Long enough to cover a branch somebody comes back to, short enough that
+          # a year of pushes is not kept at 25 MB each.
+          retention-days: 30
+          compression-level: 9
 
       # `publish` spawns `comp-host` through `tests/harness/mod.rs`, so the host
       # has to exist before the step below. Dropped once already when this

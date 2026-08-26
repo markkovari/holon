@@ -1,0 +1,65 @@
+# The first goal whose gate was written before the code, on purpose.
+#
+# `tests/guess.rs` is 19 tests and none of them passes on the base tree — the crate
+# is signatures and doc comments. That is the property goal 07 is about: a gate that
+# already passes accepts anything, and every gate in this repo that had been written
+# AFTER its implementation had that problem by construction.
+#
+# What makes it a search rather than a transcription: the happy path is a serde_json
+# call, and the other 17 tests are the cases that make a scanning app lie. A first
+# attempt that reads the signatures and writes the obvious parser fails on most of
+# them, and the reasons are in the test names rather than in a hint here.
+title = "card:identify — read a photo of a Pokémon card into typed fields"
+
+text = """
+Implement `parse` and `prompt` in components/card-identify/src/lib.rs. Nothing is
+implemented: both functions return an error or an empty string today.
+
+`tests/guess.rs` is the specification. You can read it and you may NOT edit it. Run
+it. Every case in it is a way a card-scanning app puts a row in somebody's
+collection that looks entered and is fiction, so read the test NAMES as the
+requirements they are — `absent_fields_are_listed_and_never_defaulted` is a rule
+about money, not about a Vec.
+
+The module header in src/lib.rs states the four rules the tests encode: never
+invent a field, refusing is a valid answer, normalising is not guessing, and the
+prompt lives beside the parser so the two cannot drift. It is the contract; the
+tests are how it is judged.
+
+`serde_json` is already a dependency. You are writing one file.
+
+Three things a first attempt usually gets wrong:
+
+  * a model wraps its JSON in a fenced block, or in prose, or both, and all three
+    are the same answer;
+  * an absent field must stay absent AND be named in `needs_review` — defaulting a
+    condition to Near Mint is the exact failure the rule forbids;
+  * `parse("")` and `parse("I'm sorry, I can't help with that.")` are errors, not
+    cards with empty names.
+"""
+
+component = "card-identify"
+
+# `component` derives base_paths as the crate plus the workspace manifest, and the
+# shared gate lives beside them rather than inside the crate — so it must be named or
+# it is not in the sandbox. `goal-rehearse.sh` caught exactly that here, with
+# "CANNOT RUN (exit 127)", before a single call was spent.
+base_paths = [
+  "components/card-identify/",
+  "components/Cargo.toml",
+  "components/spec-gate.sh",
+]
+writable = ["components/card-identify/src/lib.rs"]
+
+# SHOWN, and not writable. The first run of this goal proved what leaving it out
+# costs: attempt-0 failed on every branch and the winner passed on attempt-1, after
+# the GATE finally told it what the assertions say. One prompt buys the same
+# information as a whole wasted generation, and costs a great deal less.
+context = ["components/card-identify/tests/guess.rs"]
+
+# The specification, held out. Not in `writable`, so a candidate that cannot pass
+# it cannot edit it — which is the only reason the score means anything.
+[[check]]
+id = "the-specification"
+command = ["bash", "components/card-identify/gate.sh"]
+weight = 1
