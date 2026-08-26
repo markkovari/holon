@@ -1,0 +1,118 @@
+// portfolio:value — what a collection of things is worth, what it cost, and what
+// selling has already made.
+//
+// Deliberately NOT about cards. It takes acquisitions and disposals of an opaque
+// `item-id` priced in minor units, so it values a card binder, a wine cellar or a
+// parts inventory without knowing which it is. The TCG app that prompted it supplies
+// card ids; nothing here can tell.
+//
+// Pure compute: events and quotes in, numbers out. No store, no clock, no network —
+// the caller decides what "now" is, which is also what makes the history walkable by
+// passing an earlier instant.
+package portfolio:value@0.1.0;
+
+/// Cost basis, gains and the value series a chart is drawn from.
+interface valuation {
+    /// What happened to an item, and when.
+    ///
+    /// A swap is two events, not one: what left is a disposal at the agreed value
+    /// and what arrived is an acquisition at that same value, so a trade where you
+    /// got the better end shows up as a gain.
+    enum event-kind {
+        /// Bought, or received in a swap.
+        acquired,
+        /// Sold, or given up in a swap.
+        disposed,
+    }
+
+    /// One thing that happened to one item.
+    record event {
+        /// Opaque: whatever the caller uses to identify a thing.
+        item-id: string,
+        kind: event-kind,
+        /// Copies. Zero is an error, not a no-op.
+        quantity: u32,
+        /// Price per copy, in minor units of `currency`.
+        unit-minor: s64,
+        /// ISO-4217, compared exactly and never converted.
+        currency: string,
+        /// Unix seconds. Events are SORTED by this rather than trusted in order,
+        /// because backfilling an old purchase must not change the answer.
+        at: u64,
+    }
+
+    /// The latest known price for an item at some instant.
+    record quote {
+        item-id: string,
+        unit-minor: s64,
+        currency: string,
+        /// Unix seconds observed. Used for any instant at or after this one, until
+        /// a later quote replaces it.
+        at: u64,
+    }
+
+    /// What a collection is worth, and how it got there.
+    record valuation {
+        /// What the items still held cost.
+        cost-basis-minor: s64,
+        /// What they are worth — quoted at market, UNQUOTED AT COST.
+        market-value-minor: s64,
+        /// `market-value-minor - cost-basis-minor`. Held items only.
+        unrealised-minor: s64,
+        /// Proceeds minus FIFO cost over every disposal up to this instant.
+        realised-minor: s64,
+        currency: string,
+        /// Copies still held that no quote covered. They are inside
+        /// `market-value-minor` at cost, and counted here so a caller can say so
+        /// rather than showing a total that pretends to be complete.
+        unquoted: u32,
+    }
+
+    /// One sample on the value chart.
+    record point {
+        at: u64,
+        market-value-minor: s64,
+        cost-basis-minor: s64,
+        realised-minor: s64,
+        unquoted: u32,
+    }
+
+    /// Why a valuation could not be produced. Every one of these is a silent wrong
+    /// number if it is absorbed instead of refused.
+    variant value-error {
+        /// Two currencies in one portfolio. The rate on the day of a purchase eight
+        /// years ago is not knowable here, and inventing one puts a wrong number on
+        /// a chart that looks right. Carries expected and found.
+        mixed-currency(tuple<string, string>),
+        /// A disposal of more copies than were held. The event log is wrong, and
+        /// guessing which is a bigger lie than refusing. Carries item, instant,
+        /// held, disposed.
+        oversold-at(tuple<string, u64, u32, u32>),
+        /// A zero-quantity event: always a bug upstream. Carries item and instant.
+        zero-quantity(tuple<string, u64>),
+        /// A step of zero does not terminate.
+        zero-step,
+        /// No events, so there is no currency to report a zero IN.
+        empty,
+    }
+
+    /// What the collection is worth at `at`. Events after it are ignored, which is
+    /// how the history is walked.
+    ///
+    /// A sale consumes the OLDEST unsold lot at that lot's own cost — FIFO, because
+    /// the question an owner is asking is about a specific purchase, and average
+    /// cost answers a different one plausibly.
+    value-at: func(events: list<event>, quotes: list<quote>, at: u64)
+        -> result<valuation, value-error>;
+
+    /// `value-at` sampled every `step` seconds over `since`..=`until`, for a chart.
+    /// Always ends at `until` even when the step does not divide the window, so the
+    /// last point agrees with the headline figure beside it.
+    series: func(events: list<event>, quotes: list<quote>, since: u64, until: u64, step: u64)
+        -> result<list<point>, value-error>;
+}
+
+/// `portfolio-value` provides valuation; pure compute, no host imports.
+world portfolio-value {
+    export valuation;
+}
