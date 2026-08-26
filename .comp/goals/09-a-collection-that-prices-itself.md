@@ -1,4 +1,4 @@
-# A collection that prices itself — 🟢 three agent-ready goals
+# A collection that prices itself — ✅ all three landed, written by the loop
 
 **Traces to:** the loop being [paused because the gate is the limit](../../README.md#the-agentic-loop--paused-and-kept),
 and to ADR-0089 (*reuse before build*), ADR-0094 (*a capability describes itself
@@ -60,8 +60,17 @@ wrapping two existing ones would be a new interface that adds no capability.
 ## The three goals
 
 Each is one crate, one writable file, and a held-out test file that is the
-specification. They are independent — no ordering between them — and all three are
-🟢 **agent-ready** as they stand.
+specification. **All three are done**, and the loop wrote every line of every one:
+
+| goal | tests | model calls | attempts |
+|---|--:|--:|--:|
+| `card-identify` | 19 | 1 | 1 |
+| `portfolio-value` | 16 | 1 | 1 |
+| `price-history` | 13 | 2 | 2 |
+
+48 held-out tests, 4 model calls. The first run of `card-identify` took **42** and
+kept nothing — what changed in between was the harness, not the model, and it is
+written up in the commit that fixed it. The goal specs below are what ran.
 
 ```toml
 # .comp/goal.toml — one of the three, per run
@@ -78,7 +87,7 @@ Swap `portfolio-value` for `price-history` or `card-identify`. The test file is
 **not** in `writable`, which is the whole point: a candidate that cannot pass the
 spec cannot edit the spec.
 
-### 1. `portfolio-value` — 14 red tests
+### 1. `portfolio-value` — 16 tests, in four weighted checks
 
 What a collection is worth, what it cost, and what selling has already made. FIFO
 lots, realised against unrealised, a value series for the chart.
@@ -89,7 +98,7 @@ counted, because zero makes the chart dip and dropping it makes the chart climb;
 two currencies are refused rather than converted; events arriving out of order —
 the normal case when somebody backfills a 2019 purchase — give the same answer.
 
-### 2. `price-history` — 10 red tests
+### 2. `price-history` — 13 tests, in three weighted checks
 
 Sparse, duplicated, disagreeing quotes into the series a chart is drawn from.
 
@@ -99,7 +108,7 @@ five-year chart; samples before the first quote are **absent, not zero**; a
 "lowest listing" never leaks into a market series; two sources disagreeing about
 one day resolve the same way whatever order they were fetched in.
 
-### 3. `card-identify` — 19 red tests
+### 3. `card-identify` — 19 tests
 
 A vision model's answer into typed fields, plus the list of fields a person should
 check. The prompt lives in the same crate as the parser so the two cannot drift.

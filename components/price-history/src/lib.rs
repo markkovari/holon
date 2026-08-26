@@ -100,10 +100,45 @@ pub enum PriceError {
     ZeroStep,
 }
 
+fn check_currency(quotes: &[&Quote]) -> Result<(), PriceError> {
+    let mut expected: Option<&Currency> = None;
+    for q in quotes {
+        match expected {
+            None => expected = Some(&q.currency),
+            Some(e) if e != &q.currency => {
+                return Err(PriceError::MixedCurrency { expected: e.clone(), found: q.currency.clone() })
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// The price of one card at one instant: the latest quote of `kind` at or before
 /// `at`, carried forward if it is older than `at`.
-pub fn at(_quotes: &[Quote], _kind: QuoteKind, _at: u64) -> Result<Observed, PriceError> {
-    Err(PriceError::NotYetPriced)
+pub fn at(quotes: &[Quote], kind: QuoteKind, at: u64) -> Result<Observed, PriceError> {
+    let matching: Vec<&Quote> = quotes.iter().filter(|q| q.kind == kind).collect();
+    check_currency(&matching)?;
+
+    let mut best: Option<&Quote> = None;
+    for q in matching.iter().filter(|q| q.at <= at) {
+        best = match best {
+            None => Some(q),
+            Some(b) if q.at > b.at => Some(q),
+            Some(b) if q.at == b.at && q.source < b.source => Some(q),
+            Some(b) => Some(b),
+        };
+    }
+
+    let q = best.ok_or(PriceError::NotYetPriced)?;
+    Ok(Observed {
+        unit_minor: q.unit_minor,
+        currency: q.currency.clone(),
+        source: q.source.clone(),
+        observed_at: q.at,
+        age_seconds: at - q.at,
+        carried: q.at != at,
+    })
 }
 
 /// The price series over `from..=until`, sampled every `step` seconds.
@@ -112,11 +147,39 @@ pub fn at(_quotes: &[Quote], _kind: QuoteKind, _at: u64) -> Result<Observed, Pri
 /// means "never priced in this window" and a short one means the card started
 /// being priced partway through.
 pub fn series(
-    _quotes: &[Quote],
-    _kind: QuoteKind,
-    _from: u64,
-    _until: u64,
-    _step: u64,
+    quotes: &[Quote],
+    kind: QuoteKind,
+    from: u64,
+    until: u64,
+    step: u64,
 ) -> Result<Vec<Point>, PriceError> {
-    Err(PriceError::ZeroStep)
+    if step == 0 {
+        return Err(PriceError::ZeroStep);
+    }
+
+    let mut times = Vec::new();
+    let mut t = from;
+    loop {
+        times.push(t);
+        if t > until {
+            break;
+        }
+        match t.checked_add(step) {
+            Some(next) if next <= until => t = next,
+            _ => break,
+        }
+    }
+    if times.last() != Some(&until) {
+        times.push(until);
+    }
+
+    let mut points = Vec::with_capacity(times.len());
+    for t in times {
+        match at(quotes, kind, t) {
+            Ok(obs) => points.push(Point { at: t, unit_minor: obs.unit_minor, carried: obs.carried }),
+            Err(PriceError::NotYetPriced) => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(points)
 }

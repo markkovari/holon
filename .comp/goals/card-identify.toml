@@ -39,6 +39,16 @@ Three things a first attempt usually gets wrong:
 """
 
 component = "card-identify"
+
+# `component` derives base_paths as the crate plus the workspace manifest, and the
+# shared gate lives beside them rather than inside the crate — so it must be named or
+# it is not in the sandbox. `goal-rehearse.sh` caught exactly that here, with
+# "CANNOT RUN (exit 127)", before a single call was spent.
+base_paths = [
+  "components/card-identify/",
+  "components/Cargo.toml",
+  "components/spec-gate.sh",
+]
 writable = ["components/card-identify/src/lib.rs"]
 
 # SHOWN, and not writable. The first run of this goal proved what leaving it out
