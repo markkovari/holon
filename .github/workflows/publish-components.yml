@@ -1,0 +1,113 @@
+# Publish the built components to a registry, by digest.
+#
+# ## Why this is a separate workflow
+#
+# `ci.yml` opens by saying what it is allowed to do: *"It BUILDS and it TESTS. It
+# does not deploy, it does not publish."* That invariant is worth more than the
+# convenience of one extra step, so publishing lives here, with its own trigger and
+# its own permissions, and `ci.yml` keeps its promise.
+#
+# ## Why it is not on every push
+#
+# Publishing is outward-facing: it creates packages under the repository owner's
+# namespace that other people can pull. That should be a decision someone makes, not
+# a side effect of merging. So the trigger is manual, plus release tags.
+#
+# To publish on every push to `main` instead, add:
+#
+#     push:
+#       branches: [main]
+#
+# ## What it publishes
+#
+# Every `.wasm` from `just build`, at `ghcr.io/<owner>/holon/<component-name>`,
+# tagged with the first twelve hex of the component's own sha256 (ADR-0006: a tag is
+# human convenience and can never be the thing deployed). The digests are collected
+# into `components.lock` and attached to the run, so a consumer can pin what this
+# run produced rather than trusting a tag.
+name: publish components
+
+on:
+  workflow_dispatch:
+    inputs:
+      registry:
+        # No `${{ }}` here. An input default is a literal — an expression in one
+        # makes the whole workflow file invalid, which GitHub reports as a run that
+        # fails instantly with no jobs, not as a syntax error you can see. Blank
+        # means the owner's own namespace; the step below fills it in.
+        description: "Registry prefix. Blank = ghcr.io/<owner>/holon"
+        default: ""
+        required: false
+  push:
+    tags: ["v*"]
+
+# The default token can write packages for this repository's owner, so no secret
+# has to be stored. `contents: read` is the rest of the least privilege.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: push every component by digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the wasm target
+        run: rustup target add wasm32-wasip2
+
+      - name: Install cargo-component, wasm-tools and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-component@0.21.1,wasm-tools,just
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: components -> target
+
+      # The project's own entry point, same as ci.yml — what gets published has to
+      # be what the repository builds, including the `wasm-tools metadata add` name
+      # stamp that `wit-reflect` asserts.
+      - name: Build
+        run: just build force=1
+
+      - name: Build comp-oci
+        working-directory: reconciler
+        run: cargo build --release --bin comp-oci
+
+      # `GITHUB_TOKEN` as the password is the documented way to authenticate to
+      # ghcr from Actions; the username is ignored by ghcr but has to be present.
+      - name: Push
+        env:
+          OCI_USER: ${{ github.actor }}
+          OCI_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          # Through the environment rather than interpolated into the command, so a
+          # registry name can never be read as shell.
+          INPUT_REGISTRY: ${{ github.event.inputs.registry }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          reg="${INPUT_REGISTRY:-}"
+          [ -n "$reg" ] || reg="ghcr.io/$OWNER/holon"
+          echo "pushing to $reg"
+          ./reconciler/target/release/comp-oci push "$reg" \
+            components/target/wasm32-wasip2/release --lock components.lock
+
+      # The digests, not the tags. This is the file a consumer pins against.
+      - name: Keep the digests
+        uses: actions/upload-artifact@v4
+        with:
+          name: components-lock
+          path: components.lock
+
+      - name: Say what to do with it
+        # One redirect for the whole block (SC2129), not five.
+        run: |
+          {
+            echo "### Published by digest"
+            echo '```'
+            head -20 components.lock
+            echo '```'
+            echo "Pull one with \`just pull <name>\` — see docs/REGISTRY.md."
+          } >> "$GITHUB_STEP_SUMMARY"

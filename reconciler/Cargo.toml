@@ -26,6 +26,10 @@ path = "src/bin/ingress.rs"
 # A shim over src/plug.rs, for gates — which are shell scripts and cannot call a
 # Rust function. The composition itself is the library.
 [[bin]]
+name = "comp-oci"
+path = "src/bin/oci.rs"
+
+[[bin]]
 name = "comp-plug"
 path = "src/bin/plug.rs"
 
