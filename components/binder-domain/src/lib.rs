@@ -55,6 +55,7 @@ use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
+use bindings::wasi::io::streams::StreamError;
 use bindings::wasi::keyvalue::store;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -452,8 +453,17 @@ fn stream_photo(
 
     {
         let stream = body.write().expect("write stream");
+        // Chunked, like every other write in this repository: one call above 4096
+        // bytes traps the component mid-response, and an SSE frame carrying a card
+        // with a long `needs_review` is not small.
         let send = |v: Value| -> bool {
-            stream.blocking_write_and_flush(format!("data: {v}\n\n").as_bytes()).is_ok()
+            let frame = format!("data: {v}\n\n");
+            for chunk in frame.as_bytes().chunks(4096) {
+                if stream.blocking_write_and_flush(chunk).is_err() {
+                    return false;
+                }
+            }
+            true
         };
 
         if !send(json!({ "stage": "looking", "detail": "showing the card to the model" })) {
@@ -550,6 +560,21 @@ fn ns(p: &Principal) -> String {
     format!("u/{}/", p.subject)
 }
 
+/// A ceiling on what is read into memory, not a policy: past this the read gives up
+/// rather than growing until the store's memory cap traps the component and the
+/// connection simply closes. A photograph arrives here base64-encoded, so it is
+/// generous — but bounded.
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+
+/// The whole request body, or nothing.
+///
+/// `wasi:io` signals the end of a body with `Err(StreamError::Closed)` and a genuine
+/// failure with the other arm. Collapsing both into `break` returns a TRUNCATED body
+/// as if it were whole — for `/api/photo` that is half a picture described with
+/// confidence, and for anything that parses it is a confusing 400. There is no error
+/// channel out of this function, so a failed or over-long read returns EMPTY: a
+/// caller that gets nothing writes nothing, and a caller handed a plausible prefix
+/// stores it.
 fn read_body(req: &IncomingRequest) -> Vec<u8> {
     let Ok(body) = req.consume() else { return Vec::new() };
     let Ok(stream) = body.stream() else { return Vec::new() };
@@ -557,8 +582,15 @@ fn read_body(req: &IncomingRequest) -> Vec<u8> {
     loop {
         match stream.blocking_read(8192) {
             Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => buf.extend_from_slice(&chunk),
-            Err(_) => break,
+            Ok(chunk) => {
+                if buf.len() + chunk.len() > MAX_BODY_BYTES {
+                    return Vec::new();
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            Err(StreamError::Closed) => break,
+            // NOT the end of the body.
+            Err(_) => return Vec::new(),
         }
     }
     buf
