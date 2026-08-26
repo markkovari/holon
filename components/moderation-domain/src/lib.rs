@@ -36,29 +36,7 @@ use bindings::wasi::http::types::{
 };
 use serde_json::{json, Value};
 
-/// Write a whole body, however long it is.
-///
-/// `blocking-write-and-flush` accepts at most 4096 bytes and TRAPS above that
-/// rather than returning an error: the component dies mid-response and the caller
-/// sees `connection closed before message completed`, three layers from the cause.
-fn write_all(stream: &bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) -> bool {
-    while !bytes.is_empty() {
-        let ready = match stream.check_write() {
-            Ok(0) => {
-                stream.subscribe().block();
-                continue;
-            }
-            Ok(n) => n as usize,
-            Err(_) => return false,
-        };
-        let take = ready.min(bytes.len());
-        if stream.write(&bytes[..take]).is_err() {
-            return false;
-        }
-        bytes = &bytes[take..];
-    }
-    stream.blocking_flush().is_ok()
-}
+guestio::guest_write_all!();
 
 struct Component;
 
