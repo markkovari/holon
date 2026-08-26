@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Area, Brush, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+import { Link } from "react-router-dom";
 import { api, money, type Point, type Portfolio } from "../api";
 import type { Store } from "../App";
 
@@ -98,6 +99,21 @@ export function PortfolioPage({ store }: { store: Store }) {
           composed capability — <code>portfolio:value</code>, <code>price:history</code> — over WIT.
         </p>
       </div>
+
+      {/* A log that cannot be valued says so, names the card, and offers the way
+          back — rather than a page of zeroes with no explanation, or the 422 that
+          used to take out the portfolio, the cards and the decks at once. */}
+      {p.blocked && (
+        <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm space-y-1">
+          <b className="text-destructive">This collection cannot be valued yet.</b>
+          <p>{p.blocked}</p>
+          {p.blocked_card && (
+            <Link to={`/cards/${encodeURIComponent(p.blocked_card)}`} className="underline">
+              open {p.blocked_card} and fix it →
+            </Link>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-px bg-border border rounded-xl overflow-hidden">
         <Tile label="market value" value={money(p.market_value_minor, c)} />

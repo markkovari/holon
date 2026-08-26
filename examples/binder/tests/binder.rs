@@ -525,7 +525,12 @@ fn a_photographed_collection_prices_itself() {
     let (s, detail) = auth_req("GET", &format!("/api/cards/{charizard}"), None, &token);
     assert_eq!(s, 200, "{detail}");
     assert_eq!(detail["held"], 2);
-    assert_eq!(detail["cost_basis_minor"], 6000);
+    // The basis of what is STILL HELD, not everything ever spent: 60.00 went out,
+    // and the FIFO sale consumed the 10.00 lot, so 50.00 remains. Computed by
+    // `portfolio:value` over this one card's log — the app does no arithmetic — which
+    // is why a card and the total that includes it cannot disagree.
+    assert_eq!(detail["cost_basis_minor"], 5000, "{detail}");
+    assert_eq!(detail["realised_minor"], 2000, "sold the 10.00 copy for 30.00: {detail}");
     assert_eq!(detail["price_minor"], 9000, "carried forward from the newest quote");
     assert_eq!(detail["value_minor"], 18_000);
     assert_eq!(detail["quotes"].as_array().expect("array").len(), 3);
@@ -577,4 +582,83 @@ fn a_photographed_collection_prices_itself() {
 
     let (s, _) = auth_req("GET", "/api/cards/nope", None, &token);
     assert_eq!(s, 404, "a card that does not exist");
+
+    // --- a buy and a sell in ONE second are two events --------------------
+    //
+    // The key was `event:{at}:{card}`, so both landed on it and the sale silently
+    // REPLACED the purchase: the collection then held nothing, had no cost basis,
+    // and realised nothing on a sale it still displayed. Every number wrong, none of
+    // them looking it.
+    let (_, one) = auth_req(
+        "POST",
+        "/api/cards",
+        Some(json!({ "name": "Same Second", "set_code": "ss", "number": "001",
+                     "paid_minor": 500, "quantity": 1 })),
+        &token,
+    );
+    let same = one["id"].as_str().expect("an id").to_string();
+    let (s, _) = auth_req(
+        "POST",
+        "/api/events",
+        Some(json!({ "card_id": same, "kind": "disposed", "quantity": 1, "unit_minor": 900 })),
+        &token,
+    );
+    assert_eq!(s, 201);
+    let (_, both) = auth_req("GET", &format!("/api/cards/{same}"), None, &token);
+    assert_eq!(both["events"].as_array().expect("array").len(), 2, "both survive: {both}");
+    assert_eq!(both["held"], 0);
+    assert_eq!(both["cost_basis_minor"], 0, "bought one and sold it");
+
+    // Replaying the identical POST is still one event, which is what the old key was
+    // reaching for and the reason it was too coarse.
+    let sale = both["events"]
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|e| e["kind"] == "disposed")
+        .expect("the sale")
+        .clone();
+    auth_req(
+        "POST",
+        "/api/events",
+        Some(json!({ "card_id": same, "kind": "disposed", "quantity": 1,
+                     "unit_minor": 900, "at": sale["at"] })),
+        &token,
+    );
+    let (_, replayed) = auth_req("GET", &format!("/api/cards/{same}"), None, &token);
+    assert_eq!(replayed["events"].as_array().expect("array").len(), 2, "not three: {replayed}");
+
+    // --- selling more than is held is refused ON THE WRITE ----------------
+    //
+    // `portfolio:value` refuses an oversold log by design, but that refusal lands on
+    // the valuation — so one bad event took out every screen at once and left no
+    // page from which to fix it.
+    let (s, refused) = auth_req(
+        "POST",
+        "/api/events",
+        Some(json!({ "card_id": charizard, "kind": "disposed", "quantity": 99, "unit_minor": 100 })),
+        &token,
+    );
+    assert_eq!(s, 409, "{refused}");
+    let detail = refused["error"].as_str().expect("a reason");
+    assert!(detail.contains("cannot be sold"), "and says why: {detail}");
+
+    // And the portfolio still answers, because it was never allowed to go bad.
+    let (s, still) = auth_req("GET", "/api/portfolio", None, &token);
+    assert_eq!(s, 200, "{still}");
+    assert!(still["blocked"].is_null(), "nothing blocking it: {still}");
+
+    // --- deleting an event takes exactly the one named --------------------
+    let (s, gone) = auth_req(
+        "DELETE",
+        "/api/events",
+        Some(json!({ "card_id": same, "at": sale["at"], "kind": "disposed",
+                     "quantity": 1, "unit_minor": 900 })),
+        &token,
+    );
+    assert_eq!(s, 200, "{gone}");
+    assert_eq!(gone["deleted"], 1, "the sale only — not the purchase beside it: {gone}");
+    let (_, after) = auth_req("GET", &format!("/api/cards/{same}"), None, &token);
+    assert_eq!(after["held"], 1, "the purchase is still there: {after}");
+    assert_eq!(after["cost_basis_minor"], 500);
 }

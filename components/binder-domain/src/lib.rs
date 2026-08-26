@@ -322,6 +322,41 @@ fn scan<T: for<'de> Deserialize<'de>>(b: &store::Bucket, prefix: &str) -> Vec<T>
     keys.iter().filter_map(|k| get_json(b, k)).collect()
 }
 
+/// The key an event is stored under, which is its IDENTITY.
+///
+/// Everything that distinguishes one event from another is in it, and that is not
+/// fussiness — the key was `event:{at}:{card}`, so buying a card and selling it in
+/// the SAME SECOND wrote both to one key and the sale silently replaced the
+/// purchase. The collection then held nothing, had no cost basis, and realised
+/// nothing on a sale it still showed. Every number was wrong and none of them looked
+/// it.
+///
+/// Replaying an identical POST still lands on the same key, which is the idempotency
+/// the old scheme was reaching for; two DIFFERENT events at one instant no longer
+/// collide.
+fn event_key(ns: &str, e: &StoredEvent) -> String {
+    format!(
+        "{ns}event:{:020}:{}:{}:{}:{}",
+        e.at, e.card_id, e.kind, e.quantity, e.unit_minor
+    )
+}
+
+/// Every key under a prefix. `scan` reads values; deleting needs the keys.
+fn keys_under(b: &store::Bucket, prefix: &str) -> Vec<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let mut cursor = None;
+    loop {
+        let Ok(page) = b.list_keys(cursor.clone()) else { break };
+        let before = out.len();
+        out.extend(page.keys.into_iter().filter(|k| k.starts_with(prefix)));
+        match page.cursor {
+            Some(c) if out.len() > before => cursor = Some(c),
+            _ => break,
+        }
+    }
+    out.into_iter().collect()
+}
+
 fn events_for(b: &store::Bucket, ns: &str) -> Vec<pv::Event> {
     scan::<StoredEvent>(b, &format!("{ns}event:"))
         .into_iter()
@@ -759,7 +794,7 @@ impl Guest for Component {
                         currency: v.get("currency").and_then(Value::as_str).unwrap_or("EUR").to_string(),
                         at,
                     };
-                    let _ = put_json(&bucket, &format!("{ns}event:{:020}:{}", at, id), &ev);
+                    let _ = put_json(&bucket, &event_key(&ns, &ev), &ev);
                 }
                 json_out(out, 201, &serde_json::to_value(card).unwrap_or(Value::Null))
             }
@@ -801,11 +836,6 @@ impl Guest for Component {
                     .iter()
                     .map(|e| if e.kind == "disposed" { -(e.quantity as i64) } else { e.quantity as i64 })
                     .sum();
-                let basis: i64 = events
-                    .iter()
-                    .filter(|e| e.kind != "disposed")
-                    .map(|e| e.quantity as i64 * e.unit_minor)
-                    .sum();
 
                 let stored: Vec<StoredQuote> = scan::<StoredQuote>(&bucket, &format!("quote:{id}:"));
                 let quotes: Vec<ph::Quote> = stored
@@ -820,6 +850,28 @@ impl Guest for Component {
                     .collect();
 
                 let until = now();
+
+                // The money comes from `portfolio:value`, over THIS card's events —
+                // not from arithmetic here. Summing the purchases would report what
+                // was ever spent rather than the basis of what is still held, so a
+                // card sold at a profit would show a cost basis it no longer has and
+                // disagree with the portfolio total that includes it. FIFO belongs to
+                // the capability; the app's job is to hand it one card's log.
+                let one_card: Vec<pv::Event> = events
+                    .iter()
+                    .map(|e| pv::Event {
+                        item_id: e.card_id.clone(),
+                        kind: if e.kind == "disposed" { pv::EventKind::Disposed } else { pv::EventKind::Acquired },
+                        quantity: e.quantity,
+                        unit_minor: e.unit_minor,
+                        currency: e.currency.clone(),
+                        at: e.at,
+                    })
+                    .collect();
+                let valued = pv::value_at(&one_card, &quotes_for(&bucket), until).ok();
+                let basis = valued.as_ref().map(|v| v.cost_basis_minor).unwrap_or(0);
+                let realised = valued.as_ref().map(|v| v.realised_minor).unwrap_or(0);
+
                 let days = param(&query, "days").and_then(|d| d.parse::<u64>().ok()).unwrap_or(90);
                 let earliest = stored.iter().map(|q| q.at).min().unwrap_or(until);
                 let window = if days == 0 { until.saturating_sub(earliest) } else { days * 86_400 };
@@ -851,6 +903,9 @@ impl Guest for Component {
                         "card": card,
                         "held": held.max(0),
                         "cost_basis_minor": basis,
+                        // What selling this card has already made, from the same FIFO
+                        // the portfolio uses — so the card and the total agree.
+                        "realised_minor": realised,
                         "price_minor": price.as_ref().map(|o| o.unit_minor),
                         "currency": price.as_ref().map(|o| o.currency.clone()).unwrap_or_else(|| "EUR".into()),
                         "price_age_days": price.as_ref().map(|o| o.age_seconds / 86_400),
@@ -1036,13 +1091,91 @@ impl Guest for Component {
                 if ev.card_id.is_empty() {
                     return fail(out, 400, "which card");
                 }
-                // Keyed by instant and card, so replaying the same POST twice writes
-                // one event rather than inventing a second purchase.
-                let key = format!("{ns}event:{:020}:{}", at, ev.card_id);
+                // A disposal of more than is held is refused HERE, on the request that
+                // makes it, rather than by the valuation later.
+                //
+                // `portfolio:value` refuses an oversold log by design and is right to:
+                // guessing which sale was wrong is a bigger lie than refusing. But the
+                // refusal lands on `/api/portfolio`, which means one bad event takes
+                // out every screen at once and the person is left with a 422 and no
+                // way back. The place to catch it is the write.
+                if ev.kind == "disposed" {
+                    let held: i64 = scan::<StoredEvent>(&bucket, &format!("{ns}event:"))
+                        .into_iter()
+                        .filter(|e| e.card_id == ev.card_id && e.at <= at)
+                        .map(|e| if e.kind == "disposed" { -(e.quantity as i64) } else { e.quantity as i64 })
+                        .sum();
+                    if (ev.quantity as i64) > held {
+                        return fail(
+                            out,
+                            409,
+                            &format!(
+                                "you hold {held} of {} at that date, so {} cannot be sold",
+                                ev.card_id, ev.quantity
+                            ),
+                        );
+                    }
+                }
+                let key = event_key(&ns, &ev);
                 if let Err(e) = put_json(&bucket, &key, &ev) {
                     return fail(out, 500, &e);
                 }
                 json_out(out, 201, &serde_json::to_value(ev).unwrap_or(Value::Null))
+            }
+
+            // Remove one. The only way back from a log that cannot be valued, and
+            // the reason the refusal above names an `at`.
+            (Method::Delete, "/api/events") => {
+                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let body = read_body(&req);
+                let Ok(v) = serde_json::from_slice::<Value>(&body) else {
+                    return fail(out, 400, "not json");
+                };
+                let (Some(card), Some(at)) = (
+                    v.get("card_id").and_then(Value::as_str),
+                    v.get("at").and_then(Value::as_u64),
+                ) else {
+                    return fail(out, 400, "which event — card_id and at");
+                };
+                // The EXACT event when the caller names it fully, which the card page
+                // does because it is showing the thing being deleted. A prefix on
+                // (instant, card) alone removes a buy and a sell that share a second —
+                // exactly the pair that used to collide, so deleting the sale took the
+                // purchase with it.
+                let ns = ns(&who);
+                let found: Vec<String> = match (
+                    v.get("kind").and_then(Value::as_str),
+                    v.get("quantity").and_then(Value::as_u64),
+                    v.get("unit_minor").and_then(Value::as_i64),
+                ) {
+                    (Some(kind), Some(quantity), Some(unit_minor)) => {
+                        let key = event_key(
+                            &ns,
+                            &StoredEvent {
+                                card_id: card.to_string(),
+                                kind: kind.to_string(),
+                                quantity: quantity as u32,
+                                unit_minor,
+                                currency: String::new(),
+                                at,
+                            },
+                        );
+                        // Only if it is really there, so the count does not claim a
+                        // deletion that did not happen.
+                        if bucket.exists(&key).unwrap_or(false) { vec![key] } else { vec![] }
+                    }
+                    // Named only by instant and card: every event that matches goes,
+                    // and the count says how many so a caller is not surprised.
+                    _ => keys_under(&bucket, &format!("{ns}event:{:020}:{card}:", at)),
+                };
+                for k in &found {
+                    let _ = bucket.delete(k);
+                }
+                json_out(
+                    out,
+                    200,
+                    &json!({ "deleted": found.len(), "card_id": card, "at": at }),
+                )
             }
 
             // An observed price. Where it came from is not this app's business —
@@ -1171,9 +1304,42 @@ impl Guest for Component {
                         }),
                     ),
                     // Every other one is a refusal the capability makes on purpose —
-                    // mixed currency, an oversold card — and it is reported, not
-                    // absorbed into a plausible number.
-                    Err(e) => fail(out, 422, &format!("{e:?}")),
+                    // mixed currency, an oversold card. Reported, never absorbed into
+                    // a plausible number, and NOT as a 422 for the whole page:
+                    // a log with one bad event in it used to take out the portfolio,
+                    // the cards and the decks at once, leaving no screen from which to
+                    // fix the event. So: 200, zeroes, and the card to go and look at.
+                    Err(e) => {
+                        let (problem, card) = match &e {
+                            pv::ValueError::OversoldAt((card, at, held, disposed)) => (
+                                format!(
+                                    "{card} was sold {disposed} on {at} with {held} held. \
+                                     Delete that sale, or record what you bought first."
+                                ),
+                                card.clone(),
+                            ),
+                            pv::ValueError::MixedCurrency((want, got)) => (
+                                format!("this collection has both {want} and {got} in it"),
+                                String::new(),
+                            ),
+                            pv::ValueError::ZeroQuantity((card, _)) => {
+                                (format!("{card} has an event for zero copies"), card.clone())
+                            }
+                            other => (format!("{other:?}"), String::new()),
+                        };
+                        json_out(
+                            out,
+                            200,
+                            &json!({
+                                "cost_basis_minor": 0, "market_value_minor": 0,
+                                "unrealised_minor": 0, "realised_minor": 0,
+                                "currency": "EUR", "unquoted": 0, "series": [],
+                                // Named so a screen can say what to fix and where.
+                                "blocked": problem,
+                                "blocked_card": card,
+                            }),
+                        )
+                    }
                 }
             }
 

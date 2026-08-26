@@ -97,6 +97,8 @@ that invention is most of the line.
 | `POST /api/events` | what you paid, or sold it for. A swap is two of these |
 | `POST /api/quotes` | an observed price. Where it came from is not this app's business |
 | `GET /api/price/{id}` | 90 days, carried across gaps |
+| `POST /api/events` | a buy or a sell. A sale of more than is held at that date is a **409 on the write**, not a broken portfolio later |
+| `DELETE /api/events` | remove one. Name it fully (`card_id`, `at`, `kind`, `quantity`, `unit_minor`) and exactly that one goes |
 | `GET /api/cards/{id}?days=N` | one card: what it is, what is held, its own price series (each point saying whether it was carried), every quote, every buy and sell, and every correction anyone made |
 | `GET /api/portfolio?days=N` | the totals and the series. `days=0` is everything, computed from the earliest event — the range selector is a server query, not a crop |
 
@@ -112,6 +114,14 @@ open http://$(hostname):3210        # or http://<tailscale-ip>:3210
 
 `apps/binder.toml` is the deploy spec, and `access` is left at **tailnet** — a
 generated file must never be the reason an app is on the internet.
+
+**One bad row does not take out every screen.** `portfolio:value` refuses an
+oversold log by design — guessing which sale was wrong is a bigger lie than refusing
+— but that refusal used to arrive as a 422 on `/api/portfolio`, which meant the
+portfolio, the cards and the decks all went dark and there was no page left from
+which to fix the event. The oversell is now refused on the WRITE, where a person can
+act; and if a log is bad anyway, the portfolio answers with zeroes, says why, and
+links to the card.
 
 **A correction is history, not an overwrite.** The card is what it is — but "who
 said Near Mint, and when did that change" is a different question the row cannot
