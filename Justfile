@@ -1527,6 +1527,51 @@ host-track: compose-track
 # Track e2e: compose + build host + a Rust test driving all five axes — auth +
 # RBAC (admin creates a project, a member writes, a non-member is 403), issue
 # lifecycle over the fsm, full-text search, an SSE activity frame, the background
+# Fetch the built components instead of building them.
+#
+# `components/target` is 7.1 GB of intermediates for 25 MB of output — a 284:1 ratio
+# that has to be paid on every machine, for artifacts CI already produced from this
+# same tree with this same `just build`.
+#
+# So: pull them. By default for the commit you are on; pass a ref to take another's.
+# Anything you are actually editing still rebuilds, because cargo compares mtimes and
+# these arrive newer than the sources only if the sources have not changed since.
+#
+#   just fetch-components              # this commit
+#   just fetch-components main         # whatever main last built
+#
+# Needs `gh` and a successful run for that commit. It refuses rather than silently
+# fetching a different tree's bytes: a component that does not match your source is
+# the worst possible thing to debug.
+fetch-components ref="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    want="{{ref}}"
+    [ -n "$want" ] || want="$(git rev-parse HEAD)"
+    echo "looking for a components build of $want …"
+    run=$(gh run list --workflow ci.yml --commit "$(git rev-parse "$want")" \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)
+    if [ -z "$run" ]; then
+      echo "no successful CI run for $want." >&2
+      echo "  push it, wait for the 'components (wasm32-wasip2)' job, or 'just build' locally." >&2
+      exit 1
+    fi
+    out=components/target/wasm32-wasip2/release
+    mkdir -p "$out"
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    if ! gh run download "$run" --name components-wasm32-wasip2 --dir "$tmp" 2>/dev/null; then
+      echo "run $run has no components artifact." >&2
+      echo "  Runs from before the 'Keep the artifacts' step do not carry one, and an" >&2
+      echo "  artifact expires after 30 days. Push again, or 'just build'." >&2
+      exit 1
+    fi
+    n=$(find "$tmp" -name '*.wasm' | wc -l | tr -d ' ')
+    [ "$n" -gt 0 ] || { echo "the artifact held no .wasm files" >&2; exit 1; }
+    cp "$tmp"/*.wasm "$out/"
+    echo "fetched $n component(s) from run $run into $out"
+    echo "  they are the bytes that run tested; `just build` still rebuilds anything you edit."
+
 # Compose binder-domain (docs/apps/BINDER.md — a Pokemon card binder) with the three
 # capabilities it imports: card:identify (a vision model's answer into typed fields),
 # price:history (what a card was worth, carried across gaps) and portfolio:value
