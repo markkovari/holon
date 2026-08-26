@@ -1,0 +1,25 @@
+// The world TinyGo can actually build.
+//
+// `portfolio-value`'s own world (wit/portfolio.wit) has NO imports: it is pure
+// compute, and the Rust component exports it with an empty import section. TinyGo
+// cannot produce that — its runtime links stdout for panics, an exit, an
+// environment and a clock whether or not the program uses them, and a component
+// whose module imports them will not encode against a world that does not.
+//
+// So this world exports the SAME interface and admits the runtime's imports. That
+// difference is the finding, not a workaround: see README.md.
+
+
+world portfolio-value-go {
+    import wasi:io/error@0.2.0;
+    import wasi:io/streams@0.2.0;
+    import wasi:io/poll@0.2.0;
+    import wasi:cli/stdout@0.2.0;
+    import wasi:cli/stderr@0.2.0;
+    import wasi:cli/stdin@0.2.0;
+    import wasi:clocks/monotonic-clock@0.2.0;
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:random/random@0.2.0;
+
+    export valuation;
+}

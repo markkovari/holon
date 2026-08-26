@@ -1,0 +1,57 @@
+package portfolio:value@0.1.0;
+
+interface valuation {
+  enum event-kind {
+    acquired,
+    disposed,
+  }
+
+  record event {
+    item-id: string,
+    kind: event-kind,
+    quantity: u32,
+    unit-minor: s64,
+    currency: string,
+    at: u64,
+  }
+
+  record quote {
+    item-id: string,
+    unit-minor: s64,
+    currency: string,
+    at: u64,
+  }
+
+  record valuation {
+    cost-basis-minor: s64,
+    market-value-minor: s64,
+    unrealised-minor: s64,
+    realised-minor: s64,
+    currency: string,
+    unquoted: u32,
+  }
+
+  record point {
+    at: u64,
+    market-value-minor: s64,
+    cost-basis-minor: s64,
+    realised-minor: s64,
+    unquoted: u32,
+  }
+
+  variant value-error {
+    mixed-currency(tuple<string, string>),
+    oversold-at(tuple<string, u64, u32, u32>),
+    zero-quantity(tuple<string, u64>),
+    zero-step,
+    empty,
+  }
+
+  value-at: func(events: list<event>, quotes: list<quote>, at: u64) -> result<valuation, value-error>;
+
+  series: func(events: list<event>, quotes: list<quote>, since: u64, until: u64, step: u64) -> result<list<point>, value-error>;
+}
+
+world portfolio-value {
+  export valuation;
+}
