@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, money, type Card } from "../api";
 import { downscale } from "../photo";
 import type { Store } from "../App";
@@ -23,7 +24,12 @@ function Row({ card, reload }: { card: Card; reload: () => Promise<void> }) {
     return (
       <tr className="border-b hover:bg-secondary/50 cursor-pointer"
         onClick={() => { setDraft(Object.fromEntries(EDITABLE.map((k) => [k, (card as any)[k] ?? ""]))); setEditing(true); }}>
-        <td className="p-2">{card.name}</td>
+        <td className="p-2">
+          {/* The name opens the card; the rest of the row still edits in place, so a
+              quick correction does not cost a page. */}
+          <Link to={`/cards/${encodeURIComponent(card.id)}`} onClick={(e) => e.stopPropagation()}
+            className="hover:underline">{card.name}</Link>
+        </td>
         <td className="p-2"><Field card={card} k="set_name" /></td>
         <td className="p-2"><Field card={card} k="number" /></td>
         <td className="p-2"><Field card={card} k="printing" /></td>

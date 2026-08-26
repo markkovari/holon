@@ -520,4 +520,61 @@ fn a_photographed_collection_prices_itself() {
         .expect("the commons");
     assert_eq!(bulk["price_minor"], 25, "priced now: {bulk}");
     assert_eq!(bulk["value_minor"], 40 * 25, "and worth what forty of them come to: {bulk}");
+
+    // --- one card, and how it got here ------------------------------------
+    let (s, detail) = auth_req("GET", &format!("/api/cards/{charizard}"), None, &token);
+    assert_eq!(s, 200, "{detail}");
+    assert_eq!(detail["held"], 2);
+    assert_eq!(detail["cost_basis_minor"], 6000);
+    assert_eq!(detail["price_minor"], 9000, "carried forward from the newest quote");
+    assert_eq!(detail["value_minor"], 18_000);
+    assert_eq!(detail["quotes"].as_array().expect("array").len(), 3);
+    assert_eq!(detail["events"].as_array().expect("array").len(), 3);
+    // Newest first: a history is read from what just happened, backwards.
+    let events = detail["events"].as_array().expect("array");
+    assert!(
+        events[0]["at"].as_u64() >= events[events.len() - 1]["at"].as_u64(),
+        "newest first: {events:?}"
+    );
+    // Each point says whether it was CARRIED, so a flat stretch reads as "nobody
+    // quoted it" rather than "it did not move".
+    let series = detail["series"].as_array().expect("array");
+    assert!(series.iter().any(|p| p["carried"] == json!(true)), "gaps are carried: {}", series.len());
+
+    // --- a correction is kept, and one save keeps every field it touched ---
+    //
+    // The bug this pins: the history was keyed by an index within a save, so a second
+    // save in the same second restarted at zero and silently overwrote the first
+    // one's entries. Three fields, one save, three entries.
+    let (s, _) = auth_req(
+        "PATCH",
+        "/api/cards",
+        Some(json!({ "id": commons, "printing": "holo", "rarity": "Common", "language": "en" })),
+        &token,
+    );
+    assert_eq!(s, 200);
+    let (_, after) = auth_req("GET", &format!("/api/cards/{commons}"), None, &token);
+    let changes = after["changes"].as_array().expect("array");
+    let fields: Vec<&str> = changes.iter().map(|c| c["field"].as_str().unwrap()).collect();
+    for f in ["printing", "rarity", "language"] {
+        assert!(fields.contains(&f), "{f} was corrected and must be in the history: {fields:?}");
+    }
+    // The earlier correction, from before this block, is still there.
+    assert!(fields.contains(&"condition"), "history is appended, not replaced: {fields:?}");
+    let printing = changes.iter().find(|c| c["field"] == "printing").expect("the entry");
+    assert_eq!(printing["from"], "", "it was never established");
+    assert_eq!(printing["to"], "holo");
+
+    // Saving a field to the value it already has is not a change.
+    let before = changes.len();
+    auth_req("PATCH", "/api/cards", Some(json!({ "id": commons, "printing": "holo" })), &token);
+    let (_, again) = auth_req("GET", &format!("/api/cards/{commons}"), None, &token);
+    assert_eq!(
+        again["changes"].as_array().expect("array").len(),
+        before,
+        "an unchanged field writes no history"
+    );
+
+    let (s, _) = auth_req("GET", "/api/cards/nope", None, &token);
+    assert_eq!(s, 404, "a card that does not exist");
 }

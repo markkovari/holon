@@ -6,6 +6,7 @@ import { api, hasToken, setToken, type Card, type Deck, type Portfolio } from ".
 import { SignIn } from "./routes/SignIn";
 import { PortfolioPage } from "./routes/Portfolio";
 import { CardsPage } from "./routes/Cards";
+import { CardDetailPage } from "./routes/CardDetail";
 import { DecksPage } from "./routes/Decks";
 import { DeckPage } from "./routes/Deck";
 
@@ -79,6 +80,7 @@ function Shell() {
         <Routes>
           <Route path="/" element={<PortfolioPage store={store} />} />
           <Route path="/cards" element={<CardsPage store={store} />} />
+          <Route path="/cards/:id" element={<CardDetailPage store={store} />} />
           <Route path="/decks" element={<DecksPage store={store} />} />
           <Route path="/decks/:name" element={<DeckPage store={store} />} />
           <Route path="*" element={<Navigate to="/" replace />} />

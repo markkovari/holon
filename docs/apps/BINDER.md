@@ -97,6 +97,7 @@ that invention is most of the line.
 | `POST /api/events` | what you paid, or sold it for. A swap is two of these |
 | `POST /api/quotes` | an observed price. Where it came from is not this app's business |
 | `GET /api/price/{id}` | 90 days, carried across gaps |
+| `GET /api/cards/{id}?days=N` | one card: what it is, what is held, its own price series (each point saying whether it was carried), every quote, every buy and sell, and every correction anyone made |
 | `GET /api/portfolio?days=N` | the totals and the series. `days=0` is everything, computed from the earliest event — the range selector is a server query, not a crop |
 
 ## Trying it over a tailnet
@@ -111,6 +112,11 @@ open http://$(hostname):3210        # or http://<tailscale-ip>:3210
 
 `apps/binder.toml` is the deploy spec, and `access` is left at **tailnet** — a
 generated file must never be the reason an app is on the internet.
+
+**A correction is history, not an overwrite.** The card is what it is — but "who
+said Near Mint, and when did that change" is a different question the row cannot
+answer, so every edit is appended with what the field was, what it became, and when.
+An unchanged field writes nothing.
 
 **A card belongs to many decks.** A deck is a list that refers to the collection, so
 building one does not take a card out of the binder — `GET /api/cards` reports
