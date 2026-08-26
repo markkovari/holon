@@ -1,0 +1,1 @@
+`bytes-codec` provides both; pure compute, no host imports.
