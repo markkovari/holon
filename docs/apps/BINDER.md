@@ -91,7 +91,7 @@ that invention is most of the line.
 | `GET /api/photo/{job}/events` | SSE: `looking` → `reading` → `done` (with the card) or `refused` (with what the model said). The vision call runs here, so the person watching is told what is happening instead of holding a spinner |
 | `POST /api/scan` | `{answer}` → a card. Fenced JSON, prose either side, both fine. Not a card, or two cards, is a **422** and never a blank row |
 | `POST /api/register` · `POST /api/login` · `GET /api/me` | accounts, via `auth:identity` |
-| `GET` · `POST` · `PATCH` · `DELETE /api/cards` | the collection. A card typed in is confidence 100 with nothing flagged; a correction clears that field's flag; deleting the row keeps its events |
+| `GET` · `POST` · `PATCH` · `DELETE /api/cards` | the collection. Each row carries `held`, `cost_basis_minor`, its carried-forward `price_minor` and `value_minor` — computed from the same event log and quotes the portfolio total is, so a row cannot disagree with the figure above it. `price_minor` is **null** when nothing has priced it, never 0 |
 | `GET` · `POST` · `PUT` · `DELETE /api/decks` | decks. `POST /api/decks/{name}/slots` adds or changes a line, quantity 0 removes it |
 | `GET /api/decks/{name}` | legality and the shopping list, both at once |
 | `POST /api/events` | what you paid, or sold it for. A swap is two of these |
