@@ -18,11 +18,52 @@
 // other ran out of ideas, and the second is worth spending the remaining budget
 // elsewhere. Both are ordinary results rather than errors — a run that fails to
 // find an answer has not malfunctioned.
-package graph:run@0.1.0;
+package graph:run@0.2.0;
 
 interface driver {
-    use graph:agent/writer@0.1.0.{goal, file, failure};
-    use graph:fitness/evaluator@0.2.0.{check};
+    /// Its OWN, not borrowed from the interfaces this also imports.
+    ///
+    /// `use graph:agent/writer.{goal, file, failure}` is what this said, and a
+    /// component exporting `driver` then could not be composed at all: satisfying
+    /// `graph:agent/writer` made the export reference types owned by an instance
+    /// that had become internal, and the encoder refused with "instance not valid
+    /// to be used as export". `driver-probe` — the driver's whole HTTP surface —
+    /// could not be built.
+    ///
+    /// Defining them here is also what this repository already says to do.
+    /// `agent-driver` carries the note: "convert between two identical records that
+    /// belong to different contracts — kept explicit rather than papered over with
+    /// a shared type, because the agent's file and the gate's file mean different
+    /// things, and the day one grows a field the other should not, this is where it
+    /// is noticed." That was true of `file` and is true of all four.
+    record file {
+        path: string,
+        content: string,
+    }
+
+    /// What a run is for, as the driver receives it.
+    record goal {
+        text: string,
+        context: list<file>,
+        writable: list<string>,
+    }
+
+    /// A check that did not pass, as the driver hands it to a repair.
+    record failure {
+        id: string,
+        detail: string,
+    }
+
+    /// One thing to check about a candidate. Mirrors `graph:fitness`'s, because the
+    /// driver passes it straight through — and mirroring rather than borrowing is
+    /// what lets a component export this interface AND import that one.
+    record check {
+        id: string,
+        required: bool,
+        weight: u32,
+        command: list<string>,
+        needs: list<string>,
+    }
 
     variant run-error {
         /// Inference could not be reached. Distinct from an unusable ANSWER,
