@@ -16,7 +16,7 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 
 | component | package | deps | config knobs | size |
 |---|---|---|---|--:|
-| **agent-driver** | `driver:agent@0.1.0` | graph:agent/writer, graph:fitness/evaluator | — | 70 KiB |
+| **agent-driver** | `driver:agent@0.1.0` | graph:agent/writer, graph:fitness/evaluator | — | 71 KiB |
 | **agent-writer** | `writer:agent@0.1.0` | llm:inference/inference | — | 84 KiB |
 | **ai-inference** | `ai:inference@0.1.0` | llm:inference/inference | — | 115 KiB |
 | **anthropic-provider** | `anthropic:provider@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `temperature`, `seed`, `cache_control`, `anthropic-api-key` | 175 KiB |
@@ -31,7 +31,7 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 62 KiB |
 | **calc** | `demo:calc@0.1.0` | pure compute | — | 47 KiB |
 | **card-identify** | `card:identify@0.1.0` | pure compute | — | 142 KiB |
-| **checks-runner** | `checks:runner@0.1.0` | config/store, http/outgoing-handler | `checks-url` | 142 KiB |
+| **checks-runner** | `checks:runner@0.1.0` | config/store, http/outgoing-handler | `checks-url` | 174 KiB |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB |
 | **console-assets** | `ui:assets@0.1.0` | pure compute | — | 408 KiB |
 | **contract-registry** | `contract:registry@0.1.0` | knowledge:graph/store | — | 125 KiB |
@@ -133,7 +133,7 @@ A whole app, or a demo of one. Listed because it is in the tree and because its 
 | **arena-domain** | `arena:app@0.1.0` | id:generate/generator, records:store/store | — | 162 KiB |
 | **bench-suite** | `bench:suite@0.1.0` | blobstore/blobstore, kv:store | — | 122 KiB |
 | **billing-ledger** | `ledger:app@0.1.0` | csv:codec/codec, idempotency:guard/store, money:amount/arithmetic, outbox:dispatch/queue, quota:meter/meter, records:store/store | — | 179 KiB |
-| **binder-domain** | `binder:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, card:identify/identifier, deck:build/builder, portfolio:value/valuation, price:history/history, sheet:ingest/reader, vision:describe/describer, kv:store | — | 356 KiB |
+| **binder-domain** | `binder:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/types, card:identify/identifier, deck:build/builder, id:generate/generator, portfolio:value/valuation, price:history/history, qr:encode/encoder, sheet:ingest/reader, vision:describe/describer, kv:store | — | 372 KiB |
 | **booked-domain** | `booked:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, email:template/renderer, ical:codec/codec, lock:mutex/mutex, records:store/store, rrule:recur/recur | — | 211 KiB |
 | **books-domain** | `books:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, ledger:doubleentry/ledger, pdf:codec/codec, records:store/store | — | 205 KiB |
 | **budget-domain** | `holon:budget` | auth:identity/authorizer, kv:store | — | — |
@@ -233,13 +233,13 @@ Built to exercise one capability from the outside and prove it is linkable. Reus
 | **demo** | `demo:shape@0.1.0` | pure compute | — | 54 KiB |
 | **demo-probe** | `demo:probe@0.1.0` | demo:shape/pager | — | 59 KiB |
 | **driver-probe** | `comp:driverprobe@0.1.0` | graph:run/driver | — | 120 KiB |
-| **fitness-probe** | `comp:fitnessprobe@0.1.0` | graph:fitness/evaluator | — | 113 KiB |
+| **fitness-probe** | `comp:fitnessprobe@0.1.0` | graph:fitness/evaluator | — | 115 KiB |
 | **forge-probe** | `comp:forgeprobe@0.1.0` | git:forge/repo | — | 112 KiB |
 | **graph-probe** | `comp:graphprobe@0.1.0` | knowledge:graph/store | — | 66 KiB |
 | **kv-probe** | `kv:probe@0.1.0` | kv:batch, kv:store | — | 73 KiB |
 | **llm-probe** | `comp:llmprobe@0.1.0` | llm:inference/inference | — | 62 KiB |
 | **memory-probe** | `comp:memoryprobe@0.1.0` | knowledge:memory/memory, knowledge:memory/promotion | — | 112 KiB |
-| **mock-fitness** | `mockgate:fitness@0.1.0` | config/store | `gate-script` | 76 KiB |
+| **mock-fitness** | `mockgate:fitness@0.1.0` | config/store | `gate-script` | 81 KiB |
 | **mock-provider** | `mock:provider@0.1.0` | config/store | `mock-model`, `mock-embeddings`, `mock-script` | 115 KiB |
 | **secret-probe** | `comp:secretprobe@0.1.0` | comp:secrets/reader | — | 70 KiB |
 | **select-probe** | `comp:selectprobe@0.1.0` | graph:select/selector | — | 116 KiB |

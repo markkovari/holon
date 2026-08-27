@@ -100,6 +100,7 @@ fn plan_of(v: &serde_json::Value) -> run::Plan {
                 required: c["required"].as_bool().unwrap_or(true),
                 weight: c["weight"].as_u64().unwrap_or(1) as u32,
                 command: strings(c, "command"),
+                needs: strings(c, "needs"),
             })
             .collect(),
         base_commit: v["base_commit"].as_str().unwrap_or_default().to_string(),
