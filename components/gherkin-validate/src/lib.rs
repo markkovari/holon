@@ -96,6 +96,50 @@ impl Kind {
     }
 }
 
+/// One step of a scenario, as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Step {
+    /// `Given`, `When`, `Then`, `And`, `But` or `*` — as written, not resolved.
+    /// A runner that wants the resolved sense can walk the list; one that wants to
+    /// print the scenario back needs what the author typed.
+    pub keyword: String,
+    pub text: String,
+    pub line: u32,
+    /// A docstring or data table attached to this step, line by line, with the
+    /// fences removed. Empty when the step has neither.
+    pub argument: Vec<String>,
+}
+
+/// One `Examples:` table under an outline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExampleTable {
+    pub name: String,
+    pub header: Vec<String>,
+    pub rows: Vec<Vec<String>>,
+}
+
+/// A scenario, an outline, or a background.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scenario {
+    pub name: String,
+    pub line: u32,
+    pub tags: Vec<String>,
+    pub steps: Vec<Step>,
+    /// Empty for a plain scenario. Non-empty means every row is a test case.
+    pub examples: Vec<ExampleTable>,
+}
+
+/// A whole feature file, once it is known to be readable.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Document {
+    pub feature: String,
+    pub tags: Vec<String>,
+    /// Steps every scenario runs first. Flattened across `Rule:` containers, since
+    /// a runner cares what runs, not which container declared it.
+    pub background: Vec<Step>,
+    pub scenarios: Vec<Scenario>,
+}
+
 /// One problem, and where. Both coordinates are 1-based; the column counts
 /// characters, not bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +208,8 @@ struct Block {
     placeholders: Vec<(String, u32, u32)>,
     /// Whether the step being read already has a docstring.
     had_docstring: bool,
+    /// The parsed form, built alongside the checks so one walk does both.
+    parsed: Scenario,
 }
 
 /// Which table, if any, the next `|` row belongs to.
@@ -293,8 +339,30 @@ fn language_of(t: &str) -> Option<String> {
 
 /// Every problem in `source`, in the order they appear. Empty means valid.
 pub fn validate(source: &str) -> Vec<Problem> {
+    walk(source).1
+}
+
+/// The parsed feature, when nothing is an `error`.
+///
+/// Warnings do NOT stop it: a scenario with no steps and an outline with no
+/// examples both parse, cucumber says so, and a runner that refused them would
+/// disagree with the reference about what a feature file IS. They come back from
+/// `validate` and a caller decides.
+///
+/// One walk produces both, because a parser and a validator that disagree about a
+/// file is the bug neither of them can report.
+pub fn parse(source: &str) -> Result<Document, Vec<Problem>> {
+    let (doc, problems) = walk(source);
+    if problems.iter().any(|p| p.severity() == Severity::Error) {
+        return Err(problems);
+    }
+    Ok(doc)
+}
+
+fn walk(source: &str) -> (Document, Vec<Problem>) {
     let lines: Vec<&str> = source.lines().collect();
     let mut problems: Vec<Problem> = Vec::new();
+    let mut doc = Document::default();
 
     // The language header belongs on the first line; scanning the leading comments
     // for it is more forgiving than the specification and costs nothing.
@@ -313,20 +381,26 @@ pub fn validate(source: &str) -> Vec<Problem> {
             if !DIALECTS.contains(&code.as_str()) {
                 // Not a dialect at all — a broken header, and the file's own claim
                 // about itself is wrong. That IS a defect.
-                return vec![Problem {
-                    line: i as u32 + 1,
-                    column: indent_col(raw),
-                    kind: Kind::InvalidLanguage(code),
-                }];
+                return (
+                    doc,
+                    vec![Problem {
+                        line: i as u32 + 1,
+                        column: indent_col(raw),
+                        kind: Kind::InvalidLanguage(code),
+                    }],
+                );
             }
             // A real dialect this component cannot read. Decline the whole file:
             // judging French keywords against an English table would bury the one
             // useful sentence under a page of noise.
-            return vec![Problem {
-                line: i as u32 + 1,
-                column: indent_col(raw),
-                kind: Kind::UnsupportedLanguage(code),
-            }];
+            return (
+                doc,
+                vec![Problem {
+                    line: i as u32 + 1,
+                    column: indent_col(raw),
+                    kind: Kind::UnsupportedLanguage(code),
+                }],
+            );
         }
     }
 
@@ -342,6 +416,8 @@ pub fn validate(source: &str) -> Vec<Problem> {
     // Tags waiting for something to tag. At the end of the file they are a defect:
     // `testdata/bad/unexpected_eof.feature` is a feature, a blank line and a tag.
     let mut pending_tags: Option<(u32, u32)> = None;
+    // Tag lines stack: `@a\n@b\nScenario:` is two tags on one scenario.
+    let mut tag_names: Vec<String> = Vec::new();
 
     for (idx, raw) in lines.iter().enumerate() {
         let line = idx as u32 + 1;
@@ -359,6 +435,10 @@ pub fn validate(source: &str) -> Vec<Problem> {
                 for (name, at) in placeholders(raw) {
                     b.placeholders.push((name, line, at as u32 + 1));
                 }
+                // The docstring belongs to the step above it.
+                if let Some(step) = b.parsed.steps.last_mut() {
+                    step.argument.push(raw.trim().to_string());
+                }
             }
             continue;
         }
@@ -374,6 +454,9 @@ pub fn validate(source: &str) -> Vec<Problem> {
         if t.starts_with('@') {
             table = Table::None;
             pending_tags = Some((line, col));
+            tag_names.extend(
+                t.split_whitespace().take_while(|w| !w.starts_with('#')).map(str::to_string),
+            );
             // A tag cannot contain whitespace, so every token on the line has to be
             // one. `testdata/bad/whitespace_in_tags.feature` is `@a tag containing
             // whitespace`, which reads as a sentence and is four broken tags.
@@ -426,6 +509,9 @@ pub fn validate(source: &str) -> Vec<Problem> {
                     }
                     if let Some(b) = block.as_mut() {
                         b.headers.extend(row.iter().cloned());
+                        if let Some(t) = b.parsed.examples.last_mut() {
+                            t.header = row.clone();
+                        }
                     }
                     table = Table::ExamplesRows(row.len());
                 }
@@ -440,6 +526,23 @@ pub fn validate(source: &str) -> Vec<Problem> {
                             },
                         });
                     }
+                    if let Some(b) = block.as_mut() {
+                        match table {
+                            Table::ExamplesRows(_) => {
+                                if let Some(t) = b.parsed.examples.last_mut() {
+                                    t.rows.push(row.clone());
+                                }
+                            }
+                            // A data table belongs to the step above it, raw, so a
+                            // runner can decide whether it is a table of rows or a
+                            // table of key/value pairs.
+                            _ => {
+                                if let Some(step) = b.parsed.steps.last_mut() {
+                                    step.argument.push(raw.trim().to_string());
+                                }
+                            }
+                        }
+                    }
                     // Only a DATA table can carry a placeholder; an `Examples` cell
                     // is the literal value being substituted in.
                     if matches!(table, Table::Data(_)) {
@@ -453,6 +556,9 @@ pub fn validate(source: &str) -> Vec<Problem> {
                 Table::None => {
                     table = Table::Data(row.len());
                     if let Some(b) = block.as_mut() {
+                        if let Some(step) = b.parsed.steps.last_mut() {
+                            step.argument.push(raw.trim().to_string());
+                        }
                         for (name, at) in placeholders(raw) {
                             b.placeholders.push((name, line, at as u32 + 1));
                         }
@@ -470,7 +576,7 @@ pub fn validate(source: &str) -> Vec<Problem> {
             pending_tags = None;
             if keyword != "examples" {
                 table = Table::None;
-                close_block(&mut problems, block.take());
+                close_block(&mut problems, &mut doc, block.take());
             }
             match keyword {
                 "feature" => {
@@ -478,6 +584,8 @@ pub fn validate(source: &str) -> Vec<Problem> {
                         problems.push(Problem { line, column: col, kind: Kind::MultipleFeatures });
                     } else {
                         feature = Some(line);
+                        doc.feature = title.clone();
+                        doc.tags = std::mem::take(&mut tag_names);
                     }
                     backgrounds = 0;
                     scenarios = 0;
@@ -510,7 +618,9 @@ pub fn validate(source: &str) -> Vec<Problem> {
                     } else {
                         BlockKind::Scenario
                     };
-                    block = Some(new_block(kind, title, line, col));
+                    let mut b = new_block(kind, title, line, col);
+                    b.parsed.tags = std::mem::take(&mut tag_names);
+                    block = Some(b);
                 }
                 // `Examples:` under a plain `Scenario:` PROMOTES it to an outline.
                 // Gherkin treats the two keywords as interchangeable, and
@@ -520,6 +630,11 @@ pub fn validate(source: &str) -> Vec<Problem> {
                     Some(b) => {
                         b.kind = BlockKind::Outline;
                         b.examples += 1;
+                        b.parsed.examples.push(ExampleTable {
+                            name: title.clone(),
+                            header: Vec::new(),
+                            rows: Vec::new(),
+                        });
                         table = Table::ExamplesHeader;
                     }
                     None => {
@@ -554,6 +669,12 @@ pub fn validate(source: &str) -> Vec<Problem> {
                     }
                     b.steps += 1;
                     b.had_docstring = false;
+                    b.parsed.steps.push(Step {
+                        keyword: keyword.to_string(),
+                        text: t[keyword.len()..].trim().to_string(),
+                        line,
+                        argument: Vec::new(),
+                    });
                     // Collected for a plain `Scenario:` too, because an `Examples:`
                     // further down promotes it to an outline and by then these lines
                     // are read. Only CHECKED if it ends up an outline.
@@ -588,7 +709,7 @@ pub fn validate(source: &str) -> Vec<Problem> {
             kind: Kind::UnterminatedDocstring(fence.to_string()),
         });
     }
-    close_block(&mut problems, block.take());
+    close_block(&mut problems, &mut doc, block.take());
 
     if feature.is_none() {
         if let Some((line, column)) = first_content {
@@ -596,10 +717,11 @@ pub fn validate(source: &str) -> Vec<Problem> {
         }
     }
 
-    problems
+    (doc, problems)
 }
 
 fn new_block(kind: BlockKind, name: String, line: u32, column: u32) -> Block {
+    let parsed_name = name.clone();
     Block {
         kind,
         name,
@@ -610,12 +732,25 @@ fn new_block(kind: BlockKind, name: String, line: u32, column: u32) -> Block {
         headers: BTreeSet::new(),
         placeholders: Vec::new(),
         had_docstring: false,
+        parsed: Scenario {
+            name: parsed_name,
+            line,
+            tags: Vec::new(),
+            steps: Vec::new(),
+            examples: Vec::new(),
+        },
     }
 }
 
 /// The checks that can only be made once a block has ended.
-fn close_block(problems: &mut Vec<Problem>, block: Option<Block>) {
+fn close_block(problems: &mut Vec<Problem>, doc: &mut Document, block: Option<Block>) {
     let Some(b) = block else { return };
+    // A background's steps run before every scenario, so a runner wants them
+    // flattened rather than as a scenario of their own.
+    match b.kind {
+        BlockKind::Background => doc.background.extend(b.parsed.steps.clone()),
+        _ => doc.scenarios.push(b.parsed.clone()),
+    }
     if b.steps == 0 {
         problems.push(Problem {
             line: b.line,
@@ -687,21 +822,58 @@ fn kind_out(k: Kind) -> w::ProblemKind {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn problem_out(p: Problem) -> w::Problem {
+    w::Problem {
+        line: p.line,
+        column: p.column,
+        severity: match p.severity() {
+            Severity::Error => w::Severity::Error,
+            Severity::Warning => w::Severity::Warning,
+            Severity::Declined => w::Severity::Declined,
+        },
+        kind: kind_out(p.kind),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn step_out(s: Step) -> w::Step {
+    w::Step { keyword: s.keyword, text: s.text, line: s.line, argument: s.argument }
+}
+
+#[cfg(target_arch = "wasm32")]
 impl w::Guest for Component {
+    fn parse(source: String) -> Result<w::Document, Vec<w::Problem>> {
+        match crate::parse(&source) {
+            Ok(d) => Ok(w::Document {
+                feature: d.feature,
+                tags: d.tags,
+                background: d.background.into_iter().map(step_out).collect(),
+                scenarios: d
+                    .scenarios
+                    .into_iter()
+                    .map(|sc| w::Scenario {
+                        name: sc.name,
+                        line: sc.line,
+                        tags: sc.tags,
+                        steps: sc.steps.into_iter().map(step_out).collect(),
+                        examples: sc
+                            .examples
+                            .into_iter()
+                            .map(|e| w::ExampleTable {
+                                name: e.name,
+                                header: e.header,
+                                rows: e.rows,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            }),
+            Err(ps) => Err(ps.into_iter().map(problem_out).collect()),
+        }
+    }
+
     fn validate(source: String) -> Vec<w::Problem> {
-        crate::validate(&source)
-            .into_iter()
-            .map(|p| w::Problem {
-                line: p.line,
-                column: p.column,
-                severity: match p.severity() {
-                    Severity::Error => w::Severity::Error,
-                    Severity::Warning => w::Severity::Warning,
-                    Severity::Declined => w::Severity::Declined,
-                },
-                kind: kind_out(p.kind),
-            })
-            .collect()
+        crate::validate(&source).into_iter().map(problem_out).collect()
     }
 }
 

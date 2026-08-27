@@ -1618,8 +1618,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 80917,
-    "wasm_sha256_12": "6b8a571108d3",
+    "wasm_size_bytes": 104200,
+    "wasm_sha256_12": "c6854291d1ac",
     "reusable_as_is": true,
     "unimplemented": false
   },
