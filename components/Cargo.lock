@@ -971,6 +971,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gherkin-validate"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "github-forge"
 version = "0.1.0"
 dependencies = [

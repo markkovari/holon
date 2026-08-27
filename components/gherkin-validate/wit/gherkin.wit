@@ -1,0 +1,151 @@
+// gherkin:validate — is this `.feature` file actually Gherkin, and will it run?
+//
+// A Gherkin file is executable specification, and the ways it break are quiet. An
+// `Examples` row one cell short, a `<placeholder>` with a typo in it, a docstring
+// that never closes. The typo is the worst: nothing fails, the step just receives
+// the literal text `<usrename>`.
+//
+// So: parse the structure, and report EVERY problem with a line and a column rather
+// than the first one. A validator that surfaces one problem per run is a validator
+// people run once.
+//
+// ## Checked against cucumber's own corpus
+//
+// The rules here are not what a reading of the grammar suggested; several of them
+// are what `cucumber/gherkin`'s `testdata/` said. That corpus has fifty files it
+// calls good and twelve it calls bad, and running it corrected three genuine
+// mistakes: `*` is a step keyword and not a continuation, a plain `Scenario:` with
+// an `Examples:` under it IS an outline, and a scenario with no steps parses
+// perfectly well. See `tests/corpus/`.
+//
+// ## Scope
+//
+// Syntax and structure. It does NOT check that a step has a matching step
+// definition — that needs the step registry of whatever runs the suite, which is a
+// different input and a different capability.
+//
+// Pure compute: text in, problems out. No state, no host imports.
+package gherkin:validate@0.1.0;
+
+/// Validate the structure of a Gherkin feature file.
+interface validator {
+    /// How much a problem means.
+    ///
+    /// The split is not a matter of taste. Cucumber's corpus contains files it calls
+    /// GOOD that hold a scenario with no steps and an outline with no examples — so
+    /// a validator that refuses those disagrees with the reference implementation
+    /// about whether a file is valid, and becomes unusable as a gate. It is still
+    /// worth saying something about them, because both are certainly mistakes.
+    enum severity {
+        /// Cucumber cannot parse this. The file is broken.
+        error,
+        /// It parses, runs, and is almost certainly not what anyone meant.
+        warning,
+        /// This component did not judge the file at all. Exactly one kind is ever
+        /// `declined`: `unsupported-language`. Do not read it as "valid".
+        declined,
+    }
+
+    /// What is wrong, precisely enough to fix without opening the file.
+    ///
+    /// Each case carries the part a caller cannot recover from the position alone —
+    /// a name, a count, the offending text — because an editor shows the line and a
+    /// build log does not.
+    variant problem-kind {
+        /// There is content here but no `Feature:`. An empty file, or one holding
+        /// nothing but comments, is NOT this — it is fine.
+        no-feature,
+        /// A second `Feature:`. One file, one feature; the rest of the document
+        /// belongs to whichever the reader guesses, which is the problem.
+        multiple-features,
+        /// Text before `Feature:` that is not a comment, a tag or the language
+        /// header. Carries the text, because it is usually a stray paste.
+        content-before-feature(string),
+        /// A `Given`/`When`/`Then` with no `Scenario:` or `Background:` above it.
+        step-outside-scenario,
+        /// `And` or `But` as the FIRST step, with nothing to continue. Carries the
+        /// keyword.
+        ///
+        /// NOT `*`. A bullet is a step keyword in its own right and a whole file of
+        /// them is idiomatic — `testdata/good/star-keywords.feature` is exactly
+        /// that, and treating `*` as a continuation flagged four valid files.
+        continuation-without-a-step(string),
+        /// A `Scenario Outline` with no `Examples`. It can never produce a test
+        /// case: there are no rows to substitute. Carries the scenario name.
+        outline-without-examples(string),
+        /// `Examples:` with no scenario above it at all.
+        ///
+        /// A plain `Scenario:` with an `Examples:` under it is NOT this — Gherkin
+        /// treats the keywords as interchangeable and promotes it to an outline,
+        /// which is what `testdata/good/scenario_outline.feature` relies on.
+        examples-outside-a-scenario,
+        /// A scenario, outline or background with no steps. Carries its name.
+        empty-scenario(string),
+        /// A table row whose cell count differs from the row that set the width:
+        /// the header of an `Examples`, or the first row of a data table. Carries
+        /// expected, then found.
+        row-width(tuple<u32, u32>),
+        /// A second docstring on one step. The first is the step's argument; there
+        /// is nowhere for another to go.
+        repeated-docstring,
+        /// Tags at the end of the file, with nothing for them to tag.
+        dangling-tag,
+        /// A token on a tag line that is not a tag. A tag cannot contain
+        /// whitespace, so `@a tag containing whitespace` is four broken ones.
+        /// Carries the token.
+        malformed-tag(string),
+        /// A `# language:` header naming a dialect that does not exist.
+        ///
+        /// Distinct from `unsupported-language`, which names a real dialect this
+        /// component cannot read: this is the file being wrong about itself, and is
+        /// one of the twelve files in cucumber`s testdata/bad. Carries the code.
+        invalid-language(string),
+        /// A `<placeholder>` in an outline step that no `Examples` header of that
+        /// outline provides. Carries the name.
+        ///
+        /// This is the typo that costs an afternoon: nothing fails, the step just
+        /// receives the literal angle-bracketed text.
+        unknown-placeholder(string),
+        /// Two columns with the same name in one `Examples` header — the second
+        /// silently wins. Carries the name.
+        duplicate-column(string),
+        /// A `Background:` after a scenario has already appeared. It applies to
+        /// every scenario in its container, so its position is a claim about scope
+        /// that reading order contradicts.
+        background-after-a-scenario,
+        /// A second `Background:` in the same `Feature:` or `Rule:`.
+        multiple-backgrounds,
+        /// A docstring that opens and never closes. Carries the fence, `"""` or
+        /// ``` ``` ```, since the fix is to match it.
+        unterminated-docstring(string),
+        /// A `# language:` header this component cannot read.
+        ///
+        /// NOT a defect in the file. Gherkin has keywords in seventy-odd languages
+        /// and this validator knows English, so a French feature is a file it must
+        /// decline rather than bury in false positives. Carries the code, and is
+        /// the only kind whose severity is `declined`.
+        unsupported-language(string),
+    }
+
+    /// One problem, and where.
+    record problem {
+        /// 1-based, so it matches what an editor and a compiler both say.
+        line: u32,
+        /// 1-based, counted in characters rather than bytes — a feature file with
+        /// an accent in it should not report a column that is off by one.
+        column: u32,
+        severity: severity,
+        kind: problem-kind,
+    }
+
+    /// Every problem in `source`, in the order they appear. Empty means valid.
+    ///
+    /// A caller gating a build should look at `error` and decide about `warning`.
+    /// A single `declined` means the file was never judged.
+    validate: func(source: string) -> list<problem>;
+}
+
+/// `gherkin-validate` provides the validator; pure compute, no host imports.
+world gherkin-validate {
+    export validator;
+}

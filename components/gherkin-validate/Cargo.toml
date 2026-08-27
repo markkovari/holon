@@ -1,0 +1,22 @@
+[package]
+name = "gherkin-validate"
+description = "structural validation of Gherkin .feature files — every problem with a line and column, not the first (gherkin:validate)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# See `components/demo`: the bindings are gated on wasm32 so `cargo test` can link
+# the crate for the held-out specification.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "gherkin:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "gherkin-validate"
