@@ -106,8 +106,8 @@
       "graph:fitness/evaluator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 72194,
-    "wasm_sha256_12": "068f2fb43596",
+    "wasm_size_bytes": 72827,
+    "wasm_sha256_12": "d957eb972d3e",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -449,15 +449,17 @@
       "auth:identity/types",
       "card:identify/identifier",
       "deck:build/builder",
+      "id:generate/generator",
       "portfolio:value/valuation",
       "price:history/history",
+      "qr:encode/encoder",
       "sheet:ingest/reader",
       "vision:describe/describer",
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 364596,
-    "wasm_sha256_12": "fe87e095e610",
+    "wasm_size_bytes": 381781,
+    "wasm_sha256_12": "54eb8831ee44",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -671,8 +673,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 146403,
-    "wasm_sha256_12": "74b21fb91d8a",
+    "wasm_size_bytes": 178852,
+    "wasm_sha256_12": "62e73435cab1",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1236,8 +1238,8 @@
       "graph:run/driver"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 123583,
-    "wasm_sha256_12": "e7b5717c809c",
+    "wasm_size_bytes": 123767,
+    "wasm_sha256_12": "4c74f23a363b",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1458,8 +1460,8 @@
       "graph:fitness/evaluator"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 116707,
-    "wasm_sha256_12": "da69e3848104",
+    "wasm_size_bytes": 117968,
+    "wasm_sha256_12": "800a9d52f0c5",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2486,8 +2488,8 @@
         "description": ""
       }
     ],
-    "wasm_size_bytes": 78609,
-    "wasm_sha256_12": "2b7e472bcaaa",
+    "wasm_size_bytes": 83309,
+    "wasm_sha256_12": "b2d6c5ae1b43",
     "reusable_as_is": true,
     "unimplemented": false
   },

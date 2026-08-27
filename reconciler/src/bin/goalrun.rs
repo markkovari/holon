@@ -371,6 +371,15 @@ struct CheckSpec {
     #[serde(default = "one")]
     weight: u32,
     command: Vec<String>,
+    /// Check ids that must PASS before this one runs.
+    ///
+    /// Absent means "no edges", which is a graph with one level and exactly the
+    /// behaviour every goal spec written before this had. What it buys is a report
+    /// a repair prompt can use: a candidate that does not compile comes back as one
+    /// failure and a list of things nobody tried, rather than as every check
+    /// failing at once (ADR-0088).
+    #[serde(default)]
+    needs: Vec<String>,
 }
 fn yes() -> bool {
     true
@@ -877,7 +886,7 @@ fn gate_can_judge(
     let mut every_check: Vec<Value> = checks.to_vec();
     for p in &goal.parts {
         every_check.extend(p.checks.iter().map(|c| {
-            json!({ "id": c.id, "required": c.required, "weight": c.weight, "command": c.command })
+            json!({ "id": c.id, "required": c.required, "weight": c.weight, "command": c.command, "needs": c.needs })
         }));
     }
     match compose::criticise(
@@ -1444,7 +1453,7 @@ fn main() -> Result<()> {
     let checks: Vec<Value> = goal
         .checks
         .iter()
-        .map(|c| json!({ "id": c.id, "required": c.required, "weight": c.weight, "command": c.command }))
+        .map(|c| json!({ "id": c.id, "required": c.required, "weight": c.weight, "command": c.command, "needs": c.needs }))
         .collect();
 
     // The commands the gate is allowed to run: the first word of each check.
@@ -2226,6 +2235,7 @@ fn decomposed(
                 "previous": [],
                 "checks": p.checks.iter().map(|c| json!({
                     "id": c.id, "required": c.required, "weight": c.weight, "command": c.command,
+                    "needs": c.needs,
                 })).collect::<Vec<_>>(),
                 "base_commit": base_commit,
                 "base_tree": tree,
@@ -2726,6 +2736,7 @@ command = ["cargo", "test"]
                 required: true,
                 weight: 1,
                 command: cmd.into_iter().map(String::from).collect(),
+                needs: vec![],
             }],
             contract: None,
             parts: vec![],

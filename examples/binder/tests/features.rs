@@ -113,6 +113,20 @@ struct World {
     client: Client,
     status: u16,
     body: Value,
+    /// Values a scenario pulled out of one response to use in a later URL. A swap
+    /// id is minted by the app, so no scenario can write it down in advance.
+    remembered: std::collections::BTreeMap<String, String>,
+}
+
+impl World {
+    /// `{name}` in a path becomes what an earlier step remembered.
+    fn fill(&self, path: &str) -> String {
+        let mut out = path.to_string();
+        for (k, v) in &self.remembered {
+            out = out.replace(&format!("{{{k}}}"), v);
+        }
+        out
+    }
 }
 
 /// One step. Returns `Err` with a sentence when the step is not one we know, so an
@@ -125,9 +139,19 @@ fn run_step(w: &mut World, text: &str) -> Result<(), String> {
         w.client.sign_in(&email);
         return Ok(());
     }
+    if let Some(rest) = t.strip_prefix("I remember the field ") {
+        let (path, after) = quoted(rest, 0).ok_or("expected a quoted field")?;
+        let (name, _) = quoted(rest, after).ok_or("expected a quoted name")?;
+        let v = field(&w.body, &path).ok_or_else(|| format!("no field `{path}` in {}", w.body))?;
+        let as_text =
+            v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string().trim_matches('"').to_string());
+        w.remembered.insert(name, as_text);
+        return Ok(());
+    }
     if let Some(rest) = t.strip_prefix("I GET ") {
         let (path, after) = quoted(rest, 0).ok_or("expected a quoted path")?;
         let anonymous = rest[after..].contains("as nobody");
+        let path = w.fill(&path);
         let (s, b) = w.client.get(&path, !anonymous);
         w.status = s;
         w.body = b;
@@ -136,6 +160,7 @@ fn run_step(w: &mut World, text: &str) -> Result<(), String> {
     if let Some(rest) = t.strip_prefix("I upload ") {
         let (name, after) = quoted(rest, 0).ok_or("expected a quoted fixture name")?;
         let (path, _) = quoted(rest, after).ok_or("expected a quoted path")?;
+        let path = w.fill(&path);
         let (s, b) = w.client.upload(&path, &fixture(&name));
         w.status = s;
         w.body = b;
@@ -143,6 +168,7 @@ fn run_step(w: &mut World, text: &str) -> Result<(), String> {
     }
     if let Some(rest) = t.strip_prefix("I POST ") {
         let (path, _) = quoted(rest, 0).ok_or("expected a quoted path")?;
+        let path = w.fill(&path);
         let (s, b) = w.client.post(&path, w.body.clone());
         w.status = s;
         w.body = b;
@@ -235,6 +261,7 @@ fn every_scenario_runs_against_the_composed_app() {
                     client: Client::new(),
                     status: 0,
                     body: Value::Null,
+                    remembered: std::collections::BTreeMap::new(),
                 };
                 let steps = doc.background.iter().chain(scenario.steps.iter());
                 for step in steps {
