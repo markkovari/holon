@@ -50,6 +50,8 @@ use bindings::deck::build::builder as deck;
 use bindings::vision::describe::describer as vision;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::sheet::ingest::reader as sheet;
+use bindings::id::generate::generator as ids;
+use bindings::qr::encode::encoder as qr;
 use bindings::portfolio::value::valuation as pv;
 use bindings::price::history::history as ph;
 use bindings::wasi::clocks::wall_clock;
@@ -96,6 +98,30 @@ struct Card {
     confidence: u8,
     #[serde(default)]
     needs_review: Vec<String>,
+}
+
+/// A swap, offered by one collector and open until somebody takes it.
+///
+/// `value_minor` is what BOTH sides agree the trade is worth, and it is the number
+/// that makes a swap honest in both directions: the card that leaves is disposed at
+/// it and the card that arrives is acquired at it, so a trade where you got the
+/// better end shows up as a gain rather than as nothing at all. That rule is
+/// `portfolio:value`'s, written into its WIT long before this route existed.
+#[derive(Serialize, Deserialize, Clone)]
+struct Swap {
+    id: String,
+    /// The subject who offered it. Stored rather than derived, because the offer
+    /// outlives the request that made it.
+    from: String,
+    /// What the offerer gives.
+    give: String,
+    /// What they want back. Whoever accepts must own it.
+    want: String,
+    value_minor: i64,
+    currency: String,
+    /// Empty while open; the subject who took it once it is done.
+    taken_by: String,
+    at: u64,
 }
 
 /// One acquisition or disposal. Mirrors `portfolio:value`'s event, because the app
@@ -830,6 +856,183 @@ impl Guest for Component {
                     let _ = put_json(&bucket, &event_key(&ns, &ev), &ev);
                 }
                 json_out(out, 201, &serde_json::to_value(card).unwrap_or(Value::Null))
+            }
+
+            // --- swaps -------------------------------------------------------
+            //
+            // The thing `portfolio:value` has described since the day it was
+            // written and the app never did: "a swap is two events, not one — what
+            // left is a disposal at the agreed value and what arrived is an
+            // acquisition at that same value, so a trade where you got the better
+            // end shows up as a gain".
+            //
+            // Four events, because there are two collections. Both sides record
+            // both halves at the SAME agreed value, so neither portfolio silently
+            // gains or loses a card that appeared from nowhere.
+            //
+            // Nothing here knows how to draw a square or mint an id. `qr:encode`
+            // and `id:generate` both existed, import nothing, and know nothing
+            // about cards.
+            (Method::Post, "/api/swaps") => {
+                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let ns = ns(&who);
+                let body = read_body(&req);
+                let Ok(v) = serde_json::from_slice::<Value>(&body) else {
+                    return fail(out, 400, "not json");
+                };
+                let str_of =
+                    |k: &str| v.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+                let give = str_of("give");
+                let want = str_of("want");
+                if give.is_empty() || want.is_empty() {
+                    return fail(out, 400, "a swap needs a `give` and a `want`");
+                }
+                // You cannot offer what you do not have. Checked here rather than
+                // at accept time, because an offer nobody can honour wastes the
+                // other person's time and is visible to them as a valid one.
+                if get_json::<Card>(&bucket, &format!("{ns}card:{give}")).is_none() {
+                    return fail(out, 422, &format!("you do not have `{give}`"));
+                }
+                let value_minor = v.get("value_minor").and_then(Value::as_i64).unwrap_or(0);
+                if value_minor <= 0 {
+                    // Zero would make both sides record a swap that cost nothing
+                    // and was worth nothing, which is a chart that under-reports
+                    // rather than an error anybody would notice.
+                    return fail(out, 422, "a swap needs an agreed `value_minor` above zero");
+                }
+                let swap = Swap {
+                    id: ids::short_code(10),
+                    from: who.subject.clone(),
+                    give,
+                    want,
+                    value_minor,
+                    currency: v
+                        .get("currency")
+                        .and_then(Value::as_str)
+                        .unwrap_or("EUR")
+                        .to_uppercase(),
+                    taken_by: String::new(),
+                    at: v.get("at").and_then(Value::as_u64).unwrap_or_else(now),
+                };
+                // Swaps live OUTSIDE any one collector's namespace: the other party
+                // has to be able to read one, and a key under `u/<subject>/` is by
+                // construction unreadable to them.
+                if let Err(e) = put_json(&bucket, &format!("swap:{}", swap.id), &swap) {
+                    return fail(out, 500, &e);
+                }
+                let square = qr::svg(&swap.id, qr::Ecc::Medium, 2).unwrap_or_default();
+                json_out(
+                    out,
+                    201,
+                    &json!({
+                        "id": swap.id,
+                        "give": swap.give,
+                        "want": swap.want,
+                        "value_minor": swap.value_minor,
+                        "currency": swap.currency,
+                        // The square IS the handover. Two people at a table, one
+                        // phone camera, no typing an id neither can read aloud.
+                        "qr_svg": square,
+                    }),
+                )
+            }
+
+            // Anyone with the id may read an open swap — that is what the square is
+            // for. Reading one does not need an account; taking it does.
+            (Method::Get, p) if p.starts_with("/api/swaps/") && !p.ends_with("/accept") => {
+                let id = percent_decode(p.trim_start_matches("/api/swaps/"));
+                match get_json::<Swap>(&bucket, &format!("swap:{id}")) {
+                    None => fail(out, 404, "no such swap"),
+                    Some(s) => json_out(
+                        out,
+                        200,
+                        &json!({
+                            "id": s.id,
+                            "give": s.give,
+                            "want": s.want,
+                            "value_minor": s.value_minor,
+                            "currency": s.currency,
+                            "open": s.taken_by.is_empty(),
+                        }),
+                    ),
+                }
+            }
+
+            (Method::Post, p) if p.starts_with("/api/swaps/") && p.ends_with("/accept") => {
+                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let taker_ns = ns(&who);
+                let id = percent_decode(
+                    p.trim_start_matches("/api/swaps/").trim_end_matches("/accept"),
+                );
+                let Some(mut swap) = get_json::<Swap>(&bucket, &format!("swap:{id}")) else {
+                    return fail(out, 404, "no such swap");
+                };
+                if !swap.taken_by.is_empty() {
+                    // Refused, not re-run. A second accept would move a card that
+                    // has already moved and write four more events for a trade
+                    // that happened once.
+                    return fail(out, 409, "that swap has already been taken");
+                }
+                if swap.from == who.subject {
+                    return fail(out, 422, "you cannot take your own swap");
+                }
+                let offerer_ns = format!("u/{}/", swap.from);
+
+                // Both cards have to exist, on the side that is supposed to have
+                // them, BEFORE anything moves. A swap that half-completes leaves
+                // one collector holding two cards and the other holding none.
+                let Some(given) = get_json::<Card>(&bucket, &format!("{offerer_ns}card:{}", swap.give))
+                else {
+                    return fail(out, 409, "the offered card is no longer in that collection");
+                };
+                let Some(wanted) = get_json::<Card>(&bucket, &format!("{taker_ns}card:{}", swap.want))
+                else {
+                    return fail(out, 422, &format!("you do not have `{}`", swap.want));
+                };
+
+                let at = now();
+                let ev = |card_id: &str, kind: &str| StoredEvent {
+                    card_id: card_id.to_string(),
+                    kind: kind.to_string(),
+                    quantity: 1,
+                    unit_minor: swap.value_minor,
+                    currency: swap.currency.clone(),
+                    at,
+                };
+
+                // Two events per collection, at the same agreed value.
+                for (namespace, card, arriving) in [
+                    (&offerer_ns, &given, &wanted),
+                    (&taker_ns, &wanted, &given),
+                ] {
+                    let _ = bucket.delete(&format!("{namespace}card:{}", card.id));
+                    if let Err(e) =
+                        put_json(&bucket, &format!("{namespace}card:{}", arriving.id), arriving)
+                    {
+                        return fail(out, 500, &e);
+                    }
+                    let leaving = ev(&card.id, "disposed");
+                    let joining = ev(&arriving.id, "acquired");
+                    let _ = put_json(&bucket, &event_key(namespace, &leaving), &leaving);
+                    let _ = put_json(&bucket, &event_key(namespace, &joining), &joining);
+                }
+
+                swap.taken_by = who.subject.clone();
+                if let Err(e) = put_json(&bucket, &format!("swap:{}", swap.id), &swap) {
+                    return fail(out, 500, &e);
+                }
+                json_out(
+                    out,
+                    200,
+                    &json!({
+                        "id": swap.id,
+                        "you_received": given.id,
+                        "you_gave": wanted.id,
+                        "value_minor": swap.value_minor,
+                        "currency": swap.currency,
+                        "events_written": 4,
+                    }),
+                )
             }
 
             // A collection that already exists somewhere else, arriving in one go.

@@ -93,6 +93,15 @@ impl Guest for Component {
                         .iter()
                         .map(|a| a.as_str().unwrap_or_default().to_string())
                         .collect(),
+                    // The edges, so the graph can be driven from outside this
+                    // repository's own callers.
+                    needs: c["needs"]
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|a| a.as_str().unwrap_or_default().to_string())
+                        .collect(),
                 })
                 .collect();
 
@@ -102,7 +111,13 @@ impl Guest for Component {
                     "score": v.score,
                     "outcomes": v.outcomes.iter().map(|o| json!({
                         "id": o.id, "required": o.required, "weight": o.weight,
-                        "passed": o.passed, "detail": o.detail,
+                        "state": match o.state {
+                            fitness::CheckState::Passed => "passed",
+                            fitness::CheckState::Failed => "failed",
+                            fitness::CheckState::NotAttempted => "not-attempted",
+                        },
+                        "blocked_by": o.blocked_by,
+                        "detail": o.detail,
                     })).collect::<Vec<_>>(),
                 })
                 .to_string(),
