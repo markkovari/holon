@@ -22,7 +22,20 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-const ADDR: &str = "127.0.0.1:3211";
+/// One port per test. `cargo test` runs the tests in this file as THREADS in one
+/// process, so a single fixed address means the second test to start finds the
+/// first one's host — and, worse, its collection, which turns every total into a
+/// multiple of the right answer.
+const PORTS: &[u16] = &[3211, 3212];
+
+thread_local! {
+    static ADDR_CELL: std::cell::RefCell<String> =
+        std::cell::RefCell::new(format!("127.0.0.1:{}", PORTS[0]));
+}
+
+fn addr() -> String {
+    ADDR_CELL.with(|a| a.borrow().clone())
+}
 const DAY: u64 = 86_400;
 
 struct HostGuard(Child);
@@ -37,8 +50,26 @@ fn req(method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     auth_req(method, path, body, "")
 }
 
+/// A raw file upload. The bulk import takes the FILE as the body, not JSON with a
+/// base64 blob in it — a spreadsheet is already bytes, and wrapping it costs a third
+/// more of them for nothing.
+fn upload(path: &str, bytes: &[u8], token: &str) -> (u16, Value) {
+    let url = format!("http://{}{path}", addr());
+    let result = ureq::post(&url)
+        .set("authorization", &format!("Bearer {token}"))
+        .set("content-type", "application/octet-stream")
+        .send_bytes(bytes);
+    let resp = match result {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(_, resp)) => resp,
+        Err(e) => panic!("POST {path}: {e}"),
+    };
+    let status = resp.status();
+    (status, serde_json::from_str(&resp.into_string().unwrap_or_default()).unwrap_or(Value::Null))
+}
+
 fn auth_req(method: &str, path: &str, body: Option<Value>, token: &str) -> (u16, Value) {
-    let url = format!("http://{ADDR}{path}");
+    let url = format!("http://{}{path}", addr());
     let mut r = ureq::request(method, &url);
     if !token.is_empty() {
         r = r.set("authorization", &format!("Bearer {token}"));
@@ -60,16 +91,18 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().expect("repo root")
 }
 
-fn start_host() -> HostGuard {
+fn start_host_on(port: u16) -> HostGuard {
+    ADDR_CELL.with(|a| *a.borrow_mut() = format!("127.0.0.1:{port}"));
     // Refuse to run against a host this test did not start. A leaked `comp-host`
     // from an interrupted run keeps the port AND its in-memory collection, so the
     // events below land on top of an earlier run's and every total comes out a
     // multiple of the right answer — which reads as broken arithmetic in the
     // capability rather than as a stale process.
-    match std::net::TcpListener::bind(ADDR) {
+    let bind = addr();
+    match std::net::TcpListener::bind(&bind) {
         Ok(l) => drop(l),
         Err(e) => panic!(
-            "something is already listening on {ADDR} ({e}). A comp-host from an \
+            "something is already listening on {bind} ({e}). A comp-host from an \
              earlier run is still up and its store is not empty — `pkill -f comp-host`"
         ),
     }
@@ -91,7 +124,7 @@ fn start_host() -> HostGuard {
 
     let mut child = Command::new(&bin)
         .args([
-            "--app", "binder", "--component", &composed, "--addr", ADDR,
+            "--app", "binder", "--component", &composed, "--addr", &bind,
             // auth-guard reads its tenant from config; without it every register
             // lands in a different tenant from every login.
             "--config", "default-tenant=binder",
@@ -128,7 +161,7 @@ fn start_host() -> HostGuard {
 /// fixture per test or an order dependency between them.
 #[test]
 fn a_photographed_collection_prices_itself() {
-    let _host = start_host();
+    let _host = start_host_on(PORTS[0]);
     // The app values the collection as of ITS clock, and events after that instant
     // are ignored by design — so a fixed timestamp in the future makes every number
     // zero and reads like broken arithmetic. Anchor on the same wall clock.
@@ -661,4 +694,83 @@ fn a_photographed_collection_prices_itself() {
     let (_, after) = auth_req("GET", &format!("/api/cards/{same}"), None, &token);
     assert_eq!(after["held"], 1, "the purchase is still there: {after}");
     assert_eq!(after["cost_basis_minor"], 500);
+}
+
+/// Bulk import, over the composed artifact.
+///
+/// This is the only thing that exercises the DELEGATION: `sheet:ingest` parses
+/// neither format itself, it calls `csv:codec` and `zip:archive` through the
+/// linker. The held-out specs judge each of those alone; only a request through the
+/// composed app proves they are wired to each other.
+#[test]
+fn a_collection_arrives_as_a_spreadsheet() {
+    let _host = start_host_on(PORTS[1]);
+    let creds = json!({ "email": "bulk@binder.test", "password": "pw12345678" });
+    let (s, _) = req("POST", "/api/register", Some(creds.clone()));
+    assert_eq!(s, 201, "register");
+    let (s, session) = req("POST", "/api/login", Some(creds));
+    assert_eq!(s, 200, "login: {session}");
+    let token = session["access_token"].as_str().expect("a token").to_string();
+
+    // --- a real .xlsx, deflated, written by a tool that is not this one -----
+    let xlsx = include_bytes!("cards.xlsx");
+    let (s, r) = upload("/api/cards/bulk?name=cards.xlsx", xlsx, &token);
+    assert_eq!(s, 201, "xlsx import: {r}");
+    assert_eq!(r["added"], 4, "four cards: {r}");
+    assert_eq!(r["with_a_purchase"], 4, "each row carried a paid_minor: {r}");
+    assert_eq!(r["sheet"], "sheet1");
+
+    // The numbers survived the trip: a shared-string cell is a name, and a numeric
+    // cell is its value rather than an index into the string table.
+    let (s, cards) = auth_req("GET", "/api/cards", None, &token);
+    assert_eq!(s, 200);
+    let names: Vec<&str> =
+        cards["cards"].as_array().expect("cards").iter().filter_map(|c| c["name"].as_str()).collect();
+    assert!(names.contains(&"Charizard"), "{names:?}");
+    assert!(names.contains(&"Mewtwo"), "{names:?}");
+
+    // Charizard cost 1200.00, and the portfolio has to agree.
+    let (s, p) = auth_req("GET", "/api/portfolio", None, &token);
+    assert_eq!(s, 200, "{p}");
+    assert_eq!(
+        p["cost_basis_minor"], 120000 + 2500 * 4 + 45000 * 2 + 18000 * 3,
+        "the basis is the spreadsheet's own arithmetic: {p}"
+    );
+
+    // --- the same collection as CSV, which goes through csv:codec ----------
+    let csv = "name,set_code,number,quantity,paid_minor,currency\n               Gengar,fossil,5/62,1,32000,EUR\n               \"Mr. Mime, holo\",jungle,6/64,2,15000,EUR\n";
+    let (s, r) = upload("/api/cards/bulk?name=more.csv", csv.as_bytes(), &token);
+    assert_eq!(s, 201, "csv import: {r}");
+    assert_eq!(r["added"], 2, "{r}");
+
+    // The quoted field kept its comma — which is the whole reason csv:codec exists
+    // rather than a `split(',')`.
+    let (_, cards) = auth_req("GET", "/api/cards", None, &token);
+    let names: Vec<&str> =
+        cards["cards"].as_array().unwrap().iter().filter_map(|c| c["name"].as_str()).collect();
+    assert!(names.contains(&"Mr. Mime, holo"), "the comma inside the quotes: {names:?}");
+
+    // --- one bad row writes NOTHING ----------------------------------------
+    let before = cards["cards"].as_array().unwrap().len();
+    let bad = "name,quantity\nPidgey,2\nRattata,not-a-number\n";
+    let (s, r) = upload("/api/cards/bulk?name=bad.csv", bad.as_bytes(), &token);
+    assert_eq!(s, 422, "{r}");
+    assert_eq!(r["problems"][0]["row"], 3, "the row a person sees in their sheet: {r}");
+    let (_, cards) = auth_req("GET", "/api/cards", None, &token);
+    assert_eq!(
+        cards["cards"].as_array().unwrap().len(),
+        before,
+        "Pidgey was valid and must NOT have been written — a half-applied import is \
+         one a person cannot safely retry"
+    );
+
+    // --- a format nobody can read is refused by name, not by sniffing ------
+    let (s, r) = upload("/api/cards/bulk?name=cards.numbers", xlsx, &token);
+    assert_eq!(s, 400, "{r}");
+
+    // --- re-importing the same sheet updates rather than duplicates --------
+    let (s, r) = upload("/api/cards/bulk?name=cards.xlsx", xlsx, &token);
+    assert_eq!(s, 201, "{r}");
+    assert_eq!(r["added"], 0, "nothing new the second time: {r}");
+    assert_eq!(r["updated"], 4, "{r}");
 }

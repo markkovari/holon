@@ -7,15 +7,22 @@
 //! blobs this bundles). Any unzip tool reads the result. No state, no host
 //! imports, no external crates.
 
-#[allow(warnings)]
-mod bindings;
+mod inflate;
+mod read;
 
-use bindings::exports::zip::archive::archiver::{File, Guest};
+pub use read::{extract, ZipError};
 
-struct Component;
+/// One archive member. The plain-Rust twin of the WIT record, so the held-out
+/// specification can judge this crate without a component runtime — the pattern
+/// `components/bytes-codec` uses, and the reason this crate is now an `rlib` too.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct File {
+    pub name: String,
+    pub data: Vec<u8>,
+}
 
 /// CRC-32 (IEEE 802.3, polynomial 0xEDB88320), the checksum ZIP entries carry.
-fn crc32(data: &[u8]) -> u32 {
+pub(crate) fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &b in data {
         crc ^= b as u32;
@@ -37,13 +44,14 @@ fn u32le(out: &mut Vec<u8>, v: u32) {
 const DOS_TIME: u16 = 0;
 const DOS_DATE: u16 = 0x0021;
 
-impl Guest for Component {
-    fn archive(files: Vec<File>) -> Vec<u8> {
+/// Build a complete ZIP archive (STORE method) from `files`.
+pub fn archive(files: &[File]) -> Vec<u8> {
+    {
         let mut out = Vec::new();
         // (crc, size, local-header-offset, name) per entry, for the central dir.
         let mut central: Vec<(u32, u32, u32, Vec<u8>)> = Vec::new();
 
-        for f in &files {
+        for f in files {
             let name = f.name.as_bytes();
             let crc = crc32(&f.data);
             let size = f.data.len() as u32;
@@ -105,4 +113,41 @@ impl Guest for Component {
     }
 }
 
+// ---- the component -----------------------------------------------------
+//
+// A mapping between the WIT types and the ones above, and nothing else — the logic
+// is judged by `tests/` against the plain functions.
+
+#[cfg(target_arch = "wasm32")]
+#[allow(warnings)]
+mod bindings;
+
+#[cfg(target_arch = "wasm32")]
+use bindings::exports::zip::archive::archiver as w;
+
+#[cfg(target_arch = "wasm32")]
+struct Component;
+
+#[cfg(target_arch = "wasm32")]
+impl w::Guest for Component {
+    fn archive(files: Vec<w::File>) -> Vec<u8> {
+        let files: Vec<File> =
+            files.into_iter().map(|f| File { name: f.name, data: f.data }).collect();
+        crate::archive(&files)
+    }
+
+    fn extract(bytes: Vec<u8>) -> Result<Vec<w::File>, w::ZipError> {
+        crate::extract(&bytes)
+            .map(|fs| fs.into_iter().map(|f| w::File { name: f.name, data: f.data }).collect())
+            .map_err(|e| match e {
+                ZipError::NotAZip => w::ZipError::NotAZip,
+                ZipError::Truncated { at } => w::ZipError::Truncated(at),
+                ZipError::UnsupportedMethod { method } => w::ZipError::UnsupportedMethod(method),
+                ZipError::BadChecksum { name } => w::ZipError::BadChecksum(name),
+                ZipError::BadDeflate { why } => w::ZipError::BadDeflate(why),
+            })
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 bindings::export!(Component with_types_in bindings);
