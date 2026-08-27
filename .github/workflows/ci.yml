@@ -111,15 +111,30 @@ jobs:
       # is produced by this job and CI jobs do not share a filesystem. Two of
       # them — `capsearch` and `contracts` — were red on main and had never run.
       #
-      # The other 21 integration suites are NOT here: they spawn `nats-server`,
+      # The other integration suites are NOT here: they spawn `nats-server`,
       # and several want SurrealDB. That is a real dependency and this workflow
       # deliberately stands up neither, so they stay a local act until CI grows
       # service containers. Measured, not guessed — see the note below.
+      #
+      # The four added later needed nothing but a built tree, and one of them had
+      # been RED ON MAIN for as long as nothing ran it:
+      #
+      #   capgraph_store   asserts by reading files, and says so in its own words:
+      #                    "a test that has to boot Docker to notice is a test
+      #                    nobody runs before shipping the mismatch". Nobody ran
+      #                    this one either, and it was failing on a Justfile recipe
+      #                    that had gained a namespace.
+      #   capgraph_edges   reads the built catalogue.
+      #   console_session  spawns comp-host, which this job has already built.
+      #   compose_race     the regression test for the artifact race that made this
+      #                    very job flaky. It belongs where it can catch a repeat.
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
         run: >-
           cargo test --release
           --test capsearch --test contracts --test publish --test secrets
+          --test capgraph_edges --test capgraph_store --test console_session
+          --test compose_race
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is
