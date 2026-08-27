@@ -2307,6 +2307,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sheet-ingest"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+ "zip",
+]
+
+[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

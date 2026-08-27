@@ -113,7 +113,7 @@ CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → P
 | the fifty-three showcase apps, one file each | [`docs/apps/`](docs/apps/README.md) |
 | every other document, and which are generated | [`docs/README.md`](docs/README.md) |
 | the original capability-library README (archived) | [`docs/archive/capability-library-readme.md`](docs/archive/capability-library-readme.md) |
-| why a component is worth more than a note about one | [ADR-0089](docs/adr/0089-capability-accumulation.md) — 206 components, reuse enforced by a gate that reads what a candidate actually called |
+| why a component is worth more than a note about one | [ADR-0089](docs/adr/0089-capability-accumulation.md) — 207 components, reuse enforced by a gate that reads what a candidate actually called |
 | how a composition is derived rather than written | [ADR-0087](docs/adr/0087-a-composition-is-derived-not-written.md) — `reconciler/src/plug.rs` reads a component's imports out of the binary |
 
 **Delivery**
@@ -148,7 +148,7 @@ CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → P
 
 ## Status
 
-**The library is the mature half.** 206 components, 99 interfaces with a provider
+**The library is the mature half.** 207 components, 100 interfaces with a provider
 and at least one consumer, 68 applications composed from them, heavily tested
 across four workspaces. The capability graph is derived from built artifacts, so
 it says what the code does rather than what a list claims.
