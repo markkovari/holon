@@ -1246,12 +1246,33 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `graph:run/driver@0.1.0`
+## `graph:run/driver@0.2.0`
 
 ```wit
   interface driver {
-    use graph:agent/writer@0.1.0.{goal, file, failure};
-    use graph:fitness/evaluator@0.2.0.{check};
+    record file {
+      path: string,
+      content: string,
+    }
+
+    record goal {
+      text: string,
+      context: list<file>,
+      writable: list<string>,
+    }
+
+    record failure {
+      id: string,
+      detail: string,
+    }
+
+    record check {
+      id: string,
+      required: bool,
+      weight: u32,
+      command: list<string>,
+      needs: list<string>,
+    }
 
     variant run-error {
       provider-down(string),
