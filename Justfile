@@ -2886,6 +2886,58 @@ compose-cron-scheduler:
 host-cron-scheduler:
     cd host && cargo run --release --bin comp-host -- --app cron-scheduler --config-file ../examples/defaults.conf --config default-tenant=cron-scheduler --component ../components/target/cron-scheduler.composed.wasm --addr 0.0.0.0:3056
 
+# Everything CI runs, in the same order, with the same commands.
+#
+# This exists because it did not, and the gap cost three red pull requests. The
+# habit was to run a plausible subset — `--test docs --test contracts` — and call
+# the tree green. CI runs `--test publish` too, which is where a compose race lived.
+#
+# Worse, the local run was not even the same code path: `tests/harness/mod.rs`
+# prefers `components/target/platform_domain.composed.wasm` when it exists, and it
+# existed here and does not in a fresh checkout — so the compose that raced was
+# never reached locally. `PLATFORM_COMPOSED=skip` below moves it aside for the run.
+#
+# Mirrors .github/workflows/ci.yml. When a job changes there, change it here.
+ci-local:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cd "{{justfile_directory()}}"
+    fail=0
+    step() { echo; echo "=== $* ==="; }
+
+    # The stray composed artifact hides the cold path a fresh checkout takes.
+    stray="components/target/platform_domain.composed.wasm"
+    if [ -f "$stray" ]; then mv "$stray" "$stray.aside"; restore_stray=1; fi
+    trap '[ -n "${restore_stray:-}" ] && mv "$stray.aside" "$stray"' EXIT
+
+    step "components: just build force=1"
+    just build force=1 || fail=1
+
+    step "components: cargo test --workspace --exclude browser-automation"
+    (cd components && cargo test --workspace --exclude browser-automation) || fail=1
+
+    step "clippy: cargo component check + clippy --target wasm32-wasip2"
+    (cd components && cargo component check --release) || fail=1
+    (cd components && cargo clippy --workspace --exclude browser-automation --target wasm32-wasip2) || fail=1
+
+    step "host: cargo build --release --bin comp-host"
+    (cd host && cargo build --release --bin comp-host) || fail=1
+
+    # The four suites the components job runs, on a COLD compose cache — which is
+    # what CI has and what found the race.
+    step "reconciler: capsearch, contracts, publish, secrets (cold cache)"
+    rm -rf components/target/composed
+    (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets) || fail=1
+
+    step "workflows: actionlint"
+    if command -v actionlint >/dev/null; then actionlint || fail=1
+    elif [ -x "$(go env GOPATH 2>/dev/null)/bin/actionlint" ]; then "$(go env GOPATH)/bin/actionlint" || fail=1
+    else echo "actionlint not installed — CI will still lint. go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12"; fi
+
+    echo
+    if [ "$fail" -eq 0 ]; then echo "ci-local: everything CI runs is green here"; else echo "ci-local: FAILED"; fi
+    exit "$fail"
+
 # The binder's own e2e, run against a composition built in another LANGUAGE.
 #
 #     just e2e-binder-poly go portfolio-value

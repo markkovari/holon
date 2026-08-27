@@ -419,7 +419,33 @@ pub fn compose_to(name: &str, catalog: &Catalog, out_dir: &Path) -> Result<PathB
     }
     std::fs::create_dir_all(out_dir).map_err(|e| e.to_string())?;
     let bytes = compose(name, catalog)?;
-    std::fs::write(&out, bytes).map_err(|e| e.to_string())?;
+
+    // Write somewhere else, then RENAME. `fs::write` creates the file and then
+    // fills it, so for as long as that takes the path exists and holds nothing —
+    // and the `is_file()` check above hands that to whoever asked next.
+    //
+    // CI found it: three tests in `publish.rs` each start a control plane, they run
+    // as threads in one process, and one of them got
+    //
+    //     Error: expected at least one module field
+    //          --> components/target/composed/platform-domain.8bad9a2a41a087f0.wasm:1:1
+    //
+    // against a zero-byte artifact. `tests/compose_race.rs` reproduces it directly.
+    //
+    // The temporary name carries the process id and a counter because the racers
+    // agree on `stamp` — it is the digest of the same inputs — so they would collide
+    // on a temp path derived from it alone.
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = out_dir.join(format!(".{name}.{stamp}.{}.{seq}.tmp", std::process::id()));
+    std::fs::write(&tmp, bytes).map_err(|e| e.to_string())?;
+    // Atomic within a directory: the destination either does not exist or holds the
+    // whole artifact. Losing the race is fine — both wrote the same bytes, since the
+    // filename IS their digest.
+    if let Err(e) = std::fs::rename(&tmp, &out) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
     Ok(out)
 }
 
