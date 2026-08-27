@@ -2925,9 +2925,15 @@ ci-local:
 
     # The four suites the components job runs, on a COLD compose cache — which is
     # what CI has and what found the race.
-    step "reconciler: capsearch, contracts, publish, secrets (cold cache)"
+    step "reconciler (components job): eight suites, on a cold compose cache"
     rm -rf components/target/composed
-    (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets) || fail=1
+    (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets \
+        --test capgraph_edges --test capgraph_store --test console_session --test compose_race) || fail=1
+
+    step "reconciler (native job): --lib --bins + docs, fixtures, guestio, stress, uideps"
+    (cd reconciler && cargo test --release --lib --bins \
+        --test docs --test fixtures --test guestio \
+        --test stress_env --test stress_tree --test uideps) || fail=1
 
     step "workflows: actionlint"
     if command -v actionlint >/dev/null; then actionlint || fail=1
