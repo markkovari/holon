@@ -7,9 +7,19 @@
 // entry, with correct local headers, a central directory, and the
 // end-of-central-directory record. Any unzip tool reads it.
 //
-// Store-only keeps it small and exact; the archive isn't smaller than its
-// inputs, which is fine for bundling already-small text/CSV/JSON. Deflate is a
-// separate, much larger job and out of scope.
+// Store-only keeps the WRITER small and exact; the archive isn't smaller than its
+// inputs, which is fine for bundling already-small text/CSV/JSON.
+//
+// ## Reading, added later, and why deflate came with it
+//
+// This said "deflate is a separate, much larger job and out of scope". It was, until
+// something needed to read a `.xlsx` — which is a ZIP of XML, written by every
+// spreadsheet on earth with DEFLATE. A reader that only handles STORE would refuse
+// every real file, so the inflate is here.
+//
+// It lives in this component rather than a second one because a zip capability that
+// can only write is half a capability, and `sheet:import` wanting to read one is not
+// a reason to have two.
 //
 // Pure compute: bytes in, bytes out. No state, no host imports.
 package zip:archive@0.1.0;
@@ -23,9 +33,37 @@ interface archiver {
         data: list<u8>,
     }
 
+    /// Why an archive could not be read.
+    variant zip-error {
+        /// No end-of-central-directory record. Not a ZIP, or truncated so badly
+        /// there is nothing to find.
+        not-a-zip,
+        /// A structure runs past the end of the input. Carries the byte offset it
+        /// reached for, which is what tells a truncated upload from a corrupt one.
+        truncated(u32),
+        /// A compression method this cannot undo. Carries the method id — 0 is
+        /// STORE and 8 is DEFLATE; anything else (bzip2, lzma, zstd) is refused
+        /// rather than guessed at.
+        unsupported-method(u32),
+        /// The entry decompressed, and its CRC-32 is not the one the archive
+        /// recorded. Carries the entry name. Checked rather than trusted: this is
+        /// the difference between reading a file and reading something that used
+        /// to be a file.
+        bad-checksum(string),
+        /// The DEFLATE stream itself is malformed. Carries where it gave up.
+        bad-deflate(string),
+    }
+
     /// Build a complete ZIP archive (STORE method) from `files`. Entries appear
     /// in the given order.
     archive: func(files: list<file>) -> list<u8>;
+
+    /// Read an archive back. STORE and DEFLATE; every entry's CRC-32 is verified.
+    ///
+    /// Directory entries are dropped rather than returned as empty files — an
+    /// `.xlsx` has several and a caller wanting `xl/worksheets/sheet1.xml` does not
+    /// want to page past `xl/`.
+    extract: func(bytes: list<u8>) -> result<list<file>, zip-error>;
 }
 
 /// `zip` provides the archiver; pure compute, no host imports.

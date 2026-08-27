@@ -1,0 +1,31 @@
+[package]
+name = "sheet-ingest"
+description = "a .csv or .xlsx someone exported, turned into header + rows for a bulk insert — composes csv:codec and zip:archive (sheet:ingest)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# See `components/demo`: the bindings are gated on wasm32 so `cargo test` can link
+# the crate for the held-out specification.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[dev-dependencies]
+# The held-out spec opens the real `.xlsx` fixture with the same reader the
+# composed component uses, rather than a second one written for the test.
+zip = { path = "../zip" }
+
+[package.metadata.component]
+package = "sheet:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "sheet-ingest"
+
+[package.metadata.component.target.dependencies]
+"csv:codec" = { path = "../csv/wit" }
+"zip:archive" = { path = "../zip/wit" }
