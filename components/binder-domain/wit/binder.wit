@@ -43,6 +43,14 @@ world binder-domain {
     /// and `zip:archive` to do that, and what arrives here is already rows.
     import sheet:ingest/reader@0.1.0;
 
+    /// A swap, handed over as a square somebody photographs. `portfolio:value`
+    /// already says what a swap MEANS — "a swap is two events, not one" — and this
+    /// is the app finally doing it.
+    ///
+    /// Neither of these knows anything about cards; both existed before this app.
+    import qr:encode/encoder@0.1.0;
+    import id:generate/generator@0.1.0;
+
     /// The collection itself. A bucket per app, named by the app (ADR-0023), so
     /// isolation is the linker's rather than a naming convention's.
     import wasi:keyvalue/store@0.2.0-draft;

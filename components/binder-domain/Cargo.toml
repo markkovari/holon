@@ -27,6 +27,8 @@ world = "binder-domain"
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
 "sheet:ingest" = { path = "../sheet-ingest/wit" }
+"qr:encode" = { path = "../qr/wit" }
+"id:generate" = { path = "../id-generate/wit" }
 # `sheet:ingest`'s own world imports these, so they are needed to merge its package.
 "csv:codec" = { path = "../csv/wit" }
 "zip:archive" = { path = "../zip/wit" }
