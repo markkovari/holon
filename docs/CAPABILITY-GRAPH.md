@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**205 components, 99 interfaces with a provider and at least one consumer, 431 import edges, 15 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
+**206 components, 99 interfaces with a provider and at least one consumer, 431 import edges, 16 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -382,6 +382,7 @@ Not a finding. A capability library is allowed to be ahead of its callers, and s
 | `event-pusher` | `wasmcloud:messaging/handler` |
 | `expr` | `demo:expr/language` |
 | `geo` | `geo:resolve/coords` |
+| `gherkin-validate` | `gherkin:validate/validator` |
 | `glob` | `demo:glob/matcher` |
 | `login-app` | `login:app/auth` |
 | `ordinal` | `demo:ordinal/suffix` |
