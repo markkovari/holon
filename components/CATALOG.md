@@ -55,7 +55,7 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **fs-watcher** | `os:fs@0.1.0` | config/store, http/outgoing-handler | `fswatch-url` | 103 KiB |
 | **fsm-workflow** | `fsm:workflow@0.1.0` | kv:store | — | 134 KiB |
 | **geo** | `geo:resolve@0.1.0` | pure compute | — | 60 KiB |
-| **gherkin-validate** | `gherkin:validate@0.1.0` | pure compute | — | 79 KiB |
+| **gherkin-validate** | `gherkin:validate@0.1.0` | pure compute | — | 101 KiB |
 | **github-forge** | `github:forge@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `forge-repo`, `forge-api`, `forge-token`, `forge-base` | 158 KiB |
 | **glob** | `demo:glob@0.1.0` | pure compute | — | 46 KiB |
 | **golem-bridge** | `golem:bridge@0.1.0` | config/store, http/outgoing-handler | `golem-url`, `golem-host`, `golem-path-template` | 96 KiB |
