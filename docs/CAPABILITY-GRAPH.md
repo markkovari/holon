@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**207 components, 100 interfaces with a provider and at least one consumer, 436 import edges, 16 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
+**207 components, 100 interfaces with a provider and at least one consumer, 434 import edges, 16 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -35,11 +35,11 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 6 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `doc-search-domain`, `platform-domain`, `support-desk-domain`, `throttle-domain` |
 | 6 | `search:index/index` | `search-index` | `clinic-domain`, `doc-search-domain`, `knowledge-memory`, `search-domain`, `track-domain`, `vet-domain` |
 | 5 | `cache:store/cache` | `cache` | `doc-search-domain`, `link-shortener`, `passkey-domain`, `search-domain`, `vet-domain` |
-| 5 | `graph:agent/writer` | `agent-writer` | `agent-driver`, `agent-probe`, `driver-probe`, `graph-selector`, `select-probe` |
 | 5 | `knowledge:graph/store` | `knowledge-graph` | `console-domain`, `contract-registry`, `graph-probe`, `graph-viz-domain`, `knowledge-memory` |
 | 5 | `llm:inference/inference` | `anthropic-provider` | `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe`, `photosocial-domain` |
 | 5 | `notify:dispatch/dispatcher` | `notify-dispatch` | `dev-portal`, `status-page`, `support-desk-domain`, `track-domain`, `webhook-relay` |
 | 4 | `git:forge/repo` | `github-forge` | `console-domain`, `forge-probe`, `graph-selector`, `select-probe` |
+| 4 | `graph:agent/writer` | `agent-writer` | `agent-driver`, `agent-probe`, `graph-selector`, `select-probe` |
 | 4 | `md:render/renderer` | `markdown` | `helpdesk-domain`, `paste-bin`, `track-domain`, `vet-domain` |
 | 4 | `money:amount/arithmetic` | `money` | `billing-ledger`, `invoice-copilot-domain`, `treasury-ledger-domain`, `vet-domain` |
 | 4 | `pii:redact/redactor` | `pii-redact` | `paste-bin`, `triage-assist-domain`, `triage-domain`, `vet-domain` |
@@ -50,7 +50,6 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 4 | `slug:generate/generator` | `slug` | `conduit-domain`, `link-shortener`, `paste-bin`, `slug-probe` |
 | 4 | `webhook:sign/signer` | `webhook-sign` | `dev-portal`, `track-domain`, `upload-drop`, `webhook-relay` |
 | 3 | `audit:log/recorder` | `audit-log` | `auth-guard`, `triage-assist-domain`, `webhook-relay` |
-| 3 | `graph:fitness/evaluator` | `checks-runner` | `agent-driver`, `driver-probe`, `fitness-probe` |
 | 3 | `ledger:doubleentry/ledger` | `ledger` | `books-domain`, `invoice-copilot-domain`, `treasury-ledger-domain` |
 | 3 | `otp:totp/authenticator` | `otp` | `doc-search-domain`, `mfa-authgate`, `vet-domain` |
 | 3 | `paginate:cursor/cursors` | `pagination` | `csv-report`, `track-domain`, `vet-domain` |
@@ -61,6 +60,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 3 | `ui:assets/files` | `console-assets` | `console-domain`, `track-domain`, `vet-domain` |
 | 3 | `validate:schema/validator` | `validate` | `csv-report`, `paste-bin`, `vet-domain` |
 | 2 | `audit:log/query` | `audit-log` | `triage-assist-domain`, `webhook-relay` |
+| 2 | `graph:fitness/evaluator` | `checks-runner` | `agent-driver`, `fitness-probe` |
 | 2 | `lock:mutex/mutex` | `lock-mutex` | `booked-domain`, `vet-domain` |
 | 2 | `metrics:collect/collector` | `metrics-collect` | `abtest-domain`, `search-domain` |
 | 2 | `upload:policy/gate` | `upload-policy` | `upload-drop`, `vet-domain` |
