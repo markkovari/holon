@@ -96,11 +96,28 @@ fn digest_of(files: &[File]) -> String {
 /// its attention on the parts that are already fine, and the passing checks are
 /// exactly the ones a repair must not disturb — which is what "do not start
 /// over" in the writer's prompt is for.
+///
+/// So are the ones that were NEVER ATTEMPTED, and that is the whole reason the
+/// gate is a graph. A candidate that does not compile used to arrive here as
+/// fifteen failures with fifteen walls of output, and a model handed that will
+/// confidently repair a test it never ran. It now arrives as one failure — the
+/// compile — and a list of things nobody tried, which is named separately so the
+/// prompt can say "and this is what could not be checked yet" without spending
+/// the model's attention on it (ADR-0088: a gate's output is the next prompt).
 fn failures_of(outcomes: &[gate::Outcome]) -> Vec<Failure> {
     outcomes
         .iter()
-        .filter(|o| !o.passed)
+        .filter(|o| o.state == gate::CheckState::Failed)
         .map(|o| Failure { id: o.id.clone(), detail: o.detail.clone() })
+        .collect()
+}
+
+/// What was blocked, and by what. Context for a prompt, never the subject of one.
+fn blocked_by(outcomes: &[gate::Outcome]) -> Vec<String> {
+    outcomes
+        .iter()
+        .filter(|o| o.state == gate::CheckState::NotAttempted)
+        .map(|o| format!("{} (needs {})", o.id, o.blocked_by))
         .collect()
 }
 
@@ -164,6 +181,10 @@ impl Guest for Component {
                 required: c.required,
                 weight: c.weight,
                 command: c.command.clone(),
+                // The driver's own plan has no edges yet, so every gate it builds
+                // is one level — exactly the behaviour before the graph existed.
+                // A caller that wants ordering declares it in the goal spec.
+                needs: Vec::new(),
             })
             .collect();
 
@@ -387,10 +408,33 @@ mod tests {
             id: id.into(),
             required: true,
             weight: 1,
-            passed,
+            state: if passed { gate::CheckState::Passed } else { gate::CheckState::Failed },
+            blocked_by: String::new(),
             took_ms: 0,
             detail: detail.into(),
         }
+    }
+
+    /// A check that was never attempted is NOT a failure to repair. This is the
+    /// whole point of the graph reaching the prompt.
+    #[test]
+    fn a_blocked_check_is_context_and_never_the_subject_of_a_repair() {
+        let outcomes = vec![
+            outcome("compiles", false, "expected `;`"),
+            gate::Outcome {
+                id: "tests".into(),
+                required: true,
+                weight: 1,
+                state: gate::CheckState::NotAttempted,
+                blocked_by: "compiles".into(),
+                took_ms: 0,
+                detail: String::new(),
+            },
+        ];
+        let failures = failures_of(&outcomes);
+        assert_eq!(failures.len(), 1, "only the compile is a failure: {failures:?}");
+        assert_eq!(failures[0].id, "compiles");
+        assert_eq!(blocked_by(&outcomes), vec!["tests (needs compiles)"]);
     }
 
     #[test]

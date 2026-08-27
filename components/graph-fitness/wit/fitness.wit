@@ -47,6 +47,18 @@ interface evaluator {
         /// parsed, and every parser of shell strings eventually runs something
         /// its author did not intend.
         command: list<string>,
+        /// Ids that must PASS before this one runs.
+        ///
+        /// Empty is exactly the old behaviour, so a flat list is a graph with one
+        /// level and every gate written before this keeps working. The edges live
+        /// on the checks rather than in a second document, so the graph is DERIVED
+        /// from the list — the argument ADR-0087 makes for compositions.
+        ///
+        /// Three things are refused up front as `invalid`: a cycle, an id nothing
+        /// declares, and a required check that needs an optional one. The last is
+        /// the subtle one — it lets a check marked as not mattering silently
+        /// decide whether the gate opens.
+        needs: list<string>,
     }
 
     /// A file as the candidate would have it. Whole contents, not a diff: a patch
@@ -71,20 +83,42 @@ interface evaluator {
         changes: list<file>,
     }
 
+    /// What happened to a check.
+    enum check-state {
+        passed,
+        failed,
+        /// Never run, because something it needs did not pass.
+        ///
+        /// NOT a failure — it is the ABSENCE of a result, and keeping the two
+        /// apart is most of the point of the graph. A compile error should produce
+        /// one failure and a list of things nobody tried, rather than fifteen
+        /// failures and fifteen walls of output for the next prompt to drown in
+        /// (ADR-0088).
+        not-attempted,
+    }
+
     record outcome {
         id: string,
         required: bool,
         weight: u32,
-        passed: bool,
+        state: check-state,
+        /// The check whose failure stopped this one. Empty unless `not-attempted`.
+        blocked-by: string,
         took-ms: u64,
         /// What it said, bounded. Enough to act on.
         detail: string,
     }
 
     record verdict {
-        /// THE GATE: every required check passed.
+        /// THE GATE: every required check passed. A required check that was never
+        /// attempted has not passed, so a blocked gate is a closed gate.
         accepted: bool,
         /// THE SCORE, 0..=1000 milli-units, weighted across ALL checks.
+        ///
+        /// The denominator is everything that was ASKED FOR, including what was
+        /// never attempted. Dropping skipped checks from it would let a branch
+        /// that fails early compete against a smaller denominator than one that
+        /// runs the whole gate — which pays a search to break the build.
         score: u32,
         outcomes: list<outcome>,
     }

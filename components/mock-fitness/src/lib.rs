@@ -23,7 +23,7 @@
 mod bindings;
 
 use bindings::exports::graph::fitness::evaluator::{
-    Candidate, Check, EvalError, Guest, Outcome, Verdict,
+    Candidate, Check, CheckState, EvalError, Guest, Outcome, Verdict,
 };
 use bindings::wasi::config::store as config;
 
@@ -49,7 +49,7 @@ impl Guest for Component {
         let script = script();
         let text = changed_text(&c);
 
-        let outcomes: Vec<Outcome> = checks
+        let mut outcomes: Vec<Outcome> = checks
             .iter()
             .map(|k| {
                 // A check with no rule in the script fails. Not passes: an
@@ -61,7 +61,8 @@ impl Guest for Component {
                     id: k.id.clone(),
                     required: k.required,
                     weight: k.weight.max(1),
-                    passed,
+                    state: if passed { CheckState::Passed } else { CheckState::Failed },
+                    blocked_by: String::new(),
                     took_ms: 0,
                     detail: if passed { String::new() } else { format!("missing: {}", k.id) },
                 }
@@ -71,9 +72,30 @@ impl Guest for Component {
         // The same arithmetic the real evaluator recomputes, and for the same
         // reason: the gate is every required check, the score is the weighted
         // fraction of all of them.
-        let accepted = outcomes.iter().filter(|o| o.required).all(|o| o.passed);
+        // The graph, honoured here too. A mock that ran everything regardless
+        // would let a test pass against a gate the real evaluator would block —
+        // which is the one thing a stub of a gate must never do.
+        let mut stopped: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for o in outcomes.iter() {
+            if o.state != CheckState::Passed {
+                stopped.insert(o.id.clone(), o.id.clone());
+            }
+        }
+        for (i, k) in checks.iter().enumerate() {
+            if let Some(root) = k.needs.iter().find_map(|n| stopped.get(n).cloned()) {
+                outcomes[i].state = CheckState::NotAttempted;
+                outcomes[i].blocked_by = root.clone();
+                outcomes[i].detail = String::new();
+                stopped.insert(k.id.clone(), root);
+            }
+        }
+
+        let accepted =
+            outcomes.iter().filter(|o| o.required).all(|o| o.state == CheckState::Passed);
         let total: u32 = outcomes.iter().map(|o| o.weight).sum();
-        let won: u32 = outcomes.iter().filter(|o| o.passed).map(|o| o.weight).sum();
+        let won: u32 =
+            outcomes.iter().filter(|o| o.state == CheckState::Passed).map(|o| o.weight).sum();
         let score = if total == 0 { 0 } else { (won * 1000) / total };
 
         Ok(Verdict { accepted, score, outcomes })
@@ -97,7 +119,7 @@ mod tests {
     }
 
     fn check(id: &str, required: bool) -> Check {
-        Check { id: id.into(), required, weight: 1, command: vec![] }
+        Check { id: id.into(), required, weight: 1, command: vec![], needs: vec![] }
     }
 
     fn with_script(script: &str, c: Candidate, checks: Vec<Check>) -> Verdict {
@@ -105,7 +127,7 @@ mod tests {
         // arithmetic directly against a parsed script.
         let script: serde_json::Value = serde_json::from_str(script).unwrap();
         let text = changed_text(&c);
-        let outcomes: Vec<Outcome> = checks
+        let mut outcomes: Vec<Outcome> = checks
             .iter()
             .map(|k| {
                 let passed = script[&k.id].as_str().map(|n| text.contains(n)).unwrap_or(false);
@@ -113,15 +135,34 @@ mod tests {
                     id: k.id.clone(),
                     required: k.required,
                     weight: k.weight.max(1),
-                    passed,
+                    state: if passed { CheckState::Passed } else { CheckState::Failed },
+                    blocked_by: String::new(),
                     took_ms: 0,
                     detail: String::new(),
                 }
             })
             .collect();
-        let accepted = outcomes.iter().filter(|o| o.required).all(|o| o.passed);
+        // The graph, here too: a helper that ran everything would let a test pass
+        // against a gate the component itself would block.
+        let mut stopped: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for o in outcomes.iter() {
+            if o.state != CheckState::Passed {
+                stopped.insert(o.id.clone(), o.id.clone());
+            }
+        }
+        for (i, k) in checks.iter().enumerate() {
+            if let Some(root) = k.needs.iter().find_map(|n| stopped.get(n).cloned()) {
+                outcomes[i].state = CheckState::NotAttempted;
+                outcomes[i].blocked_by = root.clone();
+                stopped.insert(k.id.clone(), root);
+            }
+        }
+        let accepted =
+            outcomes.iter().filter(|o| o.required).all(|o| o.state == CheckState::Passed);
         let total: u32 = outcomes.iter().map(|o| o.weight).sum();
-        let won: u32 = outcomes.iter().filter(|o| o.passed).map(|o| o.weight).sum();
+        let won: u32 =
+            outcomes.iter().filter(|o| o.state == CheckState::Passed).map(|o| o.weight).sum();
         Verdict { accepted, score: if total == 0 { 0 } else { won * 1000 / total }, outcomes }
     }
 
