@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**206 components, 99 interfaces with a provider and at least one consumer, 431 import edges, 16 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
+**207 components, 100 interfaces with a provider and at least one consumer, 434 import edges, 16 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -28,9 +28,9 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 8 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
 | 8 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `invoice-copilot-domain`, `jobs-domain`, `saga-domain`, `treasury-ledger-domain`, `webhook-ingest` |
 | 7 | `ai:inference/inference` | `ai-inference` | `doc-search-domain`, `invoice-copilot-domain`, `moderation-domain`, `support-desk-domain`, `track-domain`, `triage-assist-domain`, `vet-domain` |
+| 7 | `csv:codec/codec` | `csv` | `billing-ledger`, `clinic-domain`, `csv-report`, `sheet-ingest`, `stash-domain`, `triage-domain`, `vet-domain` |
 | 7 | `ratelimit:guard/limiter` | `rate-limiter` | `auth-guard`, `invoice-copilot-domain`, `link-shortener`, `moderation-domain`, `throttle-domain`, `triage-assist-domain`, `webhook-relay` |
 | 6 | `blob:store/blobstore` | `blob-store` | `artifact-cache`, `platform-domain`, `studio-domain`, `upload-drop`, `vet-domain`, `virt-git` |
-| 6 | `csv:codec/codec` | `csv` | `billing-ledger`, `clinic-domain`, `csv-report`, `stash-domain`, `triage-domain`, `vet-domain` |
 | 6 | `outbox:dispatch/queue` | `outbox` | `billing-ledger`, `dev-portal`, `jobs-domain`, `pipeline-domain`, `support-desk-domain`, `webhook-relay` |
 | 6 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `doc-search-domain`, `platform-domain`, `support-desk-domain`, `throttle-domain` |
 | 6 | `search:index/index` | `search-index` | `clinic-domain`, `doc-search-domain`, `knowledge-memory`, `search-domain`, `track-domain`, `vet-domain` |
@@ -66,6 +66,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 2 | `upload:policy/gate` | `upload-policy` | `upload-drop`, `vet-domain` |
 | 2 | `wit:reflect/composer` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 2 | `wit:reflect/inspector` | `wit-reflect` | `platform-domain`, `studio-domain` |
+| 2 | `zip:archive/archiver` | `zip` | `sheet-ingest`, `stash-domain` |
 | 1 | `ai:local/local` | `llm-local` | `local-ai-domain` |
 | 1 | `artifact:cache/store` | `artifact-cache` | `artifact-probe` |
 | 1 | `bytes:codec/codec` | `bytes-codec` | `codec-probe` |
@@ -108,6 +109,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `resilience:breaker/breaker` | `resilience` | `mesh-domain` |
 | 1 | `rrule:recur/recur` | `rrule` | `booked-domain` |
 | 1 | `shaper:limit/limiter` | `shaper` | `gate-domain` |
+| 1 | `sheet:ingest/reader` | `sheet-ingest` | `binder-domain` |
 | 1 | `vgit:store/objects` | `virt-git` | `vgit-probe` |
 | 1 | `vgit:store/refs` | `virt-git` | `vgit-probe` |
 | 1 | `vgit:store/worktree` | `virt-git` | `vgit-probe` |
@@ -115,7 +117,6 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `web:browser/automation` | `browser-automation` | `pdf-generator-domain` |
 | 1 | `webauthn:verify/verifier` | `webauthn` | `passkey-domain` |
 | 1 | `webhook:ingest/verifier` | `webhook-ingest` | `webhook-relay` |
-| 1 | `zip:archive/archiver` | `zip` | `stash-domain` |
 
 ## The load-bearing few
 
@@ -154,9 +155,9 @@ graph LR
   ai_inference_inference(["ai:inference/inference"])
   ai_inference[ai-inference] --> ai_inference_inference
   ai_inference_inference --> many_ai_inference_inference["7 consumers"]
-  ratelimit_guard_limiter(["ratelimit:guard/limiter"])
-  rate_limiter[rate-limiter] --> ratelimit_guard_limiter
-  ratelimit_guard_limiter --> many_ratelimit_guard_limiter["7 consumers"]
+  csv_codec_codec(["csv:codec/codec"])
+  csv[csv] --> csv_codec_codec
+  csv_codec_codec --> many_csv_codec_codec["7 consumers"]
 ```
 
 ## Which apps is this component inside?
@@ -176,10 +177,10 @@ This is the number to look at before changing a component, and before deleting o
 | 8 | `fsm-workflow` | `eshop`, `helpdesk`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 8 | `idempotency-guard` | `eshop`, `eshop-catalog`, `jobs`, `jobs-golem`, `ledger`, `relay`, `saga`, `webhook` |
 | 7 | `anthropic-provider` | `ai`, `ai-openai`, `photosocial`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 7 | `csv` | `binder`, `ledger`, `report`, `stash`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `blob-store` | `drop`, `platform`, `studio`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `cache` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `cache-backing` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
-| 6 | `csv` | `ledger`, `report`, `stash`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `markdown` | `helpdesk`, `paste`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `outbox` | `jobs`, `jobs-golem`, `ledger`, `pipeline`, `portal`, `relay` |
 | 6 | `secrets-vault` | `authgate`, `login`, `platform`, `vet`, `vet-full`, `vet-lattice` |
@@ -210,6 +211,7 @@ This is the number to look at before changing a component, and before deleting o
 | 2 | `metrics-collect` | `abtest`, `search` |
 | 2 | `proxy-route` | `eshop`, `mesh` |
 | 2 | `wit-reflect` | `platform`, `studio` |
+| 2 | `zip` | `binder`, `stash` |
 | 1 | `anthropic-vision` | `binder` |
 | 1 | `card-identify` | `binder` |
 | 1 | `config-store` | `login` |
@@ -230,10 +232,10 @@ This is the number to look at before changing a component, and before deleting o
 | 1 | `resilience` | `mesh` |
 | 1 | `rrule` | `booked` |
 | 1 | `shaper` | `gate` |
+| 1 | `sheet-ingest` | `binder` |
 | 1 | `textdiff` | `scribe` |
 | 1 | `webauthn` | `passkey` |
 | 1 | `webhook-ingest` | `relay` |
-| 1 | `zip` | `stash` |
 
 ## What is each app made of?
 
@@ -248,7 +250,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **arena** | `arena-domain` | 2 | `arena_domain.composed.wasm` |
 | **auth-guard** | `auth-guard` | 2 | `auth_guard.composed.wasm` |
 | **authgate** | `mfa-authgate` | 5 | `mfa_authgate.composed.wasm` |
-| **binder** | `binder-domain` | 8 | `binder-domain.composed.wasm` |
+| **binder** | `binder-domain` | 11 | `binder-domain.composed.wasm` |
 | **booked** | `booked-domain` | 8 | `booked_domain.composed.wasm` |
 | **books** | `books-domain` | 6 | `books_domain.composed.wasm` |
 | **buzz** | `buzz-domain` | 4 | `buzz_domain.composed.wasm` |
@@ -338,6 +340,7 @@ graph LR
   app_binder["binder"]
   app_binder --> audit_log([audit-log])
   app_binder --> auth_guard([auth-guard])
+  app_binder --> csv([csv])
   app_binder --> rate_limiter([rate-limiter])
   app_booked["booked"]
   app_booked --> audit_log([audit-log])

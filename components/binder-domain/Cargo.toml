@@ -26,6 +26,10 @@ world = "binder-domain"
 # auth.wit's own world imports these; needed to merge the auth:identity package.
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
+"sheet:ingest" = { path = "../sheet-ingest/wit" }
+# `sheet:ingest`'s own world imports these, so they are needed to merge its package.
+"csv:codec" = { path = "../csv/wit" }
+"zip:archive" = { path = "../zip/wit" }
 "records:store" = { path = "../record-store/wit" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }
 "deck:build" = { path = "../deck-build/wit" }
