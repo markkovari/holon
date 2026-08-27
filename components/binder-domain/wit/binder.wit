@@ -35,6 +35,14 @@ world binder-domain {
     /// Cost basis, realised and unrealised gain, and the value series.
     import portfolio:value/valuation@0.1.0;
 
+    /// A `.csv` or `.xlsx` someone exported, as header and rows. Bulk entry is how
+    /// a collection that already exists somewhere else gets in here, and it is the
+    /// difference between trying this app and using it.
+    ///
+    /// The app does not parse either format: `sheet:ingest` composes `csv:codec`
+    /// and `zip:archive` to do that, and what arrives here is already rows.
+    import sheet:ingest/reader@0.1.0;
+
     /// The collection itself. A bucket per app, named by the app (ADR-0023), so
     /// isolation is the linker's rather than a naming convention's.
     import wasi:keyvalue/store@0.2.0-draft;

@@ -49,6 +49,7 @@ use bindings::card::identify::identifier as ident;
 use bindings::deck::build::builder as deck;
 use bindings::vision::describe::describer as vision;
 use bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::sheet::ingest::reader as sheet;
 use bindings::portfolio::value::valuation as pv;
 use bindings::price::history::history as ph;
 use bindings::wasi::clocks::wall_clock;
@@ -829,6 +830,197 @@ impl Guest for Component {
                     let _ = put_json(&bucket, &event_key(&ns, &ev), &ev);
                 }
                 json_out(out, 201, &serde_json::to_value(card).unwrap_or(Value::Null))
+            }
+
+            // A collection that already exists somewhere else, arriving in one go.
+            //
+            // The body is the FILE, raw, and `?name=` carries its name — the name is
+            // what selects the reader, because the bytes of a CSV are not reliably
+            // distinguishable from any other text and guessing is how a
+            // semicolon-delimited European export becomes one column.
+            //
+            // ALL OR NOTHING. Every row is validated before anything is written, and
+            // one bad row writes nothing. A half-applied import is worse than a
+            // refused one: the person cannot tell which half, and their second
+            // attempt duplicates whatever the first got through.
+            (Method::Post, "/api/cards/bulk") => {
+                let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
+                let ns = ns(&who);
+                let name = param(&query, "name").unwrap_or_else(|| "upload.csv".into());
+                let body = read_body(&req);
+                if body.is_empty() {
+                    return fail(out, 400, "no file in the body");
+                }
+
+                let sheet = match sheet::read(&name, &body) {
+                    Ok(s) => s,
+                    Err(e) => return fail(out, 400, &format!("{e:?}")),
+                };
+
+                // Header names as a person writes them: `Paid (minor)`, `paid_minor`
+                // and `PAID MINOR` are one column.
+                let key = |h: &str| -> String {
+                    h.chars()
+                        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ' ')
+                        .collect::<String>()
+                        .to_lowercase()
+                        .replace(' ', "_")
+                        .trim_matches('_')
+                        .to_string()
+                };
+                let cols: Vec<String> = sheet.header.iter().map(|h| key(h)).collect();
+                let at_col = |row: &sheet::Row, want: &str| -> String {
+                    cols.iter()
+                        .position(|c| c == want)
+                        .and_then(|i| row.cells.get(i))
+                        .map(|v| v.trim().to_string())
+                        .unwrap_or_default()
+                };
+                if !cols.iter().any(|c| c == "name") {
+                    return fail(
+                        out,
+                        422,
+                        &format!("no `name` column — found {:?}", sheet.header),
+                    );
+                }
+
+                // Validate everything first. `row` is 1-based and counts the header,
+                // so it is the row number the person sees in their spreadsheet.
+                let mut staged: Vec<(Card, Option<StoredEvent>)> = Vec::new();
+                let mut problems: Vec<Value> = Vec::new();
+                for (i, row) in sheet.rows.iter().enumerate() {
+                    let line = i as u32 + 2;
+                    let mut bad = |why: &str| {
+                        problems.push(json!({ "row": line, "problem": why }));
+                    };
+                    let card_name = at_col(row, "name");
+                    if card_name.is_empty() {
+                        bad("no name");
+                        continue;
+                    }
+                    let quantity = at_col(row, "quantity");
+                    let quantity = if quantity.is_empty() {
+                        1u32
+                    } else {
+                        match quantity.parse::<u32>() {
+                            Ok(0) => {
+                                bad("a quantity of zero");
+                                continue;
+                            }
+                            Ok(n) => n,
+                            Err(_) => {
+                                bad(&format!("quantity `{quantity}` is not a whole number"));
+                                continue;
+                            }
+                        }
+                    };
+                    let paid = at_col(row, "paid_minor");
+                    let paid = if paid.is_empty() {
+                        None
+                    } else {
+                        // Minor units, integer. A price with a decimal point in it is
+                        // a person writing euros where the column says cents, and
+                        // silently rounding it is a wrong number on a chart.
+                        match paid.parse::<i64>() {
+                            Ok(v) => Some(v),
+                            Err(_) => {
+                                bad(&format!(
+                                    "paid_minor `{paid}` is not a whole number of minor units"
+                                ));
+                                continue;
+                            }
+                        }
+                    };
+
+                    let set_code = at_col(row, "set_code").to_lowercase();
+                    let number = at_col(row, "number");
+                    let id = format!(
+                        "{}-{}",
+                        if set_code.is_empty() { "unknown" } else { &set_code },
+                        if number.is_empty() {
+                            card_name.replace(' ', "-").to_lowercase()
+                        } else {
+                            number.replace('/', "-")
+                        }
+                    );
+                    let card = Card {
+                        id: id.clone(),
+                        name: card_name,
+                        set_name: at_col(row, "set_name"),
+                        set_code,
+                        number,
+                        rarity: at_col(row, "rarity"),
+                        language: at_col(row, "language"),
+                        printing: at_col(row, "printing"),
+                        condition: at_col(row, "condition"),
+                        graded: at_col(row, "graded"),
+                        // Typed by a person from a file they already had, so there is
+                        // nothing for a model to be unsure about.
+                        confidence: 100,
+                        needs_review: vec![],
+                    };
+                    let event = paid.map(|unit_minor| StoredEvent {
+                        card_id: id,
+                        kind: "acquired".into(),
+                        quantity,
+                        unit_minor,
+                        currency: {
+                            let c = at_col(row, "currency");
+                            if c.is_empty() { "EUR".to_string() } else { c.to_uppercase() }
+                        },
+                        at: {
+                            let a = at_col(row, "at");
+                            a.parse::<u64>().unwrap_or_else(|_| now())
+                        },
+                    });
+                    staged.push((card, event));
+                }
+
+                if !problems.is_empty() {
+                    return json_out(
+                        out,
+                        422,
+                        &json!({
+                            "error": "nothing was imported",
+                            "why": "every row is checked before any is written, so a \
+                                    second attempt cannot duplicate a partial one",
+                            "rows": sheet.rows.len(),
+                            "problems": problems,
+                        }),
+                    );
+                }
+
+                // Only now does anything change.
+                let mut added = 0u32;
+                let mut updated = 0u32;
+                let mut priced = 0u32;
+                for (card, event) in staged {
+                    let k = format!("{ns}card:{}", card.id);
+                    let existed = bucket.get(&k).ok().flatten().is_some();
+                    if let Err(e) = put_json(&bucket, &k, &card) {
+                        return fail(out, 500, &e);
+                    }
+                    if existed {
+                        updated += 1;
+                    } else {
+                        added += 1;
+                    }
+                    if let Some(ev) = event {
+                        let _ = put_json(&bucket, &event_key(&ns, &ev), &ev);
+                        priced += 1;
+                    }
+                }
+                json_out(
+                    out,
+                    201,
+                    &json!({
+                        "sheet": sheet.sheet_name,
+                        "rows": added + updated,
+                        "added": added,
+                        "updated": updated,
+                        "with_a_purchase": priced,
+                    }),
+                )
             }
 
             // Gone, with whatever it was worth. A card removed from the collection

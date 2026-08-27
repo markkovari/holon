@@ -138,6 +138,57 @@ interface validator {
         kind: problem-kind,
     }
 
+    /// One step of a scenario, as written.
+    record step {
+        /// `Given`, `When`, `Then`, `And`, `But` or `*` — as WRITTEN, not resolved.
+        /// A runner that wants the resolved sense walks the list; one that wants to
+        /// print the scenario back needs what the author typed.
+        keyword: string,
+        text: string,
+        line: u32,
+        /// A docstring or data table attached to this step, line by line, fences
+        /// removed. Empty when the step has neither.
+        argument: list<string>,
+    }
+
+    /// One `Examples:` table under an outline.
+    record example-table {
+        name: string,
+        header: list<string>,
+        rows: list<list<string>>,
+    }
+
+    /// A scenario or an outline.
+    record scenario {
+        name: string,
+        line: u32,
+        tags: list<string>,
+        steps: list<step>,
+        /// Empty for a plain scenario. Non-empty means every row is a test case.
+        examples: list<example-table>,
+    }
+
+    /// A whole feature file, once it is known to be readable.
+    record document {
+        feature: string,
+        tags: list<string>,
+        /// Steps every scenario runs first, flattened across `Rule:` containers — a
+        /// runner cares what runs, not which container declared it.
+        background: list<step>,
+        scenarios: list<scenario>,
+    }
+
+    /// The parsed feature, when nothing is an `error`.
+    ///
+    /// WARNINGS DO NOT STOP IT. A scenario with no steps and an outline with no
+    /// examples both parse, cucumber says so, and a runner that refused them would
+    /// disagree with the reference about what a feature file even is. They still
+    /// come back from `validate`, and a caller decides.
+    ///
+    /// One walk produces both this and `validate`, because a parser and a validator
+    /// that disagree about a file is the bug neither of them can report.
+    parse: func(source: string) -> result<document, list<problem>>;
+
     /// Every problem in `source`, in the order they appear. Empty means valid.
     ///
     /// A caller gating a build should look at `error` and decide about `warning`.

@@ -1,0 +1,73 @@
+// sheet:ingest — a spreadsheet a person exported, turned into rows a program can use.
+//
+// Bulk entry always arrives the same way: someone has a `.csv` from one tool and an
+// `.xlsx` from another, and both are "the list". The formats are unrelated — one is
+// text with a delimiter, the other is a ZIP of XML — and every app that accepts
+// either ends up writing both readers again.
+//
+// So this composes rather than reimplements:
+//
+//   csv:codec/codec       parses the delimited text, including quoted fields
+//   zip:archive/archiver  opens the `.xlsx`, which is a ZIP of XML
+//
+// What is left is the part neither of those can do: knowing that `xl/sharedStrings.xml`
+// holds the text a sheet refers to by index, and that a row with a gap in it omits
+// the cell entirely rather than leaving it empty.
+//
+// Pure compute apart from those two imports: bytes in, rows out. No state, no host
+// imports.
+package sheet:ingest@0.1.0;
+
+/// Read a spreadsheet into a header and rows.
+interface reader {
+    /// One row, already lined up with the header.
+    record row {
+        /// Always `header.len()` long. A row the file left short is padded, and one
+        /// that is too long is an error rather than a silent truncation.
+        cells: list<string>,
+    }
+
+    /// A sheet, in the shape a bulk insert wants.
+    record sheet {
+        /// The first row, trimmed. Duplicate names are refused rather than resolved.
+        header: list<string>,
+        rows: list<row>,
+        /// Which sheet was read, for the `.xlsx` case. Empty for CSV.
+        sheet-name: string,
+    }
+
+    /// Why a file could not be read as a sheet.
+    variant import-error {
+        /// The name ends in nothing recognised. Carries what was given, because the
+        /// usual cause is `.numbers` or `.xls` — neither of which is this.
+        unknown-format(string),
+        /// No rows at all.
+        empty,
+        /// A header row that is entirely blank, which makes every column nameless.
+        no-header,
+        /// Two columns with the same name. The second would silently win.
+        duplicate-column(string),
+        /// A row with more cells than the header has columns: row index (1-based,
+        /// counting the header), then expected, then found. Padding a short row is
+        /// safe; dropping a cell nobody asked to drop is not.
+        too-many-cells(tuple<u32, u32, u32>),
+        /// The `.xlsx` container would not open. Carries what `zip:archive` said.
+        archive(string),
+        /// A `.xlsx` with no worksheet in it.
+        no-sheet,
+        /// The delimited text would not parse. Carries what `csv:codec` said.
+        csv(string),
+    }
+
+    /// Read `bytes` as a sheet. `name` selects the reader by extension — `.csv`,
+    /// `.tsv`, `.xlsx` — because the bytes of a CSV are not reliably distinguishable
+    /// from any other text, and guessing produces a confident wrong answer.
+    read: func(name: string, bytes: list<u8>) -> result<sheet, import-error>;
+}
+
+/// Composes the two capabilities that already exist, and adds the part that does not.
+world sheet-ingest {
+    import csv:codec/codec@0.1.0;
+    import zip:archive/archiver@0.1.0;
+    export reader;
+}

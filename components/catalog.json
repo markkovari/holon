@@ -451,12 +451,13 @@
       "deck:build/builder",
       "portfolio:value/valuation",
       "price:history/history",
+      "sheet:ingest/reader",
       "vision:describe/describer",
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 343928,
-    "wasm_sha256_12": "51e69520b6ea",
+    "wasm_size_bytes": 364596,
+    "wasm_sha256_12": "fe87e095e610",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -1617,8 +1618,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 80967,
-    "wasm_sha256_12": "671b370bb05e",
+    "wasm_size_bytes": 104200,
+    "wasm_sha256_12": "c6854291d1ac",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -3589,6 +3590,23 @@
     "unimplemented": false
   },
   {
+    "name": "sheet-ingest",
+    "package": "sheet:ingest@0.1.0",
+    "description": "`sheet-ingest` \u2014 a `.csv` or `.xlsx` someone exported, turned into rows",
+    "exports": [
+      "reader"
+    ],
+    "capability_deps": [
+      "csv:codec/codec",
+      "zip:archive/archiver"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 116231,
+    "wasm_sha256_12": "376cea9ef450",
+    "reusable_as_is": true,
+    "unimplemented": false
+  },
+  {
     "name": "slug",
     "package": "slug:generate@0.1.0",
     "description": "`slug` \u2014 turn a title into a clean URL slug, transliterating accents and suffixing on collision",
@@ -4416,8 +4434,8 @@
     ],
     "capability_deps": [],
     "config_keys": [],
-    "wasm_size_bytes": 48932,
-    "wasm_sha256_12": "7338ac58e714",
+    "wasm_size_bytes": 78963,
+    "wasm_sha256_12": "7d611ffa89e1",
     "reusable_as_is": true,
     "unimplemented": false
   }
