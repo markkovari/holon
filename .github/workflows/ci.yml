@@ -146,7 +146,7 @@ jobs:
           cargo test --release
           --test capsearch --test contracts --test publish --test secrets
           --test capgraph_edges --test capgraph_store --test console_session
-          --test compose_race
+          --test compose_race --test witsurface
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is
