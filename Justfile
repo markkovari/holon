@@ -2928,7 +2928,8 @@ ci-local:
     step "reconciler (components job): eight suites, on a cold compose cache"
     rm -rf components/target/composed
     (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets \
-        --test capgraph_edges --test capgraph_store --test console_session --test compose_race) || fail=1
+        --test capgraph_edges --test capgraph_store --test console_session --test compose_race \
+        --test witsurface) || fail=1
 
     step "reconciler (native job): --lib --bins + docs, fixtures, guestio, stress, uideps"
     (cd reconciler && cargo test --release --lib --bins \
@@ -3023,3 +3024,15 @@ push-components registry="": (_cargo_bin "comp-oci")
 
 _cargo_bin bin:
     @cd reconciler && cargo build --release --quiet --bin {{bin}}
+
+# Regenerate wit/SURFACES.md — every WIT package this repository defines, as its
+# built components render it.
+#
+# The file is committed because the DIFF is the review: a pull request that changes
+# a contract shows the reader exactly what moved, next to the version that did or
+# did not move with it. `reconciler/tests/witsurface.rs` fails when a shape changed
+# and its version did not.
+wit-surfaces: build
+    @cd reconciler && WIT_SURFACES=write cargo test --release --test witsurface \
+        the_committed_surfaces_are_not_stale -- --nocapture 2>&1 | grep -E "wrote|SKIPPED" || true
+    @echo "wrote wit/SURFACES.md"

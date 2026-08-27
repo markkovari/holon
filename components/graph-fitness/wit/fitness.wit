@@ -18,7 +18,24 @@
 // and that is the generation a search most needs to make progress in. So the
 // score is derived from the CHECK VECTOR — 3 of 11 beats 1 of 11 — and no model
 // is consulted for the primary selection signal.
-package graph:fitness@0.1.0;
+// ## Why 0.2.0
+//
+// 0.1.0 described `outcome.passed: bool` and a `check` with no `needs`. Adding the
+// field and replacing the boolean changed the SHAPE of both records, and a record's
+// fields have to match exactly for a component to plug — so an artifact built
+// against 0.1.0 cannot satisfy this and must not appear to.
+//
+// Measured rather than assumed, against this repository's own components: adding a
+// FUNCTION to an interface keeps a stale consumer pluggable; adding a case to a
+// VARIANT does not, and fails with "the socket component had no matching imports",
+// which names neither the interface nor the reason.
+//
+// So the version is doing the only job it can do here — making that failure say
+// "no provider for graph:fitness/evaluator@0.1.0" instead. Keeping 0.1.0 while
+// changing the shape would leave one version string meaning two different things,
+// which was true of this file for exactly one merge.
+
+package graph:fitness@0.2.0;
 
 interface evaluator {
     variant eval-error {

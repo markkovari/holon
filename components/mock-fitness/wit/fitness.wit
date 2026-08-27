@@ -13,6 +13,6 @@
 package mockgate:fitness@0.1.0;
 
 world mock-fitness {
-    export graph:fitness/evaluator@0.1.0;
+    export graph:fitness/evaluator@0.2.0;
     import wasi:config/store@0.2.0-rc.1;
 }
