@@ -61,9 +61,21 @@ jobs:
         with:
           tool: cargo-component@0.21.1,wasm-tools,just
 
+      # THREE workspaces, not one. This job builds `comp-host` (for the `publish`
+      # suite) and the reconciler's test binaries, and with only `components`
+      # declared those two compiled from scratch on every run:
+      #
+      #     346s  Build the host that `publish` spawns
+      #     216s  Test the reconciler suites that read built artifacts
+      #
+      # — 562s of a 780s job, to produce binaries the `native workspaces` jobs
+      # build in 54s and 95s from their own caches. Measured on run 33107417721.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: components -> target
+          workspaces: |
+            components -> target
+            host -> target
+            reconciler -> target
 
       # The project's own entry point, not an approximation of it. CI that
       # builds differently from the repo is CI that answers a question nobody
