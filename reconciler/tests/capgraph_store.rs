@@ -83,14 +83,51 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
     // Both recipes, because `lessons-for` reading a database `capgraph-store` never
     // wrote is the same bug wearing the other half's clothes.
     let justfile = read("Justfile");
-    let defaults: Vec<&str> =
-        justfile.lines().filter(|l| l.contains("SURREAL_NS:-")).map(|l| l.trim()).collect();
-    assert_eq!(defaults.len(), 2, "expected capgraph-store and lessons-for, found {defaults:?}");
-    for line in defaults {
+
+    // By RECIPE, not by counting lines. The first version of this counted every
+    // line holding `SURREAL_NS:-` and expected exactly two, so it went red the day
+    // `host-console` gained a namespace — a recipe that is not wrong and is not
+    // what this guards. It then went red again on `SURREAL_DB:-`, because that
+    // recipe sets both, as separate `--config` flags rather than one shell line.
+    //
+    // What the test means is narrower: the two recipes that READ AND WRITE the pool
+    // have to agree on where it is.
+    let recipe = |name: &str| -> String {
+        let at = justfile
+            .find(&format!("\n{name}"))
+            .unwrap_or_else(|| panic!("the `{name}` recipe is gone from the Justfile"));
+        justfile[at + 1..]
+            .lines()
+            .skip(1)
+            .take_while(|l| l.trim().is_empty() || l.starts_with([' ', '\t', '#']))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for name in ["capgraph-store", "lessons-for"] {
+        let body = recipe(name);
         assert!(
-            line.contains("SURREAL_NS:-comp") && line.contains("SURREAL_DB:-goalmemory"),
-            "a recipe defaults somewhere the knowledge pool is not: {line}"
+            body.contains("SURREAL_NS:-comp"),
+            "`{name}` defaults to a namespace the knowledge graph is not in"
         );
+        assert!(
+            body.contains("SURREAL_DB:-goalmemory"),
+            "`{name}` defaults to a database the knowledge pool is not in"
+        );
+    }
+
+    // And nothing anywhere may default to somewhere else — a third recipe reading
+    // another room is the same bug wearing different clothes.
+    for line in justfile.lines() {
+        if line.contains("SURREAL_NS:-") {
+            assert!(line.contains("SURREAL_NS:-comp"), "wrong namespace default: {}", line.trim());
+        }
+        if line.contains("SURREAL_DB:-") {
+            assert!(
+                line.contains("SURREAL_DB:-goalmemory"),
+                "wrong database default: {}",
+                line.trim()
+            );
+        }
     }
 }
 
