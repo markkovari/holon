@@ -107,7 +107,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 73049,
-    "wasm_sha256_12": "bafa76fe18ad",
+    "wasm_sha256_12": "4da23eba26a8",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -661,7 +661,7 @@
     "package": "checks:runner@0.1.0",
     "description": "`checks-runner` \u2014 `graph:fitness` over the native check runner",
     "exports": [
-      "graph:fitness/evaluator@0.1.0"
+      "graph:fitness/evaluator@0.2.0"
     ],
     "capability_deps": [
       "wasi:config/store",
@@ -674,7 +674,7 @@
       }
     ],
     "wasm_size_bytes": 179303,
-    "wasm_sha256_12": "6b306c5373d8",
+    "wasm_sha256_12": "139786f27287",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1461,7 +1461,7 @@
     ],
     "config_keys": [],
     "wasm_size_bytes": 118015,
-    "wasm_sha256_12": "901744854219",
+    "wasm_sha256_12": "b2343b9d2516",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -2477,7 +2477,7 @@
     "package": "mockgate:fitness@0.1.0",
     "description": "`mock-fitness` \u2014 `graph:fitness`, scored by a scripted rule (see wit/fitness.wit)",
     "exports": [
-      "graph:fitness/evaluator@0.1.0"
+      "graph:fitness/evaluator@0.2.0"
     ],
     "capability_deps": [
       "wasi:config/store"
@@ -2489,7 +2489,7 @@
       }
     ],
     "wasm_size_bytes": 83355,
-    "wasm_sha256_12": "c6ff904ae468",
+    "wasm_sha256_12": "b02c97e45fc9",
     "reusable_as_is": true,
     "unimplemented": false
   },
