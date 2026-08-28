@@ -71,13 +71,13 @@ components:
 
 links:
   - from: dprobe
-    import: graph:run/driver@0.1.0
+    import: graph:run/driver@0.2.0
     to: gdriver
   - from: gdriver
     import: graph:agent/writer@0.1.0
     to: gagent
   - from: gdriver
-    import: graph:fitness/evaluator@0.1.0
+    import: graph:fitness/evaluator@0.2.0
     to: gchecks
   - from: gagent
     import: llm:inference/inference@0.1.0
