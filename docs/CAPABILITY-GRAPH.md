@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**207 components, 100 interfaces with a provider and at least one consumer, 434 import edges, 16 interfaces exported but unconsumed in-tree, 68 applications composed from them.**
+**207 components, 100 interfaces with a provider and at least one consumer, 434 import edges, 16 interfaces exported but unconsumed in-tree, 80 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -213,19 +213,27 @@ This is the number to look at before changing a component, and before deleting o
 | 2 | `wit-reflect` | `platform`, `studio` |
 | 2 | `zip` | `binder`, `stash` |
 | 1 | `anthropic-vision` | `binder` |
+| 1 | `browser-automation` | `pdf-generator` |
 | 1 | `card-identify` | `binder` |
 | 1 | `config-store` | `login` |
+| 1 | `container-docker` | `docker-manager` |
 | 1 | `crdt` | `scribe` |
 | 1 | `deck-build` | `binder` |
+| 1 | `desktop-clipboard` | `clipboard-sync` |
 | 1 | `email-render` | `booked` |
 | 1 | `experiment-assign` | `abtest` |
 | 1 | `feature-flags` | `flags` |
+| 1 | `fs-watcher` | `fs-watcher` |
 | 1 | `github-forge` | `console` |
 | 1 | `iban` | `payees` |
 | 1 | `ical` | `booked` |
+| 1 | `image-optimizer` | `image-optimizer` |
 | 1 | `iot-scanner` | `device-radar` |
 | 1 | `jsonpatch` | `relay` |
+| 1 | `lan-scanner` | `lan-scanner` |
 | 1 | `ledger` | `books` |
+| 1 | `llm-local` | `local-ai` |
+| 1 | `mdns-discovery` | `mdns-discoverer` |
 | 1 | `portfolio-value` | `binder` |
 | 1 | `price-history` | `binder` |
 | 1 | `quiz-grade` | `lms` |
@@ -233,7 +241,11 @@ This is the number to look at before changing a component, and before deleting o
 | 1 | `rrule` | `booked` |
 | 1 | `shaper` | `gate` |
 | 1 | `sheet-ingest` | `binder` |
+| 1 | `system-cron` | `cron-scheduler` |
 | 1 | `textdiff` | `scribe` |
+| 1 | `ui-notifier` | `desktop-notifier` |
+| 1 | `video-ffmpeg` | `video-transcoder` |
+| 1 | `vpn-wireguard` | `vpn-manager` |
 | 1 | `webauthn` | `passkey` |
 | 1 | `webhook-ingest` | `relay` |
 
@@ -254,10 +266,14 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **booked** | `booked-domain` | 8 | `booked_domain.composed.wasm` |
 | **books** | `books-domain` | 6 | `books_domain.composed.wasm` |
 | **buzz** | `buzz-domain` | 4 | `buzz_domain.composed.wasm` |
+| **clipboard-sync** | `clipboard-sync-domain` | 1 | `clipboard-sync.composed.wasm` |
 | **conduit** | `conduit-domain` | 5 | `conduit_domain.composed.wasm` |
 | **console** | `console-domain` | 3 | `console_domain.composed.wasm` |
+| **cron-scheduler** | `cron-scheduler-domain` | 1 | `cron-scheduler.composed.wasm` |
 | **dashboards** | `dashboards-domain` | 5 | `dashboards_domain.composed.wasm` |
+| **desktop-notifier** | `desktop-notifier-domain` | 1 | `desktop-notifier.composed.wasm` |
 | **device-radar** | `device-radar-domain` | 4 | `device-radar.composed.wasm` |
+| **docker-manager** | `docker-manager-domain` | 1 | `docker-manager.composed.wasm` |
 | **drop** | `upload-drop` | 4 | `upload_drop.composed.wasm` |
 | **eshop** | `accounts-app` | 3 | `eshop_identity.composed.wasm` |
 | **eshop** | `eshop-basket` | 5 | `eshop_basket.composed.wasm` |
@@ -268,21 +284,27 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **eshop-catalog** | `eshop-catalog` | 3 | `eshop_catalog.composed.wasm` |
 | **flags** | `flags-domain` | 3 | `flags_domain.composed.wasm` |
 | **freight-tracker** | `freight-tracker-domain` | 4 | `freight-tracker.composed.wasm` |
+| **fs-watcher** | `fs-watcher-domain` | 1 | `fs-watcher.composed.wasm` |
 | **gate** | `gate-domain` | 2 | `gate_domain.composed.wasm` |
 | **graphviz** | `graph-viz-domain` | 1 | `graphviz_domain.composed.wasm` |
 | **health-records** | `health-records-domain` | 4 | `health-records.composed.wasm` |
 | **helpdesk** | `helpdesk-domain` | 7 | `helpdesk_domain.composed.wasm` |
+| **image-optimizer** | `image-optimizer-domain` | 1 | `image-optimizer.composed.wasm` |
 | **iot-scanner** | `iot-scanner` | 0 | `iot-scanner.composed.wasm` |
 | **jobs** | `jobs-domain` | 5 | `jobs_domain.composed.wasm` |
 | **jobs-golem** | `jobs-domain` | 5 | `jobs_domain.golem.wasm` |
+| **lan-scanner** | `lan-scanner-domain` | 1 | `lan-scanner.composed.wasm` |
 | **ledger** | `billing-ledger` | 6 | `billing_ledger.composed.wasm` |
 | **lms** | `lms-domain` | 7 | `lms_domain.composed.wasm` |
+| **local-ai** | `local-ai-domain` | 1 | `local-ai.composed.wasm` |
 | **login** | `login-app` | 3 | `login_app.composed.wasm` |
+| **mdns-discoverer** | `mdns-discoverer-domain` | 1 | `mdns-discoverer.composed.wasm` |
 | **mesh** | `mesh-domain` | 3 | `mesh_domain.composed.wasm` |
 | **passkey** | `cache` | 1 | `cache.composed.wasm` |
 | **passkey** | `passkey-domain` | 5 | `passkey_domain.composed.wasm` |
 | **paste** | `paste-bin` | 5 | `paste_bin.composed.wasm` |
 | **payees** | `payees-domain` | 5 | `payees_domain.composed.wasm` |
+| **pdf-generator** | `pdf-generator-domain` | 1 | `pdf-generator.composed.wasm` |
 | **photosocial** | `photosocial-domain` | 5 | `photosocial_domain.composed.wasm` |
 | **pipeline** | `pipeline-domain` | 3 | `pipeline_domain.composed.wasm` |
 | **platform** | `platform-domain` | 9 | `platform_domain.composed.wasm` |
@@ -310,6 +332,8 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **vet-full** | `cache` | 1 | `cache.composed.wasm` |
 | **vet-full** | `vet-domain` | 25 | `vet_domain.full.composed.wasm` |
 | **vet-lattice** | `vet-domain` | 25 | `vet_domain.lattice.wasm` |
+| **video-transcoder** | `video-transcoder-domain` | 1 | `video-transcoder.composed.wasm` |
+| **vpn-manager** | `vpn-manager-domain` | 1 | `vpn-manager.composed.wasm` |
 | **webhook** | `webhook-ingest` | 1 | `webhook_ingest.composed.wasm` |
 
 ### The apps, and the capabilities they share
@@ -358,17 +382,13 @@ graph LR
   app_buzz --> auth_guard([auth-guard])
   app_buzz --> rate_limiter([rate-limiter])
   app_buzz --> record_store([record-store])
+  app_clipboard_sync["clipboard-sync"]
   app_conduit["conduit"]
   app_conduit --> audit_log([audit-log])
   app_conduit --> auth_guard([auth-guard])
   app_conduit --> rate_limiter([rate-limiter])
   app_conduit --> record_store([record-store])
   app_console["console"]
-  app_dashboards["dashboards"]
-  app_dashboards --> audit_log([audit-log])
-  app_dashboards --> auth_guard([auth-guard])
-  app_dashboards --> rate_limiter([rate-limiter])
-  app_dashboards --> record_store([record-store])
 ```
 
 
