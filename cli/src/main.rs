@@ -42,6 +42,18 @@ pub struct Spec {
     /// duplicates either way.
     #[serde(default)]
     pub port: Option<u16>,
+    /// Where the app is mounted under `--router tailscale-serve`. Defaults to
+    /// `/<name>`, because that router gets ONE hostname per machine and apps have
+    /// to share it.
+    ///
+    /// A single-page app cannot take that default. Its `/api/...` calls and its
+    /// `/assets/...` bundle are absolute, so mounted under `/events` every one of
+    /// them misses — the page loads and nothing on it works, which is a worse
+    /// failure than not deploying. Set `mount = "/"` on the one app that owns a
+    /// box. Ignored by the other routers, which give a hostname per app and have
+    /// no such choice to make.
+    #[serde(default)]
+    pub mount: Option<String>,
     /// `sqlite` (default: one file under `StateDirectory`, survives a restart),
     /// `memory` (lost on restart — honest only for caches), `redis` or `nats`.
     #[serde(default = "default_kv")]
@@ -410,10 +422,10 @@ pub fn render_route(spec: &Spec, router: Router) -> String {
              # assumes it is mounted at `/` will break here; that is the trade against the\n\
              # Caddy route, which gives a hostname per app.\n\
              set -euo pipefail\n\
-             tailscale serve --bg --https=443 --set-path /{name} http://127.0.0.1:{port}\n\
+             tailscale serve --bg --https=443 --set-path {mount} http://127.0.0.1:{port}\n\
              echo \"https://$(tailscale status --json | \\\n\
-               python3 -c 'import json,sys;print(json.load(sys.stdin)[\"Self\"][\"DNSName\"].rstrip(\".\"))')/{name}\"\n",
-            name = spec.name,
+               python3 -c 'import json,sys;print(json.load(sys.stdin)[\"Self\"][\"DNSName\"].rstrip(\".\"))')\"\n",
+            mount = spec.mount.clone().unwrap_or_else(|| format!("/{}", spec.name)),
             port = port
         ),
         Router::Traefik => format!(
@@ -1294,6 +1306,32 @@ routes = "upstream=http://127.0.0.1:9000"
         assert!(out.contains("--set-path /gate"), "{out}");
         assert!(out.contains(&format!("http://127.0.0.1:{}", port_of(&spec(MINIMAL)))));
         assert!(out.starts_with("#!/usr/bin/env bash"), "it is a script, not config");
+    }
+
+    /// `mount = "/"` for the app that owns the box.
+    ///
+    /// The default `/<name>` is right when several apps share one Tailscale
+    /// hostname and wrong for every SPA: `/api/...` and `/assets/...` are absolute,
+    /// so under `/events` the page loads and nothing on it works. That failure is
+    /// silent in a way "no route" is not, which is why the option exists.
+    #[test]
+    fn an_app_that_owns_the_box_can_be_mounted_at_the_root() {
+        let spec: Spec = toml::from_str(
+            "name = \"events\"\ndomain = \"malna.tail3a9c.ts.net\"\n\
+             artifact = \"a.wasm\"\nport = 3230\nmount = \"/\"\n",
+        )
+        .unwrap();
+        let out = render_route(&spec, Router::TailscaleServe);
+        assert!(out.contains("--set-path / http://127.0.0.1:3230"), "{out}");
+        // And the URL it prints has no path glued on the end.
+        assert!(!out.contains("')/events"), "{out}");
+
+        // Absent, the default is still one path per app.
+        let shared: Spec = toml::from_str(
+            "name = \"gate\"\ndomain = \"malna.tail3a9c.ts.net\"\nartifact = \"a.wasm\"\n",
+        )
+        .unwrap();
+        assert!(render_route(&shared, Router::TailscaleServe).contains("--set-path /gate"));
     }
 
     #[test]
