@@ -16,8 +16,9 @@
 
 ## Where the work is now
 
-**1. The library.** 197 components, 93 interfaces with a provider and at least one
-consumer. The per-showcase list below is the live worklist for this.
+**1. The library.** Its size is in [`docs/CAPABILITY-GRAPH.md`](docs/CAPABILITY-GRAPH.md),
+derived rather than counted by hand. The per-showcase list below is the live
+worklist for this.
 
 **2. Delivery.** Four lanes from one `apps/<name>.toml`, all verified against real
 infrastructure. What is left is narrower than what is done:

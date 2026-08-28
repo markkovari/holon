@@ -122,7 +122,7 @@ componentize-py's CPython uses **extended constant expressions**, a shipped Wasm
 feature. `comp-plug` and `components/wit-reflect` were pinned to `wac-graph 0.6`,
 whose bundled `wasmparser` predates it. Upstream `wac` 0.10.1 composes the same
 artifact without complaint. The bump to `wac-graph 0.10` needed **no source
-changes** in either crate; all 205 components still build and the reconciler suite
+changes** in either crate; every component still builds and the reconciler suite
 is unchanged.
 
 That is what a gate at the artifact boundary is for: a language nobody here uses
