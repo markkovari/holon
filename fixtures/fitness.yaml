@@ -31,7 +31,7 @@ components:
 
 links:
   - from: gate
-    import: graph:fitness/evaluator@0.1.0
+    import: graph:fitness/evaluator@0.2.0
     to: fitness
 
 ingress:

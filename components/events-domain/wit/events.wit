@@ -1,0 +1,50 @@
+// events:ticketing — free event ticketing, as one component.
+//
+// An event has a CAPACITY and tickets cost nothing, which makes the whole app turn
+// on one question: what happens when more people claim than there are places. That
+// is the only genuinely hard thing here, it is a concurrency problem rather than a
+// business rule, and `quota:meter` already solves it — `reserve` is atomic where
+// "count, compare, then create" is a race that passes every single-threaded test.
+//
+// The QR carries the ticket id and nothing else. There is no signature and no
+// token: `id:generate/nanoid` produces an id that cannot be guessed, and check-in
+// happens against a store the organizer's scanner can reach. A signed payload buys
+// OFFLINE verification, which nothing here needs, and costs every part an import.
+//
+// Every import below is a solved problem in this repository. A part that
+// reimplements one is doing the wrong work, and each gate is written so that the
+// cheap way to pass is to call it.
+package events:ticketing@0.1.0;
+
+world events-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Events, tickets and swap offers.
+    import records:store/store@0.1.0;
+
+    /// Ticket ids and event ids. `nanoid` is what makes a bare id safe to put in
+    /// a QR code: unguessable, so possession of the code IS the claim.
+    import id:generate/generator@0.1.0;
+
+    /// Capacity, held atomically. THE decision this app exists to get right: two
+    /// people claiming the last place at the same moment must produce one ticket
+    /// and one refusal, and `reserve` is the only thing here that guarantees it.
+    import quota:meter/meter@0.1.0;
+
+    /// The attendee's ticket as a scannable SVG — `qr` satisfies it. Rendering a
+    /// QR by hand is how `tickets` fails.
+    import qr:encode/encoder@0.1.0;
+
+    /// The ticket lifecycle as a DEFINITION rather than a ladder of string
+    /// comparisons — `fsm-workflow` satisfies it. It is also where the refusal to
+    /// check the same ticket in twice comes from, carrying the current state.
+    import fsm:workflow/engine@0.1.0;
+
+    /// Who is asking and whether they may. `auth-guard` satisfies all four; a part
+    /// that parses the bearer itself, or compares a role string it read out of the
+    /// token, is doing authorisation in the wrong place.
+    import auth:identity/types@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/rbac@0.1.0;
+}

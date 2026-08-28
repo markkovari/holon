@@ -1,0 +1,161 @@
+# The organizer's half of the ticketing API, and the first goal aimed at a LOCAL
+# model rather than at a search.
+#
+# The line in `.comp/goal.toml` is drawn at DISCOVERABILITY: facts a part cannot find
+# from what it is shown are kept, decisions its contract already implies are cut,
+# because a goal specified to the depth of the reference stops being a search — twelve
+# branches passed it at 1000 and selection had nothing to choose between.
+#
+# That is the right line for a search. This goal is not a search. It is one part, one
+# file, judged by one gate, and it is meant to be executable by a 27B running on one
+# desk. So the line moves the other way ON PURPOSE: every signature is spelled out,
+# every trap is named, and nothing is left to be worked out from a WIT file the model
+# would have to hold in its head alongside the rest. What stays hard is the only thing
+# that should be — writing code that actually answers the requests.
+title = "events:ticketing — the organizer's events, as CRUD behind a real authorizer"
+contract = "components/events-domain/CONTRACT.md"
+
+text = """
+Implement `components/events-domain/src/events.rs`. It is not implemented: every
+route answers 501 today, and that one file is your whole job.
+
+`components/events-domain/CONTRACT.md` is the specification. Read it first. You may
+not edit it, and you may not edit `src/lib.rs` — that is the ROUTER, three other
+parts share it, and it already parses the path, the query and the bearer for you and
+hands them over as a `Route`.
+
+You own five routes. The contract's table is exact about the status codes:
+
+    POST   /api/events            create one           201 / 400 / 401 / 403
+    GET    /api/events            list, ?state= filter 200 / 401
+    GET    /api/events/{id}       one, with counts     200 / 401 / 404
+    PATCH  /api/events/{id}       amend your own       200 / 401 / 403 / 404
+    DELETE /api/events/{id}       cancel your own      204 / 401 / 403 / 404
+
+Your entry point already exists with the right signature:
+
+    pub fn handle(method: &Method, route: &Route, body: &str) -> Reply
+
+`Route` gives you `route.segments` (the path, already split and percent-decoded, so
+`/api/events/abc` is `["api","events","abc"]`), `route.param("state")` for the query
+string, and `route.bearer`. `Reply::json(status, value)`, `Reply::err(status, code)`
+and `Reply::no_content()` build the answer.
+
+## Authorisation is a call, not a comparison
+
+`crate::require(route, target, action)` is in lib.rs and already does the whole
+thing — it returns `Ok(Principal)` or `Err(Reply)` with 401 and 403 mapped the way
+the contract says. Use it:
+
+    let p = match crate::require(route, "event", "write") { Ok(p) => p, Err(r) => return r };
+
+`p.subject` is who they are; `crate::has_role(&p, "admin")` asks about a role. Do NOT
+parse `route.bearer` and do NOT compare role strings to decide whether a call is
+allowed — `auth-guard` is in the world for this and the gate reads the compiled
+component's imports to check you called it.
+
+## The store, as wit-bindgen generates it in Rust
+
+    use crate::bindings::records::store::store as records;
+
+    records::create(collection: &str, data: &str, index_fields: &[String]) -> Result<Entry, StoreError>
+    records::get(collection: &str, id: &str)                               -> Result<Entry, StoreError>
+    records::update(collection: &str, id: &str, data: &str, expected_revision: u64) -> Result<Entry, StoreError>
+    records::delete(collection: &str, id: &str)                            -> Result<(), StoreError>
+    records::list_records(collection: &str, limit: u32, after: &str)       -> Result<Page, StoreError>
+    records::find_by(collection: &str, field: &str, value: &str)           -> Result<Vec<Entry>, StoreError>
+
+    struct Entry { id: String, data: String, revision: u64, .. }   // `data` is your JSON
+    struct Page  { entries: Vec<Entry>, next: String }
+
+`update` needs `expected_revision` — take it from the `Entry` you just read.
+
+AND `find_by` WANTS THE JSON ENCODING OF THE VALUE, NOT THE VALUE. `record-store`
+indexes the serialised form, so a string field `open` is indexed under `"open"` —
+quotes included:
+
+    records::find_by("events", "state", "open")      // matches NOTHING
+    records::find_by("events", "state", "\\"open\\"")  // matches
+
+It returns `Ok(vec![])` either way, so a wrong query and an empty collection are
+indistinguishable from the caller. Use `serde_json::to_string(&value)` and pass that.
+This was found by writing the thing once and it cost an hour.
+
+## The counts on GET /api/events/{id}
+
+`claimed` and `remaining` come from the quota meter, NOT from counting tickets — the
+`tickets` part is being written at the same time as yours and there may be no tickets
+collection at all when your gate runs:
+
+    use crate::bindings::quota::meter::meter as quota;
+
+    quota::peek(subject: &str, limit: u64, period_seconds: u64) -> Result<Balance, QuotaError>
+    struct Balance { used: u64, limit: u64, remaining: u64, resets_at: u64 }
+
+The subject is `format!("event:{}", event_id)`, the limit is that event's `capacity`,
+and the period is `31_536_000`. `claimed` is `used`; `remaining` is `remaining`.
+
+## Two more this workspace cannot tell you
+
+serde is built WITHOUT std here —
+
+    serde = { default-features = false, features = ["derive", "alloc"] }
+
+so `HashMap` has no `Serialize` impl and `json!({ "x": my_hashmap })` fails with a
+bare E0277. Use `BTreeMap<String, u32>`, which serde's alloc feature does cover.
+
+DELETE is a SOFT delete. The document stays and `state` becomes `cancelled`, because
+tickets already issued must remain readable. A part that calls `records::delete` here
+passes nothing.
+
+You are judged by real HTTP requests against the running component. `cargo component
+check` passes happily on code that does nothing.
+"""
+
+component = "events-domain"
+writable = ["components/events-domain/src/events.rs"]
+
+context = [
+  "components/events-domain/CONTRACT.md",
+  "components/events-domain/src/lib.rs",
+  "components/events-domain/wit/events.wit",
+  "components/record-store/wit/record.wit",
+  "components/quota/wit/quota.wit",
+]
+
+base_paths = [
+  "components/events-domain/",
+  "components/record-store/",
+  "components/id-generate/",
+  "components/quota/",
+  "components/qr/",
+  "components/fsm-workflow/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/guestio/",
+  "components/gate-lib.sh",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "events-domain",
+  "record-store",
+  "id-generate",
+  "quota",
+  "qr",
+  "fsm-workflow",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "guestio",
+]
+
+[[check]]
+id = "events-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "components/events-domain/e2e-events.sh"]
