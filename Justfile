@@ -291,9 +291,21 @@ build force="":
     # its own tests — but a stamped one does not need stamping twice.
     rustv=$(rustc --version | cut -d' ' -f2)
     stamped=0; skipped=0
+    pruned=0
     for f in target/wasm32-wasip2/release/*.wasm; do
       name=$(basename "$f" .wasm | tr '_' '-')
       stamp="$marker/$name"
+      # A component that was deleted leaves its artifact behind — cargo removes
+      # nothing it did not just write. Left alone it is indistinguishable from a
+      # real one: it gets named, stamped, catalogued and drawn into the capability
+      # graph, because everything downstream reads this directory rather than the
+      # crate list. So the directory is the check.
+      if [ ! -d "$name" ]; then
+        rm -f "$f" "$stamp"
+        echo "pruned $name — no components/$name, its crate is gone"
+        pruned=$((pruned+1))
+        continue
+      fi
       if [ -z "{{force}}" ] && [ -f "$stamp" ] && [ ! "$f" -nt "$stamp" ]; then
         skipped=$((skipped+1)); continue
       fi
@@ -303,15 +315,16 @@ build force="":
       stamped=$((stamped+1))
     done
     total=$((stamped + skipped))
-    echo "built $total components (wasm32-wasip2, named, no preview1 adapter) — stamped $stamped, unchanged $skipped"
+    echo "built $total components (wasm32-wasip2, named, no preview1 adapter) — stamped $stamped, unchanged $skipped, pruned $pruned"
 
 # Compose the rate-limiter AND audit-log into auth-guard with wac, satisfying
 # auth-guard's `ratelimit:guard/limiter` + `audit:log/recorder` imports. Output
 # is a single self-contained component.
 # Compose ANY component with whatever it imports, derived rather than written.
 #
-# The 59 hand-written plug chains below each name their plugs; this asks the
-# component instead. `reconciler/src/plug.rs` wraps `wac` as a library: read the
+# The 71 hand-written plug chains this replaced each named their plugs; this asks
+# the component instead. There are none left — the last twelve were migrated once
+# it turned out `comp-capgraph` could not see them at all. `reconciler/src/plug.rs` wraps `wac` as a library: read the
 # built artifact's imports, find what exports those interfaces, compose each plug
 # first (a plug that is not whole hoists its own imports into the result), and key
 # the output by content. A component the loop builds is therefore runnable without
@@ -2857,7 +2870,7 @@ ci-local:
     rm -rf components/target/composed
     (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets \
         --test capgraph_edges --test capgraph_store --test console_session --test compose_race \
-        --test witsurface) || fail=1
+        --test witsurface --test hostsurface) || fail=1
 
     step "reconciler (native job): --lib --bins + docs, fixtures, guestio, stress, uideps"
     (cd reconciler && cargo test --release --lib --bins \
