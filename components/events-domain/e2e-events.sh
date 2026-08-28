@@ -54,8 +54,24 @@ done
 REM=$(printf '%s' "$ONE" | field remaining)
 [ "$REM" = "50" ] || fail "a brand-new event with capacity 50 has 50 remaining, not '$REM'"
 
+# Two separate claims, and they fail with two separate messages ON PURPOSE.
+#
+# The first version of this gate asserted only that `$NEW_ID` appeared in the body,
+# and when it did not it said "find_by wants the JSON ENCODING of the value". That
+# was a GUESS about the cause presented as a finding, and it was wrong: the filter
+# was working and every open event came back, with no `id` on any of them because
+# the contract had not said to put one there. A repair round was sent to fix a
+# working query. ADR-0088 says a gate's output IS the next prompt, which means a
+# gate may report what it OBSERVED and must not invent why.
 LIST=$(aget "$ATTENDEE" "/api/events?state=open")
-case "$LIST" in *"$NEW_ID"*) ;; *) fail "?state=open did not list the open event just created — find_by wants the JSON ENCODING of the value: $LIST" ;; esac
+case "$LIST" in
+  *'"Wasm Night, moved"'*|*'"Wasm Night"'*) ;;
+  *) fail "?state=open did not return the open event just created. If other open events came back but not this one, the filter is matching the wrong value — record-store indexes the SERIALISED form, so \"open\" with quotes. Body: $LIST" ;;
+esac
+case "$LIST" in
+  *"$NEW_ID"*) ;;
+  *) fail "the events list came back without any id on its entries, so nothing in it can be fetched or amended — CONTRACT.md says every entry carries its id. Body: $LIST" ;;
+esac
 
 aexpect_get "$ATTENDEE" 404 "/api/events/does-not-exist" "an unknown event is a 404"
 
