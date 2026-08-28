@@ -9,6 +9,9 @@
 /target/fleet/
 /target/wadm/
 /target/capgraph.json
+# `comp-goalrun` writes a candidate's files here before the gate reads them
+# (reconciler/src/bin/goalrun.rs). Source-shaped, and a `git add -A` picks it up.
+/target/goalrun/
 **/*.wasm
 
 # Generated bindings. Only Rust's are ignored, and the asymmetry is deliberate:
