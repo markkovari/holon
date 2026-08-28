@@ -42,10 +42,21 @@ passes its own gate and fails the composition.
 
 ```json
 { "title": "…", "starts_at": "2026-09-01T18:00:00Z", "capacity": 100,
-  "organizer": "<principal.subject>", "state": "open" }
+  "organizer": "<principal.subject>", "state": "open",
+  "description": "…",          // OPTIONAL — absent when not given, never ""
+  "image_type": "image/png" }  // OPTIONAL — set when a poster is uploaded
 ```
 
 Indexed on `state` and `organizer`. `state` is `open` or `cancelled`.
+
+`description` is absent rather than empty when nobody wrote one: a caller reading
+`""` cannot tell that from a description somebody cleared. `PATCH` with an explicit
+`null` removes it.
+
+The poster's BYTES are not in this document. They live in `blob:store` under the
+container `event-images`, keyed by the event id, and the record keeps only the
+content type — a JSON document is the wrong place for a JPEG, base64 is a third
+larger than what it encodes, and every read of the event would pay for it.
 
 ### `tickets`
 
@@ -119,6 +130,14 @@ Both the fsm instance and the ticket document carry the state. Move both, or
 | `GET /api/events/{id}` | any | 200 the document plus `"id"`, `"claimed"` and `"remaining"`; 404 |
 | `PATCH /api/events/{id}` | organizer, and only their own | 200; 403 if another organizer's; 404 |
 | `DELETE /api/events/{id}` | organizer, own | 204. A **soft** delete: `state` becomes `cancelled`. Tickets already issued stay readable |
+| `POST /api/events/{id}/image` | organizer, own | the raw bytes, `Content-Type` naming the type. 201; 415 `type_not_allowed` / `too_large`; 400 `empty_body` |
+| `GET /api/events/{id}/image` | any | the bytes under their stored content type; 404 `no_image` |
+| `DELETE /api/events/{id}/image` | organizer, own | 204 |
+
+What may be uploaded is **`upload:policy/gate::check(content-type, size)`**, which
+reads `allowed-types` and `max-size` from config. Do not write a content-type match
+arm: there are already three allowlists in this repository and a fourth that nothing
+tests is worse than none.
 
 `claimed` and `remaining` come from `meter::peek`, not from counting tickets.
 

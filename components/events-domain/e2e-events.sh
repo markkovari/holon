@@ -88,4 +88,50 @@ case "$DOC" in
   *) fail "DELETE is a SOFT delete — the document stays and state becomes cancelled: $DOC" ;;
 esac
 
-echo "PASSED: events — created, read, amended and cancelled, and the authorisation table is honoured"
+# --- an optional description ------------------------------------------------------
+WITH=$(apost "$ORGANIZER" /api/events '{"title":"Described","starts_at":"2026-10-02T18:00:00Z","capacity":9,"description":"An evening about nothing in particular."}')
+WID=$(printf '%s' "$WITH" | field id)
+case "$(stored events "$WID")" in
+  *"An evening about nothing in particular."*) ;;
+  *) fail "description was dropped on create: $(stored events "$WID")" ;;
+esac
+# Absent, not empty, when it is not given — a caller reading "" cannot tell "nobody
+# wrote one" from "somebody cleared it".
+case "$(stored events "$NEW_ID")" in
+  *'"description"'*) fail "an event created without a description must not carry the key" ;;
+esac
+GOT=$(apatch "$ORGANIZER" "/api/events/$WID" '{"description":null}')
+[ "$GOT" = "200" ] || fail "clearing a description is a PATCH with null (got $GOT)"
+case "$(stored events "$WID")" in
+  *'"description"'*) fail "PATCH null must REMOVE the key, not blank it: $(stored events "$WID")" ;;
+esac
+
+# --- an optional poster -------------------------------------------------------------
+#
+# A real PNG, byte for byte. The point of the round trip is that it survives: the
+# router used to read every body through `from_utf8_lossy`, which turns each byte
+# that is not valid UTF-8 into U+FFFD — the upload succeeds and stores something
+# that is not an image.
+PNG=$(mktemp -t poster).png
+printf '\211PNG\r\n\032\n\000\000\000\rIHDR\000\000\000\001\000\000\000\001\010\006\000\000\000\037\025\304\211\000\000\000\012IDATx\234c\000\001\000\000\005\000\001\015\012\055\264\000\000\000\000IEND\256B\140\202' > "$PNG"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $ORGANIZER" \
+  -H 'content-type: image/png' --data-binary "@$PNG" "$B/api/events/$WID/image")
+[ "$CODE" = "201" ] || fail "uploading a PNG poster must be 201 (got $CODE)"
+
+OUT=$(mktemp -t got).png
+curl -s -o "$OUT" "$B/api/events/$WID/image"
+cmp -s "$PNG" "$OUT" || fail "the poster did not survive the round trip byte for byte — a body read as a lossy string is not an image"
+TYPE=$(curl -s -o /dev/null -w '%{content_type}' "$B/api/events/$WID/image")
+case "$TYPE" in image/png*) ;; *) fail "the poster came back as '$TYPE', not image/png" ;; esac
+rm -f "$PNG" "$OUT"
+
+# What may be uploaded is upload-policy's answer, not this component's.
+TXT=$(mktemp -t nope).txt; echo "not an image" > "$TXT"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "authorization: Bearer $ORGANIZER" \
+  -H 'content-type: text/plain' --data-binary "@$TXT" "$B/api/events/$WID/image")
+[ "$CODE" = "415" ] || fail "a text/plain poster must be refused by upload:policy (got $CODE)"
+rm -f "$TXT"
+
+aexpect_get "$ATTENDEE" 404 "/api/events/$NEW_ID/image" "an event with no poster is a 404, not an empty 200"
+
+echo "PASSED: events — created, read, amended and cancelled, with an optional description and a poster that survives the round trip"
