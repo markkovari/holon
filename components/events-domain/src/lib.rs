@@ -54,11 +54,21 @@ pub struct Reply {
     pub status: u16,
     /// `Value::Null` means no body at all — see `no_content`.
     pub json: Value,
+    /// A body the router must NOT serialise as JSON, with its content type.
+    ///
+    /// An image cannot be expressed as a `Value`. Even setting aside the size, a
+    /// `Value::String` serialises to a JSON string LITERAL — surrounding quotes and
+    /// escapes included — so a browser asked to render it gets a quoted blob.
+    pub raw: Option<(String, Vec<u8>)>,
 }
 
 impl Reply {
     pub fn json(status: u16, body: Value) -> Self {
-        Reply { status, json: body }
+        Reply { status, json: body, raw: None }
+    }
+    /// Bytes through, byte for byte, under the content type you name.
+    pub fn raw(status: u16, content_type: &str, bytes: Vec<u8>) -> Self {
+        Reply { status, json: Value::Null, raw: Some((content_type.to_string(), bytes)) }
     }
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
@@ -369,6 +379,32 @@ fn seed() -> Reply {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
+/// The body as BYTES.
+///
+/// `read_body` returns this through `from_utf8_lossy`, which is right for JSON and
+/// silently destroys an image: every byte sequence that is not valid UTF-8 becomes
+/// U+FFFD, so the upload succeeds and stores something that is not a JPEG. Anything
+/// binary has to come through here.
+fn read_body_bytes(request: &IncomingRequest) -> Vec<u8> {
+    let Ok(body) = request.consume() else { return Vec::new() };
+    let Ok(stream) = body.stream() else { return Vec::new() };
+    let mut out = Vec::new();
+    loop {
+        match stream.blocking_read(64 * 1024) {
+            Ok(chunk) if chunk.is_empty() => break,
+            Ok(chunk) => {
+                if out.len() + chunk.len() > MAX_BODY_BYTES {
+                    return Vec::new();
+                }
+                out.extend_from_slice(&chunk);
+            }
+            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+            Err(_) => return Vec::new(),
+        }
+    }
+    out
+}
+
 fn read_body(request: &IncomingRequest) -> String {
     let Ok(body) = request.consume() else { return String::new() };
     let Ok(stream) = body.stream() else { return String::new() };
@@ -441,13 +477,31 @@ impl Guest for Component {
             bearer,
         };
         let method = request.method();
-        let body = match method {
-            Method::Post | Method::Put | Method::Patch | Method::Delete => read_body(&request),
-            _ => String::new(),
+        // The content type the caller sent, needed before the body is consumed —
+        // `request.headers()` is not readable once `consume()` has been called.
+        let content_type = request
+            .headers()
+            .get("content-type")
+            .first()
+            .map(|v| String::from_utf8_lossy(v).into_owned())
+            .unwrap_or_default();
+        let is_image_upload = matches!(method, Method::Post | Method::Put)
+            && route.segments.len() == 4
+            && route.segments[0] == "api"
+            && route.segments[1] == "events"
+            && route.segments[3] == "image";
+        // A body is read ONCE — the stream is not rewindable — so which shape it is
+        // read into has to be decided before reading, not after.
+        let (body, bytes) = match method {
+            _ if is_image_upload => (String::new(), read_body_bytes(&request)),
+            Method::Post | Method::Put | Method::Patch | Method::Delete => {
+                (read_body(&request), Vec::new())
+            }
+            _ => (String::new(), Vec::new()),
         };
 
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
-        let Reply { status, json: payload } = match seg.as_slice() {
+        let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["api", "register"] => register(&body),
             ["api", "login"] => login(&body),
@@ -467,6 +521,9 @@ impl Guest for Component {
             }
             // Before the events arm: a ticket claim is nested under an event, and a
             // match on ["api","events",..] would hand it to `events` instead.
+            ["api", "events", id, "image"] => {
+                events::image(&method, &route, id, &content_type, bytes)
+            }
             ["api", "events", _, "tickets"] => tickets::handle(&method, &route, &body),
             ["api", "events", ..] => events::handle(&method, &route, &body),
             ["api", "tickets", ..] => tickets::handle(&method, &route, &body),
@@ -476,14 +533,24 @@ impl Guest for Component {
         };
 
         let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+        let ct = match &raw {
+            Some((t, _)) => t.as_str(),
+            None => "application/json",
+        };
+        let _ = headers.set("content-type", &[ct.as_bytes().to_vec()]);
         let resp = OutgoingResponse::new(headers);
         let _ = resp.set_status_code(status);
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            if !payload.is_null() {
-                let _ = write_all(&stream, payload.to_string().as_bytes());
+            match &raw {
+                Some((_, b)) => {
+                    let _ = write_all(&stream, b);
+                }
+                None if !payload.is_null() => {
+                    let _ = write_all(&stream, payload.to_string().as_bytes());
+                }
+                None => {}
             }
             drop(stream);
         }

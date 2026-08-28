@@ -9,7 +9,9 @@
 
 use serde_json::json;
 
+use crate::bindings::blob::store::blobstore as blobs;
 use crate::bindings::quota::meter::meter as quota;
+use crate::bindings::upload::policy::gate as policy;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
 use crate::store::{find_by_str, load, quota_subject, save, with_id, PAGE, QUOTA_PERIOD};
@@ -60,13 +62,18 @@ fn create(route: &Route, body: &str) -> Reply {
         return Reply::err(400, "invalid");
     }
 
-    let doc = json!({
+    let mut doc = json!({
         "title": title,
         "starts_at": starts_at,
         "capacity": capacity,
         "organizer": p.subject,
         "state": "open",
     });
+    // Optional, and absent rather than empty when it is not given: a caller reading
+    // `"description": ""` cannot tell "nobody wrote one" from "somebody cleared it".
+    if let Some(d) = input["description"].as_str().map(str::trim).filter(|d| !d.is_empty()) {
+        doc["description"] = json!(d);
+    }
     match records::create(
         "events",
         &doc.to_string(),
@@ -127,10 +134,16 @@ fn patch(route: &Route, id: &str, body: &str) -> Reply {
     // Only these three. `organizer` and `state` are not amendable — one is identity
     // and the other is what DELETE is for, and a PATCH that could set either would
     // let a caller hand an event away or resurrect a cancelled one.
-    for key in ["title", "starts_at", "capacity"] {
+    for key in ["title", "starts_at", "capacity", "description"] {
         if let Some(v) = input.get(key) {
             if key == "capacity" && v.as_u64().unwrap_or(0) < 1 {
                 return Reply::err(400, "invalid");
+            }
+            // An explicit null CLEARS an optional field. Without this the only way
+            // to remove a description would be to delete the event.
+            if key == "description" && (v.is_null() || v.as_str() == Some("")) {
+                doc.as_object_mut().map(|m| m.remove("description"));
+                continue;
             }
             doc[key] = v.clone();
         }
@@ -161,4 +174,94 @@ fn cancel(route: &Route, id: &str) -> Reply {
         return r;
     }
     Reply::no_content()
+}
+
+/// The container every event poster lives in. One container, keyed by event id, so
+/// deleting an event's image needs no index and cannot reach another event's.
+const IMAGES: &str = "event-images";
+
+/// `POST|PUT /api/events/{id}/image` and `GET /api/events/{id}/image`.
+///
+/// The bytes go to `blob-store` and the record keeps only the content type. A JSON
+/// document is the wrong place for a JPEG: base64 is a third larger than what it
+/// encodes, every read of the event pays for it, and `record-store` would be
+/// indexing it.
+pub fn image(
+    method: &Method,
+    route: &Route,
+    id: &str,
+    content_type: &str,
+    bytes: Vec<u8>,
+) -> Reply {
+    match method {
+        Method::Get => match blobs::get(IMAGES, id) {
+            Ok(data) => {
+                let ct = match load("events", id) {
+                    Ok((_, ev)) => {
+                        ev["image_type"].as_str().unwrap_or("application/octet-stream").to_string()
+                    }
+                    Err(_) => "application/octet-stream".to_string(),
+                };
+                Reply::raw(200, &ct, data)
+            }
+            Err(_) => Reply::err(404, "no_image"),
+        },
+        Method::Post | Method::Put => {
+            let p = match require(route, "event", "write") {
+                Ok(p) => p,
+                Err(r) => return r,
+            };
+            let (entry, mut doc) = match load("events", id) {
+                Ok(v) => v,
+                Err(r) => return r,
+            };
+            if !may_change(&doc, &p.subject, has_role(&p, "admin")) {
+                return Reply::err(403, "forbidden");
+            }
+            if bytes.is_empty() {
+                return Reply::err(400, "empty_body");
+            }
+            // What counts as an image, and how big, is `upload-policy`'s answer from
+            // `allowed-types` and `max-size` — not a match arm here. A content-type
+            // allowlist written out in this file would be the fourth copy of one in
+            // this repository, and the first that nothing tests.
+            let ct = content_type.split(';').next().unwrap_or("").trim();
+            if let Err(e) = policy::check(ct, bytes.len() as u64) {
+                let code = match e {
+                    policy::PolicyError::TypeNotAllowed(_) => "type_not_allowed",
+                    policy::PolicyError::TooLarge(_) => "too_large",
+                    _ => "rejected",
+                };
+                return Reply::err(415, code);
+            }
+            if blobs::put(IMAGES, id, &bytes, ct).is_err() {
+                return Reply::err(500, "store_failed");
+            }
+            doc["image_type"] = json!(ct);
+            if let Err(r) = save("events", &entry, &doc) {
+                return r;
+            }
+            Reply::json(201, json!({ "id": id, "image_type": ct, "bytes": bytes.len() }))
+        }
+        Method::Delete => {
+            let p = match require(route, "event", "write") {
+                Ok(p) => p,
+                Err(r) => return r,
+            };
+            let (entry, mut doc) = match load("events", id) {
+                Ok(v) => v,
+                Err(r) => return r,
+            };
+            if !may_change(&doc, &p.subject, has_role(&p, "admin")) {
+                return Reply::err(403, "forbidden");
+            }
+            let _ = blobs::delete(IMAGES, id);
+            doc.as_object_mut().map(|m| m.remove("image_type"));
+            if let Err(r) = save("events", &entry, &doc) {
+                return r;
+            }
+            Reply::no_content()
+        }
+        _ => Reply::err(404, "not_found"),
+    }
 }

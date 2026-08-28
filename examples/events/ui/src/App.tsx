@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { api, setToken } from "./api";
 
-type Ev = { id: string; title: string; starts_at: string; capacity: number; state: string; claimed?: number; remaining?: number };
+type Ev = { id: string; title: string; starts_at: string; capacity: number; state: string; claimed?: number; remaining?: number; description?: string; image_type?: string };
 type Tk = { id: string; event_id: string; code: string; state: string; qr?: string };
 
 /** Which screen, once you are in. `?as=organizer` is a VIEW, not a permission —
@@ -18,6 +18,24 @@ const TOKEN_KEY = `events.token.${view}`;
 
 function Card({ children, className = "" }: any) {
   return <div className={`rounded-xl border border-border bg-card/60 p-4 ${className}`}>{children}</div>;
+}
+
+/** The poster, if the event has one.
+ *
+ * Keyed on `image_type` rather than trying the URL and hiding a broken image: the
+ * record says whether there is one, so a 404 is never requested.
+ */
+function Poster({ ev, className = "" }: { ev: Ev; className?: string }) {
+  if (!ev.image_type) return null;
+  return (
+    <img
+      src={`/api/events/${ev.id}/image`}
+      alt=""
+      // A checker of light behind it: a PNG with transparency on a dark card looks
+      // like no poster at all, which reads as an upload that silently failed.
+      className={`shrink-0 rounded-lg bg-zinc-200 object-cover ${className}`}
+    />
+  );
 }
 
 
@@ -102,6 +120,134 @@ function SignIn({ onToken }: { onToken: (t: string) => void }) {
         </form>
       </div>
     </div>
+  );
+}
+
+
+/** Opening an event.
+ *
+ * There was no way to do this in the app at all — events arrived from the fixture,
+ * and the fixture is gone. An organizer with no route to create anything is an
+ * organizer role that does nothing.
+ *
+ * The poster is a SECOND request, deliberately: the event is created first, and the
+ * image is uploaded against its id. One multipart request would mean parsing
+ * multipart in a wasm component to save a round trip nobody is counting.
+ */
+function NewEvent({ onDone }: { onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState("");
+  const [startsAt, setStartsAt] = useState("");
+  const [capacity, setCapacity] = useState("40");
+  const [description, setDescription] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="mb-4 w-full rounded-xl border border-dashed border-border py-2.5 text-sm text-muted-foreground hover:border-primary hover:text-foreground"
+      >
+        + Open an event
+      </button>
+    );
+  }
+
+  const submit = async () => {
+    setBusy(true);
+    setErr("");
+    const [status, body] = await api.createEvent({
+      title,
+      starts_at: startsAt ? `${startsAt}:00Z` : "",
+      capacity: Number(capacity),
+      ...(description.trim() ? { description: description.trim() } : {}),
+    });
+    if (status !== 201) {
+      setBusy(false);
+      return setErr(`${body?.error ?? "could not create it"} (${status})`);
+    }
+    if (file) {
+      const [up, ub] = await api.uploadImage(body.id, file);
+      if (up !== 201) {
+        setBusy(false);
+        // The event exists; only the poster failed. Say which, or somebody creates
+        // it three more times looking for the one that works.
+        return setErr(`event created, but the poster was refused: ${ub?.error ?? up}`);
+      }
+    }
+    setBusy(false);
+    setOpen(false);
+    setTitle("");
+    setDescription("");
+    setFile(null);
+    onDone();
+  };
+
+  return (
+    <Card className="mb-4">
+      <div className="mb-2 text-sm text-muted-foreground">Open an event</div>
+      <div className="grid gap-2">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="what is it called"
+          className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+        />
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="description (optional)"
+          rows={2}
+          className="resize-none rounded-md border border-input bg-background px-3 py-2 text-sm"
+        />
+        <div className="flex gap-2">
+          <input
+            type="datetime-local"
+            value={startsAt}
+            onChange={(e) => setStartsAt(e.target.value)}
+            className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <input
+            type="number"
+            min={1}
+            value={capacity}
+            onChange={(e) => setCapacity(e.target.value)}
+            title="how many places"
+            className="w-24 rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="cursor-pointer rounded-md border border-input px-3 py-1.5 hover:text-foreground">
+            Poster…
+          </span>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            className="hidden"
+          />
+          {file ? `${file.name} (${Math.round(file.size / 1024)} KB)` : "optional"}
+        </label>
+        {err && <div className="rounded-md bg-red-500/15 px-3 py-2 text-sm text-red-400">{err}</div>}
+        <div className="flex gap-2">
+          <button
+            onClick={submit}
+            disabled={busy || !title || !startsAt}
+            className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-40"
+          >
+            Open it
+          </button>
+          <button
+            onClick={() => setOpen(false)}
+            className="rounded-md border border-input px-4 py-2 text-sm"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -239,15 +385,20 @@ export default function App() {
               </button>
             </div>
           </Card>
+          <NewEvent onDone={refresh} />
           <div className="grid gap-3">
             {events.map((e) => (
               <Card key={e.id}>
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex items-center gap-3">
+                  <Poster ev={e} className="h-14 w-14" />
+                  <div className="min-w-0 flex-1">
                     <div className="font-medium">{e.title}</div>
                     <div className="text-xs text-muted-foreground">{e.starts_at}</div>
+                    {e.description && (
+                      <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{e.description}</p>
+                    )}
                   </div>
-                  <div className="text-right">
+                  <div className="shrink-0 text-right">
                     <div className="text-2xl font-semibold tabular-nums">{e.claimed}/{e.capacity}</div>
                     <div className="text-xs text-muted-foreground">claimed</div>
                   </div>
@@ -282,15 +433,21 @@ export default function App() {
           <div className="grid gap-3">
             {events.map((e) => (
               <Card key={e.id}>
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex items-start gap-3">
+                  <Poster ev={e} className="h-16 w-16" />
+                  <div className="min-w-0 flex-1">
                     <div className="font-medium">{e.title}</div>
-                    <div className="text-xs text-muted-foreground">{e.remaining} of {e.capacity} left</div>
+                    {e.description && (
+                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{e.description}</p>
+                    )}
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {e.remaining} of {e.capacity} left
+                    </div>
                   </div>
                   <button
                     onClick={() => claim(e.id)}
                     disabled={!e.remaining}
-                    className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
+                    className="shrink-0 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground disabled:opacity-40"
                   >
                     {e.remaining ? "Claim" : "Full"}
                   </button>
