@@ -48,7 +48,19 @@ world events-domain {
     import auth:identity/accounts@0.1.0;
     import auth:identity/rbac@0.1.0;
 
-    /// One key, `allow-test-routes`. The fixture that registers people and hands
+    /// An event's poster. `blob-store` holds the bytes; the record holds only the
+    /// content type, because a JSON document is the wrong place for a JPEG and a
+    /// base64 one is a third larger than the thing it encodes.
+    import blob:store/blobstore@0.1.0;
+
+    /// Whether that poster is an image at all, and whether it is too big —
+    /// `upload-policy` reads `allowed-types` and `max-size` from config and answers.
+    /// A content-type allowlist written out here would be the fourth copy of one in
+    /// this repository.
+    import upload:policy/gate@0.1.0;
+
+    /// `allow-test-routes`, `organizer-emails`, and the two keys `upload-policy`
+    /// reads. The fixture that registers people and hands
     /// their bearers back is a GATE's tool, and it was compiled into the artifact
     /// that got deployed — so anyone who could reach the app could mint an
     /// organizer token for it. Absent means off, which is the only safe default

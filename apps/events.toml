@@ -32,6 +32,10 @@ kv = "sqlite"
 # more — a role is granted, never claimed — so without this a fresh deployment has
 # nobody who can create anything and no organizer to promote them. EDIT THIS.
 organizer-emails = "mark.kovari@attrecto.com"
+# What upload:policy accepts for an event poster. An empty allowlist allows nothing,
+# which is the right default and the wrong deployment.
+allowed-types = "image/png,image/jpeg,image/webp"
+max-size = "2097152"
 # allow-test-routes is deliberately ABSENT. It turns on /test/seed, which registers
 # people and hands their bearers back; that is a gate's tool and it must never be
 # on where anyone can reach it.

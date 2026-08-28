@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**208 components, 100 interfaces with a provider and at least one consumer, 443 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
+**208 components, 100 interfaces with a provider and at least one consumer, 445 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -28,10 +28,10 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 9 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `events-domain`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
 | 8 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `invoice-copilot-domain`, `jobs-domain`, `saga-domain`, `treasury-ledger-domain`, `webhook-ingest` |
 | 7 | `ai:inference/inference` | `ai-inference` | `doc-search-domain`, `invoice-copilot-domain`, `moderation-domain`, `support-desk-domain`, `track-domain`, `triage-assist-domain`, `vet-domain` |
+| 7 | `blob:store/blobstore` | `blob-store` | `artifact-cache`, `events-domain`, `platform-domain`, `studio-domain`, `upload-drop`, `vet-domain`, `virt-git` |
 | 7 | `csv:codec/codec` | `csv` | `billing-ledger`, `clinic-domain`, `csv-report`, `sheet-ingest`, `stash-domain`, `triage-domain`, `vet-domain` |
 | 7 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `doc-search-domain`, `events-domain`, `platform-domain`, `support-desk-domain`, `throttle-domain` |
 | 7 | `ratelimit:guard/limiter` | `rate-limiter` | `auth-guard`, `invoice-copilot-domain`, `link-shortener`, `moderation-domain`, `throttle-domain`, `triage-assist-domain`, `webhook-relay` |
-| 6 | `blob:store/blobstore` | `blob-store` | `artifact-cache`, `platform-domain`, `studio-domain`, `upload-drop`, `vet-domain`, `virt-git` |
 | 6 | `outbox:dispatch/queue` | `outbox` | `billing-ledger`, `dev-portal`, `jobs-domain`, `pipeline-domain`, `support-desk-domain`, `webhook-relay` |
 | 6 | `search:index/index` | `search-index` | `clinic-domain`, `doc-search-domain`, `knowledge-memory`, `search-domain`, `track-domain`, `vet-domain` |
 | 5 | `cache:store/cache` | `cache` | `doc-search-domain`, `link-shortener`, `passkey-domain`, `search-domain`, `vet-domain` |
@@ -58,12 +58,12 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 3 | `sched:timer/timer` | `scheduler-timer` | `saga-domain`, `status-page`, `vet-domain` |
 | 3 | `svg:chart/charts` | `svg-chart` | `dashboards-domain`, `lms-domain`, `poll-domain` |
 | 3 | `ui:assets/files` | `console-assets` | `console-domain`, `track-domain`, `vet-domain` |
+| 3 | `upload:policy/gate` | `upload-policy` | `events-domain`, `upload-drop`, `vet-domain` |
 | 3 | `validate:schema/validator` | `validate` | `csv-report`, `paste-bin`, `vet-domain` |
 | 2 | `audit:log/query` | `audit-log` | `triage-assist-domain`, `webhook-relay` |
 | 2 | `graph:fitness/evaluator` | `checks-runner` | `agent-driver`, `fitness-probe` |
 | 2 | `lock:mutex/mutex` | `lock-mutex` | `booked-domain`, `vet-domain` |
 | 2 | `metrics:collect/collector` | `metrics-collect` | `abtest-domain`, `search-domain` |
-| 2 | `upload:policy/gate` | `upload-policy` | `upload-drop`, `vet-domain` |
 | 2 | `wit:reflect/composer` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 2 | `wit:reflect/inspector` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 2 | `zip:archive/archiver` | `zip` | `sheet-ingest`, `stash-domain` |
@@ -155,9 +155,9 @@ graph LR
   ai_inference_inference(["ai:inference/inference"])
   ai_inference[ai-inference] --> ai_inference_inference
   ai_inference_inference --> many_ai_inference_inference["7 consumers"]
-  csv_codec_codec(["csv:codec/codec"])
-  csv[csv] --> csv_codec_codec
-  csv_codec_codec --> many_csv_codec_codec["7 consumers"]
+  blob_store_blobstore(["blob:store/blobstore"])
+  blob_store[blob-store] --> blob_store_blobstore
+  blob_store_blobstore --> many_blob_store_blobstore["7 consumers"]
 ```
 
 ## Which apps is this component inside?
@@ -177,8 +177,8 @@ This is the number to look at before changing a component, and before deleting o
 | 9 | `fsm-workflow` | `eshop`, `events`, `helpdesk`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 8 | `idempotency-guard` | `eshop`, `eshop-catalog`, `jobs`, `jobs-golem`, `ledger`, `relay`, `saga`, `webhook` |
 | 7 | `anthropic-provider` | `ai`, `ai-openai`, `photosocial`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 7 | `blob-store` | `drop`, `events`, `platform`, `studio`, `vet`, `vet-full`, `vet-lattice` |
 | 7 | `csv` | `binder`, `ledger`, `report`, `stash`, `vet`, `vet-full`, `vet-lattice` |
-| 6 | `blob-store` | `drop`, `platform`, `studio`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `cache` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `cache-backing` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `markdown` | `helpdesk`, `paste`, `track`, `vet`, `vet-full`, `vet-lattice` |
@@ -190,6 +190,7 @@ This is the number to look at before changing a component, and before deleting o
 | 5 | `quota` | `events`, `ledger`, `platform`, `portal`, `ratelimit` |
 | 5 | `scheduler-timer` | `saga`, `status`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `search-index` | `search`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `upload-policy` | `drop`, `events`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `validate` | `paste`, `report`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `ai-inference` | `track`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `lock-mutex` | `booked`, `vet`, `vet-full`, `vet-lattice` |
@@ -197,7 +198,6 @@ This is the number to look at before changing a component, and before deleting o
 | 4 | `notify-dispatch` | `portal`, `relay`, `status`, `track` |
 | 4 | `otp` | `authgate`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `pii-redact` | `paste`, `vet`, `vet-full`, `vet-lattice` |
-| 4 | `upload-policy` | `drop`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `webhook-sign` | `drop`, `portal`, `relay`, `track` |
 | 3 | `i18n-catalog` | `vet`, `vet-full`, `vet-lattice` |
 | 3 | `pdf` | `books`, `lms`, `tempo` |
@@ -282,7 +282,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **eshop** | `eshop-payment` | 1 | `eshop_payment.composed.wasm` |
 | **eshop** | `event-pusher` | 1 | `event_pusher.composed.wasm` |
 | **eshop-catalog** | `eshop-catalog` | 3 | `eshop_catalog.composed.wasm` |
-| **events** | `events-domain` | 8 | `events_domain.composed.wasm` |
+| **events** | `events-domain` | 10 | `events_domain.composed.wasm` |
 | **flags** | `flags-domain` | 3 | `flags_domain.composed.wasm` |
 | **freight-tracker** | `freight-tracker-domain` | 4 | `freight-tracker.composed.wasm` |
 | **fs-watcher** | `fs-watcher-domain` | 1 | `fs-watcher.composed.wasm` |

@@ -1416,11 +1416,13 @@
       "auth:identity/authorizer",
       "auth:identity/rbac",
       "auth:identity/types",
+      "blob:store/blobstore",
       "fsm:workflow/engine",
       "id:generate/generator",
       "qr:encode/encoder",
       "quota:meter/meter",
       "records:store/store",
+      "upload:policy/gate",
       "wasi:config/store"
     ],
     "config_keys": [
@@ -1435,10 +1437,14 @@
       {
         "name": "authorization",
         "description": ""
+      },
+      {
+        "name": "content-type",
+        "description": ""
       }
     ],
-    "wasm_size_bytes": 180014,
-    "wasm_sha256_12": "dc6741d8efc3",
+    "wasm_size_bytes": 191338,
+    "wasm_sha256_12": "8d23bc2b9211",
     "reusable_as_is": false,
     "unimplemented": false
   },

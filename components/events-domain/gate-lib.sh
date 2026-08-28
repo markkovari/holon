@@ -15,6 +15,9 @@ GATE_PKGS="-p events-domain -p record-store -p id-generate -p quota -p qr -p fsm
 # deployed, where the SPA called it on load and the app therefore had no login
 # screen; so did anybody else who could reach the URL.
 GATE_CONFIG="${GATE_CONFIG:-} --config allow-test-routes=1"
+# `upload-policy` reads these and answers `check`. Without them every poster is
+# refused, and the refusal is correct — an empty allowlist allows nothing.
+GATE_CONFIG="$GATE_CONFIG --config allowed-types=image/png,image/jpeg,image/webp --config max-size=2097152"
 
 # shellcheck source=components/gate-lib.sh
 . components/gate-lib.sh
