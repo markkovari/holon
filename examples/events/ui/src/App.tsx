@@ -7,26 +7,117 @@ import { api, setToken } from "./api";
 type Ev = { id: string; title: string; starts_at: string; capacity: number; state: string; claimed?: number; remaining?: number };
 type Tk = { id: string; event_id: string; code: string; state: string; qr?: string };
 
-const role = new URLSearchParams(location.search).get("as") ?? "attendee";
-const isOrganizer = role === "organizer";
+/** Which screen, once you are in. `?as=organizer` is a VIEW, not a permission —
+ *  the routes are guarded by the bearer's roles and an attendee asking for the door
+ *  gets 403s from the server, which is where that decision belongs. */
+const view = new URLSearchParams(location.search).get("as") ?? "attendee";
+const isOrganizer = view === "organizer";
 
-/** The fixture hands back bearers, because a browser cannot mint one — auth-guard
- *  signs them and the secret lives inside the composition. */
-async function signIn(): Promise<string> {
-  const [, seed] = await api.seed();
-  const who = isOrganizer ? "organizer" : "attendee";
-  return seed?.tokens?.[who]?.token ?? "";
-}
+/** Per-view so the two panes of the split screen are two different people. */
+const TOKEN_KEY = `events.token.${view}`;
 
 function Card({ children, className = "" }: any) {
   return <div className={`rounded-xl border border-border bg-card/60 p-4 ${className}`}>{children}</div>;
 }
 
+
+/** The front door.
+ *
+ * There was no sign-in screen at all until now, and the reason is worth keeping:
+ * the SPA called `/test/seed` on load, which registered people and handed their
+ * bearers back. That is a gate's fixture, it was compiled into the artifact that
+ * got deployed, and so anyone who could reach the app could mint an organizer
+ * token for it. The route is off unless `allow-test-routes` says otherwise now,
+ * and this is what replaces it.
+ */
+function SignIn({ onToken }: { onToken: (t: string) => void }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const go = async (mode: "login" | "register") => {
+    setBusy(true);
+    setErr("");
+    const [status, body] =
+      mode === "login" ? await api.login(email, password) : await api.register(email, password);
+    setBusy(false);
+    if (body?.token) return onToken(body.token);
+    setErr(
+      { bad_credentials: "wrong email or password", already_registered: "that email is taken", invalid: "check the address, and use 8 characters or more" }[
+        body?.error as string
+      ] ?? `${body?.error ?? "could not sign in"} (${status})`,
+    );
+  };
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
+      <div className="w-full max-w-sm">
+        <h1 className="text-xl font-semibold">Free tickets</h1>
+        <p className="mb-5 mt-1 text-sm text-muted-foreground">
+          Signing in as <span className="text-primary">{view}</span>. A new account is an
+          attendee — the door is granted, never claimed.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            go("login");
+          }}
+          className="grid gap-2"
+        >
+          <input
+            type="email"
+            autoComplete="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.test"
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <input
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="password"
+            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          {err && <div className="rounded-md bg-red-500/15 px-3 py-2 text-sm text-red-400">{err}</div>}
+          <div className="mt-1 flex gap-2">
+            <button
+              type="submit"
+              disabled={busy}
+              className="flex-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-40"
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => go("register")}
+              className="rounded-md border border-input px-4 py-2 text-sm disabled:opacity-40"
+            >
+              Create account
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const [token, setTok] = useState<string>(() => {
+    try {
+      return localStorage.getItem(TOKEN_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [ready, setReady] = useState(false);
   const [events, setEvents] = useState<Ev[]>([]);
   const [tickets, setTickets] = useState<Tk[]>([]);
   const [scan, setScan] = useState("");
+  const [zoom, setZoom] = useState<Tk | null>(null);
   const [flash, setFlash] = useState<{ ok: boolean; text: string } | null>(null);
 
   const refresh = async () => {
@@ -46,12 +137,22 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!token) return;
+    setToken(token);
     (async () => {
-      setToken(await signIn());
       await refresh();
       setReady(true);
     })();
-  }, []);
+  }, [token]);
+
+  const authed = (t: string) => {
+    try {
+      localStorage.setItem(TOKEN_KEY, t);
+    } catch {
+      /* a private window still works for this session */
+    }
+    setTok(t);
+  };
 
   const claim = async (id: string) => {
     const [code, body] = await api.claim(id);
@@ -70,14 +171,50 @@ export default function App() {
     await refresh();
   };
 
+  if (!token) return <SignIn onToken={authed} />;
   if (!ready) return <div className="p-8 text-muted-foreground">connecting…</div>;
 
   return (
     <div className="min-h-screen bg-background text-foreground p-6 font-sans">
       <header className="mb-5 flex items-baseline gap-3">
         <h1 className="text-xl font-semibold">{isOrganizer ? "Door" : "My tickets"}</h1>
-        <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-xs text-primary">{role}</span>
+        <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-xs text-primary">{view}</span>
+        <button
+          onClick={() => {
+            try {
+              localStorage.removeItem(TOKEN_KEY);
+            } catch {
+              /* nothing to clear */
+            }
+            setTok("");
+            setReady(false);
+          }}
+          className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+        >
+          sign out
+        </button>
       </header>
+
+      {zoom && (
+        // A phone at a door is held up to a scanner, so the code has to be as big as
+        // the screen allows and on WHITE — a QR on a dark card is what a reader
+        // fails on. Escape and a click both close it; there is nothing else to do here.
+        <div
+          role="dialog"
+          aria-label="ticket code"
+          onClick={() => setZoom(null)}
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-black/85 p-4 backdrop-blur-sm"
+        >
+          <div
+            className="w-[min(88vw,88vh)] max-w-[560px] rounded-2xl bg-white p-4 [&>svg]:h-full [&>svg]:w-full"
+            dangerouslySetInnerHTML={{ __html: zoom.qr ?? "" }}
+          />
+          <div className="text-center">
+            <div className="font-mono text-sm text-white/90">{zoom.code}</div>
+            <div className="mt-1 text-xs text-white/50">tap anywhere to close</div>
+          </div>
+        </div>
+      )}
 
       {flash && (
         <div className={`mb-4 rounded-lg px-3 py-2 text-sm ${flash.ok ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`}>
@@ -124,8 +261,11 @@ export default function App() {
           <div className="mb-5 grid gap-3">
             {tickets.map((t) => (
               <Card key={t.id} className="flex items-center gap-4">
-                <div
-                  className="h-28 w-28 shrink-0 rounded bg-white p-1"
+                <button
+                  onClick={() => setZoom(t)}
+                  title="show it big enough to scan"
+                  aria-label="enlarge ticket code"
+                  className="h-28 w-28 shrink-0 cursor-zoom-in rounded bg-white p-1 transition hover:ring-2 hover:ring-primary [&>svg]:h-full [&>svg]:w-full"
                   dangerouslySetInnerHTML={{ __html: t.qr ?? "" }}
                 />
                 <div>

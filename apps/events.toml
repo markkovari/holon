@@ -26,3 +26,12 @@ static_dir = "examples/events/dist"
 # sqlite: one file under the unit's StateDirectory, so state survives the
 # restarts `Restart=always` makes routine.
 kv = "sqlite"
+
+[config]
+# Who may open an event on this box. Registration grants "attendee" and nothing
+# more — a role is granted, never claimed — so without this a fresh deployment has
+# nobody who can create anything and no organizer to promote them. EDIT THIS.
+organizer-emails = "mark.kovari@attrecto.com"
+# allow-test-routes is deliberately ABSENT. It turns on /test/seed, which registers
+# people and hands their bearers back; that is a gate's tool and it must never be
+# on where anyone can reach it.

@@ -22,7 +22,8 @@ async function call(path: string, method = "GET", body?: unknown): Promise<[numb
 }
 
 export const api = {
-  seed: () => call("/test/seed", "POST", {}),
+  register: (email: string, password: string) => call("/api/register", "POST", { email, password }),
+  login: (email: string, password: string) => call("/api/login", "POST", { email, password }),
   events: (state?: string) => call(`/api/events${state ? `?state=${state}` : ""}`),
   event: (id: string) => call(`/api/events/${id}`),
   createEvent: (b: Json) => call("/api/events", "POST", b),

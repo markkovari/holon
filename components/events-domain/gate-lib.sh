@@ -10,6 +10,12 @@ GATE_CRATE=events-domain
 GATE_APP=events
 GATE_PKGS="-p events-domain -p record-store -p id-generate -p quota -p qr -p fsm-workflow -p auth-guard -p rate-limiter -p audit-log"
 
+# The fixture is a gate's tool and is OFF unless this says otherwise — see
+# `test_routes_allowed` in src/lib.rs. It was compiled into the artifact that got
+# deployed, where the SPA called it on load and the app therefore had no login
+# screen; so did anybody else who could reach the URL.
+GATE_CONFIG="${GATE_CONFIG:-} --config allow-test-routes=1"
+
 # shellcheck source=components/gate-lib.sh
 . components/gate-lib.sh
 

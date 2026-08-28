@@ -138,8 +138,8 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 86625,
-    "wasm_sha256_12": "815ae97a2298",
+    "wasm_size_bytes": 86913,
+    "wasm_sha256_12": "e398ad818513",
     "reusable_as_is": true,
     "unimplemented": false
   },
@@ -1420,11 +1420,25 @@
       "id:generate/generator",
       "qr:encode/encoder",
       "quota:meter/meter",
-      "records:store/store"
+      "records:store/store",
+      "wasi:config/store"
     ],
-    "config_keys": [],
-    "wasm_size_bytes": 174774,
-    "wasm_sha256_12": "2c94dc29c5bd",
+    "config_keys": [
+      {
+        "name": "organizer-emails",
+        "description": ""
+      },
+      {
+        "name": "allow-test-routes",
+        "description": ""
+      },
+      {
+        "name": "authorization",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 180014,
+    "wasm_sha256_12": "dc6741d8efc3",
     "reusable_as_is": false,
     "unimplemented": false
   },

@@ -47,4 +47,11 @@ world events-domain {
     import auth:identity/authorizer@0.1.0;
     import auth:identity/accounts@0.1.0;
     import auth:identity/rbac@0.1.0;
+
+    /// One key, `allow-test-routes`. The fixture that registers people and hands
+    /// their bearers back is a GATE's tool, and it was compiled into the artifact
+    /// that got deployed — so anyone who could reach the app could mint an
+    /// organizer token for it. Absent means off, which is the only safe default
+    /// for a switch whose whole job is to be off in the place that matters.
+    import wasi:config/store@0.2.0-rc.1;
 }
