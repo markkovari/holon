@@ -814,6 +814,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "events-domain"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "experiment-assign"
 version = "0.1.0"
 dependencies = [

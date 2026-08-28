@@ -142,6 +142,9 @@ jobs:
       #                    very job flaky. It belongs where it can catch a repeat.
       #   hostsurface      what every component may ask of its host. Reads the
       #                    built artifacts, so it can only run where they are.
+      #   fixtureversions  a fixture link naming a version nothing exports. Needs
+      #                    the artifacts for the same reason, and the loop could
+      #                    not start for two merges because nothing checked it.
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
         run: >-
@@ -149,6 +152,7 @@ jobs:
           --test capsearch --test contracts --test publish --test secrets
           --test capgraph_edges --test capgraph_store --test console_session
           --test compose_race --test witsurface --test hostsurface
+          --test fixtureversions
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is

@@ -74,6 +74,8 @@ report_wasm := rel / "csv_report.wasm"
 report_composed := "components/target/csv_report.composed.wasm"
 authgate_wasm := rel / "mfa_authgate.wasm"
 authgate_composed := "components/target/mfa_authgate.composed.wasm"
+events_wasm := rel / "events_domain.wasm"
+events_composed := "components/target/events_domain.composed.wasm"
 paste_wasm := rel / "paste_bin.wasm"
 paste_composed := "components/target/paste_bin.composed.wasm"
 track_wasm := rel / "track_domain.wasm"
@@ -1529,6 +1531,30 @@ e2e-authgate: compose-authgate
 # Compose paste-bin (docs/apps/PASTE.md — a paste/gist bin) with the pure-compute
 # transform chain (validate + pii-redact + markdown + slug) plus the one
 # stateful piece (records). No auth. Remaining imports are WASI (kv).
+# Compose events-domain (free event ticketing) with everything it needs: auth-guard
+# for the whole authorisation table, record-store for the three collections,
+# quota-meter for capacity held ATOMICALLY, qr for the attendee's code, fsm-workflow
+# for the ticket lifecycle, id-generate for a code that cannot be guessed.
+compose-events: build
+    @just _derive events-domain {{events_composed}}
+
+# Build the React SPA to examples/events/dist. One page, two roles: `?as=attendee`
+# and `?as=organizer` — which is what lets a recording show both at once.
+build-events-ui:
+    cd examples/events/ui && npm ci && npm run build
+
+# The ticketing app on :3230, SPA included.
+host-events: compose-events build-events-ui
+    cd host && cargo run --release --bin comp-host -- \
+      --app events --config-file ../examples/defaults.conf --config default-tenant=events \
+      --component ../{{events_composed}} --addr 0.0.0.0:3230 \
+      --static-dir ../examples/events/dist
+
+# Both users, side by side, on the real app. Prereq: `just host-events &`
+screencast-events:
+    node tools/screencast/events.mjs
+    bash tools/screencast/to-gif.sh tools/screencast/videos/events/*.webm docs/media/events.gif 900 10 2
+
 compose-paste: build
     @just _derive paste-bin {{paste_composed}}
 
@@ -2870,7 +2896,7 @@ ci-local:
     rm -rf components/target/composed
     (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets \
         --test capgraph_edges --test capgraph_store --test console_session --test compose_race \
-        --test witsurface --test hostsurface) || fail=1
+        --test witsurface --test hostsurface --test fixtureversions) || fail=1
 
     step "reconciler (native job): --lib --bins + docs, fixtures, guestio, stress, uideps"
     (cd reconciler && cargo test --release --lib --bins \
