@@ -1201,7 +1201,7 @@ build-reconciler:
     cd reconciler && cargo build --release
 
 # The whole platform locally: NATS, the control plane on :8080, the reconciler, and
-# one lattice node on :3401. Then drive it with `./cli/target/release/comp`:
+# one lattice node on :3401. Then drive it with `./cli/target/release/holon`:
 #
 #   comp login --url http://127.0.0.1:8080 --email you@example.com --password ... --register
 #   comp component push components/target/gate_domain.composed.wasm --id gate
@@ -1974,6 +1974,12 @@ selfhost-build-relay arch="x86_64":
 
 # ONE-TIME per box. Installs the runtime and makes Caddy read what this lane writes.
 #
+# Every remote command goes through `bash -lc`. `ssh host "…"` hands the string to
+# the remote LOGIN shell, and there is no rule that it is a POSIX one: the first box
+# this lane met that did not have sh as a login shell answered
+# `fish: Missing end to balance this if statement` and stopped, having already
+# copied the binaries. The lane needs bash on the box, which it needed anyway.
+#
 # Without this, `selfhost-deploy` would install a unit pointing at a comp-host that
 # does not exist, and drop site files into a directory Caddy never reads — so it would
 # look like it worked and serve nothing.
@@ -1986,26 +1992,43 @@ selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch) (selfhost-buil
     # unit pointing at a binary that is not there fails at start rather than at deploy.
     RELAY=reconciler/target/{{arch}}-unknown-linux-musl/release/comp-relay
     if [ -f "$RELAY" ]; then scp "$RELAY" {{host}}:/tmp/comp-relay; fi
-    ssh {{host}} "set -e; \
-      sudo install -m 0755 /tmp/comp-host /usr/local/bin/comp-host; rm -f /tmp/comp-host; \
-      if [ -f /tmp/comp-relay ]; then sudo install -m 0755 /tmp/comp-relay /usr/local/bin/comp-relay; rm -f /tmp/comp-relay; fi; \
-      sudo mkdir -p /srv/comp /etc/comp /etc/caddy/comp; \
-      sudo chmod 0711 /etc/comp; \
-      /usr/local/bin/comp-host --help >/dev/null && echo '  comp-host installed:' && /usr/local/bin/comp-host --help | head -1"
-    @# Caddy only reads files it is told to. An import line at the end of the Caddyfile
-    @# is top-level, which is where site blocks belong.
-    ssh {{host}} "set -e; \
-      sudo touch /etc/caddy/Caddyfile; \
-      grep -qF 'import /etc/caddy/comp/*.caddy' /etc/caddy/Caddyfile || \
-        echo 'import /etc/caddy/comp/*.caddy' | sudo tee -a /etc/caddy/Caddyfile >/dev/null; \
-      sudo caddy validate --config /etc/caddy/Caddyfile 2>&1 | tail -2 || true"
+    # `ssh host "script"` runs the string in the remote LOGIN shell, and nothing
+    # promises that is a POSIX one. The first box this lane met whose login shell
+    # was fish answered `Missing end to balance this if statement` and stopped —
+    # after the binaries had already been copied. `ssh host bash -s` with the script
+    # on STDIN sidesteps the login shell's parser entirely, and needs no quoting.
+    ssh {{host}} bash -s <<'REMOTE'
+    set -e
+    sudo install -m 0755 /tmp/comp-host /usr/local/bin/comp-host; rm -f /tmp/comp-host
+    if [ -f /tmp/comp-relay ]; then
+      sudo install -m 0755 /tmp/comp-relay /usr/local/bin/comp-relay; rm -f /tmp/comp-relay
+    fi
+    sudo mkdir -p /srv/comp /etc/comp /etc/caddy/comp
+    sudo chmod 0711 /etc/comp
+    /usr/local/bin/comp-host --help >/dev/null && echo '  comp-host installed:' \
+      && /usr/local/bin/comp-host --help | head -1
+    REMOTE
+    # Caddy only reads files it is told to, and an import line at the end of the
+    # Caddyfile is top-level — where site blocks belong. Skipped entirely when Caddy
+    # is not installed: `--router tailscale-serve` needs no proxy at all, and a box
+    # routed that way should not be made to grow one.
+    ssh {{host}} bash -s <<'REMOTE'
+    set -e
+    command -v caddy >/dev/null || { echo "  no caddy — fine for --router tailscale-serve"; exit 0; }
+    sudo touch /etc/caddy/Caddyfile
+    grep -qF 'import /etc/caddy/comp/*.caddy' /etc/caddy/Caddyfile \
+      || echo 'import /etc/caddy/comp/*.caddy' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
+    sudo caddy validate --config /etc/caddy/Caddyfile 2>&1 | tail -2 || true
+    REMOTE
     just selfhost-tsip {{host}}
-    @echo "  bootstrapped {{host}} — `just selfhost-deploy <app> {{host}}` will work now"
+    # Not backticks. This is a bash recipe, and `just selfhost-deploy <app> {{host}}`
+    # in backticks is a command substitution — it RAN, with `<app>` as a redirect.
+    echo "  bootstrapped {{host}} — 'just selfhost-deploy <app> {{host}}' will work now"
 
 # Render one app's systemd unit, env file and route WITHOUT touching a box.
 # Read the output before you trust it to a server.
 selfhost-render app router="caddy": build-selfhost
-    ./cli/target/release/comp node render apps/{{app}}.toml \
+    ./cli/target/release/holon node render apps/{{app}}.toml \
       --out target/selfhost --router {{router}}
     @echo "--- unit ---";  cat target/selfhost/{{app}}/comp-{{app}}.service
     @echo "--- route ---"; cat target/selfhost/{{app}}/{{app}}.*
@@ -2023,7 +2046,7 @@ selfhost-specs:
 # Refuse the collisions a single spec cannot see: two apps on one port, one
 # domain, or one name. Run it in CI over apps/*.toml.
 selfhost-check: build-selfhost
-    ./cli/target/release/comp node validate apps/*.toml
+    ./cli/target/release/holon node validate apps/*.toml
 
 # Ship one app to one box: compose, render, copy, restart, route.
 #
@@ -2038,55 +2061,97 @@ selfhost-deploy app host router="caddy": build-selfhost
       echo "missing $ART — run the app's compose recipe first (just compose-{{app}})" >&2
       exit 1
     fi
-    ./cli/target/release/comp node validate apps/*.toml
+    ./cli/target/release/holon node validate apps/*.toml
     # Fail here, not with a unit that cannot start. The binary is the one thing the
     # deploy does NOT ship — it is 38 MB and identical for every app on the box.
     if ! ssh {{host}} "test -x /usr/local/bin/comp-host"; then
       echo "{{host}} has no /usr/local/bin/comp-host — run: just selfhost-bootstrap {{host}}" >&2
       exit 1
     fi
-    ./cli/target/release/comp node render apps/{{app}}.toml --out target/selfhost --router {{router}}
+    ./cli/target/release/holon node render apps/{{app}}.toml --out target/selfhost --router {{router}}
     D=target/selfhost/{{app}}
     # 0644 on the artifact: the unit runs under DynamicUser, a transient uid that
     # must still be able to read it. 0600 on the env file: it may hold secrets and
     # systemd reads it as root before dropping privileges.
-    ssh {{host}} "sudo mkdir -p /srv/comp/{{app}} /etc/comp /etc/caddy/comp"
+    ssh {{host}} bash -s <<'REMOTE'
+    sudo mkdir -p /srv/comp/{{app}} /etc/comp
+    command -v caddy >/dev/null && sudo mkdir -p /etc/caddy/comp
+    exit 0
+    REMOTE
     scp "$ART" {{host}}:/tmp/{{app}}.wasm
     scp "$D/comp-{{app}}.service" {{host}}:/tmp/
     scp "$D/{{app}}.env" {{host}}:/tmp/
     # Rendered only when the spec declares [triggers].
     if [ -f "$D/comp-{{app}}-relay.service" ]; then scp "$D/comp-{{app}}-relay.service" {{host}}:/tmp/; fi
-    scp "$D"/{{app}}.caddy {{host}}:/tmp/ 2>/dev/null || scp "$D"/{{app}}.yml {{host}}:/tmp/
-    ssh {{host}} "set -e; \
-      sudo install -m 0644 /tmp/{{app}}.wasm /srv/comp/{{app}}/app.wasm; \
-      sudo install -m 0600 /tmp/{{app}}.env /etc/comp/{{app}}.env; \
-      sudo install -m 0644 /tmp/comp-{{app}}.service /etc/systemd/system/comp-{{app}}.service; \
-      if [ -f /tmp/comp-{{app}}-relay.service ]; then \
-        sudo install -m 0644 /tmp/comp-{{app}}-relay.service /etc/systemd/system/comp-{{app}}-relay.service; \
-      fi; \
-      if [ -f /tmp/{{app}}.serve.sh ]; then \
-        sudo install -m 0755 /tmp/{{app}}.serve.sh /srv/comp/{{app}}/serve.sh; \
-      elif [ -f /tmp/{{app}}.caddy ]; then \
-        sudo install -m 0644 /tmp/{{app}}.caddy /etc/caddy/comp/{{app}}.caddy; \
-      else \
-        sudo install -m 0644 /tmp/{{app}}.yml /etc/traefik/comp/{{app}}.yml; \
-      fi; \
-      sudo systemctl daemon-reload; \
-      sudo systemctl enable --now comp-{{app}}; \
-      sudo systemctl restart comp-{{app}}; \
-      if [ -f /etc/systemd/system/comp-{{app}}-relay.service ]; then \
-        sudo systemctl enable --now comp-{{app}}-relay; sudo systemctl restart comp-{{app}}-relay; \
-      fi; \
-      if [ -f /srv/comp/{{app}}/serve.sh ]; then sudo /srv/comp/{{app}}/serve.sh; fi; \
-      rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/comp-{{app}}-relay.service \
-            /tmp/{{app}}.env /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh"
+    # The SPA, if the spec names one. The renderer already points the unit at
+    # /srv/comp/<app>/static and nothing was ever putting anything there — the app
+    # served its API perfectly and answered 404 at `/`, which is the most confusing
+    # shape a deploy failure can take. Shipped as a tar so one scp carries a tree,
+    # and replaced wholesale so a file deleted from the SPA does not survive on the
+    # box forever.
+    STATIC=$(python3 -c "import tomllib;print(tomllib.load(open('apps/{{app}}.toml','rb')).get('static_dir',''))")
+    if [ -n "$STATIC" ]; then
+      [ -d "$STATIC" ] || { echo "spec names static_dir '$STATIC' which does not exist — run the app's build-*-ui recipe" >&2; exit 1; }
+      tar -czf "$D/{{app}}-static.tgz" -C "$STATIC" .
+      scp "$D/{{app}}-static.tgz" {{host}}:/tmp/
+    fi
+    # One of three, whichever the router rendered. `.serve.sh` was missing from this
+    # list while the install block below already knew how to place it — so
+    # `--router tailscale-serve` rendered fine and could never be deployed, failing
+    # on `stat local "…/events.yml"` after the wasm was already on the box.
+    for ext in caddy yml serve.sh; do
+      if [ -f "$D/{{app}}.$ext" ]; then scp "$D/{{app}}.$ext" {{host}}:/tmp/; fi
+    done
+    # On STDIN, not as an argument: `ssh host "…"` is parsed by the remote LOGIN
+    # shell, and a box whose login shell is fish rejects `if … then … fi` outright.
+    ssh {{host}} bash -s <<'REMOTE'
+    set -e
+    sudo install -m 0644 /tmp/{{app}}.wasm /srv/comp/{{app}}/app.wasm
+    if [ -f /tmp/{{app}}-static.tgz ]; then
+      sudo rm -rf /srv/comp/{{app}}/static
+      sudo mkdir -p /srv/comp/{{app}}/static
+      sudo tar -xzf /tmp/{{app}}-static.tgz -C /srv/comp/{{app}}/static
+      sudo chmod -R a+rX /srv/comp/{{app}}/static
+    fi
+    sudo install -m 0600 /tmp/{{app}}.env /etc/comp/{{app}}.env
+    sudo install -m 0644 /tmp/comp-{{app}}.service /etc/systemd/system/comp-{{app}}.service
+    if [ -f /tmp/comp-{{app}}-relay.service ]; then
+      sudo install -m 0644 /tmp/comp-{{app}}-relay.service /etc/systemd/system/comp-{{app}}-relay.service
+    fi
+    if [ -f /tmp/{{app}}.serve.sh ]; then
+      sudo install -m 0755 /tmp/{{app}}.serve.sh /srv/comp/{{app}}/serve.sh
+    elif [ -f /tmp/{{app}}.caddy ]; then
+      sudo install -m 0644 /tmp/{{app}}.caddy /etc/caddy/comp/{{app}}.caddy
+    elif [ -f /tmp/{{app}}.yml ]; then
+      sudo install -m 0644 /tmp/{{app}}.yml /etc/traefik/comp/{{app}}.yml
+    fi
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now comp-{{app}}
+    sudo systemctl restart comp-{{app}}
+    if [ -f /etc/systemd/system/comp-{{app}}-relay.service ]; then
+      sudo systemctl enable --now comp-{{app}}-relay
+      sudo systemctl restart comp-{{app}}-relay
+    fi
+    if [ -f /srv/comp/{{app}}/serve.sh ]; then sudo /srv/comp/{{app}}/serve.sh; fi
+    rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/comp-{{app}}-relay.service \
+          /tmp/{{app}}.env /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh \
+          /tmp/{{app}}-static.tgz
+    REMOTE
     # Only a tailnet app needs TS_IP. Pinning it for a public app would report a
     # missing tailscale on a box that has no reason to have one, which reads as a
     # failed deploy when nothing is wrong.
     ACCESS=$(python3 -c "import tomllib;print(tomllib.load(open('apps/{{app}}.toml','rb')).get('access','tailnet'))")
     if [ "$ACCESS" = "tailnet" ]; then just selfhost-tsip {{host}}; fi
-    ssh {{host}} "sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy 2>/dev/null || true"
-    @echo "deployed {{app}} to {{host}} [$ACCESS]"
+    # Only if there is a Caddy to reload. A box routed by `tailscale serve` has none,
+    # and `systemctl reload caddy` on it prints a failure for something that is
+    # working — which reads as a broken deploy.
+    ssh {{host}} bash -s <<'REMOTE'
+    command -v caddy >/dev/null || exit 0
+    sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy 2>/dev/null || true
+    REMOTE
+    # Not `@echo`: this is a bash recipe, and just's `@` prefix is only meaningful
+    # on a line just itself runs.
+    echo "deployed {{app}} to {{host}} [$ACCESS]"
 
 # Pin Caddy's TS_IP to this box's Tailscale address, so that `bind {$TS_IP}` in a
 # tailnet route means what it says.
@@ -2104,12 +2169,19 @@ selfhost-tsip host:
       echo "  Install tailscale, or set access = \"public\" for apps on this box." >&2
       exit 0
     fi
-    ssh {{host}} "set -e; \
-      sudo mkdir -p /etc/systemd/system/caddy.service.d; \
-      printf '[Service]\nEnvironment=TS_IP=%s\n' '$IP' | \
-        sudo tee /etc/systemd/system/caddy.service.d/ts-ip.conf >/dev/null; \
-      sudo systemctl daemon-reload"
-    echo "  {{host}}: Caddy TS_IP=$IP (tailnet routes bind there only)"
+    # Only if Caddy is there. This pins TS_IP into Caddy's unit so a tailnet route
+    # binds the 100.x address and nothing else; a box routed by `tailscale serve`
+    # has no Caddy and needs none, and writing a drop-in for an absent unit would
+    # be a daemon-reload that means nothing.
+    { echo "TS_ADDR='$IP'"; cat; } <<'REMOTE' | ssh {{host}} bash -s
+    set -e
+    command -v caddy >/dev/null || exit 0
+    sudo mkdir -p /etc/systemd/system/caddy.service.d
+    printf '[Service]\nEnvironment=TS_IP=%s\n' "$TS_ADDR" \
+      | sudo tee /etc/systemd/system/caddy.service.d/ts-ip.conf >/dev/null
+    sudo systemctl daemon-reload
+    REMOTE
+    echo "  {{host}}: tailscale address $IP"
 
 # Is it up, and what is it doing?
 selfhost-status app host:

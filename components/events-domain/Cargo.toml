@@ -34,6 +34,8 @@ world = "events-domain"
 # `records:store`'s own world imports this.
 "comp:store" = { path = "../../host/wit/deps/comp-store" }
 "wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"blob:store" = { path = "../blob-store/wit" }
+"upload:policy" = { path = "../upload-policy/wit" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
 "wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

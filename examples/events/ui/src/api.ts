@@ -22,10 +22,22 @@ async function call(path: string, method = "GET", body?: unknown): Promise<[numb
 }
 
 export const api = {
-  seed: () => call("/test/seed", "POST", {}),
+  register: (email: string, password: string) => call("/api/register", "POST", { email, password }),
+  login: (email: string, password: string) => call("/api/login", "POST", { email, password }),
   events: (state?: string) => call(`/api/events${state ? `?state=${state}` : ""}`),
   event: (id: string) => call(`/api/events/${id}`),
   createEvent: (b: Json) => call("/api/events", "POST", b),
+  // Raw bytes under their own content type — NOT a JSON field. base64 in a document
+  // is a third larger than the image and every read of the event pays for it.
+  uploadImage: async (id: string, file: File) => {
+    const r = await fetch(`/api/events/${id}/image`, {
+      method: "POST",
+      headers: { "content-type": file.type, ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      body: file,
+    });
+    const t = await r.text();
+    return [r.status, t ? JSON.parse(t) : null] as [number, Json];
+  },
   claim: (eventId: string) => call(`/api/events/${eventId}/tickets`, "POST", {}),
   myTickets: () => call("/api/tickets"),
   ticket: (id: string) => call(`/api/tickets/${id}`),
