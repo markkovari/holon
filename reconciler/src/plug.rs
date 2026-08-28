@@ -2,8 +2,11 @@
 //!
 //! ## What this replaces
 //!
-//! 59 hand-written `wac plug … --plug … --plug …` chains in the `Justfile`, one
-//! per showcase. The recipe for assembling an app lived in a build file rather
+//! 71 hand-written `wac plug … --plug … --plug …` chains in the `Justfile`, one
+//! per showcase. This said 59 for as long as twelve of them were still there —
+//! they were invisible to `comp-capgraph`, which finds applications by reading
+//! `_derive` lines, so an unmigrated app was missing from the capability graph
+//! as well as from this count. The recipe for assembling an app lived in a build file rather
 //! than in the app, so a component the loop built could not be composed, run or
 //! deployed until a person edited that file. A substrate whose thesis is
 //! composition should not need a human to spell the composition out — and it does
