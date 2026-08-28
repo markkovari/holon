@@ -24,6 +24,12 @@
 # tools/build-polyglot.sh already explains.
 **/src/bindings.rs
 
+# The example SPAs' build output. `vite build` writes it, `just build-<app>-ui`
+# runs that, and the host serves it with --static-dir — nothing reads it from git.
+# No example has ever committed one; the rule arrived when a new app's `git add -A`
+# tried to, which is the same way `**/node_modules/` arrived below.
+examples/*/dist/
+
 # Installed npm packages for the example UIs. The lockfiles ARE committed —
 # the recipes run `npm ci`, which needs one and installs nothing else. Nobody
 # had a node_modules on disk here until someone ran `npm install`, which is why

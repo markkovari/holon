@@ -22,6 +22,21 @@ const BASE = (process.env.OPENAI_BASE || 'http://127.0.0.1:8000/v1').replace(/\/
 const KEY = process.env.OPENAI_KEY || ''
 /** Overrides whatever model the caller asked for. Empty keeps the caller's. */
 const MODEL = process.env.OPENAI_MODEL || ''
+/** Extra request fields, merged into every call. Malformed JSON is fatal on
+ *  purpose: silently sending an un-tuned request is how a model gets blamed for a
+ *  configuration mistake. */
+const EXTRA = (() => {
+  const raw = process.env.OPENAI_EXTRA_JSON
+  if (!raw) return {}
+  try {
+    const v = JSON.parse(raw)
+    if (v === null || typeof v !== 'object' || Array.isArray(v)) throw new Error('not an object')
+    return v
+  } catch (e) {
+    console.error(`OPENAI_EXTRA_JSON is not a JSON object: ${e.message}`)
+    process.exit(1)
+  }
+})()
 const TIMEOUT_MS = Number(process.env.OPENAI_TIMEOUT_MS || 540_000)
 /**
  * Refuse a prompt estimated above this many tokens. 0 disables the check.
@@ -59,6 +74,18 @@ function toOpenAI(body) {
   if (body.max_tokens) req.max_tokens = body.max_tokens
   if (body.temperature != null) req.temperature = body.temperature
   if (body.stop_sequences?.length) req.stop = body.stop_sequences
+  // Whatever the server needs that the Anthropic shape has no word for. Applied
+  // LAST so it can override what was translated above, because that is the point:
+  // Qwen3.8 thinks by default, and the same prompt costs 1200 tokens with thinking
+  // and 158 without. `enable_thinking` lives in `chat_template_kwargs`, which is
+  // not an Anthropic field and never will be.
+  //
+  //   OPENAI_EXTRA_JSON='{"chat_template_kwargs":{"enable_thinking":false},"top_p":0.8}'
+  //
+  // One env var rather than one flag per knob: the set is the SERVER's, it differs
+  // per model, and a shim that enumerates them is a shim that needs editing every
+  // time the model changes.
+  Object.assign(req, EXTRA)
   return req
 }
 

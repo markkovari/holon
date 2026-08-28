@@ -79,13 +79,13 @@ components:
 
 links:
   - from: probe
-    import: graph:run/driver@0.1.0
+    import: graph:run/driver@0.2.0
     to: driver
   - from: driver
     import: graph:agent/writer@0.1.0
     to: agent
   - from: driver
-    import: graph:fitness/evaluator@0.1.0
+    import: graph:fitness/evaluator@0.2.0
     to: gate
   - from: agent
     import: llm:inference/inference@0.1.0
