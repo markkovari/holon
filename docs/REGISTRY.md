@@ -22,7 +22,7 @@ Nobody should install a compiler to consume a 60 KB artifact.
 **`just fetch-components`.** Reads the GitHub Actions artifact from a green run.
 That is genuinely useful and it has three limits written into it: the artifact
 expires after **thirty days**, it needs a successful run for **that exact commit**,
-and it arrives as **all 205 components or none**.
+and it arrives as **every component or none**.
 
 A registry has none of those properties. `comp-oci pull` gets one component, by
 digest, from bytes that do not expire.
