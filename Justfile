@@ -291,9 +291,21 @@ build force="":
     # its own tests — but a stamped one does not need stamping twice.
     rustv=$(rustc --version | cut -d' ' -f2)
     stamped=0; skipped=0
+    pruned=0
     for f in target/wasm32-wasip2/release/*.wasm; do
       name=$(basename "$f" .wasm | tr '_' '-')
       stamp="$marker/$name"
+      # A component that was deleted leaves its artifact behind — cargo removes
+      # nothing it did not just write. Left alone it is indistinguishable from a
+      # real one: it gets named, stamped, catalogued and drawn into the capability
+      # graph, because everything downstream reads this directory rather than the
+      # crate list. So the directory is the check.
+      if [ ! -d "$name" ]; then
+        rm -f "$f" "$stamp"
+        echo "pruned $name — no components/$name, its crate is gone"
+        pruned=$((pruned+1))
+        continue
+      fi
       if [ -z "{{force}}" ] && [ -f "$stamp" ] && [ ! "$f" -nt "$stamp" ]; then
         skipped=$((skipped+1)); continue
       fi
@@ -303,15 +315,16 @@ build force="":
       stamped=$((stamped+1))
     done
     total=$((stamped + skipped))
-    echo "built $total components (wasm32-wasip2, named, no preview1 adapter) — stamped $stamped, unchanged $skipped"
+    echo "built $total components (wasm32-wasip2, named, no preview1 adapter) — stamped $stamped, unchanged $skipped, pruned $pruned"
 
 # Compose the rate-limiter AND audit-log into auth-guard with wac, satisfying
 # auth-guard's `ratelimit:guard/limiter` + `audit:log/recorder` imports. Output
 # is a single self-contained component.
 # Compose ANY component with whatever it imports, derived rather than written.
 #
-# The 59 hand-written plug chains below each name their plugs; this asks the
-# component instead. `reconciler/src/plug.rs` wraps `wac` as a library: read the
+# The 71 hand-written plug chains this replaced each named their plugs; this asks
+# the component instead. There are none left — the last twelve were migrated once
+# it turned out `comp-capgraph` could not see them at all. `reconciler/src/plug.rs` wraps `wac` as a library: read the
 # built artifact's imports, find what exports those interfaces, compose each plug
 # first (a plug that is not whole hoists its own imports into the result), and key
 # the output by content. A component the loop builds is therefore runnable without
@@ -2742,146 +2755,74 @@ screencast-device-radar: compose-device-radar
 	node tools/screencast/device-radar.mjs
 	bash tools/screencast/to-gif.sh tools/screencast/videos/device-radar/*.webm docs/media/device-radar.gif 820 10
 
-compose-desktop-notifier:
-    @echo "Linking desktop-notifier..."
-    @wac plug components/target/wasm32-wasip2/release/desktop_notifier_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/desktop_ui_notifier.wasm \
-        -o components/target/desktop-notifier.composed.wasm
-    @echo "composed desktop-notifier -> components/target/desktop-notifier.composed.wasm"
+compose-desktop-notifier: build
+    @just _derive desktop-notifier-domain components/target/desktop-notifier.composed.wasm
 
 host-desktop-notifier:
     cd host && cargo run --release --bin comp-host -- --app desktop-notifier --config-file ../examples/defaults.conf --config default-tenant=desktop-notifier --component ../components/target/desktop-notifier.composed.wasm --addr 0.0.0.0:3056
 
-compose-clipboard-sync:
-    @echo "Linking clipboard-sync..."
-    @wac plug components/target/wasm32-wasip2/release/clipboard_sync_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/desktop_clipboard.wasm \
-        -o components/target/clipboard-sync.composed.wasm
-    @echo "composed clipboard-sync -> components/target/clipboard-sync.composed.wasm"
+compose-clipboard-sync: build
+    @just _derive clipboard-sync-domain components/target/clipboard-sync.composed.wasm
 
 host-clipboard-sync:
     cd host && cargo run --release --bin comp-host -- --app clipboard-sync --config-file ../examples/defaults.conf --config default-tenant=clipboard-sync --component ../components/target/clipboard-sync.composed.wasm --addr 0.0.0.0:3056
 
-compose-pdf-generator:
-    @echo "Linking pdf-generator..."
-    @wac plug components/target/wasm32-wasip2/release/pdf_generator_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/browser_automation.wasm \
-        -o components/target/pdf-generator.composed.wasm
-    @echo "composed pdf-generator -> components/target/pdf-generator.composed.wasm"
+compose-pdf-generator: build
+    @just _derive pdf-generator-domain components/target/pdf-generator.composed.wasm
 
 host-pdf-generator:
     cd host && cargo run --release --bin comp-host -- --app pdf-generator --config-file ../examples/defaults.conf --config default-tenant=pdf-generator --component ../components/target/pdf-generator.composed.wasm --addr 0.0.0.0:3056
 
-compose-local-ai:
-    @echo "Linking local-ai..."
-    @wac plug components/target/wasm32-wasip2/release/local_ai_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/llm_local.wasm \
-        -o components/target/local-ai.composed.wasm
-    @echo "composed local-ai -> components/target/local-ai.composed.wasm"
+compose-local-ai: build
+    @just _derive local-ai-domain components/target/local-ai.composed.wasm
 
 host-local-ai:
     cd host && cargo run --release --bin comp-host -- --app local-ai --config-file ../examples/defaults.conf --config default-tenant=local-ai --component ../components/target/local-ai.composed.wasm --addr 0.0.0.0:3056
 
-compose-docker-manager:
-    @echo "Linking docker-manager..."
-    @wac plug components/target/wasm32-wasip2/release/docker_manager_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/container_docker.wasm \
-        -o components/target/docker-manager.composed.wasm
-    @echo "composed docker-manager -> components/target/docker-manager.composed.wasm"
+compose-docker-manager: build
+    @just _derive docker-manager-domain components/target/docker-manager.composed.wasm
 
 host-docker-manager:
     cd host && cargo run --release --bin comp-host -- --app docker-manager --config-file ../examples/defaults.conf --config default-tenant=docker-manager --component ../components/target/docker-manager.composed.wasm --addr 0.0.0.0:3056
 
-compose-video-transcoder:
-    @echo "Linking video-transcoder..."
-    @wac plug components/target/wasm32-wasip2/release/video_transcoder_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/video_ffmpeg.wasm \
-        -o components/target/video-transcoder.composed.wasm
-    @echo "composed video-transcoder -> components/target/video-transcoder.composed.wasm"
+compose-video-transcoder: build
+    @just _derive video-transcoder-domain components/target/video-transcoder.composed.wasm
 
 host-video-transcoder:
     cd host && cargo run --release --bin comp-host -- --app video-transcoder --config-file ../examples/defaults.conf --config default-tenant=video-transcoder --component ../components/target/video-transcoder.composed.wasm --addr 0.0.0.0:3056
 
-compose-lan-scanner:
-    @echo "Linking lan-scanner..."
-    @wac plug components/target/wasm32-wasip2/release/lan_scanner_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/lan_scanner.wasm \
-        -o components/target/lan-scanner.composed.wasm
-    @echo "composed lan-scanner -> components/target/lan-scanner.composed.wasm"
+compose-lan-scanner: build
+    @just _derive lan-scanner-domain components/target/lan-scanner.composed.wasm
 
 host-lan-scanner:
     cd host && cargo run --release --bin comp-host -- --app lan-scanner --config-file ../examples/defaults.conf --config default-tenant=lan-scanner --component ../components/target/lan-scanner.composed.wasm --addr 0.0.0.0:3056
 
-compose-mdns-discoverer:
-    @echo "Linking mdns-discoverer..."
-    @wac plug components/target/wasm32-wasip2/release/mdns_discoverer_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/mdns_discovery.wasm \
-        -o components/target/mdns-discoverer.composed.wasm
-    @echo "composed mdns-discoverer -> components/target/mdns-discoverer.composed.wasm"
+compose-mdns-discoverer: build
+    @just _derive mdns-discoverer-domain components/target/mdns-discoverer.composed.wasm
 
 host-mdns-discoverer:
     cd host && cargo run --release --bin comp-host -- --app mdns-discoverer --config-file ../examples/defaults.conf --config default-tenant=mdns-discoverer --component ../components/target/mdns-discoverer.composed.wasm --addr 0.0.0.0:3056
 
-compose-fs-watcher:
-    @echo "Linking fs-watcher..."
-    @wac plug components/target/wasm32-wasip2/release/fs_watcher_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/fs_watcher.wasm \
-        -o components/target/fs-watcher.composed.wasm
-    @echo "composed fs-watcher -> components/target/fs-watcher.composed.wasm"
+compose-fs-watcher: build
+    @just _derive fs-watcher-domain components/target/fs-watcher.composed.wasm
 
 host-fs-watcher:
     cd host && cargo run --release --bin comp-host -- --app fs-watcher --config-file ../examples/defaults.conf --config default-tenant=fs-watcher --component ../components/target/fs-watcher.composed.wasm --addr 0.0.0.0:3056
 
-compose-vpn-manager:
-    @echo "Linking vpn-manager..."
-    @wac plug components/target/wasm32-wasip2/release/vpn_manager_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/vpn_wireguard.wasm \
-        -o components/target/vpn-manager.composed.wasm
-    @echo "composed vpn-manager -> components/target/vpn-manager.composed.wasm"
+compose-vpn-manager: build
+    @just _derive vpn-manager-domain components/target/vpn-manager.composed.wasm
 
 host-vpn-manager:
     cd host && cargo run --release --bin comp-host -- --app vpn-manager --config-file ../examples/defaults.conf --config default-tenant=vpn-manager --component ../components/target/vpn-manager.composed.wasm --addr 0.0.0.0:3056
 
-compose-image-optimizer:
-    @echo "Linking image-optimizer..."
-    @wac plug components/target/wasm32-wasip2/release/image_optimizer_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/image_optimizer.wasm \
-        -o components/target/image-optimizer.composed.wasm
-    @echo "composed image-optimizer -> components/target/image-optimizer.composed.wasm"
+compose-image-optimizer: build
+    @just _derive image-optimizer-domain components/target/image-optimizer.composed.wasm
 
 host-image-optimizer:
     cd host && cargo run --release --bin comp-host -- --app image-optimizer --config-file ../examples/defaults.conf --config default-tenant=image-optimizer --component ../components/target/image-optimizer.composed.wasm --addr 0.0.0.0:3056
 
-compose-cron-scheduler:
-    @echo "Linking cron-scheduler..."
-    @wac plug components/target/wasm32-wasip2/release/cron_scheduler_domain.wasm \
-        --plug components/target/auth_guard.composed.wasm \
-        --plug components/target/wasm32-wasip2/release/record_store.wasm \
-        --plug components/target/wasm32-wasip2/release/system_cron.wasm \
-        -o components/target/cron-scheduler.composed.wasm
-    @echo "composed cron-scheduler -> components/target/cron-scheduler.composed.wasm"
+compose-cron-scheduler: build
+    @just _derive cron-scheduler-domain components/target/cron-scheduler.composed.wasm
 
 host-cron-scheduler:
     cd host && cargo run --release --bin comp-host -- --app cron-scheduler --config-file ../examples/defaults.conf --config default-tenant=cron-scheduler --component ../components/target/cron-scheduler.composed.wasm --addr 0.0.0.0:3056
@@ -2929,7 +2870,7 @@ ci-local:
     rm -rf components/target/composed
     (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets \
         --test capgraph_edges --test capgraph_store --test console_session --test compose_race \
-        --test witsurface) || fail=1
+        --test witsurface --test hostsurface) || fail=1
 
     step "reconciler (native job): --lib --bins + docs, fixtures, guestio, stress, uideps"
     (cd reconciler && cargo test --release --lib --bins \
