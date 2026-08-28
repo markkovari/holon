@@ -2870,7 +2870,7 @@ ci-local:
     rm -rf components/target/composed
     (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets \
         --test capgraph_edges --test capgraph_store --test console_session --test compose_race \
-        --test witsurface --test hostsurface) || fail=1
+        --test witsurface --test hostsurface --test fixtureversions) || fail=1
 
     step "reconciler (native job): --lib --bins + docs, fixtures, guestio, stress, uideps"
     (cd reconciler && cargo test --release --lib --bins \

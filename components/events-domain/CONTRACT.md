@@ -115,7 +115,7 @@ Both the fsm instance and the ticket document carry the state. Move both, or
 | | | |
 |---|---|---|
 | `POST /api/events` | organizer | 201 `{id, …}`; 400 on missing title/`starts_at`, or `capacity` < 1 |
-| `GET /api/events` | any | 200 `{events:[…]}`; `?state=open` filters |
+| `GET /api/events` | any | 200 `{events:[…]}`; `?state=open` filters. **Every entry carries its `id`** alongside the document's own fields — a list nothing can be selected from is not a list |
 | `GET /api/events/{id}` | any | 200 the document plus `"id"`, `"claimed"` and `"remaining"`; 404 |
 | `PATCH /api/events/{id}` | organizer, and only their own | 200; 403 if another organizer's; 404 |
 | `DELETE /api/events/{id}` | organizer, own | 204. A **soft** delete: `state` becomes `cancelled`. Tickets already issued stay readable |
