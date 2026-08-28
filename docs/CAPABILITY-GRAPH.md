@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**208 components, 100 interfaces with a provider and at least one consumer, 438 import edges, 16 interfaces exported but unconsumed in-tree, 80 applications composed from them.**
+**208 components, 100 interfaces with a provider and at least one consumer, 443 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -19,32 +19,32 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | --: | --- | --- | --- |
 | 52 | `records:store/store` | `record-store` | `academic-review-domain`, `arena-domain`, `billing-ledger`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `csv-report`, `dashboards-domain`, `dev-portal`, `doc-search-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `events-domain`, `freight-tracker-domain`, `gate-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `jobs-domain`, `link-shortener`, `lms-domain`, `mesh-domain`, `mfa-authgate`, `moderation-domain`, `passkey-domain`, `paste-bin`, `payees-domain`, `photosocial-domain`, `platform-domain`, `poll-domain`, `pulse-domain`, `real-estate-escrow-domain`, `saga-domain`, `scribe-domain`, `search-domain`, `smart-home-domain`, `stash-domain`, `status-page`, `studio-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `triage-domain`, `upload-drop`, `vet-domain`, `webhook-relay` |
 | 37 | `auth:identity/types` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `events-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
-| 35 | `auth:identity/authorizer` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
+| 36 | `auth:identity/authorizer` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `events-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
 | 28 | `auth:identity/session` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
 | 26 | `auth:identity/accounts` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `events-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
+| 15 | `id:generate/generator` | `id-generate` | `abtest-domain`, `arena-domain`, `binder-domain`, `clinic-domain`, `dev-portal`, `events-domain`, `flags-domain`, `helpdesk-domain`, `link-shortener`, `pipeline-domain`, `poll-domain`, `pulse-domain`, `saga-domain`, `scribe-domain`, `throttle-domain` |
 | 14 | `event:bus/bus` | `event-bus` | `abtest-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `eshop-payment`, `flags-domain`, `moderation-domain`, `pipeline-domain`, `pulse-domain`, `saga-domain`, `status-page`, `throttle-domain`, `track-domain`, `vet-domain` |
-| 14 | `id:generate/generator` | `id-generate` | `abtest-domain`, `arena-domain`, `binder-domain`, `clinic-domain`, `dev-portal`, `flags-domain`, `helpdesk-domain`, `link-shortener`, `pipeline-domain`, `poll-domain`, `pulse-domain`, `saga-domain`, `scribe-domain`, `throttle-domain` |
 | 11 | `auth:identity/rbac` | `auth-guard` | `accounts-app`, `booked-domain`, `dev-portal`, `events-domain`, `helpdesk-domain`, `lms-domain`, `photosocial-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
-| 8 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
+| 9 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `events-domain`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
 | 8 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `invoice-copilot-domain`, `jobs-domain`, `saga-domain`, `treasury-ledger-domain`, `webhook-ingest` |
 | 7 | `ai:inference/inference` | `ai-inference` | `doc-search-domain`, `invoice-copilot-domain`, `moderation-domain`, `support-desk-domain`, `track-domain`, `triage-assist-domain`, `vet-domain` |
 | 7 | `csv:codec/codec` | `csv` | `billing-ledger`, `clinic-domain`, `csv-report`, `sheet-ingest`, `stash-domain`, `triage-domain`, `vet-domain` |
+| 7 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `doc-search-domain`, `events-domain`, `platform-domain`, `support-desk-domain`, `throttle-domain` |
 | 7 | `ratelimit:guard/limiter` | `rate-limiter` | `auth-guard`, `invoice-copilot-domain`, `link-shortener`, `moderation-domain`, `throttle-domain`, `triage-assist-domain`, `webhook-relay` |
 | 6 | `blob:store/blobstore` | `blob-store` | `artifact-cache`, `platform-domain`, `studio-domain`, `upload-drop`, `vet-domain`, `virt-git` |
 | 6 | `outbox:dispatch/queue` | `outbox` | `billing-ledger`, `dev-portal`, `jobs-domain`, `pipeline-domain`, `support-desk-domain`, `webhook-relay` |
-| 6 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `doc-search-domain`, `platform-domain`, `support-desk-domain`, `throttle-domain` |
 | 6 | `search:index/index` | `search-index` | `clinic-domain`, `doc-search-domain`, `knowledge-memory`, `search-domain`, `track-domain`, `vet-domain` |
 | 5 | `cache:store/cache` | `cache` | `doc-search-domain`, `link-shortener`, `passkey-domain`, `search-domain`, `vet-domain` |
 | 5 | `knowledge:graph/store` | `knowledge-graph` | `console-domain`, `contract-registry`, `graph-probe`, `graph-viz-domain`, `knowledge-memory` |
 | 5 | `llm:inference/inference` | `anthropic-provider` | `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe`, `photosocial-domain` |
 | 5 | `notify:dispatch/dispatcher` | `notify-dispatch` | `dev-portal`, `status-page`, `support-desk-domain`, `track-domain`, `webhook-relay` |
+| 5 | `qr:encode/encoder` | `qr` | `binder-domain`, `events-domain`, `mfa-authgate`, `poll-domain`, `transit-domain` |
 | 4 | `git:forge/repo` | `github-forge` | `console-domain`, `forge-probe`, `graph-selector`, `select-probe` |
 | 4 | `graph:agent/writer` | `agent-writer` | `agent-driver`, `agent-probe`, `graph-selector`, `select-probe` |
 | 4 | `md:render/renderer` | `markdown` | `helpdesk-domain`, `paste-bin`, `track-domain`, `vet-domain` |
 | 4 | `money:amount/arithmetic` | `money` | `billing-ledger`, `invoice-copilot-domain`, `treasury-ledger-domain`, `vet-domain` |
 | 4 | `pii:redact/redactor` | `pii-redact` | `paste-bin`, `triage-assist-domain`, `triage-domain`, `vet-domain` |
 | 4 | `policy:guard/guard` | `policy-guard` | `dev-portal`, `moderation-domain`, `platform-domain`, `track-domain` |
-| 4 | `qr:encode/encoder` | `qr` | `binder-domain`, `mfa-authgate`, `poll-domain`, `transit-domain` |
 | 4 | `secrets:vault/vault` | `secrets-vault` | `login-app`, `mfa-authgate`, `platform-domain`, `vet-domain` |
 | 4 | `session:store/store` | `session-store` | `login-app`, `mfa-authgate`, `passkey-domain`, `support-desk-domain` |
 | 4 | `slug:generate/generator` | `slug` | `conduit-domain`, `link-shortener`, `paste-bin`, `slug-probe` |
@@ -130,25 +130,25 @@ graph LR
   auth_identity_types --> many_auth_identity_types["37 consumers"]
   auth_identity_authorizer(["auth:identity/authorizer"])
   auth_guard[auth-guard] --> auth_identity_authorizer
-  auth_identity_authorizer --> many_auth_identity_authorizer["35 consumers"]
+  auth_identity_authorizer --> many_auth_identity_authorizer["36 consumers"]
   auth_identity_session(["auth:identity/session"])
   auth_guard[auth-guard] --> auth_identity_session
   auth_identity_session --> many_auth_identity_session["28 consumers"]
   auth_identity_accounts(["auth:identity/accounts"])
   auth_guard[auth-guard] --> auth_identity_accounts
   auth_identity_accounts --> many_auth_identity_accounts["26 consumers"]
+  id_generate_generator(["id:generate/generator"])
+  id_generate[id-generate] --> id_generate_generator
+  id_generate_generator --> many_id_generate_generator["15 consumers"]
   event_bus_bus(["event:bus/bus"])
   event_bus[event-bus] --> event_bus_bus
   event_bus_bus --> many_event_bus_bus["14 consumers"]
-  id_generate_generator(["id:generate/generator"])
-  id_generate[id-generate] --> id_generate_generator
-  id_generate_generator --> many_id_generate_generator["14 consumers"]
   auth_identity_rbac(["auth:identity/rbac"])
   auth_guard[auth-guard] --> auth_identity_rbac
   auth_identity_rbac --> many_auth_identity_rbac["11 consumers"]
   fsm_workflow_engine(["fsm:workflow/engine"])
   fsm_workflow[fsm-workflow] --> fsm_workflow_engine
-  fsm_workflow_engine --> many_fsm_workflow_engine["8 consumers"]
+  fsm_workflow_engine --> many_fsm_workflow_engine["9 consumers"]
   idempotency_guard_store(["idempotency:guard/store"])
   idempotency_guard[idempotency-guard] --> idempotency_guard_store
   idempotency_guard_store --> many_idempotency_guard_store["8 consumers"]
@@ -168,13 +168,13 @@ This is the number to look at before changing a component, and before deleting o
 
 | apps | component | which |
 | --: | --- | --- |
-| 45 | `record-store` | `academic-review`, `arena`, `authgate`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `drop`, `eshop`, `eshop-catalog`, `freight-tracker`, `gate`, `health-records`, `helpdesk`, `jobs`, `jobs-golem`, `ledger`, `lms`, `mesh`, `passkey`, `paste`, `payees`, `photosocial`, `platform`, `poll`, `portal`, `pulse`, `real-estate-escrow`, `relay`, `report`, `saga`, `scribe`, `search`, `shortlink`, `smart-home`, `stash`, `status`, `studio`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 30 | `rate-limiter` | `academic-review`, `auth-guard`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `ratelimit`, `real-estate-escrow`, `relay`, `shortlink`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 28 | `audit-log` | `academic-review`, `auth-guard`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `relay`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 26 | `auth-guard` | `academic-review`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 46 | `record-store` | `academic-review`, `arena`, `authgate`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `drop`, `eshop`, `eshop-catalog`, `events`, `freight-tracker`, `gate`, `health-records`, `helpdesk`, `jobs`, `jobs-golem`, `ledger`, `lms`, `mesh`, `passkey`, `paste`, `payees`, `photosocial`, `platform`, `poll`, `portal`, `pulse`, `real-estate-escrow`, `relay`, `report`, `saga`, `scribe`, `search`, `shortlink`, `smart-home`, `stash`, `status`, `studio`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 31 | `rate-limiter` | `academic-review`, `auth-guard`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `ratelimit`, `real-estate-escrow`, `relay`, `shortlink`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 29 | `audit-log` | `academic-review`, `auth-guard`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `relay`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 27 | `auth-guard` | `academic-review`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
+| 14 | `id-generate` | `abtest`, `arena`, `binder`, `events`, `flags`, `helpdesk`, `pipeline`, `poll`, `portal`, `pulse`, `ratelimit`, `saga`, `scribe`, `shortlink` |
 | 13 | `event-bus` | `abtest`, `eshop`, `eshop-catalog`, `flags`, `pipeline`, `pulse`, `ratelimit`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
-| 13 | `id-generate` | `abtest`, `arena`, `binder`, `flags`, `helpdesk`, `pipeline`, `poll`, `portal`, `pulse`, `ratelimit`, `saga`, `scribe`, `shortlink` |
-| 8 | `fsm-workflow` | `eshop`, `helpdesk`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 9 | `fsm-workflow` | `eshop`, `events`, `helpdesk`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 8 | `idempotency-guard` | `eshop`, `eshop-catalog`, `jobs`, `jobs-golem`, `ledger`, `relay`, `saga`, `webhook` |
 | 7 | `anthropic-provider` | `ai`, `ai-openai`, `photosocial`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 7 | `csv` | `binder`, `ledger`, `report`, `stash`, `vet`, `vet-full`, `vet-lattice` |
@@ -186,6 +186,8 @@ This is the number to look at before changing a component, and before deleting o
 | 6 | `secrets-vault` | `authgate`, `login`, `platform`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `console-assets` | `console`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `pagination` | `report`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `qr` | `authgate`, `binder`, `events`, `poll`, `transit` |
+| 5 | `quota` | `events`, `ledger`, `platform`, `portal`, `ratelimit` |
 | 5 | `scheduler-timer` | `saga`, `status`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `search-index` | `search`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `validate` | `paste`, `report`, `vet`, `vet-full`, `vet-lattice` |
@@ -195,8 +197,6 @@ This is the number to look at before changing a component, and before deleting o
 | 4 | `notify-dispatch` | `portal`, `relay`, `status`, `track` |
 | 4 | `otp` | `authgate`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `pii-redact` | `paste`, `vet`, `vet-full`, `vet-lattice` |
-| 4 | `qr` | `authgate`, `binder`, `poll`, `transit` |
-| 4 | `quota` | `ledger`, `platform`, `portal`, `ratelimit` |
 | 4 | `upload-policy` | `drop`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `webhook-sign` | `drop`, `portal`, `relay`, `track` |
 | 3 | `i18n-catalog` | `vet`, `vet-full`, `vet-lattice` |
@@ -282,6 +282,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **eshop** | `eshop-payment` | 1 | `eshop_payment.composed.wasm` |
 | **eshop** | `event-pusher` | 1 | `event_pusher.composed.wasm` |
 | **eshop-catalog** | `eshop-catalog` | 3 | `eshop_catalog.composed.wasm` |
+| **events** | `events-domain` | 8 | `events_domain.composed.wasm` |
 | **flags** | `flags-domain` | 3 | `flags_domain.composed.wasm` |
 | **freight-tracker** | `freight-tracker-domain` | 4 | `freight-tracker.composed.wasm` |
 | **fs-watcher** | `fs-watcher-domain` | 1 | `fs-watcher.composed.wasm` |
