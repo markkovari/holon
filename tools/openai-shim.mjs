@@ -21,6 +21,10 @@ const HOST = process.env.HOST || '127.0.0.1'
 const BASE = (process.env.OPENAI_BASE || 'http://127.0.0.1:8000/v1').replace(/\/$/, '')
 const KEY = process.env.OPENAI_KEY || ''
 /** Overrides whatever model the caller asked for. Empty keeps the caller's. */
+import { writeFileSync } from 'node:fs'
+
+const DUMP_DIR = process.env.OPENAI_DUMP_DIR || ''
+let dumped = 0
 const MODEL = process.env.OPENAI_MODEL || ''
 /** Extra request fields, merged into every call. Malformed JSON is fatal on
  *  purpose: silently sending an un-tuned request is how a model gets blamed for a
@@ -86,6 +90,18 @@ function toOpenAI(body) {
   // per model, and a shim that enumerates them is a shim that needs editing every
   // time the model changes.
   Object.assign(req, EXTRA)
+  // OPENAI_DUMP_DIR=/some/dir writes every request as JSON, numbered. The reason
+  // is a specific afternoon: a model answered a real goal with eighty-three bytes
+  // and the only way to tell a bad prompt from a bad model was to read what was
+  // actually sent — which nothing kept. Off unless the variable is set.
+  if (DUMP_DIR) {
+    try {
+      const f = `${DUMP_DIR}/req-${String(++dumped).padStart(3, '0')}.json`
+      writeFileSync(f, JSON.stringify(req, null, 2))
+    } catch (e) {
+      console.error(`[shim] could not dump: ${e.message}`)
+    }
+  }
   return req
 }
 
