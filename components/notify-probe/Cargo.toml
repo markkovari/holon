@@ -1,0 +1,37 @@
+[package]
+name = "notify-probe"
+description = "HTTP door onto notify:prefs + notify:inbox, for the gate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+guestio = { path = "../guestio" }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "notify:probe-component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "notify-probe"
+
+[package.metadata.component.target.dependencies]
+"notify:prefs" = { path = "../notify-prefs/wit" }
+"notify:inbox" = { path = "../notify-inbox/wit" }
+"mail:send" = { path = "../mail-http/wit" }
+"records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }

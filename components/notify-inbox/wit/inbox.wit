@@ -1,0 +1,79 @@
+// notify:inbox — in-app notifications that survive being missed.
+//
+// An inbox and not a queue, and the difference is the whole design. `event:bus`
+// already offers publish/poll/ack over the same primitives, and `ack` is per
+// CONSUMER GROUP: a person reading on their phone and their laptop is either two
+// groups, each seeing everything twice, or one group where whichever device polls
+// first consumes the message and the other never sees it. Here a read message stays
+// visible and "unread" is a property of the MESSAGE, not of a cursor.
+//
+// Nothing in here holds an HTTP connection. The realtime half is the caller's: an
+// app serves `text/event-stream` and tails `since` by cursor, which is what
+// `flags-domain` already does. A capability that owned a socket would only work
+// inside an app shaped the way the capability expected.
+package notify:inbox@0.1.0;
+
+interface inbox {
+    variant inbox-error {
+        /// The store is unreachable.
+        backend-unavailable(string),
+        /// A subject was empty, or a limit was zero.
+        invalid(string),
+    }
+
+    record note {
+        /// Monotonic per subject, and therefore the stream cursor: `list(after: n)`
+        /// is every note since the caller last looked.
+        seq: u64,
+        /// What kind of thing happened — `ticket-swapped`, `event-cancelled`. A free
+        /// string on purpose: a registry means every app declares its kinds before
+        /// sending, and the first thing anyone does is forget to.
+        kind: string,
+        title: string,
+        body: string,
+        /// Whatever the app needs to act on it — a ticket id, a URL. Opaque here.
+        payload: string,
+        /// Unix seconds.
+        at: u64,
+        read: bool,
+    }
+
+    /// Put one in `subject`'s inbox. Returns its seq.
+    deliver: func(
+        subject: string,
+        kind: string,
+        title: string,
+        body: string,
+        payload: string,
+    ) -> result<u64, inbox-error>;
+
+    /// Everything after `after`, oldest first, at most `limit`. `after: 0` is the
+    /// whole inbox; a live tail passes the last seq it saw.
+    ///
+    /// Not `list`: that is a WIT keyword, the same way `import` is — which is why
+    /// `sheet-ingest` is not `sheet-import`. `since` says what the cursor means.
+    since: func(subject: string, after: u64, limit: u32) -> result<list<note>, inbox-error>;
+
+    /// The badge. Its own call because it is the most-read thing in any
+    /// notification UI, and deriving it by paging the whole inbox is how that gets
+    /// slow.
+    unread-count: func(subject: string) -> result<u64, inbox-error>;
+
+    /// Mark these read. A list because a UI marks a screenful at once, and one call
+    /// beats twenty. Already-read seqs are ignored rather than an error — a client
+    /// that retries must not be punished for it.
+    mark-read: func(subject: string, seqs: list<u64>) -> result<u64, inbox-error>;
+
+    /// Mark everything up to and including `through` read. `through: 0` means all.
+    mark-all-read: func(subject: string, through: u64) -> result<u64, inbox-error>;
+}
+
+/// `notify-inbox` provides the in-app channel, on `wasi:keyvalue`. The unread count
+/// is two monotonic counters — delivered and read — because `kv:atomics` can only
+/// increment, and `delivered - read` is a number that never needs a decrement.
+world notify-inbox {
+    export inbox;
+    import wasi:keyvalue/store@0.2.0-draft;
+    import wasi:keyvalue/atomics@0.2.0-draft;
+    import wasi:clocks/wall-clock@0.2.0;
+}
