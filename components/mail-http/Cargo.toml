@@ -1,0 +1,31 @@
+[package]
+name = "mail-http"
+description = "Send one email through an HTTP gateway — Resend, or the local relay (mail:send)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+guestio = { path = "../guestio" }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "mail:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "mail-http"
+
+[package.metadata.component.target.dependencies]
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
