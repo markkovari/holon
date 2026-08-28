@@ -146,9 +146,38 @@ an example, name the markers, forbid fences) does not address this one. What thi
 model needs said is that it CANNOT read files, and that everything it will be given
 is already below.
 
-That is the open question this run leaves: the direct test and the loop send
-near-identical content and get opposite answers, so the difference is in how
-`agent-writer` frames it, not in the model or the context.
+## Run 3: the fix, and the first goal a local model actually passed
+
+The rule added to `agent-writer`'s system prompt, phrased as a cost rather than a
+prohibition because the failure is not disobedience:
+
+    - YOU CANNOT READ FILES. There are no tools here and there is no second
+      turn. Everything you are getting is already below under CURRENT FILES; if
+      something you want is not there, work from what is. An answer that asks to
+      open a file is discarded unread, and asking costs the attempt.
+
+Same goal, same model, same server, same 33,305-character prompt — verified by
+dumping the request the loop actually sent rather than reconstructing it, which is
+what `OPENAI_DUMP_DIR` in the shim now exists for. Two reconstructions of that
+prompt had both FAILED to reproduce the failure, which is the reason for the dump:
+the difference was never in the content, so guessing at it was never going to work.
+
+| | out | wall | result |
+|---|---|---|---|
+| before | 49-101 tok, six times | — | 83 bytes of "I'll read the contract", score 0 |
+| after | **2,054 tok** | 297 s | **1/1 passed, score 1000, ACCEPTED, first attempt** |
+
+    comp-checks: attempt-0 — 1/1 passed, score 1000, ACCEPTED
+    gen 0 branch-0  accepted=true  score=1000  attempts=1 tokens=11432
+
+One model call. The PR step then failed on a deliberately fake GitHub token, which
+is the only part of that run that was not real.
+
+So the answer to "is a 27B on one desk good enough to execute a goal" is yes, for a
+goal shaped like this one — one part, one file, a contract it is given rather than
+told to find, and a gate that reports what it observed. Every failure between the
+first run and this one was in the scaffolding, and the model was the last thing that
+turned out to be wrong with it.
 
 ## What this says about making goal execution better
 

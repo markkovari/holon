@@ -66,6 +66,19 @@ const R_MARK: &str = ">>>>>>> REPLACE";
 /// example with real code in it, naming the four marker lines as mandatory, and
 /// saying explicitly that markdown fences are not allowed. A model that has spent
 /// its life emitting ```rust needs to be told this file is not a chat window.
+///
+/// The same costume, a second time, on Qwen3.8-27B: every attempt came back as
+/// eighty-three bytes of `I'll read the contract and existing files to understand
+/// what I need to implement`, and given a SMALLER prompt it invented a block of
+/// its own — `=== READ: CONTRACT.md`. Not a long-context failure and not the
+/// prompt cache, both ruled out by measurement: handed the same files in one shot
+/// it produced a correct `=== FILE:` block of 2,734 tokens. A model trained to
+/// work in a tool loop reaches for a tool, and nothing here had ever said there
+/// is not one.
+///
+/// So the fourth rule is that it CANNOT read, phrased as a cost rather than a
+/// prohibition — "asking costs the attempt" — because the failure mode is not
+/// disobedience, it is a reasonable move in the wrong environment.
 fn system_prompt() -> String {
     format!(
         "You change code to satisfy a goal. You answer ONLY with blocks.\n\
@@ -105,7 +118,12 @@ fn system_prompt() -> String {
          Rules:\n\
          - only write files you were told you may write\n\
          - if a file needs no change, leave it out entirely\n\
-         - write no prose. Your entire answer is blocks."
+         - write no prose. Your entire answer is blocks.\n\
+         - YOU CANNOT READ FILES. There are no tools here and there is no second\n\
+           turn. Everything you are getting is already below under CURRENT\n\
+           FILES; if something you want is not there, work from what is. An\n\
+           answer that asks to open a file is discarded unread, and asking costs\n\
+           the attempt."
     )
 }
 
