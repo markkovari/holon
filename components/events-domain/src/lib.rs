@@ -116,22 +116,21 @@ pub fn has_role(p: &Principal, role: &str) -> bool {
     p.roles.iter().any(|r| r == role)
 }
 
-/// Three people, their roles, the permissions those roles carry, and one event —
-/// everything a part needs to be judged before the other three exist.
+/// What each role may do — the app's own definition, not a fixture's.
 ///
-/// Returns the bearers, because a gate cannot mint one.
-fn seed() -> Reply {
-    // Role -> what it may do. Straight from CONTRACT.md's table; if the two ever
-    // disagree, this is the copy that is wrong.
+/// This lived inside `seed()`, which meant the permission table was established by
+/// a TEST ROUTE. With that route correctly switched off, nothing granted anything:
+/// a person could register, get a token carrying `attendee`, and be refused by
+/// every route in the app — including their own tickets. The gate that turned the
+/// fixture off is what found it.
+///
+/// Idempotent, and called from both entry points a principal can arrive through,
+/// because there is no startup here in which to do it once.
+fn ensure_roles() {
     let roles: [(&str, &[(&str, &str)]); 3] = [
         (
             "attendee",
-            &[
-                ("event", "read"),
-                ("ticket", "read"),
-                ("ticket", "write"),
-                ("swap", "write"),
-            ],
+            &[("event", "read"), ("ticket", "read"), ("ticket", "write"), ("swap", "write")],
         ),
         (
             "organizer",
@@ -158,10 +157,124 @@ fn seed() -> Reply {
     ];
     for (role, perms) in roles {
         let list: Vec<Permission> = perms.iter().map(|(t, a)| perm(t, a)).collect();
-        if rbac::set_role_permissions(TENANT, role, &list).is_err() {
-            return Reply::err(500, "seed_roles_failed");
-        }
+        let _ = rbac::set_role_permissions(TENANT, role, &list);
     }
+}
+
+/// Give this person the roles the DEPLOYMENT named for them.
+///
+/// Somebody has to be able to open the first event, and nobody can be granted a role
+/// by an organizer who does not exist yet. So `organizer-emails` in the app spec says
+/// who, rather than the app promoting whoever registered first — which makes the
+/// account that matters depend on who got there first.
+///
+/// Still a grant and not a claim: the list is config, written by whoever deploys the
+/// box, and a person asking for a role cannot put themselves on it.
+///
+/// Applied on LOGIN as well as registration, and that is the point. Doing it only at
+/// registration means an operator who adds an address to the spec and redeploys
+/// changes nothing for an account that already exists — the person stays an attendee
+/// and there is no way in the app to fix it. Idempotent, so a login costs one
+/// no-op write.
+fn grant_configured_roles(email: &str, subject: &str) {
+    if organizer_emails().iter().any(|e| e.eq_ignore_ascii_case(email)) {
+        let _ = rbac::assign_role(TENANT, subject, "organizer");
+    }
+}
+
+/// Who gets `organizer` when they register. Empty unless the deployment says so.
+fn organizer_emails() -> Vec<String> {
+    bindings::wasi::config::store::get("organizer-emails")
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .split(',')
+        .map(|e| e.trim().to_string())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
+/// Is the fixture allowed to run at all?
+///
+/// It registers three people and hands their bearers back, which is exactly what a
+/// gate needs and exactly what nobody else may have. It was compiled into the
+/// artifact that got deployed to a real box, where the SPA called it on load — so
+/// the app had no login screen because it did not need one, and neither did anyone
+/// else who could reach the URL.
+///
+/// Absent is OFF. A switch whose entire purpose is to be off in production must not
+/// depend on somebody remembering to turn it off.
+fn test_routes_allowed() -> bool {
+    bindings::wasi::config::store::get("allow-test-routes")
+        .ok()
+        .flatten()
+        .is_some_and(|v| v == "1" || v == "true")
+}
+
+/// Sign up. Anyone may, and a new account is an `attendee` — the two roles that can
+/// do more are granted by an admin, never claimed by the person asking.
+fn register(body: &str) -> Reply {
+    let Ok(input) = serde_json::from_str::<Value>(body) else {
+        return Reply::err(400, "malformed_body");
+    };
+    let (email, password) = (
+        input["email"].as_str().unwrap_or_default().trim(),
+        input["password"].as_str().unwrap_or_default(),
+    );
+    if !email.contains('@') || password.len() < 8 {
+        return Reply::err(400, "invalid");
+    }
+    ensure_roles();
+    let principal = match accounts::register(email, password, TENANT) {
+        Ok(p) => p,
+        Err(AuthError::AlreadyExists) => return Reply::err(409, "already_registered"),
+        Err(_) => return Reply::err(500, "register_failed"),
+    };
+    if rbac::assign_role(TENANT, &principal.subject, "attendee").is_err() {
+        return Reply::err(500, "assign_failed");
+    }
+    grant_configured_roles(email, &principal.subject);
+    // Log in here rather than making the caller ask twice, and AFTER the role is
+    // assigned — a token minted before carries no roles and every route 403s.
+    match accounts::login(email, password, TENANT) {
+        Ok(t) => Reply::json(201, json!({ "token": t.access_token, "subject": principal.subject })),
+        Err(_) => Reply::err(500, "login_failed"),
+    }
+}
+
+fn login(body: &str) -> Reply {
+    let Ok(input) = serde_json::from_str::<Value>(body) else {
+        return Reply::err(400, "malformed_body");
+    };
+    let (email, password) = (
+        input["email"].as_str().unwrap_or_default().trim(),
+        input["password"].as_str().unwrap_or_default(),
+    );
+    ensure_roles();
+    // Before the token is minted, or it carries the roles from before the grant.
+    if let Ok(p) = accounts::verify_password(email, password, TENANT) {
+        grant_configured_roles(email, &p.subject);
+    }
+    match accounts::login(email, password, TENANT) {
+        Ok(t) => {
+            // The SPA needs to know which screen to draw, and asking it to decode a
+            // bearer to find out would put token parsing in a browser.
+            let roles = accounts::verify_password(email, password, TENANT)
+                .map(|p| p.roles)
+                .unwrap_or_default();
+            Reply::json(200, json!({ "token": t.access_token, "roles": roles }))
+        }
+        Err(AuthError::InvalidCredentials) => Reply::err(401, "bad_credentials"),
+        Err(_) => Reply::err(401, "bad_credentials"),
+    }
+}
+
+/// Three people, their roles, the permissions those roles carry, and one event —
+/// everything a part needs to be judged before the other three exist.
+///
+/// Returns the bearers, because a gate cannot mint one.
+fn seed() -> Reply {
+    ensure_roles();
 
     // `already-exists` is not a failure here: the fixture is called by four gates
     // and by the composition gate, and it has to be idempotent or the second call
@@ -336,6 +449,11 @@ impl Guest for Component {
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
+            ["api", "register"] => register(&body),
+            ["api", "login"] => login(&body),
+            // 404 rather than 403 when it is off: a route that is not there should
+            // not advertise that it exists somewhere else.
+            ["test", ..] if !test_routes_allowed() => Reply::err(404, "not_found"),
             ["test", "seed"] => seed(),
             // Scaffold, and it says what it is: a part must be judgeable on what it
             // WROTE without depending on the part that owns the read route. The
