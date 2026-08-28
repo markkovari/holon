@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**207 components, 100 interfaces with a provider and at least one consumer, 434 import edges, 16 interfaces exported but unconsumed in-tree, 80 applications composed from them.**
+**208 components, 100 interfaces with a provider and at least one consumer, 438 import edges, 16 interfaces exported but unconsumed in-tree, 80 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -17,14 +17,14 @@ The number in the first column is the answer. One consumer means an edit; thirty
 
 | consumers | interface | provider | who imports it |
 | --: | --- | --- | --- |
-| 51 | `records:store/store` | `record-store` | `academic-review-domain`, `arena-domain`, `billing-ledger`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `csv-report`, `dashboards-domain`, `dev-portal`, `doc-search-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `freight-tracker-domain`, `gate-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `jobs-domain`, `link-shortener`, `lms-domain`, `mesh-domain`, `mfa-authgate`, `moderation-domain`, `passkey-domain`, `paste-bin`, `payees-domain`, `photosocial-domain`, `platform-domain`, `poll-domain`, `pulse-domain`, `real-estate-escrow-domain`, `saga-domain`, `scribe-domain`, `search-domain`, `smart-home-domain`, `stash-domain`, `status-page`, `studio-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `triage-domain`, `upload-drop`, `vet-domain`, `webhook-relay` |
-| 36 | `auth:identity/types` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
+| 52 | `records:store/store` | `record-store` | `academic-review-domain`, `arena-domain`, `billing-ledger`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `csv-report`, `dashboards-domain`, `dev-portal`, `doc-search-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `events-domain`, `freight-tracker-domain`, `gate-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `jobs-domain`, `link-shortener`, `lms-domain`, `mesh-domain`, `mfa-authgate`, `moderation-domain`, `passkey-domain`, `paste-bin`, `payees-domain`, `photosocial-domain`, `platform-domain`, `poll-domain`, `pulse-domain`, `real-estate-escrow-domain`, `saga-domain`, `scribe-domain`, `search-domain`, `smart-home-domain`, `stash-domain`, `status-page`, `studio-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `triage-domain`, `upload-drop`, `vet-domain`, `webhook-relay` |
+| 37 | `auth:identity/types` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `events-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
 | 35 | `auth:identity/authorizer` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `eshop-basket`, `eshop-ordering`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `power-domain`, `real-estate-escrow-domain`, `reddit-domain`, `sample-consumer`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
 | 28 | `auth:identity/session` | `auth-guard` | `academic-review-domain`, `accounts-app`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `doc-search-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `invoice-copilot-domain`, `lms-domain`, `moderation-domain`, `payees-domain`, `photosocial-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `support-desk-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `treasury-ledger-domain`, `triage-assist-domain`, `vet-domain` |
-| 25 | `auth:identity/accounts` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
+| 26 | `auth:identity/accounts` | `auth-guard` | `academic-review-domain`, `accounts-app`, `binder-domain`, `booked-domain`, `books-domain`, `buzz-domain`, `clinic-domain`, `conduit-domain`, `dashboards-domain`, `dev-portal`, `device-radar-domain`, `events-domain`, `freight-tracker-domain`, `health-records-domain`, `helpdesk-domain`, `lms-domain`, `payees-domain`, `photosocial-domain`, `platform-domain`, `real-estate-escrow-domain`, `smart-home-domain`, `stash-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
 | 14 | `event:bus/bus` | `event-bus` | `abtest-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `eshop-payment`, `flags-domain`, `moderation-domain`, `pipeline-domain`, `pulse-domain`, `saga-domain`, `status-page`, `throttle-domain`, `track-domain`, `vet-domain` |
 | 14 | `id:generate/generator` | `id-generate` | `abtest-domain`, `arena-domain`, `binder-domain`, `clinic-domain`, `dev-portal`, `flags-domain`, `helpdesk-domain`, `link-shortener`, `pipeline-domain`, `poll-domain`, `pulse-domain`, `saga-domain`, `scribe-domain`, `throttle-domain` |
-| 10 | `auth:identity/rbac` | `auth-guard` | `accounts-app`, `booked-domain`, `dev-portal`, `helpdesk-domain`, `lms-domain`, `photosocial-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
+| 11 | `auth:identity/rbac` | `auth-guard` | `accounts-app`, `booked-domain`, `dev-portal`, `events-domain`, `helpdesk-domain`, `lms-domain`, `photosocial-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
 | 8 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
 | 8 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `invoice-copilot-domain`, `jobs-domain`, `saga-domain`, `treasury-ledger-domain`, `webhook-ingest` |
 | 7 | `ai:inference/inference` | `ai-inference` | `doc-search-domain`, `invoice-copilot-domain`, `moderation-domain`, `support-desk-domain`, `track-domain`, `triage-assist-domain`, `vet-domain` |
@@ -124,10 +124,10 @@ The number in the first column is the answer. One consumer means an edit; thirty
 graph LR
   records_store_store(["records:store/store"])
   record_store[record-store] --> records_store_store
-  records_store_store --> many_records_store_store["51 consumers"]
+  records_store_store --> many_records_store_store["52 consumers"]
   auth_identity_types(["auth:identity/types"])
   auth_guard[auth-guard] --> auth_identity_types
-  auth_identity_types --> many_auth_identity_types["36 consumers"]
+  auth_identity_types --> many_auth_identity_types["37 consumers"]
   auth_identity_authorizer(["auth:identity/authorizer"])
   auth_guard[auth-guard] --> auth_identity_authorizer
   auth_identity_authorizer --> many_auth_identity_authorizer["35 consumers"]
@@ -136,7 +136,7 @@ graph LR
   auth_identity_session --> many_auth_identity_session["28 consumers"]
   auth_identity_accounts(["auth:identity/accounts"])
   auth_guard[auth-guard] --> auth_identity_accounts
-  auth_identity_accounts --> many_auth_identity_accounts["25 consumers"]
+  auth_identity_accounts --> many_auth_identity_accounts["26 consumers"]
   event_bus_bus(["event:bus/bus"])
   event_bus[event-bus] --> event_bus_bus
   event_bus_bus --> many_event_bus_bus["14 consumers"]
@@ -145,7 +145,7 @@ graph LR
   id_generate_generator --> many_id_generate_generator["14 consumers"]
   auth_identity_rbac(["auth:identity/rbac"])
   auth_guard[auth-guard] --> auth_identity_rbac
-  auth_identity_rbac --> many_auth_identity_rbac["10 consumers"]
+  auth_identity_rbac --> many_auth_identity_rbac["11 consumers"]
   fsm_workflow_engine(["fsm:workflow/engine"])
   fsm_workflow[fsm-workflow] --> fsm_workflow_engine
   fsm_workflow_engine --> many_fsm_workflow_engine["8 consumers"]
