@@ -24,6 +24,7 @@
 #[allow(warnings)]
 mod bindings;
 mod checkin;
+mod store;
 mod events;
 mod swaps;
 mod tickets;
@@ -203,10 +204,26 @@ fn seed() -> Reply {
     // that does exactly that. One place and two claimants is the smallest shape
     // that can tell the two implementations apart.
     let organizer = tokens["organizer"]["subject"].as_str().unwrap_or_default().to_string();
+    //
+    // Find-or-create by title, because the fixture is called by five gates AND by
+    // every pane of the screencast. Creating unconditionally made each caller add
+    // two more events: the door showed the same evening four times, and a gate that
+    // seeded twice was reading a different event from the one it had just claimed
+    // against.
+    let existing = records::find_by("events", "state", "\"open\"").unwrap_or_default();
     let mut made = Vec::new();
     for (title, capacity) in
         [("Rust, Wasm and a Free Drink", 3), ("The Last Seat In The House", 1)]
     {
+        if let Some(found) = existing.iter().find(|e| {
+            serde_json::from_str::<serde_json::Value>(&e.data)
+                .ok()
+                .and_then(|d| d["title"].as_str().map(|t| t == title))
+                .unwrap_or(false)
+        }) {
+            made.push(found.id.clone());
+            continue;
+        }
         match records::create(
             "events",
             &json!({
