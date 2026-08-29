@@ -234,17 +234,8 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);
 
-fn bearer_token(request: &IncomingRequest) -> Option<String> {
-    let headers = request.headers();
-    for v in headers.get("authorization") {
-        if let Ok(s) = String::from_utf8(v) {
-            if let Some(tok) = s.strip_prefix("Bearer ") {
-                return Some(tok.trim().to_string());
-            }
-        }
-    }
-    None
-}
+guestio::guest_bearer!();
+use bearer as bearer_token;
 
 // ---- responses ----------------------------------------------------------
 

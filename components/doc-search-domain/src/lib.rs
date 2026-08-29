@@ -36,6 +36,7 @@ use bindings::wasi::http::types::{
 use serde_json::{json, Value};
 
 guestio::guest_write_all!();
+guestio::guest_bearer!();
 
 struct Component;
 
@@ -101,8 +102,6 @@ pub fn cfg_u64(key: &str, default: u64) -> u64 {
 pub fn now_secs() -> u64 {
     wall_clock::now().seconds
 }
-
-use guestfmt::rfc3339;
 
 /// A token for a test caller, so no gate has to log in through a part it is not
 /// judging.
@@ -220,13 +219,6 @@ fn read_body(request: &IncomingRequest) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// One header, as a string. Absent, repeated or non-UTF8 all read as empty.
-fn header(request: &IncomingRequest, name: &str) -> String {
-    let fields = request.headers();
-    let values = fields.get(name);
-    values.first().map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default()
-}
-
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
         let path = request.path_with_query().unwrap_or_else(|| "/".into());
@@ -234,10 +226,7 @@ impl Guest for Component {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
         };
-        let bearer = header(&request, "authorization")
-            .strip_prefix("Bearer ")
-            .unwrap_or_default()
-            .to_string();
+        let bearer = bearer(&request).unwrap_or_default();
         let route = Route {
             segments: raw_path.split('/').filter(|s| !s.is_empty()).map(percent).collect(),
             query,

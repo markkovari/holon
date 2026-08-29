@@ -50,6 +50,8 @@ use base64::Engine as _;
 
 use manifest::{HostIface, ManifestInput, Part, Plan, Strategy};
 
+guestio::guest_bearer!();
+
 struct Component;
 
 const ACCOUNTS: &str = "tenants";
@@ -284,10 +286,7 @@ fn login(request: &IncomingRequest) -> Outcome {
 
 /// The verified caller. Roles come from the RBAC store, never from the token.
 fn caller(request: &IncomingRequest) -> Option<auth_types::Principal> {
-    let raw = request.headers().get("authorization");
-    let header = String::from_utf8(raw.into_iter().next()?).ok()?;
-    let token = header.strip_prefix("bearer ").or_else(|| header.strip_prefix("Bearer "))?.trim();
-    authorizer::introspect(token).ok()
+    authorizer::introspect(&bearer(request)?).ok()
 }
 
 fn me(request: &IncomingRequest) -> Outcome {
