@@ -3,7 +3,8 @@
 //! What a consumer needs in order to adopt a component WITHOUT reading its source:
 //! the WIT package and exports, the dependency footprint, the `wasi:config` knobs it
 //! reads, and the one-line description from its module doc. Written as
-//! `components/catalog.json` for tooling and `components/CATALOG.md` for people.
+//! Printed as JSON with `--json`, and rendered into `components/CATALOG.md` for
+//! people. Deliberately NOT a committed `catalog.json`: see the note in `main`.
 //!
 //! ## Why this is not `comp-capgraph`
 //!
@@ -326,10 +327,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let entries: Vec<Entry> = dirs.iter().filter_map(|d| scan(d, &res)).collect();
 
-    std::fs::write(
-        components.join("catalog.json"),
-        serde_json::to_string_pretty(&entries)? + "\n",
-    )?;
+    // `--json` prints; nothing writes a `catalog.json`.
+    //
+    // There was one, committed, "for tooling" — and by the time `capsearch` stopped
+    // reading it, the only things left reading it were the tests checking whether it
+    // had gone stale. A file that exists to be verified rather than used is a
+    // liability with a guard bolted on: the guard exists because the file does.
+    //
+    // The component IS the source of truth. This reads them and answers; a caller
+    // that wants the answer runs it. That costs about a second and cannot drift.
+    if std::env::args().any(|a| a == "--json") {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
 
     let groups: [(&str, &str, &str); 4] = [
         ("capability", "Capabilities — reusable as-is",
@@ -399,6 +409,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     lines.push(String::new());
     std::fs::write(components.join("CATALOG.md"), lines.join("\n"))?;
 
-    println!("{n} components -> components/CATALOG.md + catalog.json");
+    println!("{n} components -> components/CATALOG.md");
     Ok(())
 }

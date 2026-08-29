@@ -159,28 +159,25 @@ fn no_build_output_is_tracked() {
 
 /// The committed catalogue says what the components say.
 ///
-/// It could not, until now. `catalog.json` carried `wasm_size_bytes` and
-/// `wasm_sha256_12`, read straight from the built artifact — so the file was stale
-/// the moment anybody ran `just build`, for reasons that had nothing to do with the
-/// catalogue. A staleness guard was impossible while the content depended on the
-/// last build, which is why there was never one.
+/// `components/CATALOG.md` is the one derived file still committed, and it is
+/// committed for a reason nothing else here has: it is READ BY PEOPLE, on GitHub,
+/// without running anything. Its companion `catalog.json` was committed "for
+/// tooling" and is gone — once `capsearch` stopped reading it, the only things left
+/// reading it were the tests checking whether it had gone stale, which is a file
+/// existing to be verified rather than used.
 ///
-/// Nothing read those two fields. The capability graph carries a full
-/// `artifact.digest`, recomputed on every projection and never committed, and that
-/// is what a question about the bytes should be asked of. With them gone the
-/// catalogue is a function of the SOURCE, and can therefore be checked.
-///
-/// Verified by regenerating either side of a full rebuild: byte-identical.
+/// Neither could be checked at all until the build output came out of them: they
+/// carried `wasm_size_bytes` and `wasm_sha256_12` from the last build, so they were
+/// stale the moment anybody ran `just build`, for reasons having nothing to do with
+/// the catalogue. That is why there was never a guard.
 #[test]
 fn the_committed_catalogue_is_not_stale() {
     let root = root();
-    let catalogue = root.join("components/catalog.json");
-    if !catalogue.exists() {
+    let markdown = root.join("components/CATALOG.md");
+    if !markdown.exists() {
         return;
     }
-    let before = std::fs::read(&catalogue).expect("catalog.json is unreadable");
-    let markdown = root.join("components/CATALOG.md");
-    let before_md = std::fs::read(&markdown).unwrap_or_default();
+    let before = std::fs::read(&markdown).expect("CATALOG.md is unreadable");
 
     // `CARGO_BIN_EXE_` rather than a path: cargo builds the binary as a prerequisite
     // of this test, so the check cannot pass by running a stale one.
@@ -194,18 +191,15 @@ fn the_committed_catalogue_is_not_stale() {
         return;
     }
 
-    let after = std::fs::read(&catalogue).expect("catalog.json is unreadable");
-    let after_md = std::fs::read(&markdown).unwrap_or_default();
-    // Put it back before asserting: a failing test must not leave the tree dirty,
-    // or the next thing to run sees a change nobody made.
-    let _ = std::fs::write(&catalogue, &before);
-    let _ = std::fs::write(&markdown, &before_md);
+    let after = std::fs::read(&markdown).expect("CATALOG.md is unreadable");
+    // Put it back before asserting: a failing test must not leave the tree dirty, or
+    // the next thing to run sees a change nobody made.
+    let _ = std::fs::write(&markdown, &before);
 
     assert!(
-        before == after && before_md == after_md,
-        "the committed catalogue disagrees with the components — run \
-         `comp-catalog`.\nIt is derived from their sources, so a \
-         component changed and the catalogue did not."
+        before == after,
+        "components/CATALOG.md disagrees with the components — run `just catalog`.\n\
+         It is derived from their sources, so a component changed and the render did not."
     );
 }
 
