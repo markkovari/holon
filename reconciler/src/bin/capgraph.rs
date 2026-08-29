@@ -389,6 +389,25 @@ fn lit(s: &str) -> String {
 /// projection that is briefly doubled degrades a ranking; a projection that is
 /// briefly empty looks exactly like a codebase nobody has ever learned anything
 /// about, which is the wrong answer rather than a slow one.
+/// The commit this projection was derived from, or `""` when git cannot say.
+///
+/// Empty rather than absent on failure: a generation row with no commit still
+/// answers "did the counts move", which is most of the value. Refusing to write
+/// one because git is unavailable would lose the whole row to a missing label.
+fn head_commit() -> String {
+    let Ok(out) = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(comp_reconciler::fleet::repo_root())
+        .output()
+    else {
+        return String::new();
+    };
+    if !out.status.success() {
+        return String::new();
+    }
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
     let mut out = String::new();
     out.push_str(&format!(
@@ -407,6 +426,7 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
             interfaces.extend(surface.imports.iter().cloned());
         }
     }
+    let n_interfaces = interfaces.len();
     for iface in &interfaces {
         let exporter = catalog.exporter(iface).unwrap_or("");
         out.push_str(&format!(
@@ -422,7 +442,9 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
     // is retrieved by interface so that it survives a rebuild, and stamped with
     // the digest it was learned against so that "has this changed underneath the
     // lesson" stays an answerable question rather than an assumption (ADR-0091).
+    let mut n_artifacts = 0usize;
     for name in catalog.names() {
+        n_artifacts += 1;
         let digest = catalog.bytes(name).map(comp_reconciler::oci::digest_of).unwrap_or_default();
         out.push_str(&format!(
             "UPSERT {} SET name = {}, digest = {}, gen = {generation};\n",
@@ -446,12 +468,14 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
     }
 
     // Edges.
+    let (mut n_imports, mut n_exports, mut n_carries) = (0usize, 0usize, 0usize);
     for name in catalog.names() {
         let Some(surface) = catalog.surface(name) else {
             continue;
         };
         for (table, ifaces) in [("imports", &surface.imports), ("exports", &surface.exports)] {
             for iface in ifaces.iter() {
+                if table == "imports" { n_imports += 1 } else { n_exports += 1 }
                 out.push_str(&format!(
                     "RELATE {}->{}->{} SET gen = {generation};\n",
                     rid("artifact", name),
@@ -473,6 +497,7 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
             parts.push(app.root.clone());
         }
         for part in parts {
+            n_carries += 1;
             out.push_str(&format!(
                 "RELATE {}->{}->{} SET gen = {generation};\n",
                 rid("app", &app.name),
@@ -541,6 +566,44 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
              RELATE $from->about->$to SET gen = {generation};\n    \
            }};\n\
          }};\n"
+    ));
+
+    // What this build WAS — the one row a rebuild adds and can never take away.
+    //
+    // Everything else here is a projection of *now*: rewritten whole, stamped, and
+    // aged out below, so the store answers "what is the graph" and cannot answer
+    // "what did it used to be". That was fine while the graph was a report someone
+    // read. It stops being fine the moment anyone asks whether the graph MOVED —
+    // and there is no cheaper place to answer that than at the point the counts are
+    // already in hand.
+    //
+    // A third category, and worth naming as one. `memory` is accumulated and the
+    // rebuild may not touch it. The seven derived tables are recomputable and the
+    // rebuild owns them. This is accumulated — a past build's counts cannot be
+    // recovered once lost — and yet the rebuild is the only thing that can write it.
+    // What keeps that safe is the id: keyed by generation, so an UPSERT can reach
+    // exactly the row this run is writing and no other. Same argument the delete
+    // below rests on, pointed the other way.
+    //
+    // UPSERT and not CREATE so that re-projecting one generation is idempotent
+    // rather than an error — `just capgraph-store` twice in the same second is a
+    // re-run of one build, not two builds.
+    //
+    // One row per build, ~10 fields. Unbounded in principle; at a projection per CI
+    // run it is the cheapest table in the database by three orders of magnitude,
+    // and it is the only one that would notice if the projection stopped running.
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    out.push_str(&format!(
+        "\n-- This build, kept. Never aged out: it is the only history the store has.\n\
+         UPSERT {} SET gen = {generation}, at = {at}, commit = {}, \
+         interfaces = {n_interfaces}, artifacts = {n_artifacts}, apps = {}, \
+         imports = {n_imports}, exports = {n_exports}, carries = {n_carries};\n",
+        rid("generation", &generation.to_string()),
+        lit(&head_commit()),
+        apps.len(),
     ));
 
     out.push_str("\n-- Age out the previous generation. Seven derived tables, and only\n");
@@ -771,6 +834,13 @@ mod tests {
         const DERIVED: &[&str] =
             &["interface", "artifact", "app", "imports", "exports", "carries", "about"];
 
+        /// Written by the rebuild, never recomputable, and never deleted by it.
+        /// The safety is in the key, not in the verb: `generation:<gen>` means an
+        /// UPSERT can only reach the row this run is writing, so a rebuild cannot
+        /// rewrite a build that already happened. `DELETE` is checked separately
+        /// below, because that is the verb that could lose one.
+        const APPEND_ONLY: &[&str] = &["generation"];
+
         let mut mutations = 0usize;
         for statement in out.lines().filter(|l| !l.trim_start().starts_with("--")) {
             let mut words = statement.split_whitespace();
@@ -787,6 +857,14 @@ mod tests {
                 if verb == "RELATE" { rest.split("->").nth(1).unwrap_or_default() } else { rest };
             let table = target.split([':', '⟨']).next().unwrap_or_default().trim_start_matches('$');
             mutations += 1;
+            if APPEND_ONLY.contains(&table) {
+                assert!(
+                    verb != "DELETE" && verb != "REMOVE",
+                    "a {verb} targets {table:?} — the rebuild may ADD a generation and may \
+                     never remove one, or the store loses the only history it has:\n  {statement}"
+                );
+                continue;
+            }
             assert!(
                 DERIVED.contains(&table),
                 "a {verb} targets {table:?}, which is not a derived table — a rebuild must \
@@ -863,9 +941,12 @@ mod tests {
             "two generations share an edge id — the second RELATE will be refused"
         );
 
+        // `generation` is excluded on purpose, and asserted separately below: its id
+        // MUST move, because one row per build is the entire point of the table.
+        // Nothing points at it, so nothing can dangle.
         let node_ids = |s: &str| {
             s.lines()
-                .filter(|l| l.starts_with("UPSERT"))
+                .filter(|l| l.starts_with("UPSERT") && !l.starts_with("UPSERT generation"))
                 .map(|l| l.split_whitespace().nth(1).unwrap_or_default().to_string())
                 .collect::<BTreeSet<_>>()
         };
@@ -873,6 +954,22 @@ mod tests {
             node_ids(&one),
             node_ids(&two),
             "node ids moved between generations — anything pointing at one would dangle"
+        );
+
+        // The mirror image, and the reason the exclusion above is safe rather than
+        // convenient: two builds must land in two rows. A `generation` id that did
+        // NOT move would mean each build silently overwrote the last one, and the
+        // table would hold one row forever while appearing to work.
+        let gen_ids = |s: &str| {
+            s.lines()
+                .filter(|l| l.starts_with("UPSERT generation"))
+                .map(|l| l.split_whitespace().nth(1).unwrap_or_default().to_string())
+                .collect::<BTreeSet<_>>()
+        };
+        assert_eq!(gen_ids(&one).len(), 1, "a build must write exactly one generation row");
+        assert!(
+            gen_ids(&one).is_disjoint(&gen_ids(&two)),
+            "two builds share a generation id — the second would overwrite the first"
         );
     }
 }
