@@ -672,28 +672,7 @@ fn serve_static(route: &str) -> Outcome {
 /// reaches the caller as a closed connection saying nothing about a size.
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 
-fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
-    let body = request.consume().map_err(|_| ())?;
-    let stream = body.stream().map_err(|_| ())?;
-    let mut buf = Vec::new();
-    loop {
-        match stream.blocking_read(8192) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                if buf.len() + chunk.len() > MAX_BODY_BYTES {
-                    return Err(());
-                }
-                buf.extend_from_slice(&chunk);
-            }
-            // `Closed` is end-of-body; anything else is a read that went wrong.
-            // Collapsing both into `break` returns a TRUNCATED body as if it were
-            // complete — for a goal spec that means proposing half a document.
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => return Err(()),
-        }
-    }
-    Ok(buf)
-}
+guestio::guest_read_body!(MAX_BODY_BYTES);
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
     request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())

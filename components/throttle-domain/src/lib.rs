@@ -299,32 +299,7 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 /// content policy; an API that needs a real limit should state its own and say 413.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
-    let body = request.consume().map_err(|_| ())?;
-    let stream = body.stream().map_err(|_| ())?;
-    let mut buf = Vec::new();
-    loop {
-        match stream.blocking_read(8192) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                // A ceiling, not a policy: past this the read stops and the caller
-                // is told, rather than growing until the store's memory cap traps
-                // the component and the connection just closes.
-                if buf.len() + chunk.len() > MAX_BODY_BYTES {
-                    return Err(());
-                }
-                buf.extend_from_slice(&chunk);
-            }
-            // `Closed` is how wasi:io says end-of-body; `LastOperationFailed` is a
-            // read that went wrong. Collapsing both into `break` returns a TRUNCATED
-            // body as if it were complete — the same silent truncation that, on the
-            // write side, took four runs to find.
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => return Err(()),
-        }
-    }
-    Ok(buf)
-}
+guestio::guest_read_body!(MAX_BODY_BYTES);
 
 fn query_str(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
