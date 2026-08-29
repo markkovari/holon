@@ -6,6 +6,7 @@ version = 4
 name = "abtest-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -242,6 +243,7 @@ dependencies = [
 name = "binder-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "serde",
  "serde_json",
  "wit-bindgen-rt",
@@ -408,6 +410,7 @@ dependencies = [
 name = "clinic-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -437,6 +440,7 @@ dependencies = [
 name = "conduit-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -462,6 +466,7 @@ dependencies = [
 name = "console-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -485,6 +490,7 @@ dependencies = [
 name = "contract-probe"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "wit-bindgen-rt",
 ]
 
@@ -582,6 +588,7 @@ dependencies = [
 name = "csv-report"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -695,6 +702,7 @@ dependencies = [
 name = "doc-search-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -826,6 +834,7 @@ dependencies = [
 name = "events-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde_json",
  "wit-bindgen-rt",
@@ -880,6 +889,7 @@ checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
 name = "flags-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1024,6 +1034,7 @@ dependencies = [
 name = "graph-probe"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "wit-bindgen-rt",
 ]
 
@@ -1054,6 +1065,10 @@ dependencies = [
  "rand_core",
  "subtle",
 ]
+
+[[package]]
+name = "guestfmt"
+version = "0.1.0"
 
 [[package]]
 name = "guestio"
@@ -1317,6 +1332,7 @@ dependencies = [
 name = "invoice-copilot-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1557,6 +1573,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "memory-probe"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "wit-bindgen-rt",
 ]
 
@@ -1619,6 +1636,7 @@ dependencies = [
 name = "moderation-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1913,6 +1931,7 @@ name = "platform-domain"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "guestfmt",
  "p256",
  "serde",
  "serde_json",
@@ -2224,6 +2243,7 @@ dependencies = [
 name = "search-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2487,6 +2507,7 @@ dependencies = [
 name = "studio-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "serde",
  "serde_json",
  "wit-bindgen-rt",
@@ -2502,6 +2523,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 name = "support-desk-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2596,6 +2618,7 @@ dependencies = [
 name = "throttle-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2629,6 +2652,7 @@ dependencies = [
 name = "track-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2649,6 +2673,7 @@ dependencies = [
 name = "treasury-ledger-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2659,6 +2684,7 @@ dependencies = [
 name = "triage-assist-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2669,6 +2695,7 @@ dependencies = [
 name = "triage-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2712,6 +2739,7 @@ dependencies = [
 name = "upload-drop"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2772,6 +2800,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vet-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2782,6 +2811,7 @@ dependencies = [
 name = "vgit-probe"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "serde_json",
  "wit-bindgen-rt",
 ]

@@ -95,24 +95,7 @@ fn split_query(path: &str) -> (String, Map<String, Value>) {
     (route, q)
 }
 
-/// Enough of percent-decoding for a component id in a query string.
-fn percent_decode(s: &str) -> String {
-    let bytes = s.replace('+', " ").into_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&String::from_utf8_lossy(&bytes[i + 1..i + 3]), 16) {
-                out.push(b);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).to_string()
-}
+use guestfmt::percent_decode;
 
 fn usage() -> Outcome {
     Outcome::Json(
