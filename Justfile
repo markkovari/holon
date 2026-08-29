@@ -3131,6 +3131,11 @@ ci-local:
     # The four suites the components job runs, on a COLD compose cache — which is
     # what CI has and what found the race.
     step "reconciler (components job): eight suites, on a cold compose cache"
+    # Same reason as ci.yml's fetch step: the surfaces guard compares against the
+    # base branch, and a checkout that has never fetched main has nothing to
+    # compare against — it would skip here and fail in CI, which is the worst
+    # order to discover it in.
+    git fetch --depth=1 -q origin main:refs/remotes/origin/main 2>/dev/null || true
     rm -rf components/target/composed
     (cd reconciler && cargo test --release --test capsearch --test contracts --test publish --test secrets \
         --test capgraph_edges --test capgraph_store --test console_session --test compose_race \
