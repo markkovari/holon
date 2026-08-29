@@ -23,14 +23,14 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **anthropic-vision** | `vision:describe@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `anthropic-api-key` | 128 KiB |
 | **artifact-cache** | `artifact:cache@0.1.0` | blob:store/blobstore, comp:store/cas, config/store, kv:store | `artifact-container`, `artifact-claim-secs` | 84 KiB |
 | **audit-log** | `audit:log@0.1.0` | kv:store | — | 119 KiB |
-| **auth-guard** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `session-ttl`, `password-min-len`, `jwks-cache-ttl`, `default-tenant`, `expected-issuer`, `expected-audience`, `allowed-algs`, `clock-skew`, `audit-enabled`, `hs256-secret` | 444 KiB |
+| **auth-guard** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `session-ttl`, `password-min-len`, `jwks-cache-ttl`, `default-tenant`, `expected-issuer`, `expected-audience`, `allowed-algs`, `clock-skew`, `audit-enabled`, `hs256-secret` | 445 KiB |
 | **bench-suite-p3** | `bench:suite-p3@0.1.0` | http/types | — | — |
 | **blob-store** | `blob:store@0.1.0` | kv:store | — | 74 KiB |
 | **bytes-codec** | `bytes:codec@0.1.0` | pure compute | — | 63 KiB |
-| **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 75 KiB |
+| **cache** | `cache:store@0.1.0` | sink, source, kv:store | — | 76 KiB |
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — | 62 KiB |
 | **calc** | `demo:calc@0.1.0` | pure compute | — | 47 KiB |
-| **card-identify** | `card:identify@0.1.0` | pure compute | — | 142 KiB |
+| **card-identify** | `card:identify@0.1.0` | pure compute | — | 143 KiB |
 | **checks-runner** | `checks:runner@0.1.0` | config/store, http/outgoing-handler | `checks-url` | 175 KiB |
 | **config-store** | `config:store@0.1.0` | kv:store | — | 121 KiB |
 | **console-assets** | `ui:assets@0.1.0` | pure compute | — | 408 KiB |
@@ -47,7 +47,7 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **eshop-gateway** | `eshop:gateway@0.1.0` | proxy:route/router | — | 77 KiB |
 | **eshop-ordering** | `eshop:ordering@0.1.0` | auth:identity/authorizer, auth:identity/types, event:bus/bus, fsm:workflow/engine, idempotency:guard/store, records:store/store, config/store | `grace-period-secs`, `authorization` | 188 KiB |
 | **eshop-payment** | `eshop:payment@0.1.0` | event:bus/bus, config/store | `payment-succeeds` | 107 KiB |
-| **event-bus** | `event:bus@0.1.0` | kv:atomics, kv:store | — | 86 KiB |
+| **event-bus** | `event:bus@0.1.0` | kv:atomics, kv:store | — | 87 KiB |
 | **event-pusher** | `event:push@0.1.0` | proxy:route/router, config/store | `push-targets` | 50 KiB |
 | **experiment-assign** | `experiment:assign@0.1.0` | kv:store | — | 74 KiB |
 | **expr** | `demo:expr@0.1.0` | pure compute | — | 48 KiB |
@@ -63,7 +63,7 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **i18n-catalog** | `i18n:catalog@0.1.0` | config/store, kv:store | `default-locale` | 76 KiB |
 | **iban** | `iban:validate@0.1.0` | pure compute | — | 59 KiB |
 | **ical** | `ical:codec@0.1.0` | pure compute | — | 56 KiB |
-| **id-generate** | `id:generate@0.1.0` | pure compute | — | 54 KiB |
+| **id-generate** | `id:generate@0.1.0` | pure compute | — | 55 KiB |
 | **idempotency-guard** | `idempotency:guard@0.1.0` | config/store, kv:store | `default-ttl` | 81 KiB |
 | **inproc-workflow** | `inproc:workflow@0.1.0` | pure compute | — | 76 KiB |
 | **iot-scanner** | `iot:scanner@0.1.0` | http/outgoing-handler | — | 81 KiB |
@@ -76,7 +76,7 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **mail-http** | `mail:send@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `mail-api-key`, `id`, `message_id` | 128 KiB |
 | **markdown** | `md:render@0.1.0` | pure compute | — | 80 KiB |
 | **metrics-collect** | `metrics:collect@0.1.0` | kv:atomics, kv:store | — | 70 KiB |
-| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 166 KiB |
+| **mfa-authgate** | `mfa:app@0.1.0` | otp:totp/authenticator, qr:encode/encoder, records:store/store, secrets:vault/vault, session:store/store | — | 167 KiB |
 | **money** | `money:amount@0.1.0` | pure compute | — | 56 KiB |
 | **notify-dispatch** | `notify:dispatch@0.1.0` | config/store, http/outgoing-handler | — | 90 KiB |
 | **notify-inbox** | `notify:inbox@0.1.0` | kv:atomics, kv:store | — | 112 KiB |
@@ -92,7 +92,7 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **pii-redact** | `pii:redact@0.1.0` | pure compute | — | 73 KiB |
 | **policy-guard** | `policy:guard@0.1.0` | kv:store | — | 150 KiB |
 | **portfolio-value** | `portfolio:value@0.1.0` | pure compute | — | 77 KiB |
-| **price-history** | `price:history@0.1.0` | pure compute | — | 60 KiB |
+| **price-history** | `price:history@0.1.0` | pure compute | — | 61 KiB |
 | **proxy-route** | `proxy:route@0.1.0` | config/store, http/outgoing-handler | `routes`, `content-type` | 102 KiB |
 | **qr** | `qr:encode@0.1.0` | pure compute | — | 76 KiB |
 | **quiz-grade** | `quiz:grade@0.1.0` | pure compute | — | 51 KiB |
@@ -101,7 +101,7 @@ Each one exports its contract and imports only generic WASI, so it drops into an
 | **record-store** | `records:store@0.1.0` | comp:store/cas, kv:batch, kv:store | — | 207 KiB |
 | **resilience** | `resilience:breaker@0.1.0` | pure compute | — | 16 KiB |
 | **roman** | `demo:roman@0.1.0` | pure compute | — | 46 KiB |
-| **rot13** | `demo:rot13@0.1.0` | pure compute | — | 45 KiB |
+| **rot13** | `demo:rot13@0.1.0` | pure compute | — | 46 KiB |
 | **rrule** | `rrule:recur@0.1.0` | pure compute | — | 56 KiB |
 | **scheduler-timer** | `sched:timer@0.1.0` | kv:atomics, kv:store | — | 92 KiB |
 | **search-index** | `search:index@0.1.0` | kv:store | — | 96 KiB |
@@ -186,7 +186,7 @@ A whole app, or a demo of one. Listed because it is in the tree and because its 
 | **saga-domain** | `saga:app@0.1.0` | event:bus/bus, fsm:workflow/engine, id:generate/generator, idempotency:guard/store, records:store/store, sched:timer/timer, http/outgoing-handler | — | 186 KiB |
 | **sample-consumer** | `auth:identity@0.1.0` | accounts, audit:log/recorder, authorizer, ratelimit:guard/limiter, rbac, session, config/store, http/outgoing-handler, kv:atomics, kv:store | `authorization` | 82 KiB |
 | **scribe-domain** | `scribe:app@0.1.0` | crdt:merge/merger, diff:text/differ, id:generate/generator, records:store/store | — | 171 KiB |
-| **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 149 KiB |
+| **search-domain** | `search:app@0.1.0` | cache:store/cache, id:generate/generator, metrics:collect/collector, paginate:cursor/cursors, records:store/store, search:index/index | — | 150 KiB |
 | **smart-home-domain** | `smart-home:smart-home` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, records:store/store, kv:store | — | 146 KiB |
 | **stash-domain** | `stash:app@0.1.0` | auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, csv:codec/codec, records:store/store, zip:archive/archiver | — | 177 KiB |
 | **status-page** | `status:app@0.1.0` | event:bus/bus, fsm:workflow/engine, notify:dispatch/dispatcher, records:store/store, sched:timer/timer, http/outgoing-handler | — | 183 KiB |
@@ -229,12 +229,12 @@ Built to exercise one capability from the outside and prove it is linkable. Reus
 | component | package | deps | config knobs | size |
 |---|---|---|---|--:|
 | **adversary** | `probe:adversary@0.1.0` | http/outgoing-handler, kv:batch, kv:store | — | 73 KiB |
-| **agent-probe** | `comp:agentprobe@0.1.0` | graph:agent/writer | — | 112 KiB |
+| **agent-probe** | `comp:agentprobe@0.1.0` | graph:agent/writer | — | 113 KiB |
 | **artifact-probe** | `comp:artifactprobe@0.1.0` | artifact:cache/store | — | 98 KiB |
 | **bigadd** | `demo:bigadd@0.1.0` | pure compute | — | 50 KiB |
 | **codec-probe** | `comp:codecprobe@0.1.0` | bytes:codec/codec | — | 90 KiB |
 | **contract-probe** | `comp:contractprobe@0.1.0` | contract:registry/registry | — | 74 KiB |
-| **demo** | `demo:shape@0.1.0` | pure compute | — | 54 KiB |
+| **demo** | `demo:shape@0.1.0` | pure compute | — | 55 KiB |
 | **demo-probe** | `demo:probe@0.1.0` | demo:shape/pager | — | 59 KiB |
 | **driver-probe** | `comp:driverprobe@0.1.0` | graph:run/driver | — | 120 KiB |
 | **fitness-probe** | `comp:fitnessprobe@0.1.0` | graph:fitness/evaluator | — | 115 KiB |
