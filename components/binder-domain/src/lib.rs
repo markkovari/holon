@@ -534,15 +534,7 @@ fn fail(out: ResponseOutparam, status: u16, why: &str) {
     json_out(out, status, &json!({ "error": why }));
 }
 
-/// The bearer token, or nothing. Only the one scheme: an app that also accepts a
-/// token in a query string has a token in somebody's server log.
-fn bearer(req: &IncomingRequest) -> Option<String> {
-    req.headers()
-        .get(&"authorization".to_string())
-        .into_iter()
-        .filter_map(|v| String::from_utf8(v).ok())
-        .find_map(|v| v.strip_prefix("Bearer ").map(str::to_string))
-}
+guestio::guest_bearer!();
 
 /// Who is asking. Every route below except `/`, `/health` and the two auth routes
 /// goes through here, and a route that forgets to is a route that reads somebody

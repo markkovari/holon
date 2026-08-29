@@ -565,14 +565,7 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);
 
-fn bearer(request: &IncomingRequest) -> Option<String> {
-    header(request, "authorization")
-        .and_then(|s| s.strip_prefix("Bearer ").map(|tok| tok.trim().to_string()))
-}
-
-fn header(request: &IncomingRequest, name: &str) -> Option<String> {
-    request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
-}
+guestio::guest_bearer!();
 
 // ---- responses --------------------------------------------------------------------
 

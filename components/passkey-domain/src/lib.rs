@@ -215,13 +215,7 @@ fn credential_view(v: &Value) -> Value {
 
 // ---- sessions ---------------------------------------------------------------
 
-fn bearer(request: &IncomingRequest) -> Option<String> {
-    let h = request.headers().get("authorization");
-    let raw = String::from_utf8(h.into_iter().next()?).ok()?;
-    raw.strip_prefix("bearer ")
-        .or_else(|| raw.strip_prefix("Bearer "))
-        .map(|t| t.trim().to_string())
-}
+guestio::guest_bearer!();
 
 /// The account this request is authenticated as, if any.
 fn session_user(request: &IncomingRequest) -> Option<String> {

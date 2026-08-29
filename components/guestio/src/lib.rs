@@ -126,3 +126,44 @@ macro_rules! guest_read_body {
         }
     };
 }
+
+/// Define the bearer-credential helper: find the header, hand the value to `guestfmt`.
+///
+/// The split is the point. Parsing an `Authorization` value is string work and
+/// belongs somewhere it can be unit-tested — `guestfmt::bearer_token` — and 24
+/// hand-written copies got the parsing wrong, not the lookup: twenty-two matched a
+/// literal `"Bearer "` when RFC 7235 makes the scheme case-insensitive, and sixteen
+/// left whitespace attached to the credential.
+///
+/// What genuinely needs a macro is the two lines around it, because `IncomingRequest`
+/// is a different type in every component.
+///
+/// EVERY value is tried, not just the first. `Fields::get` returns a list, and a
+/// request may legally carry more than one `authorization` header; the copies that
+/// took `.first()` would refuse a valid credential because something else got there
+/// first. Invalid UTF-8 skips that value rather than failing the lookup — a bearer
+/// token is ASCII by construction (RFC 6750's `b64token`), so a value that is not
+/// UTF-8 is not the credential being offered.
+///
+/// ```ignore
+/// use guestio::guest_bearer;
+/// guest_bearer!();     // defines `bearer(&IncomingRequest) -> Option<String>`
+/// ```
+#[macro_export]
+macro_rules! guest_bearer {
+    () => {
+        /// The bearer credential this request carries, if it carries one.
+        ///
+        /// Expanded by `guestio::guest_bearer!()`.
+        fn bearer(
+            request: &crate::bindings::wasi::http::types::IncomingRequest,
+        ) -> Option<String> {
+            request
+                .headers()
+                .get(&"authorization".to_string())
+                .into_iter()
+                .filter_map(|v| String::from_utf8(v).ok())
+                .find_map(|v| guestfmt::bearer_token(&v).map(str::to_string))
+        }
+    };
+}
