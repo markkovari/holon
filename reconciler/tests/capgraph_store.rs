@@ -418,3 +418,58 @@ fn the_index_survives_an_empty_pool_and_a_lesson_about_nothing() {
          two assertions above prove nothing"
     );
 }
+
+/// A rebuild adds a generation and takes none away.
+///
+/// The derived tables answer "what is the graph"; they are rewritten whole and
+/// aged out, so nothing in them can answer "did it move". `generation` is the one
+/// row a projection leaves behind, and the whole claim is that the NEXT projection
+/// does not take it back — which is a claim about a `DELETE` that runs seven times
+/// against seven other tables and must miss this one.
+///
+/// Asserted against a real database rather than against the emitted SQL, because
+/// the emitted SQL is where it already looks right: the unit test reads the
+/// statements, and this reads what survives them.
+#[test]
+fn a_rebuild_adds_a_generation_and_removes_none() {
+    let Some(db) = Store::start() else {
+        eprintln!("SKIPPED: docker could not start {SURREAL_IMAGE} — generations unverified");
+        return;
+    };
+
+    project(&db, 1);
+    let derived_after_one = db.count("artifact");
+    assert!(derived_after_one > 0, "the projection wrote no artifacts");
+    assert_eq!(db.count("generation"), 1, "the first projection recorded no generation");
+
+    project(&db, 2);
+    project(&db, 3);
+
+    assert_eq!(
+        db.count("generation"),
+        3,
+        "three builds did not leave three rows — either the id is not generation-scoped \
+         (each build overwriting the last) or the age-out is reaching this table"
+    );
+
+    // The other half, and the reason this is not just an append test: the DERIVED
+    // tables must NOT have grown. If they did, the age-out stopped working and the
+    // store now answers every unfiltered query with three graphs stacked on top of
+    // each other — which returns more rows rather than an error, and so looks fine.
+    assert_eq!(
+        db.count("artifact"),
+        derived_after_one,
+        "the derived half grew across generations — the age-out is not running, and \
+         every query that does not filter on `gen` is now silently wrong"
+    );
+
+    // The oldest row still says what it said. An UPSERT keyed by generation can
+    // only reach its own row; this is that claim, after two later builds.
+    let first = db.last("SELECT gen, artifacts FROM generation WHERE gen = 1;");
+    let row = first.as_array().and_then(|a| a.first().cloned()).unwrap_or_default();
+    assert_eq!(
+        row["artifacts"].as_u64(),
+        Some(derived_after_one as u64),
+        "generation 1's counts changed after later builds — the row is not immutable"
+    );
+}
