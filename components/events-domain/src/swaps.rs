@@ -110,6 +110,15 @@ fn accept(route: &Route, id: &str) -> Reply {
     if let Err(r) = save("swaps", &swap_entry, &swap) {
         return r;
     }
+    // The person who offered it is told it went. They are the only one who does not
+    // find out by looking at their own screen — the acceptor just did the thing.
+    crate::remind::tell(
+        swap["from"].as_str().unwrap_or_default(),
+        "ticket-swapped",
+        "Your ticket was taken",
+        "Someone accepted your swap offer. The ticket is theirs now.",
+        &json!({ "ticket_id": ticket_id }).to_string(),
+    );
     let mut out = swap;
     out["id"] = json!(swap_entry.id);
     Reply::json(200, out)

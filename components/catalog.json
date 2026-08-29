@@ -1419,11 +1419,15 @@
       "blob:store/blobstore",
       "fsm:workflow/engine",
       "id:generate/generator",
+      "notify:inbox/inbox",
+      "notify:prefs/preferences",
       "qr:encode/encoder",
       "quota:meter/meter",
       "records:store/store",
+      "sched:timer/timer",
       "upload:policy/gate",
-      "wasi:config/store"
+      "wasi:config/store",
+      "webhook:sign/signer"
     ],
     "config_keys": [
       {
@@ -1441,10 +1445,18 @@
       {
         "name": "content-type",
         "description": ""
+      },
+      {
+        "name": "stream-ticket-secret",
+        "description": ""
+      },
+      {
+        "name": "seqs",
+        "description": ""
       }
     ],
-    "wasm_size_bytes": 191338,
-    "wasm_sha256_12": "8d23bc2b9211",
+    "wasm_size_bytes": 253971,
+    "wasm_sha256_12": "dd03efda7678",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2729,8 +2741,8 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "wasm_size_bytes": 114897,
-    "wasm_sha256_12": "9ba5b132d0b1",
+    "wasm_size_bytes": 114851,
+    "wasm_sha256_12": "6ac88d21e2f5",
     "reusable_as_is": true,
     "unimplemented": false
   },

@@ -44,5 +44,15 @@ export const api = {
   checkin: (code: string) => call("/api/checkin", "POST", { code }),
   offerSwap: (ticketId: string) => call("/api/swaps", "POST", { ticket_id: ticketId }),
   swaps: () => call("/api/swaps"),
+  notifications: (after = 0) => call(`/api/notifications?after=${after}`),
+  unread: () => call("/api/notifications/unread"),
+  markRead: (seqs?: number[]) => call("/api/notifications/read", "POST", seqs ? { seqs } : { through: 0 }),
+  prefs: () => call("/api/prefs"),
+  putPrefs: (b: Json) => call("/api/prefs", "PUT", b),
+  // `EventSource` cannot send an Authorization header, so the stream is opened with
+  // a short-lived signed ticket minted by an authenticated POST instead of with the
+  // bearer — which in a query string would end up in every access log.
+  streamTicket: () => call("/api/notifications/stream-ticket", "POST", {}),
+  runReminders: () => call("/api/reminders/run", "POST", {}),
   acceptSwap: (id: string) => call(`/api/swaps/${id}/accept`, "POST", {}),
 };

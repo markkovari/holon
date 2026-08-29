@@ -2,11 +2,11 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <title>events — two users, one component</title>
+    <title>events — two users and a real mailbox</title>
     <style>
       html, body { margin: 0; height: 100%; background: #09090b; color: #fafafa;
         font: 14px ui-sans-serif, system-ui, -apple-system, sans-serif; }
-      .wrap { display: grid; grid-template-columns: 1fr 1fr; height: 100%; }
+      .wrap { display: grid; grid-template-columns: 1fr 1fr 0.9fr; height: 100%; }
       .pane { display: flex; flex-direction: column; min-width: 0;
         border-right: 1px solid #27272a; }
       .pane:last-child { border-right: 0; }
@@ -24,7 +24,7 @@
         <div class="bar">
           <span class="dot" style="background:#60a5fa"></span>
           <span class="who">Attendee</span>
-          <span class="sub">phone — claims a place, shows the code</span>
+          <span class="sub">holds a ticket, wants both channels</span>
         </div>
         <iframe id="attendee" src="/?as=attendee"></iframe>
       </div>
@@ -32,9 +32,17 @@
         <div class="bar">
           <span class="dot" style="background:#34d399"></span>
           <span class="who">Organizer</span>
-          <span class="sub">door — scans it, and refuses it twice</span>
+          <span class="sub">opens the event, ticks the clock</span>
         </div>
         <iframe id="organizer" src="/?as=organizer"></iframe>
+      </div>
+      <div class="pane">
+        <div class="bar">
+          <span class="dot" style="background:#f59e0b"></span>
+          <span class="who">Mailbox</span>
+          <span class="sub">MailHog — real SMTP, not a mock</span>
+        </div>
+        <iframe id="mail" src="http://127.0.0.1:8025/"></iframe>
       </div>
     </div>
   </body>

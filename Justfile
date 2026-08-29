@@ -1574,6 +1574,13 @@ host-events: compose-events build-events-ui
       --component ../{{events_composed}} --addr 0.0.0.0:3230 \
       --static-dir ../examples/events/dist
 
+# The 24-hour reminder, three panes, with a REAL mailbox in the third.
+# Prereq: `just mailhog &`, `just mail-relay &`, and a host started with
+# --config mail:gateway-url=http://127.0.0.1:3390/ --egress 127.0.0.1:3390
+screencast-events-reminder:
+    node tools/screencast/events-reminder.mjs
+    bash tools/screencast/to-gif.sh tools/screencast/videos/events-reminder/*.webm docs/media/events-reminder.gif 1000 10 3
+
 # Both users, side by side, on the real app. Prereq: `just host-events &`
 screencast-events:
     node tools/screencast/events.mjs

@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**212 components, 103 interfaces with a provider and at least one consumer, 450 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
+**212 components, 103 interfaces with a provider and at least one consumer, 454 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
 
 ## Can I change this interface?
 
@@ -39,23 +39,24 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 5 | `llm:inference/inference` | `anthropic-provider` | `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe`, `photosocial-domain` |
 | 5 | `notify:dispatch/dispatcher` | `notify-dispatch` | `dev-portal`, `status-page`, `support-desk-domain`, `track-domain`, `webhook-relay` |
 | 5 | `qr:encode/encoder` | `qr` | `binder-domain`, `events-domain`, `mfa-authgate`, `poll-domain`, `transit-domain` |
+| 5 | `webhook:sign/signer` | `webhook-sign` | `dev-portal`, `events-domain`, `track-domain`, `upload-drop`, `webhook-relay` |
 | 4 | `git:forge/repo` | `github-forge` | `console-domain`, `forge-probe`, `graph-selector`, `select-probe` |
 | 4 | `graph:agent/writer` | `agent-writer` | `agent-driver`, `agent-probe`, `graph-selector`, `select-probe` |
 | 4 | `md:render/renderer` | `markdown` | `helpdesk-domain`, `paste-bin`, `track-domain`, `vet-domain` |
 | 4 | `money:amount/arithmetic` | `money` | `billing-ledger`, `invoice-copilot-domain`, `treasury-ledger-domain`, `vet-domain` |
 | 4 | `pii:redact/redactor` | `pii-redact` | `paste-bin`, `triage-assist-domain`, `triage-domain`, `vet-domain` |
 | 4 | `policy:guard/guard` | `policy-guard` | `dev-portal`, `moderation-domain`, `platform-domain`, `track-domain` |
+| 4 | `sched:timer/timer` | `scheduler-timer` | `events-domain`, `saga-domain`, `status-page`, `vet-domain` |
 | 4 | `secrets:vault/vault` | `secrets-vault` | `login-app`, `mfa-authgate`, `platform-domain`, `vet-domain` |
 | 4 | `session:store/store` | `session-store` | `login-app`, `mfa-authgate`, `passkey-domain`, `support-desk-domain` |
 | 4 | `slug:generate/generator` | `slug` | `conduit-domain`, `link-shortener`, `paste-bin`, `slug-probe` |
-| 4 | `webhook:sign/signer` | `webhook-sign` | `dev-portal`, `track-domain`, `upload-drop`, `webhook-relay` |
 | 3 | `audit:log/recorder` | `audit-log` | `auth-guard`, `triage-assist-domain`, `webhook-relay` |
 | 3 | `ledger:doubleentry/ledger` | `ledger` | `books-domain`, `invoice-copilot-domain`, `treasury-ledger-domain` |
+| 3 | `notify:inbox/inbox` | `notify-inbox` | `events-domain`, `notify-prefs`, `notify-probe` |
 | 3 | `otp:totp/authenticator` | `otp` | `doc-search-domain`, `mfa-authgate`, `vet-domain` |
 | 3 | `paginate:cursor/cursors` | `pagination` | `csv-report`, `track-domain`, `vet-domain` |
 | 3 | `pdf:codec/codec` | `pdf` | `books-domain`, `lms-domain`, `tempo-domain` |
 | 3 | `proxy:route/router` | `proxy-route` | `eshop-gateway`, `event-pusher`, `mesh-domain` |
-| 3 | `sched:timer/timer` | `scheduler-timer` | `saga-domain`, `status-page`, `vet-domain` |
 | 3 | `svg:chart/charts` | `svg-chart` | `dashboards-domain`, `lms-domain`, `poll-domain` |
 | 3 | `ui:assets/files` | `console-assets` | `console-domain`, `track-domain`, `vet-domain` |
 | 3 | `upload:policy/gate` | `upload-policy` | `events-domain`, `upload-drop`, `vet-domain` |
@@ -64,7 +65,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 2 | `graph:fitness/evaluator` | `checks-runner` | `agent-driver`, `fitness-probe` |
 | 2 | `lock:mutex/mutex` | `lock-mutex` | `booked-domain`, `vet-domain` |
 | 2 | `metrics:collect/collector` | `metrics-collect` | `abtest-domain`, `search-domain` |
-| 2 | `notify:inbox/inbox` | `notify-inbox` | `notify-prefs`, `notify-probe` |
+| 2 | `notify:prefs/preferences` | `notify-prefs` | `events-domain`, `notify-probe` |
 | 2 | `wit:reflect/composer` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 2 | `wit:reflect/inspector` | `wit-reflect` | `platform-domain`, `studio-domain` |
 | 2 | `zip:archive/archiver` | `zip` | `sheet-ingest`, `stash-domain` |
@@ -100,7 +101,6 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `net:lan/scanner` | `lan-scanner` | `lan-scanner-domain` |
 | 1 | `net:mdns/discovery` | `mdns-discovery` | `mdns-discoverer-domain` |
 | 1 | `net:vpn/wireguard` | `vpn-wireguard` | `vpn-manager-domain` |
-| 1 | `notify:prefs/preferences` | `notify-prefs` | `notify-probe` |
 | 1 | `os:container/docker` | `container-docker` | `docker-manager-domain` |
 | 1 | `os:desktop/clipboard` | `desktop-clipboard` | `clipboard-sync-domain` |
 | 1 | `os:fs/watcher` | `fs-watcher` | `fs-watcher-domain` |
@@ -186,22 +186,22 @@ This is the number to look at before changing a component, and before deleting o
 | 6 | `cache-backing` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `markdown` | `helpdesk`, `paste`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `outbox` | `jobs`, `jobs-golem`, `ledger`, `pipeline`, `portal`, `relay` |
+| 6 | `scheduler-timer` | `events`, `saga`, `status`, `vet`, `vet-full`, `vet-lattice` |
 | 6 | `secrets-vault` | `authgate`, `login`, `platform`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `console-assets` | `console`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `pagination` | `report`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `qr` | `authgate`, `binder`, `events`, `poll`, `transit` |
 | 5 | `quota` | `events`, `ledger`, `platform`, `portal`, `ratelimit` |
-| 5 | `scheduler-timer` | `saga`, `status`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `search-index` | `search`, `track`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `upload-policy` | `drop`, `events`, `vet`, `vet-full`, `vet-lattice` |
 | 5 | `validate` | `paste`, `report`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `webhook-sign` | `drop`, `events`, `portal`, `relay`, `track` |
 | 4 | `ai-inference` | `track`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `lock-mutex` | `booked`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `money` | `ledger`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `notify-dispatch` | `portal`, `relay`, `status`, `track` |
 | 4 | `otp` | `authgate`, `vet`, `vet-full`, `vet-lattice` |
 | 4 | `pii-redact` | `paste`, `vet`, `vet-full`, `vet-lattice` |
-| 4 | `webhook-sign` | `drop`, `portal`, `relay`, `track` |
 | 3 | `i18n-catalog` | `vet`, `vet-full`, `vet-lattice` |
 | 3 | `pdf` | `books`, `lms`, `tempo` |
 | 3 | `policy-guard` | `platform`, `portal`, `track` |
@@ -236,7 +236,10 @@ This is the number to look at before changing a component, and before deleting o
 | 1 | `lan-scanner` | `lan-scanner` |
 | 1 | `ledger` | `books` |
 | 1 | `llm-local` | `local-ai` |
+| 1 | `mail-http` | `events` |
 | 1 | `mdns-discovery` | `mdns-discoverer` |
+| 1 | `notify-inbox` | `events` |
+| 1 | `notify-prefs` | `events` |
 | 1 | `portfolio-value` | `binder` |
 | 1 | `price-history` | `binder` |
 | 1 | `quiz-grade` | `lms` |
@@ -285,7 +288,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **eshop** | `eshop-payment` | 1 | `eshop_payment.composed.wasm` |
 | **eshop** | `event-pusher` | 1 | `event_pusher.composed.wasm` |
 | **eshop-catalog** | `eshop-catalog` | 3 | `eshop_catalog.composed.wasm` |
-| **events** | `events-domain` | 10 | `events_domain.composed.wasm` |
+| **events** | `events-domain` | 15 | `events_domain.composed.wasm` |
 | **flags** | `flags-domain` | 3 | `flags_domain.composed.wasm` |
 | **freight-tracker** | `freight-tracker-domain` | 4 | `freight-tracker.composed.wasm` |
 | **fs-watcher** | `fs-watcher-domain` | 1 | `fs-watcher.composed.wasm` |
