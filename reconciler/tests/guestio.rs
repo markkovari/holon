@@ -138,8 +138,12 @@ fn a_read_loop_tells_end_of_body_from_a_failed_read() {
     let macro_src = repo_root().join("components/guestio/src/lib.rs");
     match std::fs::read_to_string(&macro_src) {
         Ok(text) => {
+            // `_named`, not `guest_read_body`: that one is a thin alias now, so the
+            // loop this checks lives one macro further down. A lint pointed at the
+            // alias reads its two-line body, finds no `StreamError::Closed`, and
+            // fails for the wrong reason — which is how this was found.
             let body: String = text
-                .split("macro_rules! guest_read_body")
+                .split("macro_rules! guest_read_body_named")
                 .nth(1)
                 .unwrap_or_default()
                 .chars()
@@ -289,7 +293,10 @@ fn a_body_read_into_memory_has_a_ceiling() {
         // body moved into `guestio::guest_read_body!`, and a check keyed only on
         // the definition would have dropped them out of scope at exactly the
         // moment one definition started serving all of them.
-        if !text.contains("fn read_body") && !text.contains("guest_read_body!") {
+        // `guest_read_body` without the `!` on purpose: it matches both the bytes
+        // macro and `guest_read_body_text!`, and a check that named only the first
+        // would skip every component using the second.
+        if !text.contains("fn read_body") && !text.contains("guest_read_body") {
             continue;
         }
         if text.contains("MAX_BODY_BYTES") {
