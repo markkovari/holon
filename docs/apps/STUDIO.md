@@ -169,7 +169,7 @@ That last one is the point: a graph wired in a browser produced a working app.
 - **`wkg oci push` from the studio**, turning a canvas into a deployed workload in
   one step (the manifest already names the images).
 - **Replace `gen-catalog.py`** — `wit:reflect` already knows everything
-  `catalog.json` claims, and more, from the artifacts rather than the source.
+  `comp-catalog` claims, and more, from the artifacts rather than the source.
 - **Show interface detail on hover.** `inspect` stops at interface names; the full
   WIT (functions, records, resources) is in the binary's type section and
   `wit-component::decode` would read it, at the cost of another megabyte.

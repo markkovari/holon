@@ -27,7 +27,7 @@ tests notice.
 
 | file | from | regenerate |
 |---|---|---|
-| [`../components/CATALOG.md`](../components/CATALOG.md), `catalog.json` | every `components/*/` | `just catalog` |
+| [`../components/CATALOG.md`](../components/CATALOG.md) | every `components/*/` | `just catalog` (`comp-catalog --json` for the same data unrendered) |
 | [`CAPABILITY-GRAPH.md`](CAPABILITY-GRAPH.md) | the **built** artifacts' real imports | `just capgraph` |
 | [`apps/*.md`](apps/) headers | app specs | `python3 tools/gen-app-specs.py` |
 

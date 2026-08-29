@@ -52,7 +52,7 @@ brain/muscle topology (proven, round 6b), and SSE streaming (proven, 6d).
 |---|---|
 | 38 reusable capability components (`components/CATALOG.md`) | launch content: identity, records, rate-limit, quota, flags, TOTP, webhooks, fsm, cron, LLM interface |
 | `auth-guard` | both a catalog item AND the platform's own tenant identity (it's already multi-tenant) |
-| `comp-catalog` + `catalog.json` | catalog service embryo (WIT + config-schema extraction) |
+| `comp-catalog` (`--json` on demand) | catalog service embryo (WIT + config-schema extraction) |
 | tuned runtime deployment | helm values with pooling env, NATS sizing, `-DV` fix; two clusters running it |
 | hybrid topology proof | k8s brain + bare-metal `wash host` muscle works today (round 6b) |
 | bench harness (`bench-suite`, oha recipes) | becomes the SLO/regression suite |
@@ -126,7 +126,7 @@ proof, hybrid topology proof, bench harness.
 2. **Registry with signing**: registry:2 + cosign sign-on-push, verify script.
 3. **Catalog service v1**: gen-catalog reads from the *registry* (pull →
    `wasm-tools component wit`) instead of the source tree; serves
-   catalog.json over HTTP (a wasm component, naturally).
+   `comp-catalog --json` over HTTP (a wasm component, naturally).
 4. **Ingress + ACME**: Traefik in front of both clusters' vet-clinic as the
    guinea pig; custom domain + TLS.
    **Exit test**: deploy vet-clinic end-to-end through `plat deploy` from a
@@ -193,7 +193,7 @@ proof, hybrid topology proof, bench harness.
 1. `platform.toml` spec + `plat` CLI skeleton (spec → WorkloadDeployment).
 2. cosign sign/verify wrapper for `wkg oci push` artifacts.
 3. Catalog indexer over the registry API (extend gen-catalog).
-4. Catalog HTTP service (wasm component serving catalog.json).
+4. Catalog HTTP service (wasm component serving `comp-catalog --json`).
 5. Traefik + ACME in front of picur's cluster; vet-clinic on a real domain.
 6. `plat deploy` end-to-end demo (exit test).
 7. SSE soak endpoint at c50 (bench suite).

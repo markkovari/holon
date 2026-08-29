@@ -235,7 +235,7 @@ fn main() -> Result<(), String> {
                 m.capability.apps,
                 m.because.join(", "),
                 if m.capability.description.is_empty() {
-                    "(no description in catalog.json)"
+                    "(no `//!` description on the component)"
                 } else {
                     &m.capability.description
                 },
