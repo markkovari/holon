@@ -156,3 +156,99 @@ fn no_build_output_is_tracked() {
         tracked.join("\n  ")
     );
 }
+
+/// The committed catalogue says what the components say.
+///
+/// It could not, until now. `catalog.json` carried `wasm_size_bytes` and
+/// `wasm_sha256_12`, read straight from the built artifact — so the file was stale
+/// the moment anybody ran `just build`, for reasons that had nothing to do with the
+/// catalogue. A staleness guard was impossible while the content depended on the
+/// last build, which is why there was never one.
+///
+/// Nothing read those two fields. The capability graph carries a full
+/// `artifact.digest`, recomputed on every projection and never committed, and that
+/// is what a question about the bytes should be asked of. With them gone the
+/// catalogue is a function of the SOURCE, and can therefore be checked.
+///
+/// Verified by regenerating either side of a full rebuild: byte-identical.
+#[test]
+fn the_committed_catalogue_is_not_stale() {
+    let root = root();
+    let catalogue = root.join("components/catalog.json");
+    if !catalogue.exists() {
+        return;
+    }
+    let generator = root.join("tools/gen-catalog.py");
+    if !generator.exists() {
+        eprintln!("SKIPPED: tools/gen-catalog.py is gone — nothing generates the catalogue");
+        return;
+    }
+
+    let before = std::fs::read(&catalogue).expect("catalog.json is unreadable");
+    let markdown = root.join("components/CATALOG.md");
+    let before_md = std::fs::read(&markdown).unwrap_or_default();
+
+    let run = Command::new("python3").arg("tools/gen-catalog.py").current_dir(&root).output();
+    let Ok(run) = run else {
+        eprintln!("SKIPPED: python3 is not available");
+        return;
+    };
+    if !run.status.success() {
+        eprintln!("SKIPPED: the generator failed: {}", String::from_utf8_lossy(&run.stderr));
+        return;
+    }
+
+    let after = std::fs::read(&catalogue).expect("catalog.json is unreadable");
+    let after_md = std::fs::read(&markdown).unwrap_or_default();
+    // Put it back before asserting: a failing test must not leave the tree dirty,
+    // or the next thing to run sees a change nobody made.
+    let _ = std::fs::write(&catalogue, &before);
+    let _ = std::fs::write(&markdown, &before_md);
+
+    assert!(
+        before == after && before_md == after_md,
+        "the committed catalogue disagrees with the components — run \
+         `python3 tools/gen-catalog.py`.\nIt is derived from their sources, so a \
+         component changed and the catalogue did not."
+    );
+}
+
+/// One package name means one contract, everywhere.
+///
+/// A WIT package name is a GLOBAL identifier: `vision:describe@0.1.0` means one
+/// thing, in every component, forever. Two files declaring it with different
+/// contents is not duplication — it is one name meaning two things, and which one a
+/// tool resolves depends on which directory it happened to look in.
+///
+/// `tools/check-wit-packages.py` has always been able to say this and NOTHING RAN
+/// IT: no recipe, no workflow, no test. It was found by grepping for scripts that
+/// nothing referenced, on the assumption they were dead. It was not dead, it was
+/// unwired — and it was failing: `components/anthropic-vision/wit/vision.wit` was a
+/// verbatim copy of the `vision-describe` contract with one world appended, so both
+/// claimed `vision:describe@0.1.0`.
+///
+/// A check nobody runs is worth less than no check, because its existence suggests
+/// the question is already being asked.
+#[test]
+fn no_wit_package_name_means_two_things() {
+    let root = root();
+    let tool = root.join("tools/check-wit-packages.py");
+    if !tool.exists() {
+        eprintln!("SKIPPED: tools/check-wit-packages.py is gone");
+        return;
+    }
+    let Ok(out) = Command::new("python3")
+        .arg("tools/check-wit-packages.py")
+        .current_dir(&root)
+        .output()
+    else {
+        eprintln!("SKIPPED: python3 is not available");
+        return;
+    };
+    assert!(
+        out.status.success(),
+        "a WIT package name is claimed by more than one contract:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

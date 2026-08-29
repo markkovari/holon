@@ -156,8 +156,10 @@ jobs:
       #   fixtureversions  a fixture link naming a version nothing exports. Needs
       #                    the artifacts for the same reason, and the loop could
       #                    not start for two merges because nothing checked it.
-      #   derived          deriving the graph must not write into the tree, and the
-      #                    one committed render must not drift from the artifacts.
+      #   derived          deriving the graph must not write into the tree, the
+      #                    committed renders must not drift from the components, no
+      #                    build output is tracked, and no WIT package name is
+      #                    claimed by two different contracts.
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
         run: >-
