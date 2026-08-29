@@ -110,3 +110,49 @@ fn the_committed_capability_graph_is_not_stale() {
          It is derived from the artifacts, so a component changed and the render did not."
     );
 }
+
+/// No build output is tracked.
+///
+/// 58 `.wasm` files were, and all 50 that had a same-named component had drifted
+/// from it — `crdt.wasm` by 4 100 bytes, `cron.wasm` by 3 315. So around forty jco
+/// examples were transpiling frozen copies of components that no longer existed,
+/// and a green example proved nothing about the component it demonstrated.
+///
+/// `.gitignore` has carried `**/*.wasm` throughout. Git keeps tracking what it
+/// already tracks, so the rule never reached the files that predated it, and
+/// nothing said so — the failure is not a broken build, it is a passing test about
+/// the wrong bytes. `just examples-stage` produces them from the build instead.
+///
+/// The extension list is deliberately short. This guards the case that actually
+/// happened, and a guard that tries to name every possible build output is one
+/// nobody can keep true.
+#[test]
+fn no_build_output_is_tracked() {
+    const BUILT: &[&str] = &[".wasm", ".rlib", ".rmeta"];
+
+    let root = root();
+    let Ok(out) = Command::new("git").args(["ls-files"]).current_dir(&root).output() else {
+        eprintln!("SKIPPED: git is not available");
+        return;
+    };
+    if !out.status.success() {
+        eprintln!("SKIPPED: git could not list the index");
+        return;
+    }
+    let listed = String::from_utf8_lossy(&out.stdout);
+    assert!(listed.lines().count() > 100, "git listed almost nothing — the check is not running");
+
+    let tracked: Vec<&str> = listed
+        .lines()
+        .filter(|f| BUILT.iter().any(|e| f.ends_with(e)))
+        .collect();
+
+    assert!(
+        tracked.is_empty(),
+        "{} build artifact(s) are tracked, and a committed copy of something derived \
+         goes stale without saying so:\n  {}\n\
+         Stage them instead — `just examples-stage` writes every jco input from the build.",
+        tracked.len(),
+        tracked.join("\n  ")
+    );
+}

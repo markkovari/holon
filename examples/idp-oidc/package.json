@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Verify a REAL Ory Hydra / Zitadel JWT in-process via auth-guard's oidc/jwt path",
   "scripts": {
-    "transpile": "jco transpile auth_guard.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/shims/keyvalue.js --map wasi:config/runtime@0.2.0-draft=../src/shims/config.js",
+    "transpile": "jco transpile auth_guard.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/shims/keyvalue.js --map wasi:config/store@0.2.0-rc.1=../src/shims/config.js",
     "verify": "npm run transpile && tsx src/verify.ts",
     "test": "npm run transpile && tsx --test test/**/*.test.ts"
   },
