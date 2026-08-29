@@ -159,7 +159,25 @@ jobs:
       #   derived          deriving the graph must not write into the tree, the
       #                    committed renders must not drift from the components, no
       #                    build output is tracked, and no WIT package name is
-      #                    claimed by two different contracts.
+      #                    claimed by two different contracts.      #   checks           4 tests that need NOTHING — no nats-server, no surreal,
+      #                    no comp-host, no built wasm. Written, passing, and simply
+      #                    never named here.
+      #
+      # 41 of 59 reconciler test files are absent from this workflow, 61 of 118 test
+      # functions, and almost all of that is fair: they spawn a fleet.
+      #
+      # `checks` is the ONLY one that is not. Seven others looked addable by reading
+      # them — they mention SurrealDB, and this job already runs `capgraph_store`
+      # against a container, so Docker was clearly available. All seven passed
+      # locally. All seven then failed here on `spawning nats-server: No such file or
+      # directory`, because a development machine has nats-server lying around and
+      # cannot tell you that a test needs it.
+      #
+      # Which is the fifth time that has happened, and the note further down in this
+      # file already said so: "Four earlier attempts classified these by READING
+      # them. Every one was wrong. Each dependency only became visible when it was
+      # REMOVED." Re-run with nats-server and surreal off PATH and comp-host moved
+      # aside, `checks` passes and the other seven panic in `fleet.rs`.
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
         run: >-
@@ -167,7 +185,7 @@ jobs:
           --test capsearch --test contracts --test publish --test secrets
           --test capgraph_edges --test capgraph_store --test console_session
           --test compose_race --test witsurface --test hostsurface
-          --test fixtureversions --test derived
+          --test fixtureversions --test derived --test checks
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is
