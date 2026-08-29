@@ -328,3 +328,58 @@ fn every_component_has_a_description() {
     println!("  {checked} components, all described");
 }
 
+
+/// The catalogue's idea of "reusable" matches what the artifacts export.
+///
+/// `reusable_as_is` used to be a NAME check — `ends_with("-domain")` plus a list of
+/// ten exceptions — and it disagreed with the components themselves 33 times out of
+/// 212, in both directions: every probe and all five `eshop-*` parts were advertised
+/// as reusable while exporting nothing but `wasi:http/incoming-handler`, and
+/// `login-app`, `reddit-domain` and `power-domain` were hidden from search while
+/// exporting real contracts.
+///
+/// It is now read off the exports: a component offers a contract when it exports
+/// something outside `wasi:`. The catalogue reads that from the SOURCE and `capsearch`
+/// reads it from the ARTIFACT, which is two paths to one answer — so this asserts they
+/// agree, on every component, rather than trusting that they do.
+///
+/// It also caught two rounds of getting the source half wrong: an unanchored regex
+/// matching the word "export" inside prose, and a crate pointing at the shared
+/// repo-root `wit/` picking up worlds it does not build.
+#[test]
+fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
+    let root = comp_reconciler::fleet::repo_root();
+    let catalog = Catalog::scan(&default_dirs(&root));
+    if catalog.is_empty() {
+        eprintln!("SKIPPED: nothing is built — run `just build`");
+        return;
+    }
+    let Ok(text) = std::fs::read_to_string(root.join("components/catalog.json")) else {
+        eprintln!("SKIPPED: no catalog.json");
+        return;
+    };
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&text).expect("catalog.json");
+
+    let mut wrong = Vec::new();
+    let mut checked = 0usize;
+    for e in &entries {
+        let Some(name) = e["name"].as_str() else { continue };
+        let Some(surface) = catalog.surface(name) else { continue };
+        checked += 1;
+        let from_artifact = comp_reconciler::catalogue::offers_a_contract(&surface.exports);
+        let from_source = e["reusable_as_is"].as_bool().unwrap_or(false);
+        if from_artifact != from_source {
+            wrong.push(format!(
+                "  {name}: catalogue says {from_source}, the artifact exports {:?}",
+                surface.exports
+            ));
+        }
+    }
+    assert!(checked > 100, "only {checked} components checked — the join is broken");
+    assert!(
+        wrong.is_empty(),
+        "the catalogue disagrees with the built artifacts about what can be \
+         plugged:\n{}",
+        wrong.join("\n")
+    );
+}
