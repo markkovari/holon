@@ -1,0 +1,15 @@
+[package]
+name = "guestfmt"
+description = "Wire-format helpers with no WIT in them: percent-decoding and RFC 3339 (guestfmt)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# A plain rlib, and unlike `guestio` these really are FUNCTIONS.
+#
+# `guestio` has to be macros because `cargo-component` generates a `bindings.rs`
+# per crate, so one component's `OutputStream` is a different type from another's
+# and no shared signature can name one. Nothing here touches a bindings type —
+# `&str` in, `String` out — so the ordinary answer works and the macro trick would
+# be cargo-culting the constraint into a place it does not apply.

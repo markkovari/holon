@@ -10,6 +10,7 @@ members = [
     # `budget-domain` and `bench-suite-p3` stay out: both declare their own
     # `[workspace]`, so adding them is "multiple workspace roots" and their
     # exclusion is deliberate rather than an oversight.
+    "guestfmt",
     "ai-inference",
     "ui-notifier",
     "desktop-notifier-domain",

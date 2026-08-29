@@ -59,33 +59,7 @@ impl Route {
     }
 }
 
-fn percent(s: &str) -> String {
-    let b = s.replace('+', " ");
-    let b = b.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        match (b[i], b.get(i + 1), b.get(i + 2)) {
-            (b'%', Some(h), Some(l)) => {
-                match u8::from_str_radix(core::str::from_utf8(&[*h, *l]).unwrap_or("zz"), 16) {
-                    Ok(v) => {
-                        out.push(v);
-                        i += 3;
-                    }
-                    Err(_) => {
-                        out.push(b[i]);
-                        i += 1;
-                    }
-                }
-            }
-            _ => {
-                out.push(b[i]);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+use guestfmt::percent_decode as percent;
 
 /// A `wasi:config` value, with a default.
 pub fn cfg(key: &str, default: &str) -> String {
@@ -100,29 +74,7 @@ pub fn now_secs() -> u64 {
     wall_clock::now().seconds
 }
 
-pub fn rfc3339(secs: u64) -> String {
-    let days = (secs / 86_400) as i64;
-    let tod = secs % 86_400;
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        y,
-        m,
-        d,
-        tod / 3600,
-        (tod % 3600) / 60,
-        tod % 60
-    )
-}
+use guestfmt::rfc3339;
 
 fn mint(body: &str) -> Reply {
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));

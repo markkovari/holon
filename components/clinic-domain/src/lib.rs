@@ -85,33 +85,7 @@ impl Route {
     }
 }
 
-fn percent(s: &str) -> String {
-    let b = s.replace('+', " ");
-    let b = b.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        match (b[i], b.get(i + 1), b.get(i + 2)) {
-            (b'%', Some(h), Some(l)) => {
-                match u8::from_str_radix(core::str::from_utf8(&[*h, *l]).unwrap_or("zz"), 16) {
-                    Ok(v) => {
-                        out.push(v);
-                        i += 3;
-                    }
-                    Err(_) => {
-                        out.push(b[i]);
-                        i += 1;
-                    }
-                }
-            }
-            _ => {
-                out.push(b[i]);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+use guestfmt::percent_decode as percent;
 
 /// One owner and three pets, written straight to the store.
 ///
