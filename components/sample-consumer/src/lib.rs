@@ -47,19 +47,8 @@ fn guard(request: &IncomingRequest) -> Result<Principal, AuthError> {
     authorize(&token, &required)
 }
 
-/// Pull the bearer token out of the `Authorization` header.
-fn bearer_token(request: &IncomingRequest) -> Option<String> {
-    let headers = request.headers();
-    let values = headers.get("authorization");
-    for v in values {
-        if let Ok(s) = String::from_utf8(v) {
-            if let Some(tok) = s.strip_prefix("Bearer ") {
-                return Some(tok.trim().to_string());
-            }
-        }
-    }
-    None
-}
+guestio::guest_bearer!();
+use bearer as bearer_token;
 
 /// Map an auth-error to (HTTP status, message).
 fn error_response(e: &AuthError) -> (u16, &'static str) {

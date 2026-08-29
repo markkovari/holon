@@ -37,6 +37,7 @@ use bindings::wasi::http::types::{
 use serde_json::{json, Value};
 
 guestio::guest_write_all!();
+guestio::guest_bearer!();
 
 struct Component;
 
@@ -207,10 +208,7 @@ impl Guest for Component {
             Some((p, q)) => (p.to_string(), q.to_string()),
             None => (path.clone(), String::new()),
         };
-        let bearer = header(&request, "authorization")
-            .strip_prefix("Bearer ")
-            .unwrap_or_default()
-            .to_string();
+        let bearer = bearer(&request).unwrap_or_default();
         // `traceparent` is `00-<32hex trace>-<16hex span>-<2hex flags>`; anything
         // else, including absent, gets a trace of its own so no request is
         // unattributable in the ledger.

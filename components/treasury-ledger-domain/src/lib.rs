@@ -20,6 +20,7 @@ use bindings::wasi::http::types::{
 use serde_json::{json, Value};
 
 guestio::guest_write_all!();
+guestio::guest_bearer!();
 
 struct Component;
 
@@ -227,10 +228,7 @@ impl Guest for Component {
         let route = Route {
             segments: raw_path.split('/').filter(|s| !s.is_empty()).map(percent).collect(),
             query,
-            bearer: header(&request, "authorization")
-                .strip_prefix("Bearer ")
-                .unwrap_or_default()
-                .to_string(),
+            bearer: bearer(&request).unwrap_or_default(),
             idempotency_key: header(&request, "idempotency-key"),
         };
         let method = request.method();

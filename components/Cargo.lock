@@ -17,6 +17,7 @@ dependencies = [
 name = "academic-review-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -27,6 +28,7 @@ dependencies = [
 name = "accounts-app"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -244,6 +246,7 @@ name = "binder-domain"
 version = "0.1.0"
 dependencies = [
  "guestfmt",
+ "guestio",
  "serde",
  "serde_json",
  "wit-bindgen-rt",
@@ -284,6 +287,7 @@ dependencies = [
 name = "booked-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -294,6 +298,7 @@ dependencies = [
 name = "books-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -311,6 +316,7 @@ dependencies = [
 name = "buzz-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -599,6 +605,7 @@ dependencies = [
 name = "dashboards-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -658,6 +665,7 @@ dependencies = [
 name = "dev-portal"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -669,6 +677,7 @@ dependencies = [
 name = "device-radar-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -776,6 +785,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 name = "eshop-basket"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -802,6 +812,8 @@ dependencies = [
 name = "eshop-ordering"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
+ "guestio",
  "serde",
  "serde_json",
  "wit-bindgen-rt",
@@ -939,6 +951,7 @@ dependencies = [
 name = "freight-tracker-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1099,6 +1112,7 @@ dependencies = [
 name = "health-records-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1109,6 +1123,7 @@ dependencies = [
 name = "helpdesk-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1494,6 +1509,7 @@ dependencies = [
 name = "lms-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1800,6 +1816,7 @@ name = "passkey-domain"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1831,6 +1848,7 @@ dependencies = [
 name = "payees-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1882,6 +1900,7 @@ dependencies = [
 name = "photosocial-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -1932,6 +1951,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "guestfmt",
+ "guestio",
  "p256",
  "serde",
  "serde_json",
@@ -2119,6 +2139,7 @@ dependencies = [
 name = "real-estate-escrow-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2217,6 +2238,7 @@ dependencies = [
 name = "sample-consumer"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "wit-bindgen-rt",
 ]
@@ -2439,6 +2461,7 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 name = "smart-home-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2480,6 +2503,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 name = "stash-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2581,6 +2605,7 @@ dependencies = [
 name = "tempo-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",
@@ -2663,6 +2688,7 @@ dependencies = [
 name = "transit-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
  "guestio",
  "serde",
  "serde_json",

@@ -92,13 +92,7 @@ fn usage() -> Outcome {
 
 // ---- auth (auth-guard: auth:identity) ---------------------------------------
 
-fn bearer(request: &IncomingRequest) -> Option<String> {
-    let headers = request.headers();
-    let vals = headers.get("authorization");
-    let raw = vals.first()?;
-    let s = String::from_utf8(raw.clone()).ok()?;
-    s.strip_prefix("Bearer ").map(|t| t.to_string())
-}
+guestio::guest_bearer!();
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
     let token =
