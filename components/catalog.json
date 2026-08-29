@@ -2,7 +2,7 @@
   {
     "name": "abtest-domain",
     "package": "abtest:app@0.1.0",
-    "description": "abtest:app \u2014 an A/B/n experiment console over composed contracts",
+    "description": "abtest:app — an A/B/n experiment console over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -19,7 +19,7 @@
   {
     "name": "academic-review-domain",
     "package": "academic-review:academic-review",
-    "description": "`academic-review-domain` \u2014 keep submitted papers behind a login, with peer review and per-account access",
+    "description": "`academic-review-domain` — keep submitted papers behind a login, with peer review and per-account access",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -37,7 +37,7 @@
   {
     "name": "accounts-app",
     "package": "auth:identity@0.1.0",
-    "description": "HTTP JSON register/login app. Owns NO auth logic \u2014 it maps HTTP onto the",
+    "description": "HTTP JSON register/login app. Owns NO auth logic — it maps HTTP onto the",
     "exports": [
       "wasi:http/incoming-handler@0.2.0",
       "wasi:http/incoming-handler@0.2.0",
@@ -68,7 +68,7 @@
   {
     "name": "adversary",
     "package": "probe:adversary@0.1.0",
-    "description": "`adversary` \u2014 the component ADR-0023 asks for",
+    "description": "`adversary` — the component ADR-0023 asks for",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -84,7 +84,7 @@
   {
     "name": "agent-driver",
     "package": "driver:agent@0.1.0",
-    "description": "`agent-driver` \u2014 the loop that joins the writer to the gate",
+    "description": "`agent-driver` — the loop that joins the writer to the gate",
     "exports": [
       "graph:run/driver@0.2.0"
     ],
@@ -99,7 +99,7 @@
   {
     "name": "agent-probe",
     "package": "comp:agentprobe@0.1.0",
-    "description": "`agent-probe` \u2014 an instrument for `graph:agent` (see wit/probe.wit)",
+    "description": "`agent-probe` — an instrument for `graph:agent` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -113,7 +113,7 @@
   {
     "name": "agent-writer",
     "package": "writer:agent@0.1.0",
-    "description": "`agent-writer` \u2014 a goal and a tree in, a candidate out",
+    "description": "`agent-writer` — a goal and a tree in, a candidate out",
     "exports": [
       "graph:agent/writer@0.2.0"
     ],
@@ -127,7 +127,7 @@
   {
     "name": "ai-inference",
     "package": "ai:inference@0.1.0",
-    "description": "`ai:assist` \u2014 domain-level AI verbs over a provider-agnostic LLM",
+    "description": "`ai:assist` — domain-level AI verbs over a provider-agnostic LLM",
     "exports": [
       "inference"
     ],
@@ -141,7 +141,7 @@
   {
     "name": "anthropic-provider",
     "package": "anthropic:provider@0.1.0",
-    "description": "`anthropic-provider` \u2014 `llm:inference` over Anthropic's Messages API",
+    "description": "`anthropic-provider` — `llm:inference` over Anthropic's Messages API",
     "exports": [
       "llm:inference/inference@0.1.0"
     ],
@@ -174,7 +174,7 @@
   {
     "name": "anthropic-vision",
     "package": "anthropic:vision@0.1.0",
-    "description": "`anthropic-vision` \u2014 show a model a picture and get back what it says, over Anthropic's Messages API",
+    "description": "`anthropic-vision` — show a model a picture and get back what it says, over Anthropic's Messages API",
     "exports": [
       "vision:describe/describer@0.1.0"
     ],
@@ -195,7 +195,7 @@
   {
     "name": "arena-domain",
     "package": "arena:app@0.1.0",
-    "description": "arena:app \u2014 multiplayer Connect Four over composed contracts",
+    "description": "arena:app — multiplayer Connect Four over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -210,7 +210,7 @@
   {
     "name": "artifact-cache",
     "package": "artifact:cache@0.1.0",
-    "description": "`artifact-cache` \u2014 derived work, computed once and handed over",
+    "description": "`artifact-cache` — derived work, computed once and handed over",
     "exports": [
       "store"
     ],
@@ -236,7 +236,7 @@
   {
     "name": "artifact-probe",
     "package": "comp:artifactprobe@0.1.0",
-    "description": "`artifact-probe` \u2014 an instrument for `artifact:cache` (see wit/probe.wit)",
+    "description": "`artifact-probe` — an instrument for `artifact:cache` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -250,7 +250,7 @@
   {
     "name": "audit-log",
     "package": "audit:log@0.1.0",
-    "description": "`audit-log` \u2014 record who did what and when \u2014 an append-only audit trail any component can write decisions to",
+    "description": "`audit-log` — record who did what and when — an append-only audit trail any component can write decisions to",
     "exports": [
       "recorder",
       "query"
@@ -265,7 +265,7 @@
   {
     "name": "auth-guard",
     "package": "auth:identity@0.1.0",
-    "description": "`auth-guard` \u2014 register and log a user in, hash their password, issue and introspect a session token, and check whether their role grants an action",
+    "description": "`auth-guard` — register and log a user in, hash their password, issue and introspect a session token, and check whether their role grants an action",
     "exports": [
       "wasi:http/incoming-handler@0.2.0",
       "wasi:http/incoming-handler@0.2.0",
@@ -337,7 +337,7 @@
   {
     "name": "bench-suite",
     "package": "bench:suite@0.1.0",
-    "description": "`bench-suite` \u2014 the HTTP overhead ladder (see wit/bench.wit)",
+    "description": "`bench-suite` — the HTTP overhead ladder (see wit/bench.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -352,7 +352,7 @@
   {
     "name": "bench-suite-p3",
     "package": "bench:suite-p3@0.1.0",
-    "description": "`bench-suite-p3` \u2014 the compute rungs of the HTTP overhead ladder on WASI p3",
+    "description": "`bench-suite-p3` — the compute rungs of the HTTP overhead ladder on WASI p3",
     "exports": [
       "wasi:http/handler@0.3.0"
     ],
@@ -366,7 +366,7 @@
   {
     "name": "bigadd",
     "package": "demo:bigadd@0.1.0",
-    "description": "`bigadd` \u2014 add two integers too large for a machine word, given as decimal strings",
+    "description": "`bigadd` — add two integers too large for a machine word, given as decimal strings",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
@@ -376,7 +376,7 @@
   {
     "name": "billing-ledger",
     "package": "ledger:app@0.1.0",
-    "description": "ledger:app \u2014 billing ledger over composed capability contracts",
+    "description": "ledger:app — billing ledger over composed capability contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -395,7 +395,7 @@
   {
     "name": "binder-domain",
     "package": "binder:app@0.1.0",
-    "description": "`binder-domain` \u2014 keep a Pok\u00e9mon card collection: scan a photo into fields, record what you paid, and see what it is worth",
+    "description": "`binder-domain` — keep a Pokémon card collection: scan a photo into fields, record what you paid, and see what it is worth",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -420,7 +420,7 @@
   {
     "name": "blob-store",
     "package": "blob:store@0.1.0",
-    "description": "`blob-store` \u2014 store and fetch large binary objects \u2014 uploads, exports, attachments \u2014 in named containers",
+    "description": "`blob-store` — store and fetch large binary objects — uploads, exports, attachments — in named containers",
     "exports": [
       "blobstore"
     ],
@@ -434,7 +434,7 @@
   {
     "name": "booked-domain",
     "package": "booked:app@0.1.0",
-    "description": "`booked-domain` \u2014 a Calendly-lite booking service (docs/apps/BOOKED.md) as ONE composed",
+    "description": "`booked-domain` — a Calendly-lite booking service (docs/apps/BOOKED.md) as ONE composed",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -457,7 +457,7 @@
   {
     "name": "books-domain",
     "package": "books:app@0.1.0",
-    "description": "`books-domain` \u2014 a double-entry bookkeeping service (docs/apps/BOOKS.md) as ONE composed",
+    "description": "`books-domain` — a double-entry bookkeeping service (docs/apps/BOOKS.md) as ONE composed",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -478,7 +478,7 @@
   {
     "name": "browser-automation",
     "package": "web:browser@0.1.0",
-    "description": "`browser-automation` \u2014 drive a headless browser and capture a page as PDF or image",
+    "description": "`browser-automation` — drive a headless browser and capture a page as PDF or image",
     "exports": [
       "automation"
     ],
@@ -490,7 +490,7 @@
   {
     "name": "budget-domain",
     "package": "holon:budget",
-    "description": "`budget-domain` \u2014 record spending against per-category budgets and report the balance",
+    "description": "`budget-domain` — record spending against per-category budgets and report the balance",
     "exports": [
       "add-transaction: func(token: string, amount: f64, category: string, is-income: bool)",
       "get-balance: func(token: string) -> f64",
@@ -507,7 +507,7 @@
   {
     "name": "buzz-domain",
     "package": "buzz:app@0.1.0",
-    "description": "`buzz-domain` \u2014 a live multiplayer quiz game (docs/apps/BUZZ.md) as ONE composed wasm",
+    "description": "`buzz-domain` — a live multiplayer quiz game (docs/apps/BUZZ.md) as ONE composed wasm",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -526,7 +526,7 @@
   {
     "name": "bytes-codec",
     "package": "bytes:codec@0.1.0",
-    "description": "`bytes-codec` \u2014 turn bytes into text that survives a URL, a JSON string or a header, and back again",
+    "description": "`bytes-codec` — turn bytes into text that survives a URL, a JSON string or a header, and back again",
     "exports": [
       "codec"
     ],
@@ -538,7 +538,7 @@
   {
     "name": "cache",
     "package": "cache:store@0.1.0",
-    "description": "`cache` \u2014 a TTL-aware key/value cache with read-through, write-through, write-behind and refresh-ahead",
+    "description": "`cache` — a TTL-aware key/value cache with read-through, write-through, write-behind and refresh-ahead",
     "exports": [
       "cache"
     ],
@@ -554,7 +554,7 @@
   {
     "name": "cache-backing",
     "package": "cache:backing@0.1.0",
-    "description": "`cache-backing` \u2014 exports cache:store's `source` + `sink` over wasi:keyvalue",
+    "description": "`cache-backing` — exports cache:store's `source` + `sink` over wasi:keyvalue",
     "exports": [
       "cache:store/source@0.1.0",
       "cache:store/sink@0.1.0"
@@ -569,7 +569,7 @@
   {
     "name": "calc",
     "package": "demo:calc@0.1.0",
-    "description": "`calc` \u2014 evaluate the four arithmetic operations on a pair of numbers",
+    "description": "`calc` — evaluate the four arithmetic operations on a pair of numbers",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
@@ -579,7 +579,7 @@
   {
     "name": "card-identify",
     "package": "card:identify@0.1.0",
-    "description": "`card-identify` \u2014 read a photo of a Pok\u00e9mon card into its name, set, number and condition, and say which parts are a guess",
+    "description": "`card-identify` — read a photo of a Pokémon card into its name, set, number and condition, and say which parts are a guess",
     "exports": [
       "identifier"
     ],
@@ -591,7 +591,7 @@
   {
     "name": "checks-runner",
     "package": "checks:runner@0.1.0",
-    "description": "`checks-runner` \u2014 `graph:fitness` over the native check runner",
+    "description": "`checks-runner` — `graph:fitness` over the native check runner",
     "exports": [
       "graph:fitness/evaluator@0.2.0"
     ],
@@ -611,7 +611,7 @@
   {
     "name": "clinic-domain",
     "package": "clinic:domain@0.1.0",
-    "description": "`clinic-domain` \u2014 owners, pets and visits, as one component",
+    "description": "`clinic-domain` — owners, pets and visits, as one component",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -631,7 +631,7 @@
   {
     "name": "clipboard-sync-domain",
     "package": "local:clipboard-sync",
-    "description": "`clipboard-sync-domain` \u2014 read and share the desktop clipboard over HTTP, keeping a usage count",
+    "description": "`clipboard-sync-domain` — read and share the desktop clipboard over HTTP, keeping a usage count",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -664,7 +664,7 @@
   {
     "name": "conduit-domain",
     "package": "conduit:app@0.1.0",
-    "description": "conduit:app \u2014 the RealWorld (\"Conduit\") spec over composed contracts",
+    "description": "conduit:app — the RealWorld (\"Conduit\") spec over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -682,7 +682,7 @@
   {
     "name": "config-store",
     "package": "config:store@0.1.0",
-    "description": "`config-store` \u2014 runtime application config \u2014 timeouts, limits, URLs and tunables ops can change without a redeploy",
+    "description": "`config-store` — runtime application config — timeouts, limits, URLs and tunables ops can change without a redeploy",
     "exports": [
       "store"
     ],
@@ -696,7 +696,7 @@
   {
     "name": "console-assets",
     "package": "ui:assets@0.1.0",
-    "description": "`track-assets` \u2014 the track (project tracker) SPA embedded as `ui:assets`",
+    "description": "`track-assets` — the track (project tracker) SPA embedded as `ui:assets`",
     "exports": [
       "files"
     ],
@@ -708,7 +708,7 @@
   {
     "name": "console-domain",
     "package": "console:app@0.1.0",
-    "description": "`console-domain` \u2014 the Holon console (see `wit/console.wit` for why it is a",
+    "description": "`console-domain` — the Holon console (see `wit/console.wit` for why it is a",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -735,7 +735,7 @@
   {
     "name": "container-docker",
     "package": "os:container@0.1.0",
-    "description": "`container-docker` \u2014 list and control containers running on the machine",
+    "description": "`container-docker` — list and control containers running on the machine",
     "exports": [
       "docker"
     ],
@@ -747,7 +747,7 @@
   {
     "name": "contract-probe",
     "package": "comp:contractprobe@0.1.0",
-    "description": "`contract-probe` \u2014 the door onto `contract:registry` (see wit/probe.wit)",
+    "description": "`contract-probe` — the door onto `contract:registry` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -761,7 +761,7 @@
   {
     "name": "contract-registry",
     "package": "contract:registry@0.1.0",
-    "description": "`contract-registry` \u2014 what two parts of a decomposed goal build against",
+    "description": "`contract-registry` — what two parts of a decomposed goal build against",
     "exports": [
       "registry"
     ],
@@ -775,7 +775,7 @@
   {
     "name": "contrast-audit",
     "package": "demo:contrastaudit@0.1.0",
-    "description": "`contrast-audit` \u2014 a WCAG contrast auditor that runs on the lattice",
+    "description": "`contrast-audit` — a WCAG contrast auditor that runs on the lattice",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -796,7 +796,7 @@
   {
     "name": "crdt",
     "package": "crdt:merge@0.1.0",
-    "description": "`crdt` \u2014 merge concurrent replicas with no lock \u2014 state-based CRDTs that converge whatever order updates arrive in",
+    "description": "`crdt` — merge concurrent replicas with no lock — state-based CRDTs that converge whatever order updates arrive in",
     "exports": [
       "merger"
     ],
@@ -808,7 +808,7 @@
   {
     "name": "cron",
     "package": "cron:expr@0.1.0",
-    "description": "`cron` \u2014 parse a cron expression like `0 */6 * * *` and compute when it next fires",
+    "description": "`cron` — parse a cron expression like `0 */6 * * *` and compute when it next fires",
     "exports": [
       "parser"
     ],
@@ -820,7 +820,7 @@
   {
     "name": "cron-scheduler-domain",
     "package": "local:cron-scheduler",
-    "description": "`cron-scheduler-domain` \u2014 list and inspect the machine's scheduled jobs over HTTP",
+    "description": "`cron-scheduler-domain` — list and inspect the machine's scheduled jobs over HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -839,7 +839,7 @@
   {
     "name": "csv",
     "package": "csv:codec@0.1.0",
-    "description": "`csv` \u2014 parse and format CSV \u2014 RFC 4180, with quoted fields, embedded commas, newlines and custom delimiters",
+    "description": "`csv` — parse and format CSV — RFC 4180, with quoted fields, embedded commas, newlines and custom delimiters",
     "exports": [
       "codec"
     ],
@@ -851,7 +851,7 @@
   {
     "name": "csv-report",
     "package": "report:app@0.1.0",
-    "description": "report:app \u2014 batch CSV import -> typed validate -> store -> paged report ->",
+    "description": "report:app — batch CSV import -> typed validate -> store -> paged report ->",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -868,7 +868,7 @@
   {
     "name": "dashboards-domain",
     "package": "dashboards:app@0.1.0",
-    "description": "`dashboards-domain` \u2014 personal metric dashboards (docs/apps/DASHBOARDS.md) as ONE",
+    "description": "`dashboards-domain` — personal metric dashboards (docs/apps/DASHBOARDS.md) as ONE",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -888,7 +888,7 @@
   {
     "name": "deck-build",
     "package": "deck:build@0.1.0",
-    "description": "`deck-build` \u2014 is this deck legal to play, and what is missing from your collection to build it",
+    "description": "`deck-build` — is this deck legal to play, and what is missing from your collection to build it",
     "exports": [
       "builder"
     ],
@@ -900,7 +900,7 @@
   {
     "name": "demo",
     "package": "demo:shape@0.1.0",
-    "description": "`demo` \u2014 paging, as a component. One half of a two-part goal (ADR-0086)",
+    "description": "`demo` — paging, as a component. One half of a two-part goal (ADR-0086)",
     "exports": [
       "pager"
     ],
@@ -912,7 +912,7 @@
   {
     "name": "demo-probe",
     "package": "demo:probe@0.1.0",
-    "description": "`demo-probe` \u2014 the other half: it calls `demo:shape/pager` and nothing else",
+    "description": "`demo-probe` — the other half: it calls `demo:shape/pager` and nothing else",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -926,7 +926,7 @@
   {
     "name": "desktop-clipboard",
     "package": "os:desktop@0.1.0",
-    "description": "`desktop-clipboard` \u2014 read and write the desktop session's clipboard",
+    "description": "`desktop-clipboard` — read and write the desktop session's clipboard",
     "exports": [
       "clipboard"
     ],
@@ -938,7 +938,7 @@
   {
     "name": "desktop-notifier-domain",
     "package": "local:desktop-notifier",
-    "description": "`desktop-notifier-domain` \u2014 raise a desktop notification from an HTTP call",
+    "description": "`desktop-notifier-domain` — raise a desktop notification from an HTTP call",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -957,7 +957,7 @@
   {
     "name": "dev-portal",
     "package": "portal:app@0.1.0",
-    "description": "portal:app \u2014 developer portal / API-key service over composed contracts",
+    "description": "portal:app — developer portal / API-key service over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -982,7 +982,7 @@
   {
     "name": "device-radar-domain",
     "package": "device-radar:device-radar",
-    "description": "`device-radar-domain` \u2014 show which nearby devices a scan found, behind a login",
+    "description": "`device-radar-domain` — show which nearby devices a scan found, behind a login",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1001,7 +1001,7 @@
   {
     "name": "doc-search-domain",
     "package": "docsearch:agent@0.1.0",
-    "description": "`doc-search-domain` \u2014 retrieval-augmented answers over an indexed library, behind",
+    "description": "`doc-search-domain` — retrieval-augmented answers over an indexed library, behind",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1089,7 +1089,7 @@
   {
     "name": "docker-manager-domain",
     "package": "local:docker-manager",
-    "description": "`docker-manager-domain` \u2014 list running containers and their state over HTTP",
+    "description": "`docker-manager-domain` — list running containers and their state over HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1108,7 +1108,7 @@
   {
     "name": "driver-probe",
     "package": "comp:driverprobe@0.1.0",
-    "description": "`driver-probe` \u2014 an instrument for `graph:run` (see wit/probe.wit)",
+    "description": "`driver-probe` — an instrument for `graph:run` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1122,7 +1122,7 @@
   {
     "name": "email-render",
     "package": "email:template@0.1.0",
-    "description": "`email-render` \u2014 render a transactional email from a named template and a set of variables",
+    "description": "`email-render` — render a transactional email from a named template and a set of variables",
     "exports": [
       "renderer"
     ],
@@ -1136,7 +1136,7 @@
   {
     "name": "eshop-basket",
     "package": "eshop:basket@0.1.0",
-    "description": "eshop:basket \u2014 the eShopOnDapr Basket.API over composed contracts",
+    "description": "eshop:basket — the eShopOnDapr Basket.API over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1153,7 +1153,7 @@
   {
     "name": "eshop-catalog",
     "package": "eshop:catalog@0.1.0",
-    "description": "eshop:catalog \u2014 the eShopOnDapr Catalog.API over composed contracts",
+    "description": "eshop:catalog — the eShopOnDapr Catalog.API over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1169,7 +1169,7 @@
   {
     "name": "eshop-gateway",
     "package": "eshop:gateway@0.1.0",
-    "description": "eshop:gateway \u2014 the Envoy + Blazor-host stand-in: embedded storefront SPA",
+    "description": "eshop:gateway — the Envoy + Blazor-host stand-in: embedded storefront SPA",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1183,7 +1183,7 @@
   {
     "name": "eshop-ordering",
     "package": "eshop:ordering@0.1.0",
-    "description": "eshop:ordering \u2014 the eShopOnDapr Ordering.API over composed contracts",
+    "description": "eshop:ordering — the eShopOnDapr Ordering.API over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1208,7 +1208,7 @@
   {
     "name": "eshop-payment",
     "package": "eshop:payment@0.1.0",
-    "description": "eshop:payment \u2014 the eShopOnDapr Payment.API (simulated) over composed",
+    "description": "eshop:payment — the eShopOnDapr Payment.API (simulated) over composed",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1228,7 +1228,7 @@
   {
     "name": "event-bus",
     "package": "event:bus@0.1.0",
-    "description": "`event-bus` \u2014 publish an event and let several unrelated things react \u2014 in-app publish/subscribe over topics",
+    "description": "`event-bus` — publish an event and let several unrelated things react — in-app publish/subscribe over topics",
     "exports": [
       "bus"
     ],
@@ -1243,7 +1243,7 @@
   {
     "name": "event-pusher",
     "package": "event:push@0.1.0",
-    "description": "`event-pusher` \u2014 push delivery for the pull-based event bus \u2014 drives consumer polls on hosts with a messaging plugin",
+    "description": "`event-pusher` — push delivery for the pull-based event bus — drives consumer polls on hosts with a messaging plugin",
     "exports": [
       "wasmcloud:messaging/handler@0.2.0"
     ],
@@ -1263,7 +1263,7 @@
   {
     "name": "events-domain",
     "package": "events:ticketing@0.1.0",
-    "description": "`events-domain` \u2014 free event ticketing, as one component",
+    "description": "`events-domain` — free event ticketing, as one component",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1317,7 +1317,7 @@
   {
     "name": "experiment-assign",
     "package": "experiment:assign@0.1.0",
-    "description": "`experiment-assign` \u2014 split subjects across named A/B/n variants by weight, stickily \u2014 a subject stays in its arm",
+    "description": "`experiment-assign` — split subjects across named A/B/n variants by weight, stickily — a subject stays in its arm",
     "exports": [
       "assigner"
     ],
@@ -1331,7 +1331,7 @@
   {
     "name": "expr",
     "package": "demo:expr@0.1.0",
-    "description": "`expr` \u2014 parse and evaluate a small arithmetic expression written as text",
+    "description": "`expr` — parse and evaluate a small arithmetic expression written as text",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
@@ -1341,7 +1341,7 @@
   {
     "name": "feature-flags",
     "package": "featureflags:guard@0.1.0",
-    "description": "`feature-flags` \u2014 is this feature on for this user? \u2014 flag evaluation with percentage rollouts and kill switches",
+    "description": "`feature-flags` — is this feature on for this user? — flag evaluation with percentage rollouts and kill switches",
     "exports": [
       "evaluator"
     ],
@@ -1356,7 +1356,7 @@
   {
     "name": "fitness-probe",
     "package": "comp:fitnessprobe@0.1.0",
-    "description": "`fitness-probe` \u2014 an instrument for `graph:fitness` (see wit/probe.wit)",
+    "description": "`fitness-probe` — an instrument for `graph:fitness` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1370,7 +1370,7 @@
   {
     "name": "flags-domain",
     "package": "rollout:app@0.1.0",
-    "description": "flags:app \u2014 a live feature-rollout console over composed contracts",
+    "description": "flags:app — a live feature-rollout console over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1386,7 +1386,7 @@
   {
     "name": "forge-probe",
     "package": "comp:forgeprobe@0.1.0",
-    "description": "`forge-probe` \u2014 an instrument for `git:forge` (see wit/probe.wit)",
+    "description": "`forge-probe` — an instrument for `git:forge` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1400,7 +1400,7 @@
   {
     "name": "freight-tracker-domain",
     "package": "freight-tracker:freight-tracker",
-    "description": "`freight-tracker-domain` \u2014 track shipments behind a login, with per-account access to their history",
+    "description": "`freight-tracker-domain` — track shipments behind a login, with per-account access to their history",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1418,7 +1418,7 @@
   {
     "name": "fs-watcher",
     "package": "os:fs@0.1.0",
-    "description": "`fs-watcher` \u2014 report what changed in a directory, since a cursor",
+    "description": "`fs-watcher` — report what changed in a directory, since a cursor",
     "exports": [
       "watcher"
     ],
@@ -1438,7 +1438,7 @@
   {
     "name": "fs-watcher-domain",
     "package": "local:fs-watcher",
-    "description": "`fs-watcher-domain` \u2014 watch a directory for changes and report them over HTTP",
+    "description": "`fs-watcher-domain` — watch a directory for changes and report them over HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1457,7 +1457,7 @@
   {
     "name": "fsm-workflow",
     "package": "fsm:workflow@0.1.0",
-    "description": "`fsm-workflow` \u2014 enforce a lifecycle \u2014 declare the legal state transitions and refuse the illegal ones",
+    "description": "`fsm-workflow` — enforce a lifecycle — declare the legal state transitions and refuse the illegal ones",
     "exports": [
       "engine"
     ],
@@ -1471,7 +1471,7 @@
   {
     "name": "gate-domain",
     "package": "gate:app@0.1.0",
-    "description": "`gate-domain` \u2014 a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed",
+    "description": "`gate-domain` — a durable traffic-shaping gateway (docs/apps/GATE.md) as ONE composed",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1488,7 +1488,7 @@
   {
     "name": "geo",
     "package": "geo:resolve@0.1.0",
-    "description": "`geo` \u2014 distance between two lat/lon points, a bounding box for a within-N-km filter, and IP address classing",
+    "description": "`geo` — distance between two lat/lon points, a bounding box for a within-N-km filter, and IP address classing",
     "exports": [
       "coords"
     ],
@@ -1500,7 +1500,7 @@
   {
     "name": "gherkin-validate",
     "package": "gherkin:validate@0.1.0",
-    "description": "`gherkin-validate` \u2014 is this `.feature` file actually Gherkin, and will it run?",
+    "description": "`gherkin-validate` — is this `.feature` file actually Gherkin, and will it run?",
     "exports": [
       "validator"
     ],
@@ -1512,7 +1512,7 @@
   {
     "name": "github-forge",
     "package": "github:forge@0.1.0",
-    "description": "`github-forge` \u2014 `git:forge` over GitHub's REST API",
+    "description": "`github-forge` — `git:forge` over GitHub's REST API",
     "exports": [
       "git:forge/repo@0.1.0"
     ],
@@ -1545,7 +1545,7 @@
   {
     "name": "glob",
     "package": "demo:glob@0.1.0",
-    "description": "`glob` \u2014 test whether a path matches a shell-style wildcard pattern",
+    "description": "`glob` — test whether a path matches a shell-style wildcard pattern",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
@@ -1555,7 +1555,7 @@
   {
     "name": "golem-bridge",
     "package": "golem:bridge@0.1.0",
-    "description": "`golem-bridge` \u2014 durable:workflow/orchestrator over `wasi:http`, to Golem",
+    "description": "`golem-bridge` — durable:workflow/orchestrator over `wasi:http`, to Golem",
     "exports": [
       "durable:workflow/orchestrator@0.1.0"
     ],
@@ -1583,7 +1583,7 @@
   {
     "name": "graph-probe",
     "package": "comp:graphprobe@0.1.0",
-    "description": "`graph-probe` \u2014 an instrument for `knowledge:graph/store` (see wit/probe.wit)",
+    "description": "`graph-probe` — an instrument for `knowledge:graph/store` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1597,7 +1597,7 @@
   {
     "name": "graph-selector",
     "package": "selector:graph@0.1.0",
-    "description": "`graph-selector` \u2014 which branch won, and the only path to a pull request",
+    "description": "`graph-selector` — which branch won, and the only path to a pull request",
     "exports": [
       "graph:select/selector@0.2.0"
     ],
@@ -1611,7 +1611,7 @@
   {
     "name": "graph-viz-domain",
     "package": "comp:graphvizdomain@0.1.0",
-    "description": "`graph-viz-domain` \u2014 draw the capability graph as a picture you can pan and read",
+    "description": "`graph-viz-domain` — draw the capability graph as a picture you can pan and read",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1625,7 +1625,7 @@
   {
     "name": "health-records-domain",
     "package": "health-records:health-records",
-    "description": "`health-records-domain` \u2014 keep patient records behind a login, with per-account access control",
+    "description": "`health-records-domain` — keep patient records behind a login, with per-account access control",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1643,7 +1643,7 @@
   {
     "name": "helpdesk-domain",
     "package": "helpdesk:app@0.1.0",
-    "description": "helpdesk:app \u2014 support/ticketing SaaS domain over composed contracts",
+    "description": "helpdesk:app — support/ticketing SaaS domain over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1665,7 +1665,7 @@
   {
     "name": "i18n-catalog",
     "package": "i18n:catalog@0.1.0",
-    "description": "`i18n-catalog` \u2014 translate a message for a locale \u2014 placeholder interpolation, plural rules and locale negotiation",
+    "description": "`i18n-catalog` — translate a message for a locale — placeholder interpolation, plural rules and locale negotiation",
     "exports": [
       "catalog"
     ],
@@ -1685,7 +1685,7 @@
   {
     "name": "iban",
     "package": "iban:validate@0.1.0",
-    "description": "`iban` \u2014 validate a bank account number \u2014 IBAN mod-97 checksum and the per-country length",
+    "description": "`iban` — validate a bank account number — IBAN mod-97 checksum and the per-country length",
     "exports": [
       "validator"
     ],
@@ -1697,7 +1697,7 @@
   {
     "name": "ical",
     "package": "ical:codec@0.1.0",
-    "description": "`ical` \u2014 write an .ics calendar file \u2014 RFC 5545, with the line folding, escaping and UTC timestamps it requires",
+    "description": "`ical` — write an .ics calendar file — RFC 5545, with the line folding, escaping and UTC timestamps it requires",
     "exports": [
       "codec"
     ],
@@ -1709,7 +1709,7 @@
   {
     "name": "id-generate",
     "package": "id:generate@0.1.0",
-    "description": "`id-generate` \u2014 mint a unique identifier \u2014 sortable ULIDs and random ids that do not collide across processes",
+    "description": "`id-generate` — mint a unique identifier — sortable ULIDs and random ids that do not collide across processes",
     "exports": [
       "generator"
     ],
@@ -1721,7 +1721,7 @@
   {
     "name": "idempotency-guard",
     "package": "idempotency:guard@0.1.0",
-    "description": "`idempotency-guard` \u2014 make a mutating request safe to retry \u2014 dedup by idempotency key and replay the stored result",
+    "description": "`idempotency-guard` — make a mutating request safe to retry — dedup by idempotency key and replay the stored result",
     "exports": [
       "store"
     ],
@@ -1741,7 +1741,7 @@
   {
     "name": "image-optimizer",
     "package": "media:image@0.1.0",
-    "description": "`image-optimizer` \u2014 shrink a picture by re-encoding it at lower cost",
+    "description": "`image-optimizer` — shrink a picture by re-encoding it at lower cost",
     "exports": [
       "optimizer"
     ],
@@ -1753,7 +1753,7 @@
   {
     "name": "image-optimizer-domain",
     "package": "local:image-optimizer",
-    "description": "`image-optimizer-domain` \u2014 shrink an uploaded picture and hand back the smaller one",
+    "description": "`image-optimizer-domain` — shrink an uploaded picture and hand back the smaller one",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1772,7 +1772,7 @@
   {
     "name": "inproc-workflow",
     "package": "inproc:workflow@0.1.0",
-    "description": "`inproc-workflow` \u2014 the default execution backend for the jobs queue",
+    "description": "`inproc-workflow` — the default execution backend for the jobs queue",
     "exports": [
       "durable:workflow/orchestrator@0.1.0"
     ],
@@ -1784,7 +1784,7 @@
   {
     "name": "insta-domain",
     "package": "insta:app@0.1.0",
-    "description": "`insta-domain` \u2014 post pictures, follow other people and like what they posted",
+    "description": "`insta-domain` — post pictures, follow other people and like what they posted",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1798,7 +1798,7 @@
   {
     "name": "invoice-copilot-domain",
     "package": "invoice:copilot@0.1.0",
-    "description": "`invoice-copilot-domain` \u2014 the model writes the words and the money component does the",
+    "description": "`invoice-copilot-domain` — the model writes the words and the money component does the",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1882,7 +1882,7 @@
   {
     "name": "iot-scanner",
     "package": "iot:scanner@0.1.0",
-    "description": "`iot-scanner` \u2014 list nearby wireless devices with their signal strength and connection state",
+    "description": "`iot-scanner` — list nearby wireless devices with their signal strength and connection state",
     "exports": [
       "scanner"
     ],
@@ -1896,7 +1896,7 @@
   {
     "name": "jobs-domain",
     "package": "jobs:app@0.1.0",
-    "description": "jobs:app \u2014 a durable background-job queue over composed contracts",
+    "description": "jobs:app — a durable background-job queue over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1914,7 +1914,7 @@
   {
     "name": "jsonpatch",
     "package": "json:patch@0.1.0",
-    "description": "`jsonpatch` \u2014 apply a partial change to a JSON document \u2014 RFC 6902 JSON Patch and RFC 7386 merge patch",
+    "description": "`jsonpatch` — apply a partial change to a JSON document — RFC 6902 JSON Patch and RFC 7386 merge patch",
     "exports": [
       "patcher"
     ],
@@ -1926,7 +1926,7 @@
   {
     "name": "knowledge-graph",
     "package": "knowledge:graph@0.1.0",
-    "description": "`knowledge-graph` \u2014 nodes, edges and traversal over SurrealDB's HTTP API",
+    "description": "`knowledge-graph` — nodes, edges and traversal over SurrealDB's HTTP API",
     "exports": [
       "store"
     ],
@@ -1963,7 +1963,7 @@
   {
     "name": "knowledge-memory",
     "package": "knowledge:memory@0.1.0",
-    "description": "`knowledge-memory` \u2014 the policy layer over the stores that already exist",
+    "description": "`knowledge-memory` — the policy layer over the stores that already exist",
     "exports": [
       "memory",
       "promotion"
@@ -1980,7 +1980,7 @@
   {
     "name": "kv-probe",
     "package": "kv:probe@0.1.0",
-    "description": "`kv-probe` \u2014 an instrument for one specific unknown (see wit/probe.wit)",
+    "description": "`kv-probe` — an instrument for one specific unknown (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -1995,7 +1995,7 @@
   {
     "name": "lan-scanner",
     "package": "net:lan@0.1.0",
-    "description": "`lan-scanner` \u2014 find which hosts are reachable on the local network",
+    "description": "`lan-scanner` — find which hosts are reachable on the local network",
     "exports": [
       "scanner"
     ],
@@ -2007,7 +2007,7 @@
   {
     "name": "lan-scanner-domain",
     "package": "local:lan-scanner",
-    "description": "`lan-scanner-domain` \u2014 find which hosts are reachable on the local network",
+    "description": "`lan-scanner-domain` — find which hosts are reachable on the local network",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2026,7 +2026,7 @@
   {
     "name": "ledger",
     "package": "ledger:doubleentry@0.1.0",
-    "description": "`ledger` \u2014 double-entry bookkeeping \u2014 validate that debits equal credits, and roll entries into balances",
+    "description": "`ledger` — double-entry bookkeeping — validate that debits equal credits, and roll entries into balances",
     "exports": [
       "ledger"
     ],
@@ -2038,7 +2038,7 @@
   {
     "name": "link-shortener",
     "package": "shortlink:app@0.1.0",
-    "description": "shortlink:app \u2014 link shortener over composed capability contracts",
+    "description": "shortlink:app — link shortener over composed capability contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2058,7 +2058,7 @@
   {
     "name": "llm-inference",
     "package": "llm:inference@0.1.0",
-    "description": "`llm-inference` \u2014 the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`",
+    "description": "`llm-inference` — the DETERMINISTIC MOCK provider for `llm:inference@0.1.0`",
     "exports": [
       "inference"
     ],
@@ -2070,7 +2070,7 @@
   {
     "name": "llm-local",
     "package": "ai:local@0.1.0",
-    "description": "`llm-local` \u2014 send a prompt to a language model running on this machine",
+    "description": "`llm-local` — send a prompt to a language model running on this machine",
     "exports": [
       "local"
     ],
@@ -2082,7 +2082,7 @@
   {
     "name": "llm-probe",
     "package": "comp:llmprobe@0.1.0",
-    "description": "`llm-probe` \u2014 an instrument for `llm:inference` (see wit/probe.wit)",
+    "description": "`llm-probe` — an instrument for `llm:inference` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2096,7 +2096,7 @@
   {
     "name": "lms-domain",
     "package": "lms:app@0.1.0",
-    "description": "`lms-domain` \u2014 a learning-management service (docs/apps/LMS.md) as ONE composed wasm",
+    "description": "`lms-domain` — a learning-management service (docs/apps/LMS.md) as ONE composed wasm",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2118,7 +2118,7 @@
   {
     "name": "local-ai-domain",
     "package": "local:local-ai",
-    "description": "`local-ai-domain` \u2014 ask a locally-hosted language model a question over HTTP",
+    "description": "`local-ai-domain` — ask a locally-hosted language model a question over HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2137,7 +2137,7 @@
   {
     "name": "lock-mutex",
     "package": "lock:mutex@0.1.0",
-    "description": "`lock-mutex` \u2014 stop two workers doing the same job \u2014 a distributed mutex / advisory lease with an expiry",
+    "description": "`lock-mutex` — stop two workers doing the same job — a distributed mutex / advisory lease with an expiry",
     "exports": [
       "mutex"
     ],
@@ -2152,7 +2152,7 @@
   {
     "name": "login-app",
     "package": "login:app@0.1.0",
-    "description": "`login-app` \u2014 a consumer component that composes three universal",
+    "description": "`login-app` — a consumer component that composes three universal",
     "exports": [
       "auth"
     ],
@@ -2168,7 +2168,7 @@
   {
     "name": "mail-http",
     "package": "mail:send@0.1.0",
-    "description": "`mail-http` \u2014 one email, POSTed to whatever gateway config names",
+    "description": "`mail-http` — one email, POSTed to whatever gateway config names",
     "exports": [
       "sender"
     ],
@@ -2197,7 +2197,7 @@
   {
     "name": "markdown",
     "package": "md:render@0.1.0",
-    "description": "`markdown` \u2014 render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it",
+    "description": "`markdown` — render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it",
     "exports": [
       "renderer"
     ],
@@ -2209,7 +2209,7 @@
   {
     "name": "mdns-discoverer-domain",
     "package": "local:mdns-discoverer",
-    "description": "`mdns-discoverer-domain` \u2014 discover printers, speakers and other services advertised on the local network",
+    "description": "`mdns-discoverer-domain` — discover printers, speakers and other services advertised on the local network",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2228,7 +2228,7 @@
   {
     "name": "mdns-discovery",
     "package": "net:mdns@0.1.0",
-    "description": "`mdns-discovery` \u2014 discover printers, speakers and services advertised on the local network",
+    "description": "`mdns-discovery` — discover printers, speakers and services advertised on the local network",
     "exports": [
       "discovery"
     ],
@@ -2240,7 +2240,7 @@
   {
     "name": "memory-probe",
     "package": "comp:memoryprobe@0.1.0",
-    "description": "`memory-probe` \u2014 an instrument for `knowledge:memory` (see wit/probe.wit)",
+    "description": "`memory-probe` — an instrument for `knowledge:memory` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2255,7 +2255,7 @@
   {
     "name": "mesh-domain",
     "package": "mesh:app@0.1.0",
-    "description": "`mesh-domain` \u2014 the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP",
+    "description": "`mesh-domain` — the resilience playground (docs/apps/MESH.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2271,7 +2271,7 @@
   {
     "name": "metrics-collect",
     "package": "metrics:collect@0.1.0",
-    "description": "`metrics-collect` \u2014 count named events, read a family by prefix, and compute the rate between two counters",
+    "description": "`metrics-collect` — count named events, read a family by prefix, and compute the rate between two counters",
     "exports": [
       "collector"
     ],
@@ -2286,7 +2286,7 @@
   {
     "name": "mfa-authgate",
     "package": "mfa:app@0.1.0",
-    "description": "mfa:app \u2014 TOTP 2FA enrollment + challenge-response login over composed",
+    "description": "mfa:app — TOTP 2FA enrollment + challenge-response login over composed",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2304,7 +2304,7 @@
   {
     "name": "mock-fitness",
     "package": "mockgate:fitness@0.1.0",
-    "description": "`mock-fitness` \u2014 `graph:fitness`, scored by a scripted rule (see wit/fitness.wit)",
+    "description": "`mock-fitness` — `graph:fitness`, scored by a scripted rule (see wit/fitness.wit)",
     "exports": [
       "graph:fitness/evaluator@0.2.0"
     ],
@@ -2323,7 +2323,7 @@
   {
     "name": "mock-provider",
     "package": "mock:provider@0.1.0",
-    "description": "`mock-provider` \u2014 `llm:inference`, scripted",
+    "description": "`mock-provider` — `llm:inference`, scripted",
     "exports": [
       "llm:inference/inference@0.1.0"
     ],
@@ -2350,7 +2350,7 @@
   {
     "name": "moderation-domain",
     "package": "moderation:queue@0.1.0",
-    "description": "`moderation-domain` \u2014 content in, a decision out, and the model does not have the",
+    "description": "`moderation-domain` — content in, a decision out, and the model does not have the",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2437,7 +2437,7 @@
   {
     "name": "money",
     "package": "money:amount@0.1.0",
-    "description": "`money` \u2014 exact money arithmetic in integer minor units tagged with an ISO-4217 currency \u2014 never a float",
+    "description": "`money` — exact money arithmetic in integer minor units tagged with an ISO-4217 currency — never a float",
     "exports": [
       "arithmetic"
     ],
@@ -2449,7 +2449,7 @@
   {
     "name": "notify-dispatch",
     "package": "notify:dispatch@0.1.0",
-    "description": "`notify-dispatch` \u2014 send an outbound notification \u2014 a webhook POST, or email/SMS through a configured gateway",
+    "description": "`notify-dispatch` — send an outbound notification — a webhook POST, or email/SMS through a configured gateway",
     "exports": [
       "dispatcher"
     ],
@@ -2464,7 +2464,7 @@
   {
     "name": "notify-inbox",
     "package": "notify:inbox@0.1.0",
-    "description": "`notify-inbox` \u2014 the in-app channel: durable, per subject, with unread state",
+    "description": "`notify-inbox` — the in-app channel: durable, per subject, with unread state",
     "exports": [
       "inbox"
     ],
@@ -2479,7 +2479,7 @@
   {
     "name": "notify-prefs",
     "package": "notify:prefs@0.1.0",
-    "description": "`notify-prefs` \u2014 read what a subject asked for, then tell them on those channels",
+    "description": "`notify-prefs` — read what a subject asked for, then tell them on those channels",
     "exports": [
       "preferences"
     ],
@@ -2495,7 +2495,7 @@
   {
     "name": "notify-probe",
     "package": "notify:probe@0.1.0",
-    "description": "`notify-probe` \u2014 the door onto `notify:prefs` and `notify:inbox`",
+    "description": "`notify-probe` — the door onto `notify:prefs` and `notify:inbox`",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2510,7 +2510,7 @@
   {
     "name": "openai-provider",
     "package": "openai:provider@0.1.0",
-    "description": "`openai-provider` \u2014 the OpenAI side of the LLM contract \u2014 chat, completion and embeddings over an OpenAI-compatible API",
+    "description": "`openai-provider` — the OpenAI side of the LLM contract — chat, completion and embeddings over an OpenAI-compatible API",
     "exports": [
       "llm:inference/inference@0.1.0"
     ],
@@ -2543,7 +2543,7 @@
   {
     "name": "ordinal",
     "package": "demo:ordinal@0.1.0",
-    "description": "`ordinal` \u2014 turn a number into its English ordinal \u2014 1st, 2nd, 3rd, 111th",
+    "description": "`ordinal` — turn a number into its English ordinal — 1st, 2nd, 3rd, 111th",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
@@ -2553,7 +2553,7 @@
   {
     "name": "otp",
     "package": "otp:totp@0.1.0",
-    "description": "`otp` \u2014 generate and verify a one-time password for two-factor login \u2014 TOTP and HOTP, RFC 6238 and 4226",
+    "description": "`otp` — generate and verify a one-time password for two-factor login — TOTP and HOTP, RFC 6238 and 4226",
     "exports": [
       "authenticator"
     ],
@@ -2565,7 +2565,7 @@
   {
     "name": "outbox",
     "package": "outbox:dispatch@0.1.0",
-    "description": "`outbox` \u2014 emit an event reliably after a state change \u2014 the transactional outbox, so a crash neither loses nor double-fires it",
+    "description": "`outbox` — emit an event reliably after a state change — the transactional outbox, so a crash neither loses nor double-fires it",
     "exports": [
       "queue"
     ],
@@ -2590,7 +2590,7 @@
   {
     "name": "pagination",
     "package": "paginate:cursor@0.1.0",
-    "description": "`pagination` \u2014 paginate a long list without drift \u2014 encode a sort position into an opaque cursor",
+    "description": "`pagination` — paginate a long list without drift — encode a sort position into an opaque cursor",
     "exports": [
       "cursors"
     ],
@@ -2613,7 +2613,7 @@
   {
     "name": "passkey-domain",
     "package": "passkey:app@0.1.0",
-    "description": "`passkey-domain` \u2014 passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP",
+    "description": "`passkey-domain` — passwordless sign-in (docs/apps/PASSKEY.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2644,7 +2644,7 @@
   {
     "name": "paste-bin",
     "package": "bin:app@0.1.0",
-    "description": "bin:app \u2014 a paste / gist bin over a chain of mostly pure-compute contracts",
+    "description": "bin:app — a paste / gist bin over a chain of mostly pure-compute contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2662,7 +2662,7 @@
   {
     "name": "payees-domain",
     "package": "payees:app@0.1.0",
-    "description": "`payees-domain` \u2014 a payee book (docs/apps/PAYEES.md) as ONE composed wasm HTTP",
+    "description": "`payees-domain` — a payee book (docs/apps/PAYEES.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2682,7 +2682,7 @@
   {
     "name": "pdf",
     "package": "pdf:codec@0.1.0",
-    "description": "`pdf` \u2014 write a PDF document \u2014 text laid onto pages, with no native library and no headless browser",
+    "description": "`pdf` — write a PDF document — text laid onto pages, with no native library and no headless browser",
     "exports": [
       "codec"
     ],
@@ -2694,7 +2694,7 @@
   {
     "name": "pdf-generator-domain",
     "package": "local:pdf-generator",
-    "description": "`pdf-generator-domain` \u2014 render a web page to a PDF and return the bytes",
+    "description": "`pdf-generator-domain` — render a web page to a PDF and return the bytes",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2713,7 +2713,7 @@
   {
     "name": "photo-critic",
     "package": "demo:photocritic@0.1.0",
-    "description": "`photo-critic` \u2014 a photo-critique app that runs on the lattice",
+    "description": "`photo-critic` — a photo-critique app that runs on the lattice",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2734,7 +2734,7 @@
   {
     "name": "photosocial-domain",
     "package": "photosocial:app@0.1.0",
-    "description": "`photosocial-domain` \u2014 a social photo-sharing application with AI critique,",
+    "description": "`photosocial-domain` — a social photo-sharing application with AI critique,",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2754,7 +2754,7 @@
   {
     "name": "pii-redact",
     "package": "pii:redact@0.1.0",
-    "description": "`pii-redact` \u2014 find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink",
+    "description": "`pii-redact` — find and mask personal data in free text before it reaches a log, an LLM prompt or an analytics sink",
     "exports": [
       "redactor"
     ],
@@ -2766,7 +2766,7 @@
   {
     "name": "pipeline-domain",
     "package": "pipeline:app@0.1.0",
-    "description": "pipeline:app \u2014 a reliable event pipeline over composed contracts",
+    "description": "pipeline:app — a reliable event pipeline over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2782,7 +2782,7 @@
   {
     "name": "platform-domain",
     "package": "platform:app@0.1.0",
-    "description": "`platform-domain` \u2014 the platform control plane (docs/adr/) as ONE composed wasm",
+    "description": "`platform-domain` — the platform control plane (docs/adr/) as ONE composed wasm",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2894,7 +2894,7 @@
   {
     "name": "policy-guard",
     "package": "policy:guard@0.1.0",
-    "description": "`policy-guard` \u2014 does this principal own THIS row? \u2014 attribute-based, row-level authorization beyond roles",
+    "description": "`policy-guard` — does this principal own THIS row? — attribute-based, row-level authorization beyond roles",
     "exports": [
       "guard"
     ],
@@ -2908,7 +2908,7 @@
   {
     "name": "poll-domain",
     "package": "poll:domain@0.1.0",
-    "description": "`poll-domain` \u2014 a live poll, as one component",
+    "description": "`poll-domain` — a live poll, as one component",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -2925,7 +2925,7 @@
   {
     "name": "portfolio-value",
     "package": "portfolio:value@0.1.0",
-    "description": "`portfolio-value` \u2014 what a collection is worth now, what it cost, and what selling has already made",
+    "description": "`portfolio-value` — what a collection is worth now, what it cost, and what selling has already made",
     "exports": [
       "valuation"
     ],
@@ -2937,7 +2937,7 @@
   {
     "name": "power-domain",
     "package": "local:power-domain",
-    "description": "`power-domain` \u2014 work out what running an appliance costs from its wattage and hours",
+    "description": "`power-domain` — work out what running an appliance costs from its wattage and hours",
     "exports": [
       "calculate-cost: func(wattage: f32, hours: f32, token: string) -> result<f32, string>"
     ],
@@ -2953,7 +2953,7 @@
   {
     "name": "price-history",
     "package": "price:history@0.1.0",
-    "description": "`price-history` \u2014 what a card sold for over time, from quotes that arrive late, out of order and in gaps",
+    "description": "`price-history` — what a card sold for over time, from quotes that arrive late, out of order and in gaps",
     "exports": [
       "history"
     ],
@@ -2965,7 +2965,7 @@
   {
     "name": "proxy-route",
     "package": "proxy:route@0.1.0",
-    "description": "`proxy-route` \u2014 forward a request to an upstream by path prefix \u2014 a config-driven reverse proxy",
+    "description": "`proxy-route` — forward a request to an upstream by path prefix — a config-driven reverse proxy",
     "exports": [
       "router"
     ],
@@ -2989,7 +2989,7 @@
   {
     "name": "pulse-domain",
     "package": "pulse:app@0.1.0",
-    "description": "pulse:app \u2014 a realtime chat room over composed contracts",
+    "description": "pulse:app — a realtime chat room over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3005,7 +3005,7 @@
   {
     "name": "qr",
     "package": "qr:encode@0.1.0",
-    "description": "`qr` \u2014 turn a URL or a string into a scannable QR code, as SVG",
+    "description": "`qr` — turn a URL or a string into a scannable QR code, as SVG",
     "exports": [
       "encoder"
     ],
@@ -3017,7 +3017,7 @@
   {
     "name": "quiz-grade",
     "package": "quiz:grade@0.1.0",
-    "description": "`quiz-grade` \u2014 grade answers against an answer key, and roll a cohort's scores into statistics",
+    "description": "`quiz-grade` — grade answers against an answer key, and roll a cohort's scores into statistics",
     "exports": [
       "grader"
     ],
@@ -3029,7 +3029,7 @@
   {
     "name": "quota",
     "package": "quota:meter@0.1.0",
-    "description": "`quota` \u2014 meter cumulative usage against a budget over a billing period \u2014 reserve, consume, refund",
+    "description": "`quota` — meter cumulative usage against a budget over a billing period — reserve, consume, refund",
     "exports": [
       "meter"
     ],
@@ -3044,7 +3044,7 @@
   {
     "name": "rate-limiter",
     "package": "ratelimit:guard@0.1.0",
-    "description": "`rate-limiter` \u2014 stop a caller making too many requests \u2014 count attempts against a key and lock it out after too many",
+    "description": "`rate-limiter` — stop a caller making too many requests — count attempts against a key and lock it out after too many",
     "exports": [
       "limiter"
     ],
@@ -3069,7 +3069,7 @@
   {
     "name": "real-estate-escrow-domain",
     "package": "real-estate-escrow:real-estate-escrow",
-    "description": "`real-estate-escrow-domain` \u2014 hold property transactions behind a login, with per-account access",
+    "description": "`real-estate-escrow-domain` — hold property transactions behind a login, with per-account access",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3087,7 +3087,7 @@
   {
     "name": "record-store",
     "package": "records:store@0.1.0",
-    "description": "`record-store` \u2014 store JSON records in named collections, query them by field, and index them",
+    "description": "`record-store` — store JSON records in named collections, query them by field, and index them",
     "exports": [
       "store"
     ],
@@ -3103,7 +3103,7 @@
   {
     "name": "reddit-domain",
     "package": "local:reddit",
-    "description": "`reddit-domain` \u2014 run threaded discussion boards where people post and reply under topics",
+    "description": "`reddit-domain` — run threaded discussion boards where people post and reply under topics",
     "exports": [
       "reddit"
     ],
@@ -3118,7 +3118,7 @@
   {
     "name": "resilience",
     "package": "resilience:breaker@0.1.0",
-    "description": "`resilience` \u2014 stop hammering a failing service \u2014 a circuit breaker and exponential backoff, as pure functions",
+    "description": "`resilience` — stop hammering a failing service — a circuit breaker and exponential backoff, as pure functions",
     "exports": [
       "breaker"
     ],
@@ -3130,7 +3130,7 @@
   {
     "name": "roman",
     "package": "demo:roman@0.1.0",
-    "description": "`roman` \u2014 convert a number to Roman numerals and read Roman numerals back",
+    "description": "`roman` — convert a number to Roman numerals and read Roman numerals back",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
@@ -3140,7 +3140,7 @@
   {
     "name": "rot13",
     "package": "demo:rot13@0.1.0",
-    "description": "`rot13` \u2014 obscure text with the ROT13 letter substitution, and reverse it",
+    "description": "`rot13` — obscure text with the ROT13 letter substitution, and reverse it",
     "exports": [],
     "capability_deps": [],
     "config_keys": [],
@@ -3150,7 +3150,7 @@
   {
     "name": "rrule",
     "package": "rrule:recur@0.1.0",
-    "description": "`rrule` \u2014 expand a repeating or recurring event into concrete dates \u2014 every weekday, every 2 weeks on Mon and Wed",
+    "description": "`rrule` — expand a repeating or recurring event into concrete dates — every weekday, every 2 weeks on Mon and Wed",
     "exports": [
       "recur"
     ],
@@ -3162,7 +3162,7 @@
   {
     "name": "saga-domain",
     "package": "saga:app@0.1.0",
-    "description": "saga:app \u2014 a durable trip-booking saga over composed contracts",
+    "description": "saga:app — a durable trip-booking saga over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3213,7 +3213,7 @@
   {
     "name": "scheduler-timer",
     "package": "sched:timer@0.1.0",
-    "description": "`scheduler-timer` \u2014 do this later \u2014 durable timers for reminders, payment retries and nightly sweeps",
+    "description": "`scheduler-timer` — do this later — durable timers for reminders, payment retries and nightly sweeps",
     "exports": [
       "timer"
     ],
@@ -3228,7 +3228,7 @@
   {
     "name": "scribe-domain",
     "package": "scribe:app@0.1.0",
-    "description": "scribe:app \u2014 a collaborative document editor over composed contracts",
+    "description": "scribe:app — a collaborative document editor over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3245,7 +3245,7 @@
   {
     "name": "search-domain",
     "package": "search:app@0.1.0",
-    "description": "search:app \u2014 faceted search-as-you-type over composed contracts",
+    "description": "search:app — faceted search-as-you-type over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3264,7 +3264,7 @@
   {
     "name": "search-index",
     "package": "search:index@0.1.0",
-    "description": "`search-index` \u2014 let users search their own data \u2014 a full-text inverted index with ranked results",
+    "description": "`search-index` — let users search their own data — a full-text inverted index with ranked results",
     "exports": [
       "index"
     ],
@@ -3278,7 +3278,7 @@
   {
     "name": "secret-probe",
     "package": "comp:secretprobe@0.1.0",
-    "description": "`secret-probe` \u2014 an instrument for `comp:secrets/reader` (see wit/probe.wit)",
+    "description": "`secret-probe` — an instrument for `comp:secrets/reader` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3292,7 +3292,7 @@
   {
     "name": "secrets-vault",
     "package": "secrets:vault@0.1.0",
-    "description": "`secrets-vault` \u2014 store secrets envelope-encrypted, so an API key never sits in plaintext beside ordinary data",
+    "description": "`secrets-vault` — store secrets envelope-encrypted, so an API key never sits in plaintext beside ordinary data",
     "exports": [
       "vault"
     ],
@@ -3303,7 +3303,7 @@
     "config_keys": [
       {
         "name": "master-key",
-        "description": "base64 STANDARD, MUST decode to exactly 32 bytes \u2014 required."
+        "description": "base64 STANDARD, MUST decode to exactly 32 bytes — required."
       }
     ],
     "reusable_as_is": true,
@@ -3312,7 +3312,7 @@
   {
     "name": "select-probe",
     "package": "comp:selectprobe@0.1.0",
-    "description": "`select-probe` \u2014 an instrument for `graph:select` (see wit/probe.wit)",
+    "description": "`select-probe` — an instrument for `graph:select` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3326,7 +3326,7 @@
   {
     "name": "session-store",
     "package": "session:store@0.1.0",
-    "description": "`session-store` \u2014 hold a server-side session \u2014 mint an opaque id, attach data, refresh a sliding expiry, revoke it",
+    "description": "`session-store` — hold a server-side session — mint an opaque id, attach data, refresh a sliding expiry, revoke it",
     "exports": [
       "store"
     ],
@@ -3346,7 +3346,7 @@
   {
     "name": "shaper",
     "package": "shaper:limit@0.1.0",
-    "description": "`shaper` \u2014 the arithmetic behind rate limiting \u2014 token bucket and GCRA, as pure functions whose state the caller holds",
+    "description": "`shaper` — the arithmetic behind rate limiting — token bucket and GCRA, as pure functions whose state the caller holds",
     "exports": [
       "limiter"
     ],
@@ -3358,7 +3358,7 @@
   {
     "name": "sheet-ingest",
     "package": "sheet:ingest@0.1.0",
-    "description": "`sheet-ingest` \u2014 a `.csv` or `.xlsx` someone exported, turned into rows",
+    "description": "`sheet-ingest` — a `.csv` or `.xlsx` someone exported, turned into rows",
     "exports": [
       "reader"
     ],
@@ -3373,7 +3373,7 @@
   {
     "name": "slug",
     "package": "slug:generate@0.1.0",
-    "description": "`slug` \u2014 turn a title into a clean URL slug, transliterating accents and suffixing on collision",
+    "description": "`slug` — turn a title into a clean URL slug, transliterating accents and suffixing on collision",
     "exports": [
       "generator"
     ],
@@ -3399,7 +3399,7 @@
   {
     "name": "smart-home-domain",
     "package": "smart-home:smart-home",
-    "description": "`smart-home-domain` \u2014 register household devices behind a login, with per-account access",
+    "description": "`smart-home-domain` — register household devices behind a login, with per-account access",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3417,7 +3417,7 @@
   {
     "name": "stash-domain",
     "package": "stash:app@0.1.0",
-    "description": "`stash-domain` \u2014 a personal note stash (docs/apps/STASH.md) as ONE composed wasm HTTP",
+    "description": "`stash-domain` — a personal note stash (docs/apps/STASH.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3438,7 +3438,7 @@
   {
     "name": "static-assets",
     "package": "ui:assets@0.1.0",
-    "description": "`static-assets` \u2014 serve an embedded static bundle \u2014 an SPA in a component of its own, so the domain artifact stays slim",
+    "description": "`static-assets` — serve an embedded static bundle — an SPA in a component of its own, so the domain artifact stays slim",
     "exports": [
       "files"
     ],
@@ -3450,7 +3450,7 @@
   {
     "name": "status-page",
     "package": "status:app@0.1.0",
-    "description": "status:app \u2014 uptime monitor over composed capability contracts",
+    "description": "status:app — uptime monitor over composed capability contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3469,7 +3469,7 @@
   {
     "name": "studio-domain",
     "package": "studio:app@0.1.0",
-    "description": "`studio-domain` \u2014 the composition studio (docs/apps/STUDIO.md) as ONE composed wasm HTTP",
+    "description": "`studio-domain` — the composition studio (docs/apps/STUDIO.md) as ONE composed wasm HTTP",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3486,7 +3486,7 @@
   {
     "name": "support-desk-domain",
     "package": "support:desk@0.1.0",
-    "description": "`support-desk-domain` \u2014 a model writes the reply, and the reply gets there",
+    "description": "`support-desk-domain` — a model writes the reply, and the reply gets there",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3554,7 +3554,7 @@
   {
     "name": "svg-chart",
     "package": "svg:chart@0.1.0",
-    "description": "`svg-chart` \u2014 render a chart to SVG on the server \u2014 bar, line, donut and sparkline",
+    "description": "`svg-chart` — render a chart to SVG on the server — bar, line, donut and sparkline",
     "exports": [
       "charts"
     ],
@@ -3566,7 +3566,7 @@
   {
     "name": "system-cron",
     "package": "os:system@0.1.0",
-    "description": "`system-cron` \u2014 read and write the machine's scheduled jobs",
+    "description": "`system-cron` — read and write the machine's scheduled jobs",
     "exports": [
       "cron"
     ],
@@ -3578,7 +3578,7 @@
   {
     "name": "tempo-domain",
     "package": "tempo:app@0.1.0",
-    "description": "tempo:app \u2014 a multi-person worktime logger over composed contracts",
+    "description": "tempo:app — a multi-person worktime logger over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3598,7 +3598,7 @@
   {
     "name": "textdiff",
     "package": "diff:text@0.1.0",
-    "description": "`textdiff` \u2014 what changed between two texts \u2014 a structured edit script, a unified diff, and apply",
+    "description": "`textdiff` — what changed between two texts — a structured edit script, a unified diff, and apply",
     "exports": [
       "differ"
     ],
@@ -3610,7 +3610,7 @@
   {
     "name": "throttle-domain",
     "package": "throttle:app@0.1.0",
-    "description": "throttle:app \u2014 a live throttle wall over composed contracts",
+    "description": "throttle:app — a live throttle wall over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3627,7 +3627,7 @@
   {
     "name": "track-assets",
     "package": "ui:assets@0.1.0",
-    "description": "`track-assets` \u2014 the track (project tracker) SPA embedded as `ui:assets`",
+    "description": "`track-assets` — the track (project tracker) SPA embedded as `ui:assets`",
     "exports": [
       "files"
     ],
@@ -3639,7 +3639,7 @@
   {
     "name": "track-domain",
     "package": "track:app@0.1.0",
-    "description": "track:app \u2014 a Linear-lite project tracker over composed contracts",
+    "description": "track:app — a Linear-lite project tracker over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3668,7 +3668,7 @@
   {
     "name": "transit-domain",
     "package": "transit:app@0.1.0",
-    "description": "`transit-domain` \u2014 a public-transport ticketing service (docs/apps/TRANSIT.md) as ONE",
+    "description": "`transit-domain` — a public-transport ticketing service (docs/apps/TRANSIT.md) as ONE",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3688,7 +3688,7 @@
   {
     "name": "treasury-ledger-domain",
     "package": "treasury:ledger@0.1.0",
-    "description": "`treasury-ledger-domain` \u2014 concurrent transfers that never lose money",
+    "description": "`treasury-ledger-domain` — concurrent transfers that never lose money",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3771,7 +3771,7 @@
   {
     "name": "triage-assist-domain",
     "package": "triage:assist@0.1.0",
-    "description": "`triage-assist-domain` \u2014 authenticated, rate-limited defect intake with an AI",
+    "description": "`triage-assist-domain` — authenticated, rate-limited defect intake with an AI",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3794,7 +3794,7 @@
   {
     "name": "triage-domain",
     "package": "triage:domain@0.1.0",
-    "description": "`triage-domain` \u2014 defect intake, lifecycle and digest, as one component",
+    "description": "`triage-domain` — defect intake, lifecycle and digest, as one component",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3812,7 +3812,7 @@
   {
     "name": "ui-notifier",
     "package": "os:ui@0.1.0",
-    "description": "`ui-notifier` \u2014 raise a notification on the user's desktop",
+    "description": "`ui-notifier` — raise a notification on the user's desktop",
     "exports": [
       "notifications"
     ],
@@ -3824,7 +3824,7 @@
   {
     "name": "upload-drop",
     "package": "drop:app@0.1.0",
-    "description": "drop:app \u2014 a presigned direct-upload drop-box over composed contracts",
+    "description": "drop:app — a presigned direct-upload drop-box over composed contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3841,7 +3841,7 @@
   {
     "name": "upload-policy",
     "package": "upload:policy@0.1.0",
-    "description": "`upload-policy` \u2014 validate a file upload against a size and content-type policy, then mint a signed upload ticket",
+    "description": "`upload-policy` — validate a file upload against a size and content-type policy, then mint a signed upload ticket",
     "exports": [
       "gate"
     ],
@@ -3872,7 +3872,7 @@
   {
     "name": "validate",
     "package": "validate:schema@0.1.0",
-    "description": "`validate` \u2014 validate input against declared per-field rules and return structured errors",
+    "description": "`validate` — validate input against declared per-field rules and return structured errors",
     "exports": [
       "validator"
     ],
@@ -3884,7 +3884,7 @@
   {
     "name": "version-probe",
     "package": "comp:versionprobe@0.1.0",
-    "description": "`version-probe` \u2014 answers with the tag it was BUILT with",
+    "description": "`version-probe` — answers with the tag it was BUILT with",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3903,7 +3903,7 @@
   {
     "name": "vet-domain",
     "package": "vet:domain@0.1.0",
-    "description": "`vet-domain` \u2014 the vet-clinic domain as a WIT HTTP component (FULL PARITY)",
+    "description": "`vet-domain` — the vet-clinic domain as a WIT HTTP component (FULL PARITY)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3943,7 +3943,7 @@
   {
     "name": "vgit-probe",
     "package": "comp:vgitprobe@0.1.0",
-    "description": "`vgit-probe` \u2014 an instrument for `vgit:store` (see wit/probe.wit)",
+    "description": "`vgit-probe` — an instrument for `vgit:store` (see wit/probe.wit)",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3959,7 +3959,7 @@
   {
     "name": "video-ffmpeg",
     "package": "media:video@0.1.0",
-    "description": "`video-ffmpeg` \u2014 re-encode a video into another format or resolution",
+    "description": "`video-ffmpeg` — re-encode a video into another format or resolution",
     "exports": [
       "ffmpeg"
     ],
@@ -3971,7 +3971,7 @@
   {
     "name": "video-transcoder-domain",
     "package": "local:video-transcoder",
-    "description": "`video-transcoder-domain` \u2014 re-encode an uploaded video into another format",
+    "description": "`video-transcoder-domain` — re-encode an uploaded video into another format",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -3990,7 +3990,7 @@
   {
     "name": "virt-git",
     "package": "vgit:store@0.1.0",
-    "description": "`virt-git` \u2014 git's object model over `blob:store`. No disk, no working copy",
+    "description": "`virt-git` — git's object model over `blob:store`. No disk, no working copy",
     "exports": [
       "objects",
       "refs",
@@ -4013,7 +4013,7 @@
   {
     "name": "vpn-manager-domain",
     "package": "local:vpn-manager",
-    "description": "`vpn-manager-domain` \u2014 report whether the VPN tunnel is up and who is connected to it",
+    "description": "`vpn-manager-domain` — report whether the VPN tunnel is up and who is connected to it",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -4032,7 +4032,7 @@
   {
     "name": "vpn-wireguard",
     "package": "net:vpn@0.1.0",
-    "description": "`vpn-wireguard` \u2014 report whether the VPN tunnel is up and which peers are connected",
+    "description": "`vpn-wireguard` — report whether the VPN tunnel is up and which peers are connected",
     "exports": [
       "wireguard"
     ],
@@ -4044,7 +4044,7 @@
   {
     "name": "webauthn",
     "package": "webauthn:verify@0.1.0",
-    "description": "`webauthn` \u2014 the server half of passkey login \u2014 verify a WebAuthn registration and an assertion",
+    "description": "`webauthn` — the server half of passkey login — verify a WebAuthn registration and an assertion",
     "exports": [
       "verifier"
     ],
@@ -4056,7 +4056,7 @@
   {
     "name": "webhook-ingest",
     "package": "webhook:ingest@0.1.0",
-    "description": "`webhook-ingest` \u2014 verify an inbound webhook's HMAC signature, then dedup a redelivery",
+    "description": "`webhook-ingest` — verify an inbound webhook's HMAC signature, then dedup a redelivery",
     "exports": [
       "verifier"
     ],
@@ -4071,7 +4071,7 @@
   {
     "name": "webhook-relay",
     "package": "relay:app@0.1.0",
-    "description": "relay:app \u2014 webhook relay over composed capability contracts",
+    "description": "relay:app — webhook relay over composed capability contracts",
     "exports": [
       "wasi:http/incoming-handler@0.2.0"
     ],
@@ -4095,7 +4095,7 @@
   {
     "name": "webhook-sign",
     "package": "webhook:sign@0.1.0",
-    "description": "`webhook-sign` \u2014 sign an outbound webhook the way the major providers do \u2014 HMAC-SHA256 over a timestamped payload",
+    "description": "`webhook-sign` — sign an outbound webhook the way the major providers do — HMAC-SHA256 over a timestamped payload",
     "exports": [
       "signer"
     ],
@@ -4107,7 +4107,7 @@
   {
     "name": "wit-reflect",
     "package": "wit:reflect@0.1.0",
-    "description": "`wit-reflect` \u2014 read a component's real imports and exports out of the binary, and compose components from them",
+    "description": "`wit-reflect` — read a component's real imports and exports out of the binary, and compose components from them",
     "exports": [
       "inspector",
       "composer"
@@ -4120,7 +4120,7 @@
   {
     "name": "zip",
     "package": "zip:archive@0.1.0",
-    "description": "`zip` \u2014 write a .zip archive from a list of named byte blobs",
+    "description": "`zip` — write a .zip archive from a list of named byte blobs",
     "exports": [
       "archiver"
     ],

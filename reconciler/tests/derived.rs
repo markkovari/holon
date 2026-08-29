@@ -178,19 +178,15 @@ fn the_committed_catalogue_is_not_stale() {
     if !catalogue.exists() {
         return;
     }
-    let generator = root.join("tools/gen-catalog.py");
-    if !generator.exists() {
-        eprintln!("SKIPPED: tools/gen-catalog.py is gone — nothing generates the catalogue");
-        return;
-    }
-
     let before = std::fs::read(&catalogue).expect("catalog.json is unreadable");
     let markdown = root.join("components/CATALOG.md");
     let before_md = std::fs::read(&markdown).unwrap_or_default();
 
-    let run = Command::new("python3").arg("tools/gen-catalog.py").current_dir(&root).output();
+    // `CARGO_BIN_EXE_` rather than a path: cargo builds the binary as a prerequisite
+    // of this test, so the check cannot pass by running a stale one.
+    let run = Command::new(env!("CARGO_BIN_EXE_comp-catalog")).current_dir(&root).output();
     let Ok(run) = run else {
-        eprintln!("SKIPPED: python3 is not available");
+        eprintln!("SKIPPED: comp-catalog did not run");
         return;
     };
     if !run.status.success() {
@@ -208,7 +204,7 @@ fn the_committed_catalogue_is_not_stale() {
     assert!(
         before == after && before_md == after_md,
         "the committed catalogue disagrees with the components — run \
-         `python3 tools/gen-catalog.py`.\nIt is derived from their sources, so a \
+         `comp-catalog`.\nIt is derived from their sources, so a \
          component changed and the catalogue did not."
     );
 }
