@@ -76,9 +76,23 @@ impl Guest for Component {
                     detail: f["detail"].as_str().unwrap_or_default().to_string(),
                 })
                 .collect();
+            // Optional in the request, so every existing caller of this probe keeps
+            // working — a probe is a door onto an interface, and a door that broke
+            // every knock because the interface grew a parameter would be its own
+            // kind of debt.
+            let blocked: Vec<agent::Blocked> = v["blocked"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .map(|b| agent::Blocked {
+                    id: b["id"].as_str().unwrap_or_default().to_string(),
+                    needs: b["needs"].as_str().unwrap_or_default().to_string(),
+                })
+                .collect();
             let seed = v["seed"].as_u64().unwrap_or(0);
 
-            match agent::attempt(&g, &previous, seed) {
+            match agent::attempt(&g, &previous, &blocked, seed) {
                 Ok(c) => json!({
                     "files": c.files.iter().map(|f| json!({ "path": f.path, "content": f.content }))
                         .collect::<Vec<_>>(),

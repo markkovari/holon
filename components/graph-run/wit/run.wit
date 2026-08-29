@@ -200,6 +200,6 @@ interface driver {
 
 world graph-run {
     export driver;
-    import graph:agent/writer@0.1.0;
+    import graph:agent/writer@0.2.0;
     import graph:fitness/evaluator@0.2.0;
 }
