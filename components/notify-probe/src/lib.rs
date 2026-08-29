@@ -58,25 +58,7 @@ fn param(query: &str, key: &str) -> String {
 
 const MAX_BODY_BYTES: usize = 1 << 20;
 
-fn read_body(request: &IncomingRequest) -> String {
-    let Ok(body) = request.consume() else { return String::new() };
-    let Ok(stream) = body.stream() else { return String::new() };
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(c) if c.is_empty() => break,
-            Ok(c) => {
-                if out.len() + c.len() > MAX_BODY_BYTES {
-                    return String::new();
-                }
-                out.extend_from_slice(&c);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => return String::new(),
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+guestio::guest_read_body_text!(MAX_BODY_BYTES);
 
 fn note_json(n: &inbox::Note) -> Value {
     json!({

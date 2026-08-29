@@ -497,6 +497,7 @@ name = "contract-probe"
 version = "0.1.0"
 dependencies = [
  "guestfmt",
+ "guestio",
  "wit-bindgen-rt",
 ]
 
@@ -732,6 +733,7 @@ dependencies = [
 name = "driver-probe"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -887,6 +889,7 @@ dependencies = [
 name = "fitness-probe"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -934,6 +937,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "forge-probe"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -1048,6 +1052,7 @@ name = "graph-probe"
 version = "0.1.0"
 dependencies = [
  "guestfmt",
+ "guestio",
  "wit-bindgen-rt",
 ]
 
@@ -1590,6 +1595,7 @@ name = "memory-probe"
 version = "0.1.0"
 dependencies = [
  "guestfmt",
+ "guestio",
  "wit-bindgen-rt",
 ]
 
@@ -2314,6 +2320,7 @@ dependencies = [
 name = "select-probe"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -2838,6 +2845,7 @@ name = "vgit-probe"
 version = "0.1.0"
 dependencies = [
  "guestfmt",
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
