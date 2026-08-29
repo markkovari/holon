@@ -406,6 +406,30 @@ e2e-clinic: build
 #   just capgraph            # regenerate docs/CAPABILITY-GRAPH.md
 #   just capgraph json       # the same graph for tooling
 # No `build` dependency on purpose: cargo's progress goes to stdout, so
+# Does a goal's contract document every capability its world imports?
+#
+#   just contract-critic                       # every goal
+#   just contract-critic .comp/goals/x.toml    # one
+#
+# A part whose world imports `id:generate` but whose contract never quotes the call
+# signature has to GUESS it, and a guess that compiles is the expensive kind of
+# wrong. Deliberately NOT a CI test: it judges goal files, which are inputs to a
+# loop that is paused, and gating a pull request on the prose of a historical goal
+# is the wrong trade. It was unreachable, which is a different problem — the same one
+# `tools/check-wit-packages.py` had, and that one turned out to be failing.
+contract-critic *goals:
+    @python3 tools/contract-critic.py {{ if goals == "" { ".comp/goals/*.toml" } else { goals } }}
+
+# How much of a goal's app was reused rather than written (ADR-0089's whole claim).
+#
+#   just reuse-ratio .comp/goals/treasury-ledger.toml
+#
+# Three numbers from three sources so none can be talked up: the components
+# `comp-plug` actually wired, the Rust lines in them against the lines in the goal's
+# writable files, and what the artifact really imports. treasury-ledger reads 80.9%.
+reuse-ratio +goals:
+    @python3 tools/reuse-ratio.py {{goals}}
+
 # `just capgraph json | jq` was parsing compiler output. The tool says what to do
 # The component catalogue, from the components' own SOURCES.
 #
