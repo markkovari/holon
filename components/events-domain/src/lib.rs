@@ -381,54 +381,12 @@ fn seed() -> Reply {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-/// The body as BYTES.
-///
-/// `read_body` returns this through `from_utf8_lossy`, which is right for JSON and
-/// silently destroys an image: every byte sequence that is not valid UTF-8 becomes
-/// U+FFFD, so the upload succeeds and stores something that is not a JPEG. Anything
-/// binary has to come through here.
-fn read_body_bytes(request: &IncomingRequest) -> Vec<u8> {
-    let Ok(body) = request.consume() else { return Vec::new() };
-    let Ok(stream) = body.stream() else { return Vec::new() };
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                if out.len() + chunk.len() > MAX_BODY_BYTES {
-                    return Vec::new();
-                }
-                out.extend_from_slice(&chunk);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => return Vec::new(),
-        }
-    }
-    out
-}
-
-fn read_body(request: &IncomingRequest) -> String {
-    let Ok(body) = request.consume() else { return String::new() };
-    let Ok(stream) = body.stream() else { return String::new() };
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                if out.len() + chunk.len() > MAX_BODY_BYTES {
-                    return String::new();
-                }
-                out.extend_from_slice(&chunk);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            // No error channel here, so the choice is a truncated body or none.
-            // None: a caller parsing an empty body fails cleanly, where half a JSON
-            // document can parse into something plausible and wrong.
-            Err(_) => return String::new(),
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+// The body as BYTES vs as text is a real choice here, so both come from
+// `guest_read_body_text!`: `read_body` decodes lossily, which is right for JSON and
+// silently destroys an image — every byte sequence that is not valid UTF-8 becomes
+// U+FFFD, so the upload succeeds and stores something that is not a JPEG. Anything
+// binary goes through `read_body_bytes`.
+guestio::guest_read_body_text!(MAX_BODY_BYTES);
 
 use guestfmt::percent_decode as percent;
 
@@ -469,7 +427,7 @@ impl Guest for Component {
         // A body is read ONCE — the stream is not rewindable — so which shape it is
         // read into has to be decided before reading, not after.
         let (body, bytes) = match method {
-            _ if is_image_upload => (String::new(), read_body_bytes(&request)),
+            _ if is_image_upload => (String::new(), read_body_bytes(&request).unwrap_or_default()),
             Method::Post | Method::Put | Method::Patch | Method::Delete => {
                 (read_body(&request), Vec::new())
             }

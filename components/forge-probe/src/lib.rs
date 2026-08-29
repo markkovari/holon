@@ -33,30 +33,7 @@ fn err(e: forge::ForgeError) -> String {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_body(request: IncomingRequest) -> String {
-    let Ok(body) = request.consume() else { return String::new() };
-    let Ok(stream) = body.stream() else { return String::new() };
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                // Same reasoning as the error arm below: an over-long body reads
-                // as empty rather than as a plausible prefix of itself.
-                if out.len() + chunk.len() > MAX_BODY_BYTES {
-                    return String::new();
-                }
-                out.extend_from_slice(&chunk);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            // No error channel here, so the choice is a truncated body or none.
-            // None: a caller parsing an empty body fails cleanly, where half a
-            // JSON document can parse into something plausible and wrong.
-            Err(_) => return String::new(),
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+guestio::guest_read_body_text!(MAX_BODY_BYTES);
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
@@ -69,7 +46,7 @@ impl Guest for Component {
                 Err(e) => err(e),
             },
             (Method::Post, "/propose") => {
-                let raw = read_body(request);
+                let raw = read_body(&request);
                 let v: serde_json::Value = match serde_json::from_str(&raw) {
                     Ok(v) => v,
                     Err(e) => {

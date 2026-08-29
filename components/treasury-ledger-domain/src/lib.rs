@@ -189,25 +189,7 @@ fn peek_journal() -> Reply {
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_body(request: &IncomingRequest) -> String {
-    let Ok(body) = request.consume() else { return String::new() };
-    let Ok(stream) = body.stream() else { return String::new() };
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                if out.len() + chunk.len() > MAX_BODY_BYTES {
-                    return String::new();
-                }
-                out.extend_from_slice(&chunk);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => return String::new(),
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+guestio::guest_read_body_text!(MAX_BODY_BYTES);
 
 fn header(request: &IncomingRequest, name: &str) -> String {
     request
