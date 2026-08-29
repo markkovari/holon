@@ -71,6 +71,14 @@ path = "src/bin/goald.rs"
 name = "comp-capgraph"
 path = "src/bin/capgraph.rs"
 
+# The component catalogue, derived from the SOURCES. Deliberately a second binary
+# rather than a `--format` on capgraph: that one reads built artifacts and answers
+# what a component really imports, this reads sources and answers what it is FOR, and
+# a component that does not build has the second and not the first.
+[[bin]]
+name = "comp-catalog"
+path = "src/bin/catalog.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
@@ -84,6 +92,7 @@ tempfile = "3"
 # comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
 axum = "0.8"
 serde_json = "1"
+regex = "1"
 anyhow = "1"
 # Capability versions are semver, so the self-improve gate orders them by
 # major/minor/patch rather than as strings ("2.0.0" > "10.0.0" the wrong way).

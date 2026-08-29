@@ -52,7 +52,7 @@ brain/muscle topology (proven, round 6b), and SSE streaming (proven, 6d).
 |---|---|
 | 38 reusable capability components (`components/CATALOG.md`) | launch content: identity, records, rate-limit, quota, flags, TOTP, webhooks, fsm, cron, LLM interface |
 | `auth-guard` | both a catalog item AND the platform's own tenant identity (it's already multi-tenant) |
-| `tools/gen-catalog.py` + `catalog.json` | catalog service embryo (WIT + config-schema extraction) |
+| `comp-catalog` + `catalog.json` | catalog service embryo (WIT + config-schema extraction) |
 | tuned runtime deployment | helm values with pooling env, NATS sizing, `-DV` fix; two clusters running it |
 | hybrid topology proof | k8s brain + bare-metal `wash host` muscle works today (round 6b) |
 | bench harness (`bench-suite`, oha recipes) | becomes the SLO/regression suite |
