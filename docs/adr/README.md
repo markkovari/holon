@@ -22,7 +22,7 @@ single-component app should be a container, not a wasm workload.
 
 ## Where to start, by what you are doing
 
-Ninety-six decisions is not a reading list. Four paths through it:
+Ninety-seven decisions is not a reading list. Four paths through it:
 
 | you want to | read |
 |---|---|
@@ -126,6 +126,7 @@ tells you what is true now rather than what was once believed.
 | [0094](0094-a-capability-describes-itself-in-a-callers-words.md) | A capability describes itself in a caller's words | **accepted**, and built — the discovery third of [0089](0089-capability-accumulation.md) |
 | [0095](0095-what-is-allowed-to-be-native.md) | What is allowed to be native | **accepted** — names the rule the tree already followed, and the five things that qualified |
 | [0096](0096-a-pull-contract-needs-a-relay.md) | A pull contract needs a relay, and the relay is native | **accepted**, and built — `comp-relay`, the sixth native thing |
+| [0097](0097-a-derived-file-is-a-liability.md) | A derived file is a liability, and a name is not a fact | **accepted**, and done — `catalog.json` deleted, `reusable_as_is` read off the exports |
 
 ## History: superseded, and kept
 
