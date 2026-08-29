@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Exercise the records:store typed JSON record store in-process via jco",
   "scripts": {
-    "transpile": "jco transpile record_store.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue-shim.js --map wasi:keyvalue/batch@0.2.0-draft=../src/keyvalue-shim.js",
+    "transpile": "jco transpile record_store.wasm -o gen --map wasi:keyvalue/store@0.2.0-draft=../src/keyvalue-shim.js --map wasi:keyvalue/batch@0.2.0-draft=../src/keyvalue-shim.js --map comp:store/cas@0.1.0=../src/cas-shim.js",
     "test": "npm run transpile && tsx --test test/record.test.ts"
   },
   "dependencies": {

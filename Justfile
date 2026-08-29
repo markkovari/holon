@@ -2733,6 +2733,85 @@ adversarial: compose-gate build-reconciler
     cd host && cargo build --release --bin comp-host
     bash bench/adversarial/run.sh
 
+# Stage every `.wasm` a jco example transpiles, from what `just build` produced.
+#
+# 58 of these were TRACKED, and all 50 with a same-named component had drifted from
+# it — not by a metadata stamp, by thousands of bytes. `crdt.wasm` was 4 100 bytes
+# larger than the component it was copied from. So ~40 examples were exercising
+# frozen components that no longer exist anywhere else in the repository, and a
+# green example said nothing about the component it claimed to demonstrate.
+#
+# `.gitignore` has carried `**/*.wasm` for a long time; those files predate the rule
+# and git keeps tracking what it already tracks. The intent was recorded, the rule
+# was written, the cleanup was not finished.
+#
+# Derived from each example's own `package.json` rather than listed here — the same
+# reasoning `bench-setup` already gives for its 34: a hand-kept list of 58 is wrong
+# the first time somebody adds an example, and wrong silently.
+#
+#   just examples-stage
+examples-stage: build compose
+    #!/usr/bin/env bash
+    set -euo pipefail
+    R=components/target/wasm32-wasip2/release
+
+    # Three examples ask for a bare name and need the COMPOSED artifact, because a
+    # bare component leaves non-WASI imports for jco to emit as bare specifiers,
+    # which Node rejects outright as a URL scheme (`protocol 'audit:'`). auth-guard
+    # imports ratelimit:guard + audit:log/recorder, and both it and audit-log import
+    # audit:log/types — a TYPES-ONLY interface nothing exports, so composition cannot
+    # satisfy it either; that one is stubbed at transpile time by the shims the
+    # package.json files point at.
+    #
+    # The other three are components whose crate name is not the name the example
+    # uses. Six entries, and every one of them is a fact about a specific example —
+    # which is why they are a table and the other 55 are a rule.
+    composed_alias() { case "$1" in
+        audit_log|auth_guard|webhook_ingest) return 0 ;; *) return 1 ;; esac; }
+    # An example that demonstrates a component in-process needs a DETERMINISTIC,
+    # offline composition. Where the interface has several exporters, say which —
+    # otherwise the pick is alphabetical and moves whenever somebody adds one.
+    prefer() { case "$1" in
+        ai_inference) echo llm_inference ;; *) echo "" ;; esac; }
+    bare_alias() { case "$1" in
+        eventbus) echo event_bus ;;
+        lock)     echo lock_mutex ;;
+        timer)    echo scheduler_timer ;;
+        *)        echo "${1//-/_}" ;; esac; }
+
+    staged=0
+    for pj in examples/*/package.json; do
+      dir=$(dirname "$pj")
+      for want in $(grep -o 'jco transpile [^ "]*\.wasm' "$pj" | awk '{print $3}' | sort -u); do
+        stem="${want%.wasm}"
+        if [ "${stem%.composed}" != "$stem" ] || composed_alias "$stem"; then
+          # `_derive` composes a component against its own imports, so the component
+          # name is the artifact name with the suffix off and underscores hyphenated.
+          base="${stem%.composed}"
+          out="components/target/${base}.composed.wasm"
+          if [ -n "$(prefer "$base")" ]; then
+            # comp-plug picks ONE exporter per imported interface, and adding a
+            # component can silently change which. `llm:inference/inference` now has
+            # four exporters and the pick moved to `anthropic-provider` — so this
+            # composition went from self-contained to needing a network key and a
+            # secret, and jco-ai failed with an unresolvable `comp:secrets/reader`.
+            # `--dir` wins earlier, so a directory holding one artifact pins it.
+            pin=$(mktemp -d)
+            cp "$R/$(prefer "$base").wasm" "$pin/"
+            cp "$(./reconciler/target/release/comp-plug --dir "$pin" "${base//_/-}")" "$out"
+            rm -rf "$pin"
+          else
+            just _derive "${base//_/-}" "$out" >/dev/null
+          fi
+          cp "$out" "$dir/$want"
+        else
+          cp "$R/$(bare_alias "$stem").wasm" "$dir/$want"
+        fi
+        staged=$((staged+1))
+      done
+    done
+    echo "staged $staged example input(s) from the build — none of them tracked"
+
 # Stage what `bench:inproc` needs, so it runs from a CLEAN CHECKOUT.
 #
 # It did not. The in-process benchmark imports transpiled `gen/` from 34 jco
@@ -2751,23 +2830,7 @@ adversarial: compose-gate build-reconciler
 bench-setup: build compose-webhook
     #!/usr/bin/env bash
     set -euo pipefail
-    R=components/target/wasm32-wasip2/release
-    # Two of these want the COMPOSED artifact, not the bare component, because the
-    # bare one leaves non-WASI imports for jco to emit as bare specifiers — which
-    # Node then rejects outright as a URL scheme (`protocol 'audit:'`). `_derive`
-    # says which: auth-guard imports ratelimit:guard + audit:log/recorder, and both
-    # it and audit-log import audit:log/types, a TYPES-ONLY interface nothing
-    # exports and composition therefore cannot satisfy. That last one is mapped to
-    # a stub at transpile time; see the shims the package.json files point at.
-    just _derive audit-log components/target/audit_log.composed.wasm
-    just _derive auth-guard components/target/auth_guard.composed.wasm
-    cp "$R/blob_store.wasm"         examples/jco-blob/blob_store.wasm
-    cp "$R/cache.wasm"              examples/jco-cache/cache.wasm
-    cp "$R/feature_flags.wasm"      examples/jco-featureflags/feature_flags.wasm
-    cp "$R/idempotency_guard.wasm"  examples/jco-idempotency/idempotency_guard.wasm
-    cp components/target/audit_log.composed.wasm  examples/jco-audit/audit_log.wasm
-    cp components/target/auth_guard.composed.wasm examples/jco-embed/auth_guard.wasm
-    cp components/target/webhook_ingest.composed.wasm examples/jco-webhook/webhook_ingest.wasm
+    just examples-stage
     # Every example the bench imports, installed and transpiled. Derived from the
     # bench source rather than listed here: a hand-kept list of 34 goes stale on the
     # next import and fails as a missing module three files away from the cause.
