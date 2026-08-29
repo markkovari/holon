@@ -144,30 +144,7 @@ fn request_json(r: &reg::Request) -> String {
 /// traps the component and the connection simply closes.
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_body(request: IncomingRequest) -> String {
-    let Ok(body) = request.consume() else { return String::new() };
-    let Ok(stream) = body.stream() else { return String::new() };
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                // Same reasoning as the error arm below: an over-long body reads
-                // as empty rather than as a plausible prefix of itself.
-                if out.len() + chunk.len() > MAX_BODY_BYTES {
-                    return String::new();
-                }
-                out.extend_from_slice(&chunk);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            // No error channel here, so the choice is a truncated body or none.
-            // None: a caller parsing an empty body fails cleanly, where half a
-            // JSON document can parse into something plausible and wrong.
-            Err(_) => return String::new(),
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+guestio::guest_read_body_text!(MAX_BODY_BYTES);
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
@@ -179,7 +156,7 @@ impl Guest for Component {
         let method = request.method();
 
         let body = match (&method, route.as_str()) {
-            (Method::Post, "/publish") => match reg::publish(&read_body(request)) {
+            (Method::Post, "/publish") => match reg::publish(&read_body(&request)) {
                 Ok(v) => format!("{{\"version\":{v}}}"),
                 Err(e) => err(e),
             },
@@ -203,7 +180,7 @@ impl Guest for Component {
             },
 
             (Method::Post, "/ask") => {
-                let body = read_body(request);
+                let body = read_body(&request);
                 match reg::ask(
                     &param(&query, "from"),
                     &param(&query, "to"),
@@ -226,7 +203,7 @@ impl Guest for Component {
 
             (Method::Post, "/answer") => {
                 let v = verdict_of(&param(&query, "verdict"));
-                let body = read_body(request);
+                let body = read_body(&request);
                 match reg::answer(&param(&query, "id"), v, &body) {
                     // 0 means no new version: a denial and a counter change
                     // nothing about what the parts build against.

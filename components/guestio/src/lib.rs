@@ -92,10 +92,22 @@ macro_rules! guest_write_all {
 #[macro_export]
 macro_rules! guest_read_body {
     ($limit:expr) => {
+        $crate::guest_read_body_named!(read_body, $limit);
+    };
+}
+
+/// The body loop, under a name the caller chooses.
+///
+/// Exists so `guest_read_body_text!` can build on the SAME loop instead of carrying a
+/// second copy of it — which is the thing this whole crate is for. Call
+/// `guest_read_body!` or `guest_read_body_text!` rather than this.
+#[macro_export]
+macro_rules! guest_read_body_named {
+    ($name:ident, $limit:expr) => {
         /// Read the whole request body, or fail. Never returns a partial one.
         ///
         /// Expanded by `guestio::guest_read_body!()`.
-        fn read_body(
+        fn $name(
             request: &crate::bindings::wasi::http::types::IncomingRequest,
         ) -> Result<Vec<u8>, ()> {
             let body = request.consume().map_err(|_| ())?;
@@ -164,6 +176,47 @@ macro_rules! guest_bearer {
                 .into_iter()
                 .filter_map(|v| String::from_utf8(v).ok())
                 .find_map(|v| guestfmt::bearer_token(&v).map(str::to_string))
+        }
+    };
+}
+
+/// Define a body reader that yields text: the same loop, decoded lossily at the end.
+///
+/// 21 components returned a `String` from their own copy of this, and the decode is
+/// why this is a separate macro rather than a call to `guest_read_body!`:
+/// `from_utf8_lossy` replaces every byte that is not valid UTF-8, which is right for
+/// a handler about to parse JSON — a mangled body fails the parse either way — and
+/// WRONG for anything that stores or forwards what it read. `events-domain` learned
+/// that by mangling image uploads.
+///
+/// So both are defined and the choice is at the call site:
+///
+///   * `read_body(&request) -> String` — text you are about to parse
+///   * `read_body_bytes(&request) -> Result<Vec<u8>, ()>` — anything else
+///
+/// A failed read yields an EMPTY string, not a partial one. The `Result` is gone by
+/// then, so the only honest options were empty or truncated, and a handler parsing an
+/// empty body fails cleanly where half a JSON document can parse into something
+/// plausible and wrong.
+///
+/// ```ignore
+/// use guestio::guest_read_body_text;
+/// const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// guest_read_body_text!(MAX_BODY_BYTES);
+/// ```
+#[macro_export]
+macro_rules! guest_read_body_text {
+    ($limit:expr) => {
+        $crate::guest_read_body_named!(read_body_bytes, $limit);
+
+        /// The request body as text, with invalid UTF-8 replaced.
+        ///
+        /// Expanded by `guestio::guest_read_body_text!()`. Use `read_body_bytes` for a
+        /// body that is not text.
+        fn read_body(
+            request: &crate::bindings::wasi::http::types::IncomingRequest,
+        ) -> String {
+            String::from_utf8_lossy(&read_body_bytes(request).unwrap_or_default()).into_owned()
         }
     };
 }
