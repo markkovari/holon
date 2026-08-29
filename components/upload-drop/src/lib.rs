@@ -304,6 +304,7 @@ fn parse_body(request: &IncomingRequest) -> Result<Value, Outcome> {
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_write_all!();
 
 fn query_str(path: &str, key: &str) -> Option<String> {
     let query = path.split('?').nth(1)?;
@@ -334,9 +335,7 @@ fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body
     ResponseOutparam::set(response_out, Ok(response));
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
     }
     let _ = OutgoingBody::finish(out, None);
 }

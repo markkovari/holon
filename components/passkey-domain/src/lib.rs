@@ -216,6 +216,7 @@ fn credential_view(v: &Value) -> Value {
 // ---- sessions ---------------------------------------------------------------
 
 guestio::guest_bearer!();
+guestio::guest_write_all!();
 
 /// The account this request is authenticated as, if any.
 fn session_user(request: &IncomingRequest) -> Option<String> {
@@ -597,9 +598,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let bytes = body.as_bytes();
     if !bytes.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in bytes.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, bytes);
     }
     let _ = OutgoingBody::finish(out, None);
 }

@@ -492,6 +492,7 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_write_all!();
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, body) = match result {
@@ -508,9 +509,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let bytes = body.as_bytes();
     if !bytes.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in bytes.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, bytes);
     }
     let _ = OutgoingBody::finish(out, None);
 }
