@@ -806,16 +806,38 @@ e2e-tempo: compose-tempo
 
 # Publish the composed tempo component to GHCR as a public OCI artifact — the
 # wasmCloud-native pull path. `gh` mints the token, `wash` does the OCI push.
+#
+# THE TAG IS FOR PEOPLE; THE DIGEST IS WHAT YOU START. ADR-0006 allows a tag on a
+# push and forbids one in anything that deploys — "tags drift and registries lie",
+# and it names a live broken deploy caused by nothing else. This recipe used to
+# print a `wash start … tempo:<version>` line, which is a deploy referencing a tag,
+# so it told you to do the one thing the ADR exists to prevent.
+#
 # One-time setup:
 #   gh auth refresh -s write:packages        # add the packages scope to gh
 # After the FIRST push, make it public once: GitHub → your profile → Packages →
 # tempo → Package settings → Visibility → Public (or "Connect repository").
-# Then any wasmCloud host pulls it anonymously:
-#   wash start component oci://ghcr.io/{{ghcr_owner}}/tempo:<version> tempo
 push-tempo-ghcr version="0.1.0": compose-tempo
-    wash oci push ghcr.io/{{ghcr_owner}}/tempo:{{version}} {{tempo_composed}} \
-      --user {{ghcr_owner}} --password "$(gh auth token)"
-    @echo "pushed oci://ghcr.io/{{ghcr_owner}}/tempo:{{version}} (set the package Public once)"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ref="ghcr.io/{{ghcr_owner}}/tempo:{{version}}"
+    out=$(wash oci push "$ref" {{tempo_composed}} \
+      --user {{ghcr_owner}} --password "$(gh auth token)" -o json)
+    printf '%s\n' "$out"
+    # `wash` reports the digest it pushed; that is the only thing worth starting.
+    digest=$(printf '%s' "$out" | python3 -c \
+      'import sys,json,re; t=sys.stdin.read(); m=re.search(r"sha256:[0-9a-f]{64}", t); print(m.group(0) if m else "")')
+    if [ -z "$digest" ]; then
+      # Loudly, and without a fallback to the tag: a start line that names a tag is
+      # the failure this recipe is meant to have stopped printing.
+      echo "pushed $ref, but wash reported no digest — resolve it before deploying:" >&2
+      echo "  curl -sI -H 'Accept: application/vnd.oci.image.manifest.v1+json' \\" >&2
+      echo "    https://ghcr.io/v2/{{ghcr_owner}}/tempo/manifests/{{version}} | grep -i docker-content-digest" >&2
+      exit 1
+    fi
+    echo "pushed $ref (set the package Public once)"
+    echo "start it BY DIGEST — the tag can move, this cannot:"
+    echo "  wash start component oci://ghcr.io/{{ghcr_owner}}/tempo@$digest tempo"
 
 # Compose booked-domain (docs/apps/BOOKED.md — a Calendly-lite booking service) with the
 # composed auth-guard + records + lock-mutex (no double-book) + email-render
