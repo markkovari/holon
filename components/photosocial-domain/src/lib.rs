@@ -809,25 +809,7 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
-fn read_body(request: &IncomingRequest) -> Result<Vec<u8>, ()> {
-    let b = request.consume().map_err(|_| ())?;
-    let stream = b.stream().map_err(|_| ())?;
-    let mut buf = Vec::new();
-    loop {
-        match stream.blocking_read(8192) {
-            Ok(chunk) if chunk.is_empty() => break,
-            Ok(chunk) => {
-                if buf.len() + chunk.len() > MAX_BODY_BYTES {
-                    return Err(());
-                }
-                buf.extend_from_slice(&chunk);
-            }
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(_) => return Err(()),
-        }
-    }
-    Ok(buf)
-}
+guestio::guest_read_body!(MAX_BODY_BYTES);
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, content_type, body) = match result {

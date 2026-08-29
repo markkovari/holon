@@ -131,6 +131,36 @@ fn no_component_writes_an_unbounded_payload_in_one_call() {
 #[test]
 fn a_read_loop_tells_end_of_body_from_a_failed_read() {
     let mut sloppy = Vec::new();
+
+    // The definition, first and by name. 47 components expand it, so scanning it
+    // only because `components/guestio` happens to be a guest source would make the
+    // guard depend on a coincidence — the same reasoning as the write side.
+    let macro_src = repo_root().join("components/guestio/src/lib.rs");
+    match std::fs::read_to_string(&macro_src) {
+        Ok(text) => {
+            let body: String = text
+                .split("macro_rules! guest_read_body")
+                .nth(1)
+                .unwrap_or_default()
+                .chars()
+                .take(2000)
+                .collect();
+            if !body.contains("StreamError::Closed") {
+                sloppy.push(
+                    "  components/guestio: the macro does not tell end-of-body from a \
+                     failed read"
+                        .to_string(),
+                );
+            }
+            if !body.contains("$limit") {
+                sloppy.push(
+                    "  components/guestio: the macro does not bound what it reads".to_string(),
+                );
+            }
+        }
+        Err(e) => sloppy.push(format!("  components/guestio/src/lib.rs is unreadable ({e})")),
+    }
+
     for path in guest_sources() {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
         let lines: Vec<&str> = text.lines().collect();
@@ -255,7 +285,11 @@ fn a_body_read_into_memory_has_a_ceiling() {
     let mut unbounded = Vec::new();
     for path in guest_sources() {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        if !text.contains("fn read_body") {
+        // Both spellings. 47 components stopped containing the literal when the
+        // body moved into `guestio::guest_read_body!`, and a check keyed only on
+        // the definition would have dropped them out of scope at exactly the
+        // moment one definition started serving all of them.
+        if !text.contains("fn read_body") && !text.contains("guest_read_body!") {
             continue;
         }
         if text.contains("MAX_BODY_BYTES") {

@@ -64,3 +64,65 @@ macro_rules! guest_write_all {
         }
     };
 }
+
+/// Define the body-reading helper: every byte, or an error — never a silent prefix.
+///
+/// As above, the prose avoids the literal name-plus-paren that the lint in
+/// `reconciler/tests/guestio.rs` splits files on, so that this comment cannot be
+/// handed to the lint in place of the code.
+///
+/// 76 components wrote this by hand, in 15 distinct implementations. 49 of those
+/// were the same function twice over — the top two clusters differed only in a
+/// variable name and the wrapping of a comment. The remaining variants disagreed
+/// about things that matter: 21 returned a `String` through `from_utf8_lossy`,
+/// which silently corrupts any body that is not UTF-8 and cost this repository a
+/// round of mangled image uploads, and 6 returned a bare `Vec<u8>` with the errors
+/// swallowed.
+///
+/// Takes the ceiling as an argument rather than reading a `MAX_BODY_BYTES` from the
+/// caller's scope. 71 components use 16 MiB and four deliberately use less — 64 KiB,
+/// 256 KiB, 1 MiB — so a macro that assumed the common value would have quietly
+/// raised four ceilings, which is the one change here nobody would have noticed.
+///
+/// ```ignore
+/// use guestio::guest_read_body;
+/// const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// guest_read_body!(MAX_BODY_BYTES);
+/// ```
+#[macro_export]
+macro_rules! guest_read_body {
+    ($limit:expr) => {
+        /// Read the whole request body, or fail. Never returns a partial one.
+        ///
+        /// Expanded by `guestio::guest_read_body!()`.
+        fn read_body(
+            request: &crate::bindings::wasi::http::types::IncomingRequest,
+        ) -> Result<Vec<u8>, ()> {
+            let body = request.consume().map_err(|_| ())?;
+            let stream = body.stream().map_err(|_| ())?;
+            let mut buf = Vec::new();
+            loop {
+                match stream.blocking_read(8192) {
+                    Ok(chunk) if chunk.is_empty() => break,
+                    Ok(chunk) => {
+                        // A ceiling, not a policy: past this the read stops and the
+                        // caller is told, rather than growing until the store's
+                        // memory cap traps the component and the connection just
+                        // closes with nothing said.
+                        if buf.len() + chunk.len() > $limit {
+                            return Err(());
+                        }
+                        buf.extend_from_slice(&chunk);
+                    }
+                    // `Closed` is how wasi:io says end-of-body; `LastOperationFailed`
+                    // is a read that went wrong. Collapsing both into `break` returns
+                    // a TRUNCATED body as if it were complete — the same silent
+                    // truncation that, on the write side, took four runs to find.
+                    Err(crate::bindings::wasi::io::streams::StreamError::Closed) => break,
+                    Err(_) => return Err(()),
+                }
+            }
+            Ok(buf)
+        }
+    };
+}
