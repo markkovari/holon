@@ -26,6 +26,7 @@ import collections
 import hashlib
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -33,10 +34,31 @@ PACKAGE = re.compile(r"^\s*package\s+([\w:-]+@[\d.]+)\s*;", re.M)
 
 
 def wit_files() -> list[str]:
+    """Every `.wit` file GIT TRACKS.
+
+    Walking the filesystem instead reported a `wasi:http@0.2.0` collision against
+    `components/portfolio-value-cs/bin/Release/.../WasiHttpWorld_component_type.wit`
+    — C# build output, ignored and never committed, which no reviewer could act on
+    and which reappears on the next `dotnet build`. `target/` was already excluded
+    by name; asking git is the version that does not need a list of every build
+    directory any toolchain might invent.
+
+    Falls back to the walk when git cannot answer, so a tarball still gets checked.
+    """
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "*.wit"],
+            cwd=ROOT, capture_output=True, check=True,
+        ).stdout.decode()
+        tracked = [os.path.join(ROOT, f) for f in listed.split("\0") if f]
+        if tracked:
+            return sorted(tracked)
+    except (OSError, subprocess.CalledProcessError):
+        pass
     out = []
     for base, dirs, files in os.walk(ROOT):
         # `target/` holds generated copies of the very files being compared.
-        dirs[:] = [d for d in dirs if d not in {"target", "node_modules", ".git"}]
+        dirs[:] = [d for d in dirs if d not in {"target", "node_modules", ".git", "bin", "obj"}]
         out.extend(os.path.join(base, f) for f in files if f.endswith(".wit"))
     return sorted(out)
 
