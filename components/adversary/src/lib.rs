@@ -23,6 +23,8 @@ use bindings::wasi::http::types::{
 };
 use bindings::wasi::keyvalue::store as kv;
 
+guestio::guest_write_all!();
+
 struct Component;
 
 /// Bucket names a leak would have used.
@@ -234,9 +236,7 @@ impl Guest for Component {
         let out_body = response.body().expect("outgoing body");
         ResponseOutparam::set(response_out, Ok(response));
         let stream = out_body.write().expect("write stream");
-        for chunk in body.as_bytes().chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body.as_bytes());
         drop(stream);
         let _ = OutgoingBody::finish(out_body, None);
     }

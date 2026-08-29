@@ -448,6 +448,7 @@ fn store_err(e: records::StoreError) -> Outcome {
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_write_all!();
 
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
     request.headers().get(name).into_iter().find_map(|v| String::from_utf8(v).ok())
@@ -520,9 +521,7 @@ fn respond(
     ResponseOutparam::set(response_out, Ok(response));
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
     }
     let _ = OutgoingBody::finish(out, None);
 }

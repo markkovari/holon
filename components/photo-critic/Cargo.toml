@@ -8,6 +8,7 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib"]
 [dependencies]
+guestio = { path = "../guestio" }
 wit-bindgen-rt = { workspace = true }
 serde_json = { workspace = true }
 [package.metadata.component]

@@ -108,6 +108,7 @@ fn natural(acc_type: &str, net: i64) -> i64 {
 // ---- auth -------------------------------------------------------------------
 
 guestio::guest_bearer!();
+guestio::guest_write_all!();
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
     let token =
@@ -709,9 +710,7 @@ fn respond(
     ResponseOutparam::set(response_out, Ok(response));
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
     }
     let _ = OutgoingBody::finish(out, None);
 }

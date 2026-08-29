@@ -27,6 +27,8 @@ use bindings::wasi::http::types::{
 };
 use bindings::wasi::io::streams::StreamError;
 
+guestio::guest_write_all!();
+
 struct Component;
 
 const DEFAULT_MODEL: &str = "claude-sonnet-5";
@@ -305,9 +307,7 @@ fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, body: &[u8]
     let out = resp.body().expect("body");
     ResponseOutparam::set(response_out, Ok(resp));
     if let Ok(stream) = out.write() {
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
         drop(stream);
     }
     let _ = OutgoingBody::finish(out, None);
