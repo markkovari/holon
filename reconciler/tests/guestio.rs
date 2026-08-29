@@ -367,3 +367,65 @@ fn no_component_decodes_a_percent_escape_into_a_char() {
         wrong.join("\n")
     );
 }
+
+/// An `Authorization` scheme name is matched case-insensitively.
+///
+/// RFC 7235 §2.1 says the scheme name is case-insensitive, and 22 of 24 hand-written
+/// copies matched the literal `"Bearer "`. A client sending `authorization: bearer
+/// <token>` — which is legal, and which some HTTP libraries normalise to — got a 401
+/// with nothing to explain it. Sixteen also left whitespace attached to the
+/// credential, so one trailing space authenticated against some components and not
+/// others.
+///
+/// `guestio::guest_bearer!()` finds the header and `guestfmt::bearer_token` parses
+/// the value, which is where the unit tests for all of this live. This catches a
+/// component going back to doing it by hand.
+#[test]
+fn no_component_matches_a_bearer_scheme_case_sensitively() {
+    let mut wrong = Vec::new();
+    for path in guest_sources() {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        for (i, line) in text.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            // The literal, in either casing — matching ONE casing is the bug, whichever
+            // one it is.
+            if !trimmed.contains(r#"strip_prefix("Bearer "#)
+                && !trimmed.contains(r#"strip_prefix("bearer "#)
+            {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(repo_root().join("components"))
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            if BEARER_ALLOWED.iter().any(|(site, _)| rel.starts_with(site)) {
+                continue;
+            }
+            wrong.push(format!("  {rel}:{}", i + 1));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these match an Authorization scheme by literal prefix, so a legal \
+         `authorization: bearer <token>` is refused:\n{}\n\nUse \
+         `guestio::guest_bearer!()`, which parses the value with \
+         `guestfmt::bearer_token`.",
+        wrong.join("\n")
+    );
+}
+
+/// Components that parse an `Authorization` value themselves, and why.
+const BEARER_ALLOWED: &[(&str, &str)] = &[(
+    "conduit-domain",
+    "the RealWorld spec sends `Authorization: Token <jwt>`, not Bearer, so this one \
+     accepts a second scheme and is not the shared shape",
+), (
+    "clinic-domain",
+    "returns a `String` rather than an `Option`, so an absent credential and an \
+     empty one are the same value to every caller — a change worth making on its \
+     own rather than inside a mechanical substitution",
+)];

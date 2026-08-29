@@ -102,6 +102,35 @@ pub fn rfc3339(secs: u64) -> String {
     )
 }
 
+/// Pull the token out of an `Authorization` header value.
+///
+/// 24 components parsed this by hand in nine shapes, and they did not agree on the
+/// two things RFC 7235 and RFC 6750 actually specify:
+///
+///   * **The scheme name is case-insensitive** (RFC 7235 §2.1). Twenty-two of the
+///     twenty-four matched the literal `"Bearer "`, so a perfectly legal
+///     `authorization: bearer <token>` was rejected as no credential at all — which
+///     presents as an unexplained 401 against a request that is correct.
+///
+///   * **Whitespace around the token is not part of it.** Eight trimmed and sixteen
+///     did not, so the same token with a trailing space authenticated against some
+///     components and failed against others.
+///
+/// Returns a borrow of the input, and `None` when the scheme is not Bearer, when
+/// there is no token, or when the token is empty — an empty credential is an absent
+/// one, never a valid one that happens to be blank.
+///
+/// The value only, not the header lookup: that needs a bindings type, so it lives in
+/// `guestio::guest_bearer!` and calls this.
+pub fn bearer_token(header_value: &str) -> Option<&str> {
+    let (scheme, rest) = header_value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return None;
+    }
+    let token = rest.trim();
+    (!token.is_empty()).then_some(token)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +173,42 @@ mod tests {
         // `-` is rejected by the radix parse on its own (it will not fit a u8), so
         // it was never the dangerous one. Asserted so the pair stays a pair.
         assert_eq!(percent_decode("%-a"), "%-a");
+    }
+
+
+    /// RFC 7235 §2.1 makes the scheme name case-insensitive, and 22 of 24 components
+    /// matched a literal `"Bearer "` — so a legal request got an unexplained 401.
+    #[test]
+    fn the_scheme_name_is_case_insensitive() {
+        for header in ["Bearer abc", "bearer abc", "BEARER abc", "BeArEr abc"] {
+            assert_eq!(bearer_token(header), Some("abc"), "{header:?}");
+        }
+    }
+
+    /// Whitespace around a credential is not part of it. Sixteen copies kept it, so
+    /// one trailing space authenticated in some components and not in others.
+    #[test]
+    fn the_token_is_trimmed() {
+        assert_eq!(bearer_token("Bearer  abc  "), Some("abc"));
+        assert_eq!(bearer_token("Bearer \tabc"), Some("abc"));
+    }
+
+    /// An empty credential is an absent one. `strip_prefix` alone returns `Some("")`
+    /// here, which a caller reads as "a token was presented".
+    #[test]
+    fn an_empty_credential_is_not_a_credential() {
+        assert_eq!(bearer_token("Bearer "), None);
+        assert_eq!(bearer_token("Bearer    "), None);
+    }
+
+    #[test]
+    fn another_scheme_is_not_a_bearer_token() {
+        assert_eq!(bearer_token("Basic dXNlcjpwdw=="), None);
+        assert_eq!(bearer_token("Token abc"), None);
+        assert_eq!(bearer_token("abc"), None);
+        assert_eq!(bearer_token(""), None);
+        // Not a prefix match: the scheme is the whole first word.
+        assert_eq!(bearer_token("Bearerish abc"), None);
     }
 
     #[test]

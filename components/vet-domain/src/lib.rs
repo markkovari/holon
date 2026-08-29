@@ -1547,10 +1547,7 @@ const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);
 
-fn bearer(request: &IncomingRequest) -> Option<String> {
-    header(request, "authorization")
-        .and_then(|s| s.strip_prefix("Bearer ").map(|tok| tok.trim().to_string()))
-}
+guestio::guest_bearer!();
 
 /// First value of a request header as a UTF-8 string.
 fn header(request: &IncomingRequest, name: &str) -> Option<String> {
@@ -1575,15 +1572,6 @@ fn query_param(query: &str, key: &str) -> Option<String> {
 }
 
 use guestfmt::percent_decode as url_decode;
-
-fn hex(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
 
 /// Host wall-clock "now" in unix seconds.
 fn now_seconds() -> i64 {
