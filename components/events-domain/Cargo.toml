@@ -32,8 +32,14 @@ world = "events-domain"
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
 # `records:store`'s own world imports this.
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }
 "wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"notify:prefs" = { path = "../notify-prefs/wit" }
+"notify:inbox" = { path = "../notify-inbox/wit" }
+"mail:send" = { path = "../mail-http/wit" }
+"webhook:sign" = { path = "../webhook-sign/wit" }
+"sched:timer" = { path = "../scheduler-timer/wit" }
 "blob:store" = { path = "../blob-store/wit" }
 "upload:policy" = { path = "../upload-policy/wit" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
