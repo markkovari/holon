@@ -39,7 +39,7 @@ components:
 
 links:
   - from: gate
-    import: graph:agent/writer@0.1.0
+    import: graph:agent/writer@0.2.0
     to: agent
   - from: agent
     import: llm:inference/inference@0.1.0

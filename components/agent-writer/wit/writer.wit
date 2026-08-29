@@ -10,6 +10,6 @@
 package writer:agent@0.1.0;
 
 world agent-writer {
-    export graph:agent/writer@0.1.0;
+    export graph:agent/writer@0.2.0;
     import llm:inference/inference@0.1.0;
 }

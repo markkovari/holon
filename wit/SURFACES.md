@@ -1153,7 +1153,7 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `graph:agent/writer@0.1.0`
+## `graph:agent/writer@0.2.0`
 
 ```wit
   interface writer {
@@ -1173,6 +1173,11 @@ Adding a *function* to an interface is compatible; adding a case to a
       detail: string,
     }
 
+    record blocked {
+      id: string,
+      needs: string,
+    }
+
     record goal {
       text: string,
       context: list<file>,
@@ -1186,7 +1191,7 @@ Adding a *function* to an interface is compatible; adding a case to a
       model: string,
     }
 
-    attempt: func(g: goal, previous: list<failure>, seed: u64) -> result<candidate, agent-error>;
+    attempt: func(g: goal, previous: list<failure>, blocked: list<blocked>, seed: u64) -> result<candidate, agent-error>;
   }
 ```
 
@@ -1325,11 +1330,11 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `graph:select/selector@0.1.0`
+## `graph:select/selector@0.2.0`
 
 ```wit
   interface selector {
-    use graph:agent/writer@0.1.0.{file};
+    use graph:agent/writer@0.2.0.{file};
     use git:forge/repo@0.1.0.{opened};
 
     record entry {

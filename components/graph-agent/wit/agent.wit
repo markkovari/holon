@@ -20,7 +20,20 @@
 // embeddings, and no embedding provider is wired (`search:index` is the lexical
 // half only). Requiring a goal to name its files is honest about that; guessing
 // at retrieval that does not exist would not be.
-package graph:agent@0.1.0;
+// Why 0.2.0: `attempt` gained a parameter.
+//
+// The driver has always computed which checks were NEVER ATTEMPTED — that is the
+// whole reason `graph:fitness` is a graph rather than a list — and then dropped it
+// on the floor, because there was nowhere in this interface to put it. So the
+// promise ADR-0088 makes, that a gate's output IS the next prompt, was only half
+// kept: the prompt said what failed and never said what could not be tried.
+//
+// A parameter and not a field on `failure`: a blocked check is not a failure, and
+// putting it in that list is how a model ends up confidently repairing a test that
+// never ran. Adding a field to a record is also a breaking change here, measured
+// (see reconciler/tests/witsurface.rs), so it would have cost the same version bump
+// and said something untrue as well.
+package graph:agent@0.2.0;
 
 interface writer {
     variant agent-error {
@@ -44,6 +57,18 @@ interface writer {
     record failure {
         id: string,
         detail: string,
+    }
+
+    /// A check that never ran, and the one that stopped it.
+    ///
+    /// Two fields rather than a formatted string, so the WRITER decides how to say
+    /// this. The driver used to render `"digest (needs compile)"` itself, which put
+    /// the wording of a prompt inside the component that is furthest from it.
+    record blocked {
+        /// The check that was not attempted.
+        id: string,
+        /// The check whose failure it was waiting on.
+        needs: string,
     }
 
     record goal {
@@ -87,9 +112,14 @@ interface writer {
     /// for reproducibility, used here in reverse: N branches of one generation
     /// ask the same question with N seeds, which is how they differ while
     /// staying replayable.
+    /// `previous` is what FAILED and is worth repairing. `blocked` is what could
+    /// not be tried yet — context for the prompt, never the subject of one: a
+    /// candidate that does not compile has one thing wrong with it and fourteen
+    /// things nobody knows about.
     attempt: func(
         g: goal,
         previous: list<failure>,
+        blocked: list<blocked>,
         seed: u64,
     ) -> result<candidate, agent-error>;
 }
