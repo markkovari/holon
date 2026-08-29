@@ -407,6 +407,19 @@ e2e-clinic: build
 #   just capgraph json       # the same graph for tooling
 # No `build` dependency on purpose: cargo's progress goes to stdout, so
 # `just capgraph json | jq` was parsing compiler output. The tool says what to do
+# The component catalogue, from the components' own SOURCES.
+#
+#   just catalog
+#
+# Was `tools/gen-catalog.py`. Ported because the catalogue is load-bearing —
+# `capsearch` reads it, and that is what stops a goal from generating a capability
+# the pool already has — while having no test, because it could not have one: it
+# embedded the last build's wasm size and hash and so was stale by construction.
+# `docs/apps/STUDIO.md` has had "replace gen-catalog.py" on its list for a while.
+catalog:
+    @cd reconciler && cargo build --release --quiet --bin comp-catalog
+    @./reconciler/target/release/comp-catalog
+
 # when nothing is built.
 capgraph format="md":
     @cd reconciler && cargo build --release --quiet --bin comp-capgraph
