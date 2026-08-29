@@ -3149,47 +3149,7 @@ fn split_query(path: &str) -> (String, Map<String, Value>) {
     (route, q)
 }
 
-/// Undo percent-encoding, and `+` for spaces.
-///
-/// Values used to be stored raw, so anything a caller escaped stayed escaped: a
-/// secret reference arrived as `vault%3A%2F%2Facme%2Fstripe` and compared unequal to
-/// the reference it named, which read as "this instance was not granted that
-/// reference" for a reference it plainly was. Any query value containing a space,
-/// a slash or a colon had the same problem — the market search just never happened
-/// to be given one.
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'%' if i + 2 < b.len() => {
-                let hex = std::str::from_utf8(&b[i + 1..i + 3]).ok();
-                match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
-                    Some(byte) => {
-                        out.push(byte);
-                        i += 3;
-                    }
-                    // Not a valid escape: keep it verbatim rather than dropping it,
-                    // so a stray `%` in a search term is a search term.
-                    None => {
-                        out.push(b'%');
-                        i += 1;
-                    }
-                }
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            c => {
-                out.push(c);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+use guestfmt::percent_decode;
 
 fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
     let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;

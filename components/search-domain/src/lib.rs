@@ -353,33 +353,7 @@ fn query_i64(path: &str, key: &str) -> Option<i64> {
     query_str(path, key)?.parse().ok()
 }
 
-fn decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if i + 2 < bytes.len() => {
-                if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                    out.push(b as char);
-                    i += 3;
-                    continue;
-                }
-                out.push('%');
-                i += 1;
-            }
-            b'+' => {
-                out.push(' ');
-                i += 1;
-            }
-            c => {
-                out.push(c as char);
-                i += 1;
-            }
-        }
-    }
-    out
-}
+use guestfmt::percent_decode as decode;
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
