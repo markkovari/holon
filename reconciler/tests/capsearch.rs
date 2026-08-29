@@ -320,7 +320,7 @@ fn every_component_has_a_description() {
         silent.is_empty(),
         "{} component(s) have no `//!` description, so nothing a caller types can \
          reach them:\n{}\n\nWrite one line saying what a CALLER wants from it. \
-         `tools/gen-catalog.py` lifts that line into `catalog.json`, and \
+         `comp-catalog` reads that line straight off the component, and \
          `capsearch` matches a goal against it.",
         silent.len(),
         silent.join("\n")
@@ -339,9 +339,10 @@ fn every_component_has_a_description() {
 /// exporting real contracts.
 ///
 /// It is now read off the exports: a component offers a contract when it exports
-/// something outside `wasi:`. The catalogue reads that from the SOURCE and `capsearch`
+/// something outside `wasi:`. `comp-catalog` reads that from the SOURCE and `capsearch`
 /// reads it from the ARTIFACT, which is two paths to one answer — so this asserts they
-/// agree, on every component, rather than trusting that they do.
+/// agree, on every component, rather than trusting that they do. Both are computed
+/// here and now; neither is read from a file.
 ///
 /// It also caught two rounds of getting the source half wrong: an unanchored regex
 /// matching the word "export" inside prose, and a crate pointing at the shared
@@ -354,11 +355,19 @@ fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
         eprintln!("SKIPPED: nothing is built — run `just build`");
         return;
     }
-    let Ok(text) = std::fs::read_to_string(root.join("components/catalog.json")) else {
-        eprintln!("SKIPPED: no catalog.json");
+    // The PROGRAM, not a committed snapshot of what it once said. There used to be a
+    // `catalog.json`, and once `capsearch` stopped reading it the only things left
+    // reading it were the tests checking whether it had gone stale.
+    let Ok(out) = std::process::Command::new(env!("CARGO_BIN_EXE_comp-catalog"))
+        .arg("--json")
+        .current_dir(&root)
+        .output()
+    else {
+        eprintln!("SKIPPED: comp-catalog did not run");
         return;
     };
-    let entries: Vec<serde_json::Value> = serde_json::from_str(&text).expect("catalog.json");
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_slice(&out.stdout).expect("comp-catalog --json");
 
     let mut wrong = Vec::new();
     let mut checked = 0usize;

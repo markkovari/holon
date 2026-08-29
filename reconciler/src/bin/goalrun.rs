@@ -607,7 +607,7 @@ fn artifacts(provider: &str) -> Result<Vec<String>> {
 /// Seed the capability graph into the pool, so the loop can ask what exists.
 ///
 /// ADR-0089 wants a run to ask "do we already have this?" before generating an
-/// implementation, and `capsearch` answers that from `catalog.json` plus the
+/// implementation, and `capsearch` answers that from the components plus the
 /// artifacts. The GRAPH — who imports what from whom, and how many applications
 /// carry a capability — lived only in `docs/CAPABILITY-GRAPH.md` and in a
 /// projection that nothing outside a test ever ran. `just capgraph-store` could
