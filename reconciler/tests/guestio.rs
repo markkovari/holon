@@ -314,3 +314,56 @@ fn a_body_read_into_memory_has_a_ceiling() {
         unbounded.join("\n")
     );
 }
+
+/// A percent escape is a BYTE, and nothing may decode one straight into a `char`.
+///
+/// 28 decoders existed across the pool under six names, and seven of them were the
+/// one-pass shape: `out.push(b as char)`, which reads a decoded byte as a Unicode
+/// code point. Two separate bugs came out of it, and only the first is obvious:
+///
+///   * every multi-byte UTF-8 sequence came back as its bytes reinterpreted as
+///     Latin-1 — `caf%C3%A9` decoded to `cafÃ©`.
+///
+///   * `u8::from_str_radix` accepts a leading sign, so `%+a` parsed as `+0x0a` and
+///     emitted a NEWLINE where the correct shape leaves the literal text `% a`.
+///     That is a caller injecting a control byte, not a display glitch. Found by
+///     fuzzing the two shapes against each other — 200 000 inputs, 699 divergences
+///     on pure ASCII, all of this form.
+///
+/// ASCII text decodes identically under both, which is exactly why it survived: it
+/// is correct for the inputs a test written in English would use.
+///
+/// `guestfmt::percent_decode` is the byte-correct one, and replacing `+` before the
+/// radix call is what closes the second hole rather than only the first.
+#[test]
+fn no_component_decodes_a_percent_escape_into_a_char() {
+    let mut wrong = Vec::new();
+    for path in guest_sources() {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || !trimmed.contains("from_str_radix") {
+                continue;
+            }
+            // The window is the arm that consumes the parsed byte.
+            let to = (i + 6).min(lines.len());
+            let window = lines[i..to].join("\n");
+            if window.contains("as char") {
+                let rel = path
+                    .strip_prefix(repo_root().join("components"))
+                    .unwrap_or(&path)
+                    .display()
+                    .to_string();
+                wrong.push(format!("  {rel}:{}", i + 1));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these decode a percent escape into a `char`, which mangles every non-ASCII \
+         character and turns `%+a` into a newline:\n{}\n\nUse \
+         `guestfmt::percent_decode`, which collects bytes and decodes once.",
+        wrong.join("\n")
+    );
+}

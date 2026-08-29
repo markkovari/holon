@@ -276,37 +276,7 @@ fn param(query: &str, key: &str) -> Option<String> {
         .map(|(_, v)| percent_decode(v))
 }
 
-fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'%' if i + 2 < b.len() => {
-                match u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                    Ok(byte) => {
-                        out.push(byte);
-                        i += 3;
-                    }
-                    // Not a valid escape: a literal `%` in a name, which is legal.
-                    Err(_) => {
-                        out.push(b'%');
-                        i += 1;
-                    }
-                }
-            }
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            c => {
-                out.push(c);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+use guestfmt::percent_decode;
 
 fn now() -> u64 {
     wall_clock::now().seconds

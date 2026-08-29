@@ -439,31 +439,7 @@ fn statements(answer: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// Enough percent-decoding for a run id in a path segment.
-///
-/// A run id is `seed/g1/branch` (ADR-0078), so the SPA sends it
-/// `encodeURIComponent`'d and the `/` arrives as `%2F`. `path-with-query` hands
-/// the component the RAW path — nothing decodes it on the way in — so without
-/// this the id is the literal `77%2Fg1` and every run detail is empty while the
-/// list beside it works. `studio-domain` carries the same helper for the same
-/// reason.
-fn percent_decode(s: &str) -> String {
-    let bytes = s.replace('+', " ").into_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&String::from_utf8_lossy(&bytes[i + 1..i + 3]), 16) {
-                out.push(b);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).to_string()
-}
+use guestfmt::percent_decode;
 
 /// A SurrealQL string literal. Through JSON so a value cannot carry syntax —
 /// this one takes a run id straight off the URL (ADR-0080).

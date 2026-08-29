@@ -1008,30 +1008,7 @@ fn query_param(path: &str, key: &str) -> Option<String> {
     })
 }
 
-/// Minimal form-urlencoded decode: `+` → space, `%XX` → byte.
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' => out.push(b' '),
-            b'%' if i + 2 < bytes.len() => {
-                let hex = |c: u8| (c as char).to_digit(16);
-                match (hex(bytes[i + 1]), hex(bytes[i + 2])) {
-                    (Some(h), Some(l)) => {
-                        out.push((h * 16 + l) as u8);
-                        i += 2;
-                    }
-                    _ => out.push(b'%'),
-                }
-            }
-            b => out.push(b),
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
+use guestfmt::percent_decode;
 
 /// Current wall-clock time as RealWorld ISO8601 with milliseconds. Millisecond
 /// precision matters: RealWorld asserts `updatedAt` changes after an update, and
