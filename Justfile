@@ -2191,6 +2191,93 @@ selfhost-agent-status host:
     for d in /srv/comp/*/digest; do [ -f "$d" ] && echo "  $(basename "$(dirname "$d")") $(cat "$d")"; done
     REMOTE
 
+# ---- the shared services a tailnet box carries ------------------------------
+#
+# SurrealDB holds two things with different lifecycles in one schema (ADR-0091):
+# the DERIVED capability graph, which `just capgraph-store` recomputes and can
+# always throw away, and the ACCUMULATED pool of what runs have learned, which is
+# the one thing in this system that cannot be recomputed.
+#
+# NATS is NOT installed here. The test harness spawns its own on a random loopback
+# port for every run and must keep doing so — forty suites depend on that isolation
+# — and a box that already has a JetStream NATS does not need a second. Point
+# `NATS_URL` at the one that is there; `comp.<v>.<lattice>.…` subjects mean two
+# lattices on one NATS never see each other's traffic.
+
+# Install SurrealDB on a box, bound to its TAILNET address only.
+#
+# Not 0.0.0.0: a database with a root credential should not be in front of every
+# device on whatever LAN the box happens to sit on. The password is generated here,
+# written to /etc/surrealdb/root.pass with 0600, and read by the unit at start — so
+# it is never in `ExecStart`, and therefore never in `ps` for every user on the box.
+#
+#   just selfhost-surreal malna
+#   SURREAL_URL=http://malna:8000 SURREAL_PASS=$(cat ~/.comp-secrets/surreal) just capgraph-store
+selfhost-surreal host version="v3.1.3":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ts=$(ssh {{host}} tailscale ip -4 2>/dev/null | head -1)
+    [ -n "$ts" ] || { echo "{{host}} has no tailscale address — this binds to the tailnet and there is none" >&2; exit 1; }
+    arch=$(ssh {{host}} uname -m)
+    case "$arch" in
+      aarch64|arm64) rel=linux-arm64 ;;
+      x86_64)        rel=linux-amd64 ;;
+      *) echo "no SurrealDB build named for $arch" >&2; exit 1 ;;
+    esac
+    # Generated here so it never travels through a shell history or an argument.
+    pass=$(openssl rand -base64 24 | tr -d '/+=' | head -c 28)
+    { echo "TS='$ts'"; echo "REL='$rel'"; echo "VER='{{version}}'"; echo "PASS='$pass'"; cat; } <<'REMOTE' | ssh {{host}} bash -s
+    set -e
+    cd /tmp
+    curl -fsSL -o surreal.tgz "https://github.com/surrealdb/surrealdb/releases/download/${VER}/surreal-${VER}.${REL}.tgz"
+    tar xzf surreal.tgz && sudo install -m 0755 surreal /usr/local/bin/surreal && rm -f surreal.tgz surreal
+    sudo mkdir -p /var/lib/surrealdb /etc/surrealdb && sudo chmod 0700 /etc/surrealdb
+    printf '%s' "$PASS" | sudo tee /etc/surrealdb/root.pass >/dev/null
+    sudo chmod 0600 /etc/surrealdb/root.pass
+    sudo tee /etc/systemd/system/surrealdb.service >/dev/null <<UNIT
+    [Unit]
+    Description=SurrealDB — the derived graph, and the pool that cannot be recomputed
+    After=network-online.target tailscaled.service
+    Wants=network-online.target
+
+    [Service]
+    Type=simple
+    ExecStart=/bin/sh -c '/usr/local/bin/surreal start --bind ${TS}:8000 --user root --pass "\$(cat /etc/surrealdb/root.pass)" rocksdb:/var/lib/surrealdb/data'
+    Restart=always
+    RestartSec=3
+    NoNewPrivileges=yes
+    ProtectSystem=strict
+    ProtectHome=yes
+    ReadWritePaths=/var/lib/surrealdb
+    PrivateTmp=yes
+
+    [Install]
+    WantedBy=multi-user.target
+    UNIT
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now surrealdb
+    sleep 4
+    systemctl is-active surrealdb
+    REMOTE
+    echo "$pass" > ~/.comp-secrets/surreal
+    chmod 600 ~/.comp-secrets/surreal
+    echo "  surreal on {{host}} at http://{{host}}:8000 (tailnet only)"
+    echo "  password in ~/.comp-secrets/surreal — by reference, never in a profile"
+
+# Is it up, and what is in it?
+selfhost-surreal-status host:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    ssh {{host}} bash -s <<'REMOTE'
+    systemctl is-active surrealdb
+    systemctl show surrealdb -p ActiveEnterTimestamp --value
+    REMOTE
+    pass=$(cat ~/.comp-secrets/surreal)
+    curl -sS -u "root:$pass" -H 'Accept: application/json' \
+      -H 'surreal-ns: comp' -H 'surreal-db: goalmemory' \
+      --data-binary 'SELECT count() FROM interface GROUP ALL; SELECT count() FROM app GROUP ALL;' \
+      "http://{{host}}:8000/sql" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("  interfaces:", (d[0]["result"] or [{}])[0].get("count", 0));print("  apps:      ", (d[1]["result"] or [{}])[0].get("count", 0))'
+
 # Render one app's systemd unit, env file and route WITHOUT touching a box.
 # Read the output before you trust it to a server.
 selfhost-render app router="caddy": build-selfhost
