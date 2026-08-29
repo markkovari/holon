@@ -1,0 +1,153 @@
+# Publish every deployable app as ONE composed artifact, and record which digest is
+# current. This is the half of continuous deployment that runs here; the other half
+# runs on the box and pulls (see `comp-agent`).
+#
+# ## Why a separate workflow from publish-components.yml
+#
+# That one publishes COMPONENTS, which is what somebody reusing a capability wants.
+# What actually runs on a machine is a composed artifact — `comp-plug` derives it
+# from a root component's imports (ADR-0087) — and no box has `comp-plug` or the
+# whole component set. Composing here and publishing one artifact per app keeps the
+# box dumb, which is the property that makes a pull agent small enough to trust.
+#
+# ## The lock is the desired state, and it is the ONE mutable pointer
+#
+# ADR-0006: nothing in a deploy may reference a tag, because a tag drifts and the
+# thing that ran is then unknowable. So `apps.lock` carries DIGESTS, the agent pulls
+# by digest, and the only mutable thing in the chain is which commit of `apps.lock`
+# is current — which is a branch, in git, with a history that is exactly the deploy
+# history. A tag would put the mutability inside the artifact reference, where it
+# cannot be audited.
+#
+# The lock lands on the `deploy` branch rather than `main` so that writing it cannot
+# retrigger this workflow — a push that publishes and then pushes is a loop.
+name: publish apps
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  # A second merge while the first is publishing would race on the deploy branch,
+  # and the loser would silently publish an older digest as current.
+  group: publish-apps
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: compose every app and publish it by digest
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the wasm target
+        run: rustup target add wasm32-wasip2
+
+      - name: Install cargo-component, wasm-tools and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-component@0.21.1,wasm-tools,just
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            components -> target
+            reconciler -> target
+
+      - name: Build the components
+        run: just build force=1
+
+      - name: Build comp-plug and comp-oci
+        working-directory: reconciler
+        run: cargo build --release --bin comp-plug --bin comp-oci
+
+      # One artifact per app in `apps/`, composed the same way `just compose-<app>`
+      # composes it — derived from the root's imports, not from a written list.
+      # One artifact per app in `apps/`, composed the same way `just compose-<app>`
+      # composes it — derived from the root's imports, not from a written list.
+      #
+      # The ROOT component's name is the artifact's file name with underscores
+      # turned back into dashes: `apps/<name>.toml` names the composed file and not
+      # the root, and inferring it here keeps the spec the one place an app is
+      # described. Plain sed rather than a heredoc'd parser — a nested heredoc
+      # inside a YAML block scalar is a quoting puzzle nobody should have to solve
+      # to read a build.
+      - name: Compose every app
+        run: |
+          set -euo pipefail
+          mkdir -p target/apps
+          for spec in apps/*.toml; do
+            app=$(basename "$spec" .toml)
+            artifact=$(sed -n 's/^artifact *= *"\(.*\)"/\1/p' "$spec" | head -1)
+            [ -n "$artifact" ] || { echo "::warning::$app names no artifact"; continue; }
+            root=$(basename "$artifact" .composed.wasm | tr '_' '-')
+            if ./reconciler/target/release/comp-plug "$root" > /tmp/out 2>/tmp/err; then
+              cp "$(cat /tmp/out)" "target/apps/$app.wasm"
+              echo "composed $app (root $root)"
+            else
+              # Loud, and not fatal: an app whose root does not compose must not stop
+              # every other app from being published, and must never be silently
+              # absent from the lock either.
+              echo "::warning::$app did not compose from root '$root': $(head -1 /tmp/err)"
+            fi
+          done
+          ls -la target/apps
+
+      - name: Push each composed app by digest
+        env:
+          OCI_USER: ${{ github.actor }}
+          OCI_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          reg="ghcr.io/$OWNER/holon-apps"
+          echo "pushing to $reg"
+          ./reconciler/target/release/comp-oci push "$reg" target/apps --lock apps.lock
+          cat apps.lock
+
+      # The desired state, as data, on a branch of its own. Its history is the
+      # deploy history: `git log deploy -- apps.lock` says what was current when.
+      - name: Record it on the deploy branch
+        env:
+          OWNER: ${{ github.repository_owner }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          reg="ghcr.io/$OWNER/holon-apps"
+          {
+            echo "# Generated by .github/workflows/publish-apps.yml — do not edit."
+            echo "# <app> <digest>, and the registry each is under. What a box pulls."
+            echo "# built-from $SHA"
+            echo "registry $reg"
+            cat apps.lock
+          } > apps.lock.new
+          git config user.name "holon-ci"
+          git config user.email "ci@holon.invalid"
+          git fetch origin deploy --depth=1 2>/dev/null || true
+          git checkout -B deploy
+          mv apps.lock.new apps.lock
+          git add -f apps.lock
+          git commit -m "deploy: apps built from $SHA" || {
+            echo "nothing changed — every app is already at this digest"
+            exit 0
+          }
+          git push -f origin deploy
+
+      - name: Say what is current
+        run: |
+          {
+            echo "### Apps published by digest"
+            echo '```'
+            cat apps.lock
+            echo '```'
+            echo "A box running \`comp-agent\` picks this up within its interval."
+          } >> "$GITHUB_STEP_SUMMARY"
