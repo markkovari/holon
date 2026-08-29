@@ -44,6 +44,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `witsurface` asks whether a shape changed WITHOUT its version, and answers
+      # it by comparing against the base branch — the shape that shipped, which a
+      # branch cannot rewrite by regenerating a file. `actions/checkout` fetches one
+      # ref, so `origin/main` is not here and the guard would SKIP: a guard that
+      # quietly does not run is worse than the hole it was written to close.
+      #
+      # `--depth=1` and one ref: the comparison needs the file at main's tip and
+      # nothing else, so this is a few hundred kilobytes rather than the history.
+      - name: Fetch main, so the surfaces guard has something to compare against
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
       - name: Install the wasm target
         run: rustup target add wasm32-wasip2
 
