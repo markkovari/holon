@@ -59,6 +59,38 @@ world events-domain {
     /// this repository.
     import upload:policy/gate@0.1.0;
 
+    /// Telling somebody something happened, on whichever channels they asked for.
+    /// The app does not know what a channel IS — `notify-prefs` reads the
+    /// preference and calls the inbox and the mailer. An app that sent its own
+    /// email would be deciding, for every one of its users, a thing they had
+    /// already answered.
+    import notify:prefs/preferences@0.1.0;
+
+    /// The person's own view of what they were told: the badge, the list, and the
+    /// cursor the live tail reads. `notify:inbox` holds no HTTP connection — a
+    /// capability that owned a socket would only work inside an app shaped the way
+    /// the capability expected — so the SSE endpoint is this app's, and it is a loop
+    /// over `since(after)`.
+    import notify:inbox/inbox@0.1.0;
+
+    /// The reminder. An event's notice goes out 24 hours before it starts, which is
+    /// a time in the future and therefore not something a request handler can wait
+    /// for — `sched:timer` holds it and hands it back when it is due.
+    import sched:timer/timer@0.1.0;
+
+    /// What time it is, for "is this reminder due" and for stamping a note.
+    import wasi:clocks/wall-clock@0.2.0;
+    /// The sleep between SSE polls. A stream that spun would be a stream that
+    /// burned a core per connected browser.
+    import wasi:clocks/monotonic-clock@0.2.0;
+
+    /// Signing the stream ticket. `EventSource` cannot set an `Authorization`
+    /// header, so a bearer cannot reach the SSE endpoint the way it reaches every
+    /// other route — and putting one in the query string writes a live session
+    /// token into every access log and `Referer`. An authenticated POST mints a
+    /// 60-second, single-subject ticket instead, and this is what signs it.
+    import webhook:sign/signer@0.1.0;
+
     /// `allow-test-routes`, `organizer-emails`, and the two keys `upload-policy`
     /// reads. The fixture that registers people and hands
     /// their bearers back is a GATE's tool, and it was compiled into the artifact

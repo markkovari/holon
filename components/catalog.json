@@ -1419,11 +1419,15 @@
       "blob:store/blobstore",
       "fsm:workflow/engine",
       "id:generate/generator",
+      "notify:inbox/inbox",
+      "notify:prefs/preferences",
       "qr:encode/encoder",
       "quota:meter/meter",
       "records:store/store",
+      "sched:timer/timer",
       "upload:policy/gate",
-      "wasi:config/store"
+      "wasi:config/store",
+      "webhook:sign/signer"
     ],
     "config_keys": [
       {
@@ -1441,10 +1445,18 @@
       {
         "name": "content-type",
         "description": ""
+      },
+      {
+        "name": "stream-ticket-secret",
+        "description": ""
+      },
+      {
+        "name": "seqs",
+        "description": ""
       }
     ],
-    "wasm_size_bytes": 191338,
-    "wasm_sha256_12": "8d23bc2b9211",
+    "wasm_size_bytes": 253971,
+    "wasm_sha256_12": "dd03efda7678",
     "reusable_as_is": false,
     "unimplemented": false
   },
@@ -2396,6 +2408,37 @@
     "unimplemented": false
   },
   {
+    "name": "mail-http",
+    "package": "mail:send@0.1.0",
+    "description": "`mail-http` \u2014 one email, POSTed to whatever gateway config names",
+    "exports": [
+      "sender"
+    ],
+    "capability_deps": [
+      "comp:secrets/reader",
+      "wasi:config/store",
+      "wasi:http/outgoing-handler"
+    ],
+    "config_keys": [
+      {
+        "name": "mail-api-key",
+        "description": ""
+      },
+      {
+        "name": "id",
+        "description": ""
+      },
+      {
+        "name": "message_id",
+        "description": ""
+      }
+    ],
+    "wasm_size_bytes": 131600,
+    "wasm_sha256_12": "3f0484429561",
+    "reusable_as_is": true,
+    "unimplemented": false
+  },
+  {
     "name": "markdown",
     "package": "md:render@0.1.0",
     "description": "`markdown` \u2014 render user-supplied Markdown to HTML safely, escaping raw HTML instead of trusting it",
@@ -2683,6 +2726,58 @@
     "config_keys": [],
     "wasm_size_bytes": 92481,
     "wasm_sha256_12": "404ac821967a",
+    "reusable_as_is": true,
+    "unimplemented": false
+  },
+  {
+    "name": "notify-inbox",
+    "package": "notify:inbox@0.1.0",
+    "description": "`notify-inbox` \u2014 the in-app channel: durable, per subject, with unread state",
+    "exports": [
+      "inbox"
+    ],
+    "capability_deps": [
+      "wasi:keyvalue/atomics",
+      "wasi:keyvalue/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 114851,
+    "wasm_sha256_12": "6ac88d21e2f5",
+    "reusable_as_is": true,
+    "unimplemented": false
+  },
+  {
+    "name": "notify-prefs",
+    "package": "notify:prefs@0.1.0",
+    "description": "`notify-prefs` \u2014 read what a subject asked for, then tell them on those channels",
+    "exports": [
+      "preferences"
+    ],
+    "capability_deps": [
+      "mail:send/sender",
+      "notify:inbox/inbox",
+      "records:store/store"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 112467,
+    "wasm_sha256_12": "91e716de7bc1",
+    "reusable_as_is": true,
+    "unimplemented": false
+  },
+  {
+    "name": "notify-probe",
+    "package": "notify:probe@0.1.0",
+    "description": "`notify-probe` \u2014 the door onto `notify:prefs` and `notify:inbox`",
+    "exports": [
+      "wasi:http/incoming-handler@0.2.0"
+    ],
+    "capability_deps": [
+      "notify:inbox/inbox",
+      "notify:prefs/preferences"
+    ],
+    "config_keys": [],
+    "wasm_size_bytes": 140712,
+    "wasm_sha256_12": "87431501c549",
     "reusable_as_is": true,
     "unimplemented": false
   },

@@ -1,0 +1,12 @@
+// The door onto `notify:prefs` and `notify:inbox` (see src/lib.rs for the routes).
+//
+// Two capabilities behind one probe on purpose: what is worth testing is that a
+// `notify` on one produces a note on the other, and a probe per capability could
+// only ever check each half separately.
+package notify:probe@0.1.0;
+
+world notify-probe {
+    export wasi:http/incoming-handler@0.2.0;
+    import notify:prefs/preferences@0.1.0;
+    import notify:inbox/inbox@0.1.0;
+}

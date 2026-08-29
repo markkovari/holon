@@ -1535,6 +1535,30 @@ e2e-authgate: compose-authgate
 # for the whole authorisation table, record-store for the three collections,
 # quota-meter for capacity held ATOMICALLY, qr for the attendee's code, fsm-workflow
 # for the ticket lifecycle, id-generate for a code that cannot be guessed.
+# The notification capabilities, proven against a REAL mailbox.
+#
+# `comp-host` wires no wasi:sockets, so a component cannot speak SMTP and MailHog
+# ingests nothing else. `comp-mailrelay` is the bridge; the gate starts both itself
+# so it does not fail on a clean machine as "your email code is broken".
+#
+#   go install github.com/mailhog/MailHog@latest
+e2e-notify: build
+    cd reconciler && cargo build --release --bin comp-mailrelay
+    COMP_HOST="$PWD/host/target/release/comp-host" \
+    COMP_PLUG="$PWD/reconciler/target/release/comp-plug" \
+      bash components/notify-probe/e2e.sh
+
+# MailHog on its usual ports, for watching mail arrive by eye at :8025 while you
+# poke the app. The GATE does not need this — it starts its own on free ports.
+mailhog:
+    @echo "MailHog: SMTP 127.0.0.1:1025, UI http://127.0.0.1:8025"
+    ~/go/bin/MailHog -smtp-bind-addr 127.0.0.1:1025 -api-bind-addr 127.0.0.1:8025 -ui-bind-addr 127.0.0.1:8025
+
+# The bridge in front of it: HTTP in, real SMTP out.
+mail-relay:
+    cd reconciler && cargo build --release --bin comp-mailrelay
+    ./reconciler/target/release/comp-mailrelay 127.0.0.1:3390 127.0.0.1:1025
+
 compose-events: build
     @just _derive events-domain {{events_composed}}
 
@@ -1549,6 +1573,13 @@ host-events: compose-events build-events-ui
       --app events --config-file ../examples/defaults.conf --config default-tenant=events \
       --component ../{{events_composed}} --addr 0.0.0.0:3230 \
       --static-dir ../examples/events/dist
+
+# The 24-hour reminder, three panes, with a REAL mailbox in the third.
+# Prereq: `just mailhog &`, `just mail-relay &`, and a host started with
+# --config mail:gateway-url=http://127.0.0.1:3390/ --egress 127.0.0.1:3390
+screencast-events-reminder:
+    node tools/screencast/events-reminder.mjs
+    bash tools/screencast/to-gif.sh tools/screencast/videos/events-reminder/*.webm docs/media/events-reminder.gif 1000 10 3
 
 # Both users, side by side, on the real app. Prereq: `just host-events &`
 screencast-events:
