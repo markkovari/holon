@@ -55,6 +55,12 @@ path = "src/bin/relay.rs"
 name = "comp-mailrelay"
 path = "src/bin/mailrelay.rs"
 
+# The pull half of continuous deployment: reads a digest lock and updates the apps
+# this box already runs. No inbound port, and no CI credential on this network.
+[[bin]]
+name = "comp-agent"
+path = "src/bin/agent.rs"
+
 # Drains a project's goal queue, N runs at a time (ADR-0082's missing loop).
 [[bin]]
 name = "comp-goald"

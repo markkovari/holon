@@ -293,7 +293,23 @@ build force="":
     # its own tests — but a stamped one does not need stamping twice.
     rustv=$(rustc --version | cut -d' ' -f2)
     stamped=0; skipped=0
+    # Prune EVERY directory the graph reads, not just the one this builds into.
+    # `comp-plug::default_dirs` names four — wasip2 and wasip1, release and debug —
+    # and `cargo component check` fills the debug ones. Cleaning only
+    # wasip2/release left a deleted component's artifact in three other places, and
+    # `comp-capgraph` counted them: 212 components on a branch that has 208.
     pruned=0
+    for stale in target/wasm32-wasip2/debug target/wasm32-wasip1/release target/wasm32-wasip1/debug; do
+      [ -d "$stale" ] || continue
+      for f in "$stale"/*.wasm; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f" .wasm | tr '_' '-')
+        if [ ! -f "$name/Cargo.toml" ]; then
+          rm -f "$f"
+          pruned=$((pruned+1))
+        fi
+      done
+    done
     for f in target/wasm32-wasip2/release/*.wasm; do
       name=$(basename "$f" .wasm | tr '_' '-')
       stamp="$marker/$name"
@@ -301,10 +317,16 @@ build force="":
       # nothing it did not just write. Left alone it is indistinguishable from a
       # real one: it gets named, stamped, catalogued and drawn into the capability
       # graph, because everything downstream reads this directory rather than the
-      # crate list. So the directory is the check.
-      if [ ! -d "$name" ]; then
+      # crate list.
+      #
+      # The CARGO.TOML is the check, not the directory. Switching to a branch
+      # without a component leaves its directory behind whenever it holds an
+      # ignored file — `src/bindings.rs` always does — so a directory test says
+      # "still a crate" about a crate that is gone, and its surfaces reappear in
+      # wit/SURFACES.md on a branch that never had it.
+      if [ ! -f "$name/Cargo.toml" ]; then
         rm -f "$f" "$stamp"
-        echo "pruned $name — no components/$name, its crate is gone"
+        echo "pruned $name — components/$name/Cargo.toml is gone"
         pruned=$((pruned+1))
         continue
       fi
@@ -2055,6 +2077,97 @@ selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch) (selfhost-buil
     # Not backticks. This is a bash recipe, and `just selfhost-deploy <app> {{host}}`
     # in backticks is a command substitution — it RAN, with `<app>` as a redirect.
     echo "  bootstrapped {{host}} — 'just selfhost-deploy <app> {{host}}' will work now"
+
+# ---- continuous deployment ---------------------------------------------------
+#
+# Two halves that never talk to each other. `.github/workflows/publish-apps.yml`
+# composes every app, pushes it to ghcr BY DIGEST, and records which digest is
+# current on the `deploy` branch. `comp-agent` runs here, reads that lock, and
+# updates the apps this box already has a unit for.
+#
+# Nothing reaches in: no inbound port, no webhook, and no credential in a CI system
+# that can touch this network. The only mutable thing in the chain is which commit
+# of `apps.lock` is current — a branch in git, whose history IS the deploy history.
+
+# Cross-build the agent for a box. Same target as the host it sits beside.
+selfhost-build-agent arch="x86_64":
+    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl --bin comp-agent
+    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-agent | awk '{printf "  comp-agent %.0f MB\n", $5/1048576}'
+
+# Install the agent and its timer on a box, and tell it which lock to read.
+#
+# ONE-TIME, like `selfhost-bootstrap`. The agent updates apps that already have a
+# unit and installs nothing new — so `selfhost-deploy` stays the deliberate act of
+# putting an app on a machine, and this keeps what is there current.
+selfhost-agent host arch="x86_64" interval="300": (selfhost-build-agent arch)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OWNER="${OWNER:-markkovari}"
+    LOCK="${LOCK_URL:-https://raw.githubusercontent.com/$OWNER/holon/deploy/apps.lock}"
+    scp reconciler/target/{{arch}}-unknown-linux-musl/release/comp-agent {{host}}:/tmp/comp-agent
+    # comp-oci does the pulling, so it has to be there too.
+    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl --bin comp-oci && cd ..
+    scp reconciler/target/{{arch}}-unknown-linux-musl/release/comp-oci {{host}}:/tmp/comp-oci
+    { echo "LOCK='$LOCK'"; echo "EVERY='{{interval}}'"; cat; } <<'REMOTE' | ssh {{host}} bash -s
+    set -e
+    sudo install -m 0755 /tmp/comp-agent /usr/local/bin/comp-agent
+    sudo install -m 0755 /tmp/comp-oci /usr/local/bin/comp-oci
+    rm -f /tmp/comp-agent /tmp/comp-oci
+    # A timer and a oneshot, not a daemon with its own sleep: systemd already owns
+    # "run this every N seconds", it survives reboots, and `systemctl list-timers`
+    # answers "when does it next run" without reading anyone's source.
+    printf '%s\n' \
+      '[Unit]' \
+      'Description=comp-agent: keep this box'"'"'s apps at the published digest' \
+      'After=network-online.target' \
+      'Wants=network-online.target' \
+      '' \
+      '[Service]' \
+      'Type=oneshot' \
+      "ExecStart=/usr/local/bin/comp-agent --lock-url $LOCK --once" \
+      | sudo tee /etc/systemd/system/comp-agent.service >/dev/null
+    printf '%s\n' \
+      '[Unit]' \
+      'Description=comp-agent every '"$EVERY"'s' \
+      '' \
+      '[Timer]' \
+      'OnBootSec=60' \
+      "OnUnitActiveSec=${EVERY}" \
+      'AccuracySec=10' \
+      '' \
+      '[Install]' \
+      'WantedBy=timers.target' \
+      | sudo tee /etc/systemd/system/comp-agent.timer >/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now comp-agent.timer
+    echo "  agent installed; next run:"
+    systemctl list-timers comp-agent.timer --no-pager | sed -n 2p
+    REMOTE
+    echo "  {{host}} follows $LOCK every {{interval}}s"
+
+# What the agent WOULD do, changing nothing. Run this first on a box.
+selfhost-agent-dry host:
+    #!/usr/bin/env bash
+    # A shebang, or `just` runs each line as its own command and the heredoc never
+    # reaches ssh — `systemctl` then runs on the laptop, which does not have one.
+    set -euo pipefail
+    ssh {{host}} bash -s <<'REMOTE'
+    OWNER="${OWNER:-markkovari}"
+    /usr/local/bin/comp-agent --once --dry-run \
+      --lock-url "https://raw.githubusercontent.com/$OWNER/holon/deploy/apps.lock"
+    REMOTE
+
+# Is it running, and what did it last do?
+selfhost-agent-status host:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    ssh {{host}} bash -s <<'REMOTE'
+    systemctl list-timers comp-agent.timer --no-pager | head -3
+    echo "--- last run:"
+    journalctl -u comp-agent.service -n 15 --no-pager
+    echo "--- installed digests:"
+    for d in /srv/comp/*/digest; do [ -f "$d" ] && echo "  $(basename "$(dirname "$d")") $(cat "$d")"; done
+    REMOTE
 
 # Render one app's systemd unit, env file and route WITHOUT touching a box.
 # Read the output before you trust it to a server.
