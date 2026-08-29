@@ -223,24 +223,59 @@ fn the_committed_surfaces_are_not_stale() {
 /// Compared against the snapshot at `HEAD`, so bumping the version passes — the new
 /// version simply is not in the old file — and changing a shape in place does not.
 /// Skipped outside a git checkout, and on the first commit that adds the file.
+/// `wit/SURFACES.md` as the base branch has it.
+///
+/// `origin/main` first, because that is what a pull request is measured against.
+/// A local `main` is a fallback for a checkout with no remote, and it is a weaker
+/// oracle — a stale local main compares against something old, which is wrong in
+/// the safe direction: it reports a change that was already reviewed rather than
+/// missing one that was not.
+fn base_surfaces(root: &std::path::Path) -> Option<String> {
+    for reference in ["origin/main:wit/SURFACES.md", "main:wit/SURFACES.md"] {
+        let Ok(out) =
+            Command::new("git").args(["show", reference]).current_dir(root).output()
+        else {
+            eprintln!("SKIPPED: git is not available");
+            return None;
+        };
+        if out.status.success() {
+            return Some(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+    }
+    // A shallow clone has no `origin/main` — `actions/checkout` fetches one ref by
+    // default. Loud, because a guard that quietly does not run is worse than one
+    // that fails: the CI step that fetches main is in ci.yml next to this note.
+    eprintln!(
+        "SKIPPED: neither origin/main nor main has wit/SURFACES.md — \
+         a shallow clone needs `git fetch --depth=1 origin main` first"
+    );
+    None
+}
+
 #[test]
 fn a_shape_may_not_change_without_its_version() {
     let root = repo_root();
     let Some(all) = surfaces(&root) else { return };
 
-    let Ok(out) = Command::new("git")
-        .args(["show", "HEAD:wit/SURFACES.md"])
-        .current_dir(&root)
-        .output()
-    else {
-        eprintln!("SKIPPED: git is not available");
-        return;
-    };
-    if !out.status.success() {
-        eprintln!("SKIPPED: wit/SURFACES.md is not in HEAD yet");
-        return;
-    }
-    let before = packages_in_markdown(&String::from_utf8_lossy(&out.stdout));
+    // Against the BASE BRANCH, not HEAD.
+    //
+    // `HEAD:wit/SURFACES.md` on a branch is a file you wrote yourself, and the
+    // other test in this file — `the_committed_surfaces_are_not_stale` — tells you
+    // to write it. So the workflow that satisfies one silenced the other:
+    //
+    //   1. add a case to a variant, leave the version alone   -> this test FAILS
+    //   2. `just wit-surfaces`, commit (what the other demands)
+    //   3. this test PASSES, and a breaking change ships
+    //
+    // Measured, not reasoned about: done to `qr:encode` on a scratch branch, and
+    // it passed at step 3. Every version bump made while the oracle was HEAD is
+    // unverified for the same reason.
+    //
+    // The base branch is the shape that SHIPPED. A branch cannot rewrite it by
+    // regenerating a file, which is the whole property an oracle needs.
+    let Some(base) = base_surfaces(&root) else { return };
+    let out = base;
+    let before = packages_in_markdown(&out);
     if before.is_empty() {
         eprintln!("SKIPPED: nothing to compare against");
         return;
