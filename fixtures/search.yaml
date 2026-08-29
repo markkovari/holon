@@ -79,7 +79,7 @@ links:
     import: graph:run/driver@0.2.0
     to: sdriver
   - from: sdriver
-    import: graph:agent/writer@0.1.0
+    import: graph:agent/writer@0.2.0
     to: sagent
   - from: sdriver
     import: graph:fitness/evaluator@0.2.0

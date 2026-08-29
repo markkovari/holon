@@ -6,6 +6,6 @@
 package selector:graph@0.1.0;
 
 world graph-selector {
-    export graph:select/selector@0.1.0;
+    export graph:select/selector@0.2.0;
     import git:forge/repo@0.1.0;
 }

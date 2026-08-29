@@ -44,7 +44,7 @@ components:
 
 links:
   - from: sprobe
-    import: graph:select/selector@0.1.0
+    import: graph:select/selector@0.2.0
     to: gselect
   - from: gselect
     import: git:forge/repo@0.1.0

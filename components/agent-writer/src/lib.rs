@@ -36,7 +36,9 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::graph::agent::writer::{AgentError, Candidate, Failure, File, Goal, Guest};
+use bindings::exports::graph::agent::writer::{
+    AgentError, Blocked, Candidate, Failure, File, Goal, Guest,
+};
 use bindings::llm::inference::inference as llm;
 use std::collections::HashMap;
 
@@ -131,7 +133,7 @@ fn system_prompt() -> String {
 ///
 /// Pure, so the interesting question — does a repair differ from a first attempt
 /// — is answerable without a model.
-fn build_prompt(g: &Goal, previous: &[Failure]) -> String {
+fn build_prompt(g: &Goal, previous: &[Failure], blocked: &[Blocked]) -> String {
     let mut p = String::new();
 
     // FAILURES FIRST. A repair whose prompt buries what went wrong under the
@@ -141,6 +143,21 @@ fn build_prompt(g: &Goal, previous: &[Failure]) -> String {
         p.push_str("Fix these specifically; do not start over.\n\n");
         for f in previous {
             p.push_str(&format!("- {} : {}\n", f.id, f.detail.trim()));
+        }
+        p.push('\n');
+    }
+
+    // AFTER the failures and before the goal, and phrased as "not attempted"
+    // rather than as a problem. A model shown fourteen unrun checks alongside one
+    // real failure will confidently repair a test that never ran — which is the
+    // exact behaviour `graph:fitness` became a graph to stop. This is context: it
+    // says why the list of failures is short, so a short list does not read as a
+    // nearly-passing candidate.
+    if !blocked.is_empty() {
+        p.push_str("These checks were NOT ATTEMPTED, because something they need failed first.\n");
+        p.push_str("Do not try to fix them — fix what failed, and these will run.\n\n");
+        for b in blocked {
+            p.push_str(&format!("- {} (waiting on {})\n", b.id, b.needs));
         }
         p.push('\n');
     }
@@ -347,7 +364,12 @@ fn writable(g: &Goal, path: &str) -> bool {
 }
 
 impl Guest for Component {
-    fn attempt(g: Goal, previous: Vec<Failure>, seed: u64) -> Result<Candidate, AgentError> {
+    fn attempt(
+        g: Goal,
+        previous: Vec<Failure>,
+        blocked: Vec<Blocked>,
+        seed: u64,
+    ) -> Result<Candidate, AgentError> {
         if g.text.trim().is_empty() {
             return Err(AgentError::UnderSpecified("the goal says nothing".into()));
         }
@@ -372,7 +394,7 @@ impl Guest for Component {
         };
         let messages = vec![
             llm::Message { role: llm::Role::System, content: system_prompt() },
-            llm::Message { role: llm::Role::User, content: build_prompt(&g, &previous) },
+            llm::Message { role: llm::Role::User, content: build_prompt(&g, &previous, &blocked) },
         ];
 
         let completion = llm::chat(&messages, &opts).map_err(|e| {
@@ -558,20 +580,55 @@ mod tests {
     #[test]
     fn a_repair_prompt_differs_because_of_the_failure() {
         let g = goal("make it 42", &["src/lib.rs"], &[("src/lib.rs", "fn answer() { 41 }")]);
-        let first = build_prompt(&g, &[]);
+        let first = build_prompt(&g, &[], &[]);
         let repair = build_prompt(
             &g,
             &[Failure { id: "the-fix".into(), detail: "expected 42, found 41".into() }],
+            &[],
         );
         assert_ne!(first, repair, "a repair that reads identically is not a repair");
         assert!(repair.contains("expected 42, found 41"), "the failure must reach the model");
         assert!(repair.contains("the-fix"), "and so must which check it was");
     }
 
+    /// A blocked check is context, and is not offered as something to fix.
+    ///
+    /// The whole reason `graph:fitness` is a graph rather than a list: a candidate
+    /// that does not compile used to arrive as fifteen failures with fifteen walls
+    /// of output, and a model handed that will confidently repair a test it never
+    /// ran. It arrives as one failure and a list of things nobody tried — and until
+    /// `graph:agent@0.2.0` that list had nowhere to go, so the prompt could not say
+    /// it and a one-item failure list read as a nearly-passing candidate.
+    #[test]
+    fn a_blocked_check_is_named_but_not_asked_for() {
+        let g = goal("make it 42", &["a.rs"], &[]);
+        let p = build_prompt(
+            &g,
+            &[Failure { id: "compiles".into(), detail: "E0308".into() }],
+            &[Blocked { id: "tests".into(), needs: "compiles".into() }],
+        );
+        assert!(p.contains("tests"), "the blocked check is named");
+        assert!(p.contains("compiles"), "and so is what it waits on");
+        assert!(
+            p.contains("NOT ATTEMPTED"),
+            "and it says so — a blocked check listed among failures is one a model will try to fix"
+        );
+        assert!(p.contains("Do not try to fix them"), "explicitly, because the model will otherwise");
+        // Context comes after the failure and before the goal: the thing to repair
+        // is read first.
+        assert!(p.find("E0308").unwrap() < p.find("NOT ATTEMPTED").unwrap());
+        assert!(p.find("NOT ATTEMPTED").unwrap() < p.find("GOAL").unwrap());
+
+        // Nothing blocked, nothing said. A prompt that always carried an empty
+        // section would spend the model's attention on a heading.
+        let clean = build_prompt(&g, &[], &[]);
+        assert!(!clean.contains("NOT ATTEMPTED"));
+    }
+
     #[test]
     fn the_failure_is_stated_before_the_goal_is_restated() {
         let g = goal("make it 42", &["a.rs"], &[]);
-        let p = build_prompt(&g, &[Failure { id: "x".into(), detail: "boom".into() }]);
+        let p = build_prompt(&g, &[Failure { id: "x".into(), detail: "boom".into() }], &[]);
         assert!(
             p.find("boom").unwrap() < p.find("GOAL").unwrap(),
             "what failed must come before what was wanted"
@@ -581,7 +638,7 @@ mod tests {
     #[test]
     fn the_prompt_carries_the_files_and_the_writable_list() {
         let g = goal("x", &["a.rs", "new.rs"], &[("a.rs", "contents here")]);
-        let p = build_prompt(&g, &[]);
+        let p = build_prompt(&g, &[], &[]);
         assert!(p.contains("contents here"), "the model needs the current file");
         assert!(p.contains("new.rs"), "including a path that does not exist yet");
     }

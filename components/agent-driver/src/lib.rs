@@ -113,11 +113,17 @@ fn failures_of(outcomes: &[gate::Outcome]) -> Vec<Failure> {
 }
 
 /// What was blocked, and by what. Context for a prompt, never the subject of one.
-fn blocked_by(outcomes: &[gate::Outcome]) -> Vec<String> {
+///
+/// Two fields, not a formatted string. This used to render `"digest (needs
+/// compile)"` here and hand back text — which put the wording of a prompt in the
+/// component furthest from it, and was moot anyway because there was nowhere in
+/// `graph:agent@0.1.0` to send it and nothing ever called this outside its own
+/// test. `@0.2.0` gave `attempt` somewhere to put it.
+fn blocked_by(outcomes: &[gate::Outcome]) -> Vec<agent::Blocked> {
     outcomes
         .iter()
         .filter(|o| o.state == gate::CheckState::NotAttempted)
-        .map(|o| format!("{} (needs {})", o.id, o.blocked_by))
+        .map(|o| agent::Blocked { id: o.id.clone(), needs: o.blocked_by.clone() })
         .collect()
 }
 
@@ -197,6 +203,9 @@ impl Guest for Component {
             .iter()
             .map(|f| agent::Failure { id: f.id.clone(), detail: f.detail.clone() })
             .collect();
+        // What could not be tried, alongside what failed. Empty on a first
+        // generation for the same reason `previous` is: nothing has run yet.
+        let mut blocked: Vec<agent::Blocked> = Vec::new();
         let mut best: Option<(u32, Vec<File>, Vec<Failure>)> = None;
         let mut spent: u32 = 0;
         // Attempts in a row that failed to beat the best score.
@@ -229,7 +238,7 @@ impl Guest for Component {
             // than the untouched tree.
             let goal = goal_for(&p.goal, best.as_ref().map(|(_, f, _)| f));
 
-            let produced = match agent::attempt(&goal, &previous, seed) {
+            let produced = match agent::attempt(&goal, &previous, &blocked, seed) {
                 Ok(c) => c,
                 // Reachable, and said something that was not a candidate. Another
                 // sample may well be one, so this costs an attempt and not the run.
@@ -340,6 +349,12 @@ impl Guest for Component {
             };
 
             let failures = failures_of(&v.outcomes);
+            // From THIS verdict, next to the failures it belongs with — and
+            // replaced rather than accumulated, for the same reason `previous` is:
+            // a check that was blocked last time and ran this time is not still
+            // blocked, and telling the model otherwise is telling it something
+            // false about work it just did.
+            blocked = blocked_by(&v.outcomes);
             attempts.push(Attempt {
                 seed,
                 digest,
@@ -434,7 +449,10 @@ mod tests {
         let failures = failures_of(&outcomes);
         assert_eq!(failures.len(), 1, "only the compile is a failure: {failures:?}");
         assert_eq!(failures[0].id, "compiles");
-        assert_eq!(blocked_by(&outcomes), vec!["tests (needs compiles)"]);
+        let blocked = blocked_by(&outcomes);
+        assert_eq!(blocked.len(), 1);
+        assert_eq!(blocked[0].id, "tests");
+        assert_eq!(blocked[0].needs, "compiles", "the check it is waiting on, unformatted");
     }
 
     #[test]
