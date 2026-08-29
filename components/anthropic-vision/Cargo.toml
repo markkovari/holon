@@ -21,6 +21,7 @@ path = "wit"
 world = "anthropic-vision"
 
 [package.metadata.component.target.dependencies]
+"vision:describe" = { path = "../vision-describe/wit" }
 "comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
 "wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }

@@ -19,7 +19,6 @@ Sources of truth, laziest that works:
 Usage: python3 tools/gen-catalog.py   (from the comp/ directory)
 """
 
-import hashlib
 import json
 import re
 import sys
@@ -147,12 +146,17 @@ def scan_component(d: Path):
                     seen.add(key)
                     config_keys.append({"name": key, "description": ""})
 
-    wasm = RELEASE / (d.name.replace("-", "_") + ".wasm")
-    size = sha = None
-    if wasm.is_file():
-        data = wasm.read_bytes()
-        size = len(data)
-        sha = hashlib.sha256(data).hexdigest()[:12]
+    # The built artifact is deliberately NOT read here.
+    #
+    # `wasm_size_bytes` and `wasm_sha256_12` used to live in this file, and they
+    # changed on every build — so a committed catalogue was stale the moment anybody
+    # ran `just build`, for reasons that had nothing to do with the catalogue. That
+    # is the same mistake as the 50 committed `.wasm` files: a checked-in copy of
+    # build output, drifting silently.
+    #
+    # Nothing read them. The capability graph carries a full `artifact.digest`,
+    # recomputed on every projection and never committed, which is what a question
+    # about the bytes should be asked of.
 
     return {
         "name": d.name,
@@ -161,8 +165,6 @@ def scan_component(d: Path):
         "exports": exports,
         "capability_deps": deps,
         "config_keys": config_keys,
-        "wasm_size_bytes": size,
-        "wasm_sha256_12": sha,
         "reusable_as_is": not is_app(d.name),
         # A component whose exports all return an `UNIMPLEMENTED:` marker is a
         # CONTRACT, not a capability, and the catalogue has to say so. Detected
@@ -264,15 +266,14 @@ def main() -> None:
             "",
             blurb,
             "",
-            "| component | package | deps | config knobs | size |",
-            "|---|---|---|---|--:|",
+            "| component | package | deps | config knobs |",
+            "|---|---|---|---|",
         ]
         for e in buckets[key]:
-            size = f"{e['wasm_size_bytes'] // 1024} KiB" if e["wasm_size_bytes"] else "—"
             knobs = ", ".join(f"`{k['name']}`" for k in e["config_keys"]) or "—"
             lines.append(
                 f"| **{e['name']}** | `{e['package']}` | {dep_badge(e['capability_deps'])} "
-                f"| {knobs} | {size} |"
+                f"| {knobs} |"
             )
         lines.append("")
 

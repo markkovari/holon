@@ -1,63 +1,26 @@
-// vision:describe — show a model a picture and get back what it says.
+// anthropic:vision — the Anthropic provider for `vision:describe`.
 //
-// The provider is deliberately out of the contract, exactly as `llm:inference` keeps
-// the vendor out of a text completion: a guest hands over image bytes and a prompt,
-// and WHICH model looks at it — Anthropic, a local vision model, a deterministic
-// fixture in a test — is a deployment choice satisfied by composing a concrete
-// provider. An app never names a vendor.
+// The CONTRACT lives in `components/vision-describe`, and this file used to be a
+// verbatim copy of it with one extra world appended. That made two files declare
+// `vision:describe@0.1.0`, which is a collision rather than duplication: a package
+// name is a GLOBAL identifier in the component model, so two files claiming it with
+// different contents is one name meaning two things. `tools/check-wit-packages.py`
+// says so, and nothing ran it.
 //
-// This exists as its own contract rather than as an addition to `llm:inference`
-// because that interface's `message.content` is a plain string, and eight components
-// import it. Widening it to a list of text-and-image parts is a breaking change to
-// all of them for the sake of one caller.
-//
-// What comes back is TEXT, not a card. Turning a model's prose into typed fields is
-// `card:identify`'s job, and keeping the two apart is what makes the parsing half
-// testable without a key, a network, or a photograph.
-package vision:describe@0.1.0;
+// Now the contract is a DEPENDENCY, resolved from `../vision-describe/wit`, and this
+// package declares only what is actually its own: the world describing how this
+// provider is wired. The exported interface is unchanged — still
+// `vision:describe/describer@0.1.0` — so every composition and every guest sees
+// exactly what it saw before.
+package anthropic:vision@0.1.0;
 
-/// One look at one picture.
-interface describer {
-    /// Why nothing came back.
-    variant describe-error {
-        /// The request was malformed — an unsupported media type, an empty image, a
-        /// prompt the provider rejected.
-        invalid-request(string),
-        /// The provider refused the caller: no key, a spent quota, a blocked region.
-        provider-denied(string),
-        /// Unreachable, or it timed out.
-        provider-unavailable(string),
-        /// It answered and the answer could not be understood.
-        bad-response(string),
-        /// It looked and declined to say — a safety filter, or an empty reply.
-        no-content,
-    }
-
-    /// Describe `image` according to `prompt`.
-    ///
-    /// `media-type` is the picture's own (`image/jpeg`, `image/png`, `image/webp`),
-    /// not a guess: a provider decides how to decode from it, and a `.jpg` holding a
-    /// webp fails somewhere far from here.
-    ///
-    /// The prompt is the CALLER's, because the caller is the one that has to read the
-    /// answer — `card:identify` ships the prompt whose output it can parse, so the
-    /// two cannot drift apart.
-    describe: func(image: list<u8>, media-type: string, prompt: string)
-        -> result<string, describe-error>;
-}
-
-/// `vision-describe` is the CONTRACT; a provider satisfies it.
-world vision-describe {
-    export describer;
-}
-
-/// `anthropic-vision` satisfies it over Anthropic's Messages API.
+/// `anthropic-vision` satisfies `vision:describe` over Anthropic's Messages API.
 ///
 /// The same shape `components/photo-critic` proves: egress to one authority, the key
 /// revealed from the vault rather than read from config, and the model chosen by
 /// deployment. A guest that imports `describer` sees none of it.
 world anthropic-vision {
-    export describer;
+    export vision:describe/describer@0.1.0;
     import comp:secrets/reader@0.1.0;
     import wasi:config/store@0.2.0-rc.1;
     import wasi:http/outgoing-handler@0.2.0;
