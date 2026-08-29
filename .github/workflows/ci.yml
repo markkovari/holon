@@ -178,6 +178,69 @@ jobs:
       # them. Every one was wrong. Each dependency only became visible when it was
       # REMOVED." Re-run with nats-server and surreal off PATH and comp-host moved
       # aside, `checks` passes and the other seven panic in `fleet.rs`.
+      # 26 END-TO-END GATES, 72 SECONDS.
+      #
+      # `components/*/e2e-*.sh` are the fitness gates the goal loop judges a run
+      # with. 53 scripts, 5,117 lines, and CI ran NONE of them — so an application
+      # could break on a pull request and everything here stayed green. They were
+      # left out because the note above says the integration suites "spawn
+      # nats-server, and several want SurrealDB", which is true of the reconciler
+      # suites and NOT true of these.
+      #
+      # Measured the way this file insists on, by removal rather than by reading:
+      # nats-server and surreal off PATH, and all 31 `e2e-*` gates run. 26 passed in
+      # 72 seconds.
+      #
+      # Six are skipped, and each names its own reason by calling a helper that needs
+      # a service: `gate_shim_config` wants a model on :8787, `events_start_mail`
+      # wants a real SMTP server. That is read off the script rather than kept as a
+      # list, so a gate that starts or stops needing one classifies itself.
+      #
+      # `e2e-reminders` proves a reminder EMAIL ARRIVES, which is worth real coverage,
+      # and the first attempt installed MailHog with `go install` to keep it. That
+      # fails on this runner — MailHog is archived and predates modules — so the gate
+      # is skipped and the notification fan-out stays a local check. Named here rather
+      # than quietly dropped.
+      #
+      # A gate needs `cargo component build`, `wasm-tools`, `python3`, `comp-plug` at
+      # `reconciler/target/release/`, and `comp-host` via COMP_HOST. This job builds
+      # the components and had neither binary, which is why the step before this one
+      # builds both.
+      # BOTH binaries, and the second one is the correction. `comp-host` runs what a
+      # gate composes; `comp-plug` does the composing, and the gate looks for it at
+      # `reconciler/target/release/comp-plug`. The test step below builds the
+      # reconciler's TEST binaries, which is not the same thing and does not produce
+      # it — so the first version of this step ran 26 gates and failed 26 with "no
+      # comp-plug", because a development machine has one lying around from earlier
+      # work. That is the same way `nats-server` was missed an hour before, and the
+      # note further down records four earlier instances of it.
+      - name: Build the two binaries a gate needs
+        run: |
+          cargo build --release --manifest-path host/Cargo.toml --bin comp-host
+          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
+
+      - name: Run the end-to-end gates
+        env:
+          COMP_HOST: ${{ github.workspace }}/host/target/release/comp-host
+        run: |
+          failed=0
+          ran=0
+          for gate in components/*/e2e-*.sh; do
+            if grep -qE 'gate_shim_config|events_start_mail' "$gate"; then
+              echo "skip  $gate (wants a service this runner has not got)"
+              continue
+            fi
+            ran=$((ran + 1))
+            if bash "$gate"; then
+              echo "ok    $gate"
+            else
+              echo "FAIL  $gate"
+              failed=$((failed + 1))
+            fi
+          done
+          echo "$ran gate(s) ran, $failed failed"
+          [ "$failed" -eq 0 ]
+
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
         run: >-
