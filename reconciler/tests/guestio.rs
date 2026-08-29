@@ -436,3 +436,62 @@ const BEARER_ALLOWED: &[(&str, &str)] = &[(
      empty one are the same value to every caller — a change worth making on its \
      own rather than inside a mechanical substitution",
 )];
+
+/// A revision conflict answers 409, everywhere it answers at all.
+///
+/// This is the one guard here that is NOT backed by a shared helper, and
+/// deliberately so. 30 components map `records::StoreError` to their own response
+/// type, and those types are genuinely different — as are the choices, because 422
+/// versus 400 for a malformed body is an API decision each one is entitled to make.
+/// Collapsing them would impose one component's answer on nine others.
+///
+/// The conflict arm is not that kind of choice. `RevisionConflict` means the caller
+/// is holding something out of date and should re-read and retry, which is the whole
+/// point of the compare-and-set ADR-0065 added. A client that retries on 409 does
+/// NOT retry a 400, because 400 says the request itself is wrong and sending it
+/// again cannot help — so answering 400 turns a recoverable conflict into a dead
+/// end. 31 of 32 already answered 409; `vet-domain` answered 400 through an
+/// `Outcome::Bad`, and nothing said so.
+///
+/// Scoped to `store_err`, which is where a conflict becomes a RESPONSE. A component
+/// that handles the conflict instead — `=> continue` inside a retry loop, which
+/// several do — is doing something better than reporting it, and an earlier version
+/// of this test flagged all ten of them.
+#[test]
+fn a_revision_conflict_answers_409() {
+    let mut wrong = Vec::new();
+    for path in guest_sources() {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let mut from = 0;
+        while let Some(at) = text[from..].find("fn store_err(") {
+            let at = from + at;
+            from = at + 1;
+            // The signature says whether this produces a response at all:
+            // `csv-report` has one returning the message text, which chooses nothing.
+            let sig: String = text[at..].chars().take_while(|c| *c != '{').collect();
+            if sig.contains("-> String") || sig.contains("-> &str") {
+                continue;
+            }
+            let body: String = text[at..].chars().take(900).collect();
+            let body = body.split("\nfn ").next().unwrap_or(&body);
+            let Some(arm) = body.lines().find(|l| l.contains("RevisionConflict(")) else {
+                continue;
+            };
+            if arm.contains("409") {
+                continue;
+            }
+            let rel = path
+                .strip_prefix(repo_root().join("components"))
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            wrong.push(format!("  {rel}: {}", arm.trim()));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these turn a revision conflict into something other than 409, so a client \
+         that re-reads and retries on a conflict will not:\n{}",
+        wrong.join("\n")
+    );
+}
