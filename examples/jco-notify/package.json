@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Exercise the notify:dispatch component in-process via jco",
   "scripts": {
-    "transpile": "jco transpile notify_dispatch.wasm -o gen --map wasi:config/runtime@0.2.0-draft=../src/config-shim.js",
+    "transpile": "jco transpile notify_dispatch.wasm -o gen --map wasi:config/store@0.2.0-rc.1=../src/config-shim.js",
     "test": "npm run transpile && tsx --test test/**/*.test.ts"
   },
   "dependencies": {

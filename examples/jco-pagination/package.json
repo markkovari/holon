@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Exercise the paginate:cursor component in-process via jco",
   "scripts": {
-    "transpile": "jco transpile pagination.wasm -o gen --map wasi:config/runtime@0.2.0-draft=../src/config-shim.js",
+    "transpile": "jco transpile pagination.wasm -o gen --map wasi:config/store@0.2.0-rc.1=../src/config-shim.js",
     "test": "npm run transpile && tsx --test test/pagination.test.ts"
   },
   "dependencies": {
