@@ -1,0 +1,26 @@
+[package]
+name = "notify-inbox"
+description = "In-app notifications with unread state and a stream cursor (notify:inbox)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "notify:inbox-component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "notify-inbox"
+
+[package.metadata.component.target.dependencies]
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }

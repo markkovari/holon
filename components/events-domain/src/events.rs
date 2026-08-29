@@ -79,7 +79,21 @@ fn create(route: &Route, body: &str) -> Reply {
         &doc.to_string(),
         &["state".to_string(), "organizer".to_string()],
     ) {
-        Ok(e) => Reply::json(201, with_id(&e)),
+        Ok(e) => {
+            // The reminder goes on the clock the moment the event exists, not when
+            // the first ticket is claimed: an event with no takers still has a
+            // notice to send, and scheduling per-ticket would be one job per person
+            // for one thing that happens once.
+            let at = crate::remind::schedule(&e.id, &starts_at);
+            let mut out = with_id(&e);
+            out["reminder_at"] = match at {
+                Some(t) => json!(t),
+                // Says nothing rather than lying: an event less than the lead time
+                // away gets no reminder, and a caller should be able to see that.
+                None => serde_json::Value::Null,
+            };
+            Reply::json(201, out)
+        }
         Err(_) => Reply::err(500, "store_failed"),
     }
 }
@@ -172,6 +186,20 @@ fn cancel(route: &Route, id: &str) -> Reply {
     doc["state"] = json!("cancelled");
     if let Err(r) = save("events", &entry, &doc) {
         return r;
+    }
+    // A cancelled event must not still remind people to come to it.
+    crate::remind::cancel(id);
+    // ...and everyone holding a ticket is told, on the channels they chose. This is
+    // the one notification nobody would opt out of and the one an app is most
+    // tempted to send itself.
+    for subject in crate::remind::holders_of(id) {
+        crate::remind::tell(
+            &subject,
+            "event-cancelled",
+            &format!("Cancelled: {}", doc["title"].as_str().unwrap_or("an event")),
+            "The organizer cancelled it. Your ticket is no longer needed.",
+            &json!({ "event_id": id }).to_string(),
+        );
     }
     Reply::no_content()
 }

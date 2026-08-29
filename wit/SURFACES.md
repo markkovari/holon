@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-114 interfaces.
+117 interfaces.
 
 ## `ai:inference/inference@0.1.0`
 
@@ -1851,6 +1851,26 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
+## `mail:send/sender@0.1.0`
+
+```wit
+  interface sender {
+    variant send-error {
+      rejected(string),
+      unavailable(string),
+      not-configured(string),
+    }
+
+    record email {
+      to: string,
+      subject: string,
+      body: string,
+    }
+
+    send: func(msg: email) -> result<string, send-error>;
+  }
+```
+
 ## `md:render/renderer@0.1.0`
 
 ```wit
@@ -1990,6 +2010,72 @@ Adding a *function* to an interface is compatible; adding a case to a
     }
 
     send: func(msg: message) -> result<u16, notify-error>;
+  }
+```
+
+## `notify:inbox/inbox@0.1.0`
+
+```wit
+  interface inbox {
+    variant inbox-error {
+      backend-unavailable(string),
+      invalid(string),
+    }
+
+    record note {
+      seq: u64,
+      kind: string,
+      title: string,
+      body: string,
+      payload: string,
+      at: u64,
+      read: bool,
+    }
+
+    deliver: func(subject: string, kind: string, title: string, body: string, payload: string) -> result<u64, inbox-error>;
+
+    since: func(subject: string, after: u64, limit: u32) -> result<list<note>, inbox-error>;
+
+    unread-count: func(subject: string) -> result<u64, inbox-error>;
+
+    mark-read: func(subject: string, seqs: list<u64>) -> result<u64, inbox-error>;
+
+    mark-all-read: func(subject: string, through: u64) -> result<u64, inbox-error>;
+  }
+```
+
+## `notify:prefs/preferences@0.1.0`
+
+```wit
+  interface preferences {
+    variant prefs-error {
+      backend-unavailable(string),
+      invalid(string),
+    }
+
+    enum channel {
+      in-app,
+      email,
+    }
+
+    record outcome {
+      channel: channel,
+      ok: bool,
+      detail: string,
+    }
+
+    record preference {
+      subject: string,
+      default-channels: list<channel>,
+      overrides: list<tuple<string, list<channel>>>,
+      email-address: string,
+    }
+
+    get: func(subject: string) -> result<preference, prefs-error>;
+
+    put: func(pref: preference) -> result<_, prefs-error>;
+
+    notify: func(subject: string, kind: string, title: string, body: string, payload: string) -> result<list<outcome>, prefs-error>;
   }
 ```
 

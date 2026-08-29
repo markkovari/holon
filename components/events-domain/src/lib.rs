@@ -24,8 +24,10 @@
 #[allow(warnings)]
 mod bindings;
 mod checkin;
+mod notifications;
 mod store;
 mod events;
+mod remind;
 mod swaps;
 mod tickets;
 
@@ -501,6 +503,14 @@ impl Guest for Component {
         };
 
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
+
+        // The stream never returns a `Reply`. It sets the response itself and then
+        // writes to it for as long as the connection lasts, so it has to be taken
+        // out of the dispatch table above the thing that expects a body back.
+        if seg.as_slice() == ["api", "notifications", "stream"] {
+            return notifications::stream(response_out, &route);
+        }
+
         let Reply { status, json: payload, raw } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["api", "register"] => register(&body),
@@ -521,6 +531,11 @@ impl Guest for Component {
             }
             // Before the events arm: a ticket claim is nested under an event, and a
             // match on ["api","events",..] would hand it to `events` instead.
+            ["api", "reminders", "run"] => remind::run(&method, &route),
+            ["api", "events", id, "reminder"] => remind::peek(&route, id),
+            ["api", "notifications", ..] | ["api", "prefs"] => {
+                notifications::handle(&method, &route, &body)
+            }
             ["api", "events", id, "image"] => {
                 events::image(&method, &route, id, &content_type, bytes)
             }

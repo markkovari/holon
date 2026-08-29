@@ -1,0 +1,85 @@
+// notify:prefs — who wants to hear about what, and on which channels.
+//
+// The fan-out. It owns the preferences and calls the channels; it is not itself a
+// sender and it holds no messages. That split is why it can import both
+// `mail:send` and `notify:inbox` while neither knows the other exists — and why
+// adding a channel is a new import here rather than a change to anything that
+// already works.
+//
+// A `subject` is an opaque string. Nothing here imports `auth:identity`: the moment
+// it did, this capability would only work for apps using that exact auth, and it
+// would gain an import it never needs. The app knows the subject is a principal;
+// this does not care. The email ADDRESS is part of the preference, so opting in to
+// email means giving an address — which is also the address someone deliberately
+// chose when it differs from the one they log in with.
+package notify:prefs@0.1.0;
+
+interface preferences {
+    variant prefs-error {
+        backend-unavailable(string),
+        invalid(string),
+    }
+
+    enum channel {
+        /// The durable in-app inbox, and its live tail.
+        in-app,
+        email,
+    }
+
+    /// One channel's outcome. Fan-out never fails as a whole: an email gateway
+    /// being down must not lose the in-app copy that was already written.
+    record outcome {
+        channel: channel,
+        /// Did it land.
+        ok: bool,
+        /// The message id on success, the reason on failure. Something either way,
+        /// because "it failed" with no reason is the report that sends a person to
+        /// read logs on a box.
+        detail: string,
+    }
+
+    /// What a subject wants. `default-channels` applies to any kind with no
+    /// override; `overrides` is a kind and the channels for it.
+    record preference {
+        subject: string,
+        default-channels: list<channel>,
+        /// `kind` -> channels. An empty channel list is a real answer: it means
+        /// "not this one", which is different from having no override.
+        overrides: list<tuple<string, list<channel>>>,
+        /// Where email goes. Empty means email cannot be delivered however it is
+        /// opted into — and that is reported as an outcome, not silently dropped.
+        email-address: string,
+    }
+
+    /// Read a subject's preferences. A subject with none set is not an error: it
+    /// comes back with `in-app` and no address, which is the setting that cannot
+    /// send anything anywhere it should not.
+    get: func(subject: string) -> result<preference, prefs-error>;
+
+    /// Replace them wholesale. A partial update would need a patch language, and
+    /// the caller is a settings screen that already holds the whole thing.
+    put: func(pref: preference) -> result<_, prefs-error>;
+
+    /// Tell `subject` about something, on whichever channels they asked for.
+    ///
+    /// Returns one outcome per channel ATTEMPTED, so a caller can tell "they do not
+    /// want email" (no email outcome) from "we tried and the gateway refused"
+    /// (an email outcome that is not ok).
+    notify: func(
+        subject: string,
+        kind: string,
+        title: string,
+        body: string,
+        payload: string,
+    ) -> result<list<outcome>, prefs-error>;
+}
+
+/// `notify-prefs` provides the fan-out: preferences in `records:store`, the in-app
+/// channel through `notify:inbox`, email through `mail:send`. It imports a sender
+/// and an inbox rather than being either.
+world notify-prefs {
+    export preferences;
+    import records:store/store@0.1.0;
+    import notify:inbox/inbox@0.1.0;
+    import mail:send/sender@0.1.0;
+}

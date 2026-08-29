@@ -1502,6 +1502,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mail-http"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "markdown"
 version = "0.1.0"
 dependencies = [
@@ -1613,6 +1622,31 @@ name = "notify-dispatch"
 version = "0.1.0"
 dependencies = [
  "guestio",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "notify-inbox"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "notify-prefs"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "notify-probe"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 

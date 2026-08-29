@@ -107,6 +107,25 @@ gate_requires_capability() { # gate_requires_capability <interface> <why>
   }
 }
 
+# The same claim about a component that is NOT the one under test.
+#
+# `gate_requires_capability` reads the crate the gate is named for, which is right
+# when that crate does the calling. It is wrong the moment a gate drives a stack: a
+# probe over a fan-out imports the fan-out, and the interface that matters is one
+# the FAN-OUT imports. Asserting on the probe reports "never calls mail:send" about
+# a component that was never supposed to.
+gate_component_requires() { # gate_component_requires <crate> <interface> <why>
+  local art="$OUT/${1//-/_}.wasm"
+  [ -f "$art" ] || {
+    echo "FAILED: no artifact for $1 at $art — is it in GATE_PKGS?"
+    exit 1
+  }
+  wasm-tools component wit "$art" | grep -q "$2" || {
+    echo "FAILED: $1 never calls $2 — $3"
+    exit 1
+  }
+}
+
 # --- reaching the model, through the shim --------------------------------------
 #
 # An app whose gate makes a real inference call needs three things, and getting any

@@ -6,6 +6,7 @@ import { api, setToken } from "./api";
 
 type Ev = { id: string; title: string; starts_at: string; capacity: number; state: string; claimed?: number; remaining?: number; description?: string; image_type?: string };
 type Tk = { id: string; event_id: string; code: string; state: string; qr?: string };
+type Note = { seq: number; kind: string; title: string; body: string; at: number; read: boolean };
 
 /** Which screen, once you are in. `?as=organizer` is a VIEW, not a permission —
  *  the routes are guarded by the bearer's roles and an attendee asking for the door
@@ -48,7 +49,7 @@ function Poster({ ev, className = "" }: { ev: Ev; className?: string }) {
  * token for it. The route is off unless `allow-test-routes` says otherwise now,
  * and this is what replaces it.
  */
-function SignIn({ onToken }: { onToken: (t: string) => void }) {
+function SignIn({ onToken }: { onToken: (t: string, email: string) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,7 +61,7 @@ function SignIn({ onToken }: { onToken: (t: string) => void }) {
     const [status, body] =
       mode === "login" ? await api.login(email, password) : await api.register(email, password);
     setBusy(false);
-    if (body?.token) return onToken(body.token);
+    if (body?.token) return onToken(body.token, email);
     setErr(
       { bad_credentials: "wrong email or password", already_registered: "that email is taken", invalid: "check the address, and use 8 characters or more" }[
         body?.error as string
@@ -251,7 +252,141 @@ function NewEvent({ onDone }: { onDone: () => void }) {
   );
 }
 
+
+/** The bell: a badge, a list, and a live tail.
+ *
+ * The badge is `unread-count` and not the length of the list, because the list is
+ * one page and the badge is the whole inbox — deriving it by paging is how that
+ * gets slow on the one number people look at most.
+ *
+ * The tail is `EventSource`, which cannot send an Authorization header. So it opens
+ * with a 60-second signed ticket minted by an authenticated POST. Verified through
+ * `tailscale serve` before any of this was written: frames arrive one per second,
+ * unbuffered.
+ */
+function Bell({ email }: { email: string }) {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [open, setOpen] = useState(false);
+  const [flash, setFlash] = useState(false);
+  const [wantsEmail, setWantsEmail] = useState(false);
+
+  const refresh = async () => {
+    const [, n] = await api.notifications();
+    setNotes((n?.notifications ?? []).slice().reverse());
+    const [, u] = await api.unread();
+    setUnread(u?.unread ?? 0);
+    const [, pr] = await api.prefs();
+    setWantsEmail((pr?.default_channels ?? []).includes("email"));
+  };
+
+  useEffect(() => {
+    refresh();
+    let es: EventSource | null = null;
+    let stopped = false;
+    (async () => {
+      const [, t] = await api.streamTicket();
+      if (!t?.ticket || stopped) return;
+      es = new EventSource(`/api/notifications/stream?ticket=${encodeURIComponent(t.ticket)}`);
+      es.onmessage = () => {
+        // The frame carries the note, but the badge and the list are re-read rather
+        // than patched: two sources of truth for "what is unread" is how a badge
+        // ends up disagreeing with the list under it.
+        refresh();
+        setFlash(true);
+        setTimeout(() => setFlash(false), 1200);
+      };
+    })();
+    return () => {
+      stopped = true;
+      es?.close();
+    };
+  }, []);
+
+  const markAll = async () => {
+    await api.markRead();
+    refresh();
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-label="notifications"
+        className={`relative rounded-md border border-input px-2.5 py-1.5 text-sm transition ${
+          flash ? "border-primary bg-primary/20" : ""
+        }`}
+      >
+        🔔
+        {unread > 0 && (
+          <span className="absolute -right-1.5 -top-1.5 min-w-[18px] rounded-full bg-primary px-1 text-[11px] font-semibold leading-[18px] text-primary-foreground">
+            {unread}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 z-40 mt-2 w-80 rounded-xl border border-border bg-card p-2 shadow-xl">
+          <div className="flex items-center justify-between px-2 py-1">
+            <span className="text-sm font-medium">Notifications</span>
+            {unread > 0 && (
+              <button onClick={markAll} className="text-xs text-muted-foreground hover:text-foreground">
+                mark all read
+              </button>
+            )}
+          </div>
+          {/* The settings screen is the APP's job, not the capability's — it is
+              the app that knows its own kinds. This is the smallest honest version
+              of one: the two channels, and the address email goes to. */}
+          <label className="mx-1 mb-1 flex cursor-pointer items-center gap-2 rounded-lg bg-muted/40 px-2 py-1.5 text-xs">
+            <input
+              type="checkbox"
+              checked={wantsEmail}
+              onChange={async (e) => {
+                const on = e.target.checked;
+                setWantsEmail(on);
+                await api.putPrefs({
+                  default_channels: on ? ["in-app", "email"] : ["in-app"],
+                  email_address: email,
+                  overrides: {},
+                });
+              }}
+            />
+            <span>email me too</span>
+            <span className="ml-auto font-mono text-[10px] text-muted-foreground">{email}</span>
+          </label>
+          <div className="max-h-72 overflow-y-auto">
+            {notes.length === 0 && (
+              <div className="px-2 py-3 text-sm text-muted-foreground">nothing yet</div>
+            )}
+            {notes.map((n) => (
+              <div
+                key={n.seq}
+                className={`rounded-lg px-2 py-2 ${n.read ? "opacity-55" : "bg-primary/5"}`}
+              >
+                <div className="text-sm font-medium">{n.title}</div>
+                <div className="text-xs text-muted-foreground">{n.body}</div>
+                <div className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                  {n.kind}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const EMAIL_KEY = `events.email.${view}`;
+
 export default function App() {
+  const [email, setEmail] = useState<string>(() => {
+    try {
+      return localStorage.getItem(EMAIL_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [token, setTok] = useState<string>(() => {
     try {
       return localStorage.getItem(TOKEN_KEY) ?? "";
@@ -282,16 +417,30 @@ export default function App() {
     }
   };
 
+  // DURING RENDER, not in an effect. React runs a child's effects before its
+  // parent's, so `Bell` opened its stream and asked for its badge before this had
+  // run — every call went out with no bearer, answered 401, and the badge sat at
+  // zero while the notification was sitting in the inbox. An effect is the wrong
+  // place for something a child needs in order to mount at all.
+  if (token) setToken(token);
+
   useEffect(() => {
     if (!token) return;
-    setToken(token);
     (async () => {
       await refresh();
       setReady(true);
     })();
   }, [token]);
 
-  const authed = (t: string) => {
+  const authed = (t: string, e?: string) => {
+    if (e) {
+      try {
+        localStorage.setItem(EMAIL_KEY, e);
+      } catch {
+        /* a private window still works for this session */
+      }
+      setEmail(e);
+    }
     try {
       localStorage.setItem(TOKEN_KEY, t);
     } catch {
@@ -325,6 +474,8 @@ export default function App() {
       <header className="mb-5 flex items-baseline gap-3">
         <h1 className="text-xl font-semibold">{isOrganizer ? "Door" : "My tickets"}</h1>
         <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-xs text-primary">{view}</span>
+        <div className="ml-auto" />
+        <Bell email={email} />
         <button
           onClick={() => {
             try {
@@ -335,7 +486,7 @@ export default function App() {
             setTok("");
             setReady(false);
           }}
-          className="ml-auto text-xs text-muted-foreground hover:text-foreground"
+          className="text-xs text-muted-foreground hover:text-foreground"
         >
           sign out
         </button>
@@ -386,6 +537,25 @@ export default function App() {
             </div>
           </Card>
           <NewEvent onDone={refresh} />
+          <button
+            onClick={async () => {
+              const [, r] = await api.runReminders();
+              setFlash(
+                r?.fired
+                  ? { ok: true, text: `sent ${r.fired} reminder${r.fired === 1 ? "" : "s"}` }
+                  : { ok: false, text: "nothing due yet" },
+              );
+              await refresh();
+            }}
+            // In a deployment this is `comp-relay` on a schedule — the app spec's
+            // [triggers] block — hitting the same route. A component has no loop of
+            // its own, so "the clock ticked" is always something calling in. Here it
+            // is a button, which is the same work with a person as the scheduler.
+            title="fire every reminder whose time has come"
+            className="mb-4 w-full rounded-xl border border-dashed border-border py-2 text-xs text-muted-foreground hover:border-primary hover:text-foreground"
+          >
+            ⏰ run due reminders
+          </button>
           <div className="grid gap-3">
             {events.map((e) => (
               <Card key={e.id}>

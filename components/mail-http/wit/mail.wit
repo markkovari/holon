@@ -1,0 +1,57 @@
+// mail:send — deliver one email, through a gateway that speaks HTTP.
+//
+// A separate interface from `notify:dispatch/dispatcher` on purpose. That one puts
+// webhook, email and sms behind a single enum with one `target` string and answers
+// with an HTTP status: enough to fire a webhook, not enough to run a mailbox. It
+// cannot tell "the address was rejected" from "the gateway is down", and it hands
+// back no id, so nothing later can ask what happened to a message.
+//
+// HTTP and not SMTP, and that is a constraint rather than a preference: `comp-host`
+// wires no `wasi:sockets` at all, so a component has no way to open a TCP
+// connection. Every backend of this interface is therefore a POST — Resend in
+// production, and `tools/mail-relay` in front of MailHog locally, which speaks the
+// real SMTP that MailHog needs. The component is byte-identical either way, which
+// is the property a mock never gives you.
+package mail:send@0.1.0;
+
+interface sender {
+    /// Why a send failed. Three, because three different people fix them: the
+    /// author of the address, the operator of the gateway, and whoever holds the
+    /// credentials.
+    variant send-error {
+        /// The gateway refused the recipient or the message — a 4xx that will not
+        /// succeed on a retry. Payload is what it said.
+        rejected(string),
+        /// The gateway is unreachable, or answered 5xx. Retrying may work.
+        unavailable(string),
+        /// No gateway is configured, or its credentials are missing.
+        not-configured(string),
+    }
+
+    /// One message. No attachments and no cc: an event notification has neither,
+    /// and a field nothing sets is a field every backend has to decide what to do
+    /// with.
+    record email {
+        to: string,
+        subject: string,
+        /// Plain text. A backend that wants HTML can wrap it; a reader who cannot
+        /// render HTML gets something either way.
+        body: string,
+    }
+
+    /// Send it. The string back is the gateway's own message id, which is what
+    /// makes a delivery traceable past this call — Resend returns one, and the
+    /// relay returns the id MailHog assigned.
+    send: func(msg: email) -> result<string, send-error>;
+}
+
+/// `mail-http` provides `mail:send` by POSTing to whatever `mail:gateway-url`
+/// names, with `mail:from` as the sender and the key at `mail-api-key` as a bearer
+/// when one is present. The vendor is never named here: pointing it at Resend or at
+/// `tools/mail-relay` is a deploy-time choice and not a different component.
+world mail-http {
+    export sender;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
+}

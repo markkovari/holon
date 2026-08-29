@@ -8,7 +8,7 @@
 # something unauthenticated.
 GATE_CRATE=events-domain
 GATE_APP=events
-GATE_PKGS="-p events-domain -p record-store -p id-generate -p quota -p qr -p fsm-workflow -p auth-guard -p rate-limiter -p audit-log"
+GATE_PKGS="-p events-domain -p record-store -p id-generate -p quota -p qr -p fsm-workflow -p auth-guard -p rate-limiter -p audit-log -p notify-prefs -p notify-inbox -p mail-http -p scheduler-timer"
 
 # The fixture is a gate's tool and is OFF unless this says otherwise — see
 # `test_routes_allowed` in src/lib.rs. It was compiled into the artifact that got
@@ -18,6 +18,54 @@ GATE_CONFIG="${GATE_CONFIG:-} --config allow-test-routes=1"
 # `upload-policy` reads these and answers `check`. Without them every poster is
 # refused, and the refusal is correct — an empty allowlist allows nothing.
 GATE_CONFIG="$GATE_CONFIG --config allowed-types=image/png,image/jpeg,image/webp --config max-size=2097152"
+
+# Where an email actually goes. Set by `events_start_mail` when a gate needs one;
+# absent otherwise, and then `mail:send` answers `not-configured` — which is a
+# truthful outcome rather than a silent success.
+MAILHOG_BIN="${MAILHOG_BIN:-$HOME/go/bin/MailHog}"
+
+events_start_mail() {
+  [ -x "$MAILHOG_BIN" ] || {
+    echo "no MailHog at '$MAILHOG_BIN' — this gate proves an email arrives, so it cannot run without one."
+    echo "  go install github.com/mailhog/MailHog@latest"
+    exit 1
+  }
+  SMTP_PORT=$(( 20000 + RANDOM % 20000 ))
+  MAIL_API_PORT=$(( 20000 + RANDOM % 20000 ))
+  RELAY_PORT=$(( 20000 + RANDOM % 20000 ))
+  MAIL_API="http://127.0.0.1:$MAIL_API_PORT"
+  "$MAILHOG_BIN" -smtp-bind-addr "127.0.0.1:$SMTP_PORT" \
+    -api-bind-addr "127.0.0.1:$MAIL_API_PORT" -ui-bind-addr "127.0.0.1:$MAIL_API_PORT" \
+    >/dev/null 2>&1 &
+  MAILHOG_PID=$!; disown "$MAILHOG_PID" 2>/dev/null || true
+  RELAY_BIN="${COMP_MAILRELAY:-reconciler/target/release/comp-mailrelay}"
+  [ -x "$RELAY_BIN" ] || { echo "no comp-mailrelay — cargo build --release --bin comp-mailrelay"; exit 1; }
+  "$RELAY_BIN" "127.0.0.1:$RELAY_PORT" "127.0.0.1:$SMTP_PORT" >/dev/null 2>&1 &
+  RELAY_PID=$!; disown "$RELAY_PID" 2>/dev/null || true
+  local _
+  for _ in $(seq 1 40); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 "$MAIL_API/api/v2/messages")" = "200" ] && break
+    sleep 0.25
+  done
+  GATE_CONFIG="$GATE_CONFIG --config mail:gateway-url=http://127.0.0.1:$RELAY_PORT/ --config mail:from=events@holon.test"
+  GATE_EGRESS="${GATE_EGRESS:-} --egress 127.0.0.1:$RELAY_PORT"
+  GATE_PRIVATE_EGRESS=--allow-private-egress
+  export MAIL_API
+}
+
+events_stop_mail() {
+  [ -n "${MAILHOG_PID:-}" ] && kill "$MAILHOG_PID" 2>/dev/null
+  [ -n "${RELAY_PID:-}" ] && kill "$RELAY_PID" 2>/dev/null
+  return 0
+}
+
+# How many messages MailHog holds whose body contains "$1".
+mail_count_containing() {
+  curl -s "$MAIL_API/api/v2/messages" | python3 -c "
+import sys, json
+needle = sys.argv[1]
+print(sum(1 for m in json.load(sys.stdin).get('items', []) if needle in (m['Content']['Body'] or '')))" "$1"
+}
 
 # shellcheck source=components/gate-lib.sh
 . components/gate-lib.sh

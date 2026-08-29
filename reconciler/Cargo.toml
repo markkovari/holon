@@ -49,6 +49,12 @@ path = "src/bin/fswatch.rs"
 name = "comp-relay"
 path = "src/bin/relay.rs"
 
+# HTTP in, real SMTP out — what lets a wasm component reach MailHog, since the host
+# wires no wasi:sockets and MailHog ingests SMTP only. std-only, no dependencies.
+[[bin]]
+name = "comp-mailrelay"
+path = "src/bin/mailrelay.rs"
+
 # Drains a project's goal queue, N runs at a time (ADR-0082's missing loop).
 [[bin]]
 name = "comp-goald"
