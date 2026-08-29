@@ -45,6 +45,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "adversary"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde",
  "serde_json",
  "wit-bindgen-rt",
@@ -72,6 +73,7 @@ dependencies = [
 name = "agent-probe"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -149,6 +151,7 @@ dependencies = [
 name = "artifact-probe"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -514,6 +517,7 @@ dependencies = [
 name = "contrast-audit"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -798,6 +802,7 @@ dependencies = [
 name = "eshop-catalog"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde",
  "serde_json",
  "wit-bindgen-rt",
@@ -807,6 +812,7 @@ dependencies = [
 name = "eshop-gateway"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "wit-bindgen-rt",
 ]
 
@@ -825,6 +831,7 @@ dependencies = [
 name = "eshop-payment"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -1898,6 +1905,7 @@ dependencies = [
 name = "photo-critic"
 version = "0.1.0"
 dependencies = [
+ "guestio",
  "serde_json",
  "wit-bindgen-rt",
 ]
@@ -2539,6 +2547,7 @@ name = "studio-domain"
 version = "0.1.0"
 dependencies = [
  "guestfmt",
+ "guestio",
  "serde",
  "serde_json",
  "wit-bindgen-rt",

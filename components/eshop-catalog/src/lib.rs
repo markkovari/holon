@@ -27,6 +27,8 @@ use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
 
+guestio::guest_write_all!();
+
 struct Component;
 
 const ITEMS: &str = "catalog-items";
@@ -376,9 +378,7 @@ fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
     ResponseOutparam::set(response_out, Ok(response));
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
     }
     let _ = OutgoingBody::finish(out, None);
 }

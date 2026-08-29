@@ -115,6 +115,7 @@ fn api_info() -> Outcome {
 // -----------------------------------------------------------------------------
 
 guestio::guest_bearer!();
+guestio::guest_write_all!();
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
     let token = bearer(request)
@@ -833,9 +834,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     let bytes = body.as_bytes();
     if !bytes.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in bytes.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, bytes);
     }
     let _ = OutgoingBody::finish(out, None);
 }
