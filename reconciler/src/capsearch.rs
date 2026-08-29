@@ -64,44 +64,54 @@ pub struct Capability {
     pub apps: usize,
 }
 
-/// Everything the catalogue and the graph know, joined.
+/// Everything the components and the graph know, joined.
 ///
-/// `catalog.json` supplies the prose, the artifacts supply the exports and the
-/// blast radius. Neither alone is enough: the catalogue has descriptions but is
-/// hand-generated and covers 109 of 150 components, and the artifacts have the
-/// truth about interfaces but no idea what anything is FOR.
+/// The COMPONENTS supply the prose, the artifacts supply the exports and the blast
+/// radius. Neither alone is enough: a source has a description and no idea what it
+/// resolves to, and an artifact has the truth about interfaces and no idea what
+/// anything is FOR.
+///
+/// This used to read both halves of the first sentence out of `components/catalog.json`
+/// — a 500 KB generated file — to learn a component's description and whether it was
+/// an application. The second of those is `name.ends_with("-domain")` plus a list of
+/// ten exceptions, so the loop was opening a generated file to learn the result of a
+/// string check on a name it was already holding. Both rules live in
+/// `crate::catalogue` now and are applied here directly, which also means they cannot
+/// be stale: a component renamed or newly written is described correctly on the next
+/// run rather than on the next time somebody remembers to regenerate.
 pub fn capabilities(
     repo_root: &Path,
     catalog: &Catalog,
     apps_of: &BTreeMap<String, usize>,
 ) -> Vec<Capability> {
-    // `reusable_as_is: false` is the catalogue's own word for "this is an
-    // application", derived there rather than re-guessed from the name here.
-    let app_only: BTreeSet<String> =
-        std::fs::read_to_string(repo_root.join("components/catalog.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default()
-            .iter()
-            .filter(|e| e["reusable_as_is"].as_bool() == Some(false))
-            .filter_map(|e| e["name"].as_str().map(String::from))
-            .collect();
+    // Not a name, and not a list of names: a component that exports nothing outside
+    // `wasi:` offers no contract, so nothing can plug it — which is the only reason
+    // this set exists, and is a fact about the artifact rather than a convention.
+    let app_only: BTreeSet<String> = catalog
+        .names()
+        .map(String::from)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .filter(|n| {
+            catalog
+                .surface(n)
+                .map(|s| !crate::catalogue::offers_a_contract(&s.exports))
+                .unwrap_or(false)
+        })
+        .collect();
 
-    let described: BTreeMap<String, String> =
-        std::fs::read_to_string(repo_root.join("components/catalog.json"))
-            .ok()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.as_array().cloned())
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|e| {
-                Some((
-                    e["name"].as_str()?.to_string(),
-                    e["description"].as_str().unwrap_or_default().to_string(),
-                ))
-            })
-            .collect();
+    let described: BTreeMap<String, String> = catalog
+        .names()
+        .map(String::from)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .map(|name| {
+            let doc = crate::catalogue::first_doc_line(
+                &repo_root.join("components").join(&name).join("src/lib.rs"),
+            );
+            (name, doc)
+        })
+        .collect();
 
     let wit = wit_prose(repo_root);
     let mut out: Vec<Capability> = Vec::new();

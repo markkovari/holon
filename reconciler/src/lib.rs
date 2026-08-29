@@ -6,6 +6,7 @@ pub mod bucket;
 pub mod budget;
 /// "Do we already have something for this?", asked of the catalogue (ADR-0089).
 pub mod capsearch;
+pub mod catalogue;
 /// Joining the parts of a decomposed goal: mocks, the merge, the composition gate.
 pub mod compose;
 /// The interface two parts of a decomposed goal build against (ADR-0086).

@@ -39,27 +39,13 @@
     "package": "auth:identity@0.1.0",
     "description": "HTTP JSON register/login app. Owns NO auth logic — it maps HTTP onto the",
     "exports": [
-      "wasi:http/incoming-handler@0.2.0",
-      "wasi:http/incoming-handler@0.2.0",
-      "types",
-      "jwt",
-      "oidc",
-      "session",
-      "accounts",
-      "rbac",
-      "authorizer"
+      "wasi:http/incoming-handler@0.2.0"
     ],
     "capability_deps": [
       "accounts",
-      "audit:log/recorder",
       "authorizer",
-      "ratelimit:guard/limiter",
       "rbac",
-      "session",
-      "wasi:config/store",
-      "wasi:http/outgoing-handler",
-      "wasi:keyvalue/atomics",
-      "wasi:keyvalue/store"
+      "session"
     ],
     "config_keys": [],
     "reusable_as_is": false,
@@ -78,7 +64,7 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -107,7 +93,7 @@
       "graph:agent/writer"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -244,7 +230,7 @@
       "artifact:cache/store"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -267,8 +253,6 @@
     "package": "auth:identity@0.1.0",
     "description": "`auth-guard` — register and log a user in, hash their password, issue and introspect a session token, and check whether their role grants an action",
     "exports": [
-      "wasi:http/incoming-handler@0.2.0",
-      "wasi:http/incoming-handler@0.2.0",
       "types",
       "jwt",
       "oidc",
@@ -278,12 +262,8 @@
       "authorizer"
     ],
     "capability_deps": [
-      "accounts",
       "audit:log/recorder",
-      "authorizer",
       "ratelimit:guard/limiter",
-      "rbac",
-      "session",
       "wasi:config/store",
       "wasi:http/outgoing-handler",
       "wasi:keyvalue/atomics",
@@ -360,14 +340,16 @@
       "wasi:http/types"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
     "name": "bigadd",
     "package": "demo:bigadd@0.1.0",
     "description": "`bigadd` — add two integers too large for a machine word, given as decimal strings",
-    "exports": [],
+    "exports": [
+      "bignum"
+    ],
     "capability_deps": [],
     "config_keys": [],
     "reusable_as_is": true,
@@ -501,7 +483,7 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "reusable_as_is": false,
+    "reusable_as_is": true,
     "unimplemented": false
   },
   {
@@ -570,7 +552,9 @@
     "name": "calc",
     "package": "demo:calc@0.1.0",
     "description": "`calc` — evaluate the four arithmetic operations on a pair of numbers",
-    "exports": [],
+    "exports": [
+      "arith"
+    ],
     "capability_deps": [],
     "config_keys": [],
     "reusable_as_is": true,
@@ -658,7 +642,7 @@
       "bytes:codec/codec"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -755,7 +739,7 @@
       "contract:registry/registry"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -790,7 +774,7 @@
         "description": ""
       }
     ],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -862,7 +846,7 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -920,7 +904,7 @@
       "demo:shape/pager"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1116,7 +1100,7 @@
       "graph:run/driver"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1147,7 +1131,7 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1163,7 +1147,7 @@
       "records:store/store"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1177,7 +1161,7 @@
       "proxy:route/router"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1202,7 +1186,7 @@
         "description": ""
       }
     ],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1222,7 +1206,7 @@
         "description": ""
       }
     ],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1332,7 +1316,9 @@
     "name": "expr",
     "package": "demo:expr@0.1.0",
     "description": "`expr` — parse and evaluate a small arithmetic expression written as text",
-    "exports": [],
+    "exports": [
+      "language"
+    ],
     "capability_deps": [],
     "config_keys": [],
     "reusable_as_is": true,
@@ -1364,7 +1350,7 @@
       "graph:fitness/evaluator"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1394,7 +1380,7 @@
       "git:forge/repo"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1546,7 +1532,9 @@
     "name": "glob",
     "package": "demo:glob@0.1.0",
     "description": "`glob` — test whether a path matches a shell-style wildcard pattern",
-    "exports": [],
+    "exports": [
+      "matcher"
+    ],
     "capability_deps": [],
     "config_keys": [],
     "reusable_as_is": true,
@@ -1591,7 +1579,7 @@
       "knowledge:graph/store"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -1989,7 +1977,7 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2090,7 +2078,7 @@
       "llm:inference/inference"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2162,7 +2150,7 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "reusable_as_is": false,
+    "reusable_as_is": true,
     "unimplemented": false
   },
   {
@@ -2249,7 +2237,7 @@
       "knowledge:memory/promotion"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2298,7 +2286,7 @@
       "session:store/store"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2504,7 +2492,7 @@
       "notify:prefs/preferences"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2544,7 +2532,9 @@
     "name": "ordinal",
     "package": "demo:ordinal@0.1.0",
     "description": "`ordinal` — turn a number into its English ordinal — 1st, 2nd, 3rd, 111th",
-    "exports": [],
+    "exports": [
+      "suffix"
+    ],
     "capability_deps": [],
     "config_keys": [],
     "reusable_as_is": true,
@@ -2656,7 +2646,7 @@
       "validate:schema/validator"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2728,7 +2718,7 @@
         "description": ""
       }
     ],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -2947,7 +2937,7 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "reusable_as_is": false,
+    "reusable_as_is": true,
     "unimplemented": false
   },
   {
@@ -3112,7 +3102,7 @@
       "wasi:keyvalue/store"
     ],
     "config_keys": [],
-    "reusable_as_is": false,
+    "reusable_as_is": true,
     "unimplemented": false
   },
   {
@@ -3131,7 +3121,9 @@
     "name": "roman",
     "package": "demo:roman@0.1.0",
     "description": "`roman` — convert a number to Roman numerals and read Roman numerals back",
-    "exports": [],
+    "exports": [
+      "numerals"
+    ],
     "capability_deps": [],
     "config_keys": [],
     "reusable_as_is": true,
@@ -3141,7 +3133,9 @@
     "name": "rot13",
     "package": "demo:rot13@0.1.0",
     "description": "`rot13` — obscure text with the ROT13 letter substitution, and reverse it",
-    "exports": [],
+    "exports": [
+      "cipher"
+    ],
     "capability_deps": [],
     "config_keys": [],
     "reusable_as_is": true,
@@ -3184,27 +3178,10 @@
     "package": "auth:identity@0.1.0",
     "description": "Sample HTTP consumer. Proves the auth:identity contract: every request is",
     "exports": [
-      "wasi:http/incoming-handler@0.2.0",
-      "wasi:http/incoming-handler@0.2.0",
-      "types",
-      "jwt",
-      "oidc",
-      "session",
-      "accounts",
-      "rbac",
-      "authorizer"
+      "wasi:http/incoming-handler@0.2.0"
     ],
     "capability_deps": [
-      "accounts",
-      "audit:log/recorder",
-      "authorizer",
-      "ratelimit:guard/limiter",
-      "rbac",
-      "session",
-      "wasi:config/store",
-      "wasi:http/outgoing-handler",
-      "wasi:keyvalue/atomics",
-      "wasi:keyvalue/store"
+      "authorizer"
     ],
     "config_keys": [],
     "reusable_as_is": false,
@@ -3286,7 +3263,7 @@
       "comp:secrets/reader"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3320,7 +3297,7 @@
       "graph:select/selector"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3393,7 +3370,7 @@
       "slug:generate/generator"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3835,7 +3812,7 @@
       "webhook:sign/signer"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3897,7 +3874,7 @@
         "description": ""
       }
     ],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {
@@ -3953,7 +3930,7 @@
       "vgit:store/worktree"
     ],
     "config_keys": [],
-    "reusable_as_is": true,
+    "reusable_as_is": false,
     "unimplemented": false
   },
   {

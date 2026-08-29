@@ -34,33 +34,10 @@ use comp_reconciler::fleet::repo_root;
 use regex::Regex;
 use serde::Serialize;
 
-/// Applications the `-domain` convention does not catch.
-///
-/// The suffix is the repo's own word for "this is an application", so it is DERIVED
-/// rather than listed. A hand-written set had ten names while the tree had sixty-three
-/// domains, and `capsearch` uses this flag to stop a showcase outranking the
-/// capability it is built from — so a stale list meant fifty-three applications
-/// competing with real capabilities on every goal.
-const APP_SPECIFIC: &[&str] = &[
-    "vet-domain",
-    "login-app",
-    "accounts-app",
-    "sample-consumer",
-    "bench-suite",
-    "link-shortener",
-    "dev-portal",
-    "webhook-relay",
-    "billing-ledger",
-    "status-page",
-];
-
-/// Probes the `-probe` suffix does not catch. Reusable, but only useful to whoever is
-/// testing the thing they probe, so they are grouped away from the shopping list.
+/// Probes the `-probe` suffix does not catch. Reusable-shaped, but they exist to test
+/// the thing they probe, so they are grouped away from the shopping list. Presentation
+/// only: `reusable_as_is` is decided by the exports, never by this.
 const PROBES: &[&str] = &["adversary", "twofile", "bigadd", "demo", "mock-fitness", "mock-provider"];
-
-fn is_app(name: &str) -> bool {
-    name.ends_with("-domain") || APP_SPECIFIC.contains(&name)
-}
 
 #[derive(Serialize)]
 struct ConfigKey {
@@ -132,6 +109,42 @@ fn first_doc_line(lib: &Path) -> String {
     String::new()
 }
 
+
+/// The world this crate builds, from `[package.metadata.component.target].world`.
+///
+/// Needed because a crate may point at a SHARED wit directory — `accounts-app` and
+/// `auth-guard` use the repo-root `wit/` so they can share the wkg-vendored `wasi:*`
+/// packages — and that directory holds many worlds. Reading exports from all of them
+/// attributed an unrelated `types` interface to `accounts-app` and `sample-consumer`,
+/// and told the catalogue they offered a contract when the built artifact exports
+/// nothing but a door.
+fn target_world(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
+    let re = Regex::new(r#"(?ms)\[package\.metadata\.component\.target\][^\[]*?^world\s*=\s*"([^"]+)""#)
+        .unwrap();
+    re.captures(&text).map(|c| c[1].to_string())
+}
+
+/// The body of `world <name> { ... }`, brace-matched.
+fn world_body<'a>(text: &'a str, world: &str) -> Option<&'a str> {
+    let at = text.find(&format!("world {world} "))?;
+    let open = at + text[at..].find('{')?;
+    let mut depth = 0usize;
+    for (i, c) in text[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[open + 1..open + i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
     let wit_dir = component_wit_dir(dir)?;
     let mut wits: Vec<PathBuf> = std::fs::read_dir(&wit_dir)
@@ -145,16 +158,40 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
     if wits.is_empty() || !lib.is_file() {
         return None;
     }
-    let wit_text =
-        wits.iter().filter_map(|w| std::fs::read_to_string(w).ok()).collect::<Vec<_>>().join("\n");
+    // Comments stripped FIRST, and that is not fussiness. A world may be written on
+    // one line — `world calc { export arith; }` — so the export pattern cannot be
+    // anchored to the start of a line, and an unanchored one matches the word
+    // "export" inside prose. It captured `"and a PII-redacted audit view — every
+    // cross-cutting concern…"` as an interface name and reclassified seven
+    // components on the strength of it.
+    let wit_text = wits
+        .iter()
+        .filter_map(|w| std::fs::read_to_string(w).ok())
+        .map(|t| {
+            t.lines()
+                .map(|l| match l.find("//") {
+                    Some(at) => &l[..at],
+                    None => l,
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let package =
         res.package.captures(&wit_text).map(|c| c[1].trim().to_string()).unwrap_or_default();
+    // Only the world this crate actually builds. Falls back to the whole text when the
+    // crate names no world, which is the common case of a component with its own
+    // single-world `wit/`.
+    let scope = target_world(dir)
+        .and_then(|w| world_body(&wit_text, &w).map(str::to_string))
+        .unwrap_or_else(|| wit_text.clone());
     let exports: Vec<String> =
-        res.export.captures_iter(&wit_text).map(|c| c[1].trim().to_string()).collect();
+        res.export.captures_iter(&scope).map(|c| c[1].trim().to_string()).collect();
     let deps: Vec<String> = res
         .import
-        .captures_iter(&wit_text)
+        .captures_iter(&scope)
         .map(|c| c[1].trim().split('@').next().unwrap_or_default().to_string())
         .filter(|i| !res.std_wasi.is_match(i))
         .collect::<BTreeSet<_>>()
@@ -200,8 +237,9 @@ fn scan(dir: &Path, res: &Regexes) -> Option<Entry> {
     let name = dir.file_name()?.to_string_lossy().to_string();
     let unimplemented =
         std::fs::read_to_string(&lib).map(|t| t.contains("UNIMPLEMENTED:")).unwrap_or(false);
+    let reusable_as_is = comp_reconciler::catalogue::offers_a_contract(&exports);
     Some(Entry {
-        reusable_as_is: !is_app(&name),
+        reusable_as_is,
         description: first_doc_line(&lib),
         name,
         package,
@@ -226,8 +264,8 @@ impl Regexes {
     fn new() -> Self {
         Self {
             package: Regex::new(r"(?m)^package\s+([^;]+);").unwrap(),
-            export: Regex::new(r"(?m)^\s*export\s+([^;]+);").unwrap(),
-            import: Regex::new(r"(?m)^\s*import\s+([^;]+);").unwrap(),
+            export: Regex::new(r"export\s+([^;{]+);").unwrap(),
+            import: Regex::new(r"import\s+([^;{]+);").unwrap(),
             std_wasi: Regex::new(r"^wasi:(clocks|random|io|cli|filesystem|sockets)/").unwrap(),
             get_call: Regex::new(r#"[a-z_]*(?:get|cfg)[a-z_0-9]*\(\s*"([a-z0-9._-]{2,})""#).unwrap(),
             // The repo convention: a module-doc block listing knobs with descriptions.
@@ -261,11 +299,13 @@ fn role(e: &Entry) -> &'static str {
     if e.unimplemented {
         return "contract";
     }
-    if !e.reusable_as_is {
-        return "app";
-    }
+    // Before the plugability question, because a probe that exports only a door would
+    // otherwise be filed as an application, and it is not one.
     if e.name.ends_with("-probe") || PROBES.contains(&e.name.as_str()) {
         return "probe";
+    }
+    if !e.reusable_as_is {
+        return "app";
     }
     "capability"
 }
@@ -293,9 +333,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let groups: [(&str, &str, &str); 4] = [
         ("capability", "Capabilities — reusable as-is",
-         "Each one exports its contract and imports only generic WASI, so it drops into another app via `wac plug` or a link, configured through `wasi:config`. This is the part of the tree meant to be reused; [ADR-0089](../docs/adr/0089-capability-accumulation.md) is why a gate makes you look here before you build."),
-        ("app", "Applications and demos — not reusable as-is",
-         "A whole app, or a demo of one. Listed because it is in the tree and because its composition is worth reading, but it is a consumer of the capabilities above rather than one of them. The `-domain` suffix is the repo convention; `capsearch` uses this flag so a showcase cannot outrank the capability it is built from. One file each in [`docs/apps/`](../docs/apps/README.md)."),
+         "Each one exports a contract outside the `wasi:` namespace, so it drops into another app via `wac plug` or a link, configured through `wasi:config`. That export IS the membership test — this is the part of the tree meant to be reused, and [ADR-0089](../docs/adr/0089-capability-accumulation.md) is why a gate makes you look here before you build."),
+        ("app", "Nothing to plug — exports only a door",
+         "These export `wasi:http/incoming-handler` and nothing else, so there is no contract for `wac plug` or a link to satisfy: they are consumers of the capabilities above rather than one of them. Membership is read off the exports, not off the name — a `-domain` suffix and a list of ten exceptions disagreed with the components themselves 33 times, in both directions, advertising every probe and all five `eshop-*` parts as reusable while hiding `login-app`'s `login:app/auth` from search. Most are whole applications; one file each in [`docs/apps/`](../docs/apps/README.md)."),
         ("contract", "Contract only — no implementation behind the WIT",
          "The WIT is real and every export returns an `UNIMPLEMENTED:` marker. These need a host-side capability a wasm guest cannot have (a syscall, a socket, a subprocess), so they state what a host must satisfy rather than satisfying it — see [ADR-0095](../docs/adr/0095-what-is-allowed-to-be-native.md)."),
         ("probe", "Probes — test harnesses",
