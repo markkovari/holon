@@ -29,7 +29,7 @@ use crate::plug::Catalog;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Capability {
     pub name: String,
-    /// One sentence, from `components/catalog.json`, written by whoever built it.
+    /// One sentence, from the component's own `//!` line, written by whoever built it.
     ///
     /// Weaker than it sounds: 57 of the 109 entries say only "`x` — reference
     /// implementation of `x:y`", which is a tautology and matches nothing a
