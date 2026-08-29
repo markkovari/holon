@@ -69,7 +69,7 @@ links:
     import: graph:run/driver@0.2.0
     to: driver
   - from: driver
-    import: graph:agent/writer@0.1.0
+    import: graph:agent/writer@0.2.0
     to: agent
   - from: driver
     import: graph:fitness/evaluator@0.2.0

@@ -20,10 +20,23 @@
 // produce a healthy-looking generation in which the parallelism bought nothing.
 // Nothing else in the system can see it, so `distinct` is reported on every
 // selection whether or not anyone asked (ADR-0081).
-package graph:select@0.1.0;
+// Why 0.2.0: this `use`s a type from `graph:agent`, which went to 0.2.0.
+//
+// The types themselves did not change — `file` is the same two fields. But a `use`
+// names a package VERSION, so the rendered surface moved, and to `wac` a `file`
+// from `graph:agent@0.1.0` and one from `@0.2.0` are different types. A component
+// built against the old shape would fail to plug with a message naming neither the
+// interface nor the reason, which is exactly what `witsurface.rs` exists to catch —
+// and did catch, on this file, in the same change that bumped `graph:agent`.
+//
+// This is the cost of `use` across packages, and it is the second time it has been
+// paid: #148 fixed a compose failure by having `graph:run` define its own copies of
+// the records it was borrowing. The same argument applies here and is not made
+// here, because a version bump is the smaller change and the coupling is one type.
+package graph:select@0.2.0;
 
 interface selector {
-    use graph:agent/writer@0.1.0.{file};
+    use graph:agent/writer@0.2.0.{file};
     use git:forge/repo@0.1.0.{opened};
 
     /// What one branch came back with.
