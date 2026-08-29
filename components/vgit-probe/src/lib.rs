@@ -47,6 +47,7 @@ fn err(e: objects::GitError) -> String {
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body_text!(MAX_BODY_BYTES);
+guestio::guest_write_all!();
 
 /// Walk to the subtree id at `path`, so a test can prove an untouched subtree was
 /// reused by id rather than rewritten to an equal-looking one.
@@ -169,9 +170,7 @@ impl Guest for Component {
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            for chunk in body.as_bytes().chunks(4096) {
-                let _ = stream.blocking_write_and_flush(chunk);
-            }
+            let _ = write_all(&stream, body.as_bytes());
             drop(stream);
         }
         let _ = OutgoingBody::finish(out, None);

@@ -51,6 +51,7 @@ use base64::Engine as _;
 use manifest::{HostIface, ManifestInput, Part, Plan, Strategy};
 
 guestio::guest_bearer!();
+guestio::guest_write_all!();
 
 struct Component;
 
@@ -3213,9 +3214,7 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
     ResponseOutparam::set(response_out, Ok(response));
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, &body);
     }
     let _ = OutgoingBody::finish(out, None);
 }

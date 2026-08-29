@@ -82,6 +82,7 @@ fn usage() -> Outcome {
 // ---- auth -------------------------------------------------------------------
 
 guestio::guest_bearer!();
+guestio::guest_write_all!();
 
 fn introspect(request: &IncomingRequest) -> Result<Principal, Outcome> {
     let token =
@@ -411,9 +412,7 @@ fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, body: &[u8]
     ResponseOutparam::set(response_out, Ok(response));
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
     }
     let _ = OutgoingBody::finish(out, None);
 }

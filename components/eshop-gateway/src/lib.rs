@@ -22,6 +22,8 @@ const INDEX_HTML: &str =
 /// Ordering first (creates/advances), then the reactors.
 const PUMPS: [&str; 4] = ["/pump/ordering", "/pump/catalog", "/pump/payment", "/pump/basket"];
 
+guestio::guest_write_all!();
+
 struct Component;
 
 impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
@@ -127,9 +129,7 @@ fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body
     ResponseOutparam::set(response_out, Ok(response));
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
     }
     let _ = OutgoingBody::finish(out, None);
 }

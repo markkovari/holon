@@ -1546,6 +1546,7 @@ fn parse<T: for<'de> Deserialize<'de>>(request: &IncomingRequest) -> Result<T, S
 const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
 
 guestio::guest_read_body!(MAX_BODY_BYTES);
+guestio::guest_write_all!();
 
 guestio::guest_bearer!();
 
@@ -1736,9 +1737,7 @@ fn respond_built(response_out: ResponseOutparam, status: u16, headers: Fields, b
     ResponseOutparam::set(response_out, Ok(response));
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
     }
     let _ = OutgoingBody::finish(out, None);
 }
@@ -1753,9 +1752,7 @@ fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body
     if !body.is_empty() {
         let stream = out.write().expect("write stream");
         // write in <= 4096-byte chunks (the stream's typical write budget).
-        for chunk in body.chunks(4096) {
-            let _ = stream.blocking_write_and_flush(chunk);
-        }
+        let _ = write_all(&stream, body);
     }
     let _ = OutgoingBody::finish(out, None);
 }

@@ -16,6 +16,8 @@ use bindings::wasi::http::types::{
 };
 use serde_json::json;
 
+guestio::guest_write_all!();
+
 struct Component;
 
 fn param(query: &str, key: &str) -> String {
@@ -145,9 +147,7 @@ impl Guest for Component {
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            for chunk in body.as_bytes().chunks(4096) {
-                let _ = stream.blocking_write_and_flush(chunk);
-            }
+            let _ = write_all(&stream, body.as_bytes());
             drop(stream);
         }
         let _ = OutgoingBody::finish(out, None);
