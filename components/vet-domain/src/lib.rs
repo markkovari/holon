@@ -1699,7 +1699,11 @@ fn store_err(e: StoreError) -> Outcome {
     match e {
         StoreError::NotFound => Outcome::NotFound,
         StoreError::InvalidJson(m) => Outcome::Bad(format!("invalid_json: {m}")),
-        StoreError::RevisionConflict(_) => Outcome::Bad("revision_conflict".into()),
+        // 409, not 400. `Outcome::Bad` answers 400, and a client that re-reads and
+        // retries on a conflict — which is the entire point of the compare-and-set in
+        // ADR-0065 — does not retry a 400, because 400 says the request itself is
+        // wrong and sending it again cannot help. Every other component answers 409.
+        StoreError::RevisionConflict(_) => Outcome::Err(409, "revision_conflict".into()),
         StoreError::BackendUnavailable(m) => {
             Outcome::Json(503, format!("{{\"error\":\"backend: {}\"}}", esc(&m)))
         }
