@@ -25,6 +25,7 @@
 //! have. A guard that makes the cost visible is the honest way to argue for the
 //! deletion.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
 /// The formats `comp-capgraph` emits. `md` is included deliberately: it is the one
@@ -210,35 +211,87 @@ fn the_committed_catalogue_is_not_stale() {
 /// contents is not duplication — it is one name meaning two things, and which one a
 /// tool resolves depends on which directory it happened to look in.
 ///
-/// `tools/check-wit-packages.py` has always been able to say this and NOTHING RAN
-/// IT: no recipe, no workflow, no test. It was found by grepping for scripts that
-/// nothing referenced, on the assumption they were dead. It was not dead, it was
-/// unwired — and it was failing: `components/anthropic-vision/wit/vision.wit` was a
-/// verbatim copy of the `vision-describe` contract with one world appended, so both
-/// claimed `vision:describe@0.1.0`.
+/// This was `tools/check-wit-packages.py`, which NOTHING RAN: no recipe, no
+/// workflow, no test. It was found by grepping for scripts nothing referenced, on
+/// the assumption they were dead. It was not dead, it was unwired — and it was
+/// failing: `components/anthropic-vision/wit/vision.wit` was a verbatim copy of the
+/// `vision-describe` contract with one world appended, so both claimed
+/// `vision:describe@0.1.0`.
 ///
-/// A check nobody runs is worth less than no check, because its existence suggests
-/// the question is already being asked.
+/// Ported into the test rather than shelled out to, so CI's critical path does not
+/// depend on a `python3` that happens to be on the runner. Comments and whitespace
+/// are normalised away before comparing: two files that differ only in how they
+/// explain themselves are the same contract, and flagging that would train everyone
+/// to ignore this.
+///
+/// Only files git TRACKS. Walking the filesystem instead reported a collision against
+/// `components/portfolio-value-cs/bin/Release/…/WasiHttpWorld_component_type.wit` —
+/// C# build output, ignored, never committed, and back after the next `dotnet build`.
 #[test]
 fn no_wit_package_name_means_two_things() {
     let root = root();
-    let tool = root.join("tools/check-wit-packages.py");
-    if !tool.exists() {
-        eprintln!("SKIPPED: tools/check-wit-packages.py is gone");
-        return;
-    }
-    let Ok(out) = Command::new("python3")
-        .arg("tools/check-wit-packages.py")
-        .current_dir(&root)
-        .output()
+    let Ok(listed) = Command::new("git").args(["ls-files", "*.wit"]).current_dir(&root).output()
     else {
-        eprintln!("SKIPPED: python3 is not available");
+        eprintln!("SKIPPED: git is not available");
         return;
     };
+    if !listed.status.success() {
+        eprintln!("SKIPPED: git could not list the tree");
+        return;
+    }
+    let files: Vec<String> =
+        String::from_utf8_lossy(&listed.stdout).lines().map(str::to_string).collect();
+    assert!(files.len() > 50, "git listed {} .wit files — the check is not running", files.len());
+
+    // package name -> (path, digest of everything it declares)
+    let mut by_package: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for rel in &files {
+        let Ok(text) = std::fs::read_to_string(root.join(rel)) else { continue };
+        let Some(at) = text.find("package ") else { continue };
+        let Some(end) = text[at..].find(';') else { continue };
+        let name = text[at + "package ".len()..at + end].trim().to_string();
+
+        // Everything AFTER the package line, comments and whitespace normalised out.
+        let body: String = text[at + end + 1..]
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(c) => &l[..c],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let normalised = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        by_package.entry(name).or_default().push((rel.clone(), digest_of(&normalised)));
+    }
+
+    let collisions: Vec<_> = by_package
+        .iter()
+        .filter(|(_, entries)| {
+            entries.iter().map(|(_, d)| d).collect::<BTreeSet<_>>().len() > 1
+        })
+        .collect();
+
     assert!(
-        out.status.success(),
-        "a WIT package name is claimed by more than one contract:\n{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        collisions.is_empty(),
+        "a WIT package name is claimed by more than one contract:\n{}\n\n\
+         A package name is global. Rename one, or make them the same file.",
+        collisions
+            .iter()
+            .map(|(name, entries)| {
+                let lines: Vec<String> =
+                    entries.iter().map(|(p, d)| format!("      {} {p}", &d[..12])).collect();
+                format!("  {name}\n{}", lines.join("\n"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     );
+}
+
+/// A short content digest. Only ever compared for equality, never published, so the
+/// cheap non-cryptographic hash the standard library already has is enough.
+fn digest_of(text: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    format!("{:016x}", h.finish())
 }
