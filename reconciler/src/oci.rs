@@ -28,6 +28,8 @@
 //! request and retries; anonymous is enough to pull anything public and never
 //! enough to push.
 
+use std::collections::BTreeMap;
+
 use anyhow::{bail, Context, Result};
 use serde_json::json;
 
@@ -98,6 +100,7 @@ pub async fn push_artifact(
             .header("content-type", MT_MANIFEST)
             .body(manifest_bytes),
         creds,
+        repo,
     )
     .await
     .context("PUT manifest")?;
@@ -127,6 +130,44 @@ impl Creds {
         let user = std::env::var("OCI_USER").ok().filter(|v| !v.is_empty())?;
         let pass = std::env::var("OCI_PASSWORD").ok().filter(|v| !v.is_empty())?;
         Some(Creds { user, pass })
+    }
+}
+
+/// Bearer tokens already obtained, keyed by repository.
+///
+/// A push of one component is four requests — HEAD the blob, POST an upload, PUT
+/// the blob, PUT the manifest — and every one of them used to answer 401, fetch a
+/// fresh token, and retry. Eight round-trips to `ghcr.io/token` per component, and
+/// pushing 82 apps timed the token endpoint out after five minutes:
+///
+///     1: fetching a registry token
+///     2: …ghcr.io/token?…scope=repository:owner/holon-apps/abtest:pull
+///     3: operation timed out
+///
+/// Keyed by REPOSITORY rather than by scope string: a registry issues one token per
+/// repository and the scope it names is derived from the request, so caching by
+/// scope would keep `pull` and `push,pull` apart and re-fetch for each — which is
+/// most of the saving gone.
+///
+/// Process-wide because this is a CLI that pushes to one registry and exits. A
+/// token that expires mid-push is handled where it shows: a 401 with a token
+/// attached evicts and retries once.
+static TOKENS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<String, String>>> =
+    std::sync::OnceLock::new();
+
+fn cached_token(repo: &str) -> Option<String> {
+    TOKENS.get_or_init(Default::default).lock().ok()?.get(repo).cloned()
+}
+
+fn remember_token(repo: &str, token: &str) {
+    if let Ok(mut m) = TOKENS.get_or_init(Default::default).lock() {
+        m.insert(repo.to_string(), token.to_string());
+    }
+}
+
+fn forget_token(repo: &str) {
+    if let Ok(mut m) = TOKENS.get_or_init(Default::default).lock() {
+        m.remove(repo);
     }
 }
 
@@ -174,16 +215,28 @@ async fn token_for(
 /// Once, not in a loop: a second 401 after a token means the credentials do not
 /// carry the scope, and retrying that forever turns a permissions problem into a
 /// hang.
+///
+/// A token already obtained for `repo` is attached UP FRONT, which removes the 401
+/// as well as the token fetch — the request that used to cost three round-trips
+/// costs one. If it comes back 401 anyway the token has expired, so it is evicted
+/// and the challenge is answered exactly once, as before.
 async fn send(
     http: &reqwest::Client,
     req: reqwest::RequestBuilder,
     creds: Option<&Creds>,
+    repo: &str,
 ) -> Result<reqwest::Response> {
     let retry = req.try_clone();
+    let req = match cached_token(repo) {
+        Some(t) => req.bearer_auth(t),
+        None => req,
+    };
     let res = req.send().await?;
     if res.status() != reqwest::StatusCode::UNAUTHORIZED {
         return Ok(res);
     }
+    // Either there was no token or the one there is no longer good.
+    forget_token(repo);
     let challenge = res
         .headers()
         .get("www-authenticate")
@@ -194,7 +247,19 @@ async fn send(
     if challenge.is_empty() {
         return Ok(res);
     }
+    // Basic, not Bearer. A registry behind htpasswd challenges
+    // `Basic realm="Registry"` — a realm that is a NAME, not a URL — and asking
+    // `token_for` for it produced `relative URL without a base`, which describes
+    // the code's confusion rather than the registry's answer. There is no token to
+    // cache in this flow: the credentials go on every request.
+    if challenge.trim_start().to_ascii_lowercase().starts_with("basic") {
+        let Some(c) = creds else {
+            bail!("{repo}: the registry wants a username and password (OCI_USER / OCI_PASSWORD)");
+        };
+        return Ok(retry.basic_auth(&c.user, Some(&c.pass)).send().await?);
+    }
     let token = token_for(http, &challenge, creds).await?;
+    remember_token(repo, &token);
     Ok(retry.bearer_auth(token).send().await?)
 }
 
@@ -217,6 +282,7 @@ pub async fn pull_artifact(
         http,
         http.get(format!("{base}/v2/{repo}/manifests/{reference}")).header("accept", MT_MANIFEST),
         creds,
+        repo,
     )
     .await
     .context("GET manifest")?;
@@ -252,7 +318,7 @@ pub async fn pull_artifact(
         })?;
     let digest = layer["digest"].as_str().context("the layer has no digest")?.to_string();
 
-    let res = send(http, http.get(format!("{base}/v2/{repo}/blobs/{digest}")), creds)
+    let res = send(http, http.get(format!("{base}/v2/{repo}/blobs/{digest}")), creds, repo)
         .await
         .context("GET blob")?;
     if !res.status().is_success() {
@@ -319,7 +385,7 @@ async fn upload_blob(
     // Already there? Blobs are content-addressed, so skipping is always safe, and
     // it makes a retried push cheap instead of re-sending the whole component.
     if let Ok(r) =
-        send(http, http.head(format!("{base}/v2/{repo}/blobs/{digest}")), creds).await
+        send(http, http.head(format!("{base}/v2/{repo}/blobs/{digest}")), creds, repo).await
     {
         if r.status().is_success() {
             return Ok(());
@@ -329,6 +395,7 @@ async fn upload_blob(
         http,
         http.post(format!("{base}/v2/{repo}/blobs/uploads/")).header("content-length", "0"),
         creds,
+        repo,
     )
     .await
     .context("starting a blob upload")?;
@@ -350,6 +417,7 @@ async fn upload_blob(
             .header("content-type", "application/octet-stream")
             .body(bytes.to_vec()),
         creds,
+        repo,
     )
     .await
     .context("PUT blob")?;
@@ -361,6 +429,33 @@ async fn upload_blob(
 
 #[cfg(test)]
 mod tests {
+    /// A token is reused for the repository it was issued for, and evicting one
+    /// affects only that repository.
+    ///
+    /// The cache is what turns a push of 82 apps from hundreds of token fetches
+    /// into one per repository — the difference between a pipeline that finishes
+    /// and one that times the token endpoint out after five minutes.
+    #[test]
+    fn a_token_is_remembered_per_repository() {
+        use super::{cached_token, forget_token, remember_token};
+        // Names unique to this test: the cache is process-wide, and a test that
+        // collided with another would pass or fail depending on thread order.
+        let (a, b) = ("owner/holon-apps/events", "owner/holon-apps/poll");
+        assert_eq!(cached_token(a), None, "nothing is cached before anything is put");
+
+        remember_token(a, "tok-a");
+        remember_token(b, "tok-b");
+        assert_eq!(cached_token(a).as_deref(), Some("tok-a"));
+        assert_eq!(cached_token(b).as_deref(), Some("tok-b"));
+
+        // An expired token evicts only its own repository. Clearing the whole cache
+        // on one 401 would re-fetch for every app that had already authenticated.
+        forget_token(a);
+        assert_eq!(cached_token(a), None);
+        assert_eq!(cached_token(b).as_deref(), Some("tok-b"), "the other survives");
+        forget_token(b);
+    }
+
     use super::*;
 
     /// The artifact shape, asserted against a REAL `wkg oci push` artifact read out
