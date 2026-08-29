@@ -4,7 +4,9 @@
 nothing.*
 
 **Status: accepted**, and built. Completes the *discovery* third of
-[ADR-0089](0089-capability-accumulation.md).
+[ADR-0089](0089-capability-accumulation.md). The sentence this ADR is about is still
+the component's first `//!` line; what changed is that nothing copies it into a file
+any more — see [ADR-0097](0097-a-derived-file-is-a-liability.md).
 
 ## The measurement that started it
 

@@ -5,7 +5,13 @@ An agent that rediscovers PDF parsing on Tuesday because Monday's environment wa
 thrown away is not learning; it is paying twice.*
 
 **Status: proposed, and roughly half of it is already built — which is exactly why
-it is worth writing down.** The parts that exist are named below with what proves
+it is worth writing down.** The claims here stand;
+[ADR-0097](0097-a-derived-file-is-a-liability.md) replaced the MECHANICS. Wherever
+this file says `catalog.json`, `tools/gen-catalog.py` or a "human-authored
+`reusable_as_is` flag", the pool is now read from the components themselves — the
+file is deleted, the generator is `comp-catalog`, and reusability is read off a
+component's exports rather than its name, which the old rule got wrong 33 times out
+of 212. The parts that exist are named below with what proves
 them. The parts that do not are named with equal precision, because the gap between
 "we have 150 reusable components" and "an agent finds and reuses them by itself" is
 where all the remaining value is.
