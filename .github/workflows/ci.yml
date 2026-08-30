@@ -159,7 +159,12 @@ jobs:
       #   derived          deriving the graph must not write into the tree, the
       #                    committed renders must not drift from the components, no
       #                    build output is tracked, and no WIT package name is
-      #                    claimed by two different contracts.      #   checks           4 tests that need NOTHING — no nats-server, no surreal,
+      #                    claimed by two different contracts.      #   gate_events      the `events` gate as a Rust test rather than a bash script —
+      #                    a PROTOTYPE, running beside the shell one it mirrors. Same
+      #                    assertions, same failure sentences; 4.20s -> 0.58s warm,
+      #                    and the tools a worker must have drop from thirteen to two.
+      #                    Skips loudly if `events_domain.composed.wasm` is absent.
+      #   checks           4 tests that need NOTHING — no nats-server, no surreal,
       #                    no comp-host, no built wasm. Written, passing, and simply
       #                    never named here.
       #
@@ -248,7 +253,7 @@ jobs:
           --test capsearch --test contracts --test publish --test secrets
           --test capgraph_edges --test capgraph_store --test console_session
           --test compose_race --test witsurface --test hostsurface
-          --test fixtureversions --test derived --test checks
+          --test fixtureversions --test derived --test checks --test gate_events
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is
