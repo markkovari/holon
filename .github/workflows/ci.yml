@@ -159,7 +159,7 @@ jobs:
       #   derived          deriving the graph must not write into the tree, the
       #                    committed renders must not drift from the components, no
       #                    build output is tracked, and no WIT package name is
-      #                    claimed by two different contracts.      #   gate_*           the events, clinic and triage gates as Rust tests rather than bash
+      #                    claimed by two different contracts.      #   gate_*           the events, clinic, triage, treasury and moderation gates in Rust, not bash
       #                    scripts, running beside the shell ones they mirror. Same
       #                    assertions, same failure sentences. Measured warm:
       #
@@ -267,7 +267,7 @@ jobs:
           --test compose_race --test witsurface --test hostsurface
           --test fixtureversions --test derived --test checks
           --test gate_events --test gate_tickets --test gate_checkin --test gate_swaps
-          --test gate_clinic --test gate_triage
+          --test gate_clinic --test gate_triage --test gate_treasury --test gate_moderation
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is
