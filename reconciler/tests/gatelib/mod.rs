@@ -35,25 +35,29 @@ pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
-/// A port unique to this GATE, not to the app it drives.
+/// A port the OS says is free.
 ///
-/// The app name alone is not enough and the mistake is worth recording: `cargo test`
-/// runs the tests inside one binary on parallel threads, so three triage gates named
-/// their port after `triage`, started three hosts on it, and two failed with
-/// "comp-host never answered /health" while the third passed. `harness/mod.rs`
-/// documents the same failure for the control plane — "two sharing a port fail only
-/// when the suite runs in parallel, which is how it is normally run".
+/// Two earlier versions of this were wrong, and the second failed in CI as
+/// `Error: Address already in use (os error 98)` — which is only visible because this
+/// harness keeps the host's stderr and prints it, where the shell printed `tail -3` and
+/// showed three lines of stack trace.
 ///
-/// The app hash spreads binaries apart; the counter separates gates inside one.
-fn next_port(app: &str) -> u16 {
-    use std::sync::atomic::{AtomicU16, Ordering};
-    static NEXT: AtomicU16 = AtomicU16::new(0);
-    let mut h: u32 = 2166136261;
-    for b in app.as_bytes() {
-        h = (h ^ *b as u32).wrapping_mul(16777619);
-    }
-    let base = 30000 + (h % 18000) as u16;
-    base + NEXT.fetch_add(1, Ordering::SeqCst)
+///   1. a hash of the APP name. `cargo test` runs the tests in one binary on parallel
+///      threads, so three triage gates named one port, started three hosts on it, and
+///      two failed while the third passed.
+///   2. that hash plus a per-process counter. Better, and still a guess: twenty-one
+///      test binaries each pick a base from 18000 slots and count up from it, so two
+///      bases landing within a few of each other collide.
+///
+/// Asking the OS removes the guess. The listener is dropped before the host binds, so
+/// there is a window — hence `serve_with` retries when the host dies of it, which is a
+/// race that closes rather than a hash that does not.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("the OS has no free port")
+        .local_addr()
+        .expect("a bound listener has an address")
+        .port()
 }
 
 /// A running application: one host process, killed when the gate ends or panics.
@@ -169,7 +173,29 @@ impl Gate {
         config: &[&str],
         egress: &[&str],
     ) -> Self {
-        let port = next_port(app);
+        // Three tries. The window between the OS naming a free port and the host
+        // binding it is small and real; a second attempt on a fresh port closes it,
+        // and a third says the machine is out of ports rather than this being flaky.
+        for attempt in 1..=3 {
+            match Self::serve_once(app, host, wasm, config, egress) {
+                Ok(gate) => return gate,
+                Err(said) if said.contains("Address already in use") && attempt < 3 => {
+                    eprintln!("[{app}] port taken between choosing and binding, retrying");
+                }
+                Err(said) => panic!("[{app}] comp-host never answered /health.\nThe host said:\n{said}"),
+            }
+        }
+        unreachable!("the loop above either returns or panics")
+    }
+
+    fn serve_once(
+        app: &str,
+        host: &std::path::Path,
+        wasm: &std::path::Path,
+        config: &[&str],
+        egress: &[&str],
+    ) -> Result<Self, String> {
+        let port = free_port();
         let addr = format!("127.0.0.1:{port}");
 
         // `default-tenant` only. `allow-test-routes` is NOT added here even though every
@@ -211,7 +237,7 @@ impl Gate {
             .spawn()
             .unwrap_or_else(|e| panic!("spawn comp-host: {e}"));
 
-        let gate = Gate {
+        let mut gate = Gate {
             child,
             base: format!("http://{addr}"),
             // TEN MINUTES, and not because a gate is slow. A route that calls a model
@@ -231,16 +257,18 @@ impl Gate {
         // this waited first — would have been worse.
         for _ in 0..1200 {
             if gate.client.get(format!("{}/health", gate.base)).send().is_ok() {
-                return gate;
+                return Ok(gate);
+            }
+            // A host that has already exited will never answer; do not wait out the
+            // full minute for one that is gone.
+            if let Ok(Some(_)) = gate.child.try_wait() {
+                break;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
         // What the host said, not the last three lines of it.
         let said = std::fs::read_to_string(&log_path).unwrap_or_default();
-        panic!(
-            "[{app}] comp-host never answered /health on {addr} in 60s.\nThe host said:\n{}",
-            if said.trim().is_empty() { "(nothing)".to_string() } else { said }
-        );
+        Err(if said.trim().is_empty() { format!("(nothing) on {addr}") } else { said })
     }
 
     /// (status, body). A non-2xx is a VALUE: most of a gate is asserting that a
