@@ -20,6 +20,8 @@
 #[allow(warnings)]
 mod bindings;
 mod manifest;
+mod goals;
+mod secrets;
 mod orgs;
 mod req;
 
@@ -33,7 +35,6 @@ use bindings::comp::store::cas;
 use bindings::policy::guard::guard as policy;
 use bindings::quota::meter::meter as quota;
 use bindings::records::store::store as records;
-use bindings::secrets::vault::vault;
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::config::store as config;
 use bindings::wasi::keyvalue::store as kv;
@@ -97,36 +98,36 @@ impl Guest for Component {
             (Method::Post, ["api", "components", "satisfies"]) => components_satisfies(&request),
             (Method::Get, ["api", "market"]) => market_search(&request, &query),
 
-            (Method::Post, ["api", "internal", "fetch-token"]) => fetch_token_mint(&request),
-            (Method::Get, ["api", "internal", "secret"]) => secret_fetch(&request, &query),
+            (Method::Post, ["api", "internal", "fetch-token"]) => secrets::fetch_token_mint(&request),
+            (Method::Get, ["api", "internal", "secret"]) => secrets::secret_fetch(&request, &query),
 
-            (Method::Post, ["api", "secrets"]) => secret_put(&request, &query),
-            (Method::Get, ["api", "secrets"]) => secrets_list(&request, &query),
-            (Method::Delete, ["api", "secrets", name]) => secret_delete(&request, name, &query),
+            (Method::Post, ["api", "secrets"]) => secrets::secret_put(&request, &query),
+            (Method::Get, ["api", "secrets"]) => secrets::secrets_list(&request, &query),
+            (Method::Delete, ["api", "secrets", name]) => secrets::secret_delete(&request, name, &query),
 
-            (Method::Post, ["api", "projects"]) => project_create(&request, &query),
-            (Method::Get, ["api", "projects"]) => projects_list(&request, &query),
+            (Method::Post, ["api", "projects"]) => goals::project_create(&request, &query),
+            (Method::Get, ["api", "projects"]) => goals::projects_list(&request, &query),
             (Method::Post, ["api", "projects", project, "goals"]) => {
-                goal_create(&request, project, &query)
+                goals::goal_create(&request, project, &query)
             }
             (Method::Get, ["api", "projects", project, "goals"]) => {
-                goals_list(&request, project, &query)
+                goals::goals_list(&request, project, &query)
             }
             // A human starts every goal; there is no loop that does (ADR-0082).
             (Method::Post, ["api", "goals", id, "start"]) => {
-                goal_transition(&request, id, "running", &query)
+                goals::goal_transition(&request, id, "running", &query)
             }
             (Method::Post, ["api", "goals", id, "fail"]) => {
-                goal_transition(&request, id, "failed", &query)
+                goals::goal_transition(&request, id, "failed", &query)
             }
             (Method::Post, ["api", "goals", id, "done"]) => {
-                goal_transition(&request, id, "done", &query)
+                goals::goal_transition(&request, id, "done", &query)
             }
             (Method::Post, ["api", "goals", id, "review"]) => {
-                goal_transition(&request, id, "awaiting-human", &query)
+                goals::goal_transition(&request, id, "awaiting-human", &query)
             }
             (Method::Delete, ["api", "goals", id]) => {
-                goal_transition(&request, id, "abandoned", &query)
+                goals::goal_transition(&request, id, "abandoned", &query)
             }
 
             (Method::Post, ["api", "deployments"]) => deployment_create(&request, &query),
@@ -755,266 +756,6 @@ fn components_list(request: &IncomingRequest) -> Outcome {
 /// search engine, no index: a catalogue of this size does not need one, and adding
 /// one would be inventing an answer to a question nobody has asked yet.
 /// ponytail: linear scan; add an index when the catalogue outgrows a page.
-/// Secrets are named per ORGANISATION, never globally.
-///
-/// One vault backs the whole platform, so the org has to be part of the name or two
-/// tenants would share a namespace — the same mistake ADR-0012 measured with storage
-/// buckets, in a place where the consequence is worse.
-fn vault_name(org: &str, name: &str) -> String {
-    format!("{org}/{name}")
-}
-
-/// `vault://<org>/<name>` — the only form a manifest may contain (ADR-0010).
-fn parse_ref(r: &str) -> Option<(String, String)> {
-    let rest = r.strip_prefix("vault://")?;
-    let (org, name) = rest.split_once('/')?;
-    if org.is_empty() || name.is_empty() {
-        return None;
-    }
-    Some((org.to_string(), name.to_string()))
-}
-
-/// Store a secret for an org. The value is written straight through to the vault,
-/// which seals it before it touches storage — nothing here keeps it, logs it, or puts
-/// it in a response.
-/// Where fetch tokens live. One row per instance that was granted a secret.
-const FETCH_TOKENS: &str = "fetch_tokens";
-
-/// Mint a capability for one instance: exactly these references, for a bounded time.
-///
-/// Issued BY the platform rather than signed by the reconciler, which is the simpler
-/// and stronger arrangement — no shared signing key, and revocation is deleting a
-/// row rather than waiting out a signature. The reconciler authenticates with the
-/// platform secret it already holds (ADR-0003).
-///
-/// The token is a capability, not a secret value: it is worth exactly what this
-/// manifest was worth, which is why the host may keep it in a ledger on disk
-/// (ADR-0022).
-fn fetch_token_mint(request: &IncomingRequest) -> Outcome {
-    if !internal_ok(request) {
-        return Outcome::Err(401, "bad platform secret".into());
-    }
-    let b = match body(request) {
-        Ok(v) => v,
-        Err(o) => return o,
-    };
-    let instance = str_of(&b, "instance");
-    let refs: Vec<String> = b["refs"]
-        .as_array()
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    // `refs` may be empty. This started as a SECRETS credential, minted only for
-    // instances that had any — but it is really an instance's proof of who it is,
-    // and ADR-0079 needs that for an instance with no secrets at all. An empty
-    // ref list simply authorises no secret.
-    if instance.is_empty() {
-        return Outcome::Err(422, "instance is required".into());
-    }
-    // Long enough to outlive an instance's useful life, short enough that a leaked
-    // token is not a standing grant. A restart mints a new one, and a start costs
-    // 0.43ms (ADR-0040), so a short life is cheap here in a way it usually is not.
-    let ttl = b["ttl"].as_u64().unwrap_or(3600);
-    // The record id is the token: unguessable, unique, and already stored — the same
-    // trick the invite codes use (ADR-0031).
-    let doc = json!({
-        "instance": instance, "refs": refs, "expires": now() + ttl, "issued": now(),
-    });
-    match records::create(FETCH_TOKENS, &doc.to_string(), &["instance".to_string()]) {
-        Ok(rec) => {
-            Outcome::Json(201, json!({ "token": rec.id, "expires": now() + ttl }).to_string())
-        }
-        Err(_) => Outcome::Err(500, "could not mint a fetch token".into()),
-    }
-}
-
-/// Resolve one reference for a host holding a valid token.
-///
-/// The plaintext leaves the platform here and nowhere else. Three checks, in this
-/// order, because each is cheaper than the next: does the token exist, has it
-/// expired, and does it authorise THIS reference.
-fn secret_fetch(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
-    let token = request
-        .headers()
-        .get("x-fetch-token")
-        .into_iter()
-        .next()
-        .and_then(|v| String::from_utf8(v).ok())
-        .unwrap_or_default();
-    if token.is_empty() {
-        return Outcome::Err(401, "no fetch token".into());
-    }
-    // Replay protection (ADR-0071). Without it a captured fetch could be replayed
-    // against the platform for the rest of the token's life — the gap ADR-0051
-    // named and did not close.
-    if let Err(o) = claim_fetch_nonce(request) {
-        return o;
-    }
-    let reference = query.get("ref").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let Ok(entry) = records::get(FETCH_TOKENS, &token) else {
-        return Outcome::Err(401, "unknown fetch token".into());
-    };
-    let Ok(doc) = serde_json::from_str::<Value>(&entry.data) else {
-        return Outcome::Err(401, "unreadable fetch token".into());
-    };
-    if doc["expires"].as_u64().unwrap_or(0) < now() {
-        // 401 so the host can tell "restart me" from "your manifest is wrong".
-        let _ = records::delete(FETCH_TOKENS, &token);
-        return Outcome::Err(401, "fetch token expired".into());
-    }
-    let granted = doc["refs"]
-        .as_array()
-        .map(|a| a.iter().any(|r| r.as_str() == Some(reference.as_str())))
-        .unwrap_or(false);
-    if !granted {
-        // 403, not 404: this token is real and this reference is not on it. Saying
-        // so does not leak whether the secret exists, only that this instance was
-        // not granted it — which the instance's own manifest already told it.
-        return Outcome::Err(403, "this instance was not granted that reference".into());
-    }
-    let Some((org, name)) = parse_ref(&reference) else {
-        return Outcome::Err(422, "not a secret reference".into());
-    };
-    // `?probe=1` is a host asking "does this resolve", which it does at START for
-    // every reference in a manifest (ADR-0051). Identical authorisation — the token
-    // checks above are the same ones — answered from `describe`, so no plaintext is
-    // read, logged, or put on the wire for a secret nothing has revealed yet.
-    if query.get("probe").is_some() {
-        return match vault::describe(&vault_name(&org, &name)) {
-            Ok(_) => Outcome::Json(200, json!({ "resolves": true }).to_string()),
-            Err(vault::VaultError::NotFound) => Outcome::Err(404, "no such secret".into()),
-            Err(e) => Outcome::Err(500, vault_detail(&e)),
-        };
-    }
-    match vault::get(&vault_name(&org, &name)) {
-        // Bytes, not JSON: a plaintext should not pass through a serialiser that
-        // might log or escape it.
-        Ok(v) => Outcome::Bytes(200, "application/octet-stream".into(), v),
-        Err(vault::VaultError::NotFound) => Outcome::Err(404, "no such secret".into()),
-        Err(e) => Outcome::Err(500, vault_detail(&e)),
-    }
-}
-
-fn secret_put(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    // Writing a secret is not a viewer's job.
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
-    let b: req::PutSecret = match read_body(request)
-        .map_err(|_| Outcome::Err(400, "could not read body".into()))
-        .and_then(|raw| req::parse(&raw))
-    {
-        Ok(v) => v,
-        Err(o) => return o,
-    };
-    let name = b.name.trim();
-    if name.is_empty() || b.value.is_empty() {
-        return Outcome::Err(422, "name and value are both required".into());
-    }
-    match vault::put(&vault_name(&org, name), b.value.as_bytes()) {
-        // The reply is metadata, deliberately: a caller that just wrote a secret has
-        // the value already, and echoing it back puts it in one more place.
-        Ok(meta) => Outcome::Json(
-            201,
-            json!({
-                "ref": format!("vault://{org}/{name}"),
-                "name": name, "org": org,
-                "version": meta.version, "updated": meta.updated,
-            })
-            .to_string(),
-        ),
-        Err(e) => Outcome::Err(500, format!("vault refused the write: {}", vault_detail(&e))),
-    }
-}
-
-/// Names only. There is no endpoint that returns a value: the platform stores
-/// secrets so that workloads can use them, not so that a browser can display them.
-fn secrets_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
-    let prefix = format!("{org}/");
-    match vault::list_names(500) {
-        Ok(names) => {
-            let mine: Vec<Value> = names
-                .iter()
-                .filter_map(|n| n.strip_prefix(&prefix))
-                .map(|n| json!({ "name": n, "ref": format!("vault://{org}/{n}") }))
-                .collect();
-            Outcome::Json(200, json!({ "secrets": mine, "count": mine.len() }).to_string())
-        }
-        Err(e) => Outcome::Err(500, format!("vault unreadable: {}", vault_detail(&e))),
-    }
-}
-
-fn secret_delete(request: &IncomingRequest, name: &str, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
-    match vault::delete(&vault_name(&org, name)) {
-        Ok(()) => Outcome::Json(200, json!({ "deleted": name, "org": org }).to_string()),
-        Err(e) => Outcome::Err(500, format!("vault refused the delete: {}", vault_detail(&e))),
-    }
-}
-
-fn vault_detail(e: &vault::VaultError) -> String {
-    match e {
-        vault::VaultError::NotFound => "no such secret".into(),
-        vault::VaultError::Crypto(m) => format!("crypto: {m}"),
-        vault::VaultError::BackendUnavailable(m) => format!("backend unavailable: {m}"),
-    }
-}
-
-/// Every secret a component asks for must resolve, and must belong to the org
-/// deploying it.
-///
-/// `describe` is the whole reason this is safe: it answers "is there a secret by this
-/// name" WITHOUT decrypting, so a save can be validated without the platform ever
-/// holding a plaintext it has no use for (ADR-0010).
-fn check_secrets(id: &str, org: &str, secrets: &[Value]) -> Result<Vec<Value>, String> {
-    let mut out = Vec::new();
-    for s in secrets {
-        let key = s["key"].as_str().unwrap_or_default().trim();
-        let reference = s["ref"].as_str().unwrap_or_default().trim();
-        if key.is_empty() || reference.is_empty() {
-            return Err(format!("`{id}`: every secret needs a key and a ref"));
-        }
-        let Some((ref_org, name)) = parse_ref(reference) else {
-            return Err(format!(
-                "`{id}`: `{reference}` is not a secret reference — it must look like `vault://{org}/<name>`"
-            ));
-        };
-        // Refusing another org's reference is the whole boundary. Without it a
-        // manifest could name any secret on the platform and the vault would happily
-        // resolve it.
-        if ref_org != org {
-            return Err(format!(
-                "`{id}`: `{reference}` belongs to `{ref_org}`, and this deployment is for `{org}`"
-            ));
-        }
-        if vault::describe(&vault_name(&ref_org, &name)).is_err() {
-            return Err(format!(
-                "`{id}`: `{reference}` does not resolve — store it first with POST /api/secrets"
-            ));
-        }
-        // BY REFERENCE ONLY. The value is never read here, so it cannot reach a
-        // manifest, a revision, or a log line.
-        out.push(json!({ "key": key, "ref": reference }));
-    }
-    Ok(out)
-}
-
 fn market_search(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -1507,7 +1248,7 @@ const FETCH_SKEW_SECS: u64 = 60;
 /// A missing header is refused rather than waved through: an old host that does
 /// not send one is a host whose requests can be replayed, and silently accepting
 /// it would make this decoration.
-fn claim_fetch_nonce(request: &IncomingRequest) -> Result<(), Outcome> {
+pub(crate) fn claim_fetch_nonce(request: &IncomingRequest) -> Result<(), Outcome> {
     let header = |name: &str| -> String {
         request
             .headers()
@@ -1593,7 +1334,7 @@ fn internal_env_spawn(request: &IncomingRequest, query: &Map<String, Value>) -> 
     if token.is_empty() {
         return Outcome::Err(401, "no instance token".into());
     }
-    let Ok(entry) = records::get(FETCH_TOKENS, &token) else {
+    let Ok(entry) = records::get(secrets::FETCH_TOKENS, &token) else {
         return Outcome::Err(401, "unknown instance token".into());
     };
     let Ok(doc) = serde_json::from_str::<Value>(&entry.data) else {
@@ -1930,7 +1671,7 @@ fn internal_verify(request: &IncomingRequest, query: &Map<String, Value>) -> Out
     }
 }
 
-fn internal_ok(request: &IncomingRequest) -> bool {
+pub(crate) fn internal_ok(request: &IncomingRequest) -> bool {
     let want = cfg("applier-secret", "");
     if want.is_empty() {
         return false;
@@ -2389,7 +2130,7 @@ fn resolve_parts(
             return Err(Outcome::Err(422, why));
         }
         let asked = given_secrets(&id);
-        let secrets = match check_secrets(&id, &deploy_org, &asked) {
+        let secrets = match secrets::check_secrets(&id, &deploy_org, &asked) {
             Ok(v) => v,
             Err(why) => return Err(Outcome::Err(422, why)),
         };
@@ -2520,7 +2261,7 @@ fn resolve_parts(
                 std::collections::BTreeMap::new();
             for row in &rows {
                 let id = row["id"].as_str().unwrap_or_default().to_string();
-                let checked = match check_secrets(&id, &deploy_org, &given_secrets(&id)) {
+                let checked = match secrets::check_secrets(&id, &deploy_org, &given_secrets(&id)) {
                     Ok(v) => v,
                     Err(why) => return Err(Outcome::Err(422, why)),
                 };
@@ -3151,7 +2892,7 @@ fn split_query(path: &str) -> (String, Map<String, Value>) {
 
 use guestfmt::percent_decode;
 
-fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
+pub(crate) fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
     let raw = read_body(request).map_err(|_| Outcome::Err(400, "could not read body".into()))?;
     if raw.is_empty() {
         return Ok(Value::Object(Map::new()));
@@ -3325,381 +3066,7 @@ mod query_tests {
     }
 }
 
-// ---- projects and goals (ADR-0082) -----------------------------------------
-
-const PROJECTS: &str = "projects";
-const GOALS: &str = "goals";
-
-/// The goal lifecycle, as the only legal transitions.
-///
-/// A table rather than scattered `if state == …` checks, because the illegal
-/// moves are the interesting ones: nothing may leave `failed` (a requeue makes a
-/// NEW goal, so what was tried stays visible), and nothing may reach `done`
-/// without having run.
-fn goal_may(from: &str, to: &str) -> bool {
-    matches!(
-        (from, to),
-        ("queued", "running")
-            | ("queued", "abandoned")
-            | ("running", "awaiting-human")
-            | ("running", "failed")
-            | ("running", "abandoned")
-            | ("awaiting-human", "done")
-            | ("awaiting-human", "failed")
-            | ("awaiting-human", "abandoned")
-    )
-}
-
-/// A project name that is safe as part of a store name and a branch name.
-fn valid_project_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 40
-        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        && !name.starts_with('-')
-        && !name.ends_with('-')
-}
-
-fn project_create(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
-    let b: req::NewProject = match read_body(request)
-        .map_err(|_| Outcome::Err(400, "could not read body".into()))
-        .and_then(|raw| req::parse(&raw))
-    {
-        Ok(v) => v,
-        Err(o) => return o,
-    };
-    if !valid_project_name(&b.name) {
-        return Outcome::Err(
-            422,
-            "name must be 1-40 chars of [a-z0-9-], not starting or ending with -".into(),
-        );
-    }
-    // `owner/name`, checked here rather than at the first forge call, where the
-    // answer is a 404 that reads like "the repository does not exist".
-    if b.repo.split('/').filter(|s| !s.is_empty()).count() != 2 {
-        return Outcome::Err(422, format!("repo must be \"owner/name\", got {:?}", b.repo));
-    }
-    if projects_of(&org).iter().any(|d| str_of(d, "name") == b.name) {
-        return Outcome::Err(409, format!("project `{}` already exists", b.name));
-    }
-
-    let doc = json!({
-        "name": b.name, "org": org, "repo": b.repo,
-        "base": b.base.unwrap_or_else(|| "main".into()),
-        "forge_token_ref": b.forge_token_ref.unwrap_or_default(),
-        "llm_key_ref": b.llm_key_ref.unwrap_or_default(),
-        "budget": b.budget.unwrap_or(0),
-        // One at a time, which is the whole answer to concurrent pull requests
-        // (ADR-0082). Raising it is what makes that a problem worth solving.
-        "max_concurrent_runs": 1,
-        "created": now(),
-    });
-    match records::create(PROJECTS, &doc.to_string(), &["org".to_string()]) {
-        Ok(e) => Outcome::Json(
-            201,
-            json!({ "id": e.id, "name": doc["name"], "repo": doc["repo"], "base": doc["base"] })
-                .to_string(),
-        ),
-        Err(e) => Outcome::Err(500, format!("recording the project: {e:?}")),
-    }
-}
-
-fn projects_of(org: &str) -> Vec<Value> {
-    records::find_by(PROJECTS, "org", &json!(org).to_string())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|e| serde_json::from_str::<Value>(&e.data).ok())
-        .collect()
-}
-
-fn projects_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
-    let rows: Vec<Value> = projects_of(&org)
-        .into_iter()
-        .map(|d| {
-            let name = str_of(&d, "name");
-            let goals = goals_of(&name);
-            json!({
-                "name": name, "repo": d["repo"], "base": d["base"],
-                "queued": goals.iter().filter(|g| str_of(g, "state") == "queued").count(),
-                "running": goals.iter().filter(|g| str_of(g, "state") == "running").count(),
-                "failed": goals.iter().filter(|g| str_of(g, "state") == "failed").count(),
-            })
-        })
-        .collect();
-    Outcome::Json(200, json!({ "count": rows.len(), "projects": rows }).to_string())
-}
-
-fn goals_of(project: &str) -> Vec<Value> {
-    records::find_by(GOALS, "project", &json!(project).to_string())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|e| {
-            serde_json::from_str::<Value>(&e.data).ok().map(|mut v| {
-                v["id"] = json!(e.id);
-                v
-            })
-        })
-        .collect()
-}
-
-fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
-    if !projects_of(&org).iter().any(|d| str_of(d, "name") == project) {
-        return Outcome::Err(404, format!("no project `{project}`"));
-    }
-    let b: req::NewGoal = match read_body(request)
-        .map_err(|_| Outcome::Err(400, "could not read body".into()))
-        .and_then(|raw| req::parse(&raw))
-    {
-        Ok(v) => v,
-        Err(o) => return o,
-    };
-    if b.title.trim().is_empty() {
-        return Outcome::Err(422, "a goal needs a title".into());
-    }
-    // A sub-goal's parent is checked HERE, where the answer is a 422 naming the
-    // problem. Stored unchecked, the first thing to notice would be a worklist
-    // with a child under a parent in another project, or a chain that never ends.
-    let parent = b.parent.unwrap_or_default();
-    if !parent.is_empty() {
-        if let Err((code, msg)) = parent_is_usable(&parent, project) {
-            return Outcome::Err(code, msg);
-        }
-    }
-    let doc = json!({
-        "project": project, "org": org,
-        "title": b.title.trim(),
-        "spec": b.spec.unwrap_or_default(),
-        "priority": b.priority.unwrap_or(100),
-        // Empty when this is a goal in its own right, which is most of them. A
-        // field rather than a separate table: a sub-goal IS a goal — same
-        // lifecycle, same queue, same "a human starts it" — and giving it its own
-        // table would mean two of every query that reads a worklist.
-        "parent": parent,
-        // Queued, and it stays there. A human starts every goal (ADR-0082): there
-        // is no loop that drains this, on purpose.
-        "state": "queued",
-        "created": now(),
-    });
-    match records::create(GOALS, &doc.to_string(), &["project".to_string(), "org".to_string()]) {
-        Ok(e) => Outcome::Json(
-            201,
-            json!({ "id": e.id, "project": project, "state": "queued", "title": doc["title"] })
-                .to_string(),
-        ),
-        Err(e) => Outcome::Err(500, format!("recording the goal: {e:?}")),
-    }
-}
-
-/// How deep a decomposition may go.
-///
-/// A bound rather than a promise that cycles cannot happen: the walk below
-/// catches an actual cycle, and this catches the chain that is technically a tree
-/// and still means nobody will ever run the leaves.
-const MAX_GOAL_DEPTH: usize = 8;
-
-/// May this goal be a parent, for a child in `project`?
-///
-/// Three refusals, all of them 422 because each is a mistake in the request that
-/// the caller can fix:
-///
-///   * no such goal — usually an id from another environment;
-///   * a different project — a worklist is per project, and a child under a
-///     parent nobody in that project can see is a row that reads as corrupt;
-///   * too deep, or a cycle — walked rather than assumed, because the id is the
-///     caller's and a chain that closes on itself would hang every reader of it.
-fn parent_is_usable(parent: &str, project: &str) -> Result<(), (u16, String)> {
-    let Ok(entry) = records::get(GOALS, parent) else {
-        return Err((422, format!("no goal `{parent}` to be a part of")));
-    };
-    let Ok(doc) = serde_json::from_str::<Value>(&entry.data) else {
-        return Err((500, "the parent goal's record is unreadable".into()));
-    };
-    if str_of(&doc, "project") != project {
-        return Err((
-            422,
-            format!(
-                "goal `{parent}` belongs to project `{}`, not `{project}` — a part and the                  goal it serves live in one worklist",
-                str_of(&doc, "project")
-            ),
-        ));
-    }
-    // Walk up. `seen` is what turns an infinite loop into a message: a record
-    // written before this check existed, or edited around it, can still close a
-    // cycle, and the reader must not be the thing that discovers it.
-    let mut seen = vec![parent.to_string()];
-    let mut at = str_of(&doc, "parent");
-    while !at.is_empty() {
-        if seen.contains(&at) {
-            return Err((422, format!("goal `{parent}` is already part of a cycle through `{at}`")));
-        }
-        seen.push(at.clone());
-        // A runaway walk is bounded here as well as by the check below, because
-        // the two protect different things: this stops the LOOP, that stops the
-        // GOAL. A chain longer than the bound is refused either way.
-        if seen.len() > MAX_GOAL_DEPTH {
-            break;
-        }
-        let Ok(up) = records::get(GOALS, &at) else { break };
-        let Ok(updoc) = serde_json::from_str::<Value>(&up.data) else { break };
-        at = str_of(&updoc, "parent");
-    }
-    // `seen` is the PARENT's own chain, so a child hung off it sits one deeper.
-    // Checked after the walk rather than during it: the question is how deep the
-    // NEW goal would be, and that is not known until the walk is done.
-    if seen.len() >= MAX_GOAL_DEPTH {
-        return Err((
-            422,
-            format!(
-                "goal `{parent}` is already {} levels deep, and {MAX_GOAL_DEPTH} is the bound \u{2014} a decomposition this deep is one nobody will reach the bottom of",
-                seen.len()
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer)
-    {
-        return Outcome::Err(code, msg);
-    }
-    let want = query.get("state").and_then(|v| v.as_str()).unwrap_or_default();
-    // `?parent=<id>` lists one goal's parts; `?parent=` (empty, explicitly given)
-    // lists only goals that are nobody's part, which is the top-level worklist.
-    // Absent means every goal, which is what every existing caller asks for.
-    let by_parent = query.get("parent").and_then(|v| v.as_str());
-    let mut rows: Vec<Value> = goals_of(project)
-        .into_iter()
-        .filter(|g| want.is_empty() || str_of(g, "state") == want)
-        .filter(|g| by_parent.is_none_or(|p| str_of(g, "parent") == p))
-        .collect();
-    // Priority first, then oldest — a worklist someone reads top-down.
-    rows.sort_by(|a, b| {
-        a["priority"]
-            .as_i64()
-            .unwrap_or(100)
-            .cmp(&b["priority"].as_i64().unwrap_or(100))
-            .then(str_of(a, "created").cmp(&str_of(b, "created")))
-    });
-    Outcome::Json(200, json!({ "count": rows.len(), "goals": rows }).to_string())
-}
-
-/// Move a goal, refusing anything the lifecycle does not allow.
-fn goal_transition(
-    request: &IncomingRequest,
-    id: &str,
-    to: &str,
-    query: &Map<String, Value>,
-) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member)
-    {
-        return Outcome::Err(code, msg);
-    }
-    let Ok(entry) = records::get(GOALS, id) else {
-        return Outcome::Err(404, format!("no goal `{id}`"));
-    };
-    let Ok(mut doc) = serde_json::from_str::<Value>(&entry.data) else {
-        return Outcome::Err(500, "the goal record is unreadable".into());
-    };
-    // A goal with live parts may not be finished or thrown away out from under
-    // them. Both leave rows nobody will ever look at again: parts of a goal that
-    // is done read as already handled, and parts of an abandoned one read as
-    // work still to do for a goal that no longer exists.
-    //
-    // Refused rather than cascaded. Cascading is a destructive multi-record
-    // operation inferred from one click, and the caller has more information than
-    // this function does about whether the parts are worth keeping.
-    if matches!(to, "done" | "abandoned") {
-        let live: Vec<String> = goals_of(&str_of(&doc, "project"))
-            .into_iter()
-            .filter(|g| str_of(g, "parent") == id)
-            .filter(|g| !matches!(str_of(g, "state").as_str(), "done" | "abandoned" | "failed"))
-            .map(|g| str_of(&g, "title"))
-            .collect();
-        if !live.is_empty() {
-            return Outcome::Err(
-                409,
-                format!(
-                    "goal `{id}` still has {} unfinished part(s) — {}. Finish or abandon them                      first: parts of a `{to}` goal are rows nobody looks at again.",
-                    live.len(),
-                    live.join(", ")
-                ),
-            );
-        }
-    }
-
-    let from = str_of(&doc, "state");
-    if !goal_may(&from, to) {
-        // Naming both ends beats "invalid transition": the caller usually has the
-        // wrong idea about where the goal currently IS.
-        return Outcome::Err(409, format!("a goal cannot go from `{from}` to `{to}`"));
-    }
-
-    doc["state"] = json!(to);
-    match to {
-        "running" => {
-            doc["started"] = json!(now());
-            // A goal is FROZEN once it starts (ADR-0081): the spec it was judged
-            // against must not change under a run. Editing a running goal forks
-            // it into a new one instead.
-            doc["frozen_spec"] = doc["spec"].clone();
-        }
-        "failed" => {
-            let reason = read_body(request)
-                .ok()
-                .and_then(|raw| req::parse::<req::FailGoal>(&raw).ok())
-                .map(|b| b.reason)
-                .unwrap_or_else(|| "no reason given".into());
-            doc["reason"] = json!(reason);
-            doc["failed_at"] = json!(now());
-        }
-        "done" => doc["finished"] = json!(now()),
-        _ => {}
-    }
-
-    // Guarded on the revision we READ, so two people starting the same goal at the
-    // same moment cannot both win. Without it the second write silently overwrites
-    // the first and two runs believe they own one goal — which, with one run per
-    // project, is exactly the case this design exists to prevent.
-    match records::update(GOALS, id, &doc.to_string(), entry.revision) {
-        Err(records::StoreError::RevisionConflict(_)) => {
-            Outcome::Err(409, format!("`{id}` moved while you were looking at it — read it again"))
-        }
-        Ok(_) => Outcome::Json(
-            200,
-            json!({ "id": id, "from": from, "state": to, "title": doc["title"] }).to_string(),
-        ),
-        Err(e) => Outcome::Err(500, format!("moving the goal: {e:?}")),
-    }
-}
-
-// ---- fleet status and admission control ------------------------------------
+// ---- fleet status and admission control ---------------------------------
 
 const FLEET: &str = "fleet";
 
