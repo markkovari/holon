@@ -1,4 +1,28 @@
 # support:desk's gates, named. Everything they do lives in `components/gate-lib.sh`.
+
+# A port nothing is listening on, checked rather than hoped for.
+#
+# `RANDOM % 20000` alone COLLIDES, and it is not rare: CI runs 31 of these gates
+# beside 21 Rust suites and a fleet, and every one of them wants a port. What a
+# collision looks like from the outside is `Address already in use (os error 98)`
+# — a gate that failed for a reason with nothing to do with the code it grades.
+#
+# `/dev/tcp` is bash's own, so this needs nothing installed. A successful connect
+# means something is already there; a refused one means the port is free.
+gate_free_port() {
+  local p i
+  for i in $(seq 1 50); do
+    p=$(( 20000 + RANDOM % 40000 ))
+    if ! (exec 3<>/dev/tcp/127.0.0.1/"$p") 2>/dev/null; then
+      echo "$p"; return 0
+    fi
+    exec 3<&- 2>/dev/null || true
+  done
+  # Fifty taken ports means something is wrong that a fifty-first will not fix.
+  echo "gate: no free port after 50 tries" >&2
+  return 1
+}
+
 GATE_CRATE=support-desk-domain
 GATE_APP=support
 # ratelimit:guard and audit:log are auth-guard's imports, not this app's, and the
@@ -27,7 +51,7 @@ verification and the permission check in one call — parsing a token by hand is
 # `python3 -m http.server` cannot do this: it has no way to fail on demand and no way to
 # record bodies. Twenty lines of `http.server` can do both.
 sink_start() {
-  SINK_PORT=$(( 30000 + RANDOM % 20000 ))
+  SINK_PORT=$(gate_free_port)
   SINK_LOG="$(mktemp -t gate-sink-XXXX)"
   SINK_FAIL="$(mktemp -t gate-sinkfail-XXXX)"
   rm -f "$SINK_FAIL"
