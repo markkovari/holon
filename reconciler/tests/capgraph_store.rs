@@ -75,8 +75,21 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
         read("components/knowledge-graph/src/lib.rs").contains(r#"cfg("surreal-ns", "comp")"#),
         "knowledge-graph's default namespace moved — the Justfile recipes need to move with it"
     );
+    // `goalrun.rs` AND its submodules: the coordinate is declared where the memory
+    // app's fixture is rendered, and that moved into `goalrun/setup.rs`. Reading
+    // one file makes this go red for a refactor that changed no coordinate at all
+    // — which is the opposite of what it guards.
+    let goalrun = {
+        let mut all = read("reconciler/src/bin/goalrun.rs");
+        if let Ok(dir) = std::fs::read_dir(root.join("reconciler/src/bin/goalrun")) {
+            for e in dir.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "rs")) {
+                all.push_str(&std::fs::read_to_string(e.path()).unwrap_or_default());
+            }
+        }
+        all
+    };
     assert!(
-        read("reconciler/src/bin/goalrun.rs").contains(r#"("SURREAL_DB", "goalmemory")"#),
+        goalrun.contains(r#"("SURREAL_DB", "goalmemory")"#),
         "comp-goalrun no longer points the pool at `goalmemory` — the projection is aimed elsewhere"
     );
 
