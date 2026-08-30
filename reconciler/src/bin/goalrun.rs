@@ -1138,7 +1138,6 @@ fn smoke(
     context: &[Value],
     checks: &[Value],
     base_commit: &str,
-    tree: &[Value],
     allow: &[&str],
 ) -> Result<()> {
     // Both apps serving already proves a lot: an app whose secret cannot be
@@ -1156,7 +1155,11 @@ fn smoke(
             json!({
                 "text": goal.text, "writable": goal.writable, "context": context,
                 "previous": [], "checks": checks, "base_commit": base_commit,
-                "base_tree": tree, "max_attempts": 0, "seed": 1,
+                // Empty, like every other plan: the runner holds the tree. This
+                // one runs `max_attempts: 0` and never reaches the gate at all —
+                // it exists to prove probe -> driver — so carrying a repository
+                // through it was pure postage.
+                "base_tree": [], "max_attempts": 0, "seed": 1,
             })
             .to_string(),
         )
@@ -1936,13 +1939,34 @@ fn main() -> Result<()> {
         },
     };
 
+    // --- seed the runner, so nothing downstream carries the tree ------------
+    //
+    // Once the runner has it keyed by commit, the plan a branch runs from names
+    // the commit and nothing else. That is what keeps 500 KB of repository off
+    // the lattice once per generation, and it has to happen BEFORE the critic —
+    // which is allowed to fail, and used to be the only thing that seeded.
+    if let Err(e) = compose::seed_base(
+        &gate.url(),
+        gate.token().as_deref(),
+        &base_commit,
+        &json!(tree),
+        Duration::from_secs(args.timeout),
+    ) {
+        bail!(
+            "could not give the gate runner the base tree: {e}\n\n\
+             Nothing was spent. Every branch would have failed identically, because \
+             the plan carries the commit and the runner is what holds the bytes."
+        );
+    }
+    println!("gate: base {} seeded ({} files)", &base_commit[..base_commit.len().min(8)], tree.len());
+
     // --- criticise the gate, before the money -------------------------------
     if !gate_can_judge(&goal, &checks, &gate, &base_commit, &tree, args.timeout) {
         return Ok(());
     }
 
     if args.smoke {
-        return smoke(&args, &goal, port, &context, &checks, &base_commit, &tree, &allow);
+        return smoke(&args, &goal, port, &context, &checks, &base_commit, &allow);
     }
 
     // --- has this already been done? ----------------------------------------
@@ -2026,7 +2050,14 @@ fn main() -> Result<()> {
         "previous": [],
         "checks": checks,
         "base_commit": base_commit,
-        "base_tree": tree,
+        // NOT the tree. The runner was seeded with it above and keys its cache by
+        // this commit, so a plan that carried the bytes would send 500 KB across
+        // two wrpc hops per branch per generation to say something the runner
+        // already knows. `agent-driver` starts from `base_known` and the
+        // `need-base` path stays as the error it always was — reached now only
+        // when something else cleared that cache, which is a real fault and reads
+        // as one.
+        "base_tree": [],
         "max_attempts": args.attempts,
         "seed": 1,
     });
@@ -2426,7 +2457,11 @@ fn decomposed(
                     "needs": c.needs,
                 })).collect::<Vec<_>>(),
                 "base_commit": base_commit,
-                "base_tree": tree,
+                // Empty for the same reason as the ordinary path, and it matters
+                // more here: a decomposed goal runs K parts, so the tree used to
+                // cross the lattice K times to say one thing the runner already
+                // knew. `main` seeds once, before this is reached.
+                "base_tree": [],
                 "max_attempts": args.attempts,
                 "seed": 1,
             }),

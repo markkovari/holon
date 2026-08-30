@@ -88,3 +88,90 @@ fn the_server_the_fleet_starts_advertises_that_ceiling() {
         "still on NATS's 1 MB default: the config the fleet wrote was not applied"
     );
 }
+
+/// Seeding the runner is what lets every plan afterwards carry no tree.
+///
+/// The claim is not that `seed_base` returns Ok — it is that a candidate judged
+/// AFTERWARDS, sending no tree at all, is judged against the real base. That is
+/// the property every plan in `goalrun` now depends on, and the one that was
+/// previously a side effect of a critic which is allowed to fail.
+#[test]
+fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
+    use comp_reconciler::compose;
+    use serde_json::json;
+
+    let dir = tempfile::tempdir().unwrap();
+    let port = comp_reconciler::fleet::free_port();
+    let mut child = std::process::Command::new(comp_reconciler::fleet::bin_path("comp-checks"))
+        .args(["--addr", &format!("127.0.0.1:{port}")])
+        .arg("--work-dir")
+        .arg(dir.path())
+        .args(["--allow", "test", "--allow", "grep", "--timeout", "30"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("comp-checks");
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let url = format!("http://127.0.0.1:{port}/check");
+    let commit = "cccc000000000000000000000000000000000003";
+    let tree = json!([
+        { "path": "VERSION", "content": "base\n" },
+        { "path": "keep/me.txt", "content": "here\n" },
+    ]);
+    let checks = json!([
+        { "id": "base-is-there", "required": true, "weight": 1,
+          "command": ["test", "-f", "VERSION"] },
+        { "id": "the-change-landed", "required": true, "weight": 1,
+          "command": ["test", "-f", "answer.txt"] },
+    ]);
+
+    // Before the seed the runner has nothing, and says so rather than guessing.
+    let cold = compose::gate(&url, None, commit, &json!([]), &json!([]), &checks, Duration::from_secs(30));
+    assert!(cold.is_ok(), "the runner did not answer at all: {cold:?}");
+    assert!(!cold.unwrap().passed, "a cold runner cannot have passed the base check");
+
+    compose::seed_base(&url, None, commit, &tree, Duration::from_secs(60))
+        .expect("seeding the base");
+
+    // The candidate, with NO tree — exactly what a plan now carries.
+    let report = compose::gate(
+        &url,
+        None,
+        commit,
+        &json!([]),
+        &json!([{ "path": "answer.txt", "content": "42\n" }]),
+        &checks,
+        Duration::from_secs(60),
+    )
+    .expect("judging against the seeded base");
+    assert!(
+        report.passed,
+        "a seeded runner must judge a treeless candidate against the real base, and said: {:?}",
+        report.failures
+    );
+
+    // An UNSEEDED commit still asks, so the seed is doing the work rather than
+    // the runner having quietly fallen back to something.
+    let other = compose::gate(
+        &url,
+        None,
+        "dddd000000000000000000000000000000000004",
+        &json!([]),
+        &json!([]),
+        &checks,
+        Duration::from_secs(30),
+    );
+    assert!(
+        !other.expect("an answer").passed,
+        "an unseeded commit was judged against somebody else's tree"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
