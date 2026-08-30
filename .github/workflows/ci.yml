@@ -159,7 +159,7 @@ jobs:
       #   derived          deriving the graph must not write into the tree, the
       #                    committed renders must not drift from the components, no
       #                    build output is tracked, and no WIT package name is
-      #                    claimed by two different contracts.      #   gate_*           twenty-two of the thirty-one end-to-end gates, in Rust rather than bash
+      #                    claimed by two different contracts.      #   gate_*           twenty-six of the thirty-one end-to-end gates, in Rust rather than bash
       #                    scripts, running beside the shell ones they mirror. Same
       #                    assertions, same failure sentences. Measured warm:
       #
@@ -235,6 +235,7 @@ jobs:
           cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-field
+          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
 
       - name: Run the end-to-end gates
         env:
@@ -269,6 +270,7 @@ jobs:
           --test gate_events --test gate_tickets --test gate_checkin --test gate_swaps
           --test gate_clinic --test gate_triage --test gate_treasury --test gate_moderation
           --test gate_triage_assist --test gate_invoice --test gate_support_desk --test gate_docsearch
+          --test gate_events_closed --test gate_courier --test gate_stepup --test gate_reminders
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is
