@@ -47,6 +47,23 @@ the host, the composer and the loop. Prebuilt for macOS and Linux, arm64 and
 x86_64; it builds from source only if there is no binary for the platform, and
 says so first.
 
+The gate can then run *there* rather than here. `comp-checks` materialises the
+candidate tree from the request, so the second box never clones the project it is
+gating — it needs only whatever toolchain the checks themselves name:
+
+```bash
+# on the worker, bound to a tailnet address (never 0.0.0.0)
+head -c 32 /dev/urandom | base64 > ~/.comp-secrets/checks     # the same file on both
+comp-checks --addr 100.111.200.86:8199 --token-file ~/.comp-secrets/checks             --allow 'cargo test' --timeout 120
+
+# on the box driving the loop
+comp-goalrun --checks-url http://100.111.200.86:8199/check              --checks-token-file ~/.comp-secrets/checks  …
+```
+
+A token is not optional off the loopback and `comp-checks` refuses to start
+without one: `--allow` bounds the *command*, not the tree it runs over, and
+`cargo test` on a tree an agent wrote runs that tree's `build.rs`.
+
 ```bash
 just compose-gate                    # components -> one .wasm
 just selfhost-render gate            # read the unit and route before trusting them

@@ -98,9 +98,20 @@ fn artifacts() -> Vec<String> {
 }
 
 fn spec_for(port: u16) -> std::path::PathBuf {
+    spec_pointing_at(&format!("127.0.0.1:{port}"))
+}
+
+/// The manifest, pointed at any `host:port`.
+///
+/// Split out so a remote runner can be driven by the same test that drives a
+/// local one. The authority lands in TWO places and both matter: `checks-url`,
+/// which is where the component dials, and `egress`, which is what the host will
+/// LET it dial. Getting only the first right is the failure that looks like the
+/// runner being down (ADR-0008).
+fn spec_pointing_at(authority: &str) -> std::path::PathBuf {
     let src = repo_root().join("fixtures/fitness.yaml");
-    let yaml = std::fs::read_to_string(&src).unwrap().replace("CHECKS_PORT", &port.to_string());
-    let out = std::env::temp_dir().join(format!("comp-fitness-{port}.yaml"));
+    let yaml = std::fs::read_to_string(&src).unwrap().replace("127.0.0.1:CHECKS_PORT", authority);
+    let out = std::env::temp_dir().join(format!("comp-fitness-{}.yaml", authority.replace(':', "-")));
     std::fs::write(&out, yaml).unwrap();
     out
 }
@@ -386,5 +397,85 @@ fn a_gate_behind_a_token_is_reached_with_it_and_refused_without_it() {
             "a rejected token is not an unreachable runner — that reads as a network \
              fault and sends whoever gets it to the wrong half: {last}"
         );
+    }
+}
+
+/// The gate on ANOTHER MACHINE, judged through the component that dials it.
+///
+/// Ignored by default: it needs a `comp-checks` already listening somewhere this
+/// machine can reach, which CI has not got. It is here because it is the only
+/// thing that exercises the last untested hop — a `wasi:http` call out of the
+/// sandbox to a host that is not loopback, through an egress allow-list naming
+/// a real machine.
+///
+///   COMP_REMOTE_CHECKS=100.111.200.86:8199 \
+///   COMP_REMOTE_TOKEN=~/.comp-secrets/checks \
+///   cargo test --release --test fitness -- --ignored remote
+#[test]
+#[ignore = "needs a comp-checks on another machine; see the doc comment"]
+fn a_gate_on_another_machine_judges_a_candidate() {
+    let authority = std::env::var("COMP_REMOTE_CHECKS")
+        .expect("set COMP_REMOTE_CHECKS=host:port to the runner this should use");
+    let token = std::env::var("COMP_REMOTE_TOKEN")
+        .expect("set COMP_REMOTE_TOKEN to the FILE holding that runner's token");
+    let token = shellexpand(&token);
+
+    // A tailnet address is a PRIVATE address, and egress refuses those by default
+    // — which is the correct default and the reason this is one line rather than
+    // a surprise.
+    std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
+    let spec = spec_pointing_at(&authority);
+    let fleet = Fleet::start_with_secrets(
+        "fitremote",
+        &[spec.to_str().unwrap()],
+        &artifacts(),
+        &[format!("vault://acme/checkstoken=@{token}")],
+    );
+    let probe = wait_for_probe(&fleet);
+
+    let commit = "bbbb000000000000000000000000000000000002";
+    let tree = json!([
+        { "path": "src/lib.py", "content": "def answer():\n    return 41\n" },
+        { "path": "test.py", "content":
+            "import sys; sys.path.insert(0,'src')\nfrom lib import answer\nassert answer() == 42, answer()\nprint('ok')\n" },
+    ]);
+    let checks = json!([
+        check("tree-arrived", false, 1, &["test", "-f", "src/lib.py"]),
+        check("tests-pass", true, 1, &["python3", "test.py"]),
+    ]);
+
+    // The candidate that changes nothing, against a base that fails on purpose.
+    let r = probe.call(
+        "/evaluate",
+        json!({ "name": "does-nothing", "base_commit": commit,
+                "base_tree": tree, "changes": [], "checks": checks }),
+    );
+    assert_eq!(r["accepted"], json!(false), "the broken base was accepted: {r}");
+    let failed = r["outcomes"].as_array().unwrap().iter().find(|o| o["id"] == json!("tests-pass")).unwrap();
+    assert_eq!(failed["state"], json!("failed"), "{r}");
+    assert!(
+        failed["detail"].as_str().unwrap_or_default().contains("AssertionError"),
+        "the failure has to come back from the OTHER machine's filesystem, or this \
+         proved nothing about where the work happened: {r}"
+    );
+
+    // The fix, with NO tree: the other machine cached it by commit, which is what
+    // stops a generation from sending the same repository once per candidate.
+    let r = probe.call(
+        "/evaluate",
+        json!({ "name": "the-fix", "base_commit": commit,
+                "changes": [{ "path": "src/lib.py", "content": "def answer():\n    return 42\n" }],
+                "checks": checks }),
+    );
+    assert_eq!(r["accepted"], json!(true), "the fix was rejected: {r}");
+    assert_eq!(r["score"], json!(1000), "{r}");
+}
+
+/// `~` is not expanded by anything here, and a token path is exactly where
+/// somebody writes one.
+fn shellexpand(p: &str) -> String {
+    match p.strip_prefix("~/") {
+        Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()),
+        None => p.to_string(),
     }
 }
