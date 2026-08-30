@@ -35,14 +35,25 @@ pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
-/// A port from the gate's own name, so two gates never collide and a rerun of one
-/// gate always lands on the same port.
-fn port_for(app: &str) -> u16 {
+/// A port unique to this GATE, not to the app it drives.
+///
+/// The app name alone is not enough and the mistake is worth recording: `cargo test`
+/// runs the tests inside one binary on parallel threads, so three triage gates named
+/// their port after `triage`, started three hosts on it, and two failed with
+/// "comp-host never answered /health" while the third passed. `harness/mod.rs`
+/// documents the same failure for the control plane — "two sharing a port fail only
+/// when the suite runs in parallel, which is how it is normally run".
+///
+/// The app hash spreads binaries apart; the counter separates gates inside one.
+fn next_port(app: &str) -> u16 {
+    use std::sync::atomic::{AtomicU16, Ordering};
+    static NEXT: AtomicU16 = AtomicU16::new(0);
     let mut h: u32 = 2166136261;
     for b in app.as_bytes() {
         h = (h ^ *b as u32).wrapping_mul(16777619);
     }
-    30000 + (h % 20000) as u16
+    let base = 30000 + (h % 18000) as u16;
+    base + NEXT.fetch_add(1, Ordering::SeqCst)
 }
 
 /// A running application: one host process, killed when the gate ends or panics.
@@ -56,6 +67,32 @@ impl Drop for Gate {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+/// Compose the crate against what it imports, in this process.
+///
+/// `gate_compose` in the shell harness shelled to `comp-plug`. `plug::compose_to` is
+/// the library that binary is a shim over — ADR-0087 says so in as many words — so a
+/// gate calls it directly and `comp-plug` leaves the list of things a worker needs.
+///
+/// Keyed by content, so a rerun against an unchanged tree reuses the artifact rather
+/// than composing again.
+pub fn compose(crate_name: &str) -> Option<PathBuf> {
+    use comp_reconciler::plug::{compose_to, default_dirs, Catalog};
+    let root = repo_root();
+    let catalog = Catalog::scan(&default_dirs(&root));
+    if catalog.is_empty() {
+        eprintln!("SKIPPED [{crate_name}]: nothing is built — run `just build`");
+        return None;
+    }
+    if catalog.bytes(crate_name).is_none() {
+        eprintln!("SKIPPED [{crate_name}]: not built — run `just build`");
+        return None;
+    }
+    match compose_to(crate_name, &catalog, &root.join("components/target")) {
+        Ok(path) => Some(path),
+        Err(e) => panic!("[{crate_name}] does not compose: {e}"),
     }
 }
 
@@ -84,9 +121,25 @@ impl Gate {
     ///
     /// `config` is the `--config key=value` pairs the app needs; the two every gate
     /// sets are added here so no gate has to remember them.
+    /// Compose `crate_name` here and serve it as `app`. The shape every gate wants:
+    /// nothing has to have run `just compose-…` first.
+    pub fn compose_and_start(app: &str, crate_name: &str, config: &[&str]) -> Option<Self> {
+        let wasm = compose(crate_name)?;
+        let host = repo_root().join("host/target/release/comp-host");
+        if !host.exists() {
+            eprintln!("SKIPPED [{app}]: no comp-host — cargo build --release --manifest-path host/Cargo.toml --bin comp-host");
+            return None;
+        }
+        Some(Self::serve(app, &host, &wasm, config))
+    }
+
     pub fn start(app: &str, composed: &str, config: &[&str]) -> Option<Self> {
         let (host, wasm) = artifacts(app, composed)?;
-        let port = port_for(app);
+        Some(Self::serve(app, &host, &wasm, config))
+    }
+
+    fn serve(app: &str, host: &std::path::Path, wasm: &std::path::Path, config: &[&str]) -> Self {
+        let port = next_port(app);
         let addr = format!("127.0.0.1:{port}");
 
         let mut args: Vec<String> = vec![
@@ -103,7 +156,7 @@ impl Gate {
             "--addr".into(), addr.clone(),
         ]);
 
-        let child = Command::new(&host)
+        let child = Command::new(host)
             .args(&args)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -120,7 +173,7 @@ impl Gate {
         };
         for _ in 0..200 {
             if gate.client.get(format!("{}/health", gate.base)).send().is_ok() {
-                return Some(gate);
+                return gate;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
