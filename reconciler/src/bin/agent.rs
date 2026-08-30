@@ -222,13 +222,7 @@ fn which_oci() -> Result<PathBuf, String> {
 /// The digest is written AFTER the restart succeeds. Writing it first would mean a
 /// failed restart left the box claiming a version it is not running, and the next
 /// sweep would agree with it and do nothing.
-fn update(
-    oci: &Path,
-    registry: &str,
-    scheme: &str,
-    app: &str,
-    digest: &str,
-) -> Result<(), String> {
+fn update(oci: &Path, registry: &str, scheme: &str, app: &str, digest: &str) -> Result<(), String> {
     let dir = app_dir(app);
     let tmp = dir.join("app.wasm.incoming");
     let reference = format!("{app}@{digest}");

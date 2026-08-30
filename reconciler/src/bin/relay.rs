@@ -191,8 +191,7 @@ fn check_targets(targets: &[String]) -> Result<()> {
         if t.starts_with('/') {
             bail!("target {t:?} is a path, not a URL — name the app too, e.g. http://127.0.0.1:3012{t}");
         }
-        let url = reqwest::Url::parse(t)
-            .with_context(|| format!("target {t:?} is not a URL"))?;
+        let url = reqwest::Url::parse(t).with_context(|| format!("target {t:?} is not a URL"))?;
         if !matches!(url.scheme(), "http" | "https") {
             bail!("target {t:?} must be http or https, not {:?}", url.scheme());
         }

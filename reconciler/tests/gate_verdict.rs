@@ -24,15 +24,18 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
     let config = shim.config();
     let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
     let egress = shim.egress();
-    let Some(gate) = Gate::compose_and_start_with_egress(
-        "moderation", "moderation-domain", &cfg, &[&egress],
-    ) else {
+    let Some(gate) =
+        Gate::compose_and_start_with_egress("moderation", "moderation-domain", &cfg, &[&egress])
+    else {
         return;
     };
 
     let (_, tok) = gate.post("/test/token", None, json!({"subject":"mod"}));
     let t = field(&tok, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
     gate.post("/test/rules", None, json!({}));
 
     let seed = gate.seed();
@@ -47,14 +50,20 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
 
     // --- the rule fires, and it wins ------------------------------------------------
     let (_, raw) = review(&linked);
-    assert!(!raw.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !raw.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&raw);
     assert_eq!(
         d["policy_rule"], "no-links",
         "the fixture's rule matches this item (its text carries a link) and the decision does not \
          name it. A decision that cannot say what overruled what cannot be audited: {d}"
     );
-    assert_eq!(d["final"], "blocked", "a deny rule that matched means blocked, whatever the model said: {d}");
+    assert_eq!(
+        d["final"], "blocked",
+        "a deny rule that matched means blocked, whatever the model said: {d}"
+    );
     let said = d["model_said"].as_str().unwrap_or_default();
     assert!(
         ["allow", "flag", "block"].contains(&said),
@@ -63,10 +72,17 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
     let conf = d["model_confidence"].as_i64();
     assert!(
         conf.is_some_and(|c| (0..=1000).contains(&c)),
-        "confidence is classify's 0..=1000 milli-units, passed through as-is: {:?}", d["model_confidence"]
+        "confidence is classify's 0..=1000 milli-units, passed through as-is: {:?}",
+        d["model_confidence"]
     );
-    assert!(d["policy_reason"].as_str().is_some_and(|s| !s.is_empty()), "the engine's reason belongs in the decision: {d}");
-    assert!(d["decided_at"].as_str().unwrap_or_default().ends_with('Z'), "decided_at must be RFC3339 UTC: {d}");
+    assert!(
+        d["policy_reason"].as_str().is_some_and(|s| !s.is_empty()),
+        "the engine's reason belongs in the decision: {d}"
+    );
+    assert!(
+        d["decided_at"].as_str().unwrap_or_default().ends_with('Z'),
+        "decided_at must be RFC3339 UTC: {d}"
+    );
 
     let s = parse(&gate.stored("item", &linked));
     assert_eq!(s["state"], "blocked", "the item's state must become the decision's final: {s}");
@@ -83,7 +99,8 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
     let expected: BTreeMap<&str, &str> =
         [("allow", "allowed"), ("flag", "flagged"), ("block", "blocked")].into_iter().collect();
     let said = d["model_said"].as_str().unwrap_or_default();
-    let want = expected.get(said).unwrap_or_else(|| panic!("the model's label must be recorded: {d}"));
+    let want =
+        expected.get(said).unwrap_or_else(|| panic!("the model's label must be recorded: {d}"));
     assert_eq!(
         d["final"], *want,
         "with the policy silent the model decides: it said {said:?}, so final must be {want:?}, not {:?}",
@@ -126,6 +143,7 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
     }
     assert_eq!(
         published[&linked], "blocked",
-        "the published outcome disagrees with the stored one: {:?}", published[&linked]
+        "the published outcome disagrees with the stored one: {:?}",
+        published[&linked]
     );
 }

@@ -51,7 +51,10 @@ fn rows(text: &str) -> Vec<Vec<String>> {
         let mut chars = line.chars().peekable();
         while let Some(c) = chars.next() {
             match c {
-                '"' if quoted && chars.peek() == Some(&'"') => { cur.push('"'); chars.next(); }
+                '"' if quoted && chars.peek() == Some(&'"') => {
+                    cur.push('"');
+                    chars.next();
+                }
                 '"' => quoted = !quoted,
                 ',' if !quoted => row.push(std::mem::take(&mut cur)),
                 other => cur.push(other),
@@ -79,7 +82,10 @@ fn intake_masks_validates_and_deduplicates() {
         !stored.contains("ada@example.test"),
         "the reporter's email was stored verbatim — it must be masked: {stored}"
     );
-    assert!(stored.contains("[EMAIL]"), "the body was not masked with pii:redact's placeholder: {stored}");
+    assert!(
+        stored.contains("[EMAIL]"),
+        "the body was not masked with pii:redact's placeholder: {stored}"
+    );
 
     let d = parse(&stored);
     assert_eq!(d["state"], "open", "a new report must be open with no severity: {stored}");
@@ -97,7 +103,12 @@ fn intake_masks_validates_and_deduplicates() {
         let (c, _) = gate.post("/api/reports", None, b);
         assert_eq!(c, 400, "{why}");
     }
-    let (c, _) = gate.send("POST", "/api/reports", None, Some(("application/json", b"not json at all".to_vec())));
+    let (c, _) = gate.send(
+        "POST",
+        "/api/reports",
+        None,
+        Some(("application/json", b"not json at all".to_vec())),
+    );
     assert_eq!(c, 400, "malformed JSON is a 400");
     let (c, _) = gate.get("/api/reports/nope", None);
     assert_eq!(c, 404, "an unknown report is a 404");
@@ -110,8 +121,11 @@ fn intake_masks_validates_and_deduplicates() {
         existing, id,
         "a duplicate must name the report it collides with (got '{existing}', wanted '{id}')"
     );
-    let (c, _) = gate.post("/api/reports", None,
-        json!({"title":"Search returns nothing","body":"b","component":"billing"}));
+    let (c, _) = gate.post(
+        "/api/reports",
+        None,
+        json!({"title":"Search returns nothing","body":"b","component":"billing"}),
+    );
     assert_eq!(c, 201, "the same title in a DIFFERENT component is not a duplicate");
 
     // --- listing and filtering ----------------------------------------------------
@@ -151,18 +165,31 @@ fn workflow_is_a_machine_not_a_ladder_of_comparisons() {
     assert_eq!(c, 404, "an unknown report is a 404");
 
     // --- triage requires a severity ------------------------------------------------
-    let (c, _) = gate.post(&format!("/api/reports/{a}/transition"), None, json!({"event":"triage"}));
+    let (c, _) =
+        gate.post(&format!("/api/reports/{a}/transition"), None, json!({"event":"triage"}));
     assert_eq!(c, 400, "the triage event requires a severity");
-    let (c, _) = gate.post(&format!("/api/reports/{a}/transition"), None,
-        json!({"event":"triage","severity":"urgent"}));
+    let (c, _) = gate.post(
+        &format!("/api/reports/{a}/transition"),
+        None,
+        json!({"event":"triage","severity":"urgent"}),
+    );
     assert_eq!(c, 400, "a severity outside low/medium/high is a 400");
 
     // --- the legal path ------------------------------------------------------------
-    let (_, resp) = gate.post(&format!("/api/reports/{a}/transition"), None,
-        json!({"event":"triage","severity":"high"}));
+    let (_, resp) = gate.post(
+        &format!("/api/reports/{a}/transition"),
+        None,
+        json!({"event":"triage","severity":"high"}),
+    );
     let d = parse(&resp);
-    assert_eq!(d["state"], "triaged", "triage must answer with the new state and the severity: {resp}");
-    assert_eq!(d["severity"], "high", "triage must answer with the new state and the severity: {resp}");
+    assert_eq!(
+        d["state"], "triaged",
+        "triage must answer with the new state and the severity: {resp}"
+    );
+    assert_eq!(
+        d["severity"], "high",
+        "triage must answer with the new state and the severity: {resp}"
+    );
 
     // The DOCUMENT must have moved too, not just the fsm instance. Read through the
     // SCAFFOLD's `/test/report/{id}`, not `GET /api/reports/{id}` — that route belongs
@@ -180,8 +207,11 @@ fn workflow_is_a_machine_not_a_ladder_of_comparisons() {
     // --- terminal really is terminal ------------------------------------------------
     let (c, _) = gate.post(&format!("/api/reports/{b}/transition"), None, json!({"event":"close"}));
     assert_eq!(c, 200, "open can be closed (not a bug)");
-    let (c, _) = gate.post(&format!("/api/reports/{b}/transition"), None,
-        json!({"event":"triage","severity":"low"}));
+    let (c, _) = gate.post(
+        &format!("/api/reports/{b}/transition"),
+        None,
+        json!({"event":"triage","severity":"low"}),
+    );
     assert_eq!(c, 409, "a closed report is terminal and accepts nothing");
 
     // --- the queue -----------------------------------------------------------------
@@ -206,7 +236,8 @@ fn workflow_is_a_machine_not_a_ladder_of_comparisons() {
     let mut sorted = keys.clone();
     sorted.sort();
     assert_eq!(
-        keys, sorted,
+        keys,
+        sorted,
         "most urgent first, no severity last: {:?}",
         queue.iter().map(|r| r["severity"].clone()).collect::<Vec<_>>()
     );
@@ -263,7 +294,11 @@ fn digest_counts_only_what_occurs() {
     let body = &r[1..];
     assert!(body.len() >= 2, "one row per report: {r:?}");
     for row in body {
-        assert_eq!(row.len(), 5, "every row has five columns — a comma in a title must be quoted: {row:?}");
+        assert_eq!(
+            row.len(),
+            5,
+            "every row has five columns — a comma in a title must be quoted: {row:?}"
+        );
     }
     let titles: Vec<&String> = body.iter().map(|row| &row[1]).collect();
     assert!(
@@ -276,7 +311,10 @@ fn digest_counts_only_what_occurs() {
 
     // The content type has to be text/csv, or a browser and a parser both see JSON.
     let (_, ct, _) = gate.bytes("/api/digest.csv?day=2026-08-17", None);
-    assert!(ct.starts_with("text/csv"), "the CSV must be served as text/csv, not '{ct}' — use Reply::raw");
+    assert!(
+        ct.starts_with("text/csv"),
+        "the CSV must be served as text/csv, not '{ct}' — use Reply::raw"
+    );
 
     // An empty day is the header alone.
     let (_, empty) = gate.get("/api/digest.csv?day=1999-01-01", None);

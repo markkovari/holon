@@ -165,14 +165,21 @@ async fn main() -> Result<()> {
                     // The repo builds `portfolio_value.wasm`; a registry path reads
                     // better with the name the catalogue uses.
                     .replace('_', "-");
-                let wasm = std::fs::read(path)
-                    .with_context(|| format!("reading {}", path.display()))?;
+                let wasm =
+                    std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
                 let (exports, imports) = surface(&wasm);
                 let repo = repo_for(&prefix, &name);
-                let digest =
-                    oci::push_artifact(&http, &base, &repo, &wasm, &exports, &imports, creds.as_ref())
-                        .await
-                        .with_context(|| format!("pushing {name}"))?;
+                let digest = oci::push_artifact(
+                    &http,
+                    &base,
+                    &repo,
+                    &wasm,
+                    &exports,
+                    &imports,
+                    creds.as_ref(),
+                )
+                .await
+                .with_context(|| format!("pushing {name}"))?;
                 println!("{name} {digest} ({} KB)", wasm.len() / 1024);
                 lines.push(format!("{name} {digest}"));
             }
@@ -202,8 +209,7 @@ async fn main() -> Result<()> {
             if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
                 std::fs::create_dir_all(dir).ok();
             }
-            std::fs::write(&out, &wasm)
-                .with_context(|| format!("writing {}", out.display()))?;
+            std::fs::write(&out, &wasm).with_context(|| format!("writing {}", out.display()))?;
             println!(
                 "{} <- {repo}:{reference} ({} KB, {})",
                 out.display(),

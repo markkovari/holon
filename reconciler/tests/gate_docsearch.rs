@@ -21,7 +21,10 @@ fn token(gate: &Gate, subject: &str, scopes: Option<Value>) -> String {
         b["scopes"] = s;
     }
     let t = field(&gate.post("/test/token", None, b).1, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
     t
 }
 
@@ -49,21 +52,33 @@ fn a_document_is_findable_by_its_body_and_the_tag_filter_is_the_index() {
     assert!(!id.is_empty(), "POST /api/docs returned no id");
 
     let raw = gate.stored("doc", &id);
-    assert!(!raw.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !raw.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&raw);
-    assert_eq!(d["title"], "Rotating the signing key", "the stored document is not what was filed: {d}");
+    assert_eq!(
+        d["title"], "Rotating the signing key",
+        "the stored document is not what was filed: {d}"
+    );
     assert_eq!(d["tag"], "security", "{d}");
     assert!(d["text"].as_str().unwrap_or_default().contains("overlap window"), "{d}");
 
     // "overlap" appears only in the body. A title match cannot find this.
     let (_, raw) = gate.get("/api/search?q=overlap", Some(&w));
-    assert!(!raw.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !raw.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&raw);
     let hits = d["hits"].as_array().cloned().unwrap_or_default();
     assert!(!hits.is_empty(), "no hits for a word that is in the indexed text: {d}");
     let ids: Vec<&str> = hits.iter().filter_map(|h| h["id"].as_str()).collect();
     assert!(ids.contains(&id.as_str()), "the document just filed is not among the hits: {ids:?}");
-    let h = hits.iter().find(|h| h["id"] == id.as_str()).expect("the hit that was just asserted present");
+    let h = hits
+        .iter()
+        .find(|h| h["id"] == id.as_str())
+        .expect("the hit that was just asserted present");
     assert_eq!(
         h["title"], "Rotating the signing key",
         "a hit must carry the title from the store — a caller cannot use a list of ULIDs: {h}"
@@ -76,7 +91,10 @@ fn a_document_is_findable_by_its_body_and_the_tag_filter_is_the_index() {
 
     // The tag filter is the index's, not a filter applied afterwards to everything.
     let (_, raw) = gate.get("/api/search?q=overlap&tag=ops", Some(&w));
-    assert!(!raw.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !raw.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     assert_eq!(parse(&raw)["hits"], json!([]), "tag=ops must not match a security document: {raw}");
 
     // A question the library cannot answer is an empty list, not an error: an empty

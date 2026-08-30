@@ -36,15 +36,24 @@ fn owners_and_pets() {
     let (c, _) = gate.get("/api/owners/nosuch", None);
     assert_eq!(c, 404, "an unknown owner is a 404");
 
-    let (_, p) = gate.post(&format!("/api/owners/{owner}/pets"), None,
-        json!({"name":"Rex","species":"dog","born":"2020-01-01"}));
+    let (_, p) = gate.post(
+        &format!("/api/owners/{owner}/pets"),
+        None,
+        json!({"name":"Rex","species":"dog","born":"2020-01-01"}),
+    );
     let pet = field(&p, "id");
     assert!(!pet.is_empty(), "POST pets returned no id");
-    let (c, _) = gate.post(&format!("/api/owners/{owner}/pets"), None,
-        json!({"name":"X","species":"dragon","born":"2020-01-01"}));
+    let (c, _) = gate.post(
+        &format!("/api/owners/{owner}/pets"),
+        None,
+        json!({"name":"X","species":"dragon","born":"2020-01-01"}),
+    );
     assert_eq!(c, 400, "an unknown species is a 400");
-    let (c, _) = gate.post("/api/owners/nosuch/pets", None,
-        json!({"name":"X","species":"cat","born":"2020-01-01"}));
+    let (c, _) = gate.post(
+        "/api/owners/nosuch/pets",
+        None,
+        json!({"name":"X","species":"cat","born":"2020-01-01"}),
+    );
     assert_eq!(c, 404, "a pet for an unknown owner is a 404");
 
     let (_, hits) = gate.get("/api/owners?q=ada", None);
@@ -66,9 +75,7 @@ fn visits_and_the_rule_a_compiler_cannot_check() {
     let pet = seed["pet_id"].as_str().unwrap_or_default().to_string();
     assert!(!pet.is_empty(), "the seed fixture gave no pet: {seed}");
 
-    let visit = |vet: &str, start: &str, minutes: u32| {
-        json!({"pet_id": pet, "vet": vet, "start": start, "minutes": minutes})
-    };
+    let visit = |vet: &str, start: &str, minutes: u32| json!({"pet_id": pet, "vet": vet, "start": start, "minutes": minutes});
     let (_, v) = gate.post("/api/visits", None, visit("vet-a", "2026-09-01T09:00:00Z", 30));
     let v1 = field(&v, "id");
     assert!(!v1.is_empty(), "POST /api/visits returned no id");
@@ -81,8 +88,11 @@ fn visits_and_the_rule_a_compiler_cannot_check() {
     assert_eq!(c, 201, "a different vet at the same time is fine");
     let (c, _) = gate.post("/api/visits", None, visit("vet-a", "2026-09-01T11:00:00Z", 45));
     assert_eq!(c, 400, "45 minutes is not one of 15/30/60");
-    let (c, _) = gate.post("/api/visits", None,
-        json!({"pet_id":"nosuch","vet":"vet-a","start":"2026-09-01T14:00:00Z","minutes":30}));
+    let (c, _) = gate.post(
+        "/api/visits",
+        None,
+        json!({"pet_id":"nosuch","vet":"vet-a","start":"2026-09-01T14:00:00Z","minutes":30}),
+    );
     assert_eq!(c, 404, "a visit for an unknown pet is a 404");
 
     let (_, day) = gate.get("/api/visits?vet=vet-a&day=2026-09-01", None);
@@ -101,28 +111,52 @@ fn visits_and_the_rule_a_compiler_cannot_check() {
 fn staff_access_and_pet_search() {
     let Some(gate) = start() else { return };
 
-    requires_capability(CRATE, "auth:identity/accounts",
+    requires_capability(
+        CRATE,
+        "auth:identity/accounts",
         "that capability is in the world for this part to USE, and reimplementing it is the one \
-         thing this part must not do (see CONTRACT.md)");
-    requires_capability(CRATE, "auth:identity/session",
-        "sessions are auth-guard's job; do not invent a token format (see CONTRACT.md)");
+         thing this part must not do (see CONTRACT.md)",
+    );
+    requires_capability(
+        CRATE,
+        "auth:identity/session",
+        "sessions are auth-guard's job; do not invent a token format (see CONTRACT.md)",
+    );
     requires_capability(CRATE, "search:index/index",
         "ranked search already exists in this repository; a substring scan is not it (see CONTRACT.md)");
 
     gate.seed();
 
-    let (c, _) = gate.post("/api/staff", None, json!({"email":"vet@clinic.test","password":"short"}));
+    let (c, _) =
+        gate.post("/api/staff", None, json!({"email":"vet@clinic.test","password":"short"}));
     assert_eq!(c, 400, "a password under 8 characters is a 400");
-    let (_, s) = gate.post("/api/staff", None, json!({"email":"vet@clinic.test","password":"correct-horse"}));
+    let (_, s) = gate.post(
+        "/api/staff",
+        None,
+        json!({"email":"vet@clinic.test","password":"correct-horse"}),
+    );
     assert!(!field(&s, "id").is_empty(), "POST /api/staff returned no id");
-    let (c, _) = gate.post("/api/staff", None, json!({"email":"vet@clinic.test","password":"correct-horse"}));
+    let (c, _) = gate.post(
+        "/api/staff",
+        None,
+        json!({"email":"vet@clinic.test","password":"correct-horse"}),
+    );
     assert_eq!(c, 409, "registering an email twice is a 409");
 
-    let (c, _) = gate.post("/api/staff/login", None, json!({"email":"vet@clinic.test","password":"wrong"}));
+    let (c, _) =
+        gate.post("/api/staff/login", None, json!({"email":"vet@clinic.test","password":"wrong"}));
     assert_eq!(c, 401, "a wrong password is a 401");
-    let (c, _) = gate.post("/api/staff/login", None, json!({"email":"nobody@clinic.test","password":"correct-horse"}));
+    let (c, _) = gate.post(
+        "/api/staff/login",
+        None,
+        json!({"email":"nobody@clinic.test","password":"correct-horse"}),
+    );
     assert_eq!(c, 401, "an unknown email is a 401, the same answer as a wrong password");
-    let (_, l) = gate.post("/api/staff/login", None, json!({"email":"vet@clinic.test","password":"correct-horse"}));
+    let (_, l) = gate.post(
+        "/api/staff/login",
+        None,
+        json!({"email":"vet@clinic.test","password":"correct-horse"}),
+    );
     let token = field(&l, "token");
     assert!(!token.is_empty(), "a correct login returned no token");
 
@@ -179,22 +213,32 @@ fn rows(text: &str) -> Vec<Vec<String>> {
 fn reports_csv_and_summary() {
     let Some(gate) = start() else { return };
 
-    requires_capability(CRATE, "csv:codec/codec",
+    requires_capability(
+        CRATE,
+        "csv:codec/codec",
         "CSV quoting is a solved problem in this repository and that capability is in the world \
-         for this part to USE, not to reimplement (see CONTRACT.md)");
+         for this part to USE, not to reimplement (see CONTRACT.md)",
+    );
 
     // Built through the OTHER halves' routes: a report over a fixture nobody booked
     // would not be a report. The name is the point — a comma inside a field is what
     // separates a CSV encoder from `join(",")`.
-    let (_, o) = gate.post("/api/owners", None, json!({"name":"Dana Vance","email":"dana@example.test"}));
+    let (_, o) =
+        gate.post("/api/owners", None, json!({"name":"Dana Vance","email":"dana@example.test"}));
     let owner = field(&o, "id");
     assert!(!owner.is_empty(), "could not create an owner to report on");
-    let (_, p) = gate.post(&format!("/api/owners/{owner}/pets"), None,
-        json!({"name":"Rex, Jr.","species":"dog","born":"2020-05-05"}));
+    let (_, p) = gate.post(
+        &format!("/api/owners/{owner}/pets"),
+        None,
+        json!({"name":"Rex, Jr.","species":"dog","born":"2020-05-05"}),
+    );
     let pet = field(&p, "id");
     assert!(!pet.is_empty(), "could not create a pet to report on");
-    let (_, c2) = gate.post(&format!("/api/owners/{owner}/pets"), None,
-        json!({"name":"Zoe","species":"cat","born":"2021-06-06"}));
+    let (_, c2) = gate.post(
+        &format!("/api/owners/{owner}/pets"),
+        None,
+        json!({"name":"Zoe","species":"cat","born":"2021-06-06"}),
+    );
     let cat = field(&c2, "id");
     assert!(!cat.is_empty(), "could not create a second pet to report on");
 
@@ -204,8 +248,11 @@ fn reports_csv_and_summary() {
         (&cat, "vet-b", "T08:00:00Z", 60),
         (&pet, "vet-a", "T10:00:00Z", 15),
     ] {
-        gate.post("/api/visits", None,
-            json!({"pet_id": who, "vet": vet, "start": format!("{DAY}{at}"), "minutes": mins}));
+        gate.post(
+            "/api/visits",
+            None,
+            json!({"pet_id": who, "vet": vet, "start": format!("{DAY}{at}"), "minutes": mins}),
+        );
     }
 
     let (c, _) = gate.get("/api/reports/visits.csv", None);
@@ -215,14 +262,24 @@ fn reports_csv_and_summary() {
     let r = rows(&csv);
     assert!(!r.is_empty(), "no rows at all: {csv}");
     assert_eq!(
-        r[0], ["id", "pet_id", "pet_name", "vet", "start", "minutes"],
-        "the CSV is not what CONTRACT.md describes, header: {:?}", r[0]
+        r[0],
+        ["id", "pet_id", "pet_name", "vet", "start", "minutes"],
+        "the CSV is not what CONTRACT.md describes, header: {:?}",
+        r[0]
     );
     assert_eq!(r.len(), 4, "three visits and a header make 4 rows, got {}", r.len());
     for row in &r[1..] {
-        assert_eq!(row.len(), 6, "row has {} columns, not 6 — a comma broke it: {row:?}", row.len());
+        assert_eq!(
+            row.len(),
+            6,
+            "row has {} columns, not 6 — a comma broke it: {row:?}",
+            row.len()
+        );
     }
-    assert!(r[1..].iter().any(|row| row[2] == "Rex, Jr."), "the comma in the name did not survive: {r:?}");
+    assert!(
+        r[1..].iter().any(|row| row[2] == "Rex, Jr."),
+        "the comma in the name did not survive: {r:?}"
+    );
     let starts: Vec<&String> = r[1..].iter().map(|row| &row[4]).collect();
     let mut sorted = starts.clone();
     sorted.sort();
@@ -231,7 +288,11 @@ fn reports_csv_and_summary() {
     // A day nobody booked is the header alone — not a 404, not an empty body.
     let (_, empty) = gate.get("/api/reports/visits.csv?day=2026-09-29", None);
     assert!(
-        empty.lines().next().unwrap_or_default().starts_with("id,pet_id,pet_name,vet,start,minutes"),
+        empty
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .starts_with("id,pet_id,pet_name,vet,start,minutes"),
         "an empty day still has its header: {empty}"
     );
     assert_eq!(

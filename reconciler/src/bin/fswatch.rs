@@ -56,7 +56,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-fswatch", about = "Report directory changes to a component that cannot look.")]
+#[command(
+    name = "comp-fswatch",
+    about = "Report directory changes to a component that cannot look."
+)]
 struct Args {
     /// Where to listen. Loopback by default: this hands out filesystem contents
     /// and has no authentication of its own.
@@ -260,7 +263,9 @@ mod tests {
         std::fs::write(dir.join("stays"), b"changed size").expect("write");
         let after = Daemon::snapshot(&dir);
 
-        assert!(after.contains_key(&dir.join("arrives")) && !before.contains_key(&dir.join("arrives")));
+        assert!(
+            after.contains_key(&dir.join("arrives")) && !before.contains_key(&dir.join("arrives"))
+        );
         assert!(before.contains_key(&dir.join("goes")) && !after.contains_key(&dir.join("goes")));
         assert_ne!(
             before.get(&dir.join("stays")),

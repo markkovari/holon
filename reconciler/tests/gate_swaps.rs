@@ -10,8 +10,8 @@ use serde_json::json;
 
 const APP: &str = "events";
 const COMPOSED: &str = "events_domain.composed.wasm";
-const CONFIG: &[&str] = &["allow-test-routes=1",
-    "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
+const CONFIG: &[&str] =
+    &["allow-test-routes=1", "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
 
 #[test]
 fn swaps_offered_accepted_and_capacity_unmoved() {
@@ -25,7 +25,10 @@ fn swaps_offered_accepted_and_capacity_unmoved() {
 
     let (_, t) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&attendee), json!({}));
     let tid = field(&t, "id");
-    assert!(!tid.is_empty(), "cannot judge swaps without a ticket — the tickets part answered: {t}");
+    assert!(
+        !tid.is_empty(),
+        "cannot judge swaps without a ticket — the tickets part answered: {t}"
+    );
 
     let (_, ev) = gate.get(&format!("/api/events/{event_id}"), Some(&organizer));
     let before = field(&ev, "remaining");

@@ -56,24 +56,24 @@ const ALLOWED: &[&str] = &[
     "wasi:io/poll",
     "wasi:io/streams",
     // Asked for deliberately.
-    "wasi:blobstore/blobstore", //   1 — blob-store, the only one
-    "wasi:blobstore/container", //   1
-    "wasi:blobstore/types",     //   1
-    "wasi:clocks/wall-clock",   //  67 — a timestamp, not a duration
-    "wasi:config/store",        //  37
+    "wasi:blobstore/blobstore",   //   1 — blob-store, the only one
+    "wasi:blobstore/container",   //   1
+    "wasi:blobstore/types",       //   1
+    "wasi:clocks/wall-clock",     //  67 — a timestamp, not a duration
+    "wasi:config/store",          //  37
     "wasi:http/outgoing-handler", // 18 — the components that call out
-    "wasi:http/types",          // 109 — every component that serves
-    "wasi:keyvalue/atomics",    //   5
-    "wasi:keyvalue/batch",      //   2
-    "wasi:keyvalue/store",      //  57
-    "wasi:random/insecure-seed", // 10
-    "wasi:random/random",       //  15
+    "wasi:http/types",            // 109 — every component that serves
+    "wasi:keyvalue/atomics",      //   5
+    "wasi:keyvalue/batch",        //   2
+    "wasi:keyvalue/store",        //  57
+    "wasi:random/insecure-seed",  // 10
+    "wasi:random/random",         //  15
     // This repository's own host interfaces. `comp:` is in HOST_NAMESPACES
     // because a host provides it, not another component — so it belongs here
     // rather than in the composable half, and it is a capability grant like any
     // other: `comp:secrets/reader` reads secrets.
-    "comp:secrets/reader",      //   8
-    "comp:store/cas",           //   5
+    "comp:secrets/reader", //   8
+    "comp:store/cas",      //   5
     // The one interface a wasmCloud release host provides beyond standard WASI.
     "wasmcloud:messaging/types", // 1 — event-pusher
 ];
@@ -123,8 +123,11 @@ fn no_component_reaches_for_a_host_capability_nobody_granted() {
         unexpected
             .iter()
             .map(|(iface, who)| {
-                let more =
-                    if who.len() > 6 { format!(" (+{} more)", who.len() - 6) } else { String::new() };
+                let more = if who.len() > 6 {
+                    format!(" (+{} more)", who.len() - 6)
+                } else {
+                    String::new()
+                };
                 let names = who.iter().take(6).cloned().collect::<Vec<_>>().join(", ");
                 format!("  {iface}\n    wanted by: {names}{more}")
             })
@@ -132,7 +135,11 @@ fn no_component_reaches_for_a_host_capability_nobody_granted() {
             .join("\n")
     );
 
-    println!("  {} components, {} distinct host interfaces:", catalog.names().count(), counts.len());
+    println!(
+        "  {} components, {} distinct host interfaces:",
+        catalog.names().count(),
+        counts.len()
+    );
     for (iface, n) in &counts {
         println!("    {n:>4}  {iface}");
     }

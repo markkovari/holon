@@ -20,7 +20,10 @@ fn enrolling_is_not_verifying_and_a_wrong_code_cannot_log_anyone_out() {
     let Some(gate) = Gate::compose_and_start("docsearch", "doc-search-domain", &[]) else { return };
     let (_, tok) = gate.post("/test/token", None, json!({"subject":"ada"}));
     let t = field(&tok, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
 
     let mfa = || parse(&gate.get("/api/mfa", Some(&t)).1);
     let verify = |code: &str| gate.post("/api/mfa/verify", Some(&t), json!({ "code": code }));
@@ -37,12 +40,18 @@ fn enrolling_is_not_verifying_and_a_wrong_code_cannot_log_anyone_out() {
 
     // --- enrol ----------------------------------------------------------------------
     let (_, enrol) = gate.json("POST", "/api/mfa/enroll", Some(&t), None);
-    assert!(!enrol.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !enrol.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&enrol);
     let secret = d["secret"].as_str().unwrap_or_default().to_string();
     assert!(secret.len() >= 16, "a TOTP secret is base32 and not short: {d}");
     let uri = d["uri"].as_str().unwrap_or_default();
-    assert!(uri.starts_with("otpauth://"), "the uri must be the otpauth:// one an authenticator app can read: {uri:?}");
+    assert!(
+        uri.starts_with("otpauth://"),
+        "the uri must be the otpauth:// one an authenticator app can read: {uri:?}"
+    );
     assert!(uri.contains("docsearch"), "the issuer belongs in the uri: {uri:?}");
 
     let s = mfa();
@@ -57,19 +66,28 @@ fn enrolling_is_not_verifying_and_a_wrong_code_cannot_log_anyone_out() {
     // --- the real thing -------------------------------------------------------------
     let code = totp_now(&secret);
     let (_, ok) = verify(&code);
-    assert!(!ok.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !ok.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     assert_eq!(
-        parse(&ok)["verified"], true,
+        parse(&ok)["verified"],
+        true,
         "a correct TOTP code was refused — the code was computed from the secret this part \
          provisioned: {ok}"
     );
-    assert_eq!(mfa()["verified"], true, "after a correct code the part must report the session verified");
+    assert_eq!(
+        mfa()["verified"],
+        true,
+        "after a correct code the part must report the session verified"
+    );
 
     // A wrong code AFTER verifying must not undo it: that would be a logout anyone can
     // cause.
     verify("000000");
     assert_eq!(
-        mfa()["verified"], true,
+        mfa()["verified"],
+        true,
         "a failed attempt cleared a verified step-up — anyone who knows a subject can log them out"
     );
 

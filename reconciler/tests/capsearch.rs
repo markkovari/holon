@@ -328,7 +328,6 @@ fn every_component_has_a_description() {
     println!("  {checked} components, all described");
 }
 
-
 /// The catalogue's idea of "reusable" matches what the artifacts export.
 ///
 /// `reusable_as_is` used to be a NAME check — `ends_with("-domain")` plus a list of

@@ -36,7 +36,10 @@ fn token(gate: &Gate, subject: &str, scopes: Option<Value>) -> String {
         body["scopes"] = s;
     }
     let t = field(&gate.post("/test/token", None, body).1, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
     t
 }
 
@@ -55,7 +58,10 @@ fn pair(gate: &Gate, start: &str) -> (String, String) {
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
-    assert!(ids.len() >= 2, "the fixture produced no accounts — the scaffold is broken, not the part");
+    assert!(
+        ids.len() >= 2,
+        "the fixture produced no accounts — the scaffold is broken, not the part"
+    );
     (ids[0].clone(), ids[1].clone())
 }
 
@@ -81,19 +87,32 @@ fn accounts_open_credit_and_survive_concurrent_credits() {
     assert_eq!(c, 403, "a read-only token must be 403 on opening an account");
     for (body, why) in [
         (json!({"name":"","currency":"EUR"}), "an empty name must be 400 invalid_account"),
-        (json!({"name":"x","currency":"QQQ"}), "a currency money:amount does not know must be 400 bad_money"),
-        (json!({"name":"x","currency":"EUR","start":"1"}),
-         "\"1\" is not a EUR amount (parse wants both decimals) — must be 400 bad_money"),
+        (
+            json!({"name":"x","currency":"QQQ"}),
+            "a currency money:amount does not know must be 400 bad_money",
+        ),
+        (
+            json!({"name":"x","currency":"EUR","start":"1"}),
+            "\"1\" is not a EUR amount (parse wants both decimals) — must be 400 bad_money",
+        ),
     ] {
         let (c, _) = gate.post("/api/accounts", Some(&w), body);
         assert_eq!(c, 400, "{why}");
     }
 
     // --- one account, one credit ----------------------------------------------------
-    let (_, a) = gate.post("/api/accounts", Some(&w), json!({"name":"ledger-test","currency":"EUR","start":"10.00"}));
+    let (_, a) = gate.post(
+        "/api/accounts",
+        Some(&w),
+        json!({"name":"ledger-test","currency":"EUR","start":"10.00"}),
+    );
     let id = field(&a, "id");
     assert!(!id.is_empty(), "POST /api/accounts returned no id");
-    assert_eq!(units_of(&gate, &id), 1000, "an account opened at 10.00 must store 1000 minor units");
+    assert_eq!(
+        units_of(&gate, &id),
+        1000,
+        "an account opened at 10.00 must store 1000 minor units"
+    );
 
     for (amount, code, why) in [
         ("0.00", 400, "a zero credit must be 400 invalid_amount"),
@@ -105,7 +124,8 @@ fn accounts_open_credit_and_survive_concurrent_credits() {
     let (c, _) = gate.post("/api/accounts/nope/credit", Some(&w), json!({"amount":"1.00"}));
     assert_eq!(c, 404, "crediting an unknown account must be 404");
 
-    let (_, r) = gate.post(&format!("/api/accounts/{id}/credit"), Some(&w), json!({"amount":"2.50"}));
+    let (_, r) =
+        gate.post(&format!("/api/accounts/{id}/credit"), Some(&w), json!({"amount":"2.50"}));
     assert_eq!(parse(&r)["units"], 1250, "10.00 + 2.50 is 1250 minor units: {r}");
 
     // --- and now all at once --------------------------------------------------------
@@ -113,14 +133,27 @@ fn accounts_open_credit_and_survive_concurrent_credits() {
     // A fresh account at zero, twenty-four credits of 1.00 fired in parallel. Every one
     // must be reflected: 2400. A part that surfaces a revision conflict instead of
     // re-reading ends short, and by a different amount every run.
-    let (_, s) = gate.post("/api/accounts", Some(&w), json!({"name":"storm","currency":"EUR","start":"0.00"}));
+    let (_, s) = gate.post(
+        "/api/accounts",
+        Some(&w),
+        json!({"name":"storm","currency":"EUR","start":"0.00"}),
+    );
     let storm = field(&s, "id");
     assert!(!storm.is_empty(), "could not open the account for the contention test");
 
     let credit_storm = |amount: &'static str| -> BTreeMap<u16, usize> {
         let codes: Vec<u16> = std::thread::scope(|sc| {
             let hs: Vec<_> = (0..24)
-                .map(|_| sc.spawn(|| gate.post(&format!("/api/accounts/{storm}/credit"), Some(&w), json!({"amount": amount})).0))
+                .map(|_| {
+                    sc.spawn(|| {
+                        gate.post(
+                            &format!("/api/accounts/{storm}/credit"),
+                            Some(&w),
+                            json!({"amount": amount}),
+                        )
+                        .0
+                    })
+                })
                 .collect();
             hs.into_iter().map(|h| h.join().expect("a credit panicked")).collect()
         });
@@ -136,7 +169,8 @@ fn accounts_open_credit_and_survive_concurrent_credits() {
          they asked to add money to it."
     );
     assert_eq!(
-        after, 2400,
+        after,
+        2400,
         "twenty-four concurrent credits of 100 minor units left the account at {after}, not 2400 \
          — {} of them vanished. Status codes: [{codes:?}]. Read the conflict and retry from what \
          is there now.",
@@ -170,8 +204,13 @@ fn transfers_are_idempotent_and_survive_contention() {
     };
 
     // --- the refusals ---------------------------------------------------------------
-    let (c, _) = gate.with_headers("POST", "/api/transfers", None, &[("idempotency-key", "k")],
-        Some(json!({"from": l, "to": r, "amount": "1.00"})));
+    let (c, _) = gate.with_headers(
+        "POST",
+        "/api/transfers",
+        None,
+        &[("idempotency-key", "k")],
+        Some(json!({"from": l, "to": r, "amount": "1.00"})),
+    );
     assert_eq!(c, 401, "a transfer with no bearer must be 401");
 
     let (c, _) = gate.post("/api/transfers", Some(&t), json!({"from":l,"to":r,"amount":"1.00"}));
@@ -184,7 +223,10 @@ fn transfers_are_idempotent_and_survive_contention() {
     // --- one transfer, both sides, and a journal line -------------------------------
     let (_, ok) = keyed("k-one", &l, &r, "25.00");
     let d = parse(&ok);
-    assert!(d.get("error").is_none(), "a 25.00 transfer between two accounts holding 100.00 was refused: {d}");
+    assert!(
+        d.get("error").is_none(),
+        "a 25.00 transfer between two accounts holding 100.00 was refused: {d}"
+    );
     assert_eq!(d["from_units"], 7500, "the source must end at 7500: {d}");
     assert_eq!(d["to_units"], 12500, "the destination must end at 12500: {d}");
     assert!(d.get("transfer").is_some(), "the answer must name the transfer it created: {d}");
@@ -202,7 +244,8 @@ fn transfers_are_idempotent_and_survive_contention() {
     let j = parse(&gate.get("/test/journal", None).1);
     let lines = j["lines"].as_array().cloned().unwrap_or_default();
     assert!(!lines.is_empty(), "the journal is empty after a settled transfer: {j}");
-    let mine: Vec<&Value> = lines.iter().filter(|x| x["from"] == l.as_str() && x["to"] == r.as_str()).collect();
+    let mine: Vec<&Value> =
+        lines.iter().filter(|x| x["from"] == l.as_str() && x["to"] == r.as_str()).collect();
     assert!(!mine.is_empty(), "no journal line names this pair: {lines:?}");
     assert_eq!(mine.last().unwrap()["units"], 2500, "the journal line must carry the amount");
 
@@ -254,8 +297,11 @@ fn transfers_are_idempotent_and_survive_contention() {
         // not get a clean read in the attempts I allow myself". Demanding 409 from all
         // fifteen made this gate fail CORRECT work under load, which is worse than
         // missing something.
-        let strange: BTreeMap<u16, usize> =
-            counts.iter().filter(|(c, _)| ![201u16, 409, 503].contains(c)).map(|(c, n)| (*c, *n)).collect();
+        let strange: BTreeMap<u16, usize> = counts
+            .iter()
+            .filter(|(c, _)| ![201u16, 409, 503].contains(c))
+            .map(|(c, n)| (*c, *n))
+            .collect();
         assert!(
             strange.is_empty(),
             "round {round}: {strange:?} — a loser must be refused for no money (409) or for \
@@ -280,13 +326,24 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
     };
     let opened = json!([{"account": l, "units": 5000}, {"account": r, "units": 5000}]);
     let run = |key: &str| -> String {
-        gate.with_headers("POST", "/api/reconcile", Some(&t), &[("idempotency-key", key)],
-            Some(json!({"opened": opened}))).1
+        gate.with_headers(
+            "POST",
+            "/api/reconcile",
+            Some(&t),
+            &[("idempotency-key", key)],
+            Some(json!({"opened": opened})),
+        )
+        .1
     };
 
     // --- the refusals ---------------------------------------------------------------
-    let (c, _) = gate.with_headers("POST", "/api/reconcile", None, &[("idempotency-key", "k")],
-        Some(json!({"opened": opened})));
+    let (c, _) = gate.with_headers(
+        "POST",
+        "/api/reconcile",
+        None,
+        &[("idempotency-key", "k")],
+        Some(json!({"opened": opened})),
+    );
     assert_eq!(c, 401, "reconciling with no bearer must be 401");
     let (c, _) = gate.post("/api/reconcile", Some(&t), json!({"opened": opened}));
     assert_eq!(c, 400, "a reconciliation with no Idempotency-Key must be 400");
@@ -296,13 +353,21 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
     assert_eq!(d["checked"], 2, "two accounts were given and {} were checked: {d}", d["checked"]);
     assert_eq!(d["balanced"], true, "nothing has moved, so the books balance: {d}");
     assert_eq!(d["drift"], json!([]), "drift must be empty when nothing disagrees: {d}");
-    assert_eq!(d["journal_lines"], 0, "the journal is empty and this reports {}", d["journal_lines"]);
+    assert_eq!(
+        d["journal_lines"], 0,
+        "the journal is empty and this reports {}",
+        d["journal_lines"]
+    );
 
     // --- a journal the balances do not match ----------------------------------------
     line(&l, &r, 1000);
     line(&l, &r, 1000);
     let d = parse(&run("drifted"));
-    assert_eq!(d["journal_lines"], 2, "two journal lines were written and this read {}: {d}", d["journal_lines"]);
+    assert_eq!(
+        d["journal_lines"], 2,
+        "two journal lines were written and this read {}: {d}",
+        d["journal_lines"]
+    );
     assert_eq!(
         d["balanced"], false,
         "the journal says 20.00 moved and neither balance changed, and this reports the books as \
@@ -317,15 +382,28 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
         .collect();
     assert_eq!(
         drift.keys().cloned().collect::<Vec<_>>(),
-        { let mut v = vec![l.clone(), r.clone()]; v.sort(); v },
-        "both accounts drifted and the report names {:?}: {d}", drift.keys().collect::<Vec<_>>()
+        {
+            let mut v = vec![l.clone(), r.clone()];
+            v.sort();
+            v
+        },
+        "both accounts drifted and the report names {:?}: {d}",
+        drift.keys().collect::<Vec<_>>()
     );
     // left: opened 5000, journal says -2000, so expected 3000; stored is still 5000.
     assert_eq!(drift[&l]["expected"], 3000, "left expected 5000-2000=3000: {}", drift[&l]);
     assert_eq!(drift[&l]["actual"], 5000, "left's stored balance is 5000: {}", drift[&l]);
-    assert_eq!(drift[&l]["delta"], 2000, "left holds 2000 more than the journal justifies: {}", drift[&l]);
+    assert_eq!(
+        drift[&l]["delta"], 2000,
+        "left holds 2000 more than the journal justifies: {}",
+        drift[&l]
+    );
     assert_eq!(drift[&r]["expected"], 7000, "right expected 5000+2000=7000: {}", drift[&r]);
-    assert_eq!(drift[&r]["delta"], -2000, "right holds 2000 less than the journal justifies: {}", drift[&r]);
+    assert_eq!(
+        drift[&r]["delta"], -2000,
+        "right holds 2000 less than the journal justifies: {}",
+        drift[&r]
+    );
 
     // --- the same report twice is the same report ----------------------------------
     let (one, two) = (run("twice"), run("twice"));
@@ -337,7 +415,11 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
     // A different key sees the world as it is now — one more line, one more finding.
     line(&l, &r, 500);
     let d = parse(&run("fresh"));
-    assert_eq!(d["journal_lines"], 3, "three lines exist now and this read {}: {d}", d["journal_lines"]);
+    assert_eq!(
+        d["journal_lines"], 3,
+        "three lines exist now and this read {}: {d}",
+        d["journal_lines"]
+    );
 
     // --- the journal read route ----------------------------------------------------
     let j = parse(&gate.get("/api/journal?limit=2", Some(&t)).1);

@@ -182,7 +182,9 @@ impl Gate {
                 Err(said) if said.contains("Address already in use") && attempt < 3 => {
                     eprintln!("[{app}] port taken between choosing and binding, retrying");
                 }
-                Err(said) => panic!("[{app}] comp-host never answered /health.\nThe host said:\n{said}"),
+                Err(said) => {
+                    panic!("[{app}] comp-host never answered /health.\nThe host said:\n{said}")
+                }
             }
         }
         unreachable!("the loop above either returns or panics")
@@ -204,10 +206,8 @@ impl Gate {
         // moderation rate limiter stopped limiting, so a gate that asserts a subject is
         // locked out after three submissions passed a fourth. A harness that turns a flag
         // on for everyone is a harness that tests a configuration nothing ships.
-        let mut args: Vec<String> = vec![
-            "--app".into(), app.into(),
-            "--config".into(), format!("default-tenant={app}"),
-        ];
+        let mut args: Vec<String> =
+            vec!["--app".into(), app.into(), "--config".into(), format!("default-tenant={app}")];
         for c in config {
             args.push("--config".into());
             args.push((*c).to_string());
@@ -220,8 +220,10 @@ impl Gate {
             args.push("--allow-private-egress".into());
         }
         args.extend([
-            "--component".into(), wasm.to_string_lossy().into_owned(),
-            "--addr".into(), addr.clone(),
+            "--component".into(),
+            wasm.to_string_lossy().into_owned(),
+            "--addr".into(),
+            addr.clone(),
         ]);
 
         let log_path = std::env::temp_dir().join(format!("holon-gate-{app}-{port}.log"));
@@ -318,8 +320,19 @@ impl Gate {
         (resp.status().as_u16(), resp.text().unwrap_or_default())
     }
 
-    pub fn json(&self, method: &str, path: &str, token: Option<&str>, body: Option<Value>) -> (u16, String) {
-        self.send(method, path, token, body.map(|b| ("application/json", b.to_string().into_bytes())))
+    pub fn json(
+        &self,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+        body: Option<Value>,
+    ) -> (u16, String) {
+        self.send(
+            method,
+            path,
+            token,
+            body.map(|b| ("application/json", b.to_string().into_bytes())),
+        )
     }
     pub fn get(&self, path: &str, token: Option<&str>) -> (u16, String) {
         self.json("GET", path, token, None)
@@ -344,7 +357,8 @@ impl Gate {
     /// differently and a typed struct per app would be a second contract to keep.
     pub fn seed(&self) -> Value {
         let (_, raw) = self.post("/test/seed", None, serde_json::json!({}));
-        serde_json::from_str(&raw).unwrap_or_else(|_| panic!("the fixture did not come back as JSON: {raw}"))
+        serde_json::from_str(&raw)
+            .unwrap_or_else(|_| panic!("the fixture did not come back as JSON: {raw}"))
     }
 
     /// Bytes and content-type, for the routes that answer with neither JSON nor text.
@@ -413,7 +427,8 @@ pub fn requires_capability(crate_name: &str, interface: &str, why: &str) {
     };
     let surface = comp_reconciler::plug::surface(&bytes)
         .unwrap_or_else(|e| panic!("cannot read the surface of {crate_name}: {e}"));
-    let found = surface.imports.iter().chain(surface.host_imports.iter()).any(|i| i.starts_with(interface));
+    let found =
+        surface.imports.iter().chain(surface.host_imports.iter()).any(|i| i.starts_with(interface));
     assert!(
         found,
         "the component never calls {interface} — {why}\n\
@@ -559,7 +574,8 @@ pub fn totp_now(secret_base32: &str) -> String {
         .expect("the clock is before 1970")
         .as_secs()
         / 30;
-    let mut mac = SimpleHmac::<sha1::Sha1>::new_from_slice(&key).expect("hmac accepts any key length");
+    let mut mac =
+        SimpleHmac::<sha1::Sha1>::new_from_slice(&key).expect("hmac accepts any key length");
     mac.update(&counter.to_be_bytes());
     let digest = mac.finalize().into_bytes();
     let offset = (digest[digest.len() - 1] & 0x0f) as usize;
@@ -644,7 +660,8 @@ impl MailSink {
                         if reader.read_line(&mut line).unwrap_or(0) == 0 {
                             return;
                         }
-                        let verb = line.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+                        let verb =
+                            line.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
                         match verb.as_str() {
                             "EHLO" | "HELO" => {
                                 let _ = write!(stream, "250 ok\r\n");

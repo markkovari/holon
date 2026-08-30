@@ -25,7 +25,10 @@ fn token(gate: &Gate, subject: &str, scopes: Option<Value>) -> String {
         b["scopes"] = s;
     }
     let t = field(&gate.post("/test/token", None, b).1, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
     t
 }
 
@@ -45,7 +48,8 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
         "a token with only reports:read must be 403 forbidden — 401 says 'log in' to a caller who is logged in"
     );
     let writer = token(&gate, "ada", None);
-    let (c, _) = gate.post("/api/reports", Some(&writer), json!({"title":"","body":"x","component":"web"}));
+    let (c, _) =
+        gate.post("/api/reports", Some(&writer), json!({"title":"","body":"x","component":"web"}));
     assert_eq!(c, 400, "an empty title must be 400 invalid_report");
 
     // --- a report goes in, and what is stored is masked ---------------------------
@@ -54,21 +58,39 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
     assert!(!id.is_empty(), "POST /api/reports returned no id: {resp}");
 
     let stored = gate.stored("report", &id);
-    assert!(!stored.contains("ada@example.test"), "the reporter's email was stored verbatim — it must be masked: {stored}");
-    assert!(stored.contains("[EMAIL]"), "the body was not masked with pii:redact's placeholder: {stored}");
+    assert!(
+        !stored.contains("ada@example.test"),
+        "the reporter's email was stored verbatim — it must be masked: {stored}"
+    );
+    assert!(
+        stored.contains("[EMAIL]"),
+        "the body was not masked with pii:redact's placeholder: {stored}"
+    );
     let d = parse(&stored);
     assert_eq!(d["state"], "open", "a new report must be open: {d}");
-    assert_eq!(d["reporter"], "ada", "reporter must be the principal's subject, not {:?}", d["reporter"]);
+    assert_eq!(
+        d["reporter"], "ada",
+        "reporter must be the principal's subject, not {:?}",
+        d["reporter"]
+    );
     assert_eq!(d["component"], "search", "{d}");
-    assert!(d.get("assist").is_none(), "intake must not invent an assist — that is the assist part's job");
+    assert!(
+        d.get("assist").is_none(),
+        "intake must not invent an assist — that is the assist part's job"
+    );
     assert!(
         d["reported_at"].as_str().unwrap_or_default().ends_with('Z'),
-        "reported_at must be RFC3339 UTC: {:?}", d["reported_at"]
+        "reported_at must be RFC3339 UTC: {:?}",
+        d["reported_at"]
     );
 
     // --- reading it back, through the part's own route ---------------------------
     let (_, read) = gate.get(&format!("/api/reports/{id}"), Some(&writer));
-    assert_eq!(parse(&read)["title"], "Search returns nothing", "GET /api/reports/{{id}} did not answer the stored report: {read}");
+    assert_eq!(
+        parse(&read)["title"],
+        "Search returns nothing",
+        "GET /api/reports/{{id}} did not answer the stored report: {read}"
+    );
     let (c, _) = gate.get("/api/reports/nope", Some(&writer));
     assert_eq!(c, 404, "an unknown report id must be 404");
     let (c, _) = gate.get(&format!("/api/reports/{id}"), None);
@@ -77,11 +99,17 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
     // --- the filter, which is an index lookup and not a scan ----------------------
     let (_, list) = gate.get("/api/reports?component=search", Some(&writer));
     let parsed = parse(&list);
-    let ids: Vec<&str> =
-        parsed["reports"].as_array().map(|a| a.iter().filter_map(|r| r["id"].as_str()).collect()).unwrap_or_default();
+    let ids: Vec<&str> = parsed["reports"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|r| r["id"].as_str()).collect())
+        .unwrap_or_default();
     assert!(ids.contains(&id.as_str()), "filtering on component=search missed it: {list}");
     let (_, none) = gate.get("/api/reports?component=nothing-files-bugs-here", Some(&writer));
-    assert_eq!(parse(&none)["reports"], json!([]), "a filter matching nothing must answer an empty list, not everything");
+    assert_eq!(
+        parse(&none)["reports"],
+        json!([]),
+        "a filter matching nothing must answer an empty list, not everything"
+    );
 
     // --- and the limit, which counts what was accepted ---------------------------
     //
@@ -90,21 +118,39 @@ fn intake_masks_records_the_reporter_and_limits_per_subject() {
     // something else (a path, a tenant, nothing at all), this is where that shows.
     let burst = token(&gate, "burst", None);
     for i in 1..=3 {
-        let (c, _) = gate.post("/api/reports", Some(&burst),
-            json!({"title": format!("burst {i}"), "body":"b", "component":"web"}));
+        let (c, _) = gate.post(
+            "/api/reports",
+            Some(&burst),
+            json!({"title": format!("burst {i}"), "body":"b", "component":"web"}),
+        );
         assert_eq!(c, 201, "report {i} of 3 within the limit must be accepted");
     }
-    let (_, locked) = gate.post("/api/reports", Some(&burst), json!({"title":"burst 4","body":"b","component":"web"}));
-    let (c, _) = gate.post("/api/reports", Some(&burst), json!({"title":"burst 5","body":"b","component":"web"}));
+    let (_, locked) = gate.post(
+        "/api/reports",
+        Some(&burst),
+        json!({"title":"burst 4","body":"b","component":"web"}),
+    );
+    let (c, _) = gate.post(
+        "/api/reports",
+        Some(&burst),
+        json!({"title":"burst 5","body":"b","component":"web"}),
+    );
     assert_eq!(c, 429, "the 4th report from one subject in the window must be 429 rate_limited (the limit is max-attempts=3)");
     let d = parse(&locked);
     assert_eq!(d["error"], "rate_limited", "a 429 must tell the caller how long to wait: {d}");
-    assert!(d["retry_after"].as_i64().unwrap_or(0) > 0, "retry_after must be the seconds the limiter reported: {d}");
+    assert!(
+        d["retry_after"].as_i64().unwrap_or(0) > 0,
+        "retry_after must be the seconds the limiter reported: {d}"
+    );
 
     // The other subject is unaffected — a limiter keyed on the wrong thing locks
     // everyone out at once, and a gate that only ever used one subject would call that
     // a pass.
-    let (c, _) = gate.post("/api/reports", Some(&writer), json!({"title":"still fine","body":"b","component":"web"}));
+    let (c, _) = gate.post(
+        "/api/reports",
+        Some(&writer),
+        json!({"title":"still fine","body":"b","component":"web"}),
+    );
     assert_eq!(c, 201, "locking out one subject must not lock out another");
 }
 
@@ -120,34 +166,69 @@ fn the_audit_ledger_is_by_trace_capped_and_not_public() {
     const OTHER: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2";
 
     for i in 1..=3 {
-        gate.with_headers("GET", &format!("/api/reports/r{i}"), Some(&t),
-            &[("traceparent", &format!("00-{TRACE}-0000000000000001-01"))], None);
+        gate.with_headers(
+            "GET",
+            &format!("/api/reports/r{i}"),
+            Some(&t),
+            &[("traceparent", &format!("00-{TRACE}-0000000000000001-01"))],
+            None,
+        );
     }
 
-    let (_, raw) = gate.with_headers("GET", &format!("/api/audit?trace={TRACE}"), Some(&t),
-        &[("traceparent", &format!("00-{OTHER}-0000000000000002-01"))], None);
-    assert!(!raw.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    let (_, raw) = gate.with_headers(
+        "GET",
+        &format!("/api/audit?trace={TRACE}"),
+        Some(&t),
+        &[("traceparent", &format!("00-{OTHER}-0000000000000002-01"))],
+        None,
+    );
+    assert!(
+        !raw.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&raw);
-    let evs = d["events"].as_array().cloned().unwrap_or_else(|| panic!("the answer has no events list: {d}"));
-    assert_eq!(evs.len(), 3, "three requests were made under {TRACE}, the ledger has {}: {evs:?}", evs.len());
+    let evs = d["events"]
+        .as_array()
+        .cloned()
+        .unwrap_or_else(|| panic!("the answer has no events list: {d}"));
+    assert_eq!(
+        evs.len(),
+        3,
+        "three requests were made under {TRACE}, the ledger has {}: {evs:?}",
+        evs.len()
+    );
     for e in &evs {
         assert_eq!(e["trace_id"], TRACE, "an event from another trace came back: {e}");
-        assert_eq!(e["event"], "http.request", "the router notes dispatched requests as http.request: {e}");
+        assert_eq!(
+            e["event"], "http.request",
+            "the router notes dispatched requests as http.request: {e}"
+        );
         assert_eq!(e["subject"], "router", "the router's own events are subject 'router': {e}");
         assert_eq!(e["tenant"], "triage-assist", "tenant must be the app's: {e}");
-        assert!(e["id"].as_str().is_some_and(|s| !s.is_empty()), "an event with no id cannot be referred to: {e}");
+        assert!(
+            e["id"].as_str().is_some_and(|s| !s.is_empty()),
+            "an event with no id cannot be referred to: {e}"
+        );
         assert!(e["timestamp"].as_i64().unwrap_or(0) > 0, "timestamp must be unix seconds: {e}");
-        assert!(e["detail"].as_str().is_some_and(|s| !s.is_empty()), "an event with no detail says nothing an operator can use: {e}");
+        assert!(
+            e["detail"].as_str().is_some_and(|s| !s.is_empty()),
+            "an event with no detail says nothing an operator can use: {e}"
+        );
     }
 
     // A trace nobody used is an empty list, not everything. `by-trace` returning the
     // whole log looks like a working filter until the first real incident.
     let unused = "c".repeat(32);
     let (_, raw) = gate.get(&format!("/api/audit?trace={unused}"), Some(&t));
-    assert!(!raw.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !raw.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     assert_eq!(
-        parse(&raw)["events"], json!([]),
-        "an unused trace answered {} events", parse(&raw)["events"].as_array().map(|a| a.len()).unwrap_or(0)
+        parse(&raw)["events"],
+        json!([]),
+        "an unused trace answered {} events",
+        parse(&raw)["events"].as_array().map(|a| a.len()).unwrap_or(0)
     );
 
     // The limit, and the cap on it.

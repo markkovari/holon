@@ -9,8 +9,8 @@ use serde_json::json;
 
 const APP: &str = "events";
 const COMPOSED: &str = "events_domain.composed.wasm";
-const CONFIG: &[&str] = &["allow-test-routes=1",
-    "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
+const CONFIG: &[&str] =
+    &["allow-test-routes=1", "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
 
 #[test]
 fn checkin_scanned_once_and_refused_twice() {
@@ -31,7 +31,10 @@ fn checkin_scanned_once_and_refused_twice() {
     // rather than blaming this part for it.
     let (_, t) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&attendee), json!({}));
     let (code, tid) = (field(&t, "code"), field(&t, "id"));
-    assert!(!code.is_empty(), "cannot judge check-in without a ticket — the tickets part answered: {t}");
+    assert!(
+        !code.is_empty(),
+        "cannot judge check-in without a ticket — the tickets part answered: {t}"
+    );
 
     assert_unauthenticated(&gate, "POST", "/api/checkin", Some(json!({"code": code})));
 
@@ -55,7 +58,10 @@ fn checkin_scanned_once_and_refused_twice() {
 
     // --- twice is a 409 that names the state -------------------------------------------
     let (c, again) = gate.post("/api/checkin", Some(&organizer), json!({"code": code}));
-    assert!(again.contains("already_checked_in"), "a second scan must be 409 already_checked_in: {again}");
+    assert!(
+        again.contains("already_checked_in"),
+        "a second scan must be 409 already_checked_in: {again}"
+    );
     assert!(
         again.contains("checked-in"),
         "the 409 must carry the CURRENT state, which fsm's IllegalTransition already gives you: {again}"
@@ -63,6 +69,7 @@ fn checkin_scanned_once_and_refused_twice() {
     assert_eq!(c, 409, "a repeat scan is 409");
 
     // --- an unknown code ----------------------------------------------------------------
-    let (c, _) = gate.post("/api/checkin", Some(&organizer), json!({"code":"not-a-real-code-at-all"}));
+    let (c, _) =
+        gate.post("/api/checkin", Some(&organizer), json!({"code":"not-a-real-code-at-all"}));
     assert_eq!(c, 404, "an unknown code is 404 no_such_ticket, not 500 and not 200");
 }

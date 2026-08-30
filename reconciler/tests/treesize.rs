@@ -48,11 +48,7 @@ fn the_guard_sits_below_the_ceiling_it_is_derived_from() {
 #[test]
 fn the_server_the_fleet_starts_advertises_that_ceiling() {
     let fleet = Fleet::start("treesize", &[], 1, None);
-    let addr = fleet
-        .nats_url
-        .strip_prefix("nats://")
-        .expect("a nats:// url")
-        .to_string();
+    let addr = fleet.nats_url.strip_prefix("nats://").expect("a nats:// url").to_string();
 
     let mut s = TcpStream::connect(&addr).expect("connecting to the fleet's nats");
     s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
@@ -132,7 +128,8 @@ fn a_seeded_runner_judges_a_candidate_that_carries_no_tree() {
     ]);
 
     // Before the seed the runner has nothing, and says so rather than guessing.
-    let cold = compose::gate(&url, None, commit, &json!([]), &json!([]), &checks, Duration::from_secs(30));
+    let cold =
+        compose::gate(&url, None, commit, &json!([]), &json!([]), &checks, Duration::from_secs(30));
     assert!(cold.is_ok(), "the runner did not answer at all: {cold:?}");
     assert!(!cold.unwrap().passed, "a cold runner cannot have passed the base check");
 
