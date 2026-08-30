@@ -1,0 +1,112 @@
+# Prebuilt binaries, so a second machine is not a second toolchain.
+#
+# `install.sh` shipped building from a source tarball, because there was nothing
+# to download. That put rustup on every box that wanted to take gate work — which
+# is backwards: `comp-checks` needs no checkout and no cargo, it materialises the
+# candidate tree from the request and runs the commands the CHECKS name. Whatever
+# toolchain those need is the project's business, not Holon's, and a worker gating
+# a Python repo has no reason to hold a Rust compiler.
+#
+# Tag a release to publish:  git tag v0.1.0 && git push --tags
+# Or run it by hand against any ref, which uploads to a pre-release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish as (a pre-release when run by hand)"
+        required: true
+        default: v0.0.0-dev
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: macos-14
+          # macos-15-intel, not macos-13: the 13 image is retired, and actionlint
+          # knows the current label list — which is the only reason this was
+          # caught before a tag rather than during one.
+          - target: darwin-x86_64
+            runner: macos-15-intel
+          # 22.04, not latest. A binary linked against a newer glibc will not run
+          # on an older distro, and the failure is `GLIBC_2.38 not found` at exec
+          # — after the install script has already reported success.
+          - target: linux-x86_64
+            runner: ubuntu-22.04
+          - target: linux-aarch64
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: reconciler -> target
+          key: ${{ matrix.target }}
+
+      # Five cargo workspaces, not one, so each binary is built where it lives.
+      - name: build
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for bin in comp-checks comp-plug comp-field comp-relay comp-goalrun comp-goald; do
+            ( cd reconciler && cargo build --release --bin "$bin" )
+            cp "reconciler/target/release/$bin" dist/
+          done
+          ( cd host && cargo build --release --bin comp-host ) && cp host/target/release/comp-host dist/
+          ( cd cli  && cargo build --release --bin holon )     && cp cli/target/release/holon     dist/
+          strip dist/* 2>/dev/null || true
+          ls -l dist
+
+      # Two archives, because the sets are wildly different sizes and the small
+      # one is the one a fleet actually pulls: comp-checks is ~1 MB against ~50 MB
+      # for the set that includes a wasmtime host. A worker downloading the host
+      # it will never run is the kind of waste nobody notices and everybody pays.
+      - name: package
+        run: |
+          set -euo pipefail
+          t=${{ matrix.target }}
+          tar -czf "holon-worker-$t.tar.gz" -C dist comp-checks
+          tar -czf "holon-full-$t.tar.gz" -C dist .
+          shasum -a 256 holon-*-"$t".tar.gz > "holon-$t.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            holon-*.tar.gz
+            holon-*.sha256
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          cat holon-*.sha256 > SHA256SUMS
+          rm -f holon-*.sha256
+          # A hand-run build is a PRE-release. The install script asks for the
+          # latest non-prerelease, so a dev build cannot become what everybody
+          # gets by being the most recent thing published.
+          pre=""
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && pre="--prerelease"
+          gh release create "$TAG" --repo "${{ github.repository }}" \
+            --title "$TAG" --generate-notes $pre \
+            holon-*.tar.gz SHA256SUMS

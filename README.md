@@ -41,8 +41,11 @@ curl -fsSL https://raw.githubusercontent.com/markkovari/holon/main/install.sh | 
 
 That installs `comp-checks` into `~/.holon/bin`, which is all a machine needs to
 run a candidate's checks: the tree arrives in the request, so a worker never has
-a copy of the project it is gating. `HOLON_ROLE=full` adds the host, the composer
-and the loop. Builds from a source tarball, macOS and Linux.
+a copy of the project it is gating — and no Rust, because the toolchain a check
+needs is the *gated project's* business, not this one's. `HOLON_ROLE=full` adds
+the host, the composer and the loop. Prebuilt for macOS and Linux, arm64 and
+x86_64; it builds from source only if there is no binary for the platform, and
+says so first.
 
 ```bash
 just compose-gate                    # components -> one .wasm
