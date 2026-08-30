@@ -214,8 +214,13 @@ impl Gate {
         let gate = Gate {
             child,
             base: format!("http://{addr}"),
+            // TEN MINUTES, and not because a gate is slow. A route that calls a model
+            // holds the connection while the model thinks, and the shell gates pass
+            // `anthropic:timeout=540` for exactly that. Fifteen seconds — what this was
+            // — dropped the reply gate mid-answer and reported it as a transport error,
+            // which reads as the app being broken rather than the client giving up.
             client: reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(15))
+                .timeout(Duration::from_secs(600))
                 .build()
                 .unwrap(),
         };
@@ -728,4 +733,55 @@ pub fn rfc3339(secs: u64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", tod / 3600, (tod % 3600) / 60, tod % 60)
+}
+
+/// The model endpoint a gate needs, or a loud skip.
+///
+/// Five gates judge behaviour that only exists when a real model answered: whether the
+/// reply is about the question, whether a verdict cites the rule it applied. Pointing
+/// them at `mock-provider` would prove the app plumbed a canned string through, which
+/// is a different test wearing the same name — so the REQUIREMENT is ported, not
+/// removed, and these skip without one exactly as the shell gates do.
+///
+/// A GET, which the shim answers 404 without spawning anything. Probing `/v1/messages`
+/// for real would spend a completion on liveness.
+///
+/// `SHIM_URL` overrides, and `.comp/csatapaci.env` documents the two ways to have one:
+/// `just openai-shim` in front of a local mlx server, or `just claude-shim` in front of
+/// a subscription.
+pub struct Shim {
+    url: String,
+}
+
+impl Shim {
+    pub fn probe(gate_name: &str) -> Option<Self> {
+        let url = std::env::var("SHIM_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".into());
+        let alive = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .ok()
+            .and_then(|c| c.get(format!("{url}/")).send().ok())
+            .map(|r| r.status().as_u16() == 404)
+            .unwrap_or(false);
+        if !alive {
+            eprintln!(
+                "SKIPPED [{gate_name}]: no model shim at {url} — start one with \
+                 `just openai-shim` (a local mlx server) or `just claude-shim` (a \
+                 subscription), or set SHIM_URL"
+            );
+            return None;
+        }
+        Some(Self { url })
+    }
+
+    /// `anthropic:base-url` and a long timeout: a thinking model on a local box takes
+    /// minutes, and 540 is what the shell gates pass.
+    pub fn config(&self) -> Vec<String> {
+        vec![format!("anthropic:base-url={}", self.url), "anthropic:timeout=540".into()]
+    }
+
+    /// The authority the component must be granted to reach it.
+    pub fn egress(&self) -> String {
+        self.url.trim_start_matches("http://").trim_start_matches("https://").to_string()
+    }
 }
