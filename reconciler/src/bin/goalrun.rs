@@ -177,10 +177,22 @@ struct Args {
     /// candidate path against the shared cargo cache, including the recompile, the
     /// composition, booting a host and fifteen HTTP assertions, is 2.3 SECONDS.
     ///
-    /// The budget goes to the model. From one real run's host log, 11 completed
-    /// calls: median 64s, mean 80s, slowest 174s. A branch makes up to `attempts`
-    /// of those in sequence, so two from the slow tail plus the gate lands on 300s
-    /// exactly — which is why some branches die and others do not.
+    /// The budget goes to the model. From one real run's host log against the API,
+    /// 11 completed calls: median 64s, mean 80s, slowest 174s. A branch makes up to
+    /// `attempts` of those in sequence, so two from the slow tail plus the gate lands
+    /// on 300s exactly — which is why some branches die and others do not.
+    ///
+    /// A LOCAL model moves the numbers by an order of magnitude, and the same
+    /// arithmetic then argues for a much larger budget. Measured twice against
+    /// Qwen3.8-27B-4bit on `csatapaci`, the mlx server `.comp/csatapaci.env` points at:
+    ///
+    ///     prompt 5266 tok, out 2048 tok    417s / 303s
+    ///     prompt 5261 tok, out  138 tok     64s /  69s
+    ///
+    /// The first row is a branch's real shape — a contract and a base tree in, a module
+    /// out — so two attempts is 600-834s, and `GOAL_TIMEOUT` is 1800 there rather than
+    /// 900. Note which end is slow: 64s for 138 output tokens is almost all prefill, so
+    /// a bigger CONTRACT costs more than a longer answer.
     ///
     /// What a branch over budget looks like is not a timeout message: the
     /// reconciler's client hangs up,
