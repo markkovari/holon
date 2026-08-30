@@ -332,7 +332,12 @@ fn no_script_is_pinned_to_one_machine() {
             }
             let is_script =
                 path.extension().is_some_and(|x| x == "sh" || x == "mjs" || x == "py" || x == "rs");
-            if !(is_script || rel == "Justfile") {
+            // `just/*.just` too: the Justfile was split by concern, and a hard-coded
+            // path in a fragment is pinned to one machine exactly as much as one in
+            // the root file. Matching on the extension rather than listing the four
+            // fragments, so a fifth is covered the day it is added.
+            let is_just = rel == "Justfile" || rel.ends_with(".just");
+            if !(is_script || is_just) {
                 continue;
             }
             // This file spells the needles out in order to look for them.
