@@ -8,10 +8,20 @@
 //
 // Config (wasi:config/store):
 //   checks-url   where comp-checks is listening, e.g. http://127.0.0.1:8099
+//
+// Secret (comp:secrets/reader):
+//   checks-token  bearer token for that runner, granted by reference in the
+//                 manifest. Optional: a runner on loopback needs none, and a
+//                 runner reachable over a network refuses to start without one.
+//                 It is a secret rather than config for the ordinary reason
+//                 (ADR-0051) and one specific one — the thing it authenticates
+//                 to RUNS COMMANDS, so a token in a config map that every debug
+//                 endpoint dumps is a remote code execution with extra steps.
 package checks:runner@0.1.0;
 
 world checks-runner {
     export graph:fitness/evaluator@0.2.0;
     import wasi:http/outgoing-handler@0.2.0;
     import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
 }

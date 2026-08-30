@@ -31,6 +31,15 @@
 //! candidate is written by an agent, and an agent that can name `../../etc` or run
 //! an arbitrary shell string on the machine holding the fleet's credentials is a
 //! remote code execution with extra steps.
+//!
+//! ## Off the loopback, a token is not optional
+//!
+//! `--allow` bounds the COMMAND, not the TREE — and `cargo test` on a tree
+//! somebody else wrote runs that tree's `build.rs`. Loopback is what has been
+//! holding that closed, so binding anywhere else without `--token-file` is
+//! refused at startup rather than warned about. A second machine taking gate work
+//! is the whole reason this listens on a socket at all, and it is also the moment
+//! the boundary has to become something other than "nobody else can reach it".
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -81,6 +90,15 @@ struct Args {
     /// Seconds any single check may take before it is killed.
     #[arg(long, default_value = "300")]
     timeout: u64,
+
+    /// A FILE holding the bearer token callers must present. Never a value.
+    ///
+    /// A path, so the secret never lands in argv where every user on the box can
+    /// read it off `ps` — the same rule `comp-goalrun --surreal-password-file`
+    /// already follows. Optional on loopback; REQUIRED anywhere else, because
+    /// what is on the other end of an allowed command is somebody else's code.
+    #[arg(long)]
+    token_file: Option<PathBuf>,
 
     /// Extra `KEY=VALUE` environment for the check command, repeatable.
     ///
@@ -464,6 +482,55 @@ fn respond(mut stream: TcpStream, status: u16, body: &str) {
     let _ = stream.flush();
 }
 
+/// Is this address one only this machine can reach?
+///
+/// Parsed rather than string-matched: `127.0.0.1`, `127.9.9.9`, `::1` and
+/// `localhost:8099` are all loopback, and `0.0.0.0` is emphatically not — a
+/// substring test for "127." would pass `10.0.127.4` and fail `::1`.
+///
+/// A name that does not resolve is treated as NOT loopback. The safe side of an
+/// unknown is the side that demands the token.
+fn is_loopback(addr: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    match addr.to_socket_addrs() {
+        Ok(mut it) => {
+            let addrs: Vec<_> = it.by_ref().collect();
+            !addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback())
+        }
+        Err(_) => false,
+    }
+}
+
+/// The `Authorization: Bearer` value a caller presented, if any.
+fn bearer(head: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(head).lines().find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        if !k.eq_ignore_ascii_case("authorization") {
+            return None;
+        }
+        let v = v.trim();
+        // RFC 7235 §2.1: the scheme name is case-insensitive. `bearer x` is a
+        // valid credential and rejecting it is a bug that reads as a wrong token.
+        let (scheme, rest) = v.split_once(' ')?;
+        scheme.eq_ignore_ascii_case("bearer").then(|| rest.trim().to_string())
+    })
+}
+
+/// Compare in time that does not depend on where the mismatch is.
+///
+/// `==` on a String returns at the first differing byte, which leaks the length
+/// of the matching prefix to anything that can time the response. Over a network
+/// that is a real oracle, and this is the one comparison on this path that stands
+/// between a caller and running commands.
+fn token_matches(expected: &str, given: &str) -> bool {
+    let (a, b) = (expected.as_bytes(), given.as_bytes());
+    let mut diff = a.len() ^ b.len();
+    for i in 0..a.len().max(b.len()) {
+        diff |= usize::from(a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(1));
+    }
+    diff == 0
+}
+
 fn serve(args: Args) -> Result<()> {
     let allow: Vec<Vec<String>> =
         args.allow.iter().map(|a| a.split_whitespace().map(str::to_string).collect()).collect();
@@ -479,6 +546,40 @@ fn serve(args: Args) -> Result<()> {
         }
     }
 
+    let token = match &args.token_file {
+        Some(p) => {
+            let t = std::fs::read_to_string(p)
+                .with_context(|| format!("reading --token-file {}", p.display()))?
+                .trim()
+                .to_string();
+            if t.is_empty() {
+                bail!("--token-file {} is empty", p.display());
+            }
+            Some(t)
+        }
+        None => None,
+    };
+    // The refusal, not a warning. A runner that printed "this is insecure" and
+    // listened anyway would be found in that state months later by someone who
+    // never saw the line.
+    if token.is_none() && !is_loopback(&args.addr) {
+        bail!(
+            "refusing to listen on {} without --token-file.\n\
+             \n\
+             --allow bounds the COMMAND, not the tree it runs over, and `cargo test` on a tree \
+             an agent wrote runs that tree's build.rs. On loopback the loopback is the boundary; \
+             off it, there has to be one.\n\
+             \n\
+             Make a token and point both ends at it:\n\
+             \x20 head -c 32 /dev/urandom | base64 > ~/.comp-secrets/checks\n\
+             \x20 comp-checks --addr {} --token-file ~/.comp-secrets/checks …\n\
+             \x20 comp-goalrun --checks-url http://<this-host>:<port>/check \
+             --checks-token-file ~/.comp-secrets/checks …",
+            args.addr,
+            args.addr
+        );
+    }
+
     let listener =
         TcpListener::bind(&args.addr).with_context(|| format!("binding {}", args.addr))?;
     eprintln!(
@@ -490,6 +591,13 @@ fn serve(args: Args) -> Result<()> {
             .unwrap_or_else(|| "(sent per request)".into()),
         allow.len(),
         args.timeout
+    );
+    // Said at startup, because "is this one authenticated" is the question a
+    // person asks about a runner they did not start, and reading it off the
+    // command line means finding the command line.
+    eprintln!(
+        "comp-checks: auth {}",
+        if token.is_some() { "bearer token required" } else { "none (loopback only)" }
     );
 
     let mut seq: u64 = 0;
@@ -541,6 +649,23 @@ fn serve(args: Args) -> Result<()> {
             respond(stream, 400, r#"{"error":"no headers"}"#);
             continue;
         };
+        if let Some(expected) = &token {
+            if !bearer(&buf[..pos]).is_some_and(|g| token_matches(expected, &g)) {
+                // The peer, because the useful fact about a rejected call is
+                // WHERE it came from — a misconfigured runner of your own and a
+                // stranger look identical without it.
+                eprintln!(
+                    "comp-checks: rejected an unauthenticated request from {}",
+                    stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "?".into())
+                );
+                respond(
+                    stream,
+                    401,
+                    r#"{"error":"this runner requires a bearer token; see --token-file"}"#,
+                );
+                continue;
+            }
+        }
         let raw = &buf[pos..];
         let decoded;
         let body: &[u8] = if chunked {

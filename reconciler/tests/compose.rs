@@ -252,6 +252,8 @@ fn two_parts_negotiate_a_contract_and_land_one_joined_tree() {
             driver_url: &format!("http://127.0.0.1:{port}/run"),
             driver_host: "composedrive.acme.test",
             checks_url: &format!("http://127.0.0.1:{}/check", checks.port),
+            // This harness starts its own runner on loopback with no token.
+            checks_token: None,
             registry: &registry,
             answerer: Some(&answerer),
             // The parts read, write and attribute against a real pool here too, so

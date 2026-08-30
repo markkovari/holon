@@ -103,6 +103,30 @@ struct Args {
     /// `CHECK_TIMEOUT` in the environment sets it for a whole run.
     #[arg(long, env = "CHECK_TIMEOUT", default_value = "120")]
     check_timeout: u64,
+    /// Use a `comp-checks` that is ALREADY RUNNING, instead of starting one here.
+    ///
+    /// This is what makes the gate a second machine's job. `comp-checks`
+    /// materialises the candidate tree from the request, so the box on the other
+    /// end needs no checkout of the project being gated and no toolchain beyond
+    /// what the checks themselves name — which is the shape the runner was
+    /// written for and, until this flag, the shape nothing could ask for.
+    ///
+    ///   --checks-url http://malna:8099/check --checks-token-file ~/.comp-secrets/checks
+    ///
+    /// The URL's authority also goes into the gate component's egress allow-list,
+    /// because a component may only dial what the manifest names (ADR-0008).
+    #[arg(long)]
+    checks_url: Option<String>,
+    /// A FILE holding the bearer token for `--checks-url`. Never a value.
+    ///
+    /// Required with a `--checks-url` that is not loopback, for the reason
+    /// `comp-checks` refuses to listen off the loopback without one: `--allow`
+    /// bounds the command, not the tree it runs over.
+    ///
+    /// Ignored when the runner is started here — that one gets a freshly minted
+    /// token nobody has to manage.
+    #[arg(long)]
+    checks_token_file: Option<PathBuf>,
     /// Skip the whole search when a past passing run of a goal this similar is on
     /// record. Cosine; 0.9 is alpha-swarm2's and is high on purpose — redoing work
     /// costs money, skipping work that was never done is a wrong answer.
@@ -460,10 +484,131 @@ fn head_commit(checkout: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// A bearer token nobody has to manage: 32 bytes of the OS's randomness, hex.
+///
+/// Minted per run rather than configured, because a token for a runner this
+/// process starts and kills has no reason to outlive it — and a generated secret
+/// is one that cannot be left at its default.
+fn mint_token() -> Result<String> {
+    let mut b = [0u8; 32];
+    std::io::Read::read_exact(
+        &mut std::fs::File::open("/dev/urandom").context("opening /dev/urandom")?,
+        &mut b,
+    )
+    .context("reading /dev/urandom")?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
+}
+
+/// Is this `host:port` one only this machine can reach?
+///
+/// Resolved rather than string-matched, and an unresolvable name counts as NOT
+/// loopback — the safe side of an unknown is the side that demands a token.
+fn authority_is_loopback(authority: &str) -> bool {
+    use std::net::ToSocketAddrs;
+    let with_port =
+        if authority.contains(':') { authority.to_string() } else { format!("{authority}:80") };
+    match with_port.to_socket_addrs() {
+        Ok(it) => {
+            let a: Vec<_> = it.collect();
+            !a.is_empty() && a.iter().all(|x| x.ip().is_loopback())
+        }
+        Err(_) => false,
+    }
+}
+
+/// Where the gate is: a runner this process started, or one already listening
+/// somewhere else.
+///
+/// The two cases differ only in who owns the process. Everything downstream —
+/// the manifest's `checks-url`, its egress entry, the token granted to the gate
+/// component, the direct POST that gates a composition — reads the same three
+/// answers from here, so a remote gate cannot be half-wired.
+enum Gate {
+    /// Started here, killed with the run.
+    Local(Checks),
+    Remote {
+        url: String,
+        token_file: PathBuf,
+    },
+}
+
+impl Gate {
+    fn open(args: &Args, allow: &[&str], check_env: &[String]) -> Result<Self> {
+        let Some(url) = args.checks_url.clone() else {
+            return Ok(Gate::Local(Checks::start(allow, check_env, args.check_timeout)?));
+        };
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            bail!("--checks-url must start with http:// or https://, got {url:?}");
+        }
+        let authority = egress_authority(&url);
+        let token_file = match (&args.checks_token_file, authority_is_loopback(&authority)) {
+            (Some(p), _) => {
+                if !p.is_file() {
+                    bail!("--checks-token-file {} does not exist", p.display());
+                }
+                p.clone()
+            }
+            // The same refusal `comp-checks` makes at its own end, made here too:
+            // a runner that demanded a token and a caller that never sends one
+            // fail as 401 on every candidate, which reads as a broken gate rather
+            // than as a missing flag.
+            (None, false) => bail!(
+                "--checks-url {url} is not on this machine, so it needs --checks-token-file.\n\
+                 \n\
+                 The runner at the other end refuses to listen off the loopback without a token \
+                 for the same reason: --allow bounds the COMMAND, not the tree it runs over.\n\
+                 \n\
+                 \x20 head -c 32 /dev/urandom | base64 > ~/.comp-secrets/checks   # on both boxes"
+            ),
+            // A loopback runner somebody else started. Its own guard already
+            // allows this, so refusing it here would be a second opinion.
+            (None, true) => {
+                let dir = std::env::temp_dir().join(format!("comp-goalrun-{}", std::process::id()));
+                std::fs::create_dir_all(&dir)?;
+                let p = dir.join("checks-token");
+                std::fs::write(&p, "")?;
+                p
+            }
+        };
+        eprintln!("goalrun: gate is {url} (not started here)");
+        Ok(Gate::Remote { url, token_file })
+    }
+
+    fn url(&self) -> String {
+        match self {
+            Gate::Local(c) => format!("http://127.0.0.1:{}/check", c.port),
+            Gate::Remote { url, .. } => url.clone(),
+        }
+    }
+
+    /// What the gate component is allowed to dial. A manifest decision, so it has
+    /// to be the real host and not a stand-in (ADR-0008).
+    fn authority(&self) -> String {
+        egress_authority(&self.url())
+    }
+
+    fn token_file(&self) -> &Path {
+        match self {
+            Gate::Local(c) => &c.token_file,
+            Gate::Remote { token_file, .. } => token_file,
+        }
+    }
+
+    /// The token itself, for the one call that is made from here rather than from
+    /// the gate component: the composition gate.
+    fn token(&self) -> Option<String> {
+        std::fs::read_to_string(self.token_file())
+            .ok()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+    }
+}
+
 /// The native gate runner, alive for the run.
 struct Checks {
     child: Child,
     port: u16,
+    token_file: PathBuf,
     _dir: tempfile::TempDir,
 }
 impl Drop for Checks {
@@ -476,10 +621,22 @@ impl Checks {
     fn start(allow: &[&str], check_env: &[String], timeout: u64) -> Result<Self> {
         let dir = tempfile::tempdir()?;
         let port = free_port();
+        // Authenticated even on loopback. Not because loopback is unsafe, but
+        // because the alternative is one code path used every day and a second
+        // one used only when someone points at another box — and the second is
+        // the one that matters. Minted here, so it costs the operator nothing.
+        let token_file = dir.path().join("token");
+        std::fs::write(&token_file, mint_token()?)?;
+        // The work directory is a SUBDIRECTORY, so the runner's throwaway trees
+        // and cached bases never share a parent with the token file.
+        let work = dir.path().join("work");
+        std::fs::create_dir_all(&work)?;
         let mut cmd = Command::new(bin_path("comp-checks"));
         cmd.args(["--addr", &format!("127.0.0.1:{port}")])
             .arg("--work-dir")
-            .arg(dir.path())
+            .arg(&work)
+            .arg("--token-file")
+            .arg(&token_file)
             .args(["--timeout", &timeout.to_string()]);
         for a in allow {
             cmd.args(["--allow", a]);
@@ -488,7 +645,7 @@ impl Checks {
             cmd.args(["--check-env", e]);
         }
         let child = cmd.stdout(Stdio::null()).stderr(Stdio::inherit()).spawn()?;
-        let me = Self { child, port, _dir: dir };
+        let me = Self { child, port, token_file, _dir: dir };
         let deadline = Instant::now() + Duration::from_secs(20);
         while Instant::now() < deadline {
             if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -639,22 +796,22 @@ fn seed_capability_graph(url: &str, password: Option<&str>) {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let bin = bin_path("comp-capgraph");
-    let out = match Command::new(&bin).args(["--format", "surql", "--gen", &gen.to_string()]).output()
-    {
-        Ok(o) if o.status.success() => o.stdout,
-        Ok(o) => {
-            println!(
-                "capability graph not seeded: comp-capgraph exited {} — {}",
-                o.status,
-                String::from_utf8_lossy(&o.stderr).trim()
-            );
-            return;
-        }
-        Err(e) => {
-            println!("capability graph not seeded: could not run {} ({e})", bin.display());
-            return;
-        }
-    };
+    let out =
+        match Command::new(&bin).args(["--format", "surql", "--gen", &gen.to_string()]).output() {
+            Ok(o) if o.status.success() => o.stdout,
+            Ok(o) => {
+                println!(
+                    "capability graph not seeded: comp-capgraph exited {} — {}",
+                    o.status,
+                    String::from_utf8_lossy(&o.stderr).trim()
+                );
+                return;
+            }
+            Err(e) => {
+                println!("capability graph not seeded: could not run {} ({e})", bin.display());
+                return;
+            }
+        };
 
     let http = match reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build() {
         Ok(c) => c,
@@ -730,7 +887,11 @@ fn wait_serving(port: u16, host: &str, within: Duration) -> Result<()> {
 /// Deduped, and `writable` wins. A path in both lists would otherwise be sent twice
 /// — paid for on every attempt, and the second copy stripped differently from the
 /// first, which is a worse bug than the cost.
-fn branch_context(checkout: &std::path::Path, writable: &[String], readonly: &[String]) -> Vec<Value> {
+fn branch_context(
+    checkout: &std::path::Path,
+    writable: &[String],
+    readonly: &[String],
+) -> Vec<Value> {
     let mut seen = std::collections::BTreeSet::new();
     let mut out = Vec::new();
     for (path, strip) in
@@ -747,7 +908,9 @@ fn branch_context(checkout: &std::path::Path, writable: &[String], readonly: &[S
             // Loud, because a typo'd context path is otherwise silent: the branch is
             // simply not shown the file and writes blind again, which is the failure
             // the field exists to remove.
-            Err(e) => println!("context: `{path}` could not be read ({e}) — the branch will not see it"),
+            Err(e) => {
+                println!("context: `{path}` could not be read ({e}) — the branch will not see it")
+            }
         }
     }
     out
@@ -872,12 +1035,11 @@ fn gates_missing_from_the_tree(goal: &GoalSpec, tree: &[Value]) -> Vec<String> {
 fn gate_can_judge(
     goal: &GoalSpec,
     checks: &[Value],
-    gate_port: u16,
+    gate: &Gate,
     base_commit: &str,
     tree: &[Value],
     timeout: u64,
 ) -> bool {
-
     let missing = gates_missing_from_the_tree(goal, tree);
     if !missing.is_empty() {
         println!("\nREFUSED — a gate that cannot run cannot judge:\n");
@@ -902,7 +1064,8 @@ fn gate_can_judge(
         }));
     }
     match compose::criticise(
-        &format!("http://127.0.0.1:{gate_port}/check"),
+        &gate.url(),
+        gate.token().as_deref(),
         base_commit,
         &json!(tree),
         &json!(every_check),
@@ -1585,8 +1748,9 @@ fn main() -> Result<()> {
         },
     );
 
-    // Bring the gate up first, so the driver fixture can point at it.
-    let gate = Checks::start(&allow, &check_env, args.check_timeout)?;
+    // Bring the gate up first, so the driver fixture can point at it — or find
+    // out where the one somebody else is running lives.
+    let gate = Gate::open(&args, &allow, &check_env)?;
 
     set_fleet_timeouts(&args);
     // The provider's own default when nobody named a base URL, so `--provider
@@ -1603,7 +1767,8 @@ fn main() -> Result<()> {
         "goalrun-driver.yaml",
         &[
             ("PROVIDER", &args.provider),
-            ("CHECKS_PORT", &gate.port.to_string()),
+            ("CHECKS_URL", &gate.url()),
+            ("CHECKS_AUTHORITY", &gate.authority()),
             ("LLM_MODEL", &args.model),
             ("MAX_TOKENS", &args.max_tokens.to_string()),
             ("LLM_BASE_URL", &base_url),
@@ -1617,6 +1782,7 @@ fn main() -> Result<()> {
     let mut secrets = vec![
         format!("vault://acme/llmkey=@{}", args.llm_key.display()),
         format!("vault://acme/forge=@{}", args.github_token.display()),
+        format!("vault://acme/checkstoken=@{}", gate.token_file().display()),
     ];
 
     let mut specs =
@@ -1761,7 +1927,7 @@ fn main() -> Result<()> {
     };
 
     // --- criticise the gate, before the money -------------------------------
-    if !gate_can_judge(&goal, &checks, gate.port, &base_commit, &tree, args.timeout) {
+    if !gate_can_judge(&goal, &checks, &gate, &base_commit, &tree, args.timeout) {
         return Ok(());
     }
 
@@ -1830,7 +1996,7 @@ fn main() -> Result<()> {
             &args,
             &goal,
             port,
-            gate.port,
+            &gate,
             memory.clone(),
             &context,
             &tree,
@@ -2146,7 +2312,7 @@ fn decomposed(
     args: &Args,
     goal: &GoalSpec,
     port: u16,
-    checks_port: u16,
+    gate: &Gate,
     memory_for_parts: Option<Memory>,
     // Kept in the signature and unused on purpose: a part is shown its OWN files
     // plus what its `context` names, never the goal's top-level list — the bug
@@ -2287,7 +2453,8 @@ fn decomposed(
         &compose::Wiring {
             driver_url: &format!("http://127.0.0.1:{port}/run"),
             driver_host: "goalrun.acme.test",
-            checks_url: &format!("http://127.0.0.1:{checks_port}/check"),
+            checks_url: &gate.url(),
+            checks_token: gate.token().as_deref(),
             registry: &registry,
             answerer: Some(&answerer),
             // A decomposed run reads, writes, attributes and forgets exactly as an
@@ -2421,7 +2588,10 @@ fn decomposed(
         // discard in the loop.
         if let Some(changes) = &run.changes {
             match write_candidate(&args.checkout, changes) {
-                Ok(dir) => println!("\n  the merged tree is in {} (it did not pass the join)", dir.display()),
+                Ok(dir) => println!(
+                    "\n  the merged tree is in {} (it did not pass the join)",
+                    dir.display()
+                ),
                 Err(e) => println!("\n  WARNING: the merged tree could not be written out ({e})"),
             }
         }
@@ -2445,7 +2615,9 @@ fn decomposed(
                 println!("  the joined tree is in {}", dir.display());
                 println!("  apply: rsync -a {}/ .", dir.display());
             }
-            Err(e) => println!("  WARNING: the joined tree could not be written out ({e}) — it is lost"),
+            Err(e) => {
+                println!("  WARNING: the joined tree could not be written out ({e}) — it is lost")
+            }
         }
         resolve("dry-run", "");
         return Ok(());
@@ -2520,8 +2692,9 @@ fn decomposed(
 #[cfg(test)]
 mod tests {
     use super::{
-        branch_context, component_scope, egress_authority, gates_missing_from_the_tree,
-        join_failure_owners, new_capabilities, trim_members, CheckSpec, GoalSpec, PartSpec,
+        authority_is_loopback, branch_context, component_scope, egress_authority,
+        gates_missing_from_the_tree, join_failure_owners, mint_token, new_capabilities,
+        trim_members, CheckSpec, GoalSpec, PartSpec,
     };
     use serde_json::json;
 
@@ -2649,7 +2822,11 @@ command = ["cargo", "test"]
     /// Parsed with the same crate cargo would use, so "valid TOML" is not an opinion.
     fn toml_is_parseable(text: &str) {
         let parsed: Result<toml::Value, _> = toml::from_str(text);
-        assert!(parsed.is_ok(), "the trimmed manifest is not valid TOML: {:?}\n{text}", parsed.err());
+        assert!(
+            parsed.is_ok(),
+            "the trimmed manifest is not valid TOML: {:?}\n{text}",
+            parsed.err()
+        );
     }
 
     /// A path in both `writable` and `context` is sent once, and as the WRITABLE
@@ -2761,10 +2938,15 @@ command = ["cargo", "test"]
             "a shipped script is fine"
         );
 
-        let missing = gates_missing_from_the_tree(&goal(vec!["bash", "components/x/absent.sh"]), &tree);
+        let missing =
+            gates_missing_from_the_tree(&goal(vec!["bash", "components/x/absent.sh"]), &tree);
         assert_eq!(missing.len(), 1, "{missing:?}");
         assert!(missing[0].contains("absent.sh"), "{}", missing[0]);
-        assert!(missing[0].contains("no such file"), "not on disk either, so say so: {}", missing[0]);
+        assert!(
+            missing[0].contains("no such file"),
+            "not on disk either, so say so: {}",
+            missing[0]
+        );
 
         // The discriminator has to leave ordinary commands alone. None of these
         // names a repo script, and refusing any of them would break real goals.
@@ -2905,5 +3087,31 @@ command = ["cargo", "test"]
             { "path": "components/", "content": "" },
         ]);
         assert!(new_capabilities(&files).is_empty());
+    }
+
+    /// The line between "the loopback is the boundary" and "there has to be one".
+    ///
+    /// Resolved, not string-matched: a substring test for `127.` accepts
+    /// `10.0.127.4` and rejects `::1`, and both mistakes point the same way —
+    /// letting a runner that runs commands listen where a second machine can
+    /// reach it with nothing in front of it.
+    #[test]
+    fn what_counts_as_only_this_machine() {
+        for local in ["127.0.0.1:8099", "localhost:8099", "[::1]:8099", "127.9.9.9:1"] {
+            assert!(authority_is_loopback(local), "{local} is loopback");
+        }
+        for remote in ["0.0.0.0:8099", "10.0.127.4:8099", "example.invalid:8099"] {
+            assert!(!authority_is_loopback(remote), "{remote} is not");
+        }
+    }
+
+    /// A token that is 64 hex characters and not the same one twice.
+    #[test]
+    fn a_minted_token_is_random_and_hex() {
+        let a = mint_token().expect("/dev/urandom");
+        let b = mint_token().expect("/dev/urandom");
+        assert_eq!(a.len(), 64, "32 bytes as hex: {a}");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()), "{a}");
+        assert_ne!(a, b, "two runs minted the same token");
     }
 }

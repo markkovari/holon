@@ -90,6 +90,83 @@ impl Runner {
         panic!("comp-checks never listened on {port}");
     }
 
+    /// A runner that demands a bearer token, and the token it demands.
+    ///
+    /// Loopback still, because what is under test is the CHECK, not the bind
+    /// guard — those are two different refusals and a test that needed a routable
+    /// address to exercise one of them would not run in CI.
+    fn with_token(allow: &[&str], token: &str) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let tok = dir.path().join("token");
+        std::fs::write(&tok, format!("{token}\n")).unwrap();
+        let port = free_port();
+        let mut cmd = Command::new(bin_path("comp-checks"));
+        cmd.args(["--addr", &format!("127.0.0.1:{port}")])
+            .arg("--work-dir")
+            .arg(dir.path().join("work"))
+            .arg("--token-file")
+            .arg(&tok)
+            .args(["--timeout", "30"]);
+        for a in allow {
+            cmd.args(["--allow", a]);
+        }
+        let child = cmd.stdout(Stdio::null()).stderr(Stdio::piped()).spawn().expect("comp-checks");
+        let me = Self { child, port, _dir: dir };
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return me;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("comp-checks never listened on {port}");
+    }
+
+    /// POST with whatever `authorization` header is given, and hand back the
+    /// STATUS as well — which is the whole answer when the question is auth.
+    fn evaluate_as(&self, auth: Option<&str>, body: Value) -> (u16, Value) {
+        let payload = body.to_string();
+        let mut last = String::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        while std::time::Instant::now() < deadline {
+            match Self::once_as(self.port, auth, &payload) {
+                Ok(v) => return v,
+                Err(e) => {
+                    last = e;
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            }
+        }
+        panic!("the runner never answered — {last}");
+    }
+
+    fn once_as(
+        port: u16,
+        auth: Option<&str>,
+        payload: &str,
+    ) -> std::result::Result<(u16, Value), String> {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
+        let auth_line = auth.map(|a| format!("authorization: {a}\r\n")).unwrap_or_default();
+        s.write_all(
+            format!(
+                "POST /check HTTP/1.1\r\nhost: localhost\r\n{auth_line}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+                payload.len()
+            )
+            .as_bytes(),
+        )
+        .map_err(|e| e.to_string())?;
+        let mut out = String::new();
+        s.read_to_string(&mut out).map_err(|e| e.to_string())?;
+        let status: u16 = out
+            .split_whitespace()
+            .nth(1)
+            .and_then(|c| c.parse().ok())
+            .ok_or_else(|| format!("no status line in {out:?}"))?;
+        let body = out.split("\r\n\r\n").nth(1).unwrap_or_default();
+        let v = serde_json::from_str(body).map_err(|e| format!("unreadable ({e}): {out}"))?;
+        Ok((status, v))
+    }
+
     /// POST a candidate and read the report. Hand-rolled because the runner is
     /// deliberately a few hundred lines of std and does not deserve a client.
     fn evaluate(&self, body: Value) -> Value {
@@ -339,4 +416,84 @@ fn a_runner_with_no_checkout_is_fed_its_tree_and_caches_it() {
     );
 
     println!("    no checkout: tree posted once, cached by commit, reused clean");
+}
+
+/// A runner off the loopback with no token REFUSES TO START.
+///
+/// The property under test is that it is a refusal and not a warning. A runner
+/// that printed "this is insecure" and listened anyway would be found in that
+/// state months later by somebody who never saw the line — and what is on the
+/// other end of an allowed command is a tree an agent wrote.
+#[test]
+fn listening_off_the_loopback_without_a_token_is_refused() {
+    let out = Command::new(bin_path("comp-checks"))
+        .args(["--addr", "0.0.0.0:0", "--allow", "true"])
+        .output()
+        .expect("comp-checks");
+    let said =
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+
+    assert!(!out.status.success(), "it started anyway, and said: {said}");
+    assert!(
+        said.contains("--token-file"),
+        "the refusal has to name the flag that fixes it, and said: {said}"
+    );
+    assert!(
+        said.contains("--allow bounds the COMMAND"),
+        "and why, because 'refusing to listen' alone reads as a bug: {said}"
+    );
+
+    // 127.0.0.1 is the same runner with a different address, and it must NOT be
+    // refused — otherwise this guard breaks every local gate to protect the
+    // remote case, which is how a safety check gets deleted.
+    let mut child = Command::new(bin_path("comp-checks"))
+        .args(["--addr", &format!("127.0.0.1:{}", free_port()), "--allow", "true"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("comp-checks");
+    std::thread::sleep(Duration::from_millis(600));
+    let alive = child.try_wait().expect("try_wait").is_none();
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(alive, "a loopback runner with no token must still start");
+}
+
+/// With a token, an unauthenticated request is 401 and runs nothing.
+#[test]
+fn a_runner_with_a_token_answers_401_and_runs_nothing() {
+    let runner = Runner::with_token(&["test", "touch"], "s3cret-token");
+
+    // The check would create a file if it ran, which is how "refused" is told
+    // apart from "ran and failed" — a 401 that still executed the command would
+    // pass a test that only read the status.
+    let witness = runner._dir.path().join("ran");
+    let body = json!({
+        "candidate": "stranger",
+        "base_commit": "deadbeef",
+        "base_tree": [{ "path": "VERSION", "content": "base\n" }],
+        "changes": [],
+        "checks": [check("side-effect", true, 1, &["touch", witness.to_str().unwrap()])],
+    });
+
+    for (label, auth) in [
+        ("no header at all", None),
+        ("the wrong token", Some("Bearer not-the-token")),
+        ("a prefix of the right one", Some("Bearer s3cret")),
+        ("the token under another scheme", Some("Basic s3cret-token")),
+    ] {
+        let (status, v) = runner.evaluate_as(auth, body.clone());
+        assert_eq!(status, 401, "{label} was accepted: {v}");
+    }
+    assert!(!witness.exists(), "a rejected request ran its command anyway");
+
+    // And the right token works — including with a lower-case scheme, which
+    // RFC 7235 §2.1 makes a valid credential. Rejecting it is a bug that reads
+    // from the outside as a wrong token.
+    for auth in ["Bearer s3cret-token", "bearer s3cret-token", "BEARER  s3cret-token  "] {
+        let (status, v) = runner.evaluate_as(Some(auth), body.clone());
+        assert_eq!(status, 200, "{auth:?} was rejected: {v}");
+        assert_eq!(v["accepted"], json!(true), "{auth:?}: {v}");
+    }
+    assert!(witness.exists(), "the accepted request did not run its command");
 }

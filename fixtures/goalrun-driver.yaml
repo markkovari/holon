@@ -9,7 +9,17 @@
 # the model host for the writer's provider, the loopback checks port for the
 # gate. The key is a secret by reference, never config (ADR-0051).
 #
-# LLM_MODEL and CHECKS_PORT are rewritten by the runner before start.
+# LLM_MODEL, CHECKS_URL and CHECKS_AUTHORITY are rewritten by the runner before
+# start. A URL and an authority rather than a port, because the runner is not
+# necessarily on this machine — `comp-goalrun --checks-url` points the gate at a
+# second box, and the egress allow-list has to name whatever host that is or the
+# call is refused before it leaves (ADR-0008).
+#
+# The gate's token is a SECRET, never config: the thing it authenticates to runs
+# commands, so a bearer token in a config map that every debug endpoint dumps is
+# a remote code execution with extra steps. Always granted — the runner mints one
+# even for a loopback gate, so there is one code path rather than an
+# authenticated one nobody exercises locally.
 
 version: comp/v1
 app: goalrun
@@ -45,12 +55,16 @@ components:
 
   - id: gate
     config:
-      checks-url: http://127.0.0.1:CHECKS_PORT/check
+      checks-url: CHECKS_URL
+    secrets:
+      - key: checks-token
+        ref: vault://acme/checkstoken
     host_needs:
       - wasi:http/outgoing-handler
       - wasi:config/store
+      - comp:secrets/reader
     egress:
-      - 127.0.0.1:CHECKS_PORT
+      - CHECKS_AUTHORITY
 
 links:
   - from: probe

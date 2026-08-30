@@ -58,6 +58,32 @@ impl Checks {
         }
         panic!("comp-checks never listened");
     }
+
+    /// The same runner, behind a bearer token.
+    fn with_token(token_file: &std::path::Path) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let port = free_port();
+        let child = Command::new(bin_path("comp-checks"))
+            .args(["--addr", &format!("127.0.0.1:{port}")])
+            .arg("--work-dir")
+            .arg(dir.path())
+            .arg("--token-file")
+            .arg(token_file)
+            .args(["--allow", "test", "--allow", "grep", "--timeout", "30"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("comp-checks — run `cargo build --release` in reconciler/");
+        let me = Self { child, port, _dir: dir };
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                return me;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("comp-checks never listened");
+    }
 }
 
 fn artifacts() -> Vec<String> {
@@ -148,7 +174,19 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     let checks = Checks::start();
     std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
     let spec = spec_for(checks.port);
-    let fleet = Fleet::start_with_secrets("fitness", &[spec.to_str().unwrap()], &artifacts(), &[]);
+    // An EMPTY grant: this runner wants no token, and that is spelled as a secret
+    // with nothing in it rather than as a second manifest. The component filters
+    // an empty value out and sends no header, which is what this whole test then
+    // exercises — so "no token" stays a covered path rather than a missing one.
+    let dir = tempfile::tempdir().unwrap();
+    let none = dir.path().join("no-token");
+    std::fs::write(&none, "").unwrap();
+    let fleet = Fleet::start_with_secrets(
+        "fitness",
+        &[spec.to_str().unwrap()],
+        &artifacts(),
+        &[format!("vault://acme/checkstoken=@{}", none.display())],
+    );
     let probe = wait_for_probe(&fleet);
 
     let commit = "1111111111111111111111111111111111111111";
@@ -237,9 +275,15 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     // would have found 42 here.
     let outcomes = worst["outcomes"].as_array().cloned().unwrap_or_default();
     let fix = outcomes.iter().find(|o| o["id"] == json!("the-fix")).unwrap();
+    // `state`, not `passed`. The COMPONENT answers `graph:fitness`, whose outcome
+    // is a three-way state — passed / failed / not-attempted — because a check
+    // that never ran because its dependency failed is a different fact from one
+    // that ran and failed. `passed` is `comp-checks`'s own wire shape, one layer
+    // down, and reading it here got `null`, which is not `false` and failed this
+    // assertion for a candidate that behaved correctly.
     assert_eq!(
-        fix["passed"],
-        json!(false),
+        fix["state"],
+        json!("failed"),
         "a candidate saw an earlier one's edit — a cached base that accumulates makes \
          every later score wrong: {worst}"
     );
@@ -252,4 +296,95 @@ fn a_component_judges_a_candidate_by_running_real_commands() {
     assert_eq!(empty["error"], json!("invalid"), "an empty check list must be refused: {empty}");
 
     println!("    judged three candidates through a real runner: 1000, {mid}, {}", worst["score"]);
+}
+
+/// A runner behind a bearer token, reached through the component that was granted
+/// one — and the same runner refusing the component that was granted the wrong one.
+///
+/// This is the seam that makes the gate a SECOND MACHINE's job. `comp-checks`
+/// refuses to listen anywhere but loopback without `--token-file`, because
+/// `--allow` bounds the command and not the tree it runs over. So every remote
+/// gate is an authenticated one, and the credential has to survive the whole path
+/// this test covers and nothing else does: a manifest grant, the host's vault,
+/// `comp:secrets/reader` inside the sandbox, and an `authorization` header on a
+/// `wasi:http` request the component builds itself.
+///
+/// Loopback here on purpose. What is under test is the CREDENTIAL, not the bind
+/// guard — and a test that needed a routable address would not run in CI.
+#[test]
+fn a_gate_behind_a_token_is_reached_with_it_and_refused_without_it() {
+    std::env::set_var("COMP_FLEET_ALLOW_PRIVATE_EGRESS", "1");
+    let dir = tempfile::tempdir().unwrap();
+    let right = dir.path().join("right");
+    let wrong = dir.path().join("wrong");
+    std::fs::write(&right, "the-real-token\n").unwrap();
+    std::fs::write(&wrong, "yesterdays-token\n").unwrap();
+
+    let checks = Checks::with_token(&right);
+    let spec = spec_for(checks.port);
+    let candidate = json!({
+        "name": "c", "base_commit": "2222222222222222222222222222222222222222",
+        "base_tree": [{ "path": "README", "content": "hello\n" }],
+        "checks": [check("base", true, 1, &["test", "-f", "README"])],
+    });
+
+    // --- granted the token the runner wants ----------------------------------
+    {
+        let fleet = Fleet::start_with_secrets(
+            "fittoken",
+            &[spec.to_str().unwrap()],
+            &artifacts(),
+            &[format!("vault://acme/checkstoken=@{}", right.display())],
+        );
+        let probe = wait_for_probe(&fleet);
+        let r = probe.call("/evaluate", candidate.clone());
+        assert_eq!(
+            r["accepted"],
+            json!(true),
+            "the granted token did not reach the runner — the header is built inside \
+             the sandbox and this is the only test that proves it arrives: {r}"
+        );
+    }
+
+    // --- granted the wrong one -----------------------------------------------
+    // The message matters more than the status. A rotated token looks exactly
+    // like a broken gate from the outside, and `unavailable` would send whoever
+    // reads it to look at the network — the wrong half of the system.
+    {
+        let fleet = Fleet::start_with_secrets(
+            "fitnotoken",
+            &[spec.to_str().unwrap()],
+            &artifacts(),
+            &[format!("vault://acme/checkstoken=@{}", wrong.display())],
+        );
+        // `wait_for_probe` asks for a base the runner does not have and expects
+        // `need-base`; with a bad token it never gets that far, so this waits on
+        // the refusal itself.
+        let probe = Probe {
+            port: fleet.ingress_port,
+            http: reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(60))
+                .build()
+                .unwrap(),
+        };
+        let mut last = Value::Null;
+        fleet.until("the runner's refusal", Duration::from_secs(120), || {
+            last = probe.call("/evaluate", candidate.clone());
+            if last["error"] == json!("invalid") {
+                Ok(())
+            } else {
+                Err(last.to_string())
+            }
+        });
+        let detail = last["detail"].as_str().unwrap_or_default();
+        assert!(
+            detail.contains("checks-token"),
+            "the refusal has to name the grant that fixes it: {last}"
+        );
+        assert!(
+            last["error"] != json!("unavailable"),
+            "a rejected token is not an unreachable runner — that reads as a network \
+             fault and sends whoever gets it to the wrong half: {last}"
+        );
+    }
 }

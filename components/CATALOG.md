@@ -31,7 +31,7 @@ Each one exports a contract outside the `wasi:` namespace, so it drops into anot
 | **cache-backing** | `cache:backing@0.1.0` | kv:store | — |
 | **calc** | `demo:calc@0.1.0` | pure compute | — |
 | **card-identify** | `card:identify@0.1.0` | pure compute | — |
-| **checks-runner** | `checks:runner@0.1.0` | config/store, http/outgoing-handler | `checks-url` |
+| **checks-runner** | `checks:runner@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `checks-url`, `checks-token` |
 | **config-store** | `config:store@0.1.0` | kv:store | — |
 | **console-assets** | `ui:assets@0.1.0` | pure compute | — |
 | **contract-registry** | `contract:registry@0.1.0` | knowledge:graph/store | — |
