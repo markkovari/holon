@@ -121,6 +121,26 @@ impl Gate {
     ///
     /// `config` is the `--config key=value` pairs the app needs; the two every gate
     /// sets are added here so no gate has to remember them.
+    /// As `compose_and_start`, plus the authorities the component may reach.
+    ///
+    /// `wasi:http` is DEFAULT-DENY by name and refuses loopback twice over, so a gate
+    /// that runs its own receiver has to say where it is — which is the point of the
+    /// deny rather than an inconvenience of it.
+    pub fn compose_and_start_with_egress(
+        app: &str,
+        crate_name: &str,
+        config: &[&str],
+        egress: &[&str],
+    ) -> Option<Self> {
+        let wasm = compose(crate_name)?;
+        let host = repo_root().join("host/target/release/comp-host");
+        if !host.exists() {
+            eprintln!("SKIPPED [{app}]: no comp-host");
+            return None;
+        }
+        Some(Self::serve_with(app, &host, &wasm, config, egress))
+    }
+
     /// Compose `crate_name` here and serve it as `app`. The shape every gate wants:
     /// nothing has to have run `just compose-…` first.
     pub fn compose_and_start(app: &str, crate_name: &str, config: &[&str]) -> Option<Self> {
@@ -139,6 +159,16 @@ impl Gate {
     }
 
     fn serve(app: &str, host: &std::path::Path, wasm: &std::path::Path, config: &[&str]) -> Self {
+        Self::serve_with(app, host, wasm, config, &[])
+    }
+
+    fn serve_with(
+        app: &str,
+        host: &std::path::Path,
+        wasm: &std::path::Path,
+        config: &[&str],
+        egress: &[&str],
+    ) -> Self {
         let port = next_port(app);
         let addr = format!("127.0.0.1:{port}");
 
@@ -155,6 +185,13 @@ impl Gate {
         for c in config {
             args.push("--config".into());
             args.push((*c).to_string());
+        }
+        for e in egress {
+            args.push("--egress".into());
+            args.push((*e).to_string());
+        }
+        if !egress.is_empty() {
+            args.push("--allow-private-egress".into());
         }
         args.extend([
             "--component".into(), wasm.to_string_lossy().into_owned(),
@@ -350,4 +387,345 @@ pub fn requires_capability(crate_name: &str, interface: &str, why: &str) {
          it imports: {}",
         surface.imports.iter().cloned().collect::<Vec<_>>().join(", ")
     );
+}
+
+/// A recording HTTP receiver the gate runs itself, which can be broken on purpose.
+///
+/// Delivery is the whole subject of some of these apps and none of it is observable
+/// against a far end that always works: an app that sends inline, one that acks a
+/// refusal, and one that retries something already delivered all look identical on the
+/// happy path. So a gate runs its own receiver, records every arrival, and answers 500
+/// while it is `break`n — which is how "the far end refused" becomes a thing a test can
+/// arrange.
+///
+/// The shell version is twenty lines of `python3 -m http.server` in a heredoc, writing
+/// JSON lines to a temp file that the gate then re-reads and re-parses. Here the
+/// arrivals are a `Vec` behind a mutex, which is the same thing without the file, the
+/// interpreter, or the "grep -c prints 0 AND exits 1 on an empty file" footnote the
+/// shell needed.
+pub struct Sink {
+    port: u16,
+    arrivals: std::sync::Arc<std::sync::Mutex<Vec<Arrival>>>,
+    failing: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Dropping this stops the accept loop.
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Arrival {
+    pub path: String,
+    pub body: String,
+    /// Recorded even when refused: "how many times did this arrive" is the question
+    /// at-least-once delivery is about, and a refusal still arrived.
+    pub refused: bool,
+}
+
+impl Drop for Sink {
+    fn drop(&mut self) {
+        self.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        // Unblock the accept loop so the thread notices and exits.
+        let _ = std::net::TcpStream::connect(("127.0.0.1", self.port));
+    }
+}
+
+impl Sink {
+    pub fn start() -> Self {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::atomic::Ordering;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a sink");
+        let port = listener.local_addr().expect("sink address").port();
+        let arrivals = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let failing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let (a, f, s) = (arrivals.clone(), failing.clone(), shutdown.clone());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if s.load(Ordering::SeqCst) {
+                    return;
+                }
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().expect("clone the stream"));
+
+                // Request line, then headers, then exactly content-length bytes.
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_err() {
+                    continue;
+                }
+                let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let mut len = 0usize;
+                loop {
+                    let mut h = String::new();
+                    if reader.read_line(&mut h).is_err() || h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; len];
+                if len > 0 {
+                    let _ = std::io::Read::read_exact(&mut reader, &mut body);
+                }
+
+                let refused = f.load(Ordering::SeqCst);
+                a.lock().expect("the sink log").push(Arrival {
+                    path,
+                    body: String::from_utf8_lossy(&body).into_owned(),
+                    refused,
+                });
+                let status = if refused { "500 Internal Server Error" } else { "200 OK" };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: 11\r\n\r\n{{\"ok\":true}}"
+                );
+                let _ = stream.flush();
+            }
+        });
+
+        Self { port, arrivals, failing, shutdown }
+    }
+
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/hook", self.port)
+    }
+    /// The authority a component must be granted to reach this. `wasi:http` is
+    /// default-deny by name and refuses loopback twice over.
+    pub fn egress(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+    pub fn arrivals(&self) -> Vec<Arrival> {
+        self.arrivals.lock().expect("the sink log").clone()
+    }
+    pub fn deliveries(&self) -> usize {
+        self.arrivals().len()
+    }
+    pub fn forget(&self) {
+        self.arrivals.lock().expect("the sink log").clear();
+    }
+    pub fn fail(&self) {
+        self.failing.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn repair(&self) {
+        self.failing.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// The TOTP code for a base32 secret, right now — RFC 6238 with the defaults every
+/// authenticator app uses: SHA-1, thirty-second steps, six digits.
+///
+/// The shell gate does this with `python3`'s `hmac` and `hashlib.sha1`. SHA-1 is not a
+/// choice here: RFC 6238 fixes it, and a code computed any other way is not one the
+/// component will accept.
+pub fn totp_now(secret_base32: &str) -> String {
+    use hmac::{Mac, SimpleHmac};
+    let key = base32_decode(secret_base32);
+    let counter = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is before 1970")
+        .as_secs()
+        / 30;
+    let mut mac = SimpleHmac::<sha1::Sha1>::new_from_slice(&key).expect("hmac accepts any key length");
+    mac.update(&counter.to_be_bytes());
+    let digest = mac.finalize().into_bytes();
+    let offset = (digest[digest.len() - 1] & 0x0f) as usize;
+    let code = u32::from_be_bytes([
+        digest[offset] & 0x7f,
+        digest[offset + 1],
+        digest[offset + 2],
+        digest[offset + 3],
+    ]) % 1_000_000;
+    format!("{code:06}")
+}
+
+/// RFC 4648 base32, upper-cased, padding optional — what an `otpauth://` secret is.
+fn base32_decode(s: &str) -> Vec<u8> {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let (mut out, mut buf, mut bits) = (Vec::new(), 0u32, 0u32);
+    for c in s.trim().to_ascii_uppercase().bytes().filter(|c| *c != b'=') {
+        let Some(v) = A.iter().position(|a| *a == c) else { continue };
+        buf = (buf << 5) | v as u32;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    out
+}
+
+/// An SMTP receiver that keeps what it was sent.
+///
+/// The shell gate runs MailHog for this, and CI cannot: `go install
+/// github.com/mailhog/MailHog@latest` fails on the runner — the project is archived
+/// and predates modules — so `e2e-reminders.sh` is skipped there and the notification
+/// fan-out, the one thing in that app that talks to the outside, has no coverage.
+///
+/// SMTP is small enough to receive directly: greet, accept the envelope, read until a
+/// lone dot, keep the message. Only what `comp-mailrelay` sends, which is the same
+/// principle as `guestfmt` — a receiver that needs a mail server to state its claim is
+/// testing the mail server.
+///
+/// The chain is unchanged: the component posts to `mail:gateway-url`, `comp-mailrelay`
+/// turns that into SMTP, and this is what listens. Two of those three are already
+/// artifacts this repository builds; this makes it three.
+pub struct MailSink {
+    port: u16,
+    messages: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for MailSink {
+    fn drop(&mut self) {
+        self.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = std::net::TcpStream::connect(("127.0.0.1", self.port));
+    }
+}
+
+impl MailSink {
+    pub fn start() -> Self {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::atomic::Ordering;
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind an smtp sink");
+        let port = listener.local_addr().expect("smtp address").port();
+        let messages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let (m, s) = (messages.clone(), shutdown.clone());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if s.load(Ordering::SeqCst) {
+                    return;
+                }
+                let Ok(mut stream) = stream else { continue };
+                let m = m.clone();
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                    let _ = write!(stream, "220 holon test sink\r\n");
+                    let _ = stream.flush();
+                    let mut line = String::new();
+                    loop {
+                        line.clear();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        let verb = line.split_whitespace().next().unwrap_or("").to_ascii_uppercase();
+                        match verb.as_str() {
+                            "EHLO" | "HELO" => {
+                                let _ = write!(stream, "250 ok\r\n");
+                            }
+                            "MAIL" | "RCPT" | "RSET" | "NOOP" => {
+                                let _ = write!(stream, "250 ok\r\n");
+                            }
+                            "DATA" => {
+                                let _ = write!(stream, "354 send it\r\n");
+                                let _ = stream.flush();
+                                // Until a line that is exactly a dot. Dot-stuffing is
+                                // undone the way the sender applied it.
+                                let mut body = String::new();
+                                loop {
+                                    let mut l = String::new();
+                                    if reader.read_line(&mut l).unwrap_or(0) == 0 {
+                                        break;
+                                    }
+                                    if l.trim_end_matches(['\r', '\n']) == "." {
+                                        break;
+                                    }
+                                    body.push_str(l.strip_prefix("..").map(|r| r).unwrap_or(&l));
+                                }
+                                m.lock().expect("the mailbox").push(body);
+                                let _ = write!(stream, "250 queued\r\n");
+                            }
+                            "QUIT" => {
+                                let _ = write!(stream, "221 bye\r\n");
+                                let _ = stream.flush();
+                                return;
+                            }
+                            _ => {
+                                let _ = write!(stream, "250 ok\r\n");
+                            }
+                        }
+                        let _ = stream.flush();
+                    }
+                });
+            }
+        });
+
+        Self { port, messages, shutdown }
+    }
+
+    pub fn addr(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+    /// How many delivered messages contain `needle` — `mail_count_containing` in the
+    /// shell, which asked MailHog's HTTP API and counted with `python3`.
+    pub fn count_containing(&self, needle: &str) -> usize {
+        self.messages.lock().expect("the mailbox").iter().filter(|m| m.contains(needle)).count()
+    }
+}
+
+/// `comp-mailrelay`, the HTTP-to-SMTP bridge the component actually posts to.
+///
+/// Returns the URL to give `mail:gateway-url`, and a guard that stops it.
+pub struct MailRelay {
+    child: Child,
+    port: u16,
+}
+
+impl Drop for MailRelay {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl MailRelay {
+    pub fn start(smtp: &str) -> Option<Self> {
+        let bin = repo_root().join("reconciler/target/release/comp-mailrelay");
+        if !bin.exists() {
+            eprintln!("SKIPPED: no comp-mailrelay — cargo build --release --bin comp-mailrelay");
+            return None;
+        }
+        // Ask the OS for a free port, then hand the number over: the relay takes an
+        // address rather than binding one it reports back.
+        let port = std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
+        let child = Command::new(&bin)
+            .arg(format!("127.0.0.1:{port}"))
+            .arg(smtp)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        std::thread::sleep(Duration::from_millis(200));
+        Some(Self { child, port })
+    }
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}/", self.port)
+    }
+    pub fn egress(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+}
+
+/// Unix seconds as RFC 3339 UTC.
+///
+/// `guestfmt::rfc3339` is the same arithmetic, and is a WASM-guest crate rather than a
+/// dependency of the reconciler; twenty lines of Howard Hinnant here is cheaper than a
+/// dependency edge from a native workspace to a guest one.
+pub fn rfc3339(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let tod = secs % 86_400;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", tod / 3600, (tod % 3600) / 60, tod % 60)
 }

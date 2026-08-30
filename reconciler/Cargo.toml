@@ -109,6 +109,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # For content addressing. The optional OCI mirror push is four HTTP calls on the
 # reqwest client we already have, so it needs no registry crate — see src/oci.rs.
 sha2 = "0.10"
+# HMAC-SHA1, for the one gate that computes a TOTP code from the secret the part
+# provisions. RFC 6238 fixes the algorithm; there is no newer one to prefer.
+sha1 = "0.10"
+hmac = "0.12"
 # Composition as a library call (src/plug.rs): `wac` is a crate before it is a
 # command. Pinned to the pair `components/wit-reflect` uses — wac-graph carries
 # its own wasmparser, and two versions of the component model in one graph is a
