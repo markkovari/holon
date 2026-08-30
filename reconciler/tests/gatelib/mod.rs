@@ -201,6 +201,32 @@ impl Gate {
         (resp.status().as_u16(), resp.text().unwrap_or_default())
     }
 
+    /// Extra headers, for the routes that take one. `Idempotency-Key` is the reason
+    /// this exists: three treasury routes refuse a request without it, and a gate that
+    /// cannot send one cannot judge them.
+    pub fn with_headers(
+        &self,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> (u16, String) {
+        let m = reqwest::Method::from_bytes(method.as_bytes()).expect("method");
+        let mut r = self.client.request(m, format!("{}{}", self.base, path));
+        if let Some(t) = token {
+            r = r.header("authorization", format!("Bearer {t}"));
+        }
+        for (k, v) in headers {
+            r = r.header(*k, *v);
+        }
+        if let Some(b) = body {
+            r = r.header("content-type", "application/json").body(b.to_string());
+        }
+        let resp = r.send().unwrap_or_else(|e| panic!("{method} {path}: transport error: {e}"));
+        (resp.status().as_u16(), resp.text().unwrap_or_default())
+    }
+
     pub fn json(&self, method: &str, path: &str, token: Option<&str>, body: Option<Value>) -> (u16, String) {
         self.send(method, path, token, body.map(|b| ("application/json", b.to_string().into_bytes())))
     }
