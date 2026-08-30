@@ -28,3 +28,4 @@ world = "checks-runner"
 "wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
 "wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }
