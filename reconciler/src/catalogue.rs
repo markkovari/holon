@@ -86,7 +86,10 @@ mod tests {
         // A bare name is a locally-defined interface: `world calc { export arith; }`.
         assert!(offers_a_contract(["arith"]));
         // A contract alongside a door is still a contract.
-        assert!(offers_a_contract(["wasi:http/incoming-handler@0.2.0", "slug:generate/generator@0.1.0"]));
+        assert!(offers_a_contract([
+            "wasi:http/incoming-handler@0.2.0",
+            "slug:generate/generator@0.1.0"
+        ]));
     }
 
     /// The description stops at the first line of real code, so a component with no

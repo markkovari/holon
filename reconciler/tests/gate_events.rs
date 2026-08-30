@@ -38,8 +38,8 @@ use serde_json::{json, Value};
 
 const APP: &str = "events";
 const COMPOSED: &str = "events_domain.composed.wasm";
-const CONFIG: &[&str] = &["allow-test-routes=1",
-    "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
+const CONFIG: &[&str] =
+    &["allow-test-routes=1", "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
 
 /// A real PNG, byte for byte — the same bytes the bash gate writes with `printf`.
 /// The round trip is the point: the router used to read every body through
@@ -71,19 +71,33 @@ fn events_created_read_amended_and_cancelled() {
     );
 
     // --- anonymous callers are refused --------------------------------------------
-    let (code, _) = gate.json("POST", "/api/events", None,
-        Some(json!({"title":"x","starts_at":"2026-09-01T18:00:00Z","capacity":5})));
-    assert!(code == 401 || code == 403, "an unauthenticated POST /api/events must be refused (got {code})");
+    let (code, _) = gate.json(
+        "POST",
+        "/api/events",
+        None,
+        Some(json!({"title":"x","starts_at":"2026-09-01T18:00:00Z","capacity":5})),
+    );
+    assert!(
+        code == 401 || code == 403,
+        "an unauthenticated POST /api/events must be refused (got {code})"
+    );
 
     // --- an organizer creates one --------------------------------------------------
-    let (_, new) = gate.json("POST", "/api/events", Some(&organizer),
-        Some(json!({"title":"Wasm Night","starts_at":"2026-10-01T18:00:00Z","capacity":50})));
+    let (_, new) = gate.json(
+        "POST",
+        "/api/events",
+        Some(&organizer),
+        Some(json!({"title":"Wasm Night","starts_at":"2026-10-01T18:00:00Z","capacity":50})),
+    );
     let new_id = field(&new, "id");
     assert!(!new_id.is_empty(), "POST /api/events returned no id: {new}");
 
     let doc = gate.stored("events", &new_id);
     for want in ["\"title\"", "\"starts_at\"", "\"capacity\"", "\"organizer\"", "\"state\""] {
-        assert!(doc.contains(want), "the stored event is missing {want} — CONTRACT.md fixes the shape: {doc}");
+        assert!(
+            doc.contains(want),
+            "the stored event is missing {want} — CONTRACT.md fixes the shape: {doc}"
+        );
     }
     assert!(
         doc.contains("\"state\":\"open\"") || doc.contains("\"state\": \"open\""),
@@ -91,24 +105,43 @@ fn events_created_read_amended_and_cancelled() {
     );
 
     // --- an attendee may not create ------------------------------------------------
-    let (code, _) = gate.json("POST", "/api/events", Some(&attendee),
-        Some(json!({"title":"nope","starts_at":"2026-10-01T18:00:00Z","capacity":5})));
+    let (code, _) = gate.json(
+        "POST",
+        "/api/events",
+        Some(&attendee),
+        Some(json!({"title":"nope","starts_at":"2026-10-01T18:00:00Z","capacity":5})),
+    );
     assert_eq!(code, 403, "an attendee has no event:write and must be refused");
 
     // --- validation ----------------------------------------------------------------
-    let (code, _) = gate.json("POST", "/api/events", Some(&organizer),
-        Some(json!({"starts_at":"2026-10-01T18:00:00Z","capacity":5})));
+    let (code, _) = gate.json(
+        "POST",
+        "/api/events",
+        Some(&organizer),
+        Some(json!({"starts_at":"2026-10-01T18:00:00Z","capacity":5})),
+    );
     assert_eq!(code, 400, "an event with no title is a 400");
-    let (code, _) = gate.json("POST", "/api/events", Some(&organizer),
-        Some(json!({"title":"x","starts_at":"2026-10-01T18:00:00Z","capacity":0})));
+    let (code, _) = gate.json(
+        "POST",
+        "/api/events",
+        Some(&organizer),
+        Some(json!({"title":"x","starts_at":"2026-10-01T18:00:00Z","capacity":0})),
+    );
     assert_eq!(code, 400, "capacity below 1 is a 400");
 
     // --- reading it back ------------------------------------------------------------
     let (_, one) = gate.json("GET", &format!("/api/events/{new_id}"), Some(&attendee), None);
     for want in ["\"claimed\"", "\"remaining\""] {
-        assert!(one.contains(want), "GET /api/events/{{id}} must report {want} from quota:meter's peek: {one}");
+        assert!(
+            one.contains(want),
+            "GET /api/events/{{id}} must report {want} from quota:meter's peek: {one}"
+        );
     }
-    assert_eq!(field(&one, "remaining"), "50", "a brand-new event with capacity 50 has 50 remaining");
+    assert_eq!(
+        field(&one, "remaining"),
+        "50",
+        "a brand-new event with capacity 50 has 50 remaining"
+    );
 
     // Two separate claims with two separate messages ON PURPOSE — see the note in
     // e2e-events.sh: an earlier version asserted only that the id appeared, and when
@@ -131,8 +164,12 @@ fn events_created_read_amended_and_cancelled() {
     assert_eq!(code, 404, "an unknown event is a 404");
 
     // --- only the owning organizer may amend ----------------------------------------
-    let (code, _) = gate.json("PATCH", &format!("/api/events/{new_id}"), Some(&organizer),
-        Some(json!({"title":"Wasm Night, moved"})));
+    let (code, _) = gate.json(
+        "PATCH",
+        &format!("/api/events/{new_id}"),
+        Some(&organizer),
+        Some(json!({"title":"Wasm Night, moved"})),
+    );
     assert_eq!(code, 200, "the organizer who created the event must be able to PATCH it");
 
     // --- cancelling is soft ----------------------------------------------------------
@@ -145,13 +182,19 @@ fn events_created_read_amended_and_cancelled() {
     );
 
     // --- an optional description ------------------------------------------------------
-    let (_, with) = gate.json("POST", "/api/events", Some(&organizer), Some(json!({
+    let (_, with) = gate.json(
+        "POST",
+        "/api/events",
+        Some(&organizer),
+        Some(json!({
         "title":"Described","starts_at":"2026-10-02T18:00:00Z","capacity":9,
-        "description":"An evening about nothing in particular."})));
+        "description":"An evening about nothing in particular."})),
+    );
     let wid = field(&with, "id");
     assert!(
         gate.stored("events", &wid).contains("An evening about nothing in particular."),
-        "description was dropped on create: {}", gate.stored("events", &wid)
+        "description was dropped on create: {}",
+        gate.stored("events", &wid)
     );
     // Absent, not empty, when it is not given — a caller reading "" cannot tell
     // "nobody wrote one" from "somebody cleared it".
@@ -159,17 +202,26 @@ fn events_created_read_amended_and_cancelled() {
         !gate.stored("events", &new_id).contains("\"description\""),
         "an event created without a description must not carry the key"
     );
-    let (code, _) = gate.json("PATCH", &format!("/api/events/{wid}"), Some(&organizer),
-        Some(json!({"description": Value::Null})));
+    let (code, _) = gate.json(
+        "PATCH",
+        &format!("/api/events/{wid}"),
+        Some(&organizer),
+        Some(json!({"description": Value::Null})),
+    );
     assert_eq!(code, 200, "clearing a description is a PATCH with null");
     assert!(
         !gate.stored("events", &wid).contains("\"description\""),
-        "PATCH null must REMOVE the key, not blank it: {}", gate.stored("events", &wid)
+        "PATCH null must REMOVE the key, not blank it: {}",
+        gate.stored("events", &wid)
     );
 
     // --- an optional poster -------------------------------------------------------------
-    let (code, _) = gate.send("POST", &format!("/api/events/{wid}/image"), Some(&organizer),
-        Some(("image/png", PNG.to_vec())));
+    let (code, _) = gate.send(
+        "POST",
+        &format!("/api/events/{wid}/image"),
+        Some(&organizer),
+        Some(("image/png", PNG.to_vec())),
+    );
     assert_eq!(code, 201, "uploading a PNG poster must be 201");
 
     let (_, content_type, bytes) = gate.bytes(&format!("/api/events/{wid}/image"), None);
@@ -178,11 +230,18 @@ fn events_created_read_amended_and_cancelled() {
         "the poster did not survive the round trip byte for byte — a body read as a lossy string \
          is not an image"
     );
-    assert!(content_type.starts_with("image/png"), "the poster came back as '{content_type}', not image/png");
+    assert!(
+        content_type.starts_with("image/png"),
+        "the poster came back as '{content_type}', not image/png"
+    );
 
     // What may be uploaded is upload-policy's answer, not this component's.
-    let (code, _) = gate.send("POST", &format!("/api/events/{wid}/image"), Some(&organizer),
-        Some(("text/plain", b"not an image".to_vec())));
+    let (code, _) = gate.send(
+        "POST",
+        &format!("/api/events/{wid}/image"),
+        Some(&organizer),
+        Some(("text/plain", b"not an image".to_vec())),
+    );
     assert_eq!(code, 415, "a text/plain poster must be refused by upload:policy");
 
     let (code, _) = gate.json("GET", &format!("/api/events/{new_id}/image"), Some(&attendee), None);

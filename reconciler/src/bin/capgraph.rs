@@ -475,7 +475,11 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
         };
         for (table, ifaces) in [("imports", &surface.imports), ("exports", &surface.exports)] {
             for iface in ifaces.iter() {
-                if table == "imports" { n_imports += 1 } else { n_exports += 1 }
+                if table == "imports" {
+                    n_imports += 1
+                } else {
+                    n_exports += 1
+                }
                 out.push_str(&format!(
                     "RELATE {}->{}->{} SET gen = {generation};\n",
                     rid("artifact", name),

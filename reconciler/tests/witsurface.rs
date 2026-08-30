@@ -71,9 +71,7 @@ fn interfaces_in(text: &str) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let mut i = 0usize;
     while i < lines.len() {
-        let Some(pkg) =
-            lines[i].strip_prefix("package ").and_then(|r| r.strip_suffix(" {"))
-        else {
+        let Some(pkg) = lines[i].strip_prefix("package ").and_then(|r| r.strip_suffix(" {")) else {
             i += 1;
             continue;
         };
@@ -232,8 +230,7 @@ fn the_committed_surfaces_are_not_stale() {
 /// missing one that was not.
 fn base_surfaces(root: &std::path::Path) -> Option<String> {
     for reference in ["origin/main:wit/SURFACES.md", "main:wit/SURFACES.md"] {
-        let Ok(out) =
-            Command::new("git").args(["show", reference]).current_dir(root).output()
+        let Ok(out) = Command::new("git").args(["show", reference]).current_dir(root).output()
         else {
             eprintln!("SKIPPED: git is not available");
             return None;

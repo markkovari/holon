@@ -26,8 +26,16 @@ impl Drop for Kill {
 fn tail(path: &std::path::Path) -> String {
     match std::fs::read_to_string(path) {
         Ok(s) if s.trim().is_empty() => "  (it wrote nothing to stderr)".into(),
-        Ok(s) => s.lines().rev().take(40).collect::<Vec<_>>().into_iter().rev()
-            .map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n"),
+        Ok(s) => s
+            .lines()
+            .rev()
+            .take(40)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|l| format!("  {l}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
         Err(e) => format!("  (could not read its stderr: {e})"),
     }
 }

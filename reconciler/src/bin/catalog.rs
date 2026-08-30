@@ -38,7 +38,8 @@ use serde::Serialize;
 /// Probes the `-probe` suffix does not catch. Reusable-shaped, but they exist to test
 /// the thing they probe, so they are grouped away from the shopping list. Presentation
 /// only: `reusable_as_is` is decided by the exports, never by this.
-const PROBES: &[&str] = &["adversary", "twofile", "bigadd", "demo", "mock-fitness", "mock-provider"];
+const PROBES: &[&str] =
+    &["adversary", "twofile", "bigadd", "demo", "mock-fitness", "mock-provider"];
 
 #[derive(Serialize)]
 struct ConfigKey {
@@ -110,7 +111,6 @@ fn first_doc_line(lib: &Path) -> String {
     String::new()
 }
 
-
 /// The world this crate builds, from `[package.metadata.component.target].world`.
 ///
 /// Needed because a crate may point at a SHARED wit directory — `accounts-app` and
@@ -121,8 +121,9 @@ fn first_doc_line(lib: &Path) -> String {
 /// nothing but a door.
 fn target_world(dir: &Path) -> Option<String> {
     let text = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
-    let re = Regex::new(r#"(?ms)\[package\.metadata\.component\.target\][^\[]*?^world\s*=\s*"([^"]+)""#)
-        .unwrap();
+    let re =
+        Regex::new(r#"(?ms)\[package\.metadata\.component\.target\][^\[]*?^world\s*=\s*"([^"]+)""#)
+            .unwrap();
     re.captures(&text).map(|c| c[1].to_string())
 }
 
@@ -268,7 +269,8 @@ impl Regexes {
             export: Regex::new(r"export\s+([^;{]+);").unwrap(),
             import: Regex::new(r"import\s+([^;{]+);").unwrap(),
             std_wasi: Regex::new(r"^wasi:(clocks|random|io|cli|filesystem|sockets)/").unwrap(),
-            get_call: Regex::new(r#"[a-z_]*(?:get|cfg)[a-z_0-9]*\(\s*"([a-z0-9._-]{2,})""#).unwrap(),
+            get_call: Regex::new(r#"[a-z_]*(?:get|cfg)[a-z_0-9]*\(\s*"([a-z0-9._-]{2,})""#)
+                .unwrap(),
             // The repo convention: a module-doc block listing knobs with descriptions.
             config_block: Regex::new(r"(?m)^//! Config[^\n]*:\n((?://!.*\n)+)").unwrap(),
             config_line: Regex::new(r"(?m)^//!\s{2,}([a-z0-9._-]{2,})\s{2,}(.+?)\s*$").unwrap(),

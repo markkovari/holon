@@ -32,29 +32,40 @@ fn the_fixture_is_closed_and_signing_up_does_not_make_you_an_organizer() {
 
     // --- and the front door works --------------------------------------------------
     let email = format!("ada{unique}@example.test");
-    let (_, reg) = gate.post("/api/register", None, json!({"email": email, "password":"correct-horse"}));
+    let (_, reg) =
+        gate.post("/api/register", None, json!({"email": email, "password":"correct-horse"}));
     let token = field(&reg, "token");
     assert!(!token.is_empty(), "registering did not return a token: {reg}");
 
-    let (c, _) = gate.post("/api/register", None, json!({"email": email, "password":"correct-horse"}));
+    let (c, _) =
+        gate.post("/api/register", None, json!({"email": email, "password":"correct-horse"}));
     assert_eq!(c, 409, "the same email twice is a 409");
-    let (c, _) = gate.post("/api/register", None, json!({"email":"nope","password":"correct-horse"}));
+    let (c, _) =
+        gate.post("/api/register", None, json!({"email":"nope","password":"correct-horse"}));
     assert_eq!(c, 400, "an address with no @ is a 400");
-    let (c, _) = gate.post("/api/register", None,
-        json!({"email": format!("x{unique}@example.test"), "password":"short"}));
+    let (c, _) = gate.post(
+        "/api/register",
+        None,
+        json!({"email": format!("x{unique}@example.test"), "password":"short"}),
+    );
     assert_eq!(c, 400, "a password under 8 characters is a 400");
 
-    let (_, login) = gate.post("/api/login", None, json!({"email": email, "password":"correct-horse"}));
+    let (_, login) =
+        gate.post("/api/login", None, json!({"email": email, "password":"correct-horse"}));
     assert!(
         login.contains("\"attendee\""),
         "login must report the caller's roles so the SPA knows which screen to draw: {login}"
     );
-    let (c, _) = gate.post("/api/login", None, json!({"email": email, "password":"wrong-password"}));
+    let (c, _) =
+        gate.post("/api/login", None, json!({"email": email, "password":"wrong-password"}));
     assert_eq!(c, 401, "a bad password is 401");
 
     // --- a registered attendee is an ATTENDEE, not an organizer ---------------------
-    let (c, _) = gate.post("/api/events", Some(&token),
-        json!({"title":"self-promoted","starts_at":"2026-10-01T18:00:00Z","capacity":5}));
+    let (c, _) = gate.post(
+        "/api/events",
+        Some(&token),
+        json!({"title":"self-promoted","starts_at":"2026-10-01T18:00:00Z","capacity":5}),
+    );
     assert_eq!(
         c, 403,
         "signing up must not grant event:write — a person cannot claim a role by asking for one"
@@ -66,7 +77,8 @@ fn the_fixture_is_closed_and_signing_up_does_not_make_you_an_organizer() {
     //
     // Without this a fresh box has nobody who may open an event and no organizer to
     // grant the role — a deadlock, not a security property.
-    let (_, r) = gate.post("/api/register", None, json!({"email": boss_email, "password":"correct-horse"}));
+    let (_, r) =
+        gate.post("/api/register", None, json!({"email": boss_email, "password":"correct-horse"}));
     let boss = field(&r, "token");
     assert!(!boss.is_empty(), "the named organizer could not register");
     let (c, _) = gate.post("/api/events", Some(&boss),

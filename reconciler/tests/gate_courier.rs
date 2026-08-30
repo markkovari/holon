@@ -31,7 +31,10 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
     let egress = sink.egress();
     // `max-attempts=2 --config base-backoff=1`, as the gate script sets.
     let Some(gate) = Gate::compose_and_start_with_egress(
-        "support", CRATE, &["max-attempts=2", "base-backoff=1"], &[&egress],
+        "support",
+        CRATE,
+        &["max-attempts=2", "base-backoff=1"],
+        &[&egress],
     ) else {
         return;
     };
@@ -40,17 +43,25 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
 
     let (_, tok) = gate.post("/test/token", None, json!({"subject":"agent","tenant":"acme"}));
     let t = field(&tok, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
 
     let deliver = || -> Value { parse(&gate.json("POST", "/api/deliver", Some(&t), None).1) };
     let enqueue = |body: &str| {
-        gate.post("/test/enqueue", None, json!({"target": format!("webhook:{}", sink.url()), "body": body}));
+        gate.post(
+            "/test/enqueue",
+            None,
+            json!({"target": format!("webhook:{}", sink.url()), "body": body}),
+        );
     };
 
     // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.json("POST", "/api/deliver", None, None);
     assert_eq!(c, 401, "running a delivery pass with no bearer must be 401");
-    let (_, ro) = gate.post("/test/token", None, json!({"subject":"reader","scopes":["tickets:read"]}));
+    let (_, ro) =
+        gate.post("/test/token", None, json!({"subject":"reader","scopes":["tickets:read"]}));
     let (c, _) = gate.json("POST", "/api/deliver", Some(&field(&ro, "token")), None);
     assert_eq!(c, 403, "delivering needs tickets:deliver — a read-only token must be 403");
 
@@ -64,20 +75,39 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
     enqueue("the first reply");
     let d = deliver();
     assert_eq!(d["claimed"], 1, "one event was waiting: {d}");
-    assert_eq!(d["delivered"], 1, "the sink answered 200 and this pass did not count a delivery: {d}");
+    assert_eq!(
+        d["delivered"], 1,
+        "the sink answered 200 and this pass did not count a delivery: {d}"
+    );
     assert_eq!(d["failed"], 0, "{d}");
-    assert_eq!(sink.deliveries(), 1, "the sink saw {} arrivals, wanted exactly 1", sink.deliveries());
+    assert_eq!(
+        sink.deliveries(),
+        1,
+        "the sink saw {} arrivals, wanted exactly 1",
+        sink.deliveries()
+    );
 
     let arrived = sink.arrivals()[0].body.clone();
-    assert!(!arrived.trim().is_empty(), "a request arrived at the far end with an EMPTY body — the reply itself never left");
-    let body: Value = serde_json::from_str(&arrived)
-        .unwrap_or_else(|e| panic!("what arrived at the far end is not JSON ({e}): {arrived:.200?}"));
-    assert!(body.to_string().contains("the first reply"), "the reply's text did not reach the far end: {body}");
+    assert!(
+        !arrived.trim().is_empty(),
+        "a request arrived at the far end with an EMPTY body — the reply itself never left"
+    );
+    let body: Value = serde_json::from_str(&arrived).unwrap_or_else(|e| {
+        panic!("what arrived at the far end is not JSON ({e}): {arrived:.200?}")
+    });
+    assert!(
+        body.to_string().contains("the first reply"),
+        "the reply's text did not reach the far end: {body}"
+    );
 
     // A second pass must not deliver it again: an acked event is gone from the outbox.
     let d = deliver();
     assert_eq!(d["claimed"], 0, "a delivered event must not be claimable again: {d}");
-    assert_eq!(sink.deliveries(), 1, "the reply was delivered twice — the first pass did not ack it");
+    assert_eq!(
+        sink.deliveries(),
+        1,
+        "the reply was delivered twice — the first pass did not ack it"
+    );
 
     // --- a 500 is NOT delivered, and comes back -----------------------------------
     sink.fail();

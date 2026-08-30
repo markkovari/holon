@@ -15,8 +15,8 @@ use serde_json::json;
 
 const APP: &str = "events";
 const COMPOSED: &str = "events_domain.composed.wasm";
-const CONFIG: &[&str] = &["allow-test-routes=1",
-    "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
+const CONFIG: &[&str] =
+    &["allow-test-routes=1", "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
 
 #[test]
 fn tickets_claimed_rendered_private_and_capped() {
@@ -26,16 +26,27 @@ fn tickets_claimed_rendered_private_and_capped() {
         "capacity is held atomically by quota:meter, which is in the world for this part to CALL — \
          counting tickets and comparing to capacity is a race that passes every sequential test \
          (see CONTRACT.md)");
-    requires_capability("events-domain", "qr:encode/encoder",
-        "the attendee's QR is rendered by the qr component, not by hand");
+    requires_capability(
+        "events-domain",
+        "qr:encode/encoder",
+        "the attendee's QR is rendered by the qr component, not by hand",
+    );
 
     let seed = gate.seed();
     let tok = |who: &str| seed["tokens"][who]["token"].as_str().unwrap_or_default().to_string();
     let (organizer, attendee, other) = (tok("organizer"), tok("attendee"), tok("other"));
     let event_id = seed["event_id"].as_str().unwrap_or_default().to_string();
-    assert!(!event_id.is_empty() && !attendee.is_empty(), "the fixture did not come back with an event and three tokens: {seed}");
+    assert!(
+        !event_id.is_empty() && !attendee.is_empty(),
+        "the fixture did not come back with an event and three tokens: {seed}"
+    );
 
-    assert_unauthenticated(&gate, "POST", &format!("/api/events/{event_id}/tickets"), Some(json!({})));
+    assert_unauthenticated(
+        &gate,
+        "POST",
+        &format!("/api/events/{event_id}/tickets"),
+        Some(json!({})),
+    );
 
     // --- one attendee claims one place ---------------------------------------------
     let (_, t) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&attendee), json!({}));
@@ -50,7 +61,10 @@ fn tickets_claimed_rendered_private_and_capped() {
 
     let doc = gate.stored("tickets", &tid);
     for want in ["\"event_id\"", "\"holder\"", "\"code\"", "\"state\""] {
-        assert!(doc.contains(want), "the stored ticket is missing {want} — CONTRACT.md fixes the shape: {doc}");
+        assert!(
+            doc.contains(want),
+            "the stored ticket is missing {want} — CONTRACT.md fixes the shape: {doc}"
+        );
     }
     assert!(
         doc.contains("\"state\":\"issued\"") || doc.contains("\"state\": \"issued\""),
@@ -59,13 +73,19 @@ fn tickets_claimed_rendered_private_and_capped() {
 
     // --- the same person may not hold two --------------------------------------------
     let (c, _) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&attendee), json!({}));
-    assert_eq!(c, 409, "a subject already holding a live ticket for this event gets 409 already_holding");
+    assert_eq!(
+        c, 409,
+        "a subject already holding a live ticket for this event gets 409 already_holding"
+    );
 
     // --- a ticket is private ----------------------------------------------------------
     let (_, mine) = gate.get("/api/tickets", Some(&attendee));
     assert!(mine.contains(&tid), "GET /api/tickets must list the caller's own ticket: {mine}");
     let (c, _) = gate.get(&format!("/api/tickets/{tid}"), Some(&other));
-    assert_eq!(c, 403, "another attendee is neither the holder nor the event's organizer and must be refused");
+    assert_eq!(
+        c, 403,
+        "another attendee is neither the holder nor the event's organizer and must be refused"
+    );
     let (c, _) = gate.get(&format!("/api/tickets/{tid}"), Some(&organizer));
     assert_eq!(c, 200, "the organizer of the event may read a ticket for it");
 
@@ -83,7 +103,12 @@ fn tickets_claimed_rendered_private_and_capped() {
         let handles: Vec<_> = (0..2)
             .map(|_| {
                 s.spawn(|| {
-                    gate.post(&format!("/api/events/{event_id}/tickets"), Some(&attendee), json!({})).0
+                    gate.post(
+                        &format!("/api/events/{event_id}/tickets"),
+                        Some(&attendee),
+                        json!({}),
+                    )
+                    .0
                 })
             })
             .collect();
@@ -106,8 +131,12 @@ fn tickets_claimed_rendered_private_and_capped() {
 
     // The real capacity test: a third DISTINCT holder takes the last place, a fourth
     // is refused. `organizer` is a person too and may hold a ticket.
-    let (last, _) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&organizer), json!({}));
+    let (last, _) =
+        gate.post(&format!("/api/events/{event_id}/tickets"), Some(&organizer), json!({}));
     assert_eq!(last, 201, "the third and final place must be claimable");
     let (c, _) = gate.post(&format!("/api/events/{event_id}/tickets"), Some(&organizer), json!({}));
-    assert_eq!(c, 409, "the organizer now holds one, so a second claim is already_holding not sold_out");
+    assert_eq!(
+        c, 409,
+        "the organizer now holds one, so a second claim is already_holding not sold_out"
+    );
 }

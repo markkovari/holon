@@ -45,9 +45,9 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
         "mail:from=events@holon.test",
     ];
     let relay_egress = relay.egress();
-    let Some(gate) = Gate::compose_and_start_with_egress(
-        "events", "events-domain", &config, &[&relay_egress],
-    ) else {
+    let Some(gate) =
+        Gate::compose_and_start_with_egress("events", "events-domain", &config, &[&relay_egress])
+    else {
         return;
     };
 
@@ -59,13 +59,22 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
     let run = format!("r{}", std::process::id());
 
     // --- an event far away schedules a reminder for later ------------------------------
-    let (_, far) = gate.post("/api/events", Some(&organizer),
-        json!({"title":"Far Away","starts_at":"2027-01-01T18:00:00Z","capacity":10}));
+    let (_, far) = gate.post(
+        "/api/events",
+        Some(&organizer),
+        json!({"title":"Far Away","starts_at":"2027-01-01T18:00:00Z","capacity":10}),
+    );
     let fid = field(&far, "id");
     let (_, peek) = gate.get(&format!("/api/events/{fid}/reminder"), Some(&organizer));
-    assert!(peek.contains("\"scheduled\":true"), "creating an event must put its reminder on the clock: {peek}");
+    assert!(
+        peek.contains("\"scheduled\":true"),
+        "creating an event must put its reminder on the clock: {peek}"
+    );
     let due_in = parse(&peek)["due_in_seconds"].as_i64().unwrap_or(0);
-    assert!(due_in > 0, "an event in 2027 must have a reminder in the FUTURE, not {due_in} seconds ago");
+    assert!(
+        due_in > 0,
+        "an event in 2027 must have a reminder in the FUTURE, not {due_in} seconds ago"
+    );
 
     // Nothing fires for it.
     let (_, r) = gate.post("/api/reminders/run", Some(&organizer), json!({}));
@@ -73,8 +82,11 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
 
     // --- an event SOON has a reminder that is already due --------------------------------
     let soon = in_two_hours();
-    let (_, ev) = gate.post("/api/events", Some(&organizer),
-        json!({"title": format!("Tonight {run}"), "starts_at": soon, "capacity": 10}));
+    let (_, ev) = gate.post(
+        "/api/events",
+        Some(&organizer),
+        json!({"title": format!("Tonight {run}"), "starts_at": soon, "capacity": 10}),
+    );
     let eid = field(&ev, "id");
     assert!(!eid.is_empty(), "could not create the soon event: {ev}");
 
@@ -82,10 +94,15 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
     let (_, t) = gate.post(&format!("/api/events/{eid}/tickets"), Some(&attendee), json!({}));
     assert!(!field(&t, "id").is_empty(), "no ticket: {t}");
 
-    let (_, put) = gate.json("PUT", "/api/prefs", Some(&attendee), Some(json!({
+    let (_, put) = gate.json(
+        "PUT",
+        "/api/prefs",
+        Some(&attendee),
+        Some(json!({
         "default_channels": ["in-app", "email"],
         "email_address": format!("ada-{run}@example.test"),
-        "overrides": {}})));
+        "overrides": {}})),
+    );
     assert!(put.contains("\"ok\":true"), "could not set preferences: {put}");
 
     let before_mail = mail.count_containing(&format!("Tonight {run}"));
@@ -96,8 +113,14 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
     assert_ne!(fired, "0", "a reminder that is due must fire: {run_out}");
 
     let (_, notes) = gate.get("/api/notifications", Some(&attendee));
-    assert!(notes.contains("\"kind\":\"event-reminder\""), "no event-reminder in the inbox: {notes}");
-    assert!(notes.contains(&format!("Tonight {run}")), "the reminder does not name the event: {notes}");
+    assert!(
+        notes.contains("\"kind\":\"event-reminder\""),
+        "no event-reminder in the inbox: {notes}"
+    );
+    assert!(
+        notes.contains(&format!("Tonight {run}")),
+        "the reminder does not name the event: {notes}"
+    );
 
     // --- and a REAL email arrived ---------------------------------------------------------------
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -113,13 +136,17 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
     // ticks is worse than one that never comes.
     let (_, again) = gate.post("/api/reminders/run", Some(&organizer), json!({}));
     assert_eq!(
-        field(&again, "fired"), "0",
+        field(&again, "fired"),
+        "0",
         "an acked reminder fired again — it would repeat on every tick"
     );
 
     // --- cancelling the event cancels the reminder --------------------------------------------------
-    let (_, c) = gate.post("/api/events", Some(&organizer),
-        json!({"title": format!("Doomed {run}"), "starts_at": soon, "capacity": 5}));
+    let (_, c) = gate.post(
+        "/api/events",
+        Some(&organizer),
+        json!({"title": format!("Doomed {run}"), "starts_at": soon, "capacity": 5}),
+    );
     let cid = field(&c, "id");
     gate.post(&format!("/api/events/{cid}/tickets"), Some(&attendee), json!({}));
     gate.delete(&format!("/api/events/{cid}"), Some(&organizer));

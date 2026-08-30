@@ -223,13 +223,21 @@ fn every_write_all_asks_the_stream_how_much_it_will_take() {
     let macro_src = repo_root().join("components/guestio/src/lib.rs");
     match std::fs::read_to_string(&macro_src) {
         Ok(text) => {
-            let body: String =
-                text.split("macro_rules! guest_write_all").nth(1).unwrap_or_default().chars().take(1600).collect();
+            let body: String = text
+                .split("macro_rules! guest_write_all")
+                .nth(1)
+                .unwrap_or_default()
+                .chars()
+                .take(1600)
+                .collect();
             if !body.contains("check_write") {
                 wrong.push("  components/guestio: the macro does not call check_write".to_string());
             }
             if !body.contains("subscribe") {
-                wrong.push("  components/guestio: the macro does not wait when the stream is full".to_string());
+                wrong.push(
+                    "  components/guestio: the macro does not wait when the stream is full"
+                        .to_string(),
+                );
             }
         }
         // Not "no macro, nothing to check": fifty components expand it, so its
@@ -426,16 +434,19 @@ fn no_component_matches_a_bearer_scheme_case_sensitively() {
 }
 
 /// Components that parse an `Authorization` value themselves, and why.
-const BEARER_ALLOWED: &[(&str, &str)] = &[(
-    "conduit-domain",
-    "the RealWorld spec sends `Authorization: Token <jwt>`, not Bearer, so this one \
+const BEARER_ALLOWED: &[(&str, &str)] = &[
+    (
+        "conduit-domain",
+        "the RealWorld spec sends `Authorization: Token <jwt>`, not Bearer, so this one \
      accepts a second scheme and is not the shared shape",
-), (
-    "clinic-domain",
-    "returns a `String` rather than an `Option`, so an absent credential and an \
+    ),
+    (
+        "clinic-domain",
+        "returns a `String` rather than an `Option`, so an absent credential and an \
      empty one are the same value to every caller — a change worth making on its \
      own rather than inside a mechanical substitution",
-)];
+    ),
+];
 
 /// A revision conflict answers 409, everywhere it answers at all.
 ///

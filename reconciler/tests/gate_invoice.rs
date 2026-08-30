@@ -20,7 +20,10 @@ fn token(gate: &Gate, subject: &str, scopes: Option<Value>) -> String {
         b["scopes"] = s;
     }
     let t = field(&gate.post("/test/token", None, b).1, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
     t
 }
 
@@ -39,7 +42,8 @@ fn invoices_open_as_drafts_and_the_limit_is_per_subject() {
     assert_eq!(c, 400, "an empty customer must be 400 invalid_invoice");
 
     // A currency the arithmetic cannot do. Refused here rather than at posting time.
-    let (c, _) = gate.post("/api/invoices", Some(&w), json!({"customer":"acme-gmbh","currency":"QQQ"}));
+    let (c, _) =
+        gate.post("/api/invoices", Some(&w), json!({"customer":"acme-gmbh","currency":"QQQ"}));
     assert_eq!(
         c, 400,
         "a currency money:amount does not know must be 400 bad_money — an invoice that cannot be \
@@ -51,13 +55,22 @@ fn invoices_open_as_drafts_and_the_limit_is_per_subject() {
     assert!(!id.is_empty(), "POST /api/invoices returned no id");
 
     let raw = gate.stored("invoice", &id);
-    assert!(!raw.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !raw.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&raw);
     assert_eq!(d["state"], "draft", "a new invoice is a draft: {d}");
     assert_eq!(d["lines"], json!([]), "a new invoice has no lines: {d}");
     assert_eq!(d["total_units"], 0, "a new invoice totals zero, as an integer: {d}");
-    assert!(d.get("entry").is_none(), "invoices must not invent a posted entry — that is the posting part's job");
-    assert!(d["created_at"].as_str().unwrap_or_default().ends_with('Z'), "created_at must be RFC3339 UTC: {d}");
+    assert!(
+        d.get("entry").is_none(),
+        "invoices must not invent a posted entry — that is the posting part's job"
+    );
+    assert!(
+        d["created_at"].as_str().unwrap_or_default().ends_with('Z'),
+        "created_at must be RFC3339 UTC: {d}"
+    );
 
     let (_, read) = gate.get(&format!("/api/invoices/{id}"), Some(&w));
     let d = parse(&read);
@@ -74,8 +87,14 @@ fn invoices_open_as_drafts_and_the_limit_is_per_subject() {
     }
     let (_, locked) = gate.post("/api/invoices", Some(&burst), inv.clone());
     let d = parse(&locked);
-    assert_eq!(d["error"], "rate_limited", "past the limit the part must refuse and say how long to wait: {d}");
-    assert!(d["retry_after"].as_i64().unwrap_or(0) > 0, "retry_after must be the limiter's seconds: {d}");
+    assert_eq!(
+        d["error"], "rate_limited",
+        "past the limit the part must refuse and say how long to wait: {d}"
+    );
+    assert!(
+        d["retry_after"].as_i64().unwrap_or(0) > 0,
+        "retry_after must be the limiter's seconds: {d}"
+    );
     let (c, _) = gate.post("/api/invoices", Some(&w), inv);
     assert_eq!(c, 201, "locking out one subject must not lock out another");
 }
@@ -90,18 +109,39 @@ fn posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge() {
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
-    assert!(ids.len() >= 2, "the fixture produced no invoices — the scaffold is broken, not the part");
+    assert!(
+        ids.len() >= 2,
+        "the fixture produced no invoices — the scaffold is broken, not the part"
+    );
     let (empty, filled) = (ids[0].clone(), ids[1].clone());
 
     let post_it = |id: &str, key: &str| -> (u16, String) {
-        gate.with_headers("POST", &format!("/api/invoices/{id}/post"), Some(&t), &[("idempotency-key", key)], None)
+        gate.with_headers(
+            "POST",
+            &format!("/api/invoices/{id}/post"),
+            Some(&t),
+            &[("idempotency-key", key)],
+            None,
+        )
     };
 
     // --- the refusals ---------------------------------------------------------------
-    let (c, _) = gate.with_headers("POST", &format!("/api/invoices/{filled}/post"), None, &[("idempotency-key", "k")], None);
+    let (c, _) = gate.with_headers(
+        "POST",
+        &format!("/api/invoices/{filled}/post"),
+        None,
+        &[("idempotency-key", "k")],
+        None,
+    );
     assert_eq!(c, 401, "posting with no bearer must be 401");
     let ro = token(&gate, "reader", Some(json!(["invoices:read"])));
-    let (c, _) = gate.with_headers("POST", &format!("/api/invoices/{filled}/post"), Some(&ro), &[("idempotency-key", "k")], None);
+    let (c, _) = gate.with_headers(
+        "POST",
+        &format!("/api/invoices/{filled}/post"),
+        Some(&ro),
+        &[("idempotency-key", "k")],
+        None,
+    );
     assert_eq!(c, 403, "posting needs invoices:post — a read-only token must be 403");
     let (c, _) = gate.json("POST", &format!("/api/invoices/{filled}/post"), Some(&t), None);
     assert_eq!(c, 400, "posting with no Idempotency-Key must be 400 — a retry would charge twice");
@@ -114,10 +154,16 @@ fn posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge() {
 
     // --- posted once ----------------------------------------------------------------
     let (_, first) = post_it(&filled, "key-abc");
-    assert!(!first.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !first.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&first);
     assert_eq!(d["total_units"], 10000, "the posted total must be the invoice's: {d}");
-    assert!(d["posted_at"].as_str().unwrap_or_default().ends_with('Z'), "posted_at must be RFC3339 UTC: {d}");
+    assert!(
+        d["posted_at"].as_str().unwrap_or_default().ends_with('Z'),
+        "posted_at must be RFC3339 UTC: {d}"
+    );
 
     let d = parse(&gate.stored("invoice", &filled));
     assert_eq!(d["state"], "posted", "a posted invoice is not a draft any more: {d}");
@@ -144,7 +190,8 @@ fn posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge() {
     let (_, again) = post_it(&filled, "key-abc");
     let (code, _) = post_it(&filled, "key-abc");
     assert_eq!(
-        parse(&again), parse(&first),
+        parse(&again),
+        parse(&first),
         "a retry with the same Idempotency-Key must return the response the first call got, \
          verbatim. First: {first}\nAgain: {again}"
     );
@@ -164,5 +211,8 @@ fn posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge() {
          charge, not a retry"
     );
     let after = gate.stored("invoice", &filled);
-    assert_eq!(before, after, "the refused second posting changed the invoice — the entry must be written exactly once");
+    assert_eq!(
+        before, after,
+        "the refused second posting changed the invoice — the entry must be written exactly once"
+    );
 }
