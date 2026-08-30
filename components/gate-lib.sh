@@ -170,13 +170,20 @@ gate_serve() {
   # which lands in the branch's feedback looking exactly like the failure it is not.
   disown "$HOST_PID" 2>/dev/null || true
   B="http://127.0.0.1:$PORT"
+  # 120 half-seconds, not 60. Two CI runs failed here — a different gate each time,
+  # both immediately after `e2e-courier.sh`, which is the heaviest gate in the suite
+  # and leaves the runner busy. Both took exactly the old thirty seconds, which is a
+  # timeout expiring rather than a host that will never come up.
   local _
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 120); do
     [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/health" 2>/dev/null)" = "200" ] && break
     sleep 0.5
   done
   [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/health")" = "200" ] || {
-    echo "the component never served /health — it is not up: $(tail -3 "$LOG")"
+    # The whole log, not `tail -3`. When this fired in CI the three lines were the
+    # bottom of a stack trace and the cause was above them.
+    echo "the component never served /health — it is not up:"
+    cat "$LOG"
     exit 1
   }
 }
