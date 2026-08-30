@@ -159,11 +159,18 @@ jobs:
       #   derived          deriving the graph must not write into the tree, the
       #                    committed renders must not drift from the components, no
       #                    build output is tracked, and no WIT package name is
-      #                    claimed by two different contracts.      #   gate_events      the `events` gate as a Rust test rather than a bash script —
-      #                    a PROTOTYPE, running beside the shell one it mirrors. Same
-      #                    assertions, same failure sentences; 4.20s -> 0.58s warm,
-      #                    and the tools a worker must have drop from thirteen to two.
-      #                    Skips loudly if `events_domain.composed.wasm` is absent.
+      #                    claimed by two different contracts.      #   gate_*           the events, clinic and triage gates as Rust tests rather than bash
+      #                    scripts, running beside the shell ones they mirror. Same
+      #                    assertions, same failure sentences. Measured warm:
+      #
+      #                      events   4.12s -> 0.56s     tickets  6.34s -> 0.56s
+      #                      checkin  4.04s -> 0.57s     swaps    6.36s -> 0.56s
+      #                      TOTAL   20.87s -> 2.25s     9.3x
+      #
+      #                    The tools a worker must have drop from thirteen to two, and
+      #                    that is the point rather than the seconds — these are headed
+      #                    for several machines with work scheduled between them. Each
+      #                    skips loudly if its artifacts are absent.
       #   checks           4 tests that need NOTHING — no nats-server, no surreal,
       #                    no comp-host, no built wasm. Written, passing, and simply
       #                    never named here.
@@ -219,10 +226,15 @@ jobs:
       # comp-plug", because a development machine has one lying around from earlier
       # work. That is the same way `nats-server` was missed an hour before, and the
       # note further down records four earlier instances of it.
-      - name: Build the two binaries a gate needs
+      # THREE, and the third is a lesson. `comp-field` was added to `gate-lib.sh` on a
+      # branch cut before this step existed, so its CI never ran a gate and it merged
+      # green — leaving main with 21 of 25 gates failing on "no comp-field". A PR that
+      # cannot exercise the step it breaks is a PR that passes for the wrong reason.
+      - name: Build the binaries a gate needs
         run: |
           cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
+          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-field
 
       - name: Run the end-to-end gates
         env:
@@ -253,7 +265,9 @@ jobs:
           --test capsearch --test contracts --test publish --test secrets
           --test capgraph_edges --test capgraph_store --test console_session
           --test compose_race --test witsurface --test hostsurface
-          --test fixtureversions --test derived --test checks --test gate_events
+          --test fixtureversions --test derived --test checks
+          --test gate_events --test gate_tickets --test gate_checkin --test gate_swaps
+          --test gate_clinic --test gate_triage
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is
