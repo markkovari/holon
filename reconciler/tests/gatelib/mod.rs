@@ -161,10 +161,16 @@ impl Gate {
             "--addr".into(), addr.clone(),
         ]);
 
+        let log_path = std::env::temp_dir().join(format!("holon-gate-{app}-{port}.log"));
+        let log = std::fs::File::create(&log_path).expect("create the host log");
+
         let child = Command::new(host)
             .args(&args)
+            // Kept, not discarded. The shell harness sends the host's output to a temp
+            // file and prints `tail -3` of it on failure — which, when a host actually
+            // failed in CI, was three lines of stack trace with the cause above them.
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(log.try_clone().expect("clone the host log"))
             .spawn()
             .unwrap_or_else(|e| panic!("spawn comp-host: {e}"));
 
@@ -176,13 +182,23 @@ impl Gate {
                 .build()
                 .unwrap(),
         };
-        for _ in 0..200 {
+        // SIXTY SECONDS, and the number is measured rather than picked. A host on a
+        // loaded two-core runner can take a while to come up, and both CI failures this
+        // shape produced were the shell harness's THIRTY-second wait expiring, in the
+        // gate that happened to run right after the heaviest one. Ten seconds — what
+        // this waited first — would have been worse.
+        for _ in 0..1200 {
             if gate.client.get(format!("{}/health", gate.base)).send().is_ok() {
                 return gate;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        panic!("[{app}] comp-host never answered /health on {addr}");
+        // What the host said, not the last three lines of it.
+        let said = std::fs::read_to_string(&log_path).unwrap_or_default();
+        panic!(
+            "[{app}] comp-host never answered /health on {addr} in 60s.\nThe host said:\n{}",
+            if said.trim().is_empty() { "(nothing)".to_string() } else { said }
+        );
     }
 
     /// (status, body). A non-2xx is a VALUE: most of a gate is asserting that a
