@@ -182,6 +182,10 @@ pub struct Report {
 /// the parts.
 pub fn gate(
     checks_url: &str,
+    // `checks_token` is the runner's bearer token, when it wants one. `None` is a
+    // supported way to run and the shape a runner somebody else started on
+    // loopback may have.
+    checks_token: Option<&str>,
     base_commit: &str,
     base_tree: &Value,
     changes: &Value,
@@ -200,12 +204,16 @@ pub fn gate(
         "changes": changes,
         "checks": checks,
     });
-    let r = reqwest::blocking::Client::builder()
+    let mut req = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
         .map_err(|e| e.to_string())?
         .post(checks_url)
-        .body(body.to_string())
+        .body(body.to_string());
+    if let Some(t) = checks_token {
+        req = req.bearer_auth(t);
+    }
+    let r = req
         .send()
         .map_err(|e| format!("{e}"))?;
     let text = r.text().unwrap_or_default();
@@ -391,6 +399,7 @@ mod tests {
     fn criticising_no_checks_is_itself_a_refusal() {
         let e = criticise(
             "http://127.0.0.1:1",
+            None,
             "c",
             &json!([]),
             &json!([]),
@@ -405,6 +414,7 @@ mod tests {
     fn an_empty_gate_is_refused_rather_than_passed() {
         let e = gate(
             "http://127.0.0.1:1",
+            None,
             "c",
             &json!([]),
             &json!([]),
@@ -498,6 +508,12 @@ pub struct Wiring<'a> {
     pub driver_url: &'a str,
     pub driver_host: &'a str,
     pub checks_url: &'a str,
+    /// The token the COMPOSITION gate presents. The per-part gates go through the
+    /// `checks-runner` component, which reads its own from `comp:secrets`; this
+    /// is the one call the loop makes directly, and it needs the same credential
+    /// or the composition is 401 while every part was fine — the most confusing
+    /// arrangement available.
+    pub checks_token: Option<&'a str>,
     pub registry: &'a Registry,
     /// `None` runs the loop without answering anything: requests accumulate, the
     /// run continues on the current contract, and nothing blocks. A supported way
@@ -701,7 +717,15 @@ pub fn run_parts(
     };
 
     // 4. Two green parts are not a green whole.
-    match gate(w.checks_url, base_commit, base_tree, &changes, composition_checks, timeout) {
+    match gate(
+        w.checks_url,
+        w.checks_token,
+        base_commit,
+        base_tree,
+        &changes,
+        composition_checks,
+        timeout,
+    ) {
         Ok(report) => {
             let blocked = if report.passed {
                 Vec::new()
@@ -771,6 +795,7 @@ pub struct BaseVerdict {
 /// critic something people turn off rather than something they trust.
 pub fn criticise(
     checks_url: &str,
+    checks_token: Option<&str>,
     base_commit: &str,
     base_tree: &Value,
     checks: &Value,
@@ -783,7 +808,8 @@ pub fn criticise(
     }
     // The same runner, the same tree, and NO changes. Anything green here is green
     // for a candidate that did nothing.
-    let report = gate(checks_url, base_commit, base_tree, &json!([]), checks, timeout)?;
+    let report =
+        gate(checks_url, checks_token, base_commit, base_tree, &json!([]), checks, timeout)?;
     let failed: Vec<&str> = report.failures.iter().filter_map(|f| f.split(':').next()).collect();
     Ok(BaseVerdict {
         vacuous: list

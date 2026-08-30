@@ -9,6 +9,12 @@
 #
 # `checks-url` carries a placeholder port. The test rewrites it, because the
 # runner it starts binds whatever port was free.
+#
+# `checks-token` is a SECRET, never config: the thing on the other end runs
+# commands, so a bearer token in a config map that every debug endpoint dumps is
+# a remote code execution with extra steps. Granted here in every case — an EMPTY
+# grant is how "this runner wants no token" is spelled, so there is one wiring
+# rather than two, and the component decides by whether the value is empty.
 
 version: comp/v1
 app: fitness
@@ -23,9 +29,13 @@ components:
   - id: fitness
     config:
       checks-url: http://127.0.0.1:CHECKS_PORT/check
+    secrets:
+      - key: checks-token
+        ref: vault://acme/checkstoken
     host_needs:
       - wasi:http/outgoing-handler
       - wasi:config/store
+      - comp:secrets/reader
     egress:
       - 127.0.0.1:CHECKS_PORT
 

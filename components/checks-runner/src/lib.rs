@@ -29,6 +29,7 @@ mod bindings;
 use bindings::exports::graph::fitness::evaluator::{
     Candidate, Check, CheckState, EvalError, Guest, Outcome, Verdict,
 };
+use bindings::comp::secrets::reader as secrets;
 use bindings::wasi::config::store as config;
 use bindings::wasi::http::types::{
     Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
@@ -71,11 +72,27 @@ fn files_json(files: &[bindings::exports::graph::fitness::evaluator::File]) -> s
     )
 }
 
+/// The bearer token this evaluator was granted, if it was granted one.
+///
+/// `none` is a supported way to run and the common one: a runner on loopback is
+/// bounded by the loopback, and `comp-checks` only insists on a token when it is
+/// bound somewhere a second machine can reach. Refusing to run without one would
+/// break every local gate to protect the remote case.
+fn token() -> Option<String> {
+    match secrets::get("checks-token") {
+        Ok(Some(s)) => secrets::reveal(&s).ok().filter(|v| !v.is_empty()),
+        _ => None,
+    }
+}
+
 /// POST the candidate and hand back (status, body).
 fn post(body: &str) -> Result<(u16, String), EvalError> {
     let (scheme, authority, path) = endpoint()?;
     let headers = Fields::new();
     let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+    if let Some(t) = token() {
+        let _ = headers.set("authorization", &[format!("Bearer {t}").into_bytes()]);
+    }
 
     let req = OutgoingRequest::new(headers);
     let net = |m: String| EvalError::Unavailable(m);
@@ -350,6 +367,15 @@ impl Guest for Component {
                 )),
                 400 => Err(EvalError::Invalid(
                     parsed["error"].as_str().unwrap_or("the runner refused the request").to_string(),
+                )),
+                // `invalid` rather than `unavailable`: the runner is there and
+                // answering, and no candidate can do anything about the gate not
+                // being granted a token. Reporting it as unreachable sends the
+                // caller to look at the network, which is the wrong half.
+                401 => Err(EvalError::Invalid(
+                    "the runner rejected this evaluator's token — grant `checks-token` in the \
+                     manifest, matching the runner's --token-file"
+                        .into(),
                 )),
                 other => Err(EvalError::Unavailable(format!(
                     "the runner answered {other}: {}",
