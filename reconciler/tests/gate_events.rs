@@ -38,7 +38,8 @@ use serde_json::{json, Value};
 
 const APP: &str = "events";
 const COMPOSED: &str = "events_domain.composed.wasm";
-const CONFIG: &[&str] = &["allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
+const CONFIG: &[&str] = &["allow-test-routes=1",
+    "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
 
 /// A real PNG, byte for byte — the same bytes the bash gate writes with `printf`.
 /// The round trip is the point: the router used to read every body through

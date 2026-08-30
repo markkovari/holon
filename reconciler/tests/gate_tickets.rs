@@ -15,7 +15,8 @@ use serde_json::json;
 
 const APP: &str = "events";
 const COMPOSED: &str = "events_domain.composed.wasm";
-const CONFIG: &[&str] = &["allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
+const CONFIG: &[&str] = &["allow-test-routes=1",
+    "allowed-types=image/png,image/jpeg,image/webp", "max-size=2097152"];
 
 #[test]
 fn tickets_claimed_rendered_private_and_capped() {

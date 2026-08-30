@@ -142,10 +142,15 @@ impl Gate {
         let port = next_port(app);
         let addr = format!("127.0.0.1:{port}");
 
+        // `default-tenant` only. `allow-test-routes` is NOT added here even though every
+        // gate uses `/test/…`: only `events-domain`'s shell lib sets it, the others reach
+        // their fixtures without it, and adding it universally changed behaviour — the
+        // moderation rate limiter stopped limiting, so a gate that asserts a subject is
+        // locked out after three submissions passed a fourth. A harness that turns a flag
+        // on for everyone is a harness that tests a configuration nothing ships.
         let mut args: Vec<String> = vec![
             "--app".into(), app.into(),
             "--config".into(), format!("default-tenant={app}"),
-            "--config".into(), "allow-test-routes=true".into(),
         ];
         for c in config {
             args.push("--config".into());
@@ -196,6 +201,32 @@ impl Gate {
         }
         if let Some((ct, bytes)) = body {
             r = r.header("content-type", ct).body(bytes);
+        }
+        let resp = r.send().unwrap_or_else(|e| panic!("{method} {path}: transport error: {e}"));
+        (resp.status().as_u16(), resp.text().unwrap_or_default())
+    }
+
+    /// Extra headers, for the routes that take one. `Idempotency-Key` is the reason
+    /// this exists: three treasury routes refuse a request without it, and a gate that
+    /// cannot send one cannot judge them.
+    pub fn with_headers(
+        &self,
+        method: &str,
+        path: &str,
+        token: Option<&str>,
+        headers: &[(&str, &str)],
+        body: Option<Value>,
+    ) -> (u16, String) {
+        let m = reqwest::Method::from_bytes(method.as_bytes()).expect("method");
+        let mut r = self.client.request(m, format!("{}{}", self.base, path));
+        if let Some(t) = token {
+            r = r.header("authorization", format!("Bearer {t}"));
+        }
+        for (k, v) in headers {
+            r = r.header(*k, *v);
+        }
+        if let Some(b) = body {
+            r = r.header("content-type", "application/json").body(b.to_string());
         }
         let resp = r.send().unwrap_or_else(|e| panic!("{method} {path}: transport error: {e}"));
         (resp.status().as_u16(), resp.text().unwrap_or_default())
