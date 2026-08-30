@@ -32,6 +32,18 @@ them is an edit and a different recipe, never a rewrite.
 | **wasmCloud 1.x** | wadm, over NATS | somebody else's wasmCloud |
 | **wasmCloud 2.x** | the runtime-operator, over the Kubernetes API | current wasmCloud — no wadm, no OAM |
 
+On a second machine — a gate worker, or another box to serve from — there is no
+checkout to make and no `just` to install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/markkovari/holon/main/install.sh | sh
+```
+
+That installs `comp-checks` into `~/.holon/bin`, which is all a machine needs to
+run a candidate's checks: the tree arrives in the request, so a worker never has
+a copy of the project it is gating. `HOLON_ROLE=full` adds the host, the composer
+and the loop. Builds from a source tarball, macOS and Linux.
+
 ```bash
 just compose-gate                    # components -> one .wasm
 just selfhost-render gate            # read the unit and route before trusting them
