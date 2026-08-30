@@ -459,13 +459,23 @@ fn base_tree(checkout: &Path, base_paths: &[String]) -> Result<Vec<Value>> {
             checkout.display()
         );
     }
-    // The whole tree travels over wrpc as one message. NATS refuses one past ~1
-    // MB, and the failure is opaque, so catch it here with an actionable message.
-    if bytes > 900_000 {
+    // The whole tree travels over wrpc as one message, and NATS refuses one past
+    // `max_payload` with a failure that is opaque at this end — so it is caught
+    // here, with a message that says what to do.
+    //
+    // The bound comes from `fleet::max_tree_payload()` rather than a constant
+    // here, because the same number configures the server (`fleet.rs` writes it
+    // into the nats config it starts with). Hardcoded at one end and configured at
+    // the other is how a raised server still gets refused by its own client, which
+    // is precisely the bug this replaced: 900_000 stayed put when the ceiling
+    // moved to 8 MB.
+    let ceiling = comp_reconciler::fleet::max_tree_payload();
+    if bytes > ceiling {
         bail!(
-            "the base tree is {:.1} MB, over the ~1 MB a run can ship — scope the goal with \
+            "the base tree is {:.1} MB, over the {:.1} MB a run can ship — scope the goal with \
              base_paths to the crate it touches (a monorepo cannot ship whole)",
-            bytes as f64 / 1_048_576.0
+            bytes as f64 / 1_048_576.0,
+            ceiling as f64 / 1_048_576.0
         );
     }
     Ok(tree)
