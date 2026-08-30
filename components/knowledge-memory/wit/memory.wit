@@ -16,7 +16,11 @@
 // An agent handed only `memory` has no verb that reaches the trusted namespace,
 // so knowledge poisoning is not a check that can be got round; it is a function
 // that is not in the agent's world.
-package knowledge:memory@0.1.0;
+// 0.2.0, not 0.1.0: `decomposed-into` / `parts-of` / `parents-of` are new verbs on
+// an interface that already had a version, and `wit/SURFACES.md` exists to make
+// that a version change rather than a silent one. Additive for a caller, which is
+// why it is a minor bump and not a major one.
+package knowledge:memory@0.2.0;
 
 /// Write what was observed, read what is worth knowing, and report what happened
 /// to what was read. Safe to hand to an agent.
