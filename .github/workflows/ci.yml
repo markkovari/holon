@@ -226,10 +226,15 @@ jobs:
       # comp-plug", because a development machine has one lying around from earlier
       # work. That is the same way `nats-server` was missed an hour before, and the
       # note further down records four earlier instances of it.
-      - name: Build the two binaries a gate needs
+      # THREE, and the third is a lesson. `comp-field` was added to `gate-lib.sh` on a
+      # branch cut before this step existed, so its CI never ran a gate and it merged
+      # green — leaving main with 21 of 25 gates failing on "no comp-field". A PR that
+      # cannot exercise the step it breaks is a PR that passes for the wrong reason.
+      - name: Build the binaries a gate needs
         run: |
           cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
+          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-field
 
       - name: Run the end-to-end gates
         env:
