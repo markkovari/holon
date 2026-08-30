@@ -219,10 +219,27 @@ fn every_relative_markdown_link_resolves() {
 #[test]
 fn every_just_recipe_a_document_names_exists() {
     let root = repo_root();
+    // The Justfile AND everything it imports. `import` splices a file in, so a
+    // recipe in `just/host.just` is reached as `just host-serve` exactly as it was
+    // when it lived here — and a parser that reads only the root file concludes
+    // that two thirds of the documented commands do not exist.
+    //
+    // Read off the `import` lines rather than by globbing `just/`: a fragment
+    // nobody imports is not part of the interface, and finding it here would make
+    // this test agree with a file that `just` itself ignores.
     let justfile = std::fs::read_to_string(root.join("Justfile")).expect("no Justfile");
+    let mut all = justfile.clone();
+    for line in justfile.lines() {
+        let Some(rest) = line.trim().strip_prefix("import ") else { continue };
+        let path = rest.trim().trim_matches(|c| c == '\'' || c == '"');
+        let text = std::fs::read_to_string(root.join(path))
+            .unwrap_or_else(|e| panic!("Justfile imports {path}, which does not read: {e}"));
+        all.push('\n');
+        all.push_str(&text);
+    }
 
     // A recipe is a line starting at column zero with `name:` or `name arg:`.
-    let recipes: BTreeSet<String> = justfile
+    let recipes: BTreeSet<String> = all
         .lines()
         .filter(|l| !l.starts_with(char::is_whitespace) && !l.starts_with('#'))
         .filter_map(|l| {
@@ -234,7 +251,11 @@ fn every_just_recipe_a_document_names_exists() {
             .then(|| name.to_string())
         })
         .collect();
-    assert!(recipes.len() > 50, "only found {} recipes — the parser is wrong", recipes.len());
+    assert!(
+        recipes.len() > 250,
+        "only found {} recipes — the parser is wrong, or an import stopped being read",
+        recipes.len()
+    );
 
     let mut missing: BTreeSet<String> = BTreeSet::new();
     for file in markdown_files(&root) {
