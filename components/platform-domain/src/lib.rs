@@ -3476,11 +3476,25 @@ fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String, Val
     if b.title.trim().is_empty() {
         return Outcome::Err(422, "a goal needs a title".into());
     }
+    // A sub-goal's parent is checked HERE, where the answer is a 422 naming the
+    // problem. Stored unchecked, the first thing to notice would be a worklist
+    // with a child under a parent in another project, or a chain that never ends.
+    let parent = b.parent.unwrap_or_default();
+    if !parent.is_empty() {
+        if let Err((code, msg)) = parent_is_usable(&parent, project) {
+            return Outcome::Err(code, msg);
+        }
+    }
     let doc = json!({
         "project": project, "org": org,
         "title": b.title.trim(),
         "spec": b.spec.unwrap_or_default(),
         "priority": b.priority.unwrap_or(100),
+        // Empty when this is a goal in its own right, which is most of them. A
+        // field rather than a separate table: a sub-goal IS a goal — same
+        // lifecycle, same queue, same "a human starts it" — and giving it its own
+        // table would mean two of every query that reads a worklist.
+        "parent": parent,
         // Queued, and it stays there. A human starts every goal (ADR-0082): there
         // is no loop that drains this, on purpose.
         "state": "queued",
@@ -3496,6 +3510,74 @@ fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String, Val
     }
 }
 
+/// How deep a decomposition may go.
+///
+/// A bound rather than a promise that cycles cannot happen: the walk below
+/// catches an actual cycle, and this catches the chain that is technically a tree
+/// and still means nobody will ever run the leaves.
+const MAX_GOAL_DEPTH: usize = 8;
+
+/// May this goal be a parent, for a child in `project`?
+///
+/// Three refusals, all of them 422 because each is a mistake in the request that
+/// the caller can fix:
+///
+///   * no such goal — usually an id from another environment;
+///   * a different project — a worklist is per project, and a child under a
+///     parent nobody in that project can see is a row that reads as corrupt;
+///   * too deep, or a cycle — walked rather than assumed, because the id is the
+///     caller's and a chain that closes on itself would hang every reader of it.
+fn parent_is_usable(parent: &str, project: &str) -> Result<(), (u16, String)> {
+    let Ok(entry) = records::get(GOALS, parent) else {
+        return Err((422, format!("no goal `{parent}` to be a part of")));
+    };
+    let Ok(doc) = serde_json::from_str::<Value>(&entry.data) else {
+        return Err((500, "the parent goal's record is unreadable".into()));
+    };
+    if str_of(&doc, "project") != project {
+        return Err((
+            422,
+            format!(
+                "goal `{parent}` belongs to project `{}`, not `{project}` — a part and the                  goal it serves live in one worklist",
+                str_of(&doc, "project")
+            ),
+        ));
+    }
+    // Walk up. `seen` is what turns an infinite loop into a message: a record
+    // written before this check existed, or edited around it, can still close a
+    // cycle, and the reader must not be the thing that discovers it.
+    let mut seen = vec![parent.to_string()];
+    let mut at = str_of(&doc, "parent");
+    while !at.is_empty() {
+        if seen.contains(&at) {
+            return Err((422, format!("goal `{parent}` is already part of a cycle through `{at}`")));
+        }
+        seen.push(at.clone());
+        // A runaway walk is bounded here as well as by the check below, because
+        // the two protect different things: this stops the LOOP, that stops the
+        // GOAL. A chain longer than the bound is refused either way.
+        if seen.len() > MAX_GOAL_DEPTH {
+            break;
+        }
+        let Ok(up) = records::get(GOALS, &at) else { break };
+        let Ok(updoc) = serde_json::from_str::<Value>(&up.data) else { break };
+        at = str_of(&updoc, "parent");
+    }
+    // `seen` is the PARENT's own chain, so a child hung off it sits one deeper.
+    // Checked after the walk rather than during it: the question is how deep the
+    // NEW goal would be, and that is not known until the walk is done.
+    if seen.len() >= MAX_GOAL_DEPTH {
+        return Err((
+            422,
+            format!(
+                "goal `{parent}` is already {} levels deep, and {MAX_GOAL_DEPTH} is the bound \u{2014} a decomposition this deep is one nobody will reach the bottom of",
+                seen.len()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
     let Some(p) = caller(request) else {
         return Outcome::Err(401, "no session".into());
@@ -3505,9 +3587,14 @@ fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, Valu
         return Outcome::Err(code, msg);
     }
     let want = query.get("state").and_then(|v| v.as_str()).unwrap_or_default();
+    // `?parent=<id>` lists one goal's parts; `?parent=` (empty, explicitly given)
+    // lists only goals that are nobody's part, which is the top-level worklist.
+    // Absent means every goal, which is what every existing caller asks for.
+    let by_parent = query.get("parent").and_then(|v| v.as_str());
     let mut rows: Vec<Value> = goals_of(project)
         .into_iter()
         .filter(|g| want.is_empty() || str_of(g, "state") == want)
+        .filter(|g| by_parent.is_none_or(|p| str_of(g, "parent") == p))
         .collect();
     // Priority first, then oldest — a worklist someone reads top-down.
     rows.sort_by(|a, b| {
@@ -3540,6 +3627,33 @@ fn goal_transition(
     let Ok(mut doc) = serde_json::from_str::<Value>(&entry.data) else {
         return Outcome::Err(500, "the goal record is unreadable".into());
     };
+    // A goal with live parts may not be finished or thrown away out from under
+    // them. Both leave rows nobody will ever look at again: parts of a goal that
+    // is done read as already handled, and parts of an abandoned one read as
+    // work still to do for a goal that no longer exists.
+    //
+    // Refused rather than cascaded. Cascading is a destructive multi-record
+    // operation inferred from one click, and the caller has more information than
+    // this function does about whether the parts are worth keeping.
+    if matches!(to, "done" | "abandoned") {
+        let live: Vec<String> = goals_of(&str_of(&doc, "project"))
+            .into_iter()
+            .filter(|g| str_of(g, "parent") == id)
+            .filter(|g| !matches!(str_of(g, "state").as_str(), "done" | "abandoned" | "failed"))
+            .map(|g| str_of(&g, "title"))
+            .collect();
+        if !live.is_empty() {
+            return Outcome::Err(
+                409,
+                format!(
+                    "goal `{id}` still has {} unfinished part(s) — {}. Finish or abandon them                      first: parts of a `{to}` goal are rows nobody looks at again.",
+                    live.len(),
+                    live.join(", ")
+                ),
+            );
+        }
+    }
+
     let from = str_of(&doc, "state");
     if !goal_may(&from, to) {
         // Naming both ends beats "invalid transition": the caller usually has the

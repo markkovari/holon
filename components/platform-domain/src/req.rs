@@ -208,6 +208,19 @@ pub struct NewGoal {
     /// this sorts a worklist rather than driving anything.
     #[serde(default)]
     pub priority: Option<i64>,
+    /// The goal this one is a part of, when it is a sub-goal.
+    ///
+    /// A sub-goal is an ORDINARY goal in every other respect — same lifecycle,
+    /// same queue, same "a human starts it" rule (ADR-0082). This field is the
+    /// only difference, and it exists so a decomposition can be picked up later
+    /// rather than living for the length of one run.
+    ///
+    /// The knowledge pool holds the same relationship as a `decomposes_into`
+    /// edge, keyed by goal TEXT. This is keyed by goal ID and answers a different
+    /// question: the pool says what has been learned, the queue says what is
+    /// still to do.
+    #[serde(default)]
+    pub parent: Option<String>,
 }
 
 /// `POST /api/goals/{id}/fail`

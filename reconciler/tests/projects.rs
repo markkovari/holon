@@ -123,6 +123,14 @@ impl Api {
         v["id"].as_str().unwrap().to_string()
     }
 
+    /// A goal that is a part of another one.
+    fn part(&self, project: &str, title: &str, parent: &str) -> (u16, Value) {
+        self.post(
+            &format!("/api/projects/{project}/goals"),
+            json!({ "title": title, "parent": parent }),
+        )
+    }
+
     fn state_of(&self, project: &str, id: &str) -> String {
         let (_, v) = self.get(&format!("/api/projects/{project}/goals"));
         v["goals"]
@@ -507,4 +515,101 @@ fn a_stale_fleet_report_stops_new_work() {
          full: {refused}"
     );
     println!("    stale report refused: {detail}");
+}
+
+/// A sub-goal is an ordinary goal with a parent, and the queue keeps that honest.
+///
+/// The pool holds the same relationship as a `decomposes_into` edge keyed by goal
+/// TEXT, and it answers a different question: the pool says what has been learned,
+/// the queue says what is still to do. This is the second half — the half that
+/// makes a decomposition something a person can come back to next week rather
+/// than something that lived for the length of one run.
+///
+/// What is asserted here is mostly the REFUSALS, because those are what stop a
+/// worklist becoming unreadable: a part under a parent in another project, a
+/// chain that closes on itself or runs away, and a parent finished or thrown away
+/// out from under parts that are still live.
+#[test]
+fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_not() {
+    let fleet = Fleet::start_with_platform("subgoals", 1);
+    let api = Api::new(fleet.platform_url());
+    for (name, repo) in [("widgets", "acme/widgets"), ("gadgets", "acme/gadgets")] {
+        let (code, v) = api.post("/api/projects", json!({ "name": name, "repo": repo }));
+        assert_eq!(code, 201, "creating `{name}` failed: {v}");
+    }
+
+    let parent = api.goal("widgets", "serve invoices over http");
+
+    // --- the ordinary case ---------------------------------------------------
+    let (code, back) = api.part("widgets", "store invoices in postgres", &parent);
+    assert_eq!(code, 201, "a part of a goal in the same project is ordinary: {back}");
+    let (code, front) = api.part("widgets", "render the invoice list", &parent);
+    assert_eq!(code, 201, "{front}");
+    let back = back["id"].as_str().unwrap().to_string();
+
+    // Listing: `?parent=<id>` is a goal's parts, `?parent=` is what is nobody's
+    // part, and no `parent` at all is everything — which is what every caller
+    // that predates this asks for and must keep getting.
+    let (_, parts) = api.get(&format!("/api/projects/widgets/goals?parent={parent}"));
+    assert_eq!(parts["count"], json!(2), "both parts: {parts}");
+    let (_, top) = api.get("/api/projects/widgets/goals?parent=");
+    assert_eq!(top["count"], json!(1), "only the goal that is nobody's part: {top}");
+    let (_, all) = api.get("/api/projects/widgets/goals");
+    assert_eq!(all["count"], json!(3), "absent means every goal: {all}");
+
+    // --- the refusals --------------------------------------------------------
+    let (code, v) = api.part("widgets", "an orphan", "goals:does-not-exist");
+    assert_eq!(code, 422, "a parent that is not there must be refused: {v}");
+
+    let elsewhere = api.goal("gadgets", "a goal in another project");
+    let (code, v) = api.part("widgets", "a part across projects", &elsewhere);
+    assert_eq!(code, 422, "a worklist is per project: {v}");
+    assert!(
+        v["error"].as_str().unwrap_or_default().contains("gadgets"),
+        "the refusal has to name the project that owns the parent: {v}"
+    );
+
+    // Depth. Eight levels is the bound; the ninth is refused, and the message has
+    // to say WHY rather than "invalid parent".
+    let mut chain = api.goal("widgets", "level 0");
+    for i in 1..8 {
+        let (code, v) = api.part("widgets", &format!("level {i}"), &chain);
+        assert_eq!(code, 201, "level {i} should still fit: {v}");
+        chain = v["id"].as_str().unwrap().to_string();
+    }
+    let (code, v) = api.part("widgets", "one level too far", &chain);
+    assert_eq!(code, 422, "the ninth level must be refused: {v}");
+    assert!(
+        v["error"].as_str().unwrap_or_default().contains("deep"),
+        "and say it is depth, not a missing parent: {v}"
+    );
+
+    // --- a parent may not be finished out from under live parts --------------
+    api.post(&format!("/api/goals/{parent}/start"), json!({}));
+    api.post(&format!("/api/goals/{parent}/review"), json!({}));
+    let (code, v) = api.post(&format!("/api/goals/{parent}/done"), json!({}));
+    assert_eq!(code, 409, "two parts are still queued: {v}");
+    let detail = v["error"].as_str().unwrap_or_default().to_string();
+    assert!(
+        detail.contains("unfinished part"),
+        "the refusal must say what is holding it: {detail}"
+    );
+    assert!(
+        detail.contains("store invoices in postgres"),
+        "and name them, or the caller has to go looking: {detail}"
+    );
+
+    // Finish the parts and the parent may finish. `failed` counts as finished
+    // here: it is terminal, and a parent held open forever by a part that can
+    // never move is worse than one that closes over a failure.
+    for p in [&back] {
+        api.post(&format!("/api/goals/{p}/start"), json!({}));
+        api.post(&format!("/api/goals/{p}/review"), json!({}));
+        api.post(&format!("/api/goals/{p}/done"), json!({}));
+    }
+    let front_id = front["id"].as_str().unwrap();
+    api.delete(&format!("/api/goals/{front_id}"));
+    let (code, v) = api.post(&format!("/api/goals/{parent}/done"), json!({}));
+    assert_eq!(code, 200, "every part is terminal now: {v}");
+    assert_eq!(api.state_of("widgets", &parent), "done");
 }
