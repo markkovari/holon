@@ -1665,7 +1665,22 @@ fn main() -> Result<()> {
         "repo: {}  base: {}  branches: {}  rounds: {}  model: {}",
         args.repo, args.base, args.branches, args.rounds, args.model
     );
-    println!("gate allows: {allow:?}");
+    // Said differently when the runner is not ours to configure. `allow` is
+    // derived from the goal's own checks and handed to a runner THIS process
+    // starts; a runner already listening somewhere else has its own `--allow`,
+    // set by whoever started it, and this list has no effect on it at all.
+    //
+    // Printing it unqualified was a lie the first real remote run told: the
+    // header said `gate allows: ["python3"]` while the binding list on the other
+    // machine was `test, grep, sh, python3` — and had it been narrower, every
+    // check would have failed for a reason this line said was handled.
+    match &args.checks_url {
+        None => println!("gate allows: {allow:?}"),
+        Some(u) => println!(
+            "gate needs: {allow:?} — and this run does not set that: {u} was started by \
+             somebody else, with its own --allow"
+        ),
+    }
     // A branch makes up to `attempts` model calls IN SEQUENCE, so the per-branch
     // timeout has to hold all of them. When it cannot, the branch dies with
     // `error sending request` and zero attempts — which reads as a fleet fault, and
