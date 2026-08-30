@@ -82,7 +82,20 @@ fn the_projection_targets_the_database_the_pool_lives_in() {
 
     // Both recipes, because `lessons-for` reading a database `capgraph-store` never
     // wrote is the same bug wearing the other half's clothes.
-    let justfile = read("Justfile");
+    // The root file AND everything it imports: `host-console` and `capgraph-store`
+    // live in `just/host.just` now, and a reader that stops at the root panics
+    // with "the recipe is gone from the Justfile" about a recipe `just` runs fine.
+    let justfile = {
+        let root = read("Justfile");
+        let mut all = root.clone();
+        for line in root.lines() {
+            if let Some(rest) = line.trim().strip_prefix("import ") {
+                all.push('\n');
+                all.push_str(&read(rest.trim().trim_matches(|c| c == '\'' || c == '"')));
+            }
+        }
+        all
+    };
 
     // By RECIPE, not by counting lines. The first version of this counted every
     // line holding `SURREAL_NS:-` and expected exactly two, so it went red the day

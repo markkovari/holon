@@ -99,8 +99,33 @@ struct App {
     artifact: String,
 }
 
+/// The Justfile and everything it imports, concatenated.
+///
+/// `import` splices a file in, so a `compose-*` recipe in `just/compose.just` is
+/// exactly as much a part of the interface as one in the root file. Reading only
+/// the root makes two thirds of the apps invisible — and this graph's failure mode
+/// for an app it cannot see is not an error, it is a smaller graph, which is why
+/// this is worth a function rather than a line.
+///
+/// Read off the `import` lines rather than by globbing `just/`: a fragment nobody
+/// imports is not part of the interface, and finding it here would make this
+/// disagree with what `just` itself runs.
+fn justfile_text(root_dir: &std::path::Path) -> Option<String> {
+    let root = std::fs::read_to_string(root_dir.join("Justfile")).ok()?;
+    let mut all = root.clone();
+    for line in root.lines() {
+        let Some(rest) = line.trim().strip_prefix("import ") else { continue };
+        let path = rest.trim().trim_matches(|c| c == '\'' || c == '"');
+        if let Ok(text) = std::fs::read_to_string(root_dir.join(path)) {
+            all.push('\n');
+            all.push_str(&text);
+        }
+    }
+    Some(all)
+}
+
 fn apps(root_dir: &std::path::Path) -> Vec<App> {
-    let Ok(justfile) = std::fs::read_to_string(root_dir.join("Justfile")) else {
+    let Some(justfile) = justfile_text(root_dir) else {
         return Vec::new();
     };
     // The just variables, so `{{vet_composed}}` becomes a path.
