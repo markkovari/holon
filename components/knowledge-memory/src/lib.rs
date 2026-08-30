@@ -79,7 +79,7 @@ mod scenarios;
 mod surql;
 
 use bindings::exports::knowledge::memory::memory::{
-    Entry, Guest, Hit, MemoryError, Namespace, PriorWork, RecallOpts,
+    Entry, Guest, Hit, MemoryError, Namespace, PriorWork, RecallOpts, SubGoal,
 };
 use bindings::exports::knowledge::memory::promotion::Guest as PromotionGuest;
 use bindings::knowledge::graph::store as graph;
@@ -154,6 +154,27 @@ fn digest(s: &str) -> String {
         h = h.wrapping_mul(0x100_0000_01b3);
     }
     format!("{h:016x}")
+}
+
+/// Read a decomposition edge's rows.
+///
+/// `parents_of` selects the same field names as `parts_of` deliberately, so one
+/// reader serves both directions and the two cannot drift into disagreeing about
+/// what a sub-goal looks like from either end.
+///
+/// A row missing `done` reads as NOT done. The safe side of an unknown here is
+/// the one that does the work again: skipping a part that was never finished is a
+/// silent wrong answer, and redoing a finished one merely costs money (ADR-0084).
+fn sub_goals(statement: &str) -> Result<Vec<SubGoal>, MemoryError> {
+    Ok(ask(statement)?
+        .iter()
+        .map(|r| SubGoal {
+            goal: r["goal"].as_str().unwrap_or_default().to_string(),
+            ordinal: r["ordinal"].as_u64().unwrap_or(0) as u32,
+            why: r["why"].as_str().unwrap_or_default().to_string(),
+            done: r["done"].as_bool().unwrap_or(false),
+        })
+        .collect())
 }
 
 fn ns_name(ns: Namespace) -> &'static str {
@@ -554,6 +575,45 @@ impl Guest for Component {
             Err(e) if dimension_conflict(&e) => ask(&stmt(None, true)).map(|_| ()),
             Err(e) => Err(e),
         }
+    }
+
+    fn decomposed_into(
+        parent: String,
+        child: String,
+        ordinal: u32,
+        why: String,
+    ) -> Result<(), MemoryError> {
+        if parent.trim().is_empty() || child.trim().is_empty() {
+            return Err(MemoryError::Refused(
+                "a decomposition needs both goals — an edge with an end missing is not a \
+                 decomposition"
+                    .into(),
+            ));
+        }
+        // A goal that decomposes into itself is a loop with one step. Refused
+        // here rather than left for a depth bound to catch later, because by
+        // then it has already cost a run.
+        let (pk, ck) = (digest(&normalise(&parent)), digest(&normalise(&child)));
+        if pk == ck {
+            return Err(MemoryError::Refused(
+                "a goal cannot be a part of itself — these two normalise to the same goal".into(),
+            ));
+        }
+        ask(&surql::decomposed_into(&pk, &parent, &ck, &child, ordinal, &why)).map(|_| ())
+    }
+
+    fn parts_of(goal: String) -> Result<Vec<SubGoal>, MemoryError> {
+        if goal.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        sub_goals(&surql::parts_of(&digest(&normalise(&goal))))
+    }
+
+    fn parents_of(goal: String) -> Result<Vec<SubGoal>, MemoryError> {
+        if goal.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        sub_goals(&surql::parents_of(&digest(&normalise(&goal))))
     }
 
     fn already_done(goal: String, min_similarity: f64) -> Result<Option<PriorWork>, MemoryError> {

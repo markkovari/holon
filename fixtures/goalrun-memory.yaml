@@ -59,10 +59,10 @@ components:
 
 links:
   - from: mprobe
-    import: knowledge:memory/memory@0.1.0
+    import: knowledge:memory/memory@0.2.0
     to: memory
   - from: mprobe
-    import: knowledge:memory/promotion@0.1.0
+    import: knowledge:memory/promotion@0.2.0
     to: memory
   - from: memory
     import: knowledge:graph/store@0.1.0

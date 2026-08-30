@@ -152,6 +152,64 @@ impl Memory {
     /// and a generation-level record cannot say it. Idempotent per `(goal, run)`,
     /// so the landing path may call it again with the pull request once the forge
     /// has opened one.
+    /// Record that this goal was decomposed into that one.
+    ///
+    /// Idempotent per `(parent, child)`. Failure is REPORTED, never fatal to the
+    /// caller: a run whose parts are already computed can still do the work, and
+    /// losing the edge costs the pool its memory of the decomposition rather than
+    /// the run its result — the same asymmetry `already_done` is built on.
+    pub fn decomposed_into(
+        &self,
+        parent: &str,
+        child: &str,
+        ordinal: u32,
+        why: &str,
+    ) -> Result<(), String> {
+        let v = self.call(
+            reqwest::Method::POST,
+            &format!(
+                "/decomposed-into?parent={}&child={}&ordinal={ordinal}&why={}",
+                enc(parent),
+                enc(child),
+                enc(why)
+            ),
+        )?;
+        if let Some(detail) = v["error"].as_str() {
+            return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
+        }
+        Ok(())
+    }
+
+    /// What this goal broke into, in ordinal order. Empty is an answer.
+    pub fn parts_of(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
+        self.sub_goals("/parts-of", goal)
+    }
+
+    /// The goals this one is a part of — plural, because one sub-goal reached
+    /// from two parents is one node with two edges.
+    pub fn parents_of(&self, goal: &str) -> Result<Vec<SubGoal>, String> {
+        self.sub_goals("/parents-of", goal)
+    }
+
+    fn sub_goals(&self, route: &str, goal: &str) -> Result<Vec<SubGoal>, String> {
+        let v = self.call(reqwest::Method::GET, &format!("{route}?goal={}", enc(goal)))?;
+        if let Some(detail) = v["error"].as_str() {
+            return Err(format!("{detail}: {}", v["detail"].as_str().unwrap_or_default()));
+        }
+        Ok(v["parts"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|p| SubGoal {
+                goal: p["goal"].as_str().unwrap_or_default().to_string(),
+                ordinal: p["ordinal"].as_u64().unwrap_or(0) as u32,
+                why: p["why"].as_str().unwrap_or_default().to_string(),
+                done: p["done"].as_bool().unwrap_or(false),
+            })
+            .collect())
+    }
+
     pub fn evaluated(
         &self,
         goal: &str,
@@ -174,6 +232,17 @@ impl Memory {
         }
         Ok(())
     }
+}
+
+/// One part of a decomposed goal, as the pool holds it.
+pub struct SubGoal {
+    pub goal: String,
+    pub ordinal: u32,
+    pub why: String,
+    /// Whether any run has PASSED on this part — derived from its own verdict
+    /// edges, so it cannot disagree with the trail. This is what makes a parent
+    /// resumable rather than all-or-nothing.
+    pub done: bool,
 }
 
 /// One lesson, as it came back from the pool.

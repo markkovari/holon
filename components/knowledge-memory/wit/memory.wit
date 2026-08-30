@@ -16,7 +16,11 @@
 // An agent handed only `memory` has no verb that reaches the trusted namespace,
 // so knowledge poisoning is not a check that can be got round; it is a function
 // that is not in the agent's world.
-package knowledge:memory@0.1.0;
+// 0.2.0, not 0.1.0: `decomposed-into` / `parts-of` / `parents-of` are new verbs on
+// an interface that already had a version, and `wit/SURFACES.md` exists to make
+// that a version change rather than a silent one. Additive for a caller, which is
+// why it is a minor bump and not a major one.
+package knowledge:memory@0.2.0;
 
 /// Write what was observed, read what is worth knowing, and report what happened
 /// to what was read. Safe to hand to an agent.
@@ -185,6 +189,54 @@ interface memory {
         passed: bool,
         artifact: string,
     ) -> result<_, memory-error>;
+
+    /// One part of a decomposed goal, as the pool holds it.
+    record sub-goal {
+        /// The part's own goal text. It is an ordinary goal — it can be recalled,
+        /// evaluated and skipped exactly like any other, which is the point.
+        goal: string,
+        /// Where it came in the decomposition. Stable across re-runs.
+        ordinal: u32,
+        /// Why the decomposition drew the line here, in the decomposer's words.
+        /// On the EDGE rather than the node: the same sub-goal reached from two
+        /// parents has two reasons, one per parent.
+        why: string,
+        /// Whether any run has PASSED on this part. Derived from its own verdict
+        /// edges, never stored, so it cannot disagree with the trail.
+        ///
+        /// This is what makes a parent resumable: a re-run picks up the parts
+        /// that are not done rather than starting the whole decomposition again.
+        done: bool,
+    }
+
+    /// Record that one goal was decomposed into another.
+    ///
+    /// Idempotent per `(parent, child)`, because re-running a decomposed goal is
+    /// the normal case and not an error — a second call reinforces one edge
+    /// instead of growing a fan of duplicates.
+    ///
+    /// Both goals are created if they are not already there, so a sub-goal exists
+    /// in the pool the moment it is NAMED — before anything runs it, and whether
+    /// or not anything ever does. That is what makes an abandoned decomposition
+    /// legible instead of invisible.
+    decomposed-into: func(
+        parent: string,
+        child: string,
+        ordinal: u32,
+        why: string,
+    ) -> result<_, memory-error>;
+
+    /// What this goal broke into, in ordinal order. Empty when it was never
+    /// decomposed, which is an answer and not an error.
+    parts-of: func(goal: string) -> result<list<sub-goal>, memory-error>;
+
+    /// The goals this one is a part of.
+    ///
+    /// Plural on purpose: one sub-goal reached from two parents is ONE node with
+    /// two edges, and answering with a single parent would make this disagree
+    /// with the edges the pool holds. `done` is the child's own, so it reads the
+    /// same from either side.
+    parents-of: func(goal: string) -> result<list<sub-goal>, memory-error>;
 
     /// Forget what nobody used: entries read fewer than `min-uses` times and not
     /// read for `max-age-days`. Returns how many went.

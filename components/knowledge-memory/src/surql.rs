@@ -237,6 +237,73 @@ pub fn evaluated(
     )
 }
 
+/// Record that one goal was decomposed into another.
+///
+/// A task -> task edge, so the pool can answer two questions it could not answer
+/// before: what did this goal break into, and whose sub-goal is this. Both halves
+/// matter — the first is how a decomposition is reviewed, the second is how a
+/// sub-goal found later by similarity is put back in context.
+///
+/// Deterministic id, `<parent>|<child>`, for the same reason the verdict edge has
+/// one: a run that decomposes the same goal twice reinforces one edge instead of
+/// growing a fan of duplicates. Re-running a decomposed goal is the NORMAL case,
+/// not an error, so this verb has to be idempotent per `(parent, child)`.
+///
+/// The child node is UPSERTed here with its goal text, so a sub-goal exists in the
+/// pool the moment it is named — before anything has run it, and whether or not
+/// anything ever does. That is what makes an abandoned decomposition legible
+/// rather than invisible.
+///
+/// `ordinal` and `why` travel on the EDGE, not on either node: they are facts
+/// about the relationship. The same sub-goal reached from two parents is one node
+/// with two edges, and each edge carries its own reason.
+pub fn decomposed_into(
+    parent_key: &str,
+    parent_goal: &str,
+    child_key: &str,
+    child_goal: &str,
+    ordinal: u32,
+    why: &str,
+) -> String {
+    let parent = rid(TASKS, parent_key);
+    let child = rid(TASKS, child_key);
+    format!(
+        "BEGIN;         UPSERT {parent} SET goal = {};         UPSERT {child} SET goal = {};         RELATE {parent}->{}->{child} CONTENT {{ ordinal: {ordinal}, why: {} }};         COMMIT;",
+        lit(parent_goal),
+        lit(child_goal),
+        part_edge(parent_key, child_key),
+        lit(why),
+    )
+}
+
+/// The decomposition edge's id: one per `(parent, child)`.
+fn part_edge(parent: &str, child: &str) -> String {
+    rid("decomposes_into", &format!("{}|{}", parent.replace('|', ""), child.replace('|', "")))
+}
+
+/// What a goal broke into, in the order it was decomposed.
+///
+/// Each child carries whether anything has PASSED on it, counted off its own
+/// verdict edges — the same derivation `already_done` uses, so the two cannot
+/// disagree about what is finished. That count is the whole point: a parent is
+/// resumable only if you can tell which of its parts are already done.
+pub fn parts_of(parent_key: &str) -> String {
+    format!(
+        "SELECT out.goal AS goal, out.id AS id, ordinal, why,          count(out->evaluated_by[WHERE passed = true]) > 0 AS done          FROM {}->decomposes_into ORDER BY ordinal;",
+        rid(TASKS, parent_key)
+    )
+}
+
+/// The goals this one is a part of. Plural on purpose: the same sub-goal reached
+/// from two parents is one node, and hiding the second parent would make the pool
+/// disagree with the edges it holds.
+pub fn parents_of(child_key: &str) -> String {
+    format!(
+        "SELECT in.goal AS goal, in.id AS id, ordinal, why          FROM {}<-decomposes_into ORDER BY ordinal;",
+        rid(TASKS, child_key)
+    )
+}
+
 /// The verdict edge's id: one per `(task, run)`, so a run that reports twice
 /// reinforces one edge instead of counting twice.
 fn verdict_edge(key: &str, run: &str) -> String {

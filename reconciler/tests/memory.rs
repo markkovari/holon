@@ -382,6 +382,62 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     assert_eq!(prior.artifact, "https://github.test/pr/7", "the pull request is now the answer");
     assert!(prior.summary().contains("pr/7"), "and a human can read it: {}", prior.summary());
 
+    // --- a decomposition, through the deployed component ---------------------
+    //
+    // The scenario suite proves the statements against SurrealDB. This proves the
+    // path the RUNNER uses: the client, the probe's routes, the component, and
+    // the graph store, deployed. Those are four places the shape can be lost
+    // between, and the SQL being right says nothing about any of them.
+    let parent = "serve invoices over http";
+    let (back, front) = ("store invoices in postgres", "render the invoice list");
+    assert!(
+        client.parts_of(parent).expect("the pool answered").is_empty(),
+        "a goal nobody decomposed has no parts, and that is an answer not an error"
+    );
+    client.decomposed_into(parent, back, 0, "the data half").expect("refused");
+    client.decomposed_into(parent, front, 1, "the view half").expect("refused");
+
+    let parts = client.parts_of(parent).expect("the pool answered");
+    assert_eq!(parts.len(), 2, "both parts came back");
+    assert_eq!(parts[0].goal, back, "in ordinal order");
+    assert_eq!(parts[0].why, "the data half", "the reason rides on the edge");
+    assert!(!parts[0].done, "nothing has been evaluated, so nothing is done");
+
+    // Naming a part is enough to make it an ordinary goal. This is the property
+    // the whole design rests on: a sub-goal can be asked about, skipped and
+    // evaluated exactly like any other.
+    client.evaluated(back, &run_id(seed, 0, "backend"), 1000, true, "").expect("refused");
+    let parts = client.parts_of(parent).expect("the pool answered");
+    let done_for = |g: &str| parts.iter().find(|p| p.goal == g).map(|p| p.done);
+    assert_eq!(done_for(back), Some(true), "a passing verdict finishes that part");
+    assert_eq!(
+        done_for(front),
+        Some(false),
+        "and ONLY that part — a parent is resumable or it is not"
+    );
+
+    // Upward, and plural: a shared sub-goal has two parents and remains one node.
+    let other = "produce a monthly billing report";
+    client.decomposed_into(other, back, 0, "needs the same store").expect("refused");
+    let owners = client.parents_of(back).expect("the pool answered");
+    assert_eq!(owners.len(), 2, "a shared sub-goal has two parents: {:?}", owners.len());
+    assert!(owners.iter().any(|p| p.goal == parent) && owners.iter().any(|p| p.goal == other));
+
+    // Idempotent, because re-running a decomposed goal is the normal case.
+    client.decomposed_into(parent, back, 0, "the data half").expect("refused");
+    assert_eq!(
+        client.parts_of(parent).expect("the pool answered").len(),
+        2,
+        "a second decomposition reinforces the edges rather than duplicating them"
+    );
+
+    // And a goal cannot be a part of itself: a one-step loop, refused where it is
+    // cheap rather than left for a depth bound to find after it has cost a run.
+    assert!(
+        client.decomposed_into(parent, "  Serve Invoices Over HTTP ", 0, "same thing").is_err(),
+        "a goal that normalises to itself must be refused"
+    );
+
     // A goal that has ONLY failed stays available. This is the case that must not
     // be skipped: four failures are a reason to think, not a finished piece of work.
     let hard = "make the flaky integration suite deterministic";
