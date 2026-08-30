@@ -16,6 +16,6 @@ package comp:memoryprobe@0.1.0;
 
 world memory-probe {
     export wasi:http/incoming-handler@0.2.0;
-    import knowledge:memory/memory@0.1.0;
-    import knowledge:memory/promotion@0.1.0;
+    import knowledge:memory/memory@0.2.0;
+    import knowledge:memory/promotion@0.2.0;
 }

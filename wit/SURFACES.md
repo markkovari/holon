@@ -1576,7 +1576,7 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `knowledge:memory/memory@0.1.0`
+## `knowledge:memory/memory@0.2.0`
 
 ```wit
   interface memory {
@@ -1628,6 +1628,13 @@ Adding a *function* to an interface is compatible; adding a case to a
       evaluations: u32,
     }
 
+    record sub-goal {
+      goal: string,
+      ordinal: u32,
+      why: string,
+      done: bool,
+    }
+
     observe: func(e: entry) -> result<string, memory-error>;
 
     recall: func(goal: string, opts: recall-opts) -> result<list<hit>, memory-error>;
@@ -1636,13 +1643,19 @@ Adding a *function* to an interface is compatible; adding a case to a
 
     evaluated: func(goal: string, run: string, score: s32, passed: bool, artifact: string) -> result<_, memory-error>;
 
+    decomposed-into: func(parent: string, child: string, ordinal: u32, why: string) -> result<_, memory-error>;
+
+    parts-of: func(goal: string) -> result<list<sub-goal>, memory-error>;
+
+    parents-of: func(goal: string) -> result<list<sub-goal>, memory-error>;
+
     decay: func(max-age-days: u32, min-uses: u64) -> result<u32, memory-error>;
 
     already-done: func(goal: string, min-similarity: f64) -> result<option<prior-work>, memory-error>;
   }
 ```
 
-## `knowledge:memory/promotion@0.1.0`
+## `knowledge:memory/promotion@0.2.0`
 
 ```wit
   interface promotion {

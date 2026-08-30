@@ -62,7 +62,7 @@ Each one exports a contract outside the `wasi:` namespace, so it drops into anot
 | **iot-scanner** | `iot:scanner@0.1.0` | http/outgoing-handler | — |
 | **jsonpatch** | `json:patch@0.1.0` | pure compute | — |
 | **knowledge-graph** | `knowledge:graph@0.1.0` | comp:secrets/reader, config/store, http/outgoing-handler | `surreal-url`, `surreal-user`, `surreal-password`, `surreal-ns`, `surreal-db` |
-| **knowledge-memory** | `knowledge:memory@0.1.0` | knowledge:graph/store, llm:inference/inference, search:index/index | — |
+| **knowledge-memory** | `knowledge:memory@0.2.0` | knowledge:graph/store, llm:inference/inference, search:index/index | — |
 | **ledger** | `ledger:doubleentry@0.1.0` | pure compute | — |
 | **llm-inference** | `llm:inference@0.1.0` | pure compute | — |
 | **lock-mutex** | `lock:mutex@0.1.0` | kv:atomics, kv:store | — |

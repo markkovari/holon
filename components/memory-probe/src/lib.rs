@@ -241,6 +241,41 @@ impl Guest for Component {
                 Err(e) => err(e),
             },
 
+            (Method::Post, "/decomposed-into") => match mem::decomposed_into(
+                &param(&query, "parent"),
+                &param(&query, "child"),
+                num(&query, "ordinal", 0),
+                &param(&query, "why"),
+            ) {
+                Ok(()) => "{\"ok\":true}".to_string(),
+                Err(e) => err(e),
+            },
+
+            // One route, two directions. The rows are the same shape from either
+            // end — a sub-goal is a sub-goal — so a second route would be a second
+            // encoder that could disagree with this one.
+            (Method::Get, "/parts-of") | (Method::Get, "/parents-of") => {
+                let goal = param(&query, "goal");
+                let up = route == "/parents-of";
+                match if up { mem::parents_of(&goal) } else { mem::parts_of(&goal) } {
+                    Ok(parts) => format!(
+                        "{{\"parts\":[{}]}}",
+                        parts
+                            .iter()
+                            .map(|p| format!(
+                                "{{\"goal\":\"{}\",\"ordinal\":{},\"why\":\"{}\",\"done\":{}}}",
+                                esc(&p.goal),
+                                p.ordinal,
+                                esc(&p.why),
+                                p.done
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    ),
+                    Err(e) => err(e),
+                }
+            }
+
             (Method::Post, "/decay") => {
                 match mem::decay(num(&query, "days", 30), num(&query, "min-uses", 2) as u64) {
                     Ok(gone) => format!("{{\"forgotten\":{gone}}}"),
@@ -266,7 +301,7 @@ impl Guest for Component {
                 }
             }
 
-            _ => "{\"service\":\"memory-probe\",\"routes\":[\"/observe\",\"/promote\",\"/recall\",\"/attribute\",\"/evaluated\",\"/already-done\"]}"
+            _ => "{\"service\":\"memory-probe\",\"routes\":[\"/observe\",\"/promote\",\"/recall\",\"/attribute\",\"/evaluated\",\"/already-done\",\"/decomposed-into\",\"/parts-of\",\"/parents-of\"]}"
                 .to_string(),
         };
 

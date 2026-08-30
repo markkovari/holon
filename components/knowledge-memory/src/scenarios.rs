@@ -785,3 +785,87 @@ fn a_re_reported_winner_does_not_invent_a_verdict() {
     let ids = db.must(name, "SELECT id FROM evaluated_by;");
     assert_eq!(ids.len(), 4, "the edge ids that exist: {ids:?}");
 }
+
+/// A goal broken into sub-goals, and both directions of the edge.
+///
+/// The pool could already say "this goal was evaluated by these runs" and could
+/// not say "this goal broke into these sub-goals". Both questions are asked of a
+/// decomposition — the first when it is reviewed, the second when a sub-goal is
+/// found later by similarity and has to be put back in context.
+///
+/// What this asserts beyond the statements parsing: the edge is idempotent per
+/// `(parent, child)` because re-running a decomposed goal is the normal case; a
+/// sub-goal exists in the pool the moment it is NAMED, before anything runs it;
+/// `done` is derived from the child's own verdict edges rather than stored, so a
+/// parent can be resumed from what actually passed; and one sub-goal reached from
+/// two parents is one node with two edges, not two nodes.
+#[test]
+fn a_goal_remembers_what_it_broke_into_and_a_part_remembers_whose_it_is() {
+    let Some(db) = Db::start() else {
+        eprintln!("SKIPPED: knowledge-memory scenarios need Docker to start {IMAGE}.");
+        return;
+    };
+    let name = "s12_subgoals";
+    let parent = "serve invoices over http";
+    let (pk, back) = (digest(&normalise(parent)), "store invoices in postgres");
+    let (bk, front) = (digest(&normalise(back)), "render the invoice list");
+    let fk = digest(&normalise(front));
+
+    db.must(name, &surql::decomposed_into(&pk, parent, &bk, back, 0, "the data half"));
+    db.must(name, &surql::decomposed_into(&pk, parent, &fk, front, 1, "the view half"));
+
+    // Naming a sub-goal is enough to put it in the pool. Nothing has run either.
+    let parts = db.must(name, &surql::parts_of(&pk));
+    assert_eq!(parts.len(), 2, "both parts, in ordinal order: {parts:?}");
+    assert_eq!(parts[0]["goal"], back, "ordinal 0 first: {parts:?}");
+    assert_eq!(parts[1]["goal"], front);
+    assert_eq!(parts[0]["why"], "the data half");
+    assert_eq!(
+        parts[0]["done"], false,
+        "nothing has been evaluated, so nothing may read as done: {parts:?}"
+    );
+
+    // Idempotent: decomposing the same goal again reinforces the edges.
+    db.must(name, &surql::decomposed_into(&pk, parent, &bk, back, 0, "the data half"));
+    let again = db.must(name, &surql::parts_of(&pk));
+    assert_eq!(
+        again.len(),
+        2,
+        "re-running a decomposed goal must not grow a fan of duplicate edges: {again:?}"
+    );
+
+    // `done` is DERIVED. Pass the backend half and only that half moves.
+    db.must(name, &surql::evaluated(&bk, back, "run-1", 1000, true, "art-1", None, false));
+    let after = db.must(name, &surql::parts_of(&pk));
+    let by_goal = |g: &str| -> Value {
+        after.iter().find(|r| r["goal"] == g).cloned().unwrap_or(Value::Null)
+    };
+    assert_eq!(by_goal(back)["done"], true, "a passing verdict finishes that part: {after:?}");
+    assert_eq!(
+        by_goal(front)["done"],
+        false,
+        "and finishes ONLY that part — a parent is resumable or it is not: {after:?}"
+    );
+
+    // Upward, and plural: the same sub-goal under a second parent is one node.
+    let other = "produce a monthly billing report";
+    let ok = digest(&normalise(other));
+    db.must(name, &surql::decomposed_into(&ok, other, &bk, back, 0, "needs the same store"));
+    let owners = db.must(name, &surql::parents_of(&bk));
+    assert_eq!(
+        owners.len(),
+        2,
+        "a shared sub-goal has two parents, and hiding one would make the pool \
+         disagree with the edges it holds: {owners:?}"
+    );
+    let texts: Vec<&str> = owners.iter().filter_map(|r| r["goal"].as_str()).collect();
+    assert!(texts.contains(&parent) && texts.contains(&other), "{texts:?}");
+
+    // And the node was not duplicated by the second parent.
+    let nodes = db.must(name, &format!("SELECT id FROM {};", surql::TASKS));
+    assert_eq!(
+        nodes.len(),
+        4,
+        "two parents and two children, no duplicates: {nodes:?}"
+    );
+}
