@@ -6,6 +6,30 @@
 # variants live here once. They are named `apost`/`aget`/`aexpect_*` so a gate that
 # forgets the token gets a 401 from the plain helper rather than silently passing
 # something unauthenticated.
+
+# A port nothing is listening on, checked rather than hoped for.
+#
+# `RANDOM % 20000` alone COLLIDES, and it is not rare: CI runs 31 of these gates
+# beside 21 Rust suites and a fleet, and every one of them wants a port. What a
+# collision looks like from the outside is `Address already in use (os error 98)`
+# — a gate that failed for a reason with nothing to do with the code it grades.
+#
+# `/dev/tcp` is bash's own, so this needs nothing installed. A successful connect
+# means something is already there; a refused one means the port is free.
+gate_free_port() {
+  local p i
+  for i in $(seq 1 50); do
+    p=$(( 20000 + RANDOM % 40000 ))
+    if ! (exec 3<>/dev/tcp/127.0.0.1/"$p") 2>/dev/null; then
+      echo "$p"; return 0
+    fi
+    exec 3<&- 2>/dev/null || true
+  done
+  # Fifty taken ports means something is wrong that a fifty-first will not fix.
+  echo "gate: no free port after 50 tries" >&2
+  return 1
+}
+
 GATE_CRATE=events-domain
 GATE_APP=events
 GATE_PKGS="-p events-domain -p record-store -p id-generate -p quota -p qr -p fsm-workflow -p auth-guard -p rate-limiter -p audit-log -p notify-prefs -p notify-inbox -p mail-http -p scheduler-timer"
@@ -30,9 +54,9 @@ events_start_mail() {
     echo "  go install github.com/mailhog/MailHog@latest"
     exit 1
   }
-  SMTP_PORT=$(( 20000 + RANDOM % 20000 ))
-  MAIL_API_PORT=$(( 20000 + RANDOM % 20000 ))
-  RELAY_PORT=$(( 20000 + RANDOM % 20000 ))
+  SMTP_PORT=$(gate_free_port)
+  MAIL_API_PORT=$(gate_free_port)
+  RELAY_PORT=$(gate_free_port)
   MAIL_API="http://127.0.0.1:$MAIL_API_PORT"
   "$MAILHOG_BIN" -smtp-bind-addr "127.0.0.1:$SMTP_PORT" \
     -api-bind-addr "127.0.0.1:$MAIL_API_PORT" -ui-bind-addr "127.0.0.1:$MAIL_API_PORT" \

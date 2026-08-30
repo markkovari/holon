@@ -24,6 +24,30 @@
 #
 # `$COMP_HOST` and `$COMP_PLUG` are passed in by `holon goal run`: the sandbox
 # holds the base tree and nothing else, so neither binary can be found by path.
+
+# A port nothing is listening on, checked rather than hoped for.
+#
+# `RANDOM % 20000` alone COLLIDES, and it is not rare: CI runs 31 of these gates
+# beside 21 Rust suites and a fleet, and every one of them wants a port. What a
+# collision looks like from the outside is `Address already in use (os error 98)`
+# — a gate that failed for a reason with nothing to do with the code it grades.
+#
+# `/dev/tcp` is bash's own, so this needs nothing installed. A successful connect
+# means something is already there; a refused one means the port is free.
+gate_free_port() {
+  local p i
+  for i in $(seq 1 50); do
+    p=$(( 20000 + RANDOM % 40000 ))
+    if ! (exec 3<>/dev/tcp/127.0.0.1/"$p") 2>/dev/null; then
+      echo "$p"; return 0
+    fi
+    exec 3<&- 2>/dev/null || true
+  done
+  # Fifty taken ports means something is wrong that a fifty-first will not fix.
+  echo "gate: no free port after 50 tries" >&2
+  return 1
+}
+
 gate_require_tools() {
   HOST="${COMP_HOST:-}"
   [ -x "$HOST" ] || {
@@ -98,7 +122,7 @@ gate_requires_capability() { # gate_requires_capability <interface> <why>
 # --- run it --------------------------------------------------------------------
 gate_serve() {
   LOG="$(mktemp -t clinic-log-XXXX)"
-  PORT=$(( 20000 + RANDOM % 20000 ))
+  PORT=$(gate_free_port)
   "$HOST" --app clinic --config default-tenant=clinic \
     --component "$COMPOSED" --addr "127.0.0.1:$PORT" >"$LOG" 2>&1 &
   HOST_PID=$!
