@@ -142,10 +142,15 @@ impl Gate {
         let port = next_port(app);
         let addr = format!("127.0.0.1:{port}");
 
+        // `default-tenant` only. `allow-test-routes` is NOT added here even though every
+        // gate uses `/test/…`: only `events-domain`'s shell lib sets it, the others reach
+        // their fixtures without it, and adding it universally changed behaviour — the
+        // moderation rate limiter stopped limiting, so a gate that asserts a subject is
+        // locked out after three submissions passed a fourth. A harness that turns a flag
+        // on for everyone is a harness that tests a configuration nothing ships.
         let mut args: Vec<String> = vec![
             "--app".into(), app.into(),
             "--config".into(), format!("default-tenant={app}"),
-            "--config".into(), "allow-test-routes=true".into(),
         ];
         for c in config {
             args.push("--config".into());
