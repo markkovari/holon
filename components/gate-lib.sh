@@ -50,8 +50,10 @@ gate_require_tools() {
     echo "no wasm-tools — the gate cannot read what the component imports"
     exit 1
   }
-  command -v python3 >/dev/null || {
-    echo "no python3 — the gate cannot parse what the component answered"
+  FIELD="${COMP_FIELD:-reconciler/target/release/comp-field}"
+  [ -x "$FIELD" ] || {
+    echo "no comp-field at '$FIELD' — the gate cannot parse what the component answered"
+    echo "  cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-field"
     exit 1
   }
 }
@@ -190,7 +192,11 @@ post() { curl -s -X POST -H 'content-type: application/json' -d "$2" "$B$1"; }
 pcode() { curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "$2" "$B$1"; }
 get() { curl -s "$B$1"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-field() { python3 -c "import sys,json;print(json.load(sys.stdin).get('$1',''))" 2>/dev/null; }
+# One field out of a JSON body. Was `python3 -c "import sys,json;…"`, at 14.9 ms of
+# interpreter start-up per call — measured — against 1.6 ms for the binary. There are
+# 106 call sites, and the loop re-runs every gate per candidate per attempt, so the
+# difference is multiplied by every branch of every graph it explores.
+field() { "$FIELD" "$1" 2>/dev/null; }
 
 # One helper rather than `[ "$(pcode … "{\"json\":…}")" = 409 ]`: that nest of quotes
 # inside a command substitution inside a test made bash answer `[: too many
@@ -212,6 +218,5 @@ expect_get() { # expect_get <code> <path> <message>
 # Every gate needs reports and no gate may depend on `intake` existing: all three
 # parts are written at the same time by different agents.
 gate_seed() {
-  post /test/seed '{}' | python3 -c \
-    "import sys,json;[print(i) for i in json.load(sys.stdin).get('report_ids',[])]" 2>/dev/null
+  post /test/seed '{}' | "$FIELD" --list report_ids 2>/dev/null
 }
