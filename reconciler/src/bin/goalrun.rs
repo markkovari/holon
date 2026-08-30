@@ -2484,6 +2484,40 @@ fn decomposed(
         .collect();
     println!("parts: {}", parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "));
 
+    // --- the decomposition, into the pool ------------------------------------
+    //
+    // The pool has always given each part its own `task` row — its own goal, its
+    // own lessons, its own verdicts — and nothing that said whose part it was. So
+    // it could answer "has this been done" about a part and could not answer
+    // "what did this goal break into", which is the question a decomposition is
+    // reviewed by, or "whose part is this", which is what puts a sub-goal found
+    // later by similarity back in context.
+    //
+    // Written BEFORE the search, not after it. A decomposition that is recorded
+    // only when it succeeds is a pool that has never seen a bad one, and the bad
+    // ones are what a reviewer needs. `done` is derived from each part's own
+    // verdict edges, so this write says nothing about outcomes and cannot go
+    // stale.
+    //
+    // Reported and never fatal: losing the edge costs the pool its memory of the
+    // decomposition, not the run its result (ADR-0084's asymmetry).
+    if let Some(m) = memory_for_parts.as_ref() {
+        let mut written = 0usize;
+        for (i, p) in goal.parts.iter().enumerate() {
+            match m.decomposed_into(&goal.text, &p.text, i as u32, &p.name) {
+                Ok(()) => written += 1,
+                Err(e) => println!("knowledge: part `{}` not linked to its goal ({e})", p.name),
+            }
+        }
+        if written > 0 {
+            println!(
+                "knowledge: {written}/{} part(s) linked to this goal — a later run can ask \
+                 what it broke into",
+                goal.parts.len()
+            );
+        }
+    }
+
     let timeout = Duration::from_secs(args.timeout);
     let bounds =
         Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
