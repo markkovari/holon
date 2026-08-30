@@ -178,6 +178,27 @@ impl OpenLoad {
     }
 }
 
+/// The largest message the lattice will carry, and therefore the largest base
+/// tree a run can ship.
+///
+/// It lives here because BOTH ends need the same number and they must not
+/// disagree: `Fleet` configures the server with it, and `comp-goalrun` refuses a
+/// tree over it before spending anything. Hardcoded on one side and configured on
+/// the other is how a raised server still gets refused by its own client.
+///
+/// 8 MB is NATS's recommended ceiling; the hard maximum is 64 MB.
+pub const MAX_TREE_BYTES: usize = 8 * 1024 * 1024;
+
+/// What a run may actually fill, leaving room for the envelope around it.
+///
+/// The tree is not the whole message — the contract, the goal text and the
+/// framing ride with it — so a guard set AT the ceiling passes a tree that then
+/// makes the message that carries it too large. 90% is the margin, and it is a
+/// margin rather than a measurement because the envelope varies per goal.
+pub fn max_tree_payload() -> usize {
+    MAX_TREE_BYTES / 10 * 9
+}
+
 /// Find one of our binaries.
 ///
 /// `CARGO_BIN_EXE_*` only exists inside an integration test, and this harness is used
@@ -380,8 +401,22 @@ impl Fleet {
         }
         let mut children = Vec::new();
 
+        // A base tree travels to the driver as ONE message, and NATS refuses one
+        // past `max_payload` — 1 MB by default, with a failure `goalrun` describes
+        // as opaque. That default is the binding constraint on the whole goal
+        // loop: the largest goals in `.comp/goals` ship 504 KB, 57% of the guard,
+        // and the loop's own job is adding components.
+        //
+        // 8 MB is NATS's own recommended ceiling (64 MB is the hard maximum). It
+        // costs a larger per-connection buffer on a server that lives for one run
+        // on loopback, which is nothing, and it turns 1.8x of headroom into 16x.
+        //
+        // A FILE, because `nats-server` has no `--max_payload` flag — only `-c`.
+        let conf = sp.join("nats.conf");
+        std::fs::write(&conf, format!("max_payload: {MAX_TREE_BYTES}\n"))
+            .expect("writing the nats config");
         let mut nats = Command::new("nats-server");
-        nats.args(["-js", "-sd"]).arg(sp.join("nats")).args([
+        nats.arg("-c").arg(&conf).args(["-js", "-sd"]).arg(sp.join("nats")).args([
             "-a",
             "127.0.0.1",
             "-p",

@@ -787,6 +787,67 @@ pub struct BaseVerdict {
     pub reasons: Vec<String>,
 }
 
+/// Put the base tree in the runner's cache, and confirm it landed.
+///
+/// The point is what comes AFTER: once the runner has the tree keyed by commit,
+/// nothing downstream has to carry it. The plan a branch runs from names the
+/// commit and nothing else, so 500 KB of repository stops crossing the lattice
+/// once per generation — and the ceiling on a message stops being a ceiling on
+/// how large a goal's tree may be.
+///
+/// A commit id is a content address, so "does the runner have the right tree"
+/// needs no invalidation logic: `ensure_base` returns the cached directory when
+/// the key is there and asks for the bytes when it is not.
+///
+/// Sent with NO checks, because this is not a judgement. `comp-checks` caches the
+/// tree in `ensure_base` before it looks at the check list, so an empty list
+/// materialises the base and runs nothing — the cheapest call that has the
+/// required side effect.
+///
+/// Failure is fatal to the caller and deliberately so. This was previously a side
+/// effect of the base critic, which is allowed to fail — "could not be criticised,
+/// running anyway" — and a run that proceeded from there had an unseeded runner
+/// and no tree in the plan to fix it with.
+pub fn seed_base(
+    checks_url: &str,
+    checks_token: Option<&str>,
+    base_commit: &str,
+    base_tree: &Value,
+    timeout: Duration,
+) -> Result<(), String> {
+    if base_commit.is_empty() {
+        return Err("no base commit — the runner keys its cache by one".into());
+    }
+    let body = json!({
+        "candidate": "seed",
+        "base_commit": base_commit,
+        "base_tree": base_tree,
+        "changes": [],
+        "checks": [],
+    });
+    let mut req = reqwest::blocking::Client::builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| e.to_string())?
+        .post(checks_url)
+        .body(body.to_string());
+    if let Some(t) = checks_token {
+        req = req.bearer_auth(t);
+    }
+    let r = req.send().map_err(|e| format!("{e}"))?;
+    let status = r.status().as_u16();
+    let text = r.text().unwrap_or_default();
+    if status != 200 {
+        // 409 here means the runner did not accept the tree it was just handed,
+        // which is a different fault from a cold cache and must not read as one.
+        return Err(format!(
+            "the runner would not take the base tree ({status}): {}",
+            text.chars().take(300).collect::<String>()
+        ));
+    }
+    Ok(())
+}
+
 /// Run the checks against the base tree alone and report the ones that pass.
 ///
 /// `excuse` names the checks a caller has declared may legitimately pass on the
