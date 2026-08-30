@@ -111,7 +111,8 @@ fn spec_for(port: u16) -> std::path::PathBuf {
 fn spec_pointing_at(authority: &str) -> std::path::PathBuf {
     let src = repo_root().join("fixtures/fitness.yaml");
     let yaml = std::fs::read_to_string(&src).unwrap().replace("127.0.0.1:CHECKS_PORT", authority);
-    let out = std::env::temp_dir().join(format!("comp-fitness-{}.yaml", authority.replace(':', "-")));
+    let out =
+        std::env::temp_dir().join(format!("comp-fitness-{}.yaml", authority.replace(':', "-")));
     std::fs::write(&out, yaml).unwrap();
     out
 }
@@ -451,7 +452,8 @@ fn a_gate_on_another_machine_judges_a_candidate() {
                 "base_tree": tree, "changes": [], "checks": checks }),
     );
     assert_eq!(r["accepted"], json!(false), "the broken base was accepted: {r}");
-    let failed = r["outcomes"].as_array().unwrap().iter().find(|o| o["id"] == json!("tests-pass")).unwrap();
+    let failed =
+        r["outcomes"].as_array().unwrap().iter().find(|o| o["id"] == json!("tests-pass")).unwrap();
     assert_eq!(failed["state"], json!("failed"), "{r}");
     assert!(
         failed["detail"].as_str().unwrap_or_default().contains("AssertionError"),

@@ -35,16 +35,19 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
     config.extend(shim.config());
     let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
     let egress = shim.egress();
-    let Some(gate) = Gate::compose_and_start_with_egress(
-        "docsearch", "doc-search-domain", &cfg, &[&egress],
-    ) else {
+    let Some(gate) =
+        Gate::compose_and_start_with_egress("docsearch", "doc-search-domain", &cfg, &[&egress])
+    else {
         return;
     };
 
     gate.seed();
     let (_, tok) = gate.post("/test/token", None, json!({"subject":"ada"}));
     let t = field(&tok, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
     let ask = |q: &str| gate.post("/api/answer", Some(&t), json!({ "question": q }));
 
     // --- no step-up, no answer ------------------------------------------------------
@@ -59,7 +62,10 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
     // --- the first real question ----------------------------------------------------
     const Q: &str = "How long does the reconciler wait between inventory polls?";
     let (_, first) = ask(Q);
-    assert!(!first.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !first.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&first);
     let a = d["answer"].as_str().unwrap_or_default().trim().to_string();
     assert!((5..=2000).contains(&a.len()), "no usable answer, got {} chars: {a:?}", a.len());
@@ -82,11 +88,21 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
     let (_, second) = ask(Q);
     let elapsed = start.elapsed().as_secs_f64();
     let d = parse(&second);
-    assert_eq!(d["cached"], true, "the second identical question must be served from the cache: {d}");
-    assert_eq!(d["answer"], parse(&first)["answer"], "a cache hit must return the answer that was cached");
+    assert_eq!(
+        d["cached"], true,
+        "the second identical question must be served from the cache: {d}"
+    );
+    assert_eq!(
+        d["answer"],
+        parse(&first)["answer"],
+        "a cache hit must return the answer that was cached"
+    );
     assert_eq!(d["remaining"], 0, "a cache hit spends nothing, so remaining is unchanged: {d}");
     // A real model call through the shim takes seconds. A cache hit cannot.
-    assert!(elapsed < 4.0, "the second answer took {elapsed:.1}s — that is a model call, not a cache hit");
+    assert!(
+        elapsed < 4.0,
+        "the second answer took {elapsed:.1}s — that is a model call, not a cache hit"
+    );
 
     // --- a question the library cannot support: also free --------------------------
     let (c, _) = ask("What temperature should I proof sourdough at?");
@@ -96,7 +112,10 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
     const OTHER: &str = "Why does raising the per-instance memory ceiling cost address space?";
     let (_, new) = ask(OTHER);
     let d = parse(&new);
-    assert_eq!(d["error"], "budget_exhausted", "a second distinct question on a budget of one must be refused: {d}");
+    assert_eq!(
+        d["error"], "budget_exhausted",
+        "a second distinct question on a budget of one must be refused: {d}"
+    );
     assert!(d["retry_after"].as_i64().unwrap_or(0) > 0, "a refusal must say how long to wait: {d}");
     let (c, _) = ask(OTHER);
     assert_eq!(c, 429, "a refused question must be 429");

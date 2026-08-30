@@ -39,11 +39,8 @@ fn root() -> std::path::PathBuf {
 /// `git status --porcelain`, or `None` when git cannot answer — a checkout with no
 /// git is a skip, not a pass.
 fn tree_state(root: &std::path::Path) -> Option<String> {
-    let out = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(root)
-        .output()
-        .ok()?;
+    let out =
+        Command::new("git").args(["status", "--porcelain"]).current_dir(root).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
@@ -143,10 +140,8 @@ fn no_build_output_is_tracked() {
     let listed = String::from_utf8_lossy(&out.stdout);
     assert!(listed.lines().count() > 100, "git listed almost nothing — the check is not running");
 
-    let tracked: Vec<&str> = listed
-        .lines()
-        .filter(|f| BUILT.iter().any(|e| f.ends_with(e)))
-        .collect();
+    let tracked: Vec<&str> =
+        listed.lines().filter(|f| BUILT.iter().any(|e| f.ends_with(e))).collect();
 
     assert!(
         tracked.is_empty(),
@@ -266,9 +261,7 @@ fn no_wit_package_name_means_two_things() {
 
     let collisions: Vec<_> = by_package
         .iter()
-        .filter(|(_, entries)| {
-            entries.iter().map(|(_, d)| d).collect::<BTreeSet<_>>().len() > 1
-        })
+        .filter(|(_, entries)| entries.iter().map(|(_, d)| d).collect::<BTreeSet<_>>().len() > 1)
         .collect();
 
     assert!(

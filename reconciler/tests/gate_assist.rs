@@ -20,7 +20,10 @@ fn parse(t: &str) -> Value {
 }
 fn token(gate: &Gate) -> String {
     let t = field(&gate.post("/test/token", None, json!({"subject":"ada"})).1, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
     t
 }
 /// The first seeded report id.
@@ -31,7 +34,10 @@ fn seed_one(gate: &Gate) -> String {
         .and_then(|v| v.as_str())
         .unwrap_or_default()
         .to_string();
-    assert!(!id.is_empty(), "the fixture produced no reports — the scaffold is broken, not the part");
+    assert!(
+        !id.is_empty(),
+        "the fixture produced no reports — the scaffold is broken, not the part"
+    );
     id
 }
 
@@ -62,7 +68,8 @@ fn an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down() {
     let conf = a["confidence"].as_i64();
     assert!(
         conf.is_some_and(|c| (0..=1000).contains(&c)),
-        "confidence is classify's 0..=1000 milli-units, passed through as-is, got {:?}", a["confidence"]
+        "confidence is classify's 0..=1000 milli-units, passed through as-is, got {:?}",
+        a["confidence"]
     );
     let s = a["summary"].as_str().unwrap_or_default().trim().to_string();
     assert!((10..=600).contains(&s.len()), "no usable summary, got {} chars: {s:?}", s.len());
@@ -70,7 +77,10 @@ fn an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down() {
     // Not a copy: an extractive slice of the input needs no model at all.
     let title = before["title"].as_str().unwrap_or_default();
     let haystack = format!("{title}\n{}", before["body"].as_str().unwrap_or_default());
-    assert!(!haystack.contains(&s), "the summary is a verbatim slice of the report — that is extraction, not a model call");
+    assert!(
+        !haystack.contains(&s),
+        "the summary is a verbatim slice of the report — that is extraction, not a model call"
+    );
     assert_ne!(s, title, "the summary is the title again");
     // About THIS report: a canned sentence passes every check above.
     let low = s.to_lowercase();
@@ -83,20 +93,30 @@ fn an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down() {
 
     // The same fields on the document, which is where the next reader looks.
     let stored = gate.stored("report", &id);
-    assert!(!stored.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !stored.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&stored);
     let block = &d["assist"];
     assert!(block.is_object(), "the report has no assist block: {d}");
-    assert_eq!(block["severity"], a["severity"], "the stored severity differs from the answer: {block} vs {a}");
+    assert_eq!(
+        block["severity"], a["severity"],
+        "the stored severity differs from the answer: {block} vs {a}"
+    );
     assert_eq!(block["summary"], a["summary"], "the stored summary differs from the answer");
     assert!(
         block["assisted_at"].as_str().unwrap_or_default().ends_with('Z'),
-        "assisted_at must be RFC3339 UTC: {:?}", block["assisted_at"]
+        "assisted_at must be RFC3339 UTC: {:?}",
+        block["assisted_at"]
     );
 
     // Reading it back through the part's own route.
     let got = parse(&gate.get(&format!("/api/reports/{id}/assist"), Some(&t)).1);
-    assert_eq!(got["severity"], a["severity"], "GET /api/reports/{{id}}/assist did not answer the stored assist: {got}");
+    assert_eq!(
+        got["severity"], a["severity"],
+        "GET /api/reports/{{id}}/assist did not answer the stored assist: {got}"
+    );
 
     // A second assist is a conflict, not a second model call — otherwise a refresh is a
     // model call per request forever.

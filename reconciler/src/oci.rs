@@ -303,14 +303,11 @@ pub async fn pull_artifact(
     let layers = manifest["layers"].as_array().map(Vec::as_slice).unwrap_or_default();
     let layer = layers
         .iter()
-        .find(|l| {
-            l["mediaType"].as_str().is_some_and(|mt| MT_WASM_LAYERS.contains(&mt))
-        })
+        .find(|l| l["mediaType"].as_str().is_some_and(|mt| MT_WASM_LAYERS.contains(&mt)))
         .with_context(|| {
             // Name what it DID have. "not a component" on its own sends whoever
             // hits this to read their own build rather than the manifest.
-            let had: Vec<&str> =
-                layers.iter().filter_map(|l| l["mediaType"].as_str()).collect();
+            let had: Vec<&str> = layers.iter().filter_map(|l| l["mediaType"].as_str()).collect();
             format!(
                 "{repo}:{reference} carries no wasm layer — its layers are {had:?}, and a \
                  wasm one is any of {MT_WASM_LAYERS:?}"
@@ -521,55 +518,53 @@ mod tests {
         *BLOBS.lock().unwrap() = Some(HashMap::new());
         *TAGS.lock().unwrap() = Some(HashMap::new());
 
-        let app = Router::new().fallback(
-            |method: Method, uri: Uri, body: Bytes| async move {
-                let path = uri.path().to_string();
-                let query = uri.query().unwrap_or_default().to_string();
+        let app = Router::new().fallback(|method: Method, uri: Uri, body: Bytes| async move {
+            let path = uri.path().to_string();
+            let query = uri.query().unwrap_or_default().to_string();
 
-                if method == Method::POST && path.ends_with("/blobs/uploads/") {
-                    return (StatusCode::ACCEPTED, [("location", "/upload/s".to_string())], Vec::new());
-                }
-                if method == Method::PUT && path == "/upload/s" {
-                    let digest = query
-                        .split('&')
-                        .filter_map(|kv| kv.split_once('='))
-                        .find(|(k, _)| *k == "digest")
-                        .map(|(_, v)| v.to_string())
-                        .unwrap_or_default();
-                    BLOBS.lock().unwrap().as_mut().unwrap().insert(digest, body.to_vec());
-                    return (StatusCode::CREATED, [("location", String::new())], Vec::new());
-                }
-                if method == Method::PUT && path.contains("/manifests/") {
-                    let tag = path.rsplit("/manifests/").next().unwrap_or_default().to_string();
-                    let bytes = body.to_vec();
-                    // A real registry addresses a manifest by its digest too.
-                    TAGS.lock().unwrap().as_mut().unwrap().insert(digest_of(&bytes), bytes.clone());
-                    TAGS.lock().unwrap().as_mut().unwrap().insert(tag, bytes);
-                    return (StatusCode::CREATED, [("location", String::new())], Vec::new());
-                }
-                if method == Method::GET && path.contains("/manifests/") {
-                    let tag = path.rsplit("/manifests/").next().unwrap_or_default().to_string();
-                    return match TAGS.lock().unwrap().as_ref().unwrap().get(&tag) {
-                        Some(m) => (StatusCode::OK, [("location", String::new())], m.clone()),
-                        None => (StatusCode::NOT_FOUND, [("location", String::new())], Vec::new()),
-                    };
-                }
-                if method == Method::GET && path.contains("/blobs/") {
-                    let digest = path.rsplit("/blobs/").next().unwrap_or_default().to_string();
-                    return match BLOBS.lock().unwrap().as_ref().unwrap().get(&digest) {
-                        Some(b) => {
-                            let mut b = b.clone();
-                            if *TAMPER.lock().unwrap() {
-                                b.push(b'!');
-                            }
-                            (StatusCode::OK, [("location", String::new())], b)
+            if method == Method::POST && path.ends_with("/blobs/uploads/") {
+                return (StatusCode::ACCEPTED, [("location", "/upload/s".to_string())], Vec::new());
+            }
+            if method == Method::PUT && path == "/upload/s" {
+                let digest = query
+                    .split('&')
+                    .filter_map(|kv| kv.split_once('='))
+                    .find(|(k, _)| *k == "digest")
+                    .map(|(_, v)| v.to_string())
+                    .unwrap_or_default();
+                BLOBS.lock().unwrap().as_mut().unwrap().insert(digest, body.to_vec());
+                return (StatusCode::CREATED, [("location", String::new())], Vec::new());
+            }
+            if method == Method::PUT && path.contains("/manifests/") {
+                let tag = path.rsplit("/manifests/").next().unwrap_or_default().to_string();
+                let bytes = body.to_vec();
+                // A real registry addresses a manifest by its digest too.
+                TAGS.lock().unwrap().as_mut().unwrap().insert(digest_of(&bytes), bytes.clone());
+                TAGS.lock().unwrap().as_mut().unwrap().insert(tag, bytes);
+                return (StatusCode::CREATED, [("location", String::new())], Vec::new());
+            }
+            if method == Method::GET && path.contains("/manifests/") {
+                let tag = path.rsplit("/manifests/").next().unwrap_or_default().to_string();
+                return match TAGS.lock().unwrap().as_ref().unwrap().get(&tag) {
+                    Some(m) => (StatusCode::OK, [("location", String::new())], m.clone()),
+                    None => (StatusCode::NOT_FOUND, [("location", String::new())], Vec::new()),
+                };
+            }
+            if method == Method::GET && path.contains("/blobs/") {
+                let digest = path.rsplit("/blobs/").next().unwrap_or_default().to_string();
+                return match BLOBS.lock().unwrap().as_ref().unwrap().get(&digest) {
+                    Some(b) => {
+                        let mut b = b.clone();
+                        if *TAMPER.lock().unwrap() {
+                            b.push(b'!');
                         }
-                        None => (StatusCode::NOT_FOUND, [("location", String::new())], Vec::new()),
-                    };
-                }
-                (StatusCode::NOT_FOUND, [("location", String::new())], Vec::new())
-            },
-        );
+                        (StatusCode::OK, [("location", String::new())], b)
+                    }
+                    None => (StatusCode::NOT_FOUND, [("location", String::new())], Vec::new()),
+                };
+            }
+            (StatusCode::NOT_FOUND, [("location", String::new())], Vec::new())
+        });
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

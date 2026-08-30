@@ -27,7 +27,10 @@ fn token(gate: &Gate, subject: &str, scopes: Option<Value>) -> String {
         b["scopes"] = s;
     }
     let t = field(&gate.post("/test/token", None, b).1, "token");
-    assert!(!t.is_empty(), "POST /test/token returned no token — the scaffold is broken, not the part");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the part"
+    );
     t
 }
 
@@ -52,19 +55,27 @@ fn intake_stores_the_principal_and_honours_the_limit() {
     assert!(!id.is_empty(), "POST /api/items returned no id");
 
     let raw = gate.stored("item", &id);
-    assert!(!raw.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !raw.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let d = parse(&raw);
     assert_eq!(d["state"], "pending", "a new item is pending: {d}");
     assert_eq!(d["author"], "ada", "author must be the principal's subject, not {:?}", d["author"]);
-    assert!(d.get("decision").is_none(), "intake must not invent a decision — that is the verdict part's job");
+    assert!(
+        d.get("decision").is_none(),
+        "intake must not invent a decision — that is the verdict part's job"
+    );
     assert!(
         d["submitted_at"].as_str().unwrap_or_default().ends_with('Z'),
-        "submitted_at must be RFC3339 UTC: {:?}", d["submitted_at"]
+        "submitted_at must be RFC3339 UTC: {:?}",
+        d["submitted_at"]
     );
 
     let (_, read) = gate.get(&format!("/api/items/{id}"), Some(&w));
     assert_eq!(
-        parse(&read)["text"], "has anyone tried the new deploy flow?",
+        parse(&read)["text"],
+        "has anyone tried the new deploy flow?",
         "GET /api/items/{{id}} did not answer the stored item: {read}"
     );
     let (c, _) = gate.get("/api/items/nope", Some(&w));
@@ -78,7 +89,10 @@ fn intake_stores_the_principal_and_honours_the_limit() {
     }
     let (_, locked) = gate.post("/api/items", Some(&burst), json!({"text":"burst 4"}));
     let d = parse(&locked);
-    assert_eq!(d["error"], "rate_limited", "past the limit the part must refuse and say how long to wait: {d}");
+    assert_eq!(
+        d["error"], "rate_limited",
+        "past the limit the part must refuse and say how long to wait: {d}"
+    );
     assert!(
         d["retry_after"].as_i64().unwrap_or(0) > 0,
         "retry_after must be the limiter's seconds: {d}"
@@ -98,7 +112,10 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
-    assert!(!seeded.is_empty(), "the fixture produced no items — the scaffold is broken, not the part");
+    assert!(
+        !seeded.is_empty(),
+        "the fixture produced no items — the scaffold is broken, not the part"
+    );
 
     // --- the refusals ---------------------------------------------------------------
     let (c, _) = gate.get("/api/queue", None);
@@ -109,16 +126,25 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
 
     // --- what is waiting ------------------------------------------------------------
     let (_, q) = gate.get("/api/queue", Some(&t));
-    assert!(!q.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
+    assert!(
+        !q.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
     let items = parse(&q)["items"].as_array().cloned().unwrap_or_default();
     assert!(items.len() >= 2, "two items were seeded and the queue shows {q}");
     let ids: Vec<&str> = items.iter().filter_map(|i| i["id"].as_str()).collect();
     for s in &seeded {
-        assert!(ids.contains(&s.as_str()), "a pending item is missing from the queue: {s} not in {ids:?}");
+        assert!(
+            ids.contains(&s.as_str()),
+            "a pending item is missing from the queue: {s} not in {ids:?}"
+        );
     }
     for i in &items {
         assert_eq!(i["state"], "pending", "the default queue is the pending one: {i}");
-        assert!(i["id"].as_str().is_some_and(|s| !s.is_empty()), "an item without its id cannot be reviewed: {i}");
+        assert!(
+            i["id"].as_str().is_some_and(|s| !s.is_empty()),
+            "an item without its id cannot be reviewed: {i}"
+        );
     }
     let stamps: Vec<&str> = items.iter().filter_map(|i| i["submitted_at"].as_str()).collect();
     let mut sorted = stamps.clone();
@@ -127,7 +153,8 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
 
     let (_, blocked) = gate.get("/api/queue?state=blocked", Some(&t));
     assert_eq!(
-        parse(&blocked)["items"], json!([]),
+        parse(&blocked)["items"],
+        json!([]),
         "nothing is blocked yet and the queue said otherwise"
     );
 
@@ -155,9 +182,13 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
     // says `no-links`.
     gate.post("/test/rules", None, json!({}));
     let back = parse(&gate.get("/api/rules", Some(&t)).1);
-    let ids: Vec<&str> = back["rules"].as_array().map(|a| a.iter().filter_map(|r| r["id"].as_str()).collect()).unwrap_or_default();
+    let ids: Vec<&str> = back["rules"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|r| r["id"].as_str()).collect())
+        .unwrap_or_default();
     assert_eq!(
-        ids, ["no-links"],
+        ids,
+        ["no-links"],
         "something else replaced the rules through policy:guard and this route still reports \
          {ids:?}. The rules a reviewer reads must be the rules the engine holds, or they are \
          not the rules any decision used."
@@ -166,11 +197,15 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
     // An invalid rule is refused here, because a rule the engine rejects later is a rule
     // nobody wrote down.
     for (body, why) in [
-        (json!({"rules":[{"id":"x","action":"publish","effect":"maybe","priority":1,"conditions":[]}]}),
-         "an unknown effect must be 400 invalid_rule"),
-        (json!({"rules":[{"id":"x","action":"publish","effect":"deny","priority":1,
+        (
+            json!({"rules":[{"id":"x","action":"publish","effect":"maybe","priority":1,"conditions":[]}]}),
+            "an unknown effect must be 400 invalid_rule",
+        ),
+        (
+            json!({"rules":[{"id":"x","action":"publish","effect":"deny","priority":1,
                 "conditions":[{"left":"a","op":"sideways","right":"b"}]}]}),
-         "an unknown op must be 400 invalid_rule"),
+            "an unknown op must be 400 invalid_rule",
+        ),
     ] {
         let (c, _) = gate.post("/api/rules", Some(&t), body);
         assert_eq!(c, 400, "{why}");
@@ -183,8 +218,15 @@ fn queue_reads_the_engine_and_does_not_consume_the_bus() {
     // inventing a list, and that reading twice gives the same answer, which an `ack`
     // would not.
     let (_, one) = gate.get("/api/events", Some(&t));
-    assert!(!one.trim().is_empty(), "the route answered an empty body — it is not implemented, or it trapped");
-    assert_eq!(parse(&one)["events"], json!([]), "nothing has been published and this route answered {one}");
+    assert!(
+        !one.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
+    assert_eq!(
+        parse(&one)["events"],
+        json!([]),
+        "nothing has been published and this route answered {one}"
+    );
     let (_, two) = gate.get("/api/events", Some(&t));
     assert_eq!(
         one, two,

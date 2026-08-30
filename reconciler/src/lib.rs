@@ -18,6 +18,7 @@ pub mod cost;
 /// exactly what the tests need — and two harnesses that start fleets slightly
 /// differently would produce numbers that cannot be compared with the assertions.
 pub mod fleet;
+pub mod gate;
 pub mod generation;
 /// Skipping work already done, and recording every verdict so the next run can.
 pub mod memory;

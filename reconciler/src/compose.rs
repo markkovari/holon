@@ -213,9 +213,7 @@ pub fn gate(
     if let Some(t) = checks_token {
         req = req.bearer_auth(t);
     }
-    let r = req
-        .send()
-        .map_err(|e| format!("{e}"))?;
+    let r = req.send().map_err(|e| format!("{e}"))?;
     let text = r.text().unwrap_or_default();
     let v: Value =
         serde_json::from_str(&text).map_err(|e| format!("unreadable report ({e}): {text}"))?;
