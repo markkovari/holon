@@ -68,7 +68,16 @@ def just_vars():
 
 def recipes():
     """`host-<app>` recipe bodies, as one flattened string each."""
-    lines = open(os.path.join(ROOT, "Justfile")).read().split("\n")
+    # The Justfile and everything it imports: `host-*` recipes live in
+    # `just/host.just` now, and reading only the root finds none of them.
+    text = open(os.path.join(ROOT, "Justfile")).read()
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("import "):
+            path = stripped[len("import "):].strip().strip("'\"")
+            with open(os.path.join(ROOT, path)) as fh:
+                text += "\n" + fh.read()
+    lines = text.split("\n")
     found = {}
     i = 0
     while i < len(lines):

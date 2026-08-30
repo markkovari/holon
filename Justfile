@@ -5,6 +5,18 @@
 
 set dotenv-load := true
 
+# Split by concern, and IMPORTED rather than made into modules. `import`
+# splices a file in, so every recipe keeps the name the docs and the README
+# already use; `mod` would have renamed all 201 of them (`just host build`),
+# which is a worse trade than a long file.
+#
+# Verified by `just --dump`, which is the whole interface in one string: the
+# split is right when that output does not change.
+import 'just/compose.just'
+import 'just/host.just'
+import 'just/e2e.just'
+import 'just/selfhost.just'
+
 wit_dir := "wit"
 components := "components"
 rel := components / "target/wasm32-wasip2/release"
@@ -360,41 +372,6 @@ plug name: build
     @cd reconciler && cargo build --release --quiet --bin comp-plug
     @./reconciler/target/release/comp-plug {{name}}
 
-# The clinic's behavioural gates — the four checks `holon goal run` judges the
-# decomposed clinic goal by, run the same way it runs them.
-#
-# Each one builds the component, composes it with `plug` (derived from its own
-# imports, not from a chain written here), starts it on comp-host and drives real
-# HTTP against it. `access` is EXPECTED to fail on a clean tree: `src/access.rs` is
-# the stub the goal exists to replace, and a check that passes before the work is
-# done cannot judge the work.
-e2e-clinic: build
-    #!/usr/bin/env bash
-    set -uo pipefail
-    (cd host && cargo build --release --quiet --bin comp-host)
-    (cd reconciler && cargo build --release --quiet --bin comp-plug)
-    export COMP_HOST="$PWD/host/target/release/comp-host"
-    export COMP_PLUG="$PWD/reconciler/target/release/comp-plug"
-    # The halves that are written must pass; anything else here is a real
-    # regression.
-    failed=0
-    for gate in e2e-owners e2e-visits; do
-      printf '%-12s ' "$gate"
-      bash "components/clinic-domain/$gate.sh" 2>&1 | tail -1 || failed=1
-    done
-    # The two unwritten parts, judged separately: on a clean tree their FAILURE is
-    # the correct outcome, and an exit code that says "broken" every time teaches
-    # everyone to ignore it. When one passes, that part has been written.
-    # The unwritten parts and the join that covers them. On a clean tree their
-    # FAILURE is the correct outcome — a check that passes before the work is done
-    # cannot judge the work — so they do not set the exit code.
-    for gate in e2e e2e-access e2e-reports; do
-      printf '%-12s ' "$gate"
-      if bash "components/clinic-domain/$gate.sh" 2>&1 | tail -1; then
-        echo "             ^ $gate now passes — that part is written"
-      fi
-    done
-    exit $failed
 
 # The capability graph: who imports what from whom, across every built component.
 #
@@ -472,96 +449,11 @@ capability query:
 build-console-ui:
     cd examples/console/ui && npm ci && npm run build
 
-# Compose console-domain with what it imports: the embedded SPA (ui:assets) and
-# a forge (git:forge) — because a goal's SPEC is prose in git, so authoring one
-# from a browser is a pull request, and a component has no filesystem.
-#
-# It does NOT import the control plane's storage. `platform-domain` already
-# serves /api and the CLI is a client of it; this is the second client. Two
-# components independently knowing the storage layout is two places the control
-# plane's invariants can break.
-compose-console: build-console-ui compose
-    @just _derive console-domain {{console_composed}}
 
-# Compose the poll app: poll-domain + record-store + id-generate + svg-chart +
-# qr-encode. The chain is DERIVED from the component's own imports, so adding a
-# capability to the world does not mean editing this. Output imports only generic
-# WASI (keyvalue, clocks, random), so any comp host runs it.
-compose-poll: build
-    @just _derive poll-domain {{poll_composed}}
 
-# Run the poll app on the native host, in-memory kv.
-#
-#   just host-poll
-#   open http://127.0.0.1:3057
-host-poll: compose-poll
-    cd host && cargo run --release --bin comp-host -- \
-      --app poll --config default-tenant=poll \
-      --component ../{{poll_composed}} --addr 127.0.0.1:3057
 
-# The poll's browser suite: Playwright against the real stack.
-#
-#   playwright -> poll-domain (wasm) -> record-store + svg-chart + qr-encode (wasm)
-#
-# A browser and not curl, because what is being asserted needs one: ONE VOTE PER
-# BROWSER is a cookie rule, so it takes two cookie jars, and a single HTTP client
-# either replays the cookie it was just handed or never sends one — both wrong, both
-# green. And a chart is only right if the PAGE embedded it; `<svg>` in a response
-# body proves the renderer, `<svg>` in the DOM proves the app.
-#
-# Fails loudly when a prerequisite is missing rather than skipping: a browser suite
-# that "passes" because the app never started is the worst outcome there is.
-e2e-poll: compose-poll build-reconciler
-    cd host && cargo build --release --quiet --bin comp-host
-    cd examples/poll && npm ci && npx playwright install --with-deps chromium && npx playwright test
 
-# Run the console on the native host. Needs `platform-url` pointing at a running
-# platform, and — to author a goal — a forge repo and token, because the write
-# path is a real pull request.
-#
-#   just host-console
-#   open http://127.0.0.1:3055
-host-console: compose-console
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # The run view reads the knowledge store DIRECTLY (ADR-0091 keeps run history
-    # out of the control plane), so without this the console comes up, serves, and
-    # shows no runs — which reads as "no runs happened" rather than as a console
-    # that was never told where they are. `e2e-console` passed these all along;
-    # only the recipe a PERSON runs by hand did not.
-    #
-    # The store is on loopback, which the host denies by default (ADR-0008).
-    surreal=()
-    if [ -n "${SURREAL_URL:-}" ]; then
-      auth=${SURREAL_URL#*://}
-      surreal=(--config "surreal-url=$SURREAL_URL" \
-               --config "surreal-ns=${SURREAL_NS:-comp}" \
-               --config "surreal-db=${SURREAL_DB:-goalmemory}" \
-               --config "surreal-user=${SURREAL_USER:-root}" \
-               --egress "$auth" --allow-private-egress)
-    fi
-    cd host && cargo run --release --bin comp-host -- \
-      --app console --config-file ../examples/defaults.conf \
-      --config default-tenant=console \
-      --config platform-url=${PLATFORM_URL:-http://127.0.0.1:8080} \
-      "${surreal[@]}" \
-      --component ../{{console_composed}} --addr 0.0.0.0:3055
 
-# The console's browser suite: Playwright against the real stack.
-#
-#   playwright -> console-domain (wasm) -> knowledge:graph (wasm) -> SurrealDB
-#
-# Nothing below the browser is stubbed. `globalSetup` starts a pinned SurrealDB,
-# seeds one run through `comp-trace-seed` (the SAME `trace.rs` a run calls, so a
-# schema drift fails here too), stands in for the platform's login, and runs
-# `comp-host` on the composed component.
-#
-# Fails loudly when a prerequisite is missing rather than skipping: a browser
-# suite that "passes" because the app never started is the worst outcome there
-# is.
-e2e-console: compose-console
-    @cd reconciler && cargo build --release --quiet --bin comp-trace-seed
-    cd examples/console && npm ci && npx playwright install --with-deps chromium && npx playwright test
 
 # Serve `/v1/messages` from `claude -p` instead of the Anthropic API.
 #
@@ -685,60 +577,12 @@ plug-wiring name: build
     @cd reconciler && cargo build --release --quiet --bin comp-plug
     @./reconciler/target/release/comp-plug {{name}} --wiring
 
-# Compose a component and put the artifact where the showcases expect it.
-#
-# Every `compose-*` recipe below used to spell out its own `wac plug … --plug …`
-# chain: 59 of them, each a hand-maintained list of what an app depends on, none of
-# them checked against the app. They were wrong more often than not — `compose-vet`
-# named five plugs for a component that imports twenty-two capabilities, and the
-# sixteen it omitted were simply left dangling in an artifact `wasm-tools validate`
-# accepted (ADR-0087).
-#
-# Now the list comes from the component. `comp-plug` reads what the artifact
-# imports, finds what exports those interfaces, composes each plug before plugging
-# it, and keys the result by content. All 49 roots in this file were verified to
-# compose this way before the chains were removed.
-#
-# The output path is unchanged, because the e2e recipes and several tests name it.
-_derive name out:
-    @cd reconciler && cargo build --release --quiet --bin comp-plug
-    @cp "$(./reconciler/target/release/comp-plug {{name}})" {{out}}
-    @echo "composed {{name}} (derived from its own imports) -> {{out}}"
 
-compose: build
-    @just _derive auth-guard {{guard_composed}}
 
-# Compose the vet-clinic DOMAIN component (the Rust HTTP backend) with every
-# capability it imports: the composed auth-guard (auth:identity), records:store,
-# validate:schema, search:index. Output is ONE self-contained app component that
-# serves HTTP and runs identically on jco or a wasmCloud host — the whole
-# vet-clinic backend as language-agnostic wasm, no Node.
-compose-vet: compose
-    @just _derive vet-domain {{vet_composed}}
 
-# Compose helpdesk-domain (docs/apps/HELPDESK.md rung 1) with every capability it
-# imports: the composed auth-guard (auth:identity), records:store,
-# fsm:workflow, id:generate, md:render. Remaining imports are generic WASI.
-compose-helpdesk: compose
-    @just _derive helpdesk-domain {{helpdesk_composed}}
 
-# Compose conduit-domain (docs/apps/CONDUIT.md rung 1 — the RealWorld spec) with the
-# capabilities it imports: the composed auth-guard (auth:identity) + records:store.
-# Remaining imports are generic WASI. Output is ONE self-contained app component.
-compose-conduit: compose
-    @just _derive conduit-domain {{conduit_composed}}
 
-# Run the conduit app (docs/apps/CONDUIT.md rung 1) on the native Rust host, in-memory KV.
-host-conduit: compose-conduit
-    cd host && cargo run --release --bin comp-host -- \
-      --app conduit --config-file ../examples/defaults.conf --config default-tenant=conduit \
-      --component ../{{conduit_composed}} --addr 0.0.0.0:3008
 
-# conduit e2e: build the composed app + native host, then a Rust test that spawns
-# the host and drives the full API (users/profiles/articles/comments/favorites).
-e2e-conduit: compose-conduit
-    cd host && cargo build --release --bin comp-host
-    cd examples/conduit && cargo test --release
 
 # RealWorld conformance (docs/apps/CONDUIT.md rung 4): the OFFICIAL Hurl suite (vendored in
 # examples/conduit/conformance/hurl) against the composed app on the native host.
@@ -747,24 +591,8 @@ conformance-conduit: compose-conduit
     cd host && cargo build --release --bin comp-host
     bash examples/conduit/conformance/run.sh
 
-# Compose saga-domain (docs/apps/SAGA.md — a durable trip-booking saga) with the durable
-# primitives it orchestrates: records + fsm + idempotency + event-bus + ids.
-# No auth (anonymous engine). Remaining imports are generic WASI.
-compose-saga: build
-    @just _derive saga-domain {{saga_composed}}
 
-# Run the saga app on the native Rust host. Use --kv nats to prove durability
-# (state survives a restart); memory is fine for the happy/compensation paths.
-host-saga: compose-saga
-    cd host && cargo run --release --bin comp-host -- \
-      --app saga --config-file ../examples/defaults.conf --config default-tenant=saga \
-      --component ../{{saga_composed}} --addr 0.0.0.0:3012
 
-# Saga e2e: compose + build host + a Rust test that spawns the host and drives
-# commit, compensation, and (NATS) resume-after-restart over real HTTP.
-e2e-saga: compose-saga
-    cd host && cargo build --release --bin comp-host
-    cd examples/saga && cargo test --release
 
 # Durability proof (docs/apps/SAGA.md rung 3): start a saga on NATS KV, advance it, KILL
 # the host, restart, and show it resumes. Requires NATS on :4222.
@@ -790,36 +618,10 @@ saga-golem: compose-saga
     cd host && cargo build --release --bin comp-host
     bash examples/saga/golem-legs.sh
 
-# Compose pulse-domain (docs/apps/REALTIME.md — a realtime chat room with SSE server-push)
-# with records + event-bus + id-generate. No auth. Remaining imports are WASI.
-compose-pulse: build
-    @just _derive pulse-domain {{pulse_composed}}
 
-# Run the chat app on the native Rust host + serve the two-pane SPA. Open two
-# browser windows on http://127.0.0.1:3015 and watch messages stream live.
-host-pulse: compose-pulse
-    cd host && cargo run --release --bin comp-host -- \
-      --app pulse --config-file ../examples/defaults.conf --config default-tenant=pulse \
-      --component ../{{pulse_composed}} --addr 0.0.0.0:3015 \
-      --static-dir ../examples/pulse/public
 
-# Realtime e2e: compose + build host + a Rust test that posts a message and
-# proves a SEPARATE held-open SSE connection receives it live.
-e2e-pulse: compose-pulse
-    cd host && cargo build --release --bin comp-host
-    cd examples/pulse && cargo test --release
 
-# Compose jobs-domain (docs/apps/JOBS.md — a durable background-job queue) with its
-# capabilities: the outbox (durable queue), the IN-PROCESS durable:workflow
-# backend (swap for the golem-workflow provider on a classic host), cron, the
-# idempotency guard, and record-store. Remaining imports are WASI.
-compose-jobs: build
-    @just _derive jobs-domain {{jobs_composed}}
 
-# Compose tempo-domain (docs/apps/TEMPO.md — a multi-person worktime logger) with the
-# composed auth-guard (auth:identity) + records. Remaining imports are WASI.
-compose-tempo: compose
-    @just _derive tempo-domain {{tempo_composed}}
 
 # Run the worktime logger on the native host + serve the SPA. Open
 # http://127.0.0.1:3040: register (pick admin to create projects/categories),
@@ -828,18 +630,7 @@ compose-tempo: compose
 build-tempo-ui:
     cd examples/tempo/ui && npm ci && npm run build
 
-host-tempo: compose-tempo build-tempo-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app tempo --config-file ../examples/defaults.conf --config default-tenant=tempo \
-      --component ../{{tempo_composed}} --addr 0.0.0.0:3040 \
-      --static-dir ../examples/tempo/dist
 
-# Worktime e2e: compose + build host + a Rust test — admin creates projects +
-# categories, members log entries + a pomodoro timer, and the report aggregates
-# by project/category over a range with RBAC scope (member=own, manager=all).
-e2e-tempo: compose-tempo
-    cd host && cargo build --release --bin comp-host
-    cd examples/tempo && cargo test --release
 
 # Publish the composed tempo component to GHCR as a public OCI artifact — the
 # wasmCloud-native pull path. `gh` mints the token, `wash` does the OCI push.
@@ -876,113 +667,33 @@ push-tempo-ghcr version="0.1.0": compose-tempo
     echo "start it BY DIGEST — the tag can move, this cannot:"
     echo "  wash start component oci://ghcr.io/{{ghcr_owner}}/tempo@$digest tempo"
 
-# Compose booked-domain (docs/apps/BOOKED.md — a Calendly-lite booking service) with the
-# composed auth-guard + records + lock-mutex (no double-book) + email-render
-# (confirmation) + ical (.ics) + rrule (recurring). Remaining imports are WASI.
-compose-booked: compose
-    @just _derive booked-domain {{booked_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/booked/dist.
 build-booked-ui:
     cd examples/booked/ui && npm ci && npm run build
 
-# Run the booking app on the native host + serve the SPA on :3041. Register as
-# `owner` to create resources + weekly availability; anyone else books free
-# slots (no double-book), gets an .ics + a confirmation.
-host-booked: compose-booked build-booked-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app booked --config-file ../examples/defaults.conf --config default-tenant=booked \
-      --component ../{{booked_composed}} --addr 0.0.0.0:3041 \
-      --static-dir ../examples/booked/dist
 
-# Booking e2e: owner creates a resource + availability; a member books a slot;
-# a SECOND booking of the same slot is rejected (no double-book); concurrent
-# attempts leave exactly one booking; a recurrence expands to N instances; and
-# a booking exports to a valid .ics.
-e2e-booked: compose-booked
-    cd host && cargo build --release --bin comp-host
-    cd examples/booked && cargo test --release
 
-# Compose transit-domain (docs/apps/TRANSIT.md — a public-transport ticketing service)
-# with auth-guard + records (single-use enforced by record-revision CAS) + qr
-# (the scannable ticket). Remaining imports are WASI.
-compose-transit: compose
-    @just _derive transit-domain {{transit_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/transit/dist.
 build-transit-ui:
     cd examples/transit/ui && npm ci && npm run build
 
-# Run the ticketing app on the native host + serve the SPA on :3042. Register as
-# `rider` to buy fares (single / 60-min / 90-min / monthly) and show their QR;
-# as `validator` to scan + validate with the device camera.
-host-transit: compose-transit build-transit-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app transit --config-file ../examples/defaults.conf --config default-tenant=transit \
-      --component ../{{transit_composed}} --addr 0.0.0.0:3042 \
-      --static-dir ../examples/transit/dist
 
-# Ticketing e2e: a rider buys tickets; a validator validates — a single is
-# consumed by one scan (a second is rejected); a duration ticket activates with
-# a remaining window; CONCURRENT scans of one single ticket accept exactly once;
-# a fabricated code is rejected; and a ticket renders a valid QR SVG.
-e2e-transit: compose-transit
-    cd host && cargo build --release --bin comp-host
-    cd examples/transit && cargo test --release
 
-# Compose dashboards-domain (docs/apps/DASHBOARDS.md — personal metric dashboards) with
-# auth-guard + records + svg-chart (server-side SVG chart rendering). Remaining
-# imports are WASI.
-compose-dashboards: compose
-    @just _derive dashboards-domain {{dashboards_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/dashboards/dist.
 build-dashboards-ui:
     cd examples/dashboards/ui && npm ci && npm run build
 
-# Run the dashboards app on the native host + serve the SPA on :3043. Register a
-# new account (seeded with a demo dashboard); add panels and see them rendered to
-# SVG charts on the server — the frontend has no charting library.
-host-dashboards: compose-dashboards build-dashboards-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app dashboards --config-file ../examples/defaults.conf --config default-tenant=dashboards \
-      --component ../{{dashboards_composed}} --addr 0.0.0.0:3043 \
-      --static-dir ../examples/dashboards/dist
 
-# Dashboards e2e: a fresh account is seeded a demo dashboard; each panel renders
-# to a valid SVG per kind (bar/line/donut/sparkline); a new panel round-trips;
-# and one account cannot read another's dashboards.
-e2e-dashboards: compose-dashboards
-    cd host && cargo build --release --bin comp-host
-    cd examples/dashboards && cargo test --release
 
-# Compose gate-domain (docs/apps/GATE.md — a durable traffic-shaping gateway) with records
-# (the durable per-key state) + shaper (the token-bucket / GCRA math). The three
-# patterns — rate limit, throttle, batch — are the Golem durable-worker model
-# expressed over records:store revision CAS. Remaining imports are WASI.
-compose-gate: compose
-    @just _derive gate-domain {{gate_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/gate/dist.
 build-gate-ui:
     cd examples/gate/ui && npm ci && npm run build
 
-# Run the gateway on the native host + serve the SPA on :3044. Fire bursts at the
-# rate limiter (token bucket, 200/429), the throttle (GCRA smoothing), and submit
-# items to watch a batch coalesce and flush — all per-key, durable state.
-host-gate: compose-gate build-gate-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app gate --config-file ../examples/defaults.conf --config default-tenant=gate \
-      --component ../{{gate_composed}} --addr 0.0.0.0:3044 \
-      --static-dir ../examples/gate/dist
 
-# Gateway e2e: a token bucket allows `capacity` then 429s then refills; GCRA
-# admits a burst then spaces with an exact retry-after; concurrent hits on one
-# key admit exactly `capacity` (durable per-key CAS = a single-writer worker);
-# and a batch coalesces submits and flushes atomically with per-item results.
-e2e-gate: compose-gate
-    cd host && cargo build --release --bin comp-host
-    cd examples/gate && cargo test --release
 
 # Run gate as a REAL Golem agent (docs/apps/GATE.md) and prove EXACT serialization: a
 # durable single-writer worker per key admits exactly `capacity` under a
@@ -991,157 +702,48 @@ e2e-gate: compose-gate
 gate-golem:
     bash examples/gate/golem-run.sh
 
-# Compose books-domain (docs/apps/BOOKS.md — double-entry bookkeeping) with auth-guard +
-# records + ledger (the debits==credits invariant + trial balance) + pdf
-# (statements). Remaining imports are WASI.
-compose-books: compose
-    @just _derive books-domain {{books_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/books/dist.
 build-books-ui:
     cd examples/books/ui && npm ci && npm run build
 
-# Run the bookkeeping app on the native host + serve the SPA on :3045. Register
-# a new account (seeded a demo chart + entries); post balanced journal entries
-# and read the trial balance / P&L / balance sheet (+ PDF).
-host-books: compose-books build-books-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app books --config-file ../examples/defaults.conf --config default-tenant=books \
-      --component ../{{books_composed}} --addr 0.0.0.0:3045 \
-      --static-dir ../examples/books/dist
 
-# Bookkeeping e2e: a balanced entry posts; an UNBALANCED entry is rejected; the
-# trial balance's debits equal its credits; the balance sheet balances
-# (assets = liabilities + equity + net income); and a statements PDF renders.
-e2e-books: compose-books
-    cd host && cargo build --release --bin comp-host
-    cd examples/books && cargo test --release
 
-# Compose stash-domain (docs/apps/STASH.md — a note stash you export as a .zip) with
-# auth-guard + records + zip (the archive) + csv (the index inside it). Remaining
-# imports are WASI.
-compose-stash: compose
-    @just _derive stash-domain {{stash_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/stash/dist.
 build-stash-ui:
     cd examples/stash/ui && npm ci && npm run build
 
-# Run the note stash on the native host + serve the SPA on :3046. Register a new
-# account (seeded demo notes), keep notes, and hit Export .zip to download them
-# all as a real ZIP (Markdown + index.csv + manifest.json).
-host-stash: compose-stash build-stash-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app stash --config-file ../examples/defaults.conf --config default-tenant=stash \
-      --component ../{{stash_composed}} --addr 0.0.0.0:3046 \
-      --static-dir ../examples/stash/dist
 
-# Stash e2e: notes CRUD; the export is a valid ZIP (PK header + intact central
-# directory) containing a .md per note, an index.csv, and a manifest.json.
-e2e-stash: compose-stash
-    cd host && cargo build --release --bin comp-host
-    cd examples/stash && cargo test --release
 
-# Compose payees-domain (docs/apps/PAYEES.md — a payee book) with auth-guard + records +
-# iban (validate the IBAN before storing). Remaining imports are WASI.
-compose-payees: compose
-    @just _derive payees-domain {{payees_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/payees/dist.
 build-payees-ui:
     cd examples/payees/ui && npm ci && npm run build
 
-# Run the payee book on the native host + serve the SPA on :3047. Register a new
-# account (seeded demo payees); add payees — the IBAN is validated as you type
-# (country length + mod-97 checksum) and a typo is refused with the reason.
-host-payees: compose-payees build-payees-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app payees --config-file ../examples/defaults.conf --config default-tenant=payees \
-      --component ../{{payees_composed}} --addr 0.0.0.0:3047 \
-      --static-dir ../examples/payees/dist
 
-# Payee-book e2e: a valid IBAN is accepted (stored normalized + country); a
-# bad-checksum / wrong-length / bad-country IBAN is rejected with the reason;
-# /verify returns the parsed country + grouped form; and ownership is enforced.
-e2e-payees: compose-payees
-    cd host && cargo build --release --bin comp-host
-    cd examples/payees && cargo test --release
 
-# Compose lms-domain (docs/apps/LMS.md — a learning platform) with auth-guard + records +
-# quiz (auto-grade + stats) + pdf (certificate) + svg-chart (gradebook chart).
-# Remaining imports are WASI.
-compose-lms: compose
-    @just _derive lms-domain {{lms_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/lms/dist.
 build-lms-ui:
     cd examples/lms/ui && npm ci && npm run build
 
-# Run the learning platform on the native host + serve the SPA on :3048. Register
-# as `instructor` (creates courses/lessons/quizzes; seeded a demo course) or as
-# `student` (enroll, take auto-graded quizzes, see progress + certificate).
-host-lms: compose-lms build-lms-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app lms --config-file ../examples/defaults.conf --config default-tenant=lms \
-      --component ../{{lms_composed}} --addr 0.0.0.0:3048 \
-      --static-dir ../examples/lms/dist
 
-# Learning e2e: an instructor creates a course + quiz; a student enrolls and
-# submits, which auto-grades (quiz:grade); the instructor gradebook reflects it
-# consistently; a certificate issues once every quiz is passed; and the student's
-# progress reconciles with the gradebook.
-e2e-lms: compose-lms
-    cd host && cargo build --release --bin comp-host
-    cd examples/lms && cargo test --release
 
-# Compose buzz-domain (docs/apps/BUZZ.md — a live multiplayer quiz game) with auth-guard +
-# records. Remaining imports are WASI (random for the PIN, clocks for timing).
-compose-buzz: compose
-    @just _derive buzz-domain {{buzz_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/buzz/dist.
 build-buzz-ui:
     cd examples/buzz/ui && npm ci && npm run build
 
-# Run the quiz game on the native host + serve the SPA on :3049. Sign in as a
-# host to run a game (get a PIN), or open on other devices to Join with the PIN
-# and a nickname; the host drives the questions and everyone buzzes in.
-host-buzz: compose-buzz build-buzz-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app buzz --config-file ../examples/defaults.conf --config default-tenant=buzz \
-      --component ../{{buzz_composed}} --addr 0.0.0.0:3049 \
-      --static-dir ../examples/buzz/dist
 
-# Game e2e: a host starts a game; two players join and answer at different speeds;
-# reveal grades speed-weighted (faster-correct > slower-correct > wrong=0); the
-# leaderboard ranks correctly; and the game ends on a podium.
-e2e-buzz: compose-buzz
-    cd host && cargo build --release --bin comp-host
-    cd examples/buzz && cargo test --release
 
-# Compose photosocial-domain (docs/apps/PHOTOSOCIAL.md — social photo sharing with AI critique & RBAC attributes)
-compose-photosocial: compose
-    @just _derive photosocial-domain {{photosocial_composed}}
 
-host-photosocial: compose-photosocial
-    cd host && cargo run --release --bin comp-host -- \
-      --app photosocial --config-file ../examples/defaults.conf --config default-tenant=photosocial \
-      --component ../{{photosocial_composed}} --addr 0.0.0.0:3055
 
-e2e-photosocial: compose-photosocial
-    cd host && cargo build --release --bin comp-host
-    cd examples/photosocial && cargo test --release
 
 screencast-photosocial: compose-photosocial
     node tools/screencast/photosocial.mjs
     bash tools/screencast/to-gif.sh tools/screencast/videos/photosocial/*.webm docs/media/photosocial.gif 820 10
 
-# Compose mesh-domain (docs/apps/MESH.md — resilient upstream calls) with records (the
-# durable per-key circuit state) + resilience (the breaker state machine and the
-# backoff schedule) + proxy-route (the REAL outgoing HTTP hop). Remaining imports
-# are WASI: clocks for latency + the backoff sleep, config for the route table.
-compose-mesh: compose
-    @just _derive mesh-domain {{mesh_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/mesh/dist.
 build-mesh-ui:
@@ -1153,79 +755,15 @@ build-mesh-ui:
 mesh-upstream:
     cd examples/mesh && cargo run --release --bin flaky -- 127.0.0.1:3051
 
-# Run the resilience playground on the native host + serve the SPA on :3050, with
-# the flaky upstream on :3051 (started here, killed on exit). Hammer the upstream
-# with failures and watch the breaker trip — while it is OPEN the upstream's hit
-# counter stops moving, because the request never leaves the host.
-host-mesh: compose-mesh build-mesh-ui
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd examples/mesh && cargo build --release --bin flaky
-    ./target/release/flaky 127.0.0.1:3051 &
-    UPSTREAM_PID=$!
-    trap 'kill $UPSTREAM_PID 2>/dev/null || true' EXIT
-    cd ../../host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=mesh --config routes='/upstream=http://127.0.0.1:3051/,/dead=http://127.0.0.1:3052/' \
-      --component ../{{mesh_composed}} --addr 0.0.0.0:3050 \
-      --static-dir ../examples/mesh/dist
 
-# Resilience e2e against the REAL flaky upstream: retries ride out a two-request
-# blip; `failure_threshold` failures trip the breaker and while it is OPEN the
-# upstream's own hit counter proves it is never dialled; a half-open probe closes
-# it again; a response slower than `slo_ms` counts as failed despite its 200; an
-# unreachable upstream trips the breaker but a missing route (our config bug)
-# does not.
-e2e-mesh: compose-mesh
-    cd host && cargo build --release --bin comp-host
-    cd examples/mesh && cargo build --release --bin flaky && cargo test --release
 
-# Compose passkey-domain (docs/apps/PASSKEY.md — passwordless WebAuthn sign-in) with
-# webauthn (the ceremony verification: CBOR/COSE + ES256/RS256 signatures) +
-# records (accounts + credentials) + cache (single-use challenges with a TTL) +
-# session-store (the session a completed ceremony mints). Remaining imports are
-# WASI: random for challenges, clocks, and config for the RP id + origin.
-compose-passkey: build
-    @just _derive cache components/target/cache.composed.wasm
-    @just _derive passkey-domain {{passkey_composed}}
 
 # Build the React + shadcn SPA (Vite) to examples/passkey/dist.
 build-passkey-ui:
     cd examples/passkey/ui && npm ci && npm run build
 
-# Run passwordless sign-in on the native host + serve the SPA on :3053. Pick a
-# username and hit Create passkey — the browser prompts for Touch ID / Windows
-# Hello / your phone, and there is no password anywhere in the flow. Then sign out
-# and sign back in with the passkey (or with no username at all, if your
-# authenticator stores discoverable credentials).
-#
-# The RP id + origin come from CONFIG, never the request — that is what makes the
-# origin check meaningful. WebAuthn needs a secure context: http://localhost
-# counts, a LAN IP does not, so use localhost (not 0.0.0.0:3053) in the browser.
-host-passkey: compose-passkey build-passkey-ui
-    cd host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=passkey --config rp-id=localhost --config origin=http://localhost:3053 \
-      --component ../{{passkey_composed}} --addr 127.0.0.1:3053 \
-      --static-dir ../examples/passkey/dist
 
-# Passkey e2e with a VIRTUAL AUTHENTICATOR: the test holds a P-256 key and
-# performs the real ceremonies over HTTP (CBOR attestation object, COSE key,
-# DER-encoded ECDSA over authData || sha256(clientDataJSON)). It registers, logs
-# in, and then proves each check bites: a replayed challenge, a phishing origin,
-# a credential from another RP, a signature from the wrong key, and a counter
-# that went backwards are all refused — by reason.
-e2e-passkey: compose-passkey
-    cd host && cargo build --release --bin comp-host
-    cd examples/passkey && cargo test --release
 
-# Compose studio-domain (docs/apps/STUDIO.md — the composition studio) with wit-reflect
-# (inspection + wac's own composition engine) + records (surfaces + saved
-# canvases) + blob-store (the uploaded component bytes). Remaining imports are
-# WASI. Note wit_reflect.wasm is ~1 MB: it carries wasmparser and wac-graph, so
-# the studio can compose for real instead of printing instructions.
-compose-studio: build
-    @just _derive studio-domain {{studio_composed}}
 
 # Build the React + xyflow SPA (Vite) to examples/studio/dist.
 build-studio-ui:
@@ -1247,67 +785,12 @@ seed-studio addr="127.0.0.1:3054":
     done
     echo "seeded $ok components ($skipped not accepted)"
 
-# Run the studio on the native host + serve the SPA on :3054, then seed it with
-# every component in the repo. Drag components onto the canvas, wire the handles
-# (only type-compatible connections are allowed — that check is wac's own), and
-# read off the wac plug script, the .wac file, and the wasmCloud workload. Hit
-# Compose to download a real composed component.
-host-studio: compose-studio build-studio-ui
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cd host && cargo build --release --bin comp-host
-    ./target/release/comp-host \
-      --config default-tenant=studio \
-      --component ../{{studio_composed}} --addr 127.0.0.1:3054 \
-      --static-dir ../examples/studio/dist &
-    HOST_PID=$!
-    trap 'kill $HOST_PID 2>/dev/null || true' EXIT
-    for _ in $(seq 1 100); do curl -sf http://127.0.0.1:3054/ >/dev/null && break; sleep 0.2; done
-    cd .. && just seed-studio
-    echo "studio on http://127.0.0.1:3054"
-    wait $HOST_PID
 
-# Compose platform-domain (docs/adr/ — the multi-tenant deployment platform) with
-# the composed auth-guard (accounts/sessions/RBAC) + policy-guard (ownership and
-# visibility as rules) + records (tenants/deployments/revisions) + blob (staged
-# uploads) + quota (per-tenant budgets) + wit-reflect (inspect/plan/compose).
-# Remaining imports are WASI. Note it no longer needs outgoing-handler for anything:
-# with the applier gone (ADR-0022) the control plane makes no outbound calls at all,
-# so it runs with egress denied.
-compose-platform: compose
-    @just _derive platform-domain {{platform_composed}}
 
 # Build the native reconciler — the only process holding a lattice credential.
 build-reconciler:
     cd reconciler && cargo build --release
 
-# The whole platform locally: NATS, the control plane on :8080, the reconciler, and
-# one lattice node on :3401. Then drive it with `./cli/target/release/holon`:
-#
-#   comp login --url http://127.0.0.1:8080 --email you@example.com --password ... --register
-#   comp component push components/target/gate_domain.composed.wasm --id gate
-#   comp app create shop --component gate && comp app ls && comp app deploy <id>
-host-platform: compose-platform build-reconciler
-    #!/usr/bin/env bash
-    set -euo pipefail
-    SECRET=${PLATFORM_SECRET:-dev-secret}
-    STATE=$(mktemp -d)
-    cd host && cargo build --release --bin comp-host && cd ..
-    cd cli && cargo build --release && cd ..
-    nats-server -js -sd "$STATE/nats" -a 127.0.0.1 -p 4222 >"$STATE/nats.log" 2>&1 &
-    trap 'kill %1 %2 %3 2>/dev/null || true' EXIT
-    sleep 1
-    ./host/target/release/comp-host --component {{platform_composed}} \
-      --addr 127.0.0.1:8080 --kv sqlite --sqlite-path "$STATE/platform.db" \
-      --tenant platform --app control-plane \
-      --config applier-secret="$SECRET" --config ingress-suffix=apps.local &
-    sleep 2
-    ./reconciler/target/release/comp-reconciler --platform-url http://127.0.0.1:8080 \
-      --secret "$SECRET" --nats-url nats://127.0.0.1:4222 --lattice dev --interval 3 &
-    echo "platform on :8080 | node on :3401 | state in $STATE"
-    ./host/target/release/comp-host --lattice-nats nats://127.0.0.1:4222 --node dev-1 \
-      --lattice dev --addr 127.0.0.1:3401 --state-dir "$STATE/node" \
-      --kv sqlite --sqlite-path "$STATE/node.db"
 
 # Stop every local platform process. Safe to run at any time, and safe when
 # nothing is running.
@@ -1326,21 +809,7 @@ platform-teardown:
     echo "-- left behind ON PURPOSE: artifacts in a JetStream object store are"
     echo "   content-addressed, so they are cheap to keep and safe to re-push."
 
-# Platform e2e: sign in, upload components, refuse a deploy with no digest
-# (ADR-0006), record a push, then save under BOTH strategies and assert the
-# rendered manifests — namespace, one hostInterfaces entry per interface, the
-# isolation stamp, digest pinning. Needs no cluster and no NATS.
-e2e-platform: compose-platform build-reconciler
-    cd host && cargo build --release --bin comp-host
-    cd examples/platform && cargo test --release
 
-# Studio e2e: reflect real components over HTTP, refuse an illegal edge (wac's
-# subtype check says no), plan a two-level build in the right order, emit all
-# three forms, and COMPOSE FOR REAL — then prove the composed component is the
-# same artifact `wac plug` writes and that the host will actually serve it.
-e2e-studio: compose-studio
-    cd host && cargo build --release --bin comp-host
-    cd examples/studio && cargo test --release
 
 # Build ONE self-contained image (comp-host + composed component + built SPA).
 # No wasmCloud — comp-host serves http + the SPA + Redis-backed storage in one
@@ -1349,285 +818,39 @@ docker-tempo: compose-tempo build-tempo-ui
     docker build -f examples/tempo/Dockerfile -t tempo .
     @echo "built image 'tempo' — docker run -p 8080:8080 -e REDIS_URL=rediss://user:pw@host:25061 tempo"
 
-# Compose arena-domain (docs/apps/ARENA.md — multiplayer Connect Four) with records +
-# id-generate. Remaining imports are WASI.
-compose-arena: build
-    @just _derive arena-domain {{arena_composed}}
 
-# Run the game on the native host + serve the SPA. Open two windows on
-# http://127.0.0.1:3039 — create a game in one, join from the other, play live.
-host-arena: compose-arena
-    cd host && cargo run --release --bin comp-host -- \
-      --config registry=registry.platform.svc.cluster.local:5000 --config cluster-suffix=svc.cluster.local --config registry="$REG" --config cluster-suffix=svc.cluster.local \
-      --app arena --config-file ../examples/defaults.conf --config default-tenant=arena \
-      --component ../{{arena_composed}} --addr 0.0.0.0:3039 \
-      --static-dir ../examples/arena/public
 
-# Game e2e: compose + build host + a Rust test that plays a full game — create,
-# join, turn/seat/illegal-move rejection, a scripted win, and a concurrent-move
-# revision conflict.
-e2e-arena: compose-arena
-    cd host && cargo build --release --bin comp-host
-    cd examples/arena && cargo test --release
 
-# Golem-backed variant: same queue, but durable:workflow is satisfied by the
-# golem-bridge component (calls a durable Golem worker over wasi:http) instead of
-# the in-process backend. The composed wasm now imports wasi:http/outgoing-handler
-# (a host interface on the v2 operator). Point it at Golem via CFG_GOLEM_URL.
-compose-jobs-golem: build
-    @just _derive jobs-domain components/target/jobs_domain.golem.wasm
 
-jobs_reg := env_var_or_default("JOBS_REG", "localhost:30501")
 
-# Run the job queue on the native host + serve the board SPA. Open
-# http://127.0.0.1:3038: enqueue jobs, watch them run/retry/dead-letter live,
-# replay from the DLQ. CFG tunes the outbox: 3 attempts, 1s base backoff.
-host-jobs: compose-jobs
-    cd host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=jobs --config max-attempts=2 --config base-backoff=1 \
-      --component ../{{jobs_composed}} --addr 0.0.0.0:3038 \
-      --static-dir ../examples/jobs/public
 
-# Job-queue e2e: compose + build host + a Rust test that enqueues jobs, drives
-# ticks, and proves success / retry-then-succeed / dead-letter / replay + the
-# exactly-once enqueue key.
-e2e-jobs: compose-jobs
-    cd host && cargo build --release --bin comp-host
-    cd examples/jobs && cargo test --release
 
-# Compose scribe-domain (docs/apps/SCRIBE.md — a collaborative document editor) with the
-# crdt merge component + records + id-generate. Remaining imports are WASI.
-compose-scribe: build
-    @just _derive scribe-domain {{scribe_composed}}
 
-# Run the collaborative editor on the native host + serve the two-pane SPA. Open
-# two windows on http://127.0.0.1:3037 and edit the same doc — edits merge and
-# stream live to both.
-host-scribe: compose-scribe
-    cd host && cargo run --release --bin comp-host -- \
-      --app scribe --config-file ../examples/defaults.conf --config default-tenant=scribe \
-      --component ../{{scribe_composed}} --addr 0.0.0.0:3037 \
-      --static-dir ../examples/scribe/public
 
-# Collaborative-editor e2e: compose + build host + a Rust test proving two
-# concurrent edits merge (both survive) and a live SSE connection sees them.
-e2e-scribe: compose-scribe
-    cd host && cargo build --release --bin comp-host
-    cd examples/scribe && cargo test --release
 
-# Compose pipeline-domain (docs/apps/PIPELINE.md — a reliable event pipeline with
-# outbox → dispatch → DLQ → replay, SSE server-push) with outbox + event-bus +
-# id-generate. No auth. Remaining imports are WASI (bound at deploy).
-compose-pipeline: build
-    @just _derive pipeline-domain {{pipeline_composed}}
 
-# Run the pipeline board on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3016: POST events, toggle the sink down, watch retries drop
-# to the dead-letter tray, then Replay them — live over SSE.
-host-pipeline: compose-pipeline
-    cd host && cargo run --release --bin comp-host -- \
-      --app pipeline --config-file ../examples/defaults.conf --config default-tenant=pipeline \
-      --component ../{{pipeline_composed}} --addr 0.0.0.0:3016 \
-      --static-dir ../examples/pipeline/public
 
-# Reliability e2e: compose + build host + a Rust test that enqueues events,
-# proves they deliver (acked), then takes the sink down and proves an event
-# retries and drops to the dead-letter tray, and that Replay requeues it.
-e2e-pipeline: compose-pipeline
-    cd host && cargo build --release --bin comp-host
-    cd examples/pipeline && cargo test --release
 
-# Compose flags-domain (docs/apps/FLAGS.md — a live feature-rollout console with SSE
-# server-push) with feature-flags + event-bus + id-generate. No auth. Remaining
-# imports are WASI (kv + config bound at deploy).
-compose-flags: build
-    @just _derive flags-domain {{flags_composed}}
 
-# Run the rollout console on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3017: drag a flag to 30% and watch ~30 of 100 subject tiles
-# light up instantly and stay sticky; trip the kill-switch — all dark at once.
-host-flags: compose-flags
-    cd host && cargo run --release --bin comp-host -- \
-      --app flags --config-file ../examples/defaults.conf --config default-tenant=flags \
-      --component ../{{flags_composed}} --addr 0.0.0.0:3017 \
-      --static-dir ../examples/flags/public
 
-# Rollout e2e: compose + build host + a Rust test that sets a 30% rule and
-# proves (a) a subject is STICKY across repeated evals, (b) raising the
-# percentage never turns an already-on subject off, and (c) a rule flip made by
-# one request reaches a SEPARATE held-open SSE connection live.
-e2e-flags: compose-flags
-    cd host && cargo build --release --bin comp-host
-    cd examples/flags && cargo test --release
 
-# Compose abtest-domain (docs/apps/EXPERIMENT.md — an A/B/n experiment console with SSE)
-# with experiment-assign + metrics-collect + event-bus + id-generate. No auth.
-# Remaining imports are WASI (kv + config bound at deploy).
-compose-abtest: build
-    @just _derive abtest-domain {{abtest_composed}}
 
-# Run the experiment console on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3018: define control/variant-a/variant-b weights, watch 100
-# subjects split into arms (sticky as weights shift), fire conversions, and see
-# the per-arm conversion-rate bars pull apart live.
-host-abtest: compose-abtest
-    cd host && cargo run --release --bin comp-host -- \
-      --app abtest --config-file ../examples/defaults.conf --config default-tenant=abtest \
-      --component ../{{abtest_composed}} --addr 0.0.0.0:3018 \
-      --static-dir ../examples/abtest/public
 
-# Experiment e2e: compose + build host + a Rust test that defines a 50/25/25
-# experiment and proves (a) assignment is STICKY per subject, (b) two different
-# subjects can land in different arms, (c) the ~50/25/25 split holds across a
-# cohort, (d) conversions attribute to the right arm's rate, and (e) an outcome
-# recorded by one request reaches a SEPARATE held-open SSE connection live.
-e2e-abtest: compose-abtest
-    cd host && cargo build --release --bin comp-host
-    cd examples/abtest && cargo test --release
 
-# Compose search-domain (docs/apps/SEARCH.md — faceted search-as-you-type) with the
-# engine + corpus + cache (pre-composed with its kv backing) + metrics +
-# pagination + ids. No auth. Remaining imports are WASI (kv + config).
-compose-search: build
-    @just _derive cache components/target/cache.composed.wasm
-    @just _derive search-domain {{search_composed}}
 
-# Run the search console on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3019: type in the box, watch ranked hits narrow live, click a
-# facet chip to filter, and watch the cache hit-ratio climb on repeat queries.
-host-search: compose-search
-    cd host && cargo run --release --bin comp-host -- \
-      --app search --config-file ../examples/defaults.conf --config default-tenant=search \
-      --component ../{{search_composed}} --addr 0.0.0.0:3019 \
-      --static-dir ../examples/search/public
 
-# Search e2e: compose + build host + a Rust test that seeds the corpus and
-# proves ranked results (a rare term ranks its doc first), all-mode intersection
-# shrinks the set, a tag facet restricts hits, and the cache serves a repeat
-# query (hit-ratio rises).
-e2e-search: compose-search
-    cd host && cargo build --release --bin comp-host
-    cd examples/search && cargo test --release
 
-# Compose throttle-domain (docs/apps/RATELIMIT.md — a live throttle wall) with the two
-# limiters + event-bus + id-generate. No auth. Remaining imports are WASI
-# (kv + config bound at deploy).
-compose-ratelimit: build
-    @just _derive throttle-domain {{throttle_composed}}
 
-# Run the throttle wall on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3020: hold the hammer button, watch the attempt bar hit the
-# ceiling and the key LOCK with a countdown, and the quota gauge drain — live.
-# CFG_MAX_ATTEMPTS / CFG_LOCKOUT_WINDOW tune the wall (defaults 5 / 300s).
-host-ratelimit: compose-ratelimit
-    cd host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=throttle --config max-attempts=10 --config lockout-window=15 \
-      --component ../{{throttle_composed}} --addr 0.0.0.0:3020 \
-      --static-dir ../examples/ratelimit/public
 
-# Throttle e2e: compose + build host + a Rust test that proves N allowed then a
-# 429 at the ceiling, a quota `remaining` that decrements, lockout after a burst
-# of failures, and a verdict reaching a SEPARATE held-open SSE connection.
-e2e-ratelimit: compose-ratelimit
-    cd host && cargo build --release --bin comp-host
-    cd examples/ratelimit && cargo test --release
 
-# Compose upload-drop (docs/apps/DROP.md — a presigned direct-upload drop-box) with the
-# gate + blob store + signer + records + ids. No auth. Remaining imports are
-# WASI (kv + config bound at deploy — see CFG_* below).
-compose-drop: build
-    @just _derive upload-drop {{drop_composed}}
 
-# Run the drop-box on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3021: pick a file, watch it ask for a ticket (the policy
-# answer), PUT the bytes straight to storage, then get a signed download link.
-# CFG_ALLOWED_TYPES / CFG_MAX_SIZE tune the gate (defaults: all types / 10 MiB).
-host-drop: compose-drop
-    cd host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=drop --config allowed-types=text/plain,image/png --config max-size=1048576 \
-      --component ../{{drop_composed}} --addr 0.0.0.0:3021 \
-      --static-dir ../examples/drop/public
 
-# Drop e2e: compose + build host + a Rust test that proves a ticket is minted
-# for an allowed type, an oversized/blocked type is rejected at ticket time, a
-# redeemed ticket stores bytes, and a signed download link round-trips the bytes
-# while a tampered signature is refused.
-e2e-drop: compose-drop
-    cd host && cargo build --release --bin comp-host
-    cd examples/drop && cargo test --release
 
-# Compose csv-report (docs/apps/REPORT.md — batch CSV import/report) with the codec +
-# validator + records + pagination. No auth. Remaining imports are WASI
-# (kv + config bound at deploy).
-compose-report: build
-    @just _derive csv-report {{report_composed}}
 
-# Run the CSV import/report tool on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3022: paste a CSV, watch valid rows import and bad rows come
-# back with per-field errors, page the clean report, then export it back to CSV.
-host-report: compose-report
-    cd host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=report \
-      --component ../{{report_composed}} --addr 0.0.0.0:3022 \
-      --static-dir ../examples/report/public
 
-# Report e2e: compose + build host + a Rust test that imports a CSV with a mix
-# of valid + invalid rows (proving typed validation splits them with per-field
-# errors), pages the clean set through the opaque cursor, and exports it back to
-# CSV through the same codec (round-trip).
-e2e-report: compose-report
-    cd host && cargo build --release --bin comp-host
-    cd examples/report && cargo test --release
 
-# Compose mfa-authgate (docs/apps/AUTHGATE.md — TOTP 2FA + challenge-response login) with
-# the otp primitive + secrets vault + session store + records. No auth-guard —
-# this app IS the second factor. secrets:vault needs a 32-byte base64 master-key
-# from config (CFG_MASTER_KEY below).
-compose-authgate: build
-    @just _derive mfa-authgate {{authgate_composed}}
 
-# Run the 2FA authgate on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3023: enroll an account (scan the QR / copy the secret into an
-# authenticator app), activate with the first code, then log in with a live code
-# or burn a recovery code. CFG_MASTER_KEY seals the TOTP secret in the vault.
-host-authgate: compose-authgate
-    cd host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=authgate --config master-key=bWZhLWRlbW8tbWFzdGVyLWtleS0zMi1ieXRlcyEhISE= \
-      --component ../{{authgate_composed}} --addr 0.0.0.0:3023 \
-      --static-dir ../examples/authgate/public
 
-# Authgate e2e: compose + build host + a Rust test that provisions a secret,
-# derives a valid TOTP code from it, activates enrollment, logs in with a live
-# code (rejecting a wrong one), and burns a single-use recovery code (rejecting
-# its reuse) — proving the full challenge-response lifecycle.
-e2e-authgate: compose-authgate
-    cd host && cargo build --release --bin comp-host
-    cd examples/authgate && cargo test --release
-
-# Compose paste-bin (docs/apps/PASTE.md — a paste/gist bin) with the pure-compute
-# transform chain (validate + pii-redact + markdown + slug) plus the one
-# stateful piece (records). No auth. Remaining imports are WASI (kv).
-# Compose events-domain (free event ticketing) with everything it needs: auth-guard
-# for the whole authorisation table, record-store for the three collections,
-# quota-meter for capacity held ATOMICALLY, qr for the attendee's code, fsm-workflow
-# for the ticket lifecycle, id-generate for a code that cannot be guessed.
-# The notification capabilities, proven against a REAL mailbox.
-#
-# `comp-host` wires no wasi:sockets, so a component cannot speak SMTP and MailHog
-# ingests nothing else. `comp-mailrelay` is the bridge; the gate starts both itself
-# so it does not fail on a clean machine as "your email code is broken".
-#
-#   go install github.com/mailhog/MailHog@latest
-e2e-notify: build
-    cd reconciler && cargo build --release --bin comp-mailrelay
-    COMP_HOST="$PWD/host/target/release/comp-host" \
-    COMP_PLUG="$PWD/reconciler/target/release/comp-plug" \
-      bash components/notify-probe/e2e.sh
 
 # MailHog on its usual ports, for watching mail arrive by eye at :8025 while you
 # poke the app. The GATE does not need this — it starts its own on free ports.
@@ -1640,20 +863,12 @@ mail-relay:
     cd reconciler && cargo build --release --bin comp-mailrelay
     ./reconciler/target/release/comp-mailrelay 127.0.0.1:3390 127.0.0.1:1025
 
-compose-events: build
-    @just _derive events-domain {{events_composed}}
 
 # Build the React SPA to examples/events/dist. One page, two roles: `?as=attendee`
 # and `?as=organizer` — which is what lets a recording show both at once.
 build-events-ui:
     cd examples/events/ui && npm ci && npm run build
 
-# The ticketing app on :3230, SPA included.
-host-events: compose-events build-events-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app events --config-file ../examples/defaults.conf --config default-tenant=events \
-      --component ../{{events_composed}} --addr 0.0.0.0:3230 \
-      --static-dir ../examples/events/dist
 
 # The 24-hour reminder, three panes, with a REAL mailbox in the third.
 # Prereq: `just mailhog &`, `just mail-relay &`, and a host started with
@@ -1667,53 +882,15 @@ screencast-events:
     node tools/screencast/events.mjs
     bash tools/screencast/to-gif.sh tools/screencast/videos/events/*.webm docs/media/events.gif 900 10 2
 
-compose-paste: build
-    @just _derive paste-bin {{paste_composed}}
 
-# Run the paste bin on the native Rust host + serve the SPA. Open
-# http://127.0.0.1:3024: paste Markdown (with an email or card number in it),
-# submit, and watch the PII get masked at ingest and the Markdown render to safe
-# HTML on view — a pure-compute pipeline with one stateful step.
-host-paste: compose-paste
-    cd host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=paste \
-      --component ../{{paste_composed}} --addr 0.0.0.0:3024 \
-      --static-dir ../examples/paste/public
 
-# Paste e2e: compose + build host + a Rust test that proves an empty body is
-# rejected (validate), PII in the body is masked BEFORE storage (the raw email
-# never appears in the stored/raw output), Markdown renders to sanitized HTML
-# (a <script> is escaped, not executed), and duplicate titles get distinct
-# slugs.
-e2e-paste: compose-paste
-    cd host && cargo build --release --bin comp-host
-    cd examples/paste && cargo test --release
 
 # Build the track SPA (Vite + TS) into components/track-assets/static, so the
 # track-assets component's build.rs embeds it. Run before compose-track.
 build-track-ui:
     cd examples/track/ui && npm install && npm run build
 
-# Compose track-domain (docs/apps/TRACK.md — a Linear-lite project tracker) — the biggest
-# composition in the repo: the pre-composed auth-guard + records + fsm + search +
-# event-bus + notify + webhook-sign + policy + paginate + markdown + the
-# pre-composed ai-inference (mock llm) + the baked SPA (track-assets). Five axes
-# in one self-contained component. Depends on `compose` (guard), `compose-ai`
-# (ai+mock-llm), and the built SPA.
-compose-track: build-track-ui compose compose-ai
-    @just _derive track-domain {{track_composed}}
 
-# Run the project tracker on the native Rust host. The SPA is BAKED into the
-# component (track-assets) — no --static-dir. Open http://127.0.0.1:3025:
-# register (first user as admin), create a project, file issues, move them
-# across the board, comment, watch the activity feed stream live over SSE, and
-# summarize a thread with AI.
-host-track: compose-track
-    cd host && \
-      cargo run --release --bin comp-host -- \
-        --config default-tenant=track \
-      --component ../{{track_composed}} --addr 0.0.0.0:3025
 
 # Track e2e: compose + build host + a Rust test driving all five axes — auth +
 # RBAC (admin creates a project, a member writes, a non-member is 403), issue
@@ -1778,30 +955,11 @@ fetch-components ref="":
     echo "fetched $n component(s) from run $run into $out"
     echo "  they are the bytes that run tested; `just build` still rebuilds anything you edit."
 
-# Compose binder-domain (docs/apps/BINDER.md — a Pokemon card binder) with the three
-# capabilities it imports: card:identify (a vision model's answer into typed fields),
-# price:history (what a card was worth, carried across gaps) and portfolio:value
-# (FIFO cost basis, realised and unrealised gain). Remaining imports are WASI.
-#
-# Derived from the component's own imports (ADR-0087) rather than a hand-written
-# `wac plug` line, so adding a capability to the world is the only edit needed.
-compose-binder: build
-    @just _derive binder-domain {{binder_composed}}
 
 # Build the React + Vite SPA (router, recharts) to examples/binder/dist.
 build-binder-ui:
     cd examples/binder/ui && npm ci && npm run build
 
-# Run the binder on the native host. Bound to 0.0.0.0 on purpose: this is the app
-# you open from another machine on the tailnet, so `http://<this-host>:3210` works
-# without a tunnel. The store is in memory — restart it and the collection is gone,
-# which is the right default for something you are trying out.
-host-binder: compose-binder build-binder-ui
-    cd host && cargo run --release --bin comp-host -- \
-      --app binder --component ../{{binder_composed}} --addr 0.0.0.0:3210 \
-      --config default-tenant=binder --static-dir ../examples/binder/dist \
-      --config vision:base-url=http://127.0.0.1:8787 \
-      --egress 127.0.0.1:8787 --allow-private-egress
 
 # The camera works with NO key in the tenant, because it goes through the shim.
 #
@@ -1823,204 +981,33 @@ host-binder: compose-binder build-binder-ui
 #
 #     --config vision:base-url=https://api.anthropic.com --egress api.anthropic.com
 
-# Binder e2e: a fenced model answer becomes a typed card; an incomplete one is
-# flagged rather than defaulted; a photo that is not a card is refused; and the
-# money is checked as ARITHMETIC — buy 2 @ 10.00, buy 1 @ 40.00, sell 1 @ 30.00
-# realises 20.00 under FIFO and 10.00 under average cost, so the assertion fails
-# for a plausible wrong answer rather than only for a broken one.
-e2e-binder: compose-binder
-    cd host && cargo build --release --bin comp-host
-    cd reconciler && cargo build --release --bin comp-plug
-    cd examples/binder && cargo test --release
 
-# stale-sweep tick, and the AI thread summary.
-e2e-track: compose-track
-    cd host && cargo build --release --bin comp-host
-    cd examples/track && cargo test --release
 
-# FULL-PARITY compose: plug every capability the parity vet-domain imports into
-# one app component — all 19 (auth-guard, records, validate, search, blob,
-# upload, fsm, money, markdown, csv, pii, otp, secrets, i18n, pagination,
-# ai-inference (+mock llm, pre-composed), cache, timer, lock, event-bus). Output
-# is the whole feature-complete vet-clinic backend as ONE wasm.
-compose-vet-full: compose compose-ai
-    # cache needs a backing store (source/sink); pre-compose cache + cache-backing
-    # so the pair has zero non-WASI imports, then plug the pair.
-    @just _derive cache components/target/cache.composed.wasm
-    @just _derive vet-domain {{vet_full_composed}}
 
-# LATTICE compose (wasmCloud): fuse ONLY the pure-compute capabilities into
-# vet-domain — each is ~4 core modules, and wasmtime caps a component at 30
-# nested core-module instances (the fused-everything artifact is 104 and does
-# not deploy). vet-domain + these 6 = 28 modules; csv (admin export, coldest
-# path) stays linked to fit. Every stateful/swap-point capability (auth,
-# records, search, blob, fsm, otp, secrets, i18n, ai, cache, timer, lock,
-# event-bus, ui/static, csv) remains a wadm LINK. This removes the per-call
-# wrpc-over-NATS hop for pure compute while keeping the lattice where it earns
-# its cost (durability, scaling, hot-swap). LATTICE=1 gen-manifest.py drops the
-# fused capabilities from the manifest.
-compose-vet-lattice: build
-    @just _derive vet-domain {{vet_lattice}}
 
-# Run the composed vet-domain wasm under the NATIVE Rust host (wasmtime). No
-# Node, no wasmCloud — `host/` is its own native binary that serves the
-# component's HTTP and satisfies its keyvalue/config imports in-process.
-host: compose-vet
-    cd host && cargo run --release --bin comp-host -- --component ../{{vet_composed}} --addr 127.0.0.1:3007
 
-# Run the FULL-PARITY app on the native host + serve the built React SPA. One
-# Rust binary = UI + API. The whole vet-clinic, no Node. (--kv memory default.)
-host-full: compose-vet-full
-    cd host && cargo run --release --bin comp-host -- --component ../{{vet_full_composed}} \
-      --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public
 
-# Same, persisted to Redis (any redis-compatible server, e.g. valkey :6379).
-host-redis: compose-vet-full
-    cd host && cargo run --release --bin comp-host -- --component ../{{vet_full_composed}} \
-      --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
-      --kv redis --redis-url redis://127.0.0.1:6379
 
-# Run the helpdesk app (docs/apps/HELPDESK.md rung 1) on the native host, persisted to
-# NATS JetStream KV. Same bytes the jco example serves — different host.
-host-helpdesk: compose-helpdesk
-    cd host && cargo run --release --bin comp-host -- \
-      --app helpdesk --config-file ../examples/defaults.conf --config default-tenant=helpdesk \
-      --component ../{{helpdesk_composed}} --addr 0.0.0.0:3007 \
-      --static-dir ../examples/jco-helpdesk/public \
-      --kv nats --nats-url 127.0.0.1:4222
 
-# Same, persisted to NATS JetStream KV (:4222 by default).
-host-nats: compose-vet-full
-    cd host && cargo run --release --bin comp-host -- --component ../{{vet_full_composed}} \
-      --addr 127.0.0.1:3007 --static-dir ../examples/jco-vet-clinic/public \
-      --kv nats --nats-url 127.0.0.1:4222
 
-# Compose the eshop-catalog service (docs/apps/ESHOP.md): eShopOnDapr's Catalog.API over
-# record-store + event-bus + idempotency-guard (at-least-once dedup for the
-# stock consumers). Output imports only generic WASI.
-compose-eshop-catalog: build
-    @just _derive eshop-catalog {{eshopcatalog_composed}}
 
-# Compose every eshop service (docs/apps/ESHOP.md): eShopOnDapr recreated over comp
-# contracts. identity = the existing accounts-app + composed auth-guard,
-# untouched. Each output imports only generic WASI.
-compose-eshop: compose compose-eshop-catalog
-    @just _derive eshop-basket {{eshopbasket_composed}}
-    @just _derive eshop-ordering {{eshopordering_composed}}
-    @just _derive eshop-payment {{eshoppayment_composed}}
-    @just _derive accounts-app {{eshopidentity_composed}}
-    @just _derive eshop-gateway {{eshopgateway_composed}}
-    @just _derive event-pusher components/target/event_pusher.composed.wasm
 
-# Run the whole eshop (identity/catalog/basket/ordering/payment + gateway with
-# the embedded storefront) on native hosts over a shared NATS at :4222.
-# Gateway/storefront: http://127.0.0.1:3100 — smoke: examples/eshop/smoke.sh
-host-eshop: compose-eshop
-    examples/eshop/run-local.sh
 
-eshop_reg := env_var_or_default("ESHOP_REG", "localhost:30500")
 
-# Compose the idempotency-guard into webhook-ingest, satisfying its
-# `idempotency:guard/store` import. Demonstrates one component composing another.
-compose-webhook: build
-    @just _derive webhook-ingest {{webhook_composed}}
 
-# Compose THREE capabilities — session:store + config:store + secrets:vault —
-# into the login-app consumer, satisfying all three of its imports at once.
-# The multi-capability composition demo: the output imports nothing but generic
-# WASI host shims.
-compose-login: build
-    @just _derive login-app {{login_composed}}
 
-# Compose the link-shortener app: slug + id-generate + record-store +
-# rate-limiter + cache (pre-composed with its kv backing). Output imports only
-# generic WASI (keyvalue/clocks/random/config), so any comp host runs it.
-compose-shortlink: build
-    @just _derive cache components/target/cache.composed.wasm
-    @just _derive link-shortener {{shortlink_composed}}
 
-# Run the composed link-shortener under the native host.
-host-shortlink: compose-shortlink
-    cd host && cargo run --release --bin comp-host -- --component ../{{shortlink_composed}} --addr 127.0.0.1:3008
 
-# Compose the dev-portal app: the composed auth-guard (auth:identity) +
-# record-store + id-generate + quota + policy-guard + outbox + webhook-sign +
-# notify-dispatch. RBAC gates role verbs, policy-guard gates project access;
-# key events leave as stripe-signed webhooks on an admin-pumped outbox drain.
-compose-portal: compose
-    @just _derive dev-portal {{portal_composed}}
 
-# Run the composed dev-portal under the native host.
-host-portal: compose-portal
-    cd host && cargo run --release --bin comp-host -- --component ../{{portal_composed}} --addr 127.0.0.1:3009
 
-# Compose the webhook-relay app: the composed webhook-ingest (HMAC verify +
-# replay dedup) + jsonpatch + outbox + webhook-sign + notify-dispatch +
-# rate-limiter + audit-log + record-store. Ingest -> transform -> durable
-# queue; drain delivers github-signed webhooks with retry + dead letters.
-compose-relay: compose-webhook
-    @just _derive webhook-relay {{relay_composed}}
 
-# Run the composed webhook-relay under the native host.
-host-relay: compose-relay
-    cd host && cargo run --release --bin comp-host -- --component ../{{relay_composed}} --addr 127.0.0.1:3010
 
-# Compose the billing-ledger app: money + record-store + idempotency-guard +
-# quota + csv + outbox. Idempotency-key replay cache on the write path,
-# integer minor-unit arithmetic, revision-CAS balances, csv statements.
-compose-ledger: build
-    @just _derive billing-ledger {{ledger_composed}}
 
-# Run the composed billing-ledger under the native host.
-host-ledger: compose-ledger
-    cd host && cargo run --release --bin comp-host -- --component ../{{ledger_composed}} --addr 127.0.0.1:3011
 
-# Compose the status-page app: scheduler-timer + record-store + fsm-workflow +
-# event-bus + notify-dispatch. Timer-driven probes over outgoing HTTP; state
-# transitions fan out on the bus and alert as webhooks.
-compose-status: build
-    @just _derive status-page {{statuspage_composed}}
 
-# Run the composed status-page under the native host. Open
-# http://127.0.0.1:3012: add a monitor (url + period >= 10s), then POST
-# /api/tick to probe — the page shows each monitor's up/degraded/down state and
-# its fsm transition history (up -> degraded -> down needs TWO failures).
-host-status: compose-status
-    cd host && cargo run --release --bin comp-host -- --component ../{{statuspage_composed}} --addr 127.0.0.1:3012
 
-# Status-page e2e: compose + build host + a Rust test that adds a self-probe
-# (stays up) and a dead-port monitor, then proves the fsm walks up -> degraded
-# (one failure) -> down (a second consecutive failure), with both transitions in
-# the history log. Slow: monitors have a 10s minimum period, so it sleeps across
-# a period to force the second probe.
-e2e-status: compose-status
-    cd host && cargo build --release --bin comp-host
-    cd examples/status && cargo test --release
 
-# Compose an LLM provider into the ai-inference domain layer, satisfying its
-# `llm:inference/inference` import. Here the deterministic MOCK provider is
-# plugged in (for offline tests + demo); swap --plug for a real provider
-# component (openai/anthropic/ollama) to go live — ai-inference is unchanged.
-compose-ai: build
-    @just _derive ai-inference components/target/llm_local.composed.wasm
 
-# Same domain layer, but with the REAL openai-provider plugged in instead of the
-# mock — proves the swap is a composition choice, not a code change. The provider
-# imports wasi:http + wasi:config (base-url / api-key / model), which the host
-# (wasmCloud httpclient + config, or a jco http shim) satisfies at runtime.
-compose-ai-openai: build
-    @just _derive ai-inference components/target/llm_local.openai.composed.wasm
-
-# Same composition, the DECLARATIVE way — `wac compose` over a .wac source file
-# (components/login-app/compose.wac) instead of the imperative `wac plug` chain
-# above. The .wac file states the wiring explicitly. Output is equivalent.
-compose-login-wac: build
-    wac compose {{components}}/login-app/compose.wac \
-        --dep login:component={{loginapp_wasm}} \
-        --dep session:store={{session_wasm}} \
-        --dep config:store={{config_wasm}} \
-        --dep secrets:vault={{secrets_wasm}} \
-        -o components/target/login_app.wac-composed.wasm
 
 # Validate the built components.
 validate: build
@@ -2064,78 +1051,8 @@ check: wit-check validate
 build-selfhost:
     cd cli && cargo build --release
 
-# Cross-build a STATIC comp-host for a Linux box.
-#
-# musl on purpose: the result has no glibc version to match, so one binary runs on
-# Debian, Ubuntu or Alpine. Needs `cross` and a running docker/orbstack. Takes ~4
-# minutes cold, because wasmtime.
-#
-#   just selfhost-build-host              # x86_64 (most VPSes)
-#   just selfhost-build-host aarch64      # ARM boxes, Pi, Hetzner/Oracle ARM
-selfhost-build-host arch="x86_64":
-    cd host && cross build --release --target {{arch}}-unknown-linux-musl
-    @file host/target/{{arch}}-unknown-linux-musl/release/comp-host
-    @ls -la host/target/{{arch}}-unknown-linux-musl/release/comp-host | awk '{printf "  %.0f MB\n", $5/1048576}'
 
-# Cross-build a STATIC comp-relay — what makes a pull-based timer or topic fire.
-#
-# Small next to comp-host: it is an HTTP client with a clock and JITs nothing.
-selfhost-build-relay arch="x86_64":
-    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl --bin comp-relay
-    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-relay | awk '{printf "  comp-relay %.0f MB\n", $5/1048576}'
 
-# ONE-TIME per box. Installs the runtime and makes Caddy read what this lane writes.
-#
-# Every remote command goes through `bash -lc`. `ssh host "…"` hands the string to
-# the remote LOGIN shell, and there is no rule that it is a POSIX one: the first box
-# this lane met that did not have sh as a login shell answered
-# `fish: Missing end to balance this if statement` and stopped, having already
-# copied the binaries. The lane needs bash on the box, which it needed anyway.
-#
-# Without this, `selfhost-deploy` would install a unit pointing at a comp-host that
-# does not exist, and drop site files into a directory Caddy never reads — so it would
-# look like it worked and serve nothing.
-selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch) (selfhost-build-relay arch)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    BIN=host/target/{{arch}}-unknown-linux-musl/release/comp-host
-    scp "$BIN" {{host}}:/tmp/comp-host
-    # comp-relay too: an app whose spec declares [triggers] gets a second unit, and a
-    # unit pointing at a binary that is not there fails at start rather than at deploy.
-    RELAY=reconciler/target/{{arch}}-unknown-linux-musl/release/comp-relay
-    if [ -f "$RELAY" ]; then scp "$RELAY" {{host}}:/tmp/comp-relay; fi
-    # `ssh host "script"` runs the string in the remote LOGIN shell, and nothing
-    # promises that is a POSIX one. The first box this lane met whose login shell
-    # was fish answered `Missing end to balance this if statement` and stopped —
-    # after the binaries had already been copied. `ssh host bash -s` with the script
-    # on STDIN sidesteps the login shell's parser entirely, and needs no quoting.
-    ssh {{host}} bash -s <<'REMOTE'
-    set -e
-    sudo install -m 0755 /tmp/comp-host /usr/local/bin/comp-host; rm -f /tmp/comp-host
-    if [ -f /tmp/comp-relay ]; then
-      sudo install -m 0755 /tmp/comp-relay /usr/local/bin/comp-relay; rm -f /tmp/comp-relay
-    fi
-    sudo mkdir -p /srv/comp /etc/comp /etc/caddy/comp
-    sudo chmod 0711 /etc/comp
-    /usr/local/bin/comp-host --help >/dev/null && echo '  comp-host installed:' \
-      && /usr/local/bin/comp-host --help | head -1
-    REMOTE
-    # Caddy only reads files it is told to, and an import line at the end of the
-    # Caddyfile is top-level — where site blocks belong. Skipped entirely when Caddy
-    # is not installed: `--router tailscale-serve` needs no proxy at all, and a box
-    # routed that way should not be made to grow one.
-    ssh {{host}} bash -s <<'REMOTE'
-    set -e
-    command -v caddy >/dev/null || { echo "  no caddy — fine for --router tailscale-serve"; exit 0; }
-    sudo touch /etc/caddy/Caddyfile
-    grep -qF 'import /etc/caddy/comp/*.caddy' /etc/caddy/Caddyfile \
-      || echo 'import /etc/caddy/comp/*.caddy' | sudo tee -a /etc/caddy/Caddyfile >/dev/null
-    sudo caddy validate --config /etc/caddy/Caddyfile 2>&1 | tail -2 || true
-    REMOTE
-    just selfhost-tsip {{host}}
-    # Not backticks. This is a bash recipe, and `just selfhost-deploy <app> {{host}}`
-    # in backticks is a command substitution — it RAN, with `<app>` as a redirect.
-    echo "  bootstrapped {{host}} — 'just selfhost-deploy <app> {{host}}' will work now"
 
 # ---- continuous deployment ---------------------------------------------------
 #
@@ -2148,85 +1065,9 @@ selfhost-bootstrap host arch="x86_64": (selfhost-build-host arch) (selfhost-buil
 # that can touch this network. The only mutable thing in the chain is which commit
 # of `apps.lock` is current — a branch in git, whose history IS the deploy history.
 
-# Cross-build the agent for a box. Same target as the host it sits beside.
-selfhost-build-agent arch="x86_64":
-    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl --bin comp-agent
-    @ls -la reconciler/target/{{arch}}-unknown-linux-musl/release/comp-agent | awk '{printf "  comp-agent %.0f MB\n", $5/1048576}'
 
-# Install the agent and its timer on a box, and tell it which lock to read.
-#
-# ONE-TIME, like `selfhost-bootstrap`. The agent updates apps that already have a
-# unit and installs nothing new — so `selfhost-deploy` stays the deliberate act of
-# putting an app on a machine, and this keeps what is there current.
-selfhost-agent host arch="x86_64" interval="300": (selfhost-build-agent arch)
-    #!/usr/bin/env bash
-    set -euo pipefail
-    OWNER="${OWNER:-markkovari}"
-    LOCK="${LOCK_URL:-https://raw.githubusercontent.com/$OWNER/holon/deploy/apps.lock}"
-    scp reconciler/target/{{arch}}-unknown-linux-musl/release/comp-agent {{host}}:/tmp/comp-agent
-    # comp-oci does the pulling, so it has to be there too.
-    cd reconciler && cross build --release --target {{arch}}-unknown-linux-musl --bin comp-oci && cd ..
-    scp reconciler/target/{{arch}}-unknown-linux-musl/release/comp-oci {{host}}:/tmp/comp-oci
-    { echo "LOCK='$LOCK'"; echo "EVERY='{{interval}}'"; cat; } <<'REMOTE' | ssh {{host}} bash -s
-    set -e
-    sudo install -m 0755 /tmp/comp-agent /usr/local/bin/comp-agent
-    sudo install -m 0755 /tmp/comp-oci /usr/local/bin/comp-oci
-    rm -f /tmp/comp-agent /tmp/comp-oci
-    # A timer and a oneshot, not a daemon with its own sleep: systemd already owns
-    # "run this every N seconds", it survives reboots, and `systemctl list-timers`
-    # answers "when does it next run" without reading anyone's source.
-    printf '%s\n' \
-      '[Unit]' \
-      'Description=comp-agent: keep this box'"'"'s apps at the published digest' \
-      'After=network-online.target' \
-      'Wants=network-online.target' \
-      '' \
-      '[Service]' \
-      'Type=oneshot' \
-      "ExecStart=/usr/local/bin/comp-agent --lock-url $LOCK --once" \
-      | sudo tee /etc/systemd/system/comp-agent.service >/dev/null
-    printf '%s\n' \
-      '[Unit]' \
-      'Description=comp-agent every '"$EVERY"'s' \
-      '' \
-      '[Timer]' \
-      'OnBootSec=60' \
-      "OnUnitActiveSec=${EVERY}" \
-      'AccuracySec=10' \
-      '' \
-      '[Install]' \
-      'WantedBy=timers.target' \
-      | sudo tee /etc/systemd/system/comp-agent.timer >/dev/null
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now comp-agent.timer
-    echo "  agent installed; next run:"
-    systemctl list-timers comp-agent.timer --no-pager | sed -n 2p
-    REMOTE
-    echo "  {{host}} follows $LOCK every {{interval}}s"
 
-# What the agent WOULD do, changing nothing. Run this first on a box.
-selfhost-agent-dry host:
-    #!/usr/bin/env bash
-    # A shebang, or `just` runs each line as its own command and the heredoc never
-    # reaches ssh — `systemctl` then runs on the laptop, which does not have one.
-    set -euo pipefail
-    ssh {{host}} bash -s <<'REMOTE'
-    OWNER="${OWNER:-markkovari}"
-    /usr/local/bin/comp-agent --once --dry-run \
-      --lock-url "https://raw.githubusercontent.com/$OWNER/holon/deploy/apps.lock"
-    REMOTE
 
-# Is it running, and what did it last do?
-selfhost-agent-status host:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    ssh {{host}} bash -s <<'REMOTE'
-    systemctl list-timers comp-agent.timer --no-pager | head -3
-    echo "--- last run:"
-    journalctl -u comp-agent.service -n 15 --no-pager
-    echo "--- installed digests:"
-    for d in /srv/comp/*/digest; do [ -f "$d" ] && echo "  $(basename "$(dirname "$d")") $(cat "$d")"; done
-    REMOTE
 
 # ---- the shared services a tailnet box carries ------------------------------
 #
@@ -2241,282 +1082,15 @@ selfhost-agent-status host:
 # `NATS_URL` at the one that is there; `comp.<v>.<lattice>.…` subjects mean two
 # lattices on one NATS never see each other's traffic.
 
-# Install SurrealDB on a box, bound to its TAILNET address only.
-#
-# Not 0.0.0.0: a database with a root credential should not be in front of every
-# device on whatever LAN the box happens to sit on. The password is generated here,
-# written to /etc/surrealdb/root.pass with 0600, and read by the unit at start — so
-# it is never in `ExecStart`, and therefore never in `ps` for every user on the box.
-#
-#   just selfhost-surreal malna
-#   SURREAL_URL=http://malna:8000 SURREAL_PASS=$(cat ~/.comp-secrets/surreal) just capgraph-store
-selfhost-surreal host version="v3.1.3":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ts=$(ssh {{host}} tailscale ip -4 2>/dev/null | head -1)
-    [ -n "$ts" ] || { echo "{{host}} has no tailscale address — this binds to the tailnet and there is none" >&2; exit 1; }
-    arch=$(ssh {{host}} uname -m)
-    case "$arch" in
-      aarch64|arm64) rel=linux-arm64 ;;
-      x86_64)        rel=linux-amd64 ;;
-      *) echo "no SurrealDB build named for $arch" >&2; exit 1 ;;
-    esac
-    # Generated here so it never travels through a shell history or an argument.
-    pass=$(openssl rand -base64 24 | tr -d '/+=' | head -c 28)
-    { echo "TS='$ts'"; echo "REL='$rel'"; echo "VER='{{version}}'"; echo "PASS='$pass'"; cat; } <<'REMOTE' | ssh {{host}} bash -s
-    set -e
-    cd /tmp
-    curl -fsSL -o surreal.tgz "https://github.com/surrealdb/surrealdb/releases/download/${VER}/surreal-${VER}.${REL}.tgz"
-    tar xzf surreal.tgz && sudo install -m 0755 surreal /usr/local/bin/surreal && rm -f surreal.tgz surreal
-    sudo mkdir -p /var/lib/surrealdb /etc/surrealdb && sudo chmod 0700 /etc/surrealdb
-    printf '%s' "$PASS" | sudo tee /etc/surrealdb/root.pass >/dev/null
-    sudo chmod 0600 /etc/surrealdb/root.pass
-    sudo tee /etc/systemd/system/surrealdb.service >/dev/null <<UNIT
-    [Unit]
-    Description=SurrealDB — the derived graph, and the pool that cannot be recomputed
-    After=network-online.target tailscaled.service
-    Wants=network-online.target
 
-    [Service]
-    Type=simple
-    ExecStart=/bin/sh -c '/usr/local/bin/surreal start --bind ${TS}:8000 --user root --pass "\$(cat /etc/surrealdb/root.pass)" rocksdb:/var/lib/surrealdb/data'
-    Restart=always
-    RestartSec=3
-    NoNewPrivileges=yes
-    ProtectSystem=strict
-    ProtectHome=yes
-    ReadWritePaths=/var/lib/surrealdb
-    PrivateTmp=yes
 
-    [Install]
-    WantedBy=multi-user.target
-    UNIT
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now surrealdb
-    sleep 4
-    systemctl is-active surrealdb
-    REMOTE
-    echo "$pass" > ~/.comp-secrets/surreal
-    chmod 600 ~/.comp-secrets/surreal
-    echo "  surreal on {{host}} at http://{{host}}:8000 (tailnet only)"
-    echo "  password in ~/.comp-secrets/surreal — by reference, never in a profile"
 
-# Is it up, and what is in it?
-selfhost-surreal-status host:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    ssh {{host}} bash -s <<'REMOTE'
-    systemctl is-active surrealdb
-    systemctl show surrealdb -p ActiveEnterTimestamp --value
-    REMOTE
-    pass=$(cat ~/.comp-secrets/surreal)
-    curl -sS -u "root:$pass" -H 'Accept: application/json' \
-      -H 'surreal-ns: comp' -H 'surreal-db: goalmemory' \
-      --data-binary 'SELECT count() FROM interface GROUP ALL; SELECT count() FROM app GROUP ALL;' \
-      "http://{{host}}:8000/sql" | python3 -c 'import sys,json;d=json.load(sys.stdin);print("  interfaces:", (d[0]["result"] or [{}])[0].get("count", 0));print("  apps:      ", (d[1]["result"] or [{}])[0].get("count", 0))'
 
-# Render one app's systemd unit, env file and route WITHOUT touching a box.
-# Read the output before you trust it to a server.
-selfhost-render app router="caddy": build-selfhost
-    ./cli/target/release/holon node render apps/{{app}}.toml \
-      --out target/selfhost --router {{router}}
-    @echo "--- unit ---";  cat target/selfhost/{{app}}/comp-{{app}}.service
-    @echo "--- route ---"; cat target/selfhost/{{app}}/{{app}}.*
 
-# Derive a spec for every app that has a `host-<app>` recipe but no `apps/*.toml`.
-#
-# The recipe already names the artifact, the port and the SPA directory — a spec is
-# those three facts plus a hostname. What the generator cannot know it does not
-# guess: `domain` is a placeholder to edit, and `access` is left at its
-# fail-closed default. An existing spec is never overwritten.
-selfhost-specs:
-    python3 tools/gen-app-specs.py
-    @just selfhost-check
 
-# Refuse the collisions a single spec cannot see: two apps on one port, one
-# domain, or one name. Run it in CI over apps/*.toml.
-selfhost-check: build-selfhost
-    ./cli/target/release/holon node validate apps/*.toml
 
-# Ship one app to one box: compose, render, copy, restart, route.
-#
-# Needs on the box: comp-host at /usr/local/bin, caddy (or traefik), and an ssh
-# key. It is deliberately plain scp+systemctl — for a handful of machines a
-# control plane costs more than it saves (docs/SELFHOST.md).
-selfhost-deploy app host router="caddy": build-selfhost
-    #!/usr/bin/env bash
-    set -euo pipefail
-    ART=$(python3 -c "import tomllib,sys;print(tomllib.load(open('apps/{{app}}.toml','rb'))['artifact'])")
-    if [ ! -f "$ART" ]; then
-      echo "missing $ART — run the app's compose recipe first (just compose-{{app}})" >&2
-      exit 1
-    fi
-    ./cli/target/release/holon node validate apps/*.toml
-    # Fail here, not with a unit that cannot start. The binary is the one thing the
-    # deploy does NOT ship — it is 38 MB and identical for every app on the box.
-    if ! ssh {{host}} "test -x /usr/local/bin/comp-host"; then
-      echo "{{host}} has no /usr/local/bin/comp-host — run: just selfhost-bootstrap {{host}}" >&2
-      exit 1
-    fi
-    ./cli/target/release/holon node render apps/{{app}}.toml --out target/selfhost --router {{router}}
-    D=target/selfhost/{{app}}
-    # 0644 on the artifact: the unit runs under DynamicUser, a transient uid that
-    # must still be able to read it. 0600 on the env file: it may hold secrets and
-    # systemd reads it as root before dropping privileges.
-    ssh {{host}} bash -s <<'REMOTE'
-    sudo mkdir -p /srv/comp/{{app}} /etc/comp
-    command -v caddy >/dev/null && sudo mkdir -p /etc/caddy/comp
-    exit 0
-    REMOTE
-    scp "$ART" {{host}}:/tmp/{{app}}.wasm
-    scp "$D/comp-{{app}}.service" {{host}}:/tmp/
-    scp "$D/{{app}}.env" {{host}}:/tmp/
-    # Rendered only when the spec declares [triggers].
-    if [ -f "$D/comp-{{app}}-relay.service" ]; then scp "$D/comp-{{app}}-relay.service" {{host}}:/tmp/; fi
-    # The SPA, if the spec names one. The renderer already points the unit at
-    # /srv/comp/<app>/static and nothing was ever putting anything there — the app
-    # served its API perfectly and answered 404 at `/`, which is the most confusing
-    # shape a deploy failure can take. Shipped as a tar so one scp carries a tree,
-    # and replaced wholesale so a file deleted from the SPA does not survive on the
-    # box forever.
-    STATIC=$(python3 -c "import tomllib;print(tomllib.load(open('apps/{{app}}.toml','rb')).get('static_dir',''))")
-    if [ -n "$STATIC" ]; then
-      [ -d "$STATIC" ] || { echo "spec names static_dir '$STATIC' which does not exist — run the app's build-*-ui recipe" >&2; exit 1; }
-      tar -czf "$D/{{app}}-static.tgz" -C "$STATIC" .
-      scp "$D/{{app}}-static.tgz" {{host}}:/tmp/
-    fi
-    # One of three, whichever the router rendered. `.serve.sh` was missing from this
-    # list while the install block below already knew how to place it — so
-    # `--router tailscale-serve` rendered fine and could never be deployed, failing
-    # on `stat local "…/events.yml"` after the wasm was already on the box.
-    for ext in caddy yml serve.sh; do
-      if [ -f "$D/{{app}}.$ext" ]; then scp "$D/{{app}}.$ext" {{host}}:/tmp/; fi
-    done
-    # On STDIN, not as an argument: `ssh host "…"` is parsed by the remote LOGIN
-    # shell, and a box whose login shell is fish rejects `if … then … fi` outright.
-    ssh {{host}} bash -s <<'REMOTE'
-    set -e
-    sudo install -m 0644 /tmp/{{app}}.wasm /srv/comp/{{app}}/app.wasm
-    if [ -f /tmp/{{app}}-static.tgz ]; then
-      sudo rm -rf /srv/comp/{{app}}/static
-      sudo mkdir -p /srv/comp/{{app}}/static
-      sudo tar -xzf /tmp/{{app}}-static.tgz -C /srv/comp/{{app}}/static
-      sudo chmod -R a+rX /srv/comp/{{app}}/static
-    fi
-    sudo install -m 0600 /tmp/{{app}}.env /etc/comp/{{app}}.env
-    sudo install -m 0644 /tmp/comp-{{app}}.service /etc/systemd/system/comp-{{app}}.service
-    if [ -f /tmp/comp-{{app}}-relay.service ]; then
-      sudo install -m 0644 /tmp/comp-{{app}}-relay.service /etc/systemd/system/comp-{{app}}-relay.service
-    fi
-    if [ -f /tmp/{{app}}.serve.sh ]; then
-      sudo install -m 0755 /tmp/{{app}}.serve.sh /srv/comp/{{app}}/serve.sh
-    elif [ -f /tmp/{{app}}.caddy ]; then
-      sudo install -m 0644 /tmp/{{app}}.caddy /etc/caddy/comp/{{app}}.caddy
-    elif [ -f /tmp/{{app}}.yml ]; then
-      sudo install -m 0644 /tmp/{{app}}.yml /etc/traefik/comp/{{app}}.yml
-    fi
-    sudo systemctl daemon-reload
-    sudo systemctl enable --now comp-{{app}}
-    sudo systemctl restart comp-{{app}}
-    if [ -f /etc/systemd/system/comp-{{app}}-relay.service ]; then
-      sudo systemctl enable --now comp-{{app}}-relay
-      sudo systemctl restart comp-{{app}}-relay
-    fi
-    if [ -f /srv/comp/{{app}}/serve.sh ]; then sudo /srv/comp/{{app}}/serve.sh; fi
-    rm -f /tmp/{{app}}.wasm /tmp/comp-{{app}}.service /tmp/comp-{{app}}-relay.service \
-          /tmp/{{app}}.env /tmp/{{app}}.caddy /tmp/{{app}}.yml /tmp/{{app}}.serve.sh \
-          /tmp/{{app}}-static.tgz
-    REMOTE
-    # Only a tailnet app needs TS_IP. Pinning it for a public app would report a
-    # missing tailscale on a box that has no reason to have one, which reads as a
-    # failed deploy when nothing is wrong.
-    ACCESS=$(python3 -c "import tomllib;print(tomllib.load(open('apps/{{app}}.toml','rb')).get('access','tailnet'))")
-    if [ "$ACCESS" = "tailnet" ]; then just selfhost-tsip {{host}}; fi
-    # Only if there is a Caddy to reload. A box routed by `tailscale serve` has none,
-    # and `systemctl reload caddy` on it prints a failure for something that is
-    # working — which reads as a broken deploy.
-    ssh {{host}} bash -s <<'REMOTE'
-    command -v caddy >/dev/null || exit 0
-    sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy 2>/dev/null || true
-    REMOTE
-    # Not `@echo`: this is a bash recipe, and just's `@` prefix is only meaningful
-    # on a line just itself runs.
-    echo "deployed {{app}} to {{host}} [$ACCESS]"
 
-# Pin Caddy's TS_IP to this box's Tailscale address, so that `bind {$TS_IP}` in a
-# tailnet route means what it says.
-#
-# This matters more than it looks: Caddy substitutes {$TS_IP} from its OWN
-# environment, so if nothing sets it the bind resolves to empty and Caddy listens on
-# EVERY interface — the exact opposite of private, silently. Idempotent; on a box with
-# no tailscale it reports that and changes nothing.
-selfhost-tsip host:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    IP=$(ssh {{host}} "tailscale ip -4 2>/dev/null | head -1" || true)
-    if [ -z "$IP" ]; then
-      echo "  {{host}}: no tailscale address — a tailnet route here would bind nothing." >&2
-      echo "  Install tailscale, or set access = \"public\" for apps on this box." >&2
-      exit 0
-    fi
-    # Only if Caddy is there. This pins TS_IP into Caddy's unit so a tailnet route
-    # binds the 100.x address and nothing else; a box routed by `tailscale serve`
-    # has no Caddy and needs none, and writing a drop-in for an absent unit would
-    # be a daemon-reload that means nothing.
-    { echo "TS_ADDR='$IP'"; cat; } <<'REMOTE' | ssh {{host}} bash -s
-    set -e
-    command -v caddy >/dev/null || exit 0
-    sudo mkdir -p /etc/systemd/system/caddy.service.d
-    printf '[Service]\nEnvironment=TS_IP=%s\n' "$TS_ADDR" \
-      | sudo tee /etc/systemd/system/caddy.service.d/ts-ip.conf >/dev/null
-    sudo systemctl daemon-reload
-    REMOTE
-    echo "  {{host}}: tailscale address $IP"
 
-# Is it up, and what is it doing?
-selfhost-status app host:
-    ssh {{host}} "systemctl status comp-{{app}} --no-pager -n 15 || true"
-
-# Remove an app from a box, including its state.
-selfhost-remove app host:
-    ssh {{host}} "set -e; \
-      sudo systemctl disable --now comp-{{app}}-relay || true; \
-      sudo systemctl disable --now comp-{{app}} || true; \
-      sudo rm -f /etc/systemd/system/comp-{{app}}-relay.service \
-                 /etc/systemd/system/comp-{{app}}.service /etc/comp/{{app}}.env \
-                 /etc/caddy/comp/{{app}}.caddy /etc/traefik/comp/{{app}}.yml; \
-      sudo rm -rf /srv/comp/{{app}} /var/lib/private/comp/{{app}} /var/lib/comp/{{app}}; \
-      sudo systemctl daemon-reload; sudo systemctl reload caddy 2>/dev/null || true"
-    @echo "removed {{app}} from {{host}} (including its state)"
-
-# Ship every app in apps/ to one box. The fleet-of-one-machine case.
-selfhost-deploy-all host router="caddy":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    for f in apps/*.toml; do
-      just selfhost-deploy "$(basename "$f" .toml)" {{host}} {{router}}
-    done
-
-# ---- the wasmCloud lanes: same app, someone else's runtime -------------------
-#
-# For a cluster somebody else already operates. ADR-0021 took Kubernetes off this
-# platform's runtime path deliberately and priced it, so this is interop, not a
-# recommendation — `docs/SELFHOST.md` still says start at tier 1.
-#
-# Two axes, four manifests, one app spec:
-#   --topology fused|linked    one wac-composed artifact, or components wired by links
-#   --api      v1|v2           core.oam.dev/v1beta1 (wadm 0.21), or wasmcloud.dev/v1alpha1
-#
-# No `wash`: wash 2.x removed `wash app put`, but the API underneath it is a set of
-# NATS subjects both versions still serve, and those are what these recipes use.
-
-wasmcloud_lattice := env_var_or_default("WASMCLOUD_LATTICE", "default")
-wasmcloud_registry := env_var_or_default("WASMCLOUD_REGISTRY", "registry.wasmcloud.svc.cluster.local:5000")
-# Where THIS machine reaches the registry to push. In-cluster the host pulls from
-# the name above; from a laptop that name does not resolve, so pushes go via the
-# NodePort. Two names for one registry, and conflating them is why a push succeeds
-# and a pull then fails.
-wasmcloud_push_registry := env_var_or_default("WASMCLOUD_PUSH_REGISTRY", "localhost:30500")
 
 # The capability graph, derived from the BUILT artifacts. A linked render needs it:
 # a wadm link carries the WIT namespace, package and interfaces that say which import
@@ -3099,184 +1673,74 @@ goal-run:
 
 graphviz_composed := "components/target/graphviz_domain.composed.wasm"
 
-compose-graphviz: build
-    @just _derive graph-viz-domain {{graphviz_composed}}
 
-host-graphviz: compose-graphviz
-    cd host && cargo run --release --bin comp-host -- \
-      --app graphviz --config-file ../examples/defaults.conf --config default-tenant=graphviz \
-      --component ../{{graphviz_composed}} --addr 0.0.0.0:3056
 
-compose-health-records: compose
-	@just _derive health-records-domain {{health_records_composed}}
 
-host-health-records: compose-health-records
-	cd host && cargo run --release --bin comp-host -- \
-	  --app health-records --config-file ../examples/defaults.conf --config default-tenant=health-records \
-	  --component ../{{health_records_composed}} --addr 0.0.0.0:3055
 
-e2e-health-records: compose-health-records
-	cd host && cargo build --release --bin comp-host
-	cd examples/health-records && cargo test --release
 
 screencast-health-records: compose-health-records
 	node tools/screencast/health-records.mjs
 	bash tools/screencast/to-gif.sh tools/screencast/videos/health-records/*.webm docs/media/health-records.gif 820 10
 
-compose-freight-tracker: compose
-	@just _derive freight-tracker-domain {{freight_tracker_composed}}
 
-host-freight-tracker: compose-freight-tracker
-	cd host && cargo run --release --bin comp-host -- \
-	  --app freight-tracker --config-file ../examples/defaults.conf --config default-tenant=freight-tracker \
-	  --component ../{{freight_tracker_composed}} --addr 0.0.0.0:3055
 
-e2e-freight-tracker: compose-freight-tracker
-	cd host && cargo build --release --bin comp-host
-	cd examples/freight-tracker && cargo test --release
 
 screencast-freight-tracker: compose-freight-tracker
 	node tools/screencast/freight-tracker.mjs
 	bash tools/screencast/to-gif.sh tools/screencast/videos/freight-tracker/*.webm docs/media/freight-tracker.gif 820 10
 
-compose-smart-home: compose
-	@just _derive smart-home-domain {{smart_home_composed}}
 
-host-smart-home: compose-smart-home
-	cd host && cargo run --release --bin comp-host -- \
-	  --app smart-home --config-file ../examples/defaults.conf --config default-tenant=smart-home \
-	  --component ../{{smart_home_composed}} --addr 0.0.0.0:3055
 
-e2e-smart-home: compose-smart-home
-	cd host && cargo build --release --bin comp-host
-	cd examples/smart-home && cargo test --release
 
 screencast-smart-home: compose-smart-home
 	node tools/screencast/smart-home.mjs
 	bash tools/screencast/to-gif.sh tools/screencast/videos/smart-home/*.webm docs/media/smart-home.gif 820 10
 
-compose-academic-review: compose
-	@just _derive academic-review-domain {{academic_review_composed}}
 
-host-academic-review: compose-academic-review
-	cd host && cargo run --release --bin comp-host -- \
-	  --app academic-review --config-file ../examples/defaults.conf --config default-tenant=academic-review \
-	  --component ../{{academic_review_composed}} --addr 0.0.0.0:3055
 
-e2e-academic-review: compose-academic-review
-	cd host && cargo build --release --bin comp-host
-	cd examples/academic-review && cargo test --release
 
 screencast-academic-review: compose-academic-review
 	node tools/screencast/academic-review.mjs
 	bash tools/screencast/to-gif.sh tools/screencast/videos/academic-review/*.webm docs/media/academic-review.gif 820 10
 
-compose-real-estate-escrow: compose
-	@just _derive real-estate-escrow-domain {{real_estate_escrow_composed}}
 
-host-real-estate-escrow: compose-real-estate-escrow
-	cd host && cargo run --release --bin comp-host -- \
-	  --app real-estate-escrow --config-file ../examples/defaults.conf --config default-tenant=real-estate-escrow \
-	  --component ../{{real_estate_escrow_composed}} --addr 0.0.0.0:3055
 
-e2e-real-estate-escrow: compose-real-estate-escrow
-	cd host && cargo build --release --bin comp-host
-	cd examples/real-estate-escrow && cargo test --release
 
 screencast-real-estate-escrow: compose-real-estate-escrow
 	node tools/screencast/real-estate-escrow.mjs
 	bash tools/screencast/to-gif.sh tools/screencast/videos/real-estate-escrow/*.webm docs/media/real-estate-escrow.gif 820 10
 
-compose-iot-scanner: compose
-	@just _derive iot-scanner {{iot_scanner_composed}}
 
-compose-device-radar: compose-iot-scanner
-	@just _derive device-radar-domain {{device_radar_composed}}
 
-host-device-radar: compose-device-radar
-	cd host && cargo run --release --bin comp-host -- \
-	  --app device-radar --config-file ../examples/defaults.conf --config default-tenant=device-radar \
-	  --component ../{{device_radar_composed}} --addr 0.0.0.0:3055
 
-e2e-device-radar: compose-device-radar
-	cd host && cargo build --release --bin comp-host
-	cd examples/device-radar && cargo test --release
 
 screencast-device-radar: compose-device-radar
 	node tools/screencast/device-radar.mjs
 	bash tools/screencast/to-gif.sh tools/screencast/videos/device-radar/*.webm docs/media/device-radar.gif 820 10
 
-compose-desktop-notifier: build
-    @just _derive desktop-notifier-domain components/target/desktop-notifier.composed.wasm
 
-host-desktop-notifier:
-    cd host && cargo run --release --bin comp-host -- --app desktop-notifier --config-file ../examples/defaults.conf --config default-tenant=desktop-notifier --component ../components/target/desktop-notifier.composed.wasm --addr 0.0.0.0:3056
 
-compose-clipboard-sync: build
-    @just _derive clipboard-sync-domain components/target/clipboard-sync.composed.wasm
 
-host-clipboard-sync:
-    cd host && cargo run --release --bin comp-host -- --app clipboard-sync --config-file ../examples/defaults.conf --config default-tenant=clipboard-sync --component ../components/target/clipboard-sync.composed.wasm --addr 0.0.0.0:3056
 
-compose-pdf-generator: build
-    @just _derive pdf-generator-domain components/target/pdf-generator.composed.wasm
 
-host-pdf-generator:
-    cd host && cargo run --release --bin comp-host -- --app pdf-generator --config-file ../examples/defaults.conf --config default-tenant=pdf-generator --component ../components/target/pdf-generator.composed.wasm --addr 0.0.0.0:3056
 
-compose-local-ai: build
-    @just _derive local-ai-domain components/target/local-ai.composed.wasm
 
-host-local-ai:
-    cd host && cargo run --release --bin comp-host -- --app local-ai --config-file ../examples/defaults.conf --config default-tenant=local-ai --component ../components/target/local-ai.composed.wasm --addr 0.0.0.0:3056
 
-compose-docker-manager: build
-    @just _derive docker-manager-domain components/target/docker-manager.composed.wasm
 
-host-docker-manager:
-    cd host && cargo run --release --bin comp-host -- --app docker-manager --config-file ../examples/defaults.conf --config default-tenant=docker-manager --component ../components/target/docker-manager.composed.wasm --addr 0.0.0.0:3056
 
-compose-video-transcoder: build
-    @just _derive video-transcoder-domain components/target/video-transcoder.composed.wasm
 
-host-video-transcoder:
-    cd host && cargo run --release --bin comp-host -- --app video-transcoder --config-file ../examples/defaults.conf --config default-tenant=video-transcoder --component ../components/target/video-transcoder.composed.wasm --addr 0.0.0.0:3056
 
-compose-lan-scanner: build
-    @just _derive lan-scanner-domain components/target/lan-scanner.composed.wasm
 
-host-lan-scanner:
-    cd host && cargo run --release --bin comp-host -- --app lan-scanner --config-file ../examples/defaults.conf --config default-tenant=lan-scanner --component ../components/target/lan-scanner.composed.wasm --addr 0.0.0.0:3056
 
-compose-mdns-discoverer: build
-    @just _derive mdns-discoverer-domain components/target/mdns-discoverer.composed.wasm
 
-host-mdns-discoverer:
-    cd host && cargo run --release --bin comp-host -- --app mdns-discoverer --config-file ../examples/defaults.conf --config default-tenant=mdns-discoverer --component ../components/target/mdns-discoverer.composed.wasm --addr 0.0.0.0:3056
 
-compose-fs-watcher: build
-    @just _derive fs-watcher-domain components/target/fs-watcher.composed.wasm
 
-host-fs-watcher:
-    cd host && cargo run --release --bin comp-host -- --app fs-watcher --config-file ../examples/defaults.conf --config default-tenant=fs-watcher --component ../components/target/fs-watcher.composed.wasm --addr 0.0.0.0:3056
 
-compose-vpn-manager: build
-    @just _derive vpn-manager-domain components/target/vpn-manager.composed.wasm
 
-host-vpn-manager:
-    cd host && cargo run --release --bin comp-host -- --app vpn-manager --config-file ../examples/defaults.conf --config default-tenant=vpn-manager --component ../components/target/vpn-manager.composed.wasm --addr 0.0.0.0:3056
 
-compose-image-optimizer: build
-    @just _derive image-optimizer-domain components/target/image-optimizer.composed.wasm
 
-host-image-optimizer:
-    cd host && cargo run --release --bin comp-host -- --app image-optimizer --config-file ../examples/defaults.conf --config default-tenant=image-optimizer --component ../components/target/image-optimizer.composed.wasm --addr 0.0.0.0:3056
 
-compose-cron-scheduler: build
-    @just _derive cron-scheduler-domain components/target/cron-scheduler.composed.wasm
 
-host-cron-scheduler:
-    cd host && cargo run --release --bin comp-host -- --app cron-scheduler --config-file ../examples/defaults.conf --config default-tenant=cron-scheduler --component ../components/target/cron-scheduler.composed.wasm --addr 0.0.0.0:3056
 
 # Everything CI runs, in the same order, with the same commands.
 #
@@ -3342,49 +1806,7 @@ ci-local:
     if [ "$fail" -eq 0 ]; then echo "ci-local: everything CI runs is green here"; else echo "ci-local: FAILED"; fi
     exit "$fail"
 
-# The binder's own e2e, run against a composition built in another LANGUAGE.
-#
-#     just e2e-binder-poly go portfolio-value
-#     just e2e-binder-poly c  portfolio-value
-#     just e2e-binder-poly js price-history
-#     just e2e-binder-poly py price-history
-#     just e2e-binder-poly go price-history
-#
-# `portfolio:value` (FIFO cost basis, realised and unrealised gain, the chart
-# series) and `price:history` (carry-forward, staleness, absent-before-first-quote)
-# are re-derived under `components/<capability>-<lang>`, built through
-# `tools/build-polyglot.sh`, and swapped in for the Rust builds by filename.
-# Nothing in `examples/binder/tests/binder.rs` is edited: the same 122 assertions
-# judge whichever artifact satisfies the contract, which is the claim.
-#
-# The Rust build is put back afterwards even when the test fails — it is what
-# `just build` produces and what everything else composes against.
-e2e-binder-poly lang cap: build
-    #!/usr/bin/env bash
-    set -uo pipefail
-    cd "{{justfile_directory()}}"
-    ./tools/build-polyglot.sh {{lang}} {{cap}} || exit 1
-    snake=$(echo {{cap}} | tr - _)
-    cp "{{rel}}/$snake.wasm" "/tmp/$snake.rust.wasm"
-    restore() {
-      cp "/tmp/$snake.rust.wasm" "{{rel}}/$snake.wasm"
-      just _derive binder-domain {{binder_composed}} >/dev/null
-      echo "restored the Rust build of {{cap}}"
-    }
-    trap restore EXIT
-    cp "components/target/${snake}_{{lang}}.wasm" "{{rel}}/$snake.wasm"
-    just _derive binder-domain {{binder_composed}}
-    (cd host && cargo build --release --quiet --bin comp-host)
-    (cd examples/binder && cargo test --release)
 
-# Every language, one after another. The table in
-# components/portfolio-value-go/README.md is generated from exactly these runs.
-e2e-binder-poly-all:
-    just e2e-binder-poly c  portfolio-value
-    just e2e-binder-poly go portfolio-value
-    just e2e-binder-poly go price-history
-    just e2e-binder-poly js price-history
-    just e2e-binder-poly py price-history
 
 # Fetch ONE component from a registry, by name or by digest.
 #
