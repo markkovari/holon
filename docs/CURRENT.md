@@ -407,7 +407,15 @@ the fiction.
   fault: the gate handed the repair `tail -25` of a build log with the error
   scrolled off the top, and the actual bug (serde built without `std`, so
   `HashMap` has no `Serialize` impl) is unguessable from outside this repo. Both
-  are fixed and unspent — the next run is the test of it.
+  are fixed and unspent. The TARGET was not: every decomposed goal in this
+  repository has its parts implemented — `triage`, `triage-assist`,
+  `moderation-queue`, `support-desk`, `treasury-ledger`, `invoice-copilot`,
+  `doc-search-agent` and the archived clinic — so each is now *refused* by goal 07's
+  base pre-check rather than run, every gate passing against the untouched tree.
+  There was nothing left to spend a run on, which is why the next run had not
+  happened. `.comp/goals/dispatch.toml` is a target: three parts, four gates that
+  fail against the base, and `geo:resolve` imported by two of the parts so the
+  composition can catch a disagreement neither part's own gate can see. → goal 10
 - ~~**Half a branch's budget can vanish into a message that names nothing.**~~ →
   **built**: seven branches across those two runs died as `error sending request
   for url .../run`, which reads as a fleet fault and is not one — the gate costs

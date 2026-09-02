@@ -1,0 +1,53 @@
+// dispatch:domain — a field-service dispatch API, as one component.
+//
+// Written to be a GOAL, not a reference: nothing here is implemented, and the
+// three parts are meant to be written at the same time by three agents against
+// `CONTRACT.md`.
+//
+// Why this one, when the repository already has `triage:domain` in the same
+// shape. Triage's three parts each import a capability nothing else was going to
+// call, so a part that reimplemented one failed alone, in its own gate. Here the
+// SAME capability is imported by two parts — `schedule` picks the nearest engineer
+// by `geo:resolve`'s distance, and `manifest` filters by radius with the same
+// component's bounding box — so a part that hand-rolls haversine can pass its own
+// gate with numbers that are internally consistent and disagree with its sibling's.
+// That failure needs two parts to produce and one composition gate to see, which is
+// the thing three independent halves are for.
+//
+// `geo:resolve/coords` is also, at the time of writing, exported by `geo` and
+// imported by NOTHING in this tree — one of the sixteen the contracts test reports
+// as unconsumed. So this goal is additionally the first real consumer of a
+// capability that has only ever been checked against itself.
+package dispatch:domain@0.1.0;
+
+world dispatch-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Service requests and what has happened to them.
+    import records:store/store@0.1.0;
+    /// Their ids.
+    import id:generate/generator@0.1.0;
+
+    /// Masking the caller's details out of the notes a dispatcher types —
+    /// `pii-redact` satisfies it. A hand-written `@`-finder is how `requests`
+    /// fails: it answers 201 on a well-behaved body and the gate reads the
+    /// compiled component's imports.
+    import pii:redact/redactor@0.1.0;
+
+    /// The request lifecycle as a DEFINITION rather than a ladder of string
+    /// comparisons — `fsm-workflow` satisfies it, and its `IllegalTransition`
+    /// already carries the current state the contract's 409 has to report.
+    import fsm:workflow/engine@0.1.0;
+
+    /// Great-circle distance and bounding boxes — `geo` satisfies it. Imported by
+    /// TWO parts on purpose (see the note above): `schedule` needs
+    /// `distance-meters` to pick an engineer, `manifest` needs `bounding-box` and
+    /// `contains` to answer `within_m`. Two hand-rolled haversines agree with
+    /// nothing, including each other.
+    import geo:resolve/coords@0.1.0;
+
+    /// CSV with the quoting rules already right. One seeded request is titled
+    /// `Boiler leaking, badly` and a field with a comma in it has to come back
+    /// quoted or the row stops having five columns.
+    import csv:codec/codec@0.1.0;
+}

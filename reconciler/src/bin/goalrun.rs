@@ -2257,8 +2257,7 @@ fn decomposed(
 mod tests {
     use super::{
         branch_context, component_scope, gates_missing_from_the_tree, join_failure_owners,
-        part_context,
-        new_capabilities, trim_members, CheckSpec, GoalSpec, PartSpec,
+        new_capabilities, part_context, trim_members, CheckSpec, GoalSpec, PartSpec,
     };
     use comp_reconciler::gate::egress_authority;
     use serde_json::json;
