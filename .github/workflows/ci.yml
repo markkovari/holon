@@ -207,10 +207,18 @@ jobs:
       # nats-server and surreal off PATH, and all 31 `e2e-*` gates run. 26 passed in
       # 72 seconds.
       #
-      # Six are skipped, and each names its own reason by calling a helper that needs
-      # a service: `gate_shim_config` wants a model on :8787, `events_start_mail`
-      # wants a real SMTP server. That is read off the script rather than kept as a
-      # list, so a gate that starts or stops needing one classifies itself.
+      # Some are skipped, and each names its own reason by calling a helper that needs
+      # a service: `gate_shim_config` wants a model on :8787, and anything matching
+      # `_start_mail` wants a real SMTP server. That is read off the script rather than
+      # kept as a list, so a gate that starts or stops needing one classifies itself.
+      #
+      # The mail pattern is a SHAPE and not a name, and it used to be the literal
+      # `events_start_mail`. That covered every gate the old `e2e-*.sh` glob matched
+      # and missed `notify-probe/e2e.sh`, which the widened glob below now includes and
+      # which calls `notify_start_mail` — the same dependency under a per-app name. It
+      # failed this job once with `no MailHog at /home/runner/go/bin/MailHog`. Matching
+      # the suffix means the next app that grows a mailbox helper classifies itself,
+      # which is what the paragraph above claims and what a literal list cannot do.
       #
       # THE GLOB IS `e2e*.sh` AND USED TO BE `e2e-*.sh`, AND THE HYPHEN WAS A BUG.
       #
@@ -272,7 +280,7 @@ jobs:
           failed=0
           ran=0
           for gate in components/*/e2e*.sh; do
-            if grep -qE 'gate_shim_config|events_start_mail' "$gate"; then
+            if grep -qE 'gate_shim_config|_start_mail' "$gate"; then
               echo "skip  $gate (wants a service this runner has not got)"
               continue
             fi
