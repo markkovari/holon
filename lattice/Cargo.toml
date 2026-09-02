@@ -22,3 +22,7 @@ zstd = "0.13"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+# `tests/inventory_ttl.rs` spawns a real `nats-server` and needs a store directory
+# per test that is gone afterwards — two servers sharing one would share a bucket,
+# which is the exact thing the test is about.
+tempfile = "3"

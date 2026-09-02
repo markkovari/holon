@@ -40,7 +40,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 # TLS (rustls + webpki roots) so `--kv redis` can dial managed `rediss://`
 # endpoints (DO Managed Valkey, Upstash, …) from a minimal container.
-redis = { version = "0.27", features = ["tls-rustls", "tls-rustls-webpki-roots"] }
+redis = { version = "1.5", features = ["tls-rustls", "tls-rustls-webpki-roots"] }
 # The fabric between a node and the reconciler, as three traits (inventory,
 # commands, artifacts) with one implementation over NATS. The host holds
 # `Arc<dyn ...>` and never names a broker.

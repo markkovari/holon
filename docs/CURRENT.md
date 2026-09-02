@@ -362,6 +362,18 @@ rediscover.
 - **`cargo component check` and `cargo component build` are not gates.** Both
   succeed on a crate that implements none of its world — measured twice, while
   running a real goal. Any goal whose checks are those commands is gated on nothing.
+- **The Rust toolchain is pinned, and the pin is load-bearing.** rustc decides which
+  `wasi:cli` a `wasm32-wasip2` component IMPORTS; wasmtime decides which one
+  `comp-host` can PROVIDE, and wasmtime is pinned to 45 by `wrpc-runtime-wasmtime`
+  — "not by choice", as `host/Cargo.toml` puts it. Two pins facing each other, and
+  until now only one was written down. Measured on one crate, same target, same
+  source: **1.98.0 emits `wasi:cli/exit@0.2.9` and links; 1.100.0-nightly emits
+  `@0.2.12` and does not.** What the mismatch looks like names nothing useful —
+  `instance export 'exit-with-code' has the wrong type`, which every gate reports as
+  `the component never served /health`, because from a gate's side the app just did
+  not come up. It cost a session here: four composition gates read as broken and
+  were fine, on a machine whose default toolchain is nightly. `rust-toolchain.toml`
+  now pins it, with the re-measure command in its own comment.
 
 ## Honestly missing
 
@@ -407,14 +419,25 @@ the fiction.
   fault: the gate handed the repair `tail -25` of a build log with the error
   scrolled off the top, and the actual bug (serde built without `std`, so
   `HashMap` has no `Serialize` impl) is unguessable from outside this repo. Both
-  are fixed and unspent — the next run is the test of it.
-- **Half a branch's budget can vanish into a message that names nothing.** Seven
-  branches across those two runs died as `error sending request for url .../run`,
-  which reads as a fleet fault and is not one: `--timeout` defaults to 300s, the
-  gate costs 2.3s of it, and the model calls have a median of 64s with a tail of
-  174s. Two from that tail is the whole budget. The default is unchanged, because
-  changing it silently is worse than documenting it; `--timeout 900` is the fix
-  and nothing sets it automatically. → ADR-0088
+  are fixed and unspent. The TARGET was not: every decomposed goal in this
+  repository has its parts implemented — `triage`, `triage-assist`,
+  `moderation-queue`, `support-desk`, `treasury-ledger`, `invoice-copilot`,
+  `doc-search-agent` and the archived clinic — so each is now *refused* by goal 07's
+  base pre-check rather than run, every gate passing against the untouched tree.
+  There was nothing left to spend a run on, which is why the next run had not
+  happened. `.comp/goals/dispatch.toml` is a target: three parts, four gates that
+  fail against the base, and `geo:resolve` imported by two of the parts so the
+  composition can catch a disagreement neither part's own gate can see. → goal 10
+- ~~**Half a branch's budget can vanish into a message that names nothing.**~~ →
+  **built**: seven branches across those two runs died as `error sending request
+  for url .../run`, which reads as a fleet fault and is not one — the gate costs
+  2.3s and the model calls have a median of 64s with a tail of 174s, so two from
+  that tail spent a 300s budget. `--timeout` now defaults to 900. A LOCAL model
+  moves the arithmetic by an order of magnitude (417s for one branch-shaped call
+  on `csatapaci`), which is why `.comp/csatapaci.env` says `GOAL_TIMEOUT=1800` —
+  and `just goal-run` read `TIMEOUT` while only `just goald` read `GOAL_TIMEOUT`,
+  so sourcing that env file and running a single goal silently ran at 900 anyway.
+  Both names now reach the same flag. → ADR-0088
 - ~~**Nothing criticises a gate.**~~ → **built**: every check, the goal's and each
   part's, is run against the untouched base before anything is spent, and a run is
   refused when one of them passes. What it does NOT check is whether a gate
@@ -430,15 +453,32 @@ the fiction.
   interface an agent cannot reach. Every run sweeps the pool on
   its way out, so it stays bounded without a daemon, and a decomposed run's PARTS
   do all of it too — each on its own goal. → goal 08, ADR-0084
-- **`redis 0.27` will stop compiling.** cargo reports it as containing code a
-  future Rust will reject, and it is the only such dependency in the tree. The fix
-  is a jump to 1.x, which is a major-version API migration of a KV BACKEND against
-  which nothing here runs an integration test — so it is named rather than
-  attempted. `--kv sqlite` and `--kv nats` are the tested paths.
-- **Decomposed runs leave no trace at all.** `decomposed()` never constructs a
-  `Trace`, so a multi-part run (ADR-0086) records no `run-started`, no attempts, no
-  verdicts and no capability search — the console cannot show one, and ADR-0092's
-  vocabulary covers a class of run that does not use it. → ADR-0094
+- ~~**`redis 0.27` will stop compiling.**~~ → **done**: it was the only dependency
+  cargo reported as containing code a future Rust will reject, and the stated blocker
+  was the right one — a major-version migration of a backend nothing exercised is a
+  change nobody can review. So the integration test came first and was made to pass
+  against **0.27**, because a test authored against the new API only proves the new
+  API compiles: five tests against a real redis in docker covering every `KvBackend`
+  method, bucket isolation, `INCRBY` under eight threads, and the compare-and-set
+  through `redis::Script` — the narrowest surface used and the one ADR-0065 exists
+  for. Then **0.27 → 1.5**, which broke exactly one line: `scan_match` now yields
+  `Result` per item, because SCAN is paginated and a page after the first can fail
+  alone. Collected into `Result<Vec<_>, _>` so a mid-scan failure is an error rather
+  than a SHORT key list, which for `list_keys` would read as "this bucket has fewer
+  keys than it does". Same five tests green on 1.5, and the future-incompatibility
+  report is empty. They SKIP when nothing answers, so a machine without redis is
+  unaffected; CI does not run them yet, which wants a service container and is a
+  separate change from proving the backend works. `--kv sqlite` and `--kv nats` are the tested paths.
+- ~~**Decomposed runs leave no trace at all.**~~ → **built**: the `Trace` is
+  constructed above the decomposed dispatch and a multi-part run now records
+  `run-started`, every part's branches (the part name is in the attempt id, or two
+  parts' `branch-0` would collide), every verdict, the capabilities the merged tree
+  added, and one resolution — `composition` as the winner, because no single branch
+  passed the join. The capability search was the last piece and was worse than a
+  missing row: it also ran below the dispatch, so a decomposed run never ASKED the
+  catalogue, and every part wrote without being told what 150 components contain.
+  It is now searched once per run, above the dispatch, and put into every part's
+  context. → ADR-0092, ADR-0094
 - **Nothing measures herding or churn.** The diversity knobs exist (a lens per
   branch, one branch that reads nothing); no run reports that its generation
   converged. A negotiation was observed climbing v3 → v7 while no score moved, and
@@ -451,10 +491,23 @@ the fiction.
 
 **The platform**
 
-- **Nothing notices an inventory TTL mismatch.** Three processes declare a TTL on
-  one shared bucket and whoever creates it first wins, silently; they agree today
-  only because three defaults coincide at 15 s. The bucket's real `max_age` is never
-  compared with the one asked for.
+- ~~**Nothing notices an inventory TTL mismatch.**~~ → **built, and the gap was
+  described wrong.** Three processes do declare a TTL on one shared bucket and they
+  do agree only because three defaults coincide at 15 s. What was recorded here is
+  that whoever creates it first wins and the others "silently get a TTL they did not
+  ask for" — that is not what nats-server 2.14.6 does, and a test against a real one
+  is how we know. `create_key_value` **refuses**: `stream name already in use with a
+  different configuration` (10058). So the second process did not degrade quietly, it
+  **failed to start**, with a message naming a stream and a configuration and neither
+  the TTL nor which process wanted what. Change `--heartbeat-secs` on one host and
+  that host simply never joined. Refusing is the worse of the two behaviours, because
+  the three TTLs are legitimately different and a fleet has to interoperate across
+  them: `connect` now falls back to the bucket that exists, reports the difference
+  naming both numbers and how to change it, and carries the real value on
+  `effective_ttl()` — which the ingress sizes its refresh from, including in the
+  refresh thread that opens its own connection. `lattice/tests/inventory_ttl.rs`
+  spawns a real `nats-server` and pins it, because a single process cannot observe
+  this at all.
 - **Convergence under load is unmeasured.** Placement can lag past ten seconds and
   nobody has measured it as a function of load; the reconcile interval is the
   obvious suspect.
