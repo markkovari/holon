@@ -491,10 +491,23 @@ the fiction.
 
 **The platform**
 
-- **Nothing notices an inventory TTL mismatch.** Three processes declare a TTL on
-  one shared bucket and whoever creates it first wins, silently; they agree today
-  only because three defaults coincide at 15 s. The bucket's real `max_age` is never
-  compared with the one asked for.
+- ~~**Nothing notices an inventory TTL mismatch.**~~ → **built, and the gap was
+  described wrong.** Three processes do declare a TTL on one shared bucket and they
+  do agree only because three defaults coincide at 15 s. What was recorded here is
+  that whoever creates it first wins and the others "silently get a TTL they did not
+  ask for" — that is not what nats-server 2.14.6 does, and a test against a real one
+  is how we know. `create_key_value` **refuses**: `stream name already in use with a
+  different configuration` (10058). So the second process did not degrade quietly, it
+  **failed to start**, with a message naming a stream and a configuration and neither
+  the TTL nor which process wanted what. Change `--heartbeat-secs` on one host and
+  that host simply never joined. Refusing is the worse of the two behaviours, because
+  the three TTLs are legitimately different and a fleet has to interoperate across
+  them: `connect` now falls back to the bucket that exists, reports the difference
+  naming both numbers and how to change it, and carries the real value on
+  `effective_ttl()` — which the ingress sizes its refresh from, including in the
+  refresh thread that opens its own connection. `lattice/tests/inventory_ttl.rs`
+  spawns a real `nats-server` and pins it, because a single process cannot observe
+  this at all.
 - **Convergence under load is unmeasured.** Placement can lag past ten seconds and
   nobody has measured it as a function of load; the reconcile interval is the
   obvious suspect.
