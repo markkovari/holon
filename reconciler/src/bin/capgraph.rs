@@ -737,6 +737,25 @@ fn markdown(
         orphans.len(),
         apps.len()
     ));
+    // Why this total is not `CATALOG.md`'s, said HERE rather than left for a reader to
+    // reconcile two derived files by hand.
+    //
+    // They count different things and both are right. `comp-catalog` counts source
+    // crates; this counts what got BUILT, because it reads a component's real imports
+    // out of its binary. The gap is the crates that declare their own `[workspace]`
+    // and are therefore never built by `just build` — `components/Cargo.toml` names
+    // them and says why they stay out.
+    //
+    // Two files with two totals and nothing explaining the difference is the same
+    // liability ADR-0097 retired `catalog.json` for, one level up: a number a reader
+    // has to trust without being able to check it.
+    s.push_str(
+        "That total counts what was BUILT. `components/CATALOG.md` counts source \
+         crates and is larger by however many declare their own `[workspace]` and so \
+         are never built — `components/Cargo.toml` names them. Both numbers are \
+         right; they answer different questions, and this one is the one you can \
+         compose against.\n\n",
+    );
     s.push_str(
         "## Can I change this interface?\n\n\
          The number in the first column is the answer. One consumer means an edit; \

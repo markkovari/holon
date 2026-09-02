@@ -11,6 +11,8 @@ Three layers: an INTERFACE is provided by one component and imported by several;
 
 **213 components, 103 interfaces with a provider and at least one consumer, 455 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
 
+That total counts what was BUILT. `components/CATALOG.md` counts source crates and is larger by however many declare their own `[workspace]` and so are never built — `components/Cargo.toml` names them. Both numbers are right; they answer different questions, and this one is the one you can compose against.
+
 ## Can I change this interface?
 
 The number in the first column is the answer. One consumer means an edit; thirty-seven means a migration, and no gate in this repository runs those thirty-seven apps. An interface with many consumers is frozen in practice whatever its version number says, and extending it means a NEW interface or a new version with both live — see [ADR-0089](adr/0089-capability-accumulation.md).

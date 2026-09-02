@@ -431,6 +431,23 @@ capgraph format="md":
         ./reconciler/target/release/comp-capgraph --format {{format}}; \
      fi
 
+# BOTH committed derived files, in one command.
+#
+#   just derived
+#
+# There are two, not one, and that is worth a recipe because the count is the thing
+# people get wrong. ADR-0097 and `reconciler/tests/derived.rs` both say
+# `components/CATALOG.md` is "the one derived file still committed"; `just capgraph`
+# writes a second one, `docs/CAPABILITY-GRAPH.md`, and it has its own staleness guard.
+#
+# Adding one component makes both stale. Two files, two commands, two tests, and the
+# failure arrives one test at a time — regenerate the one the first failure names, push,
+# and the other one fails next. That happened on the way to #201: `capgraph` was rerun,
+# `catalog` was not, and CI caught it a commit later.
+#
+# Run this instead of either, after adding, renaming or re-describing a component.
+derived: capgraph catalog
+
 # "Do we already have something for this?" — the question ADR-0089 says a goal
 # should ask before generating an implementation.
 #

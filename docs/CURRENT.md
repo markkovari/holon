@@ -476,7 +476,7 @@ the fiction.
   added, and one resolution — `composition` as the winner, because no single branch
   passed the join. The capability search was the last piece and was worse than a
   missing row: it also ran below the dispatch, so a decomposed run never ASKED the
-  catalogue, and every part wrote without being told what 150 components contain.
+  catalogue, and every part wrote without being told what the catalogue contains.
   It is now searched once per run, above the dispatch, and put into every part's
   context. → ADR-0092, ADR-0094
 - **Nothing measures herding or churn.** The diversity knobs exist (a lens per
