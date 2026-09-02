@@ -212,6 +212,30 @@ jobs:
       # wants a real SMTP server. That is read off the script rather than kept as a
       # list, so a gate that starts or stops needing one classifies itself.
       #
+      # THE GLOB IS `e2e*.sh` AND USED TO BE `e2e-*.sh`, AND THE HYPHEN WAS A BUG.
+      #
+      # `e2e-*.sh` matches the 31 PART gates and none of the ten `e2e.sh` COMPOSITION
+      # gates — the ones that drive a request through every part at once and are the
+      # only gates that can catch two parts disagreeing. Those are precisely what a
+      # decomposed goal is judged by, and nothing had run them since they were
+      # written.
+      #
+      # One had been broken since the day after it was written. `triage-domain/e2e.sh`
+      # hardcoded `DAY=2026-08-17` — the date it was authored — and then asked the
+      # digest about a report it had just filed through `intake`, which stamps
+      # `reported_at` from the store's real clock. It agreed with the app for one day
+      # and failed every day after with a digest of `{'total': 0}`. Its own part gate
+      # never caught it, because the part gate reads the FIXTURE, whose `reported_at`
+      # is a literal `2026-08-17` and therefore never moves.
+      #
+      # The expensive half is not the broken assertion, it is what it does to a run: a
+      # goal whose composition gate cannot pass can never land. Goal 07's pre-check
+      # refuses a run when a gate PASSES against the base; this one failed against the
+      # base for a reason no candidate could fix, so nothing refused it and a run would
+      # have spent its whole budget to be told the join failed.
+      #
+      # All ten pass as of this commit. Measured, not assumed.
+      #
       # `e2e-reminders` proves a reminder EMAIL ARRIVES, which is worth real coverage,
       # and the first attempt installed MailHog with `go install` to keep it. That
       # fails on this runner — MailHog is archived and predates modules — so the gate
@@ -247,7 +271,7 @@ jobs:
         run: |
           failed=0
           ran=0
-          for gate in components/*/e2e-*.sh; do
+          for gate in components/*/e2e*.sh; do
             if grep -qE 'gate_shim_config|events_start_mail' "$gate"; then
               echo "skip  $gate (wants a service this runner has not got)"
               continue

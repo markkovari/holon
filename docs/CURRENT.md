@@ -362,6 +362,18 @@ rediscover.
 - **`cargo component check` and `cargo component build` are not gates.** Both
   succeed on a crate that implements none of its world — measured twice, while
   running a real goal. Any goal whose checks are those commands is gated on nothing.
+- **The Rust toolchain is pinned, and the pin is load-bearing.** rustc decides which
+  `wasi:cli` a `wasm32-wasip2` component IMPORTS; wasmtime decides which one
+  `comp-host` can PROVIDE, and wasmtime is pinned to 45 by `wrpc-runtime-wasmtime`
+  — "not by choice", as `host/Cargo.toml` puts it. Two pins facing each other, and
+  until now only one was written down. Measured on one crate, same target, same
+  source: **1.98.0 emits `wasi:cli/exit@0.2.9` and links; 1.100.0-nightly emits
+  `@0.2.12` and does not.** What the mismatch looks like names nothing useful —
+  `instance export 'exit-with-code' has the wrong type`, which every gate reports as
+  `the component never served /health`, because from a gate's side the app just did
+  not come up. It cost a session here: four composition gates read as broken and
+  were fine, on a machine whose default toolchain is nightly. `rust-toolchain.toml`
+  now pins it, with the re-measure command in its own comment.
 
 ## Honestly missing
 

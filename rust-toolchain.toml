@@ -1,0 +1,56 @@
+# The toolchain this repository builds with, pinned — and the pin is load-bearing.
+#
+# WHY, MEASURED RATHER THAN ASSUMED
+#
+# `just build` compiles every component for `wasm32-wasip2`, and rustc decides which
+# version of `wasi:cli` those components IMPORT. `comp-host` decides which version it
+# can PROVIDE, and that is wasmtime's, which is pinned to 45 by `wrpc-runtime-wasmtime`
+# — see `host/Cargo.toml`, which says "PINNED TO 45 BY wrpc-runtime-wasmtime, not by
+# choice". Two pins facing each other, and only one of them was written down.
+#
+# When rustc's is newer than wasmtime's, nothing runs. Measured on one crate, three
+# toolchains, same target, same source:
+#
+#   rustc 1.98.0  (stable)               wasi:cli/exit@0.2.9    links, gates pass
+#   rustc 1.100.0-nightly (2026-09-01)   wasi:cli/exit@0.2.12   does not link
+#
+# What that failure looks like is the reason this file exists rather than a note in a
+# README. It is not "your toolchain is too new". It is:
+#
+#   Error: component imports instance `wasi:cli/exit@0.2.12`, but a matching
+#          implementation was not found in the linker
+#     Caused by:
+#         0: instance export `exit-with-code` has the wrong type
+#         1: function implementation is missing
+#
+# — which every gate then reports as `the component never served /health`, because
+# from a gate's point of view the app simply did not come up. Nothing in that chain
+# names a toolchain, a target or a version, and a developer whose default is nightly
+# gets it on a clean checkout after a successful build. It cost a session here: four
+# composition gates read as broken, and they were fine.
+#
+# WHY AN EXACT VERSION AND NOT `stable`
+#
+# `stable` drifts, and the ceiling it has to stay under does not move with it: the day
+# stable's `wasm32-wasip2` emits a `wasi:cli` past wasmtime 45, `channel = "stable"`
+# reintroduces exactly this failure on a morning nobody touched the code. An exact
+# version fails loudly at `rustup` instead, which is a better place to find out.
+#
+# WHEN TO RAISE IT
+#
+# When `wrpc-runtime-wasmtime` takes a wasmtime newer than 45, raise both together and
+# re-measure with the command that produced the table above:
+#
+#   cd components && cargo build --release --target wasm32-wasip2 -p record-store
+#   wasm-tools component wit target/wasm32-wasip2/release/record_store.wasm \
+#     | grep -o 'wasi:cli/exit@[0-9.]*'
+#
+# Raising this alone is safe only while that number stays inside what the host
+# provides, and `reconciler/tests/gate_*.rs` is the check: they compose real
+# components and boot a real host, so a mismatch fails them all at once.
+[toolchain]
+channel = "1.98.0"
+# Installed automatically on a fresh checkout, so `just build` does not fail on a
+# missing target and send someone looking for the wrong problem.
+targets = ["wasm32-wasip2"]
+components = ["rustfmt", "clippy"]
