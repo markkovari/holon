@@ -203,7 +203,7 @@ These export `wasi:http/incoming-handler` and nothing else, so there is no contr
 | **vet-domain** | `vet:domain@0.1.0` | ai:inference/inference, auth:identity/accounts, auth:identity/authorizer, auth:identity/rbac, auth:identity/session, auth:identity/types, blob:store/blobstore, cache:store/cache, csv:codec/codec, event:bus/bus, fsm:workflow/engine, i18n:catalog/catalog, lock:mutex/mutex, md:render/renderer, money:amount/arithmetic, otp:totp/authenticator, paginate:cursor/cursors, pii:redact/redactor, records:store/store, sched:timer/timer, search:index/index, secrets:vault/vault, ui:assets/files, upload:policy/gate, validate:schema/validator, http/outgoing-handler, kv:store | — |
 | **video-transcoder-domain** | `local:video-transcoder` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, media:video/ffmpeg, records:store/store, kv:store | — |
 | **vpn-manager-domain** | `local:vpn-manager` | auth:identity/accounts, auth:identity/authorizer, auth:identity/session, net:vpn/wireguard, records:store/store, kv:store | — |
-| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:ingest/verifier, webhook:sign/signer | — |
+| **webhook-relay** | `relay:app@0.1.0` | audit:log/query, audit:log/recorder, audit:log/types, idempotency:guard/store, json:patch/patcher, notify:dispatch/dispatcher, outbox:dispatch/queue, ratelimit:guard/limiter, records:store/store, kv:store, webhook:sign/signer | — |
 
 ## Contract only — no implementation behind the WIT
 

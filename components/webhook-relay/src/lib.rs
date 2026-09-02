@@ -21,7 +21,7 @@ use bindings::ratelimit::guard::limiter;
 use bindings::ratelimit::guard::limiter::LimitError;
 use bindings::records::store::store as records;
 use bindings::wasi::keyvalue::store as kv;
-use bindings::webhook::ingest::verifier;
+use bindings::idempotency::guard::store as idem;
 use bindings::webhook::sign::signer;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
@@ -34,6 +34,15 @@ struct Component;
 const SOURCES: &str = "relay_sources";
 const CLAIM_BATCH: u32 = 25;
 const CLAIM_LEASE: u64 = 60;
+/// How long a delivery-id stays deduplicated.
+///
+/// The replay window a sender can retry inside, and it was `webhook:ingest`'s to
+/// choose before this component held the mark itself. Twenty-four hours because
+/// that is the outer bound of every webhook retry schedule worth naming — GitHub
+/// gives up long before it, Stripe keeps trying for three days but with the same
+/// delivery-id, so a shorter window would let a genuinely-delivered event be
+/// accepted twice.
+const DEDUP_TTL: u64 = 24 * 60 * 60;
 
 impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
@@ -217,18 +226,78 @@ fn inbound(request: &IncomingRequest, source_id: &str) -> Outcome {
     }
     let payload = read_body(request).unwrap_or_default();
 
+    // --- verify, THEN reserve, THEN work, and only then commit ----------------
+    //
+    // The order is the fix. `webhook:ingest/verifier::ingest` did the first two in
+    // one atomic call, which meant the delivery-id was marked seen before anything
+    // that could still fail had run — see the note in `wit/relay.wit`.
+    //
+    // Verification stays first and stays side-effect-free: a forged request must not
+    // be able to burn an id, or an attacker who guesses a delivery-id can suppress
+    // the real delivery of it. `signer::verify` compares in constant time.
+    let secret = match kv::open("default").and_then(|b| b.get(&secret_ref(source_id))) {
+        Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
+        // The source record exists and its secret does not. `create_source` writes
+        // both and rolls the record back if the secret write fails, so this is a
+        // store that lost one of them — a 503 the sender should retry, never a 401,
+        // which would blame the sender for our missing key.
+        Ok(None) => return Outcome::Err(503, "the inbound secret for this source is missing".into()),
+        Err(e) => return Outcome::Err(503, format!("reading the inbound secret: {e:?}")),
+    };
+    // The header as the sender sent it. `sig` has had any `sha256=` prefix stripped
+    // above, and the github scheme wants it back — senders that omit it still work,
+    // which is the behaviour this component already had.
+    let header = format!("sha256={sig}");
+    if signer::verify(&payload, &header, &secret, signer::Scheme::Github, 0).is_err() {
+        let _ = limiter::record_failure(&rl_key);
+        audit("hook.rejected", "bad-signature", source_id, &delivery, "");
+        return Outcome::Err(401, "bad signature".into());
+    }
+
     // delivery-ids are scoped per source so two senders can't collide.
     let scoped = format!("{source_id}:{delivery}");
-    match verifier::ingest(&payload, &sig, &secret_ref(source_id), &scoped) {
-        Err(verifier::IngestError::BadSignature) => {
-            let _ = limiter::record_failure(&rl_key);
-            audit("hook.rejected", "bad-signature", source_id, &delivery, "");
-            Outcome::Err(401, "bad signature".into())
+    match idem::begin(&scoped, DEDUP_TTL) {
+        // First time for this id: it is reserved, not committed. Nothing below may
+        // return without either completing or forgetting it.
+        Ok(None) => {}
+        // Already handled. 200 with `{"replay": true}` rather than replaying the
+        // stored response verbatim: that is what this component has always answered,
+        // it is a 2xx so the sender correctly stops, and the case was never broken.
+        Ok(Some(_)) => return Outcome::Json(200, json!({ "replay": true }).to_string()),
+        // A concurrent duplicate — the other caller holds the reservation and has not
+        // finished. Retryable, and `idempotency:guard`'s own contract names 409 for it.
+        Err(idem::IdemError::InProgress) => {
+            return Outcome::Err(409, "a delivery with this id is already in flight".into())
         }
-        Err(verifier::IngestError::BackendUnavailable(m)) => Outcome::Err(503, m),
-        Ok(v) if v.replay => Outcome::Json(200, json!({ "replay": true }).to_string()),
-        Ok(_) => accept(&source, source_id, &delivery, payload),
+        Err(idem::IdemError::BackendUnavailable(m)) => return Outcome::Err(503, m),
     }
+
+    let outcome = accept(&source, source_id, &delivery, payload);
+
+    // COMMIT ON SUCCESS, RELEASE ON ANYTHING ELSE.
+    //
+    // A 2xx means the delivery is in the outbox and a retry of this id must be told
+    // to stop. Anything else means it is not, and the id has to be usable again or
+    // the sender is told to stop retrying an event that never landed.
+    //
+    // `forget` failing is reported and not fatal: the delivery already failed, this
+    // is the second piece of bad news, and turning it into a different status would
+    // hide the first. A guard whose backend is down is also why the enqueue failed.
+    match &outcome {
+        Outcome::Json(status, body) if (200..300).contains(status) => {
+            if let Err(e) = idem::complete(&scoped, *status, body.as_bytes()) {
+                // Queued but not marked: a retry will queue it a second time. Worth
+                // saying out loud, and still a success — the event IS delivered.
+                audit("hook.accepted", "dedup-not-recorded", source_id, &delivery, &format!("{e:?}"));
+            }
+        }
+        _ => {
+            if let Err(e) = idem::forget(&scoped) {
+                audit("hook.rejected", "dedup-not-released", source_id, &delivery, &format!("{e:?}"));
+            }
+        }
+    }
+    outcome
 }
 
 fn accept(source: &records::Entry, source_id: &str, delivery: &str, payload: Vec<u8>) -> Outcome {
@@ -252,9 +321,10 @@ fn accept(source: &records::Entry, source_id: &str, delivery: &str, payload: Vec
             }
         }
     };
-    // ponytail: dedup is marked complete before the enqueue, so an enqueue
-    // failure loses this delivery-id to the replay window; import
-    // idempotency:guard directly and complete after enqueue if that matters.
+    // The enqueue is the last thing that can fail, and its failure is now visible
+    // to the caller: `inbound` forgets the reservation for any non-2xx, so a 503
+    // here leaves the delivery-id usable and the sender's retry is a real attempt
+    // rather than a `200 {"replay": true}` for an event that was never queued.
     match outbox::enqueue(source_id, outbound.as_bytes(), 0) {
         Ok(event_id) => {
             audit("hook.accepted", "queued", source_id, delivery, &event_id);
