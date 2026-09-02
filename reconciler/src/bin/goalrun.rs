@@ -1479,7 +1479,7 @@ fn main() -> Result<()> {
     // ABOVE the decomposed dispatch, for the same reason the `Trace` is. This sat
     // below it, so a two-part run asked the catalogue nothing: no `capsearch-hit`
     // or `capsearch-miss` row, and — worse than the missing row — every part wrote
-    // without being told what 150 components already contain. The ADR calls the
+    // without being told what the catalogue already contains. The ADR calls the
     // question mandatory in both directions, and the path that decomposes a goal
     // into parts is the one where "does this already exist" is asked per PART and
     // therefore most likely to be answered yes.
