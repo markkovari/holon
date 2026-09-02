@@ -247,3 +247,103 @@ fn events_created_read_amended_and_cancelled() {
     let (code, _) = gate.json("GET", &format!("/api/events/{new_id}/image"), Some(&attendee), None);
     assert_eq!(code, 404, "an event with no poster is a 404, not an empty 200");
 }
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// The whole evening: event opened, place taken, ticket passed on, and the right
+/// person walks in.
+///
+/// Ported from `components/events-domain/e2e.sh`. This app has four part gates
+/// (`events`, `tickets`, `swaps`, `checkin`) and they came over in #180-#189; the
+/// composition gates did not, and CI never ran them either — its loop globbed
+/// `components/*/e2e-*.sh`, with a hyphen, which matches the part gates and none of
+/// the `e2e.sh` files.
+///
+/// It lives here rather than in a fifth file because the chain starts with an event,
+/// and because a fifth integration binary would pay for its own host to assert what
+/// this one can.
+///
+/// What only the composition can prove, and each of these is a plausible local
+/// success in isolation:
+///
+///   * `events` reads `remaining` from `quota:meter`, and `tickets` must be the thing
+///     that moved it — two parts, one counter, and neither gate sees the other's.
+///   * a swap moves a ticket between holders and must NOT free a seat: the house did
+///     not empty one, someone else is sitting in it.
+///   * `checkin` admits by the holder `swaps` last wrote. A door reading a stale
+///     holder lets the wrong person in and is invisible to both parts alone.
+#[test]
+fn the_whole_evening_works() {
+    let Some(gate) = Gate::start(APP, COMPOSED, CONFIG) else { return };
+
+    let seed = gate.seed();
+    let tok = |who: &str| seed["tokens"][who]["token"].as_str().unwrap_or_default().to_string();
+    let subject =
+        |who: &str| seed["tokens"][who]["subject"].as_str().unwrap_or_default().to_string();
+    let (organizer, attendee, other) = (tok("organizer"), tok("attendee"), tok("other"));
+
+    // --- an organizer opens the doors --------------------------------------
+    let (_, e) = gate.post(
+        "/api/events",
+        Some(&organizer),
+        json!({"title":"The Whole Evening","starts_at":"2026-11-05T19:00:00Z","capacity":2}),
+    );
+    let eid = field(&e, "id");
+    assert!(!eid.is_empty(), "events: no event was created: {e}");
+
+    // --- an attendee takes a place -----------------------------------------
+    let (_, t) = gate.post(&format!("/api/events/{eid}/tickets"), Some(&attendee), json!({}));
+    let tid = field(&t, "id");
+    assert!(!tid.is_empty(), "tickets: no ticket was issued: {t}");
+
+    let (_, ev) = gate.get(&format!("/api/events/{eid}"), Some(&organizer));
+    let after_claim = field(&ev, "remaining");
+    assert_eq!(
+        after_claim, "1",
+        "capacity 2 minus one claim is 1 remaining, not '{after_claim}' — events reads this \
+         from quota:meter, which tickets must be the thing that moved"
+    );
+
+    // --- they cannot come, and pass it on ----------------------------------
+    let (_, s) = gate.post("/api/swaps", Some(&attendee), json!({"ticket_id": tid}));
+    let sid = field(&s, "id");
+    assert!(!sid.is_empty(), "swaps: no offer was created: {s}");
+    let (ok, _) = gate.post(&format!("/api/swaps/{sid}/accept"), Some(&other), json!({}));
+    assert_eq!(ok, 200, "swaps: the offer could not be accepted (got {ok})");
+
+    let (_, ev) = gate.get(&format!("/api/events/{eid}"), Some(&organizer));
+    let still = field(&ev, "remaining");
+    assert_eq!(
+        still, "1",
+        "a swap moved remaining from 1 to '{still}' — the ticket changed hands, the house did \
+         not empty a seat"
+    );
+
+    // --- the new holder is the one who gets in -----------------------------
+    let (_, held) = gate.get(&format!("/api/tickets/{tid}"), Some(&other));
+    let code = field(&held, "code");
+    assert!(
+        !code.is_empty(),
+        "the acceptor cannot read the ticket they now hold — tickets and swaps disagree about \
+         who the holder is: {held}"
+    );
+
+    let (_, admitted) = gate.post("/api/checkin", Some(&organizer), json!({"code": code}));
+    assert!(
+        admitted.contains("checked-in"),
+        "checkin: the swapped ticket was not admitted: {admitted}"
+    );
+    let holder = field(&admitted, "holder");
+    let owner = subject("other");
+    assert_eq!(
+        holder, owner,
+        "the door admitted '{holder}' but the ticket belongs to '{owner}' after the swap — \
+         checkin is reading a holder that swaps already changed"
+    );
+
+    // --- and the person who gave it away cannot get in ---------------------
+    let (c, _) = gate.post("/api/checkin", Some(&organizer), json!({"code": code}));
+    assert_eq!(c, 409, "the ticket is spent — a second scan is refused whoever presents it");
+}
