@@ -32,6 +32,20 @@ second. `components/CATALOG.md` survives for the one reason nothing else here ha
 **people read it on GitHub without running anything.** A rendering for humans is not
 a cache for programs, and it keeps its guard, because a rendering can still lie.
 
+**Two renderings survive on that reasoning, not one.** This ADR originally called
+`CATALOG.md` the only derived file still committed and `reconciler/tests/derived.rs`
+repeated it; `docs/CAPABILITY-GRAPH.md` is the other, and it has its own staleness
+guard in the same file. The claim was wrong when written. Adding one component makes
+both stale, the two guards fail one at a time, and #201 duly regenerated the graph,
+missed the catalogue, and had CI report it a commit later. `just derived` runs both.
+
+Their totals also differ — 215 against 213 at the time of writing — because
+`comp-catalog` counts source crates while the graph counts what was BUILT, reading
+each component's real imports out of its binary. The gap is the crates that declare
+their own `[workspace]` and are never built. Both numbers are right, and the graph now
+says so in its own header rather than leaving a reader to reconcile two derived files
+by hand.
+
 The same argument retired `tools/gen-catalog.py`: the catalogue is load-bearing —
 [0089](0089-capability-accumulation.md) rests on `capsearch` finding what the pool
 already has — and it had no test because it could not have one.

@@ -155,9 +155,14 @@ fn no_build_output_is_tracked() {
 
 /// The committed catalogue says what the components say.
 ///
-/// `components/CATALOG.md` is the one derived file still committed, and it is
-/// committed for a reason nothing else here has: it is READ BY PEOPLE, on GitHub,
-/// without running anything. Its companion `catalog.json` was committed "for
+/// `components/CATALOG.md` is committed for a reason nothing else here has: it is
+/// READ BY PEOPLE, on GitHub, without running anything.
+///
+/// It is not the ONLY derived file still committed, which is what this said and what
+/// ADR-0097 says. `docs/CAPABILITY-GRAPH.md` is the other, guarded by
+/// `the_committed_capability_graph_is_not_stale` in this same file. Believing there
+/// was one is how #201 regenerated the graph, missed the catalogue, and had CI find
+/// it a commit later — so `just derived` now runs both. Its companion `catalog.json` was committed "for
 /// tooling" and is gone — once `capsearch` stopped reading it, the only things left
 /// reading it were the tests checking whether it had gone stale, which is a file
 /// existing to be verified rather than used.
