@@ -263,8 +263,24 @@ jobs:
           echo "$ran gate(s) ran, $failed failed"
           [ "$failed" -eq 0 ]
 
+      # COMP_HOST is set even though the fallback path is the one the step above
+      # builds, and that is the point: with it set, `gatelib::host_bin` finds no
+      # binary LOUDLY. Without it, a gate whose host is missing prints `SKIPPED`,
+      # returns `None`, and every gate turns that into `return` — a pass. Twenty-one
+      # gates going green because nothing was there to judge with is how a checkout
+      # with no artifacts reads as a healthy one, and this file's own rule is to
+      # measure by removal: move `comp-host` aside and this step must go RED, not
+      # quiet.
+      #
+      # `gate_dispatch` is deliberately NOT in the list below. It is goal 10's gate
+      # and it is supposed to FAIL — `components/dispatch-domain`'s three parts are
+      # stubs answering 501, on purpose, because a goal whose gates already pass is
+      # refused by the base pre-check rather than run. Add it here only when the goal
+      # has landed, and expect red until then.
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
+        env:
+          COMP_HOST: ${{ github.workspace }}/host/target/release/comp-host
         run: >-
           cargo test --release
           --test capsearch --test contracts --test publish --test secrets

@@ -1353,7 +1353,6 @@ fn main() -> Result<()> {
         setup::render_specs(&args, &goal, &gate)?;
     let spec_refs: Vec<&str> = specs.iter().map(String::as_str).collect();
 
-
     println!("starting fleet …");
     let fleet = Fleet::start_with_secrets("goalrun", &spec_refs, &art, &secrets);
     let port = fleet.ingress_port;

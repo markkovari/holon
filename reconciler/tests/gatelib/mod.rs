@@ -58,27 +58,30 @@ pub fn host_bin() -> PathBuf {
     }
 }
 
-/// Whether this gate is judging a candidate rather than a checkout.
+/// Whether a caller STATED where the host binary is.
 ///
-/// Under a goal run a missing binary is not "you have not built yet", it is the
-/// harness being wrong — and answering that with a skip would report a pass for a
-/// candidate nothing executed.
-pub fn under_a_goal_run() -> bool {
+/// The distinction this turns on is not "goal run or not", it is whether anybody
+/// promised the binary exists. A cold checkout promised nothing and a skip is the
+/// kind thing to do. A goal run passes `$COMP_HOST` and CI sets it, and in both of
+/// those a missing binary is the harness being wrong — answering it with a skip
+/// reports a pass for a component nothing executed.
+pub fn host_was_stated() -> bool {
     std::env::var("COMP_HOST").is_ok_and(|p| !p.trim().is_empty())
 }
 
-/// No host binary: a skip in a checkout, a panic under a goal.
+/// No host binary: a skip in a cold checkout, a panic when someone stated the path.
 ///
 /// The asymmetry is the point. In a checkout, nothing has been broken by not having
 /// built yet, and a gate that fails for a missing file trains people to ignore gate
-/// failures. Under a goal run there is a candidate being judged and a score being
-/// written down, and "nothing ran" must not arrive at the selector as a pass.
+/// failures. When a caller stated the path there is a score being written down, and
+/// "nothing ran" must not arrive at the selector, or at CI, as a pass.
 fn no_host(app: &str, host: &std::path::Path) {
-    if under_a_goal_run() {
+    if host_was_stated() {
         panic!(
-            "[{app}] $COMP_HOST is set to `{}`, which does not exist. A candidate is \
-             being judged, so this is a harness fault and not a skip — reporting a pass \
-             for a component nothing executed is worse than reporting a failure.",
+            "[{app}] $COMP_HOST is set to `{}`, which does not exist. Something stated \
+             where the host is, so this is a harness fault and not a cold checkout — \
+             reporting a pass for a component nothing executed is worse than reporting \
+             a failure.",
             host.display()
         );
     }
@@ -145,7 +148,7 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
     // reach the selector as a candidate that passed.
     if catalog.is_empty() {
         assert!(
-            !under_a_goal_run(),
+            !host_was_stated(),
             "[{crate_name}] the catalogue is empty while judging a candidate — the \
              check command must build the crate and its providers before this runs, \
              and a pass for a component nothing composed is worse than a failure"
@@ -155,7 +158,7 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
     }
     if catalog.bytes(crate_name).is_none() {
         assert!(
-            !under_a_goal_run(),
+            !host_was_stated(),
             "[{crate_name}] is not in the catalogue while judging a candidate — the \
              check command must build it before this runs"
         );

@@ -10,7 +10,9 @@ use std::process::Command;
 use anyhow::{bail, Result};
 use comp_reconciler::gate::{egress_authority, Gate};
 
-use crate::{artifacts, host_bin, plug_bin, render, warm_the_gate_cache, Args, GateCaches, GoalSpec};
+use crate::{
+    artifacts, host_bin, plug_bin, render, warm_the_gate_cache, Args, GateCaches, GoalSpec,
+};
 
 /// A warm, shared tool cache for the gate, and the environment that points every
 /// check at it.
