@@ -7,6 +7,31 @@
 //!      component plugged in with wac).
 //!
 //! The signing secret is read from a generic kv store at `secret-ref`.
+//!
+//! ## Nothing imports this any more, and that is on purpose
+//!
+//! `webhook-relay` was the only consumer and has moved to `webhook:sign/signer::verify`
+//! plus `idempotency:guard`. Not because either half of this component is wrong — the
+//! HMAC check and the dedup both work — but because `ingest` does them in ONE call,
+//! and that shape cannot express what a relay needs: everything that can still fail
+//! happens after the mark, so a refused delivery left its id burnt and the sender's
+//! retry came back `200 {"replay": true}` for an event that was never queued.
+//!
+//! The mechanism is visible below: `ingest` calls `idem::begin` and then
+//! `idem::complete` immediately, on the next line. `idempotency:guard` is a
+//! three-step protocol — reserve, then commit or release — and collapsing it into one
+//! call is what removes the caller's ability to release. The capability was always
+//! there; the shape of this interface hid it.
+//!
+//! The same collapse shows up once more: `Err(in-progress)` is reported to the caller
+//! as `replay: true`. A concurrent duplicate is told "already handled" while the other
+//! request may still fail. `webhook-relay` now answers 409 for that case, which is
+//! what `idempotency:guard`'s own contract names it.
+//!
+//! So this stays as a worked example of chaining two capabilities, and as the right
+//! answer for a caller whose accept path cannot fail after the mark. It is the wrong
+//! answer for one whose can, and a caller cannot tell from the signature which it is —
+//! which is the part worth remembering if this grows a second consumer.
 
 #[allow(warnings)]
 mod bindings;

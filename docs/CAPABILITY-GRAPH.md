@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**213 components, 103 interfaces with a provider and at least one consumer, 455 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
+**213 components, 102 interfaces with a provider and at least one consumer, 455 import edges, 17 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
 
 That total counts what was BUILT. `components/CATALOG.md` counts source crates and is larger by however many declare their own `[workspace]` and so are never built — `components/Cargo.toml` names them. Both numbers are right; they answer different questions, and this one is the one you can compose against.
 
@@ -28,7 +28,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 14 | `event:bus/bus` | `event-bus` | `abtest-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `eshop-payment`, `flags-domain`, `moderation-domain`, `pipeline-domain`, `pulse-domain`, `saga-domain`, `status-page`, `throttle-domain`, `track-domain`, `vet-domain` |
 | 11 | `auth:identity/rbac` | `auth-guard` | `accounts-app`, `booked-domain`, `dev-portal`, `events-domain`, `helpdesk-domain`, `lms-domain`, `photosocial-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
 | 9 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `events-domain`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
-| 8 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `invoice-copilot-domain`, `jobs-domain`, `saga-domain`, `treasury-ledger-domain`, `webhook-ingest` |
+| 9 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `invoice-copilot-domain`, `jobs-domain`, `saga-domain`, `treasury-ledger-domain`, `webhook-ingest`, `webhook-relay` |
 | 7 | `ai:inference/inference` | `ai-inference` | `doc-search-domain`, `invoice-copilot-domain`, `moderation-domain`, `support-desk-domain`, `track-domain`, `triage-assist-domain`, `vet-domain` |
 | 7 | `blob:store/blobstore` | `blob-store` | `artifact-cache`, `events-domain`, `platform-domain`, `studio-domain`, `upload-drop`, `vet-domain`, `virt-git` |
 | 7 | `csv:codec/codec` | `csv` | `billing-ledger`, `clinic-domain`, `csv-report`, `sheet-ingest`, `stash-domain`, `triage-domain`, `vet-domain` |
@@ -121,7 +121,6 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `vision:describe/describer` | `anthropic-vision` | `binder-domain` |
 | 1 | `web:browser/automation` | `browser-automation` | `pdf-generator-domain` |
 | 1 | `webauthn:verify/verifier` | `webauthn` | `passkey-domain` |
-| 1 | `webhook:ingest/verifier` | `webhook-ingest` | `webhook-relay` |
 
 ## The load-bearing few
 
@@ -156,7 +155,7 @@ graph LR
   fsm_workflow_engine --> many_fsm_workflow_engine["9 consumers"]
   idempotency_guard_store(["idempotency:guard/store"])
   idempotency_guard[idempotency-guard] --> idempotency_guard_store
-  idempotency_guard_store --> many_idempotency_guard_store["8 consumers"]
+  idempotency_guard_store --> many_idempotency_guard_store["9 consumers"]
   ai_inference_inference(["ai:inference/inference"])
   ai_inference[ai-inference] --> ai_inference_inference
   ai_inference_inference --> many_ai_inference_inference["7 consumers"]
@@ -255,7 +254,6 @@ This is the number to look at before changing a component, and before deleting o
 | 1 | `video-ffmpeg` | `video-transcoder` |
 | 1 | `vpn-wireguard` | `vpn-manager` |
 | 1 | `webauthn` | `passkey` |
-| 1 | `webhook-ingest` | `relay` |
 
 ## What is each app made of?
 
@@ -322,7 +320,7 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **pulse** | `pulse-domain` | 3 | `pulse_domain.composed.wasm` |
 | **ratelimit** | `throttle-domain` | 4 | `throttle_domain.composed.wasm` |
 | **real-estate-escrow** | `real-estate-escrow-domain` | 4 | `real-estate-escrow.composed.wasm` |
-| **relay** | `webhook-relay` | 9 | `webhook_relay.composed.wasm` |
+| **relay** | `webhook-relay` | 8 | `webhook_relay.composed.wasm` |
 | **report** | `csv-report` | 4 | `csv_report.composed.wasm` |
 | **saga** | `saga-domain` | 6 | `saga_domain.composed.wasm` |
 | **scribe** | `scribe-domain` | 4 | `scribe_domain.composed.wasm` |
@@ -423,4 +421,5 @@ Not a finding. A capability library is allowed to be ahead of its callers, and s
 | `reddit-domain` | `local:reddit/reddit` |
 | `roman` | `demo:roman/numerals` |
 | `rot13` | `demo:rot13/cipher` |
+| `webhook-ingest` | `webhook:ingest/verifier` |
 
