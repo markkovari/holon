@@ -131,3 +131,145 @@ fn an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up() {
          must be checked BEFORE the meter: {d}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// The whole doc-search agent: a document filed, a real second factor verified, and
+/// a question answered over what was filed.
+///
+/// Ported from `components/doc-search-domain/e2e.sh`. It lives beside the answer gate
+/// because it needs the same model on the shim.
+///
+/// One request is the join. `POST /api/answer` succeeds only if `answer` found the
+/// mark `stepup` wrote, retrieved the document `library` indexed, and reached the
+/// model. Any one of the three disagreeing about a shape makes it a 403, a 404 or an
+/// answer about nothing — and each part's own gate sees only its own half.
+///
+/// The TOTP is computed here rather than stubbed: `otp:totp` is in the world and the
+/// step-up is only meaningful if the code is one a real authenticator would produce.
+#[test]
+fn the_whole_docsearch_agent_works() {
+    let Some(shim) = Shim::probe("docsearch/whole") else { return };
+    let mut config = shim.config();
+    for extra in ["answer-budget=2", "answer-period-secs=3600", "answer-cache-ttl-secs=300"] {
+        config.push(extra.into());
+    }
+    let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
+    let egress = shim.egress();
+    let Some(gate) =
+        Gate::compose_and_start_with_egress("docsearch", "doc-search-domain", &cfg, &[&egress])
+    else {
+        return;
+    };
+
+    for (iface, why) in [
+        ("otp:totp/authenticator", "the composed API must still be checking codes through otp"),
+        ("quota:meter/meter", "the composed API must still be metering through quota"),
+        ("cache:store/cache", "the composed API must still be caching through the cache component"),
+        ("search:index/index", "the composed API must still be retrieving through the index"),
+        (
+            "ai:inference/inference",
+            "the composed API must still be reaching the model through ai-inference",
+        ),
+    ] {
+        gatelib::requires_capability("doc-search-domain", iface, why);
+    }
+
+    let t = field(&gate.post("/test/token", None, json!({"subject":"ada"})).1, "token");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the parts"
+    );
+
+    // --- a document filed through the library part -------------------------
+    let (_, doc) = gate.post(
+        "/api/docs",
+        Some(&t),
+        json!({
+            "title": "The quiet hours window",
+            "text": "A digest scheduled inside the quiet hours window is held until 08:00 in \
+                     the recipient tenant timezone, and never merged with the next one.",
+            "tag": "product",
+        }),
+    );
+    let id = field(&doc, "id");
+    assert!(
+        !id.is_empty(),
+        "the library part did not accept a document, so nothing else can be judged: {doc}"
+    );
+
+    const Q: &str = "What happens to a digest scheduled inside the quiet hours window?";
+
+    // --- asking before stepping up: refused --------------------------------
+    let (got, _) = gate.post("/api/answer", Some(&t), json!({"question": Q}));
+    assert_eq!(
+        got, 403,
+        "the composed API answered a question for a session that never stepped up (got {got})"
+    );
+
+    // --- stepping up for real, through the step-up part --------------------
+    let (_, enrolled) = gate.post("/api/mfa/enroll", Some(&t), json!({}));
+    let secret = field(&enrolled, "secret");
+    assert!(!secret.is_empty(), "the step-up part did not provision a secret: {enrolled}");
+    let code = gatelib::totp_now(&secret);
+    let (_, verified) = gate.post("/api/mfa/verify", Some(&t), json!({"code": code}));
+    assert_eq!(
+        parse(&verified)["verified"],
+        json!(true),
+        "a correct TOTP code was refused by the composed API — the real second factor did \
+         not verify: {verified}"
+    );
+
+    // --- and now the question, over the document that was filed ------------
+    let (_, ans) = gate.post("/api/answer", Some(&t), json!({"question": Q}));
+    assert!(
+        !ans.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
+    let d = parse(&ans);
+    assert!(
+        d.get("error").is_none(),
+        "the composed API refused a question from a session that verified through the real \
+         routes. If this is step_up_required, `stepup` (src/stepup.rs) and `answer` \
+         (src/answer.rs) disagree about the mark's shape — the contract's `stepups` \
+         collection, indexed on `subject`, with `verified_at`. Got: {ans}"
+    );
+    let sources: Vec<&str> = d["sources"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|s| s.as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        sources.contains(&id.as_str()),
+        "the answer does not cite the document filed through /api/docs. If sources is empty, \
+         `library` (src/library.rs) indexed something `answer` (src/answer.rs) cannot find. \
+         Got: {ans}"
+    );
+    let a = d["answer"].as_str().unwrap_or_default().to_lowercase();
+    assert!(a.len() >= 20, "no usable answer: {ans}");
+    assert!(
+        ["08:00", "8:00", "eight", "quiet", "held", "morning"].iter().any(|w| a.contains(w)),
+        "the answer is not about the document it cited: {:?}",
+        d["answer"]
+    );
+    assert_eq!(
+        d["cached"],
+        json!(false),
+        "the first answer to a question is not a cache hit: {ans}"
+    );
+    assert_eq!(d["remaining"], 1, "one answer out of a budget of two leaves 1: {ans}");
+
+    // The step-up part's own read of the state agrees with what the answer part did.
+    let (_, mfa) = gate.get("/api/mfa", Some(&t));
+    assert!(
+        !mfa.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
+    assert_eq!(
+        parse(&mfa)["verified"],
+        json!(true),
+        "the answer part accepted the session but the step-up part reports it unverified: \
+         {mfa} — the two parts read the same state differently"
+    );
+}

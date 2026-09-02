@@ -16,7 +16,7 @@
 //! The storms were `xargs -P 16` and `seq 24 | xargs -P`; they are scoped threads.
 
 mod gatelib;
-use gatelib::{field, Gate};
+use gatelib::{field, requires_capability, Gate};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -429,4 +429,168 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
     let mut sorted = ats.clone();
     sorted.sort();
     assert_eq!(ats, sorted, "oldest first, and these are not: {ats:?}");
+}
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// The whole treasury, through the real routes, with the auditor checking the mover.
+///
+/// Ported from `components/treasury-ledger-domain/e2e.sh`, the fourth and last of
+/// this app's gates to move. The three part gates came over in #180-#189; the
+/// composition gates did not, and CI never ran them — its loop globbed
+/// `components/*/e2e-*.sh`, with a hyphen, which matches the part gates and none of
+/// the `e2e.sh` files.
+///
+/// What only the composition can prove: `reconcile` recomputes both balances from
+/// the journal ALONE. It was written against the same contract by an agent that
+/// never saw `transfers`, so if the two disagree about the journal's shape — a field
+/// name, a direction, a unit — this is where it shows and nowhere else.
+///
+/// The transfer storm here is the MIRROR of the one in
+/// `transfers_are_idempotent_and_survive_contention`: there ten transfers contend for
+/// a balance only one can have and the answer is "exactly one lands"; here all ten
+/// fit and the answer is "all of them land". Only a correct implementation gives both.
+#[test]
+fn the_whole_treasury_api_works() {
+    let Some(gate) = start() else { return };
+
+    requires_capability(
+        CRATE,
+        "auth:identity/authorizer",
+        "resolving a bearer token is a solved problem in this repository and `authorize` does \
+         the verification and the permission check in one call — parsing a token by hand is how \
+         this part fails",
+    );
+    for (iface, why) in [
+        (
+            "records:store/store",
+            "the composed API must still be serialising its debits on the store's revision",
+        ),
+        (
+            "money:amount/arithmetic",
+            "the composed API must still do its arithmetic in money:amount",
+        ),
+        (
+            "ledger:doubleentry/ledger",
+            "the composed API must still balance its journal through the ledger",
+        ),
+        ("idempotency:guard/store", "the composed API must still be exactly-once"),
+        ("fsm:workflow/engine", "the composed API must still drive the transfer lifecycle"),
+    ] {
+        requires_capability(CRATE, iface, why);
+    }
+
+    let w = token(&gate, "treasurer", None);
+    let open = |name: &str| {
+        let (_, a) = gate.post(
+            "/api/accounts",
+            Some(&w),
+            json!({"name": name, "currency": "EUR", "start": "0.00"}),
+        );
+        field(&a, "id")
+    };
+    let (a, z) = (open("join-a"), open("join-b"));
+    assert!(
+        !a.is_empty() && !z.is_empty(),
+        "the accounts part did not open an account, so nothing else can be judged"
+    );
+
+    // --- fund one side with twenty concurrent credits ----------------------
+    std::thread::scope(|sc| {
+        let hs: Vec<_> = (0..20)
+            .map(|_| {
+                sc.spawn(|| {
+                    gate.post(
+                        &format!("/api/accounts/{a}/credit"),
+                        Some(&w),
+                        json!({"amount": "5.00"}),
+                    )
+                    .0
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().expect("a credit panicked");
+        }
+    });
+    let funded = units_of(&gate, &a);
+    assert_eq!(
+        funded, 10000,
+        "twenty concurrent credits of 5.00 should fund the account with 10000 minor units, \
+         it holds {funded}"
+    );
+
+    // --- move it across in ten concurrent transfers ------------------------
+    // The same borrow-capturing closure the transfers gate uses: it holds only
+    // references, so it is `Copy` and a `move` thread body copies it rather than
+    // taking the `Gate` with it.
+    let keyed = |key: &str| -> u16 {
+        gate.with_headers(
+            "POST",
+            "/api/transfers",
+            Some(&w),
+            &[("idempotency-key", key)],
+            Some(json!({"from": a, "to": z, "amount": "10.00"})),
+        )
+        .0
+    };
+    let codes: Vec<u16> = std::thread::scope(|sc| {
+        let hs: Vec<_> = (1..=10)
+            .map(|i| {
+                let key = format!("join-{i}");
+                sc.spawn(move || keyed(&key))
+            })
+            .collect();
+        hs.into_iter().map(|h| h.join().expect("a transfer panicked")).collect()
+    });
+    let counted = tally(&codes);
+    let (from, to) = (units_of(&gate, &a), units_of(&gate, &z));
+    assert_eq!(
+        from + to,
+        10000,
+        "the pair held 10000 and now holds {}. Codes: {counted:?}",
+        from + to
+    );
+    assert!(
+        from == 0 && to == 10000,
+        "ten transfers of 10.00 out of 100.00 all fit, so the source should be empty and the \
+         destination full: from={from} to={to}. Codes: {counted:?}"
+    );
+
+    // --- and the auditor agrees --------------------------------------------
+    let (_, report) = gate.with_headers(
+        "POST",
+        "/api/reconcile",
+        Some(&w),
+        &[("idempotency-key", "join-audit")],
+        Some(json!({"opened": [
+            {"account": a, "units": 10000},
+            {"account": z, "units": 0},
+        ]})),
+    );
+    assert!(!report.trim().is_empty(), "the reconcile route answered an empty body");
+    let d = parse(&report);
+    assert!(
+        d.get("error").is_none(),
+        "the reconcile part refused a report over accounts moved through the real routes. If \
+         this is a store or shape error, the two parts disagree about the `journal` \
+         collection: {report}"
+    );
+    assert_eq!(
+        d["journal_lines"].as_i64().unwrap_or(-1),
+        10,
+        "ten transfers settled and the journal has {} lines. `transfers` writes them and \
+         `reconcile` reads them, and nothing else in the app would notice if they disagreed \
+         about the collection or the field names.",
+        d["journal_lines"]
+    );
+    assert_eq!(
+        d["balanced"],
+        json!(true),
+        "the recomputation from the journal disagrees with the stored balances. Every unit \
+         that moved was journalled, or it was not: {report}"
+    );
+    assert_eq!(d["drift"], json!([]), "drift must be empty when the books agree: {report}");
 }
