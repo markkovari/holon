@@ -163,3 +163,150 @@ fn a_suggestion_is_allocated_to_the_cent_and_described_by_the_model() {
     assert_eq!(units.len(), 2, "two shares means two lines, not five: {d}");
     assert_eq!(units.iter().sum::<i64>(), 5000, "the new total must be the new amount: {units:?}");
 }
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// The whole invoice API: an invoice, lines the model described and `money` split,
+/// and a balanced ledger entry posted exactly once.
+///
+/// Ported from `components/invoice-copilot-domain/e2e.sh`. It lives beside the
+/// copilot gate because it needs the same model on the shim.
+///
+/// The chain is one number: **10.00 into 3 is 3.34 + 3.33 + 3.33**. A part that
+/// divides by hand loses a cent here, and the ledger refuses the entry two steps
+/// later — so a rounding error in `copilot` surfaces as a balance failure in
+/// `posting`, and neither part's own gate can see the other end of that.
+///
+/// What else only the composition proves: `copilot` stores lines and `posting` reads
+/// them, so a `nothing_to_post` here means they disagree about where lines live, and
+/// nothing in either part would notice.
+#[test]
+fn the_whole_invoice_api_works() {
+    let Some(shim) = Shim::probe("invoice/whole") else { return };
+    let mut config = shim.config();
+    config.push("max-attempts=10".into());
+    config.push("lockout-window=60".into());
+    let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
+    let egress = shim.egress();
+    let Some(gate) =
+        Gate::compose_and_start_with_egress("invoice", "invoice-copilot-domain", &cfg, &[&egress])
+    else {
+        return;
+    };
+
+    for (iface, why) in [
+        (
+            "ratelimit:guard/limiter",
+            "the composed API must still be counting invoices through the limiter",
+        ),
+        ("ai:inference/inference", "the composed API must still be asking the model for the words"),
+        (
+            "money:amount/arithmetic",
+            "the composed API must still be doing its arithmetic in money:amount",
+        ),
+        (
+            "ledger:doubleentry/ledger",
+            "the composed API must still be balancing through the ledger",
+        ),
+        ("idempotency:guard/store", "the composed API must still post exactly once"),
+    ] {
+        gatelib::requires_capability("invoice-copilot-domain", iface, why);
+    }
+
+    let t = field(&gate.post("/test/token", None, json!({"subject":"biller"})).1, "token");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the parts"
+    );
+
+    // --- an invoice, through the part that owns invoices -------------------
+    let (_, created) =
+        gate.post("/api/invoices", Some(&t), json!({"customer":"acme-gmbh","currency":"EUR"}));
+    let id = field(&created, "id");
+    assert!(
+        !id.is_empty(),
+        "the invoices part did not accept an invoice, so nothing else can be judged: {created}"
+    );
+
+    // --- lines, through the part that talks to the model -------------------
+    let (_, s) = gate.post(
+        &format!("/api/invoices/{id}/lines/suggest"),
+        Some(&t),
+        json!({
+            "prose": "An afternoon reviewing the billing migration, and notes on what to change.",
+            "total": "10.00",
+            "shares": 3,
+        }),
+    );
+    assert!(
+        !s.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
+    let d = parse(&s);
+    let units: Vec<i64> = d["lines"]
+        .as_array()
+        .map(|a| a.iter().map(|l| l["units"].as_i64().unwrap_or(-1)).collect())
+        .unwrap_or_default();
+    assert_eq!(units.len(), 3, "three shares means three lines: {s}");
+    let total: i64 = units.iter().sum();
+    assert_eq!(
+        total, 1000,
+        "10.00 into three shares still totals 1000 minor units, got {total}: {units:?}"
+    );
+    let mut sorted = units.clone();
+    sorted.sort_by(|a, b| b.cmp(a));
+    assert_eq!(sorted, vec![334, 333, 333], "expected [334, 333, 333]: {units:?}");
+
+    // --- posted, through the part that owns posting ------------------------
+    let (_, p) = gate.with_headers(
+        "POST",
+        &format!("/api/invoices/{id}/post"),
+        Some(&t),
+        &[("idempotency-key", "join-key")],
+        None,
+    );
+    let posted = parse(&p);
+    let (_, stored) = gate.get(&format!("/test/invoice/{id}"), None);
+    let inv = parse(&stored);
+    assert!(
+        posted.get("error").is_none(),
+        "the composed API refused to post an invoice built through its own routes. If this \
+         is nothing_to_post, `copilot` (src/copilot.rs) stored lines somewhere `posting` \
+         (src/posting.rs) does not read. Got: {p}"
+    );
+    assert_eq!(
+        posted["total_units"], 1000,
+        "the posted total is not the allocated total. `copilot` and `posting` disagree about \
+         the invoice's shape: {p} vs {stored}"
+    );
+    let lines = inv["entry"]["lines"].as_array().cloned().unwrap_or_default();
+    let side = |want: &str| -> i64 {
+        lines
+            .iter()
+            .filter(|l| l["side"].as_str() == Some(want))
+            .map(|l| l["amount"].as_i64().unwrap_or(0))
+            .sum()
+    };
+    let (debits, credits) = (side("debit"), side("credit"));
+    assert!(
+        debits == 1000 && credits == 1000,
+        "the ledger entry does not balance against the allocated total: debits {debits}, \
+         credits {credits}, invoice {}",
+        inv["total_units"]
+    );
+
+    // And the retry a real client would make.
+    let (code, _) = gate.with_headers(
+        "POST",
+        &format!("/api/invoices/{id}/post"),
+        Some(&t),
+        &[("idempotency-key", "join-key")],
+        None,
+    );
+    assert_eq!(
+        code, 201,
+        "the retry of a successful posting must answer as the first did (201), got {code}"
+    );
+}

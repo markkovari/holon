@@ -161,3 +161,177 @@ fn an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down() {
         "the provider was down and the report was written anyway — a report with an empty opinion attached: {d}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// The whole triage-assist API: a report taken in, assisted by the model, and the
+/// audit trail proving what the other two parts did.
+///
+/// Ported from `components/triage-assist-domain/e2e.sh`. One model call, like the
+/// assist gate's own — the cost of this gate is what the loop pays per attempt, and
+/// two would double it for nothing.
+///
+/// The trail IS the join. `intake` writes `reports.create` and `assist` writes
+/// `reports.assist`, and the ledger part reads both. A part that invented its own
+/// storage shape or its own event names passes its own gate and fails here.
+///
+/// The subject check is the sharpest of them: every audit event must carry
+/// `principal.subject` — what `authorize` RETURNED — and not the bearer token. A token
+/// in an audit trail is both the wrong value and a credential written to a log, and
+/// the failure names which part wrote it, because a verdict addressed to nobody
+/// cannot be repaired.
+#[test]
+fn the_whole_triage_assist_api_works() {
+    let Some(shim) = Shim::probe("triage-assist/whole") else { return };
+    let mut config = shim.config();
+    // Three accepted reports before the lockout, and the third is this gate's own —
+    // so the limit must be at least 4 for the happy path to survive it.
+    config.push("max-attempts=4".into());
+    config.push("lockout-window=60".into());
+    let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
+    let egress = shim.egress();
+    let Some(gate) = Gate::compose_and_start_with_egress("triage-assist", CRATE, &cfg, &[&egress])
+    else {
+        return;
+    };
+
+    for (iface, why) in [
+        (
+            "ratelimit:guard/limiter",
+            "the composed API must still be counting attempts through the limiter component",
+        ),
+        ("pii:redact/redactor", "the composed API must still be masking through pii-redact"),
+        (
+            "ai:inference/inference",
+            "the composed API must still be reaching the model through ai-inference",
+        ),
+        ("audit:log/recorder", "the composed API must still be recording through audit-log"),
+    ] {
+        gatelib::requires_capability(CRATE, iface, why);
+    }
+
+    const TRACE: &str = "deadbeefdeadbeefdeadbeefdeadbee1";
+    let tp = format!("00-{TRACE}-0000000000000001-01");
+    let t = field(&gate.post("/test/token", None, json!({"subject":"ada"})).1, "token");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the parts"
+    );
+
+    let traced = |method: &str, path: &str, body: Option<Value>| {
+        gate.with_headers(method, path, Some(&t), &[("traceparent", tp.as_str())], body)
+    };
+
+    // --- a report goes all the way through ---------------------------------
+    let (_, resp) = traced(
+        "POST",
+        "/api/reports",
+        Some(json!({
+            "title": "Checkout total is wrong",
+            "body": "off by a cent, mail me at ada@example.test",
+            "component": "billing",
+        })),
+    );
+    let id = field(&resp, "id");
+    assert!(!id.is_empty(), "POST /api/reports returned no id: {resp}");
+
+    let (_, read) = traced("GET", &format!("/api/reports/{id}"), None);
+    assert!(
+        !read.contains("ada@example.test"),
+        "the composed API stored the reporter's email verbatim: {read}"
+    );
+
+    let (_, assist) = traced("POST", &format!("/api/reports/{id}/assist"), None);
+    let a = parse(&assist);
+    let severity = a["severity"].as_str().unwrap_or_default();
+    assert!(["critical", "major", "minor"].contains(&severity), "no usable severity: {assist}");
+    assert!(
+        a["summary"].as_str().unwrap_or_default().trim().len() >= 20,
+        "no usable summary: {assist}"
+    );
+
+    // --- the trail proves what the other two did ---------------------------
+    let events = |gate: &Gate| -> Vec<Value> {
+        let (_, e) = gate.get(&format!("/api/audit?trace={TRACE}"), Some(&t));
+        parse(&e)["events"].as_array().cloned().unwrap_or_default()
+    };
+    let evs = events(&gate);
+    let pairs: Vec<(String, String)> = evs
+        .iter()
+        .map(|e| {
+            (
+                e["event"].as_str().unwrap_or_default().to_string(),
+                e["outcome"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    let has = |name: &str, outcome: &str| pairs.iter().any(|(n, o)| n == name && o == outcome);
+    assert!(
+        has("reports.create", "ok"),
+        "no reports.create/ok in the trail: the intake part did not note an accepted report \
+         under the contract's name. Got {pairs:?}"
+    );
+    assert!(
+        has("reports.assist", "ok"),
+        "no reports.assist/ok in the trail: the assist part did not note the model's answer. \
+         Got {pairs:?}"
+    );
+
+    // Named per part, because a verdict addressed to nobody cannot be repaired.
+    fn owner(name: &str) -> &str {
+        match name {
+            "reports.create" => "intake (src/intake.rs)",
+            "reports.assist" => "assist (src/assist.rs)",
+            other => other,
+        }
+    }
+    let mut wrong: Vec<String> = evs
+        .iter()
+        .filter(|e| e["event"].as_str() != Some("http.request"))
+        .filter(|e| e["subject"].as_str() != Some("ada"))
+        .map(|e| {
+            format!(
+                "    {} wrote subject={:?}",
+                owner(e["event"].as_str().unwrap_or_default()),
+                e["subject"]
+            )
+        })
+        .collect();
+    wrong.sort();
+    wrong.dedup();
+    assert!(
+        wrong.is_empty(),
+        "an audit event carries something other than the principal's subject ('ada'):\n{}\n  \
+         The subject is principal.subject — what `authorize` RETURNED. A bearer token there \
+         is both the wrong value and a credential written into an audit trail.",
+        wrong.join("\n")
+    );
+
+    // --- and the limit is still a limit once everything is wired together --
+    for i in 1..=3 {
+        traced(
+            "POST",
+            "/api/reports",
+            Some(json!({"title": format!("noise {i}"), "body": "b", "component": "web"})),
+        );
+    }
+    let (got, _) = traced(
+        "POST",
+        "/api/reports",
+        Some(json!({"title":"one too many","body":"b","component":"web"})),
+    );
+    assert_eq!(got, 429, "past the limit the composed API must answer 429, got {got}");
+
+    let after = events(&gate);
+    assert!(
+        after.iter().any(|e| {
+            e["event"].as_str() == Some("reports.create")
+                && e["outcome"].as_str() == Some("throttled")
+        }),
+        "a throttled report left no trace — an operator cannot tell a rate limit from an \
+         outage. The intake part refused for the rate limit and noted nothing under the \
+         contract's outcome name."
+    );
+}
