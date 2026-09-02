@@ -453,11 +453,22 @@ the fiction.
   interface an agent cannot reach. Every run sweeps the pool on
   its way out, so it stays bounded without a daemon, and a decomposed run's PARTS
   do all of it too — each on its own goal. → goal 08, ADR-0084
-- **`redis 0.27` will stop compiling.** cargo reports it as containing code a
-  future Rust will reject, and it is the only such dependency in the tree. The fix
-  is a jump to 1.x, which is a major-version API migration of a KV BACKEND against
-  which nothing here runs an integration test — so it is named rather than
-  attempted. `--kv sqlite` and `--kv nats` are the tested paths.
+- ~~**`redis 0.27` will stop compiling.**~~ → **done**: it was the only dependency
+  cargo reported as containing code a future Rust will reject, and the stated blocker
+  was the right one — a major-version migration of a backend nothing exercised is a
+  change nobody can review. So the integration test came first and was made to pass
+  against **0.27**, because a test authored against the new API only proves the new
+  API compiles: five tests against a real redis in docker covering every `KvBackend`
+  method, bucket isolation, `INCRBY` under eight threads, and the compare-and-set
+  through `redis::Script` — the narrowest surface used and the one ADR-0065 exists
+  for. Then **0.27 → 1.5**, which broke exactly one line: `scan_match` now yields
+  `Result` per item, because SCAN is paginated and a page after the first can fail
+  alone. Collected into `Result<Vec<_>, _>` so a mid-scan failure is an error rather
+  than a SHORT key list, which for `list_keys` would read as "this bucket has fewer
+  keys than it does". Same five tests green on 1.5, and the future-incompatibility
+  report is empty. They SKIP when nothing answers, so a machine without redis is
+  unaffected; CI does not run them yet, which wants a service container and is a
+  separate change from proving the backend works. `--kv sqlite` and `--kv nats` are the tested paths.
 - ~~**Decomposed runs leave no trace at all.**~~ → **built**: the `Trace` is
   constructed above the decomposed dispatch and a multi-part run now records
   `run-started`, every part's branches (the part name is in the attempt id, or two

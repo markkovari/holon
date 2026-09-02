@@ -262,7 +262,16 @@ impl KvBackend for RedisKv {
         let mut c = crate::sync::held(&self.conn);
         let prefix = format!("{bucket}{SEP}");
         let pattern = format!("{prefix}*");
-        let keys: Vec<String> = c.scan_match(pattern).context("redis scan")?.collect();
+        // `scan_match` yields `Result` per item as of redis 1.0, because SCAN is
+        // paginated and any page after the first can fail on its own. Collecting into
+        // `Result<Vec<_>, _>` stops at the first failure rather than silently
+        // returning a SHORT key list — which for `list_keys` would read as "the
+        // bucket has fewer keys than it does", the quietest possible wrong answer.
+        let keys: Vec<String> = c
+            .scan_match::<_, String>(pattern)
+            .context("redis scan")?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .context("redis scan page")?;
         Ok(keys.into_iter().map(|k| k.trim_start_matches(&prefix).to_string()).collect())
     }
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
@@ -1106,5 +1115,255 @@ mod tests {
         assert_eq!(NatsKv::safe_key("a/b"), "a_2Fb");
         // The wart, said out loud: `list_keys` hands this back as `with_20space`.
         // Not the original, and not something else's name either.
+    }
+}
+
+#[cfg(test)]
+mod redis_tests {
+    //! The redis backend, against a REAL redis.
+    //!
+    //! Written because `docs/CURRENT.md` named the absence of exactly this as the
+    //! reason the `redis 0.27` future-incompatibility warning was "named rather than
+    //! attempted": a major-version API migration of a backend nothing exercises is a
+    //! change nobody can review. So this comes first, and it is deliberately written
+    //! and made to pass against 0.27 BEFORE the bump — a test authored against the
+    //! new API would only prove the new API compiles.
+    //!
+    //! It SKIPS when nothing answers on the URL, the same shape as every other gate
+    //! here: a machine without redis has broken nothing. To run it for real:
+    //!
+    //!     docker run --rm -d -p 6379:6379 --name comp-redis-test redis:7-alpine
+    //!     cargo test --manifest-path host/Cargo.toml --bin comp-host redis_
+    //!
+    //! CI does not run these yet — that wants a service container, and adding one is
+    //! a separate change from proving the backend works.
+
+    use super::*;
+
+    /// The URL, and whether anything is listening on it.
+    ///
+    /// `REDIS_TEST_URL` so a CI service container or a non-default port needs no code
+    /// change.
+    fn reachable() -> Option<String> {
+        let url = std::env::var("REDIS_TEST_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        match RedisKv::connect(&url) {
+            Ok(_) => Some(url),
+            Err(_) => {
+                eprintln!(
+                    "SKIPPED: no redis at {url} — docker run --rm -d -p 6379:6379 redis:7-alpine"
+                );
+                None
+            }
+        }
+    }
+
+    /// A bucket name unique to this run, so two test binaries against one redis do
+    /// not read each other's keys. Redis is FLAT and shared — unlike sqlite's file
+    /// per test, there is nothing to scope a test but the key itself.
+    fn scratch(tag: &str) -> BucketId {
+        // The same constructor the other backends' tests reach for: a backend is
+        // handed a host-built id, never a guest string — that is the point of the type.
+        BucketId::for_test(&format!(
+            "t{}-{}-{:?}",
+            std::process::id(),
+            tag,
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ))
+    }
+
+    /// Every key this test wrote, gone — a shared store outlives the process.
+    fn wipe(kv: &RedisKv, b: &BucketId) {
+        for k in kv.list_keys(b).unwrap_or_default() {
+            let _ = kv.delete(b, &k);
+        }
+    }
+
+    #[test]
+    fn redis_roundtrips_every_operation() {
+        let Some(url) = reachable() else { return };
+        let kv = RedisKv::connect(&url).expect("connect");
+        let b = scratch("ops");
+
+        assert_eq!(kv.get(&b, "missing").unwrap(), None);
+        assert!(!kv.exists(&b, "missing").unwrap());
+
+        kv.set(&b, "k", b"v1").unwrap();
+        assert_eq!(kv.get(&b, "k").unwrap().as_deref(), Some(&b"v1"[..]));
+        assert!(kv.exists(&b, "k").unwrap());
+
+        // set is an upsert, not an insert — a second write replaces.
+        kv.set(&b, "k", b"v2").unwrap();
+        assert_eq!(kv.get(&b, "k").unwrap().as_deref(), Some(&b"v2"[..]));
+
+        kv.set(&b, "a", b"x").unwrap();
+        let mut keys = kv.list_keys(&b).unwrap();
+        keys.sort();
+        assert_eq!(keys, vec!["a".to_string(), "k".to_string()]);
+
+        kv.delete(&b, "k").unwrap();
+        assert_eq!(kv.get(&b, "k").unwrap(), None);
+        // Deleting something absent is not an error — the guest may retry.
+        kv.delete(&b, "k").unwrap();
+
+        // Bytes, not text: a value that is not valid UTF-8 must survive intact.
+        kv.set(&b, "raw", &[0u8, 159, 146, 150]).unwrap();
+        assert_eq!(kv.get(&b, "raw").unwrap().as_deref(), Some(&[0u8, 159, 146, 150][..]));
+
+        wipe(&kv, &b);
+    }
+
+    #[test]
+    fn redis_buckets_do_not_leak_into_each_other() {
+        let Some(url) = reachable() else { return };
+        let kv = RedisKv::connect(&url).expect("connect");
+        let (alice, bob) = (scratch("alice"), scratch("bob"));
+
+        kv.set(&alice, "secret", b"hers").unwrap();
+        kv.set(&bob, "secret", b"his").unwrap();
+        assert_eq!(kv.get(&alice, "secret").unwrap().as_deref(), Some(&b"hers"[..]));
+        assert_eq!(kv.get(&bob, "secret").unwrap().as_deref(), Some(&b"his"[..]));
+        assert_eq!(kv.list_keys(&alice).unwrap(), vec!["secret".to_string()]);
+
+        kv.delete(&alice, "secret").unwrap();
+        assert_eq!(
+            kv.get(&bob, "secret").unwrap().as_deref(),
+            Some(&b"his"[..]),
+            "deleting one bucket's key removed the other's — the \\x1f namespacing is wrong"
+        );
+
+        wipe(&kv, &alice);
+        wipe(&kv, &bob);
+    }
+
+    #[test]
+    fn redis_increment_counts_from_nothing_and_is_atomic_under_threads() {
+        let Some(url) = reachable() else { return };
+        let kv = RedisKv::connect(&url).expect("connect");
+        let b = scratch("incr");
+
+        assert_eq!(kv.increment(&b, "n", 1).unwrap(), 1, "absent key starts at zero");
+        assert_eq!(kv.increment(&b, "n", 4).unwrap(), 5);
+        // Stored as a decimal string, so `get` agrees with `increment` — the
+        // representation the memory and sqlite backends also promise.
+        assert_eq!(kv.get(&b, "n").unwrap().as_deref(), Some(&b"5"[..]));
+
+        // INCRBY is server-side, so concurrent increments cannot lose an update.
+        // 8 threads x 50 = 400. Each thread gets its own connection: `RedisKv` holds
+        // ONE behind a mutex, which is the documented ceiling, not a race.
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let url = url.clone();
+                let b = b.clone();
+                std::thread::spawn(move || {
+                    let kv = RedisKv::connect(&url).expect("connect");
+                    for _ in 0..50 {
+                        kv.increment(&b, "concurrent", 1).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(
+            kv.get(&b, "concurrent").unwrap().as_deref(),
+            Some(&b"400"[..]),
+            "an increment was lost — INCRBY is not doing its job"
+        );
+
+        wipe(&kv, &b);
+    }
+
+    /// The compare-and-set, which is the operation ADR-0065 exists for and the one a
+    /// version bump is most likely to break: it goes through `redis::Script`, the
+    /// narrowest API surface used here.
+    #[test]
+    fn redis_cas_guards_a_write_and_reports_what_it_missed() {
+        let Some(url) = reachable() else { return };
+        let kv = RedisKv::connect(&url).expect("connect");
+        let b = scratch("cas");
+
+        assert_eq!(kv.get_revision(&b, "k").unwrap(), None, "absent has no revision");
+
+        // expected == 0 means "must not exist yet", so create and update are one call.
+        let rev1 = match kv.set_if_revision(&b, "k", b"first", 0).unwrap() {
+            Cas::Committed(r) => r,
+            Cas::Conflict(r) => panic!("a create against revision 0 conflicted at {r}"),
+        };
+        assert_eq!(kv.get_revision(&b, "k").unwrap(), Some((rev1, b"first".to_vec())));
+
+        // A second create must NOT land, and must report the revision actually held.
+        match kv.set_if_revision(&b, "k", b"again", 0).unwrap() {
+            Cas::Conflict(r) => assert_eq!(r, rev1, "the conflict reported the wrong revision"),
+            Cas::Committed(_) => panic!("creating an existing key was allowed — the guard is off"),
+        }
+        assert_eq!(
+            kv.get_revision(&b, "k").unwrap().unwrap().1,
+            b"first".to_vec(),
+            "the refused write changed the value anyway"
+        );
+
+        // At the right revision it lands and the revision moves.
+        let rev2 = match kv.set_if_revision(&b, "k", b"second", rev1).unwrap() {
+            Cas::Committed(r) => r,
+            Cas::Conflict(r) => panic!("a guarded write at the current revision {r} conflicted"),
+        };
+        assert!(rev2 > rev1, "the revision did not move: {rev1} -> {rev2}");
+        assert_eq!(kv.get_revision(&b, "k").unwrap(), Some((rev2, b"second".to_vec())));
+
+        // A stale revision is refused.
+        match kv.set_if_revision(&b, "k", b"stale", rev1).unwrap() {
+            Cas::Conflict(r) => assert_eq!(r, rev2),
+            Cas::Committed(_) => panic!("a stale revision was accepted — the lost update is back"),
+        }
+
+        // A PLAIN set must also move the revision, or it slips past a guard silently
+        // — the property the trait doc calls out.
+        kv.set(&b, "k", b"plain").unwrap();
+        let after = kv.get_revision(&b, "k").unwrap().expect("still there");
+        assert!(
+            after.0 > rev2,
+            "a plain `set` left the revision at {rev2}, so a guarded write holding a \
+             stale revision would now be accepted"
+        );
+
+        wipe(&kv, &b);
+    }
+
+    /// Only one writer wins per revision, under real contention.
+    #[test]
+    fn redis_cas_lets_exactly_one_writer_win() {
+        let Some(url) = reachable() else { return };
+        let kv = RedisKv::connect(&url).expect("connect");
+        let b = scratch("race");
+        kv.set_if_revision(&b, "k", b"0", 0).unwrap();
+        let base = kv.get_revision(&b, "k").unwrap().unwrap().0;
+
+        let wins: Vec<bool> = (0..8)
+            .map(|i| {
+                let url = url.clone();
+                let b = b.clone();
+                std::thread::spawn(move || {
+                    let kv = RedisKv::connect(&url).expect("connect");
+                    matches!(
+                        kv.set_if_revision(&b, "k", format!("w{i}").as_bytes(), base).unwrap(),
+                        Cas::Committed(_)
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|t| t.join().unwrap())
+            .collect();
+
+        assert_eq!(
+            wins.iter().filter(|w| **w).count(),
+            1,
+            "exactly one write may land against one revision; {} did",
+            wins.iter().filter(|w| **w).count()
+        );
+
+        wipe(&kv, &b);
     }
 }
