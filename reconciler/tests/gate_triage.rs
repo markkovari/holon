@@ -15,7 +15,7 @@
 //!     "no rows at all".
 
 mod gatelib;
-use gatelib::{field, Gate};
+use gatelib::{field, requires_capability, Gate};
 use serde_json::{json, Value};
 
 const CRATE: &str = "triage-domain";
@@ -320,4 +320,174 @@ fn digest_counts_only_what_occurs() {
     let (_, empty) = gate.get("/api/digest.csv?day=1999-01-01", None);
     let r = rows(&empty);
     assert!(r.len() == 1 && r[0][0] == "id", "an empty day is the header alone: {r:?}");
+}
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// One report driven the whole way through all three parts.
+///
+/// Ported from `components/triage-domain/e2e.sh`, the last of this app's four gates
+/// to move. The three part gates came over in #180-#189; the nine COMPOSITION gates
+/// did not, and nothing noticed because CI globbed `components/*/e2e-*.sh` — with a
+/// hyphen — which matches the part gates and none of the `e2e.sh` files. #201 widened
+/// the glob and found this one had been failing since the day after it was written.
+///
+/// The chain is why this goal has three parts and not two:
+///
+///   intake writes it -> workflow moves it and assigns severity -> digest counts it
+///
+/// `digest` can only be right if `intake` stored the contract's shape and `workflow`
+/// updated the document rather than only the fsm instance. Each of those is a
+/// plausible local success that shows up nowhere until the halves meet.
+///
+/// THE DAY COMES FROM THE COMPONENT. The shell version hardcoded `DAY=2026-08-17`,
+/// its authoring date, while `intake` stamps `reported_at` from the store's own
+/// `created` because the world imports no wall clock. It agreed with the app for one
+/// day. The part gate never caught it: `e2e-digest.sh` reads the FIXTURE, whose
+/// `reported_at` is a literal that never moves, so only the composition went through
+/// the clock. Asking the component keeps that fixed by construction here.
+#[test]
+fn the_whole_triage_api_works() {
+    let Some(gate) = start() else { return };
+
+    // All three capabilities, in one place: a candidate that dropped one fails here
+    // even if the part that owns it was never the one judged.
+    requires_capability(CRATE, "pii:redact/redactor", "intake must mask the body with pii:redact");
+    requires_capability(
+        CRATE,
+        "fsm:workflow/engine",
+        "workflow must validate moves with the fsm engine",
+    );
+    requires_capability(CRATE, "csv:codec/codec", "digest must format the CSV with csv:codec");
+
+    let (_, created) = gate.post(
+        "/api/reports",
+        None,
+        json!({
+            "title": "Totals drift, badly",
+            "body": "ping me on +1 555 010 0199",
+            "component": "billing",
+        }),
+    );
+    let id = field(&created, "id");
+    assert!(!id.is_empty(), "intake did not create a report: {created}");
+
+    // The day the COMPONENT stamped, not a constant.
+    let (_, doc) = gate.get(&format!("/api/reports/{id}"), None);
+    let reported = parse(&doc)["reported_at"].as_str().unwrap_or_default().to_string();
+    let day: String = reported.chars().take(10).collect();
+    assert_eq!(day.len(), 10, "intake did not stamp a usable reported_at: {doc}");
+
+    // A phone number is PII too, so intake masks more than emails.
+    //
+    // ELEVEN digits with a `+`, not `555-0100`. The scanner wants 10-15 digits and
+    // either a leading `+` or a NANP-looking span, so a 7-digit local number is not a
+    // phone number by its definition — asserting on one would have this gate "prove"
+    // that masking was broken when it was working exactly as specified.
+    assert!(!doc.contains("0199"), "the reporter's phone number was stored verbatim: {doc}");
+    assert!(
+        doc.contains("[PHONE]"),
+        "the phone number was not masked with pii:redact's placeholder: {doc}"
+    );
+
+    // workflow moves it and assigns a severity.
+    let (status, triaged) = gate.post(
+        &format!("/api/reports/{id}/transition"),
+        None,
+        json!({"event": "triage", "severity": "high"}),
+    );
+    assert_eq!(
+        status, 200,
+        "workflow could not triage a report intake had just created: {triaged}"
+    );
+
+    // The queue is workflow's view; it must contain the report intake wrote.
+    let (_, queue) = gate.get("/api/queue", None);
+    let q = parse(&queue);
+    let entry = q["queue"]
+        .as_array()
+        .and_then(|a| a.iter().find(|r| r["id"].as_str() == Some(id.as_str())))
+        .unwrap_or_else(|| panic!("workflow's queue is missing intake's report: {queue}"));
+    assert_eq!(entry["severity"], "high", "the queue lost the severity workflow assigned: {queue}");
+
+    // --- digest sees what the other two did --------------------------------
+    //
+    // The assertion that needs all three parts to agree. `open_high` counts reports
+    // with severity high that are not closed — a number that exists only because
+    // intake wrote the document, workflow put `high` on it, and digest read it back.
+    let (_, body) = gate.get(&format!("/api/digest?day={day}"), None);
+    let d = parse(&body);
+    assert!(
+        d["open_high"].as_i64().unwrap_or(0) >= 1,
+        "a high-severity open report was triaged; the digest missed it: {body}"
+    );
+    assert!(
+        d["by_component"]["billing"].as_i64().unwrap_or(0) >= 1,
+        "the digest does not reflect the triaged report: {body}"
+    );
+    assert!(
+        d["by_state"]["triaged"].as_i64().unwrap_or(0) >= 1,
+        "workflow moved a report to triaged and the document did not follow: {body}"
+    );
+
+    // And the CSV carries the severity workflow assigned, in the row for that report.
+    let (_, csv) = gate.get(&format!("/api/digest.csv?day={day}"), None);
+    let parsed = rows(&csv);
+    assert_eq!(
+        parsed[0],
+        vec!["id", "title", "component", "state", "severity"],
+        "the CSV header is not the contract's: {csv}"
+    );
+    let row = parsed[1..]
+        .iter()
+        .find(|r| r.first().map(String::as_str) == Some(id.as_str()))
+        .unwrap_or_else(|| panic!("the report is missing from the CSV: {csv}"));
+    assert_eq!(row.len(), 5, "the row lost a column: {csv}");
+    assert_eq!(row[3], "triaged", "the CSV disagrees about the state: {csv}");
+    assert_eq!(row[4], "high", "the CSV does not carry what workflow assigned: {csv}");
+    // The comma-bearing title still has to survive alongside it.
+    let titles: Vec<&str> = parsed[1..].iter().map(|r| r[1].as_str()).collect();
+    assert!(
+        titles.contains(&"Totals drift, badly"),
+        "a comma in a title must be quoted, not split: {titles:?}"
+    );
+
+    // --- closing takes it out of the queue, and the digest agrees ----------
+    for event in ["fix", "close"] {
+        let (status, out) =
+            gate.post(&format!("/api/reports/{id}/transition"), None, json!({"event": event}));
+        assert_eq!(status, 200, "`{event}` was refused: {out}");
+    }
+
+    let (_, queue) = gate.get("/api/queue", None);
+    let after = parse(&queue);
+    let ids: Vec<&str> = after["queue"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|r| r["id"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        !ids.contains(&id.as_str()),
+        "a closed report is still in the queue — closed reports are not queued: {queue}"
+    );
+
+    let (_, body) = gate.get(&format!("/api/digest?day={day}"), None);
+    assert!(
+        parse(&body)["by_state"]["closed"].as_i64().unwrap_or(0) >= 1,
+        "the digest still counts the closed report as open_high: {body}"
+    );
+
+    // A closed report no longer blocks a new one with the same title+component: the
+    // bug came back. Intake's rule, checked here because it depends on workflow
+    // having closed it — neither part can assert this alone.
+    let (status, again) = gate.post(
+        "/api/reports",
+        None,
+        json!({"title": "Totals drift, badly", "body": "again", "component": "billing"}),
+    );
+    assert_eq!(
+        status, 201,
+        "a closed report must not block a new report with the same title: {again}"
+    );
 }

@@ -308,3 +308,138 @@ fn reports_csv_and_summary() {
     assert_eq!(s["by_vet"], json!({"vet-a": 2, "vet-b": 1}), "by_vet: {sum}");
     assert_eq!(s["by_species"], json!({"dog": 2, "cat": 1}), "by_species: {sum}");
 }
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// The whole clinic, driven the way CONTRACT.md describes it.
+///
+/// Ported from `components/clinic-domain/e2e.sh`, the fifth and last of this app's
+/// gates to move. The four part gates came over in #180-#189; the composition gates
+/// did not, and CI never ran them either — its loop globbed
+/// `components/*/e2e-*.sh`, with a hyphen, which matches the part gates and none of
+/// the `e2e.sh` files.
+///
+/// This is THE JOIN, and it is what the gate is for: the four parts share one
+/// component and one store, so a report has to see visits the visits half wrote, and
+/// a search has to find a pet the owners half created. Each half's own gate can only
+/// prove its half; nothing but this proves they add up to a clinic.
+///
+/// Dates here are INPUT, not derived — the visits are booked AT `2026-09-01` and
+/// queried for that day, so the app stores what it was given and the gate is
+/// date-independent. That is the opposite of the trap `triage`'s composition gate
+/// fell into, where `reported_at` came from the store's own clock and a hardcoded day
+/// made the gate correct for exactly one day.
+#[test]
+fn the_whole_clinic_works() {
+    let Some(gate) = start() else { return };
+    const DAY: &str = "2026-09-01";
+
+    // --- owners and pets ---------------------------------------------------
+    let (_, o) = gate.post("/api/owners", None, json!({"name":"Ada","email":"ada@example.test"}));
+    let owner = field(&o, "id");
+    assert!(!owner.is_empty(), "POST /api/owners returned no id");
+    let (c, _) = gate.get(&format!("/api/owners/{owner}"), None);
+    assert_eq!(c, 200, "the owner does not read back");
+    let (c, _) = gate.post("/api/owners", None, json!({"name":"","email":"x@y"}));
+    assert_eq!(c, 400, "an empty name is a 400");
+    let (c, _) = gate.post("/api/owners", None, json!({"name":"Bo","email":"nope"}));
+    assert_eq!(c, 400, "an email without @ is a 400");
+    let (c, _) = gate.get("/api/owners/nosuch", None);
+    assert_eq!(c, 404, "an unknown owner is a 404");
+
+    let (_, p) = gate.post(
+        &format!("/api/owners/{owner}/pets"),
+        None,
+        json!({"name":"Rex","species":"dog","born":"2020-01-01"}),
+    );
+    let pet = field(&p, "id");
+    assert!(!pet.is_empty(), "POST pets returned no id");
+    let (c, _) = gate.post(
+        &format!("/api/owners/{owner}/pets"),
+        None,
+        json!({"name":"X","species":"dragon","born":"2020-01-01"}),
+    );
+    assert_eq!(c, 400, "an unknown species is a 400");
+    let (c, _) = gate.post(
+        "/api/owners/nosuch/pets",
+        None,
+        json!({"name":"X","species":"cat","born":"2020-01-01"}),
+    );
+    assert_eq!(c, 404, "a pet for an unknown owner is a 404");
+    let (_, found) = gate.get("/api/owners?q=ada", None);
+    assert!(found.contains(&owner), "search by name does not find the owner: {found}");
+    let (_, pets) = gate.get(&format!("/api/owners/{owner}/pets"), None);
+    assert!(pets.contains(&pet), "the owner's pets do not list: {pets}");
+
+    // --- visits, and the rule a compiler cannot check ----------------------
+    let visit = |vet: &str, at: &str, minutes: u32| json!({"pet_id": pet, "vet": vet, "start": format!("{DAY}T{at}"), "minutes": minutes});
+    let (_, v) = gate.post("/api/visits", None, visit("vet-a", "09:00:00Z", 30));
+    let v1 = field(&v, "id");
+    assert!(!v1.is_empty(), "POST /api/visits returned no id");
+
+    let (c, _) = gate.post("/api/visits", None, visit("vet-a", "09:15:00Z", 30));
+    assert_eq!(c, 409, "an overlapping visit for the same vet must be a 409");
+    let (c, _) = gate.post("/api/visits", None, visit("vet-a", "09:30:00Z", 30));
+    assert_eq!(c, 201, "touching at the boundary is not an overlap");
+    let (c, _) = gate.post("/api/visits", None, visit("vet-b", "09:15:00Z", 30));
+    assert_eq!(c, 201, "a different vet at the same time is fine");
+    let (c, _) = gate.post("/api/visits", None, visit("vet-a", "11:00:00Z", 45));
+    assert_eq!(c, 400, "45 minutes is not one of 15/30/60");
+    let (c, _) = gate.post(
+        "/api/visits",
+        None,
+        json!({"pet_id":"nosuch","vet":"vet-a","start":format!("{DAY}T14:00:00Z"),"minutes":30}),
+    );
+    assert_eq!(c, 404, "a visit for an unknown pet is a 404");
+
+    let (_, listed) = gate.get(&format!("/api/visits?vet=vet-a&day={DAY}"), None);
+    assert!(listed.contains(&v1), "the day's visits do not list: {listed}");
+
+    let (c, _) = gate.delete(&format!("/api/visits/{v1}"), None);
+    assert_eq!(c, 204, "DELETE of a visit is a 204");
+    let (c, _) = gate.post("/api/visits", None, visit("vet-a", "09:00:00Z", 30));
+    assert_eq!(c, 201, "a deleted visit must free its slot");
+
+    // --- staff access, and search behind it --------------------------------
+    let (c, _) = gate.post(
+        "/api/staff",
+        None,
+        json!({"email":"vet@clinic.test","password":"correct-horse"}),
+    );
+    assert_eq!(c, 201, "a staff account is created");
+    let (_, l) = gate.post(
+        "/api/staff/login",
+        None,
+        json!({"email":"vet@clinic.test","password":"correct-horse"}),
+    );
+    let token = field(&l, "token");
+    assert!(!token.is_empty(), "a correct login returned no token");
+    let (c, _) = gate.get("/api/pets/search?q=Rex", None);
+    assert_eq!(c, 401, "search without a token is a 401");
+    let (_, hits) = gate.get("/api/pets/search?q=Rex", Some(&token));
+    assert!(hits.contains(&pet), "search does not find the pet the owners half created: {hits}");
+
+    // --- reports over what the visits half booked --------------------------
+    let (_, csv) = gate.get(&format!("/api/reports/visits.csv?day={DAY}"), None);
+    assert!(
+        csv.lines().next().unwrap_or_default().starts_with("id,pet_id,pet_name,vet,start,minutes"),
+        "the CSV report has no header: {csv}"
+    );
+    assert!(csv.contains("vet-b"), "the report does not show the visits that were booked: {csv}");
+
+    let (_, sum) = gate.get(&format!("/api/reports/summary?day={DAY}"), None);
+    assert!(sum.contains("\"by_species\""), "the summary has no by_species: {sum}");
+    let s: Value = serde_json::from_str(&sum).unwrap_or(Value::Null);
+    // Three visits survive the day: two for vet-a (one rebooked after a delete) and
+    // one for vet-b.
+    assert_eq!(s["visits"], 3, "the summary does not count what the visits half booked: {sum}");
+    assert_eq!(
+        s["by_vet"]["vet-b"], 1,
+        "the summary does not count what the visits half booked: {sum}"
+    );
+
+    let (c, _) = gate.get("/api/nope", None);
+    assert_eq!(c, 404, "an unknown route is a 404");
+}

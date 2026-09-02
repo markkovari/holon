@@ -15,7 +15,7 @@
 //! not come due yet is indistinguishable from one that never will.
 
 mod gatelib;
-use gatelib::{field, Gate, Sink};
+use gatelib::{field, Gate, Shim, Sink};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -177,4 +177,174 @@ fn a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered() {
 
     let (c, _) = gate.json("POST", "/api/dead-letters/nope/replay", Some(&t), None);
     assert_eq!(c, 404, "replaying something the outbox does not know must be 404");
+}
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// The whole support desk: a ticket, a drafted reply, and what actually arrives at
+/// the customer's endpoint.
+///
+/// Ported from `components/support-desk-domain/e2e.sh`. It lives beside the courier
+/// gate because it needs the same two things that one does — a `Sink` for the far end
+/// and a real model on the shim — and because everything it asserts about delivery is
+/// already spelled out in this file's header.
+///
+/// Two things only the composition can prove:
+///
+///   * the reply must NOT reach the far end before a delivery pass runs. A part that
+///     sends inline passes its own gate and defeats the entire point of the app.
+///   * what ARRIVES must be the draft that was STORED, field by field. `reply` writes
+///     the payload and `courier` reads it, and nothing else in the app would notice
+///     if they disagreed about a field name.
+///
+/// The fields are compared individually and not as a re-serialised blob, and the
+/// shell version carries the scar: `json.dumps` escapes non-ASCII by default, so a
+/// draft containing an em dash — which a model writes constantly — appears as
+/// `—` in the dump and no substring of the original is found in it. That failed
+/// a run in which all three parts were correct.
+#[test]
+fn the_whole_support_desk_works() {
+    let Some(shim) = Shim::probe("support/whole") else { return };
+    let sink = Sink::start();
+    let mut config = shim.config();
+    for extra in ["reply-budget=5", "reply-period-secs=3600", "max-attempts=3", "base-backoff=1"] {
+        config.push(extra.into());
+    }
+    let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
+    let (sink_egress, shim_egress) = (sink.egress(), shim.egress());
+    let Some(gate) =
+        Gate::compose_and_start_with_egress("support", CRATE, &cfg, &[&sink_egress, &shim_egress])
+    else {
+        return;
+    };
+    // The readiness probe is itself a delivery, so the log starts clean afterwards.
+    sink.forget();
+
+    for (iface, why) in [
+        ("quota:meter/meter", "the composed API must still be metering drafts"),
+        ("ai:inference/inference", "the composed API must still be drafting through ai-inference"),
+        (
+            "outbox:dispatch/queue",
+            "the composed API must still be enqueuing rather than sending inline",
+        ),
+        (
+            "notify:dispatch/dispatcher",
+            "the composed API must still have something that actually sends",
+        ),
+        (
+            "session:store/store",
+            "the composed API must still be checking CSRF against the session that issued it",
+        ),
+    ] {
+        gatelib::requires_capability(CRATE, iface, why);
+    }
+
+    let (_, tok) = gate.post("/test/token", None, json!({"subject":"agent","tenant":"acme"}));
+    let t = field(&tok, "token");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the parts"
+    );
+    let (_, sess) = gate.post("/test/session", None, json!({}));
+    let (sid, csrf) = (field(&sess, "session"), field(&sess, "csrf"));
+
+    // --- a ticket, through the part that owns tickets ----------------------
+    let (_, created) = gate.post(
+        "/api/tickets",
+        Some(&t),
+        json!({
+            "subject": "Charged twice this month",
+            "body": "There are two invoices dated the same day.",
+            "customer": format!("webhook:{}", sink.url()),
+        }),
+    );
+    let id = field(&created, "id");
+    assert!(
+        !id.is_empty(),
+        "the tickets part did not accept a ticket, so nothing else can be judged: {created}"
+    );
+
+    // --- a reply, through the part that drafts -----------------------------
+    let (_, r) = gate.with_headers(
+        "POST",
+        &format!("/api/tickets/{id}/reply"),
+        Some(&t),
+        &[("x-session", sid.as_str()), ("x-csrf", csrf.as_str())],
+        None,
+    );
+    let event = field(&r, "event");
+    assert!(
+        !event.is_empty(),
+        "the reply part drafted nothing usable, so there is nothing to deliver: {r}"
+    );
+    assert_eq!(
+        sink.deliveries(),
+        0,
+        "the reply reached the far end before any delivery pass ran — the reply part is \
+         sending inline, which is the failure this app exists to prevent"
+    );
+
+    // --- delivered, through the part that sends ----------------------------
+    let (_, body) = gate.post("/api/deliver", Some(&t), json!({}));
+    assert!(
+        !body.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
+    let d = parse(&body);
+    assert_eq!(
+        d["claimed"], 1,
+        "the courier claimed nothing. If the reply part enqueued under a different topic \
+         than the contract's support.reply, the two never meet: {body}"
+    );
+    assert_eq!(
+        d["delivered"], 1,
+        "the sink answered 200 and this was not counted as delivered: {body}"
+    );
+    assert_eq!(
+        sink.deliveries(),
+        1,
+        "the reply did not reach the far end exactly once (saw {} arrivals)",
+        sink.deliveries()
+    );
+
+    // --- THE join assertion ------------------------------------------------
+    //
+    // What arrived is what the customer should read, which means the two parts agreed
+    // on every field of a payload neither of them shows anyone.
+    let arrivals = sink.arrivals();
+    let arrival = arrivals.first().expect("nothing arrived at the far end at all");
+    let arrived = arrival.body.trim();
+    assert!(
+        !arrived.is_empty(),
+        "a request arrived at the far end with an EMPTY body — the reply never left"
+    );
+    let payload: Value = serde_json::from_str(arrived).unwrap_or_else(|e| {
+        panic!("what arrived at the far end is not JSON ({e}): {:.200}", arrived)
+    });
+    assert!(payload.is_object(), "what arrived is not a JSON object: {payload}");
+
+    let (_, stored) = gate.get(&format!("/test/ticket/{id}"), None);
+    let ticket = parse(&stored);
+    let drafted = ticket["reply"]["text"].as_str().unwrap_or_default().trim().to_string();
+    assert!(!drafted.is_empty(), "the ticket has no stored draft to compare against: {stored}");
+
+    let arrived_body = payload["body"].as_str().unwrap_or_default().trim();
+    assert_eq!(
+        arrived_body, drafted,
+        "what arrived at the customer's endpoint is not the draft that was stored. `reply` \
+         writes the payload and `courier` reads it, and nothing else in the app would notice \
+         if they disagreed about a field name.\n  stored:  {:.160?}\n  arrived: {:.160?}",
+        drafted, arrived_body
+    );
+    assert!(
+        payload["subject"].as_str().unwrap_or_default().contains("Charged twice"),
+        "the subject did not survive the trip: {:?}",
+        payload["subject"]
+    );
+    assert!(
+        !payload["ticket"].as_str().unwrap_or_default().is_empty(),
+        "the payload must carry the ticket it answers: {payload}"
+    );
 }

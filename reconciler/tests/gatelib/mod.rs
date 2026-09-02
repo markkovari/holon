@@ -785,6 +785,23 @@ impl MailSink {
     pub fn count_containing(&self, needle: &str) -> usize {
         self.messages.lock().expect("the mailbox").iter().filter(|m| m.contains(needle)).count()
     }
+
+    /// The delivered messages that contain `needle`, whole.
+    ///
+    /// `count_containing` answers "did one arrive"; this answers "and was it the right
+    /// one". Two separate counts cannot: `count_containing(address) > 0` and
+    /// `count_containing(subject) > 0` both pass when the address is in one message
+    /// and the subject in another, which is exactly the mix-up a fan-out produces.
+    /// `mail_find` in the shell returned the matching message for the same reason.
+    pub fn messages_containing(&self, needle: &str) -> Vec<String> {
+        self.messages
+            .lock()
+            .expect("the mailbox")
+            .iter()
+            .filter(|m| m.contains(needle))
+            .cloned()
+            .collect()
+    }
 }
 
 /// `comp-mailrelay`, the HTTP-to-SMTP bridge the component actually posts to.

@@ -147,3 +147,147 @@ fn a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model() {
         published[&linked]
     );
 }
+
+// ---------------------------------------------------------------------------
+// the composition — the gate no single part can pass
+// ---------------------------------------------------------------------------
+
+/// The whole moderation API: a rule written, an item submitted, a review decided,
+/// and the outcome readable on the bus and in the queue.
+///
+/// Ported from `components/moderation-domain/e2e.sh`. It lives beside the verdict
+/// gate rather than in `gate_moderation.rs` because it needs the same thing that one
+/// does — a real model on the shim — and `gate_moderation.rs` is explicitly the file
+/// for the two gates that need nothing. Skips loudly without a shim, which is why CI
+/// classifies it the same way it classified the shell version.
+///
+/// What only the composition can prove: the CONTENT here is benign, so a model left
+/// to itself would allow it. The rule denies it because of who wrote it. That gap is
+/// the join — three parts agreeing on the item's shape, on the attribute names, and
+/// on who has the last word. Each part's own gate can see its own half of that and
+/// none of them can see the disagreement.
+///
+/// `author` rather than `has_link` in the rule, deliberately: the fixture's own rule
+/// is about links, so a part that depends on the fixture instead of on what was just
+/// written through `/api/rules` fails here rather than passing by luck.
+#[test]
+fn the_whole_moderation_api_works() {
+    let Some(shim) = Shim::probe("moderation/whole") else { return };
+    let mut config = shim.config();
+    config.push("max-attempts=10".into());
+    config.push("lockout-window=60".into());
+    let cfg: Vec<&str> = config.iter().map(String::as_str).collect();
+    let egress = shim.egress();
+    let Some(gate) =
+        Gate::compose_and_start_with_egress("moderation", "moderation-domain", &cfg, &[&egress])
+    else {
+        return;
+    };
+
+    for (iface, why) in [
+        (
+            "ratelimit:guard/limiter",
+            "the composed API must still be counting submissions through the limiter",
+        ),
+        (
+            "ai:inference/inference",
+            "the composed API must still be asking the model through ai-inference",
+        ),
+        ("policy:guard/guard", "the composed API must still be deciding through the policy engine"),
+        ("event:bus/bus", "the composed API must still be publishing what it decided"),
+    ] {
+        gatelib::requires_capability("moderation-domain", iface, why);
+    }
+
+    let t = field(&gate.post("/test/token", None, json!({"subject":"ada"})).1, "token");
+    assert!(
+        !t.is_empty(),
+        "POST /test/token returned no token — the scaffold is broken, not the parts"
+    );
+
+    // --- a rule, written through the part that owns rules ------------------
+    let rules = json!({"rules":[{
+        "id":"deny-ada","action":"publish","effect":"deny","priority":1,
+        "conditions":[{"left":"resource.author","op":"eq","right":"ada"}],
+    }]});
+    let (got, _) = gate.post("/api/rules", Some(&t), rules);
+    assert_eq!(
+        got, 204,
+        "the queue part did not accept a rule set ({got}), so precedence cannot be judged"
+    );
+
+    // --- an item, submitted through the part that owns submission ----------
+    let (_, submitted) = gate.post(
+        "/api/items",
+        Some(&t),
+        json!({"text":"a perfectly ordinary message with nothing wrong with it"}),
+    );
+    let id = field(&submitted, "id");
+    assert!(
+        !id.is_empty(),
+        "the intake part did not accept an item, so nothing else can be judged: {submitted}"
+    );
+
+    // --- reviewed through the part that owns review ------------------------
+    let (_, body) = gate.post(&format!("/api/items/{id}/review"), Some(&t), json!({}));
+    assert!(
+        !body.trim().is_empty(),
+        "the route answered an empty body — it is not implemented, or it trapped"
+    );
+    let d = parse(&body);
+    assert!(
+        d.get("error").is_none(),
+        "the composed API refused a review of an item submitted through the real route. If \
+         this is not_found, `intake` (src/intake.rs) and `verdict` (src/verdict.rs) disagree \
+         about the `items` collection or its shape. Got: {body}"
+    );
+    assert_eq!(
+        d["policy_rule"], "deny-ada",
+        "the rule written through /api/rules did not decide this review. If policy_rule is \
+         empty, `queue` (src/queue.rs) wrote rules the engine does not hold, or `verdict` \
+         (src/verdict.rs) passed target attributes under different names than the contract's \
+         `author`/`has_link`/`model_label`. Got: {body}"
+    );
+    assert_eq!(
+        d["final"], "blocked",
+        "a deny rule that matched means blocked whatever the model said: {body}"
+    );
+    let said = d["model_said"].as_str().unwrap_or_default();
+    assert!(
+        ["allow", "flag", "block"].contains(&said),
+        "the model's own label must be recorded: {body}"
+    );
+
+    // --- and the decision is readable through the part that owns the bus ---
+    let (_, evs) = gate.get("/api/events", Some(&t));
+    let events = parse(&evs)["events"].as_array().cloned().unwrap_or_default();
+    let found = events
+        .iter()
+        .find(|e| e["payload"]["item"].as_str() == Some(id.as_str()))
+        .unwrap_or_else(|| {
+            panic!(
+                "the review was decided but `queue`'s /api/events cannot see it. Either \
+                 `verdict` published to a different topic than the contract's \
+                 moderation.decided, or `queue` polls a different one. Events seen: {evs}"
+            )
+        });
+    assert_eq!(
+        found["payload"]["final"], "blocked",
+        "the published outcome disagrees with the decision: {found}"
+    );
+
+    // The queue reflects it too: blocked, and no longer pending.
+    let ids = |body: &str| -> Vec<String> {
+        parse(body)["items"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|i| i["id"].as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    let (_, blocked) = gate.get("/api/queue?state=blocked", Some(&t));
+    assert!(
+        ids(&blocked).contains(&id),
+        "a blocked item must appear under state=blocked: {blocked}"
+    );
+    let (_, pending) = gate.get("/api/queue", Some(&t));
+    assert!(!ids(&pending).contains(&id), "a decided item must leave the pending queue: {pending}");
+}
