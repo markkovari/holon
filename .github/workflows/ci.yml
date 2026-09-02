@@ -194,106 +194,46 @@ jobs:
       # them. Every one was wrong. Each dependency only became visible when it was
       # REMOVED." Re-run with nats-server and surreal off PATH and comp-host moved
       # aside, `checks` passes and the other seven panic in `fleet.rs`.
-      # 26 END-TO-END GATES, 72 SECONDS.
+      # THE END-TO-END GATES ARE RUST, AND THIS STEP IS GONE.
       #
-      # `components/*/e2e-*.sh` are the fitness gates the goal loop judges a run
-      # with. 53 scripts, 5,117 lines, and CI ran NONE of them — so an application
-      # could break on a pull request and everything here stayed green. They were
-      # left out because the note above says the integration suites "spawn
-      # nats-server, and several want SurrealDB", which is true of the reconciler
-      # suites and NOT true of these.
+      # There used to be a loop here running `components/*/e2e*.sh` — 41 shell gates,
+      # 5,235 lines, needing `cargo component build`, `wasm-tools`, `python3`,
+      # `comp-plug` on a path, `comp-field`, and `comp-host` via COMP_HOST. Every one
+      # of them is now a `#[test]` in `reconciler/tests/gate_*.rs`, run by the step
+      # below with the rest of the suites, and the scripts are deleted.
       #
-      # Measured the way this file insists on, by removal rather than by reading:
-      # nats-server and surreal off PATH, and all 31 `e2e-*` gates run. 26 passed in
-      # 72 seconds.
+      # The history is worth keeping because each line of it cost a debugging session:
       #
-      # Some are skipped, and each names its own reason by calling a helper that needs
-      # a service: `gate_shim_config` wants a model on :8787, and anything matching
-      # `_start_mail` wants a real SMTP server. That is read off the script rather than
-      # kept as a list, so a gate that starts or stops needing one classifies itself.
+      #   * CI ran NONE of these for a long time, so an application could break on a
+      #     pull request and everything stayed green. They were assumed to need
+      #     services they did not.
+      #   * the loop globbed `e2e-*.sh` — with a hyphen — which matched the 31 PART
+      #     gates and none of the ten `e2e.sh` COMPOSITION gates, the only ones that
+      #     judge the parts together. One of those had been failing since the day
+      #     after it was written and nothing noticed (#201).
+      #   * `comp-field` was added to `gate-lib.sh` on a branch cut before the gate
+      #     step existed, so its own CI ran no gate and it merged green, leaving main
+      #     with 21 of 25 gates failing on "no comp-field". A PR that cannot exercise
+      #     the step it breaks is a PR that passes for the wrong reason.
+      #   * `e2e-reminders` and `notify-probe/e2e.sh` wanted MailHog, which is
+      #     archived, predates Go modules and will not install on this runner — so
+      #     both were skipped here and the whole notification fan-out was a local-only
+      #     check. `gatelib::MailSink` is a pure-Rust SMTP server, so the ported
+      #     versions run.
       #
-      # The mail pattern is a SHAPE and not a name, and it used to be the literal
-      # `events_start_mail`. That covered every gate the old `e2e-*.sh` glob matched
-      # and missed `notify-probe/e2e.sh`, which the widened glob below now includes and
-      # which calls `notify_start_mail` — the same dependency under a per-app name. It
-      # failed this job once with `no MailHog at /home/runner/go/bin/MailHog`. Matching
-      # the suffix means the next app that grows a mailbox helper classifies itself,
-      # which is what the paragraph above claims and what a literal list cannot do.
+      # What the Rust gates still need is two binaries and nothing else: `comp-host`
+      # to run what they compose, and `comp-mailrelay` for the mail ones. They compose
+      # IN PROCESS via `plug::compose_to` (ADR-0087), so `comp-plug` is no longer a
+      # gate dependency — it is still built below because `console_session` spawns it.
       #
-      # THE GLOB IS `e2e*.sh` AND USED TO BE `e2e-*.sh`, AND THE HYPHEN WAS A BUG.
-      #
-      # `e2e-*.sh` matches the 31 PART gates and none of the ten `e2e.sh` COMPOSITION
-      # gates — the ones that drive a request through every part at once and are the
-      # only gates that can catch two parts disagreeing. Those are precisely what a
-      # decomposed goal is judged by, and nothing had run them since they were
-      # written.
-      #
-      # One had been broken since the day after it was written. `triage-domain/e2e.sh`
-      # hardcoded `DAY=2026-08-17` — the date it was authored — and then asked the
-      # digest about a report it had just filed through `intake`, which stamps
-      # `reported_at` from the store's real clock. It agreed with the app for one day
-      # and failed every day after with a digest of `{'total': 0}`. Its own part gate
-      # never caught it, because the part gate reads the FIXTURE, whose `reported_at`
-      # is a literal `2026-08-17` and therefore never moves.
-      #
-      # The expensive half is not the broken assertion, it is what it does to a run: a
-      # goal whose composition gate cannot pass can never land. Goal 07's pre-check
-      # refuses a run when a gate PASSES against the base; this one failed against the
-      # base for a reason no candidate could fix, so nothing refused it and a run would
-      # have spent its whole budget to be told the join failed.
-      #
-      # All ten pass as of this commit. Measured, not assumed.
-      #
-      # `e2e-reminders` proves a reminder EMAIL ARRIVES, which is worth real coverage,
-      # and the first attempt installed MailHog with `go install` to keep it. That
-      # fails on this runner — MailHog is archived and predates modules — so the gate
-      # is skipped and the notification fan-out stays a local check. Named here rather
-      # than quietly dropped.
-      #
-      # A gate needs `cargo component build`, `wasm-tools`, `python3`, `comp-plug` at
-      # `reconciler/target/release/`, and `comp-host` via COMP_HOST. This job builds
-      # the components and had neither binary, which is why the step before this one
-      # builds both.
-      # BOTH binaries, and the second one is the correction. `comp-host` runs what a
-      # gate composes; `comp-plug` does the composing, and the gate looks for it at
-      # `reconciler/target/release/comp-plug`. The test step below builds the
-      # reconciler's TEST binaries, which is not the same thing and does not produce
-      # it — so the first version of this step ran 26 gates and failed 26 with "no
-      # comp-plug", because a development machine has one lying around from earlier
-      # work. That is the same way `nats-server` was missed an hour before, and the
-      # note further down records four earlier instances of it.
-      # THREE, and the third is a lesson. `comp-field` was added to `gate-lib.sh` on a
-      # branch cut before this step existed, so its CI never ran a gate and it merged
-      # green — leaving main with 21 of 25 gates failing on "no comp-field". A PR that
-      # cannot exercise the step it breaks is a PR that passes for the wrong reason.
-      - name: Build the binaries a gate needs
+      # `comp-field` is no longer built here. It existed to read a JSON field for the
+      # shell gates and now has no caller in the tree; it is still shipped by
+      # `install.sh` and `release.yml`, so the crate stays.
+      - name: Build the binaries the gates and suites spawn
         run: |
           cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
-          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-field
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
-
-      - name: Run the end-to-end gates
-        env:
-          COMP_HOST: ${{ github.workspace }}/host/target/release/comp-host
-        run: |
-          failed=0
-          ran=0
-          for gate in components/*/e2e*.sh; do
-            if grep -qE 'gate_shim_config|_start_mail' "$gate"; then
-              echo "skip  $gate (wants a service this runner has not got)"
-              continue
-            fi
-            ran=$((ran + 1))
-            if bash "$gate"; then
-              echo "ok    $gate"
-            else
-              echo "FAIL  $gate"
-              failed=$((failed + 1))
-            fi
-          done
-          echo "$ran gate(s) ran, $failed failed"
-          [ "$failed" -eq 0 ]
 
       # COMP_HOST is set even though the fallback path is the one the step above
       # builds, and that is the point: with it set, `gatelib::host_bin` finds no

@@ -76,7 +76,10 @@ base_paths = [
   # Not in the world, and READABLE on purpose: the contract makes a claim about what
   # `acquire` does, and a part that wants to check that claim should be able to.
   "components/lock-mutex/",
-  "components/gate-lib.sh",
+  # The gate harness a part is judged by is `reconciler/tests/gate_*.rs` now, not a
+  # shell library. It is deliberately NOT in this list: a part is judged by the gate
+  # and does not get to read it, which was true of `gate-lib.sh` too — that entry
+  # showed the shared PLUMBING (how a gate boots a host), never the assertions.
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -127,7 +130,7 @@ context = [
 id = "accounts-lose-nothing-under-contention"
 required = true
 weight = 1
-command = ["bash", "components/treasury-ledger-domain/e2e-accounts.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p treasury-ledger-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p fsm-workflow -p record-store && cd ../reconciler && cargo test --release --test gate_treasury accounts_open_credit_and_survive_concurrent_credits -- --exact"]
 
 [[part]]
 name = "transfers"
@@ -175,7 +178,7 @@ context = [
 id = "transfers-let-exactly-one-through"
 required = true
 weight = 1
-command = ["bash", "components/treasury-ledger-domain/e2e-transfers.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p treasury-ledger-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p fsm-workflow -p record-store && cd ../reconciler && cargo test --release --test gate_treasury transfers_are_idempotent_and_survive_contention -- --exact"]
 
 [[part]]
 name = "reconcile"
@@ -212,7 +215,7 @@ context = [
 id = "reconcile-reads-the-journal"
 required = true
 weight = 1
-command = ["bash", "components/treasury-ledger-domain/e2e-reconcile.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p treasury-ledger-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p fsm-workflow -p record-store && cd ../reconciler && cargo test --release --test gate_treasury reconcile_reads_the_journal_and_is_idempotent -- --exact"]
 
 # The join, and it is the only gate that can prove what this app is for: after a storm of
 # concurrent credits and a storm of concurrent transfers, an INDEPENDENT recomputation from the
@@ -222,4 +225,4 @@ command = ["bash", "components/treasury-ledger-domain/e2e-reconcile.sh"]
 id = "the-whole-treasury-api-balances"
 required = true
 weight = 1
-command = ["bash", "components/treasury-ledger-domain/e2e.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p treasury-ledger-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p fsm-workflow -p record-store && cd ../reconciler && cargo test --release --test gate_treasury the_whole_treasury_api_works -- --exact"]

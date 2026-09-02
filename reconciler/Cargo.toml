@@ -79,9 +79,15 @@ path = "src/bin/capgraph.rs"
 name = "comp-catalog"
 path = "src/bin/catalog.rs"
 
-# One JSON field, for the gate harness. `gate-lib.sh` spawned `python3` for this, at
-# 15.3 ms of interpreter start-up per call across 106 call sites — multiplied by every
-# candidate and every attempt the loop runs.
+# One JSON field, from JSON on stdin. Written for the shell gate harness, where
+# `gate-lib.sh` spawned `python3` for this at 15.3 ms of interpreter start-up per call
+# across 106 call sites, multiplied by every candidate and every attempt.
+#
+# Those gates are Rust now and read JSON with `serde_json`, so NOTHING IN THIS TREE
+# CALLS THIS ANY MORE. It stays because `install.sh` and `release.yml` ship it and
+# something outside the tree may have it on a path — the same reasoning that keeps
+# `webhook-ingest` after `webhook-relay` stopped importing it. If a release ever drops
+# it, delete the crate rather than leaving a binary nobody runs.
 [[bin]]
 name = "comp-field"
 path = "src/bin/field.rs"
