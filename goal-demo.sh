@@ -25,6 +25,19 @@ export BRANCHES="${BRANCHES:-4}"
 export ROUNDS="${ROUNDS:-1}"
 export ATTEMPTS="${ATTEMPTS:-2}"
 export MODEL="${MODEL:-claude-haiku-4-5-20251001}"
+# The branch budget, passed through under BOTH names `just goal-run` accepts.
+#
+# This script exported every other knob and not this one, so the one command the
+# README offers could not be given a timeout at all — and the default is sized for
+# the real API (median 64s a call), not for a local model at 417s or the Claude CLI
+# shim at 90-135s. A branch over budget does not say so: the client hangs up, the
+# host logs `IncompleteMessage`, and the run reports `error sending request for url
+# .../run`, which reads as a fleet fault. Seven branches died that way across two
+# paid runs before the number was the suspect.
+#
+# Unset stays unset, so the flag is simply absent and comp-goalrun's own default
+# applies — this passes a value through, it does not invent one.
+export TIMEOUT="${TIMEOUT:-${GOAL_TIMEOUT:-}}"
 
 # Smoke by default; `real` as the first argument does the real run.
 if [ "${1:-smoke}" = "real" ]; then

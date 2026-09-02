@@ -729,6 +729,26 @@ fn wait_serving(port: u16, host: &str, within: Duration) -> Result<()> {
 /// Deduped, and `writable` wins. A path in both lists would otherwise be sent twice
 /// — paid for on every attempt, and the second copy stripped differently from the
 /// first, which is a worse bug than the cost.
+/// What a PART is shown: its own files, plus what the pool already has.
+///
+/// A function rather than two lines inside the plan literal so a test can ask the
+/// question that matters — does a part read the capability search — without a
+/// fleet, a contract registry and a model behind it. The decomposed path shipped
+/// without this for as long as it did because nothing could see the difference
+/// between a part told about `auth-guard` and a part not told (ADR-0094).
+fn part_context(
+    checkout: &std::path::Path,
+    writable: &[String],
+    readonly: &[String],
+    pool: Option<Value>,
+) -> Vec<Value> {
+    let mut out = branch_context(checkout, writable, readonly);
+    // LAST, and appended rather than merged: it is the only entry here that is
+    // prose about other components instead of a file the part may read.
+    out.extend(pool);
+    out
+}
+
 fn branch_context(
     checkout: &std::path::Path,
     writable: &[String],
@@ -1333,7 +1353,6 @@ fn main() -> Result<()> {
         setup::render_specs(&args, &goal, &gate)?;
     let spec_refs: Vec<&str> = specs.iter().map(String::as_str).collect();
 
-
     println!("starting fleet …");
     let fleet = Fleet::start_with_secrets("goalrun", &spec_refs, &art, &secrets);
     let port = fleet.ingress_port;
@@ -1455,6 +1474,17 @@ fn main() -> Result<()> {
         );
     }
 
+    // --- what the pool already has (ADR-0094) --------------------------------
+    //
+    // ABOVE the decomposed dispatch, for the same reason the `Trace` is. This sat
+    // below it, so a two-part run asked the catalogue nothing: no `capsearch-hit`
+    // or `capsearch-miss` row, and — worse than the missing row — every part wrote
+    // without being told what 150 components already contain. The ADR calls the
+    // question mandatory in both directions, and the path that decomposes a goal
+    // into parts is the one where "does this already exist" is asked per PART and
+    // therefore most likely to be answered yes.
+    let reuse = pool::search_the_pool(&goal.text, &run, trace.as_ref());
+
     // --- a DECOMPOSED goal ---------------------------------------------------
     //
     // Parts that compose rather than branches that compete: each half runs its own
@@ -1474,6 +1504,7 @@ fn main() -> Result<()> {
             &checks,
             seed,
             trace.as_ref(),
+            &reuse,
         );
     }
 
@@ -1505,10 +1536,6 @@ fn main() -> Result<()> {
     let timeout = Duration::from_secs(args.timeout);
     let bounds =
         Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
-
-    // `seed`, `run` and `trace` come from above the decomposed dispatch, so both
-    // paths share one run identity and one trace.
-    let reuse = pool::search_the_pool(&goal.text, &run, trace.as_ref());
 
     let mut plan = plan;
     if let Some(entry) = pool::pool_context(&reuse) {
@@ -1802,6 +1829,9 @@ fn decomposed(
     // in `main` for why they are not constructed here.
     seed: u64,
     trace: Option<&Trace>,
+    // What the catalogue answered about this goal, searched by the caller so one
+    // run asks once and both paths ask at all (ADR-0094).
+    reuse: &[comp_reconciler::capsearch::Capability],
 ) -> Result<()> {
     let registry = Registry {
         url: format!("http://127.0.0.1:{port}"),
@@ -1872,10 +1902,18 @@ fn decomposed(
     // earlier run's negotiation may be later than v1.
     let body = registry.get(version).ok().flatten().map(|c| c.body).unwrap_or(body);
 
+    // Every part's context, not one branch's: a decomposed run has no single branch
+    // to put this in, and a part that reimplements `auth-guard` fails ADR-0089's
+    // gate whether or not anyone told it the component exists.
+    let pool_entry = pool::pool_context(reuse);
+
     let parts: Vec<Part> = goal
         .parts
         .iter()
-        .map(|p| Part {
+        .map(|p| {
+            let context =
+                part_context(&args.checkout, &p.writable, &p.context, pool_entry.clone());
+            Part {
             name: p.name.clone(),
             plan: json!({
                 "text": p.text,
@@ -1886,7 +1924,7 @@ fn decomposed(
                 // nothing writes blind.
                 // Writable files (the part's own stub) keep every comment — there the comments
                 // are the brief. Read-only `.wit` context is trimmed by `lean_context`.
-                "context": branch_context(&args.checkout, &p.writable, &p.context),
+                "context": context,
                 "previous": [],
                 "checks": p.checks.iter().map(|c| json!({
                     "id": c.id, "required": c.required, "weight": c.weight, "command": c.command,
@@ -1901,6 +1939,7 @@ fn decomposed(
                 "max_attempts": args.attempts,
                 "seed": 1,
             }),
+            }
         })
         .collect();
     println!("parts: {}", parts.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", "));
@@ -2122,6 +2161,15 @@ fn decomposed(
     // thing the decomposed path never did. Before the PR, because promotion is earned by the
     // verdict, not by the forge accepting the branch.
     pool::promote_parts(memory_for_parts.as_ref(), goal, port, &run.composition.parts);
+    // And what the pool GAINED, from the merged tree rather than any one part's —
+    // the join is what passed, so the composition is what added the capability
+    // (ADR-0089). Same derivation as the ordinary path, which had it and this
+    // did not, so a decomposed run could add a component the graph never recorded.
+    if let Some(t) = trace {
+        for (name, path) in new_capabilities(&changes) {
+            t.capability_added(&run_key, &name, &path);
+        }
+    }
 
     if args.dry_run {
         println!("\n[dry run] the join passed; not opening a PR.");
@@ -2208,7 +2256,7 @@ fn decomposed(
 mod tests {
     use super::{
         branch_context, component_scope, gates_missing_from_the_tree, join_failure_owners,
-        new_capabilities, trim_members, CheckSpec, GoalSpec, PartSpec,
+        new_capabilities, part_context, trim_members, CheckSpec, GoalSpec, PartSpec,
     };
     use comp_reconciler::gate::egress_authority;
     use serde_json::json;
@@ -2374,6 +2422,34 @@ command = ["cargo", "test"]
 
         // A path that does not exist is skipped, not fatal, and not an empty entry.
         assert!(branch_context(&dir, &[], &["nope.rs".to_string()]).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A PART reads what the pool already has, and reads it last.
+    ///
+    /// The capability search is mandatory in both directions (ADR-0094) and the
+    /// decomposed path skipped it entirely: it ran below the dispatch that returns
+    /// into `decomposed`, so a two-part run asked nothing and every part wrote
+    /// blind. Nothing failed — an absent question looks exactly like one with no
+    /// answer, which is the shape of failure this repository keeps rediscovering.
+    #[test]
+    fn a_part_is_told_what_the_pool_already_has() {
+        let dir = std::env::temp_dir().join("holon-part-context-test");
+        std::fs::create_dir_all(&dir).expect("tmpdir");
+        std::fs::write(dir.join("own.rs"), "fn stub() {}\n").expect("write");
+        let own = vec!["own.rs".to_string()];
+
+        let pool = json!({"path": "the pool", "content": "- `auth-guard` exports auth:identity"});
+        let with = part_context(&dir, &own, &[], Some(pool.clone()));
+        assert_eq!(with.len(), 2, "its own file and the pool: {with:?}");
+        assert_eq!(with[1], pool, "the pool entry is last");
+        assert!(with[0]["content"].as_str().expect("content").contains("fn stub"));
+
+        // No hits is no entry — not an empty one. A part shown "the pool has:"
+        // followed by nothing reads as a pool that is empty rather than as a
+        // question that found no answer.
+        let without = part_context(&dir, &own, &[], None);
+        assert_eq!(without.len(), 1, "nothing appended: {without:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -19,6 +19,9 @@ pub struct NatsLattice {
     kv: async_nats::jetstream::kv::Store,
     objects: async_nats::jetstream::object_store::ObjectStore,
     lattice: String,
+    /// The bucket's REAL `max_age`, which is not necessarily the one this process
+    /// asked for — see `connect_bucket`.
+    effective_ttl: Duration,
 }
 
 /// Split a comma-separated server list, so one flag can name a whole cluster.
@@ -60,14 +63,38 @@ impl NatsLattice {
         let js = async_nats::jetstream::new(client.clone());
 
         // Created rather than assumed, so a fresh lattice needs no setup step.
-        let kv = js
-            .create_key_value(async_nats::jetstream::kv::Config {
-                bucket: bucket.into(),
-                max_age: inventory_ttl,
-                ..Default::default()
-            })
-            .await
-            .context("opening the inventory bucket")?;
+        //
+        // AND OPENED rather than insisted upon when it already exists with a
+        // different config. Three processes call this on the same bucket with their
+        // own `max_age` — a host asks for `heartbeat_secs * 3`, the reconciler for
+        // `--inventory-ttl`, the ingress for its own — and they agree today only
+        // because three defaults coincide at 15s.
+        //
+        // `docs/CURRENT.md` recorded the consequence as "whoever creates the bucket
+        // first wins and the others silently get a TTL they did not ask for". That is
+        // not what nats-server 2.14.6 does, and a test against a real one is how we
+        // know: `create_key_value` REFUSES with `stream name already in use with a
+        // different configuration` (10058). So the second process does not degrade
+        // quietly, it fails to start — with a message that names a stream and a
+        // configuration and neither the TTL nor which process wanted what.
+        //
+        // Neither behaviour is acceptable, and refusing is the worse of the two: the
+        // three TTLs are legitimately different, so a fleet has to interoperate
+        // across them. Change `--heartbeat-secs` on one host and, unfixed, that host
+        // simply never joins. So: fall back to the bucket that is there, and say what
+        // the difference is. The TTL comes back out on `effective_ttl` so a caller
+        // sizes its refresh off reality.
+        let wanted = async_nats::jetstream::kv::Config {
+            bucket: bucket.into(),
+            max_age: inventory_ttl,
+            ..Default::default()
+        };
+        let kv = match js.create_key_value(wanted).await {
+            Ok(kv) => kv,
+            Err(create) => js.get_key_value(bucket).await.with_context(|| {
+                format!("opening the inventory bucket `{bucket}` after create said: {create}")
+            })?,
+        };
         let objects = js
             .create_object_store(async_nats::jetstream::object_store::Config {
                 bucket: wire::ARTIFACTS.into(),
@@ -76,7 +103,58 @@ impl NatsLattice {
             .await
             .context("opening the artifact store")?;
 
-        Ok(Self { client, kv, objects, lattice: lattice.to_string() })
+        // WHAT THE BUCKET ACTUALLY SAYS, not what we asked for.
+        //
+        // The harm is not the disagreement itself, it is what each process then
+        // computes FROM its own number: entries that live `T` seconds must be
+        // re-read well inside `T`, and a refresh sized against a TTL three times the
+        // real one is a poll that mostly sees an empty bucket. From the outside that
+        // is `no app answers`, which is where the four wrong diagnoses in this file's
+        // history came from.
+        //
+        // So it is read back, reported once when it differs, and carried on the
+        // handle. Not fatal: a bucket that outlives a config change is an operator's
+        // to fix, and refusing to start turns a degraded fleet into a dead one.
+        let effective_ttl = match kv.status().await {
+            Ok(status) => {
+                let actual = status.max_age();
+                if actual != inventory_ttl {
+                    eprintln!(
+                        "comp-lattice: bucket `{bucket}` already existed with max_age {}s; \
+                         this process asked for {}s and does NOT get it. Whoever created the \
+                         bucket first decided. Everything derived from the TTL here now uses \
+                         {}s. To change it, update the bucket (`nats kv edit {bucket}`) or \
+                         delete it while nothing is running.",
+                        actual.as_secs(),
+                        inventory_ttl.as_secs(),
+                        actual.as_secs(),
+                    );
+                }
+                actual
+            }
+            // A status read that fails says nothing about the TTL, so the requested
+            // value stands rather than a zero being invented — and it is reported,
+            // because silently falling back is the failure this whole block is about.
+            Err(e) => {
+                eprintln!(
+                    "comp-lattice: could not read `{bucket}`'s max_age ({e}); assuming the \
+                     requested {}s, which may not be what the bucket holds",
+                    inventory_ttl.as_secs()
+                );
+                inventory_ttl
+            }
+        };
+
+        Ok(Self { client, kv, objects, lattice: lattice.to_string(), effective_ttl })
+    }
+
+    /// The inventory bucket's real `max_age`.
+    ///
+    /// Ask this rather than reusing the value passed to `connect`: they differ
+    /// whenever the bucket outlived the config, and anything sized against the wrong
+    /// one polls too slowly and reads an empty bucket.
+    pub fn effective_ttl(&self) -> Duration {
+        self.effective_ttl
     }
 }
 

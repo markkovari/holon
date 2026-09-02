@@ -405,21 +405,31 @@ async fn main() -> Result<()> {
     // whose real TTL is short enough is a poll that mostly sees an empty bucket —
     // which is what `no app answers` looked like from the outside.
     let inventory_ttl = settings::pick(args.inventory_ttl, file.inventory_ttl, 15).max(1);
-    // A third of the TTL, so two reads may be lost before anything is noticed.
-    // An explicit `--refresh-secs` still wins, because an operator who sets it
-    // means it.
-    let refresh_secs = match args.refresh_secs.or(file.refresh_secs) {
-        Some(v) => v.max(1),
-        None => (inventory_ttl / 3).max(1),
-    };
-    eprintln!(
-        "comp-ingress: inventory ttl {inventory_ttl}s, refreshing every {refresh_secs}s \
-         (the ttl is shared with the hosts and the reconciler — a mismatch there is silent)"
-    );
 
     let fabric = Arc::new(
         NatsLattice::connect(&args.nats_url, &args.lattice, Duration::from_secs(inventory_ttl))
             .await?,
+    );
+
+    // The refresh comes off the bucket's REAL ttl, not the one asked for above.
+    //
+    // A third of it, so two reads may be lost before anything is noticed. That
+    // arithmetic is only worth anything against the number the bucket actually
+    // holds: `connect` hands back the existing bucket when one exists, so a process
+    // that sized its poll against its own request could poll at a third of a TTL
+    // three times too long and read a bucket that had already expired everything.
+    // `effective_ttl()` is what the bucket says; it reports the difference itself.
+    //
+    // An explicit `--refresh-secs` still wins, because an operator who sets it means
+    // it.
+    let effective_ttl = fabric.effective_ttl().as_secs().max(1);
+    let refresh_secs = match args.refresh_secs.or(file.refresh_secs) {
+        Some(v) => v.max(1),
+        None => (effective_ttl / 3).max(1),
+    };
+    eprintln!(
+        "comp-ingress: inventory ttl {effective_ttl}s (asked for {inventory_ttl}s), \
+         refreshing every {refresh_secs}s"
     );
     // No inventory handle taken off `fabric`: the refresh loop below opens its own
     // NATS connection on its own thread, for the priority-inversion reason spelled
@@ -468,8 +478,14 @@ async fn main() -> Result<()> {
     // connection removes the coupling entirely. It costs one thread.
     {
         let (table, every) = (table.clone(), refresh_secs);
+        // The EFFECTIVE ttl, for the same reason `refresh_secs` is derived from it:
+        // this thread opens its own connection, so it calls `create_key_value`
+        // again, and handing it the requested value would have it ask for a TTL the
+        // bucket will not give — reported once per connection instead of silently
+        // taken. It only reads, so the number changes nothing here beyond what gets
+        // printed; passing the wrong one would just be a second lie in the log.
         let (nats_url, lattice_name, ttl) =
-            (args.nats_url.clone(), args.lattice.clone(), inventory_ttl);
+            (args.nats_url.clone(), args.lattice.clone(), effective_ttl);
         std::thread::Builder::new()
             .name("inventory-refresh".into())
             .spawn(move || {

@@ -29,10 +29,33 @@ trap gate_cleanup EXIT
 gate_serve
 
 # --- one report, all the way through -------------------------------------------
-DAY=2026-08-17
 RESP=$(post /api/reports '{"title":"Totals drift, badly","body":"ping me on +1 555 010 0199","component":"billing"}')
 ID=$(printf '%s' "$RESP" | field id)
 [ -n "$ID" ] || fail "intake did not create a report: $RESP"
+
+# The day comes from the COMPONENT, not from a constant.
+#
+# This was `DAY=2026-08-17` — the date this gate was written — while `intake` stamps
+# `reported_at` from the store's own `created`, because the world imports no wall
+# clock. So the gate agreed with the app for exactly one day and has failed every day
+# since with `the digest does not reflect the triaged report` and a digest of
+# `{'total': 0, 'day': '2026-08-17'}`: a report filed today is not in yesterday's
+# digest, and the gate was asking about yesterday.
+#
+# Nothing caught it because nothing runs this file. CI's loop globs
+# `components/*/e2e-*.sh` — with a hyphen — which matches the 31 part gates and none
+# of the nine `e2e.sh` COMPOSITION gates, the only ones that judge the parts together.
+#
+# Worth stating plainly, because it is the more expensive half: a goal whose
+# composition gate cannot pass is a run that can never land. Goal 07's pre-check
+# refuses a run when a gate passes against the base, and this one FAILED against the
+# base — for a reason that had nothing to do with any candidate — so the refusal
+# never fired and the run would simply have burned its budget.
+DAY=$(printf '%s' "$(get "/api/reports/$ID")" | field reported_at | cut -c1-10)
+case "$DAY" in
+  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+  *) fail "intake did not stamp a usable reported_at: $(get "/api/reports/$ID")" ;;
+esac
 
 # A phone number is PII too, so intake masks more than emails.
 #

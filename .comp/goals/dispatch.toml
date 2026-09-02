@@ -1,0 +1,278 @@
+# The goal, versioned in the repo it acts on (ADR-0082).
+#
+# WHY THIS GOAL EXISTS
+#
+# Every decomposed goal in this repository has been spent: `triage`, `triage-assist`,
+# `moderation-queue`, `support-desk`, `treasury-ledger`, `invoice-copilot`,
+# `doc-search-agent` and the archived clinic all have their parts implemented, so
+# each one is now refused by the base pre-check (goal 07) rather than run — every
+# gate passes against the untouched tree. `docs/CURRENT.md` says a decomposed goal
+# has still never been DELIVERED and that the fix for the last two failures is
+# "unspent"; the fixes are unspent and the TARGET is not. This is a target.
+#
+# WHAT MAKES IT DIFFERENT FROM `triage`
+#
+# Triage's three parts each import a capability the others do not, so a part that
+# reimplemented one failed alone, in its own gate. Here `geo:resolve` is imported by
+# TWO parts — `schedule` picks the nearest engineer with `distance-meters`, `manifest`
+# filters by radius with `bounding-box` and `contains` — so a part that hand-rolls
+# haversine can be internally consistent, pass its own gate, and disagree with its
+# sibling. The composition gate compares the two numbers directly. That is a failure
+# three independent parts can produce and no single part's gate can see, which is the
+# thing this goal is for.
+#
+# `geo:resolve/coords` is also, at the time of writing, imported by nothing in this
+# tree — one of the sixteen the contracts test reports as exported-but-unconsumed. So
+# a landed run here is additionally the first real consumer of a capability that has
+# only ever been checked against itself.
+#
+# THE LINE ON WHAT THE PARTS ARE TOLD
+#
+# Same discipline as triage, which learned it the expensive way: a goal specified to
+# the depth of its own reference had twelve branches pass on the first attempt at
+# score 1000, selection had nothing to choose between, and the search had stopped
+# being a search.
+#
+#   KEPT — facts a part cannot find from what it is shown and that fail SILENTLY:
+#          `query` wanting the JSON encoding of a value (it returns `Ok(vec![])` for
+#          a wrong query, indistinguishable from an empty collection), `pii::redact`
+#          taking `&Options` rather than `Options`, `geo::contains` naming its first
+#          parameter `box_`, and `Reply::json` being unable to carry a CSV.
+#
+#   CUT  — decisions the contract and the imports already imply: which engineer is
+#          nearest (arithmetic), that a bounding box is a pre-filter and not the
+#          answer (geo.wit says so), what `create_instance` does to an instance that
+#          exists (fsm.wit says), and that a transition has to move the document as
+#          well as the fsm instance (the contract says the document carries `state`).
+
+text = """
+Finish the field-service dispatch API in components/dispatch-domain. Nothing is
+implemented yet: three parts are written at the same time, by three agents, against
+one contract.
+
+`CONTRACT.md` in that crate is the specification — every route, every status code,
+the engineer roster all three parts share, and the shape of the stored document.
+Read it first. You may not edit it: if it is wrong or missing something you need,
+write CONTRACT-REQUEST.md (first line the subject, the rest why) and the other parts
+will answer between generations.
+
+The router in src/lib.rs already exists and is not yours to change. It dispatches to
+the three parts, answers /health, seeds a fixture at POST /test/seed, and exposes the
+stored document at GET /test/request/{id} so your part can be judged before the part
+upstream of it exists. Your part is one file.
+
+You are judged by real HTTP requests against the running component — not by whether
+it compiles. `cargo component check` and `cargo component build` both pass happily on
+a crate that implements none of its world.
+
+THE POINT OF THIS GOAL: your part's world already contains the hard pieces, as
+components, bound at compose time. Look at wit/dispatch.wit. What is imported there
+is implemented, tested and composed for you — you call it, you do not write it.
+Writing your own PII scanner, your own transition table, your own CSV quoting or your
+own haversine is the one way to fail a gate while answering every request correctly,
+because the gate reads which capabilities the compiled component actually calls.
+
+Two parts import `geo:resolve` and the composition gate compares the numbers they
+produce. A hand-rolled distance formula in either of them is internally consistent,
+passes that part's own gate, and disagrees with the other — so it is the whole run
+that fails, not your half.
+
+The store, as wit-bindgen generates it in Rust — this is the exact surface, and
+guessing it wrong is how earlier runs of other goals died:
+
+    use crate::bindings::records::store::store as records;
+
+    records::create(collection: &str, data: &str, index_fields: &[String]) -> Result<Entry, StoreError>
+    records::get(collection: &str, id: &str)                               -> Result<Entry, StoreError>
+    records::update(collection: &str, id: &str, data: &str, expected_revision: u64) -> Result<Entry, StoreError>
+    records::delete(collection: &str, id: &str)                            -> Result<(), StoreError>
+    records::list_records(collection: &str, limit: u32, after: &str)       -> Result<Page, StoreError>
+    records::find_by(collection: &str, field: &str, value: &str)           -> Result<Vec<Entry>, StoreError>
+    records::query(collection: &str, filters: &[Filter], limit: u32)       -> Result<Vec<Entry>, StoreError>
+    records::count(collection: &str)                                       -> Result<u64, StoreError>
+
+    struct Entry  { id: String, data: String, revision: u64, created: u64, … }  // `data` is your JSON
+    struct Filter { field: String, value: String }
+    struct Page   { entries: Vec<Entry>, next: String }
+
+`query` takes a list of equals-filters, ANDs them, and re-checks each candidate
+against every filter — so a two-field list filter and a two-field duplicate lookup
+are the same three lines with a different filter vector. `find_by` would need two
+calls and a hand-written intersection.
+
+AND `query` AND `find_by` WANT THE JSON ENCODING OF THE VALUE, NOT THE VALUE.
+`record-store` indexes the serialised form, so a string field `new` is indexed under
+`"new"`, quotes included. A wrong query returns `Ok(vec![])`, which is
+indistinguishable from an empty collection — it fails silently, and the gate that
+then fails will look like it is about something else.
+
+`find_by` and `query` only filter on a field that was passed in `index_fields` when
+the record was created. The router's fixture indexes `state` and `engineer`; anything
+else means listing and filtering yourself. The collection is `requests`, and
+src/lib.rs's `seed` shows exactly how a request document is written.
+
+There is no wall clock in this world. `created` on the document is RFC3339 UTC
+derived from the store's own `created` on the record it just wrote.
+"""
+title = "A field-service dispatch API, in three parts that share one capability"
+contract = "components/dispatch-domain/CONTRACT.md"
+writable = []
+
+[[part]]
+name = "requests"
+text = """
+Implement components/dispatch-domain/src/requests.rs: taking a service request in,
+listing them, and reading one back.
+
+`notes` is stored MASKED, via `pii:redact` — the raw text never reaches the store,
+because the manifest is readable by anyone. Empty `kinds` means every kind, which is
+what a note typed by a dispatcher needs. Note the reference on `opts`:
+
+    use crate::bindings::pii::redact::redactor as pii;
+
+    pii::redact(text: &str, opts: &pii::Options) -> String
+
+    pub struct Options { pub kinds: Vec<Kind> }   // EMPTY kinds = every kind
+    pub enum Kind { Email, CreditCard, Ssn, Phone, Ip }
+
+The duplicate rule is worth reading twice: same `title` AND the same `lat` and `lon`
+as an existing request that is NOT `done` and NOT `cancelled` is a 409 naming the
+existing id. A finished job does not block a new one — the boiler leaked again.
+
+`invalid` and `bad_coordinate` are different 400s on purpose: a caller can fix only
+one of them, and the contract says which is which.
+"""
+writable = ["components/dispatch-domain/src/requests.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/dispatch-domain/src/lib.rs",
+  "components/dispatch-domain/wit/dispatch.wit",
+  "components/pii-redact/wit/pii.wit",
+  "components/record-store/wit/record.wit",
+]
+[[part.check]]
+id = "requests-part-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "-c", "cd components && cargo component build --release -p dispatch-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p geo -p csv && cd ../reconciler && cargo test --release --test gate_dispatch requests_masks_validates_and_deduplicates -- --exact --nocapture"]
+
+[[part]]
+name = "schedule"
+text = """
+Implement components/dispatch-domain/src/schedule.rs: assigning the nearest engineer,
+moving a request through its lifecycle, and the queue of what is still open.
+
+THE LIFECYCLE IS A DEFINITION, not a ladder of `if state == "new"`. Register it once
+with `fsm:workflow` under the machine name `dispatch`, then drive each request as an
+instance whose id is the request id. An illegal move comes back as
+`IllegalTransition(String)` carrying the CURRENT state — which is exactly what the
+contract's 409 body has to report, so you do not need to look it up yourself.
+
+    use crate::bindings::fsm::workflow::engine as fsm;
+
+    fsm::define(name: &str, def: &fsm::Definition)            -> Result<(), fsm::FsmError>
+    fsm::create_instance(machine: &str, instance: &str)       -> Result<fsm::Status, fsm::FsmError>
+    fsm::get_status(machine: &str, instance: &str)            -> Result<fsm::Status, fsm::FsmError>
+    fsm::fire(machine: &str, instance: &str, event: &str)     -> Result<fsm::Status, fsm::FsmError>
+
+    pub struct Definition { pub states: Vec<String>, pub initial: String,
+                            pub transitions: Vec<Transition>, pub terminal: Vec<String> }
+    pub struct Transition { pub event: String, pub source: String, pub target: String }
+    pub struct Status { pub machine: String, pub instance: String,
+                        pub state: String, pub done: bool, pub steps: u32 }
+
+Read `fsm.wit` for how `define` and `create_instance` behave on a store that already
+has the machine or the instance — it says, and the difference matters.
+
+THE DISTANCE IS NOT YOURS TO COMPUTE:
+
+    use crate::bindings::geo::resolve::coords as geo;
+
+    geo::distance_meters(a: geo::Point, b: geo::Point) -> Result<f64, geo::GeoError>
+    pub struct Point { pub lat: f64, pub lon: f64 }
+
+`manifest` imports the same component to answer its radius filter, and the
+composition gate asserts your number equals the one it prints. `distance_m` on the
+document is an INTEGER number of metres, rounded half-up.
+
+The fsm instance is not the readable copy: the contract says the document carries
+`state`, so a transition moves both.
+"""
+writable = ["components/dispatch-domain/src/schedule.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/dispatch-domain/src/lib.rs",
+  "components/dispatch-domain/wit/dispatch.wit",
+  "components/fsm-workflow/wit/fsm.wit",
+  "components/geo/wit/geo.wit",
+  "components/record-store/wit/record.wit",
+]
+[[part.check]]
+id = "schedule-part-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "-c", "cd components && cargo component build --release -p dispatch-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p geo -p csv && cd ../reconciler && cargo test --release --test gate_dispatch schedule_assigns_the_nearest_and_refuses_illegal_moves -- --exact --nocapture"]
+
+[[part]]
+name = "manifest"
+text = """
+Implement components/dispatch-domain/src/manifest.rs: the day's work as a JSON
+summary and as a CSV, both with an optional radius filter.
+
+The counting is yours; the CSV is not. Use `csv:codec`'s `format`, because one seeded
+request is titled `Boiler leaking, badly` and a field with a comma in it has to come
+back quoted or the row stops having five columns. The gate parses the CSV with a real
+parser and counts columns, and it also reads the compiled component's imports — so
+formatting it by hand fails even if you get the quoting right.
+
+    use crate::bindings::csv::codec::codec as csv;
+
+    pub struct Row     { pub fields: Vec<String> }
+    pub struct Dialect { pub delimiter: String,   // a STRING, not a char: ",".to_string()
+                         pub has_header: bool, pub trim: bool }
+    csv::format(rows: &[Row], opts: &Dialect) -> String
+
+A file is `Vec<Row>` — the header is just the first `Row` — and `format` returns the
+whole document as one `String`.
+
+The gate checks the content type as well as the columns, so look at what `Reply` in
+src/lib.rs can actually answer with before you build the response.
+
+THE RADIUS IS NOT YOURS TO COMPUTE:
+
+    use crate::bindings::geo::resolve::coords as geo;
+
+    geo::bounding_box(center: geo::Point, radius_meters: f64) -> Result<geo::Bbox, geo::GeoError>
+    geo::contains(box_: geo::Bbox, p: geo::Point)             -> bool
+    geo::distance_meters(a: geo::Point, b: geo::Point)        -> Result<f64, geo::GeoError>
+
+`schedule` imports the same component to pick an engineer, and the composition gate
+compares what the two of you produce.
+
+`by_state` and `by_engineer` include only the states and engineers that OCCUR: no
+zero-filled keys, and an unassigned request contributes to no engineer at all — `""`
+is not a key. A day with nothing in it is a manifest of zero, not a 404.
+"""
+writable = ["components/dispatch-domain/src/manifest.rs", "CONTRACT-REQUEST.md"]
+context = [
+  "components/dispatch-domain/src/lib.rs",
+  "components/dispatch-domain/wit/dispatch.wit",
+  "components/csv/wit/csv.wit",
+  "components/geo/wit/geo.wit",
+  "components/record-store/wit/record.wit",
+]
+[[part.check]]
+id = "manifest-part-answers-real-requests"
+required = true
+weight = 1
+command = ["bash", "-c", "cd components && cargo component build --release -p dispatch-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p geo -p csv && cd ../reconciler && cargo test --release --test gate_dispatch manifest_counts_quotes_and_filters_by_radius -- --exact --nocapture"]
+
+# The COMPOSITION gate: the one no single part can pass. It drives one request the
+# whole way through all three — `requests` takes it in and masks it, `schedule`
+# assigns it and moves it, `manifest` reports it — and then compares the distance
+# `schedule` computed with the one `manifest` printed, and checks that the request
+# `schedule` placed falls inside a radius `manifest` measured. A part that stored its
+# own shape, or hand-rolled its own haversine, passes its own gate and fails here.
+[[check]]
+id = "the-whole-dispatch-api-works"
+required = true
+weight = 1
+command = ["bash", "-c", "cd components && cargo component build --release -p dispatch-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p geo -p csv && cd ../reconciler && cargo test --release --test gate_dispatch the_whole_dispatch_api_works -- --exact --nocapture"]

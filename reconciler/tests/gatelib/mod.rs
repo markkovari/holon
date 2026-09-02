@@ -35,6 +35,62 @@ pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
+/// The host binary, from `$COMP_HOST` when something set it and from the checkout
+/// otherwise.
+///
+/// This is the whole reason a ported gate could not gate a GOAL RUN, which is what
+/// the ports were for. `holon goal run` materialises a candidate in a sandbox that
+/// holds the base tree and nothing else, and passes the two binaries it cannot
+/// contain as `$COMP_HOST` and `$COMP_PLUG` — `components/gate-lib.sh` says so in as
+/// many words, and the shell gates read them. The Rust harness resolved the host by
+/// path instead, so under a goal every ported gate found no binary, SKIPPED, and a
+/// skip returns `None`, which every gate turns into `return` — a pass. Thirty-one
+/// gates that pass because nothing was there to judge with is the empty-corpus
+/// candidate wearing a different hat, and it is why every goal spec in `.comp/goals/`
+/// still points at the shell copies of gates that were ported months ago.
+///
+/// `$COMP_PLUG` is deliberately NOT read: composition is a library call here
+/// (ADR-0087), so this harness needs no plug binary at all.
+pub fn host_bin() -> PathBuf {
+    match std::env::var("COMP_HOST") {
+        Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
+        _ => repo_root().join("host/target/release/comp-host"),
+    }
+}
+
+/// Whether a caller STATED where the host binary is.
+///
+/// The distinction this turns on is not "goal run or not", it is whether anybody
+/// promised the binary exists. A cold checkout promised nothing and a skip is the
+/// kind thing to do. A goal run passes `$COMP_HOST` and CI sets it, and in both of
+/// those a missing binary is the harness being wrong — answering it with a skip
+/// reports a pass for a component nothing executed.
+pub fn host_was_stated() -> bool {
+    std::env::var("COMP_HOST").is_ok_and(|p| !p.trim().is_empty())
+}
+
+/// No host binary: a skip in a cold checkout, a panic when someone stated the path.
+///
+/// The asymmetry is the point. In a checkout, nothing has been broken by not having
+/// built yet, and a gate that fails for a missing file trains people to ignore gate
+/// failures. When a caller stated the path there is a score being written down, and
+/// "nothing ran" must not arrive at the selector, or at CI, as a pass.
+fn no_host(app: &str, host: &std::path::Path) {
+    if host_was_stated() {
+        panic!(
+            "[{app}] $COMP_HOST is set to `{}`, which does not exist. Something stated \
+             where the host is, so this is a harness fault and not a cold checkout — \
+             reporting a pass for a component nothing executed is worse than reporting \
+             a failure.",
+            host.display()
+        );
+    }
+    eprintln!(
+        "SKIPPED [{app}]: no comp-host at {} — cargo build --release --manifest-path host/Cargo.toml --bin comp-host",
+        host.display()
+    );
+}
+
 /// A port the OS says is free.
 ///
 /// Two earlier versions of this were wrong, and the second failed in CI as
@@ -86,11 +142,26 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
     use comp_reconciler::plug::{compose_to, default_dirs, Catalog};
     let root = repo_root();
     let catalog = Catalog::scan(&default_dirs(&root));
+    // Same asymmetry as `no_host`, and for the same reason: under a goal run the
+    // check command has already built what it needs, so an empty catalogue here is
+    // the harness being wrong rather than a checkout being cold — and a skip would
+    // reach the selector as a candidate that passed.
     if catalog.is_empty() {
+        assert!(
+            !host_was_stated(),
+            "[{crate_name}] the catalogue is empty while judging a candidate — the \
+             check command must build the crate and its providers before this runs, \
+             and a pass for a component nothing composed is worse than a failure"
+        );
         eprintln!("SKIPPED [{crate_name}]: nothing is built — run `just build`");
         return None;
     }
     if catalog.bytes(crate_name).is_none() {
+        assert!(
+            !host_was_stated(),
+            "[{crate_name}] is not in the catalogue while judging a candidate — the \
+             check command must build it before this runs"
+        );
         eprintln!("SKIPPED [{crate_name}]: not built — run `just build`");
         return None;
     }
@@ -107,7 +178,7 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
 /// ignore gate failures.
 pub fn artifacts(app: &str, composed: &str) -> Option<(PathBuf, PathBuf)> {
     let root = repo_root();
-    let host = root.join("host/target/release/comp-host");
+    let host = host_bin();
     let wasm = root.join("components/target").join(composed);
     if !host.exists() {
         eprintln!("SKIPPED [{app}]: no comp-host — cargo build --release --manifest-path host/Cargo.toml --bin comp-host");
@@ -137,9 +208,9 @@ impl Gate {
         egress: &[&str],
     ) -> Option<Self> {
         let wasm = compose(crate_name)?;
-        let host = repo_root().join("host/target/release/comp-host");
+        let host = host_bin();
         if !host.exists() {
-            eprintln!("SKIPPED [{app}]: no comp-host");
+            no_host(app, &host);
             return None;
         }
         Some(Self::serve_with(app, &host, &wasm, config, egress))
@@ -149,9 +220,9 @@ impl Gate {
     /// nothing has to have run `just compose-…` first.
     pub fn compose_and_start(app: &str, crate_name: &str, config: &[&str]) -> Option<Self> {
         let wasm = compose(crate_name)?;
-        let host = repo_root().join("host/target/release/comp-host");
+        let host = host_bin();
         if !host.exists() {
-            eprintln!("SKIPPED [{app}]: no comp-host — cargo build --release --manifest-path host/Cargo.toml --bin comp-host");
+            no_host(app, &host);
             return None;
         }
         Some(Self::serve(app, &host, &wasm, config))
