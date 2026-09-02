@@ -408,13 +408,16 @@ the fiction.
   scrolled off the top, and the actual bug (serde built without `std`, so
   `HashMap` has no `Serialize` impl) is unguessable from outside this repo. Both
   are fixed and unspent — the next run is the test of it.
-- **Half a branch's budget can vanish into a message that names nothing.** Seven
-  branches across those two runs died as `error sending request for url .../run`,
-  which reads as a fleet fault and is not one: `--timeout` defaults to 300s, the
-  gate costs 2.3s of it, and the model calls have a median of 64s with a tail of
-  174s. Two from that tail is the whole budget. The default is unchanged, because
-  changing it silently is worse than documenting it; `--timeout 900` is the fix
-  and nothing sets it automatically. → ADR-0088
+- ~~**Half a branch's budget can vanish into a message that names nothing.**~~ →
+  **built**: seven branches across those two runs died as `error sending request
+  for url .../run`, which reads as a fleet fault and is not one — the gate costs
+  2.3s and the model calls have a median of 64s with a tail of 174s, so two from
+  that tail spent a 300s budget. `--timeout` now defaults to 900. A LOCAL model
+  moves the arithmetic by an order of magnitude (417s for one branch-shaped call
+  on `csatapaci`), which is why `.comp/csatapaci.env` says `GOAL_TIMEOUT=1800` —
+  and `just goal-run` read `TIMEOUT` while only `just goald` read `GOAL_TIMEOUT`,
+  so sourcing that env file and running a single goal silently ran at 900 anyway.
+  Both names now reach the same flag. → ADR-0088
 - ~~**Nothing criticises a gate.**~~ → **built**: every check, the goal's and each
   part's, is run against the untouched base before anything is spent, and a run is
   refused when one of them passes. What it does NOT check is whether a gate
@@ -435,10 +438,16 @@ the fiction.
   is a jump to 1.x, which is a major-version API migration of a KV BACKEND against
   which nothing here runs an integration test — so it is named rather than
   attempted. `--kv sqlite` and `--kv nats` are the tested paths.
-- **Decomposed runs leave no trace at all.** `decomposed()` never constructs a
-  `Trace`, so a multi-part run (ADR-0086) records no `run-started`, no attempts, no
-  verdicts and no capability search — the console cannot show one, and ADR-0092's
-  vocabulary covers a class of run that does not use it. → ADR-0094
+- ~~**Decomposed runs leave no trace at all.**~~ → **built**: the `Trace` is
+  constructed above the decomposed dispatch and a multi-part run now records
+  `run-started`, every part's branches (the part name is in the attempt id, or two
+  parts' `branch-0` would collide), every verdict, the capabilities the merged tree
+  added, and one resolution — `composition` as the winner, because no single branch
+  passed the join. The capability search was the last piece and was worse than a
+  missing row: it also ran below the dispatch, so a decomposed run never ASKED the
+  catalogue, and every part wrote without being told what 150 components contain.
+  It is now searched once per run, above the dispatch, and put into every part's
+  context. → ADR-0092, ADR-0094
 - **Nothing measures herding or churn.** The diversity knobs exist (a lens per
   branch, one branch that reads nothing); no run reports that its generation
   converged. A negotiation was observed climbing v3 → v7 while no score moved, and

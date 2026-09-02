@@ -1637,8 +1637,12 @@ goald:
          --anthropic-base-url "${HOLON_BASE_URL:-http://127.0.0.1:8787}" \
          --branches "${BRANCHES:-4}" --rounds "${ROUNDS:-1}" \
          --timeout "${GOAL_TIMEOUT:-900}")
-    # The shared pool is what makes the goals aware of each other's work.
+    # The shared pool is what makes the goals aware of each other's work — and it
+    # needs the password to be a pool rather than a reported drop. This passed the
+    # url alone, so every goal this recipe drained wrote its lessons nowhere.
     [ -n "${SURREAL_URL:-}" ] && run+=(--surreal-url "$SURREAL_URL")
+    sp="${SURREAL_PASSWORD:-${SURREAL_PASSWORD_FILE:-}}"
+    [ -n "$sp" ] && run+=(--surreal-password "${sp/#\~/$HOME}")
     exec reconciler/target/release/comp-goald \
       --project "$PROJECT" --checkout "$ck" --repo "$REPO" \
       --max-runs "${MAX_RUNS:-1}" --poll "${POLL:-15}" -- "${run[@]}"
@@ -1661,9 +1665,23 @@ goal-run:
     [ -n "${BASE_URL:-}" ] && args+=(--anthropic-base-url "$BASE_URL")
     # A multi-part goal needs the contract registry; a one-part goal never does.
     [ -n "${SURREAL_URL:-}" ] && args+=(--surreal-url "$SURREAL_URL")
-    [ -n "${SURREAL_PASSWORD:-}" ] && args+=(--surreal-password "${SURREAL_PASSWORD/#\~/$HOME}")
-    # Through the shim a call is a whole `claude -p`, so the default 300s is short.
-    [ -n "${TIMEOUT:-}" ] && args+=(--timeout "$TIMEOUT")
+    # Both names, for the same reason as the timeout below. The flag takes a PATH
+    # and `.comp/csatapaci.env` calls it SURREAL_PASSWORD_FILE — saying so, because
+    # a password does not belong in argv — while this read SURREAL_PASSWORD. So
+    # sourcing that file and running a goal passed `--surreal-url` and no password,
+    # which against a root-auth database is a trace and a pool that write nothing.
+    # It fails the way an absent record always does here: the run reports its drops
+    # and carries on green.
+    sp="${SURREAL_PASSWORD:-${SURREAL_PASSWORD_FILE:-}}"
+    [ -n "$sp" ] && args+=(--surreal-password "${sp/#\~/$HOME}")
+    # One knob, both names. The default is 900 and that is right for the API; a
+    # local model is an order of magnitude slower (measured on csatapaci: 417s for
+    # one branch-shaped call, so two attempts is 834s) and `.comp/csatapaci.env`
+    # says GOAL_TIMEOUT=1800 for exactly that reason. `goald` read GOAL_TIMEOUT and
+    # this read TIMEOUT, so the documented shim path — source the env file, then
+    # `just goal-run` — silently ran at 900 and lost branches to it.
+    t="${TIMEOUT:-${GOAL_TIMEOUT:-}}"
+    [ -n "$t" ] && args+=(--timeout "$t")
     # A measured run pins this to 1.0 — never skip. At the default 0.9 a re-run after
     # a HARNESS failure is skipped as work already done, which reads as a pass.
     [ -n "${SKIP_ABOVE:-}" ] && args+=(--skip-above "$SKIP_ABOVE")
