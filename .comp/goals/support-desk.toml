@@ -72,7 +72,10 @@ base_paths = [
   "components/llm-inference/",
   "components/anthropic-provider/",
   "components/record-store/",
-  "components/gate-lib.sh",
+  # The gate harness a part is judged by is `reconciler/tests/gate_*.rs` now, not a
+  # shell library. It is deliberately NOT in this list: a part is judged by the gate
+  # and does not get to read it, which was true of `gate-lib.sh` too — that entry
+  # showed the shared PLUMBING (how a gate boots a host), never the assertions.
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -117,7 +120,7 @@ context = [
 id = "tickets-refuses-what-cannot-be-delivered"
 required = true
 weight = 1
-command = ["bash", "components/support-desk-domain/e2e-tickets.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p support-desk-domain -p auth-guard -p rate-limiter -p audit-log -p session-store -p quota -p outbox -p notify-dispatch -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_support_desk tickets_open_validate_their_address_and_list_oldest_first -- --exact"]
 
 [[part]]
 name = "reply"
@@ -162,7 +165,7 @@ context = [
 id = "reply-queues-and-does-not-send"
 required = true
 weight = 1
-command = ["bash", "components/support-desk-domain/e2e-reply.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p support-desk-domain -p auth-guard -p rate-limiter -p audit-log -p session-store -p quota -p outbox -p notify-dispatch -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_reply a_reply_is_drafted_queued_and_not_sent_by_this_part -- --exact"]
 
 [[part]]
 name = "courier"
@@ -205,7 +208,7 @@ context = [
 id = "courier-delivers-at-least-once"
 required = true
 weight = 1
-command = ["bash", "components/support-desk-domain/e2e-courier.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p support-desk-domain -p auth-guard -p rate-limiter -p audit-log -p session-store -p quota -p outbox -p notify-dispatch -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_courier a_reply_is_delivered_once_retried_on_refusal_and_finally_dead_lettered -- --exact"]
 
 # The join, and it uses no fixture: the ticket is opened through `tickets`, drafted through
 # `reply`, delivered through `courier`, to a sink the gate runs. What only this gate sees is
@@ -215,4 +218,4 @@ command = ["bash", "components/support-desk-domain/e2e-courier.sh"]
 id = "the-whole-support-desk-api-works"
 required = true
 weight = 1
-command = ["bash", "components/support-desk-domain/e2e.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p support-desk-domain -p auth-guard -p rate-limiter -p audit-log -p session-store -p quota -p outbox -p notify-dispatch -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_courier the_whole_support_desk_works -- --exact"]

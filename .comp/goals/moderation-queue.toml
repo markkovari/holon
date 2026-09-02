@@ -75,7 +75,10 @@ base_paths = [
   "components/llm-inference/",
   "components/anthropic-provider/",
   "components/record-store/",
-  "components/gate-lib.sh",
+  # The gate harness a part is judged by is `reconciler/tests/gate_*.rs` now, not a
+  # shell library. It is deliberately NOT in this list: a part is judged by the gate
+  # and does not get to read it, which was true of `gate-lib.sh` too — that entry
+  # showed the shared PLUMBING (how a gate boots a host), never the assertions.
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -126,7 +129,7 @@ context = [
 id = "intake-throttles-what-it-queues"
 required = true
 weight = 1
-command = ["bash", "components/moderation-domain/e2e-intake.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p moderation-domain -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p event-bus -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_moderation intake_stores_the_principal_and_honours_the_limit -- --exact"]
 
 [[part]]
 name = "verdict"
@@ -169,7 +172,7 @@ context = [
 id = "verdict-lets-the-policy-decide"
 required = true
 weight = 1
-command = ["bash", "components/moderation-domain/e2e-verdict.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p moderation-domain -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p event-bus -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_verdict a_matching_rule_wins_and_a_silent_policy_leaves_it_to_the_model -- --exact"]
 
 [[part]]
 name = "queue"
@@ -207,7 +210,7 @@ context = [
 id = "queue-reads-the-engine-not-a-copy"
 required = true
 weight = 1
-command = ["bash", "components/moderation-domain/e2e-queue.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p moderation-domain -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p event-bus -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_moderation queue_reads_the_engine_and_does_not_consume_the_bus -- --exact"]
 
 # The join, and it uses no fixture: the rule is written through `queue`'s route, the item is
 # submitted through `intake`'s, the review goes through `verdict`'s, and the decision is read
@@ -217,4 +220,4 @@ command = ["bash", "components/moderation-domain/e2e-queue.sh"]
 id = "the-whole-moderation-api-works"
 required = true
 weight = 1
-command = ["bash", "components/moderation-domain/e2e.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p moderation-domain -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p event-bus -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_verdict the_whole_moderation_api_works -- --exact"]

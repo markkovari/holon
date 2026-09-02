@@ -90,8 +90,9 @@ use guestfmt::percent_decode as percent;
 /// One owner and three pets, written straight to the store.
 ///
 /// Three, because `access-and-search` is judged on RANKING and a corpus of one
-/// ranks trivially. `pet_id` stays the first of them: `e2e-visits.sh` books
-/// against that field and predates this.
+/// ranks trivially. `pet_id` stays the first of them: the visits gate — now
+/// `gate_clinic::visits_and_the_rule_a_compiler_cannot_check` — books against that
+/// field and predates this.
 fn seed() -> Reply {
     let owner = match records::create(
         "owners",

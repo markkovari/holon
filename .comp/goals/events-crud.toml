@@ -134,7 +134,10 @@ base_paths = [
   "components/rate-limiter/",
   "components/audit-log/",
   "components/guestio/",
-  "components/gate-lib.sh",
+  # The gate harness a part is judged by is `reconciler/tests/gate_*.rs` now, not a
+  # shell library. It is deliberately NOT in this list: a part is judged by the gate
+  # and does not get to read it, which was true of `gate-lib.sh` too — that entry
+  # showed the shared PLUMBING (how a gate boots a host), never the assertions.
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -158,4 +161,4 @@ keep_members = [
 id = "events-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "components/events-domain/e2e-events.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p events-domain -p record-store -p id-generate -p quota -p qr -p fsm-workflow -p auth-guard -p rate-limiter -p audit-log -p notify-prefs -p notify-inbox -p mail-http -p scheduler-timer && cd ../reconciler && cargo test --release --test gate_events events_created_read_amended_and_cancelled -- --exact"]
