@@ -70,7 +70,10 @@ base_paths = [
   "components/anthropic-provider/",
   "components/audit-log/",
   "components/record-store/",
-  "components/gate-lib.sh",
+  # The gate harness a part is judged by is `reconciler/tests/gate_*.rs` now, not a
+  # shell library. It is deliberately NOT in this list: a part is judged by the gate
+  # and does not get to read it, which was true of `gate-lib.sh` too — that entry
+  # showed the shared PLUMBING (how a gate boots a host), never the assertions.
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -147,7 +150,7 @@ context = [
 id = "intake-authenticates-throttles-and-masks"
 required = true
 weight = 1
-command = ["bash", "components/triage-assist-domain/e2e-intake.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p triage-assist-domain -p auth-guard -p rate-limiter -p pii-redact -p ai-inference -p anthropic-provider -p audit-log -p record-store && cd ../reconciler && cargo test --release --test gate_triage_assist intake_masks_records_the_reporter_and_limits_per_subject -- --exact"]
 
 [[part]]
 name = "assist"
@@ -200,7 +203,7 @@ context = [
 id = "assist-asks-a-real-model-and-survives-it-being-down"
 required = true
 weight = 1
-command = ["bash", "components/triage-assist-domain/e2e-assist.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p triage-assist-domain -p auth-guard -p rate-limiter -p pii-redact -p ai-inference -p anthropic-provider -p audit-log -p record-store && cd ../reconciler && cargo test --release --test gate_assist an_assist_is_written_once_and_never_written_at_all_when_the_model_is_down -- --exact"]
 
 [[part]]
 name = "ledger"
@@ -248,7 +251,7 @@ context = [
 id = "ledger-records-and-can-be-asked"
 required = true
 weight = 1
-command = ["bash", "components/triage-assist-domain/e2e-ledger.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p triage-assist-domain -p auth-guard -p rate-limiter -p pii-redact -p ai-inference -p anthropic-provider -p audit-log -p record-store && cd ../reconciler && cargo test --release --test gate_triage_assist the_audit_ledger_is_by_trace_capped_and_not_public -- --exact"]
 
 # The join. Each part's gate judges it with the other two stubbed — which is what makes
 # three agents possible, and exactly why something has to judge them together. The trail
@@ -259,4 +262,4 @@ command = ["bash", "components/triage-assist-domain/e2e-ledger.sh"]
 id = "the-whole-triage-assist-api-works"
 required = true
 weight = 1
-command = ["bash", "components/triage-assist-domain/e2e.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p triage-assist-domain -p auth-guard -p rate-limiter -p pii-redact -p ai-inference -p anthropic-provider -p audit-log -p record-store && cd ../reconciler && cargo test --release --test gate_assist the_whole_triage_assist_api_works -- --exact"]

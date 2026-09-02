@@ -65,7 +65,10 @@ base_paths = [
   "components/llm-inference/",
   "components/anthropic-provider/",
   "components/record-store/",
-  "components/gate-lib.sh",
+  # The gate harness a part is judged by is `reconciler/tests/gate_*.rs` now, not a
+  # shell library. It is deliberately NOT in this list: a part is judged by the gate
+  # and does not get to read it, which was true of `gate-lib.sh` too — that entry
+  # showed the shared PLUMBING (how a gate boots a host), never the assertions.
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -123,7 +126,7 @@ context = [
 id = "library-indexes-what-it-stores"
 required = true
 weight = 1
-command = ["bash", "components/doc-search-domain/e2e-library.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p doc-search-domain -p auth-guard -p rate-limiter -p audit-log -p otp -p quota -p search-index -p cache -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_docsearch a_document_is_findable_by_its_body_and_the_tag_filter_is_the_index -- --exact"]
 
 [[part]]
 name = "answer"
@@ -172,7 +175,7 @@ context = [
 id = "answer-pays-once-and-refuses-well"
 required = true
 weight = 1
-command = ["bash", "components/doc-search-domain/e2e-answer.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p doc-search-domain -p auth-guard -p rate-limiter -p audit-log -p otp -p quota -p search-index -p cache -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_answer an_answer_is_paid_for_once_cached_forever_and_gated_by_step_up -- --exact"]
 
 [[part]]
 name = "stepup"
@@ -212,7 +215,7 @@ context = [
 id = "stepup-checks-a-real-code"
 required = true
 weight = 1
-command = ["bash", "components/doc-search-domain/e2e-stepup.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p doc-search-domain -p auth-guard -p rate-limiter -p audit-log -p otp -p quota -p search-index -p cache -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_stepup enrolling_is_not_verifying_and_a_wrong_code_cannot_log_anyone_out -- --exact"]
 
 # The join. The step-up is earned through the real routes with a real TOTP code, and the
 # question is asked over a document filed through the real library route — nothing in the
@@ -221,4 +224,4 @@ command = ["bash", "components/doc-search-domain/e2e-stepup.sh"]
 id = "the-whole-docsearch-api-works"
 required = true
 weight = 1
-command = ["bash", "components/doc-search-domain/e2e.sh"]
+command = ["bash", "-c", "cd components && cargo component build --release -p doc-search-domain -p auth-guard -p rate-limiter -p audit-log -p otp -p quota -p search-index -p cache -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_answer the_whole_docsearch_agent_works -- --exact"]
