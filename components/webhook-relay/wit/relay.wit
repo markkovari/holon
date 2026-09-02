@@ -23,13 +23,31 @@ package relay:app@0.1.0;
 world relay-app {
     export wasi:http/incoming-handler@0.2.0;
 
-    // inbound HMAC verify + replay dedup (composed with idempotency-guard).
-    import webhook:ingest/verifier@0.1.0;
+    // Inbound HMAC verify and replay dedup, as TWO capabilities rather than one.
+    //
+    // This was `webhook:ingest/verifier`, whose `ingest` does both in a single call:
+    // it verifies the signature and marks the delivery-id seen, atomically. That
+    // atomicity is the bug. Everything that can still fail happens after it — the
+    // transform (422) and the enqueue (503) — so a refused delivery left its id
+    // burnt, and the sender's retry came back `200 {"replay": true}`. A webhook
+    // sender retries on non-2xx and stops on 2xx, so answering 200 to a delivery
+    // that was dropped tells it the event landed. Nothing queued, nothing
+    // dead-lettered, and silent loss on the one path idempotency exists to protect.
+    //
+    // A single call cannot express it, because dedup here needs a RESERVATION that
+    // is committed on success and released on failure. `idempotency:guard` is
+    // exactly that shape — `begin` / `complete` / `forget`, and its own contract
+    // says `forget` is for "the operation failed and the client should be allowed to
+    // retry from scratch". So the mark is ours to hold, and the signature check is a
+    // separate, side-effect-free call to the signer this world already imported.
+    import idempotency:guard/store@0.1.0;
     // optional payload reshape: array -> RFC 6902 patch, object -> merge-patch.
     import json:patch/patcher@0.1.0;
     // durable at-least-once delivery queue with retry/backoff + dead letters.
     import outbox:dispatch/queue@0.1.0;
-    // github-scheme HMAC signatures on outbound deliveries.
+    // github-scheme HMAC signatures on outbound deliveries — and, since the split
+    // above, the constant-time VERIFY on inbound ones too. Same interface, both
+    // directions, and `verify` has no side effect, which is the whole point.
     import webhook:sign/signer@0.1.0;
     // outbound webhook delivery (wasi:http/outgoing-handler under the hood).
     import notify:dispatch/dispatcher@0.1.0;
@@ -42,7 +60,9 @@ world relay-app {
     // source configs (destination, transform, outbound secret).
     import records:store/store@0.1.0;
 
-    // inbound secrets live at `relay:secret:{source}` — the kv location
-    // webhook:ingest's `secret-ref` parameter points at.
+    // Inbound secrets live at `relay:secret:{source}`. `webhook:ingest` used to read
+    // that key itself, given a `secret-ref`; now this component reads it and hands
+    // the VALUE to `signer::verify`, which is why the key's location stopped being
+    // part of another component's contract.
     import wasi:keyvalue/store@0.2.0-draft;
 }
