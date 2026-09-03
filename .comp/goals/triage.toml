@@ -168,7 +168,7 @@ context = [
 id = "intake-half-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p triage-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p csv && cd ../reconciler && cargo test --release --test gate_triage intake_masks_validates_and_deduplicates -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p triage-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p csv && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_triage intake_masks_validates_and_deduplicates -- --exact"]
 
 [[part]]
 name = "workflow"
@@ -210,7 +210,7 @@ context = [
 id = "workflow-half-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p triage-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p csv && cd ../reconciler && cargo test --release --test gate_triage workflow_is_a_machine_not_a_ladder_of_comparisons -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p triage-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p csv && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_triage workflow_is_a_machine_not_a_ladder_of_comparisons -- --exact"]
 
 [[part]]
 name = "digest"
@@ -251,7 +251,7 @@ context = [
 id = "digest-half-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p triage-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p csv && cd ../reconciler && cargo test --release --test gate_triage digest_counts_only_what_occurs -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p triage-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p csv && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_triage digest_counts_only_what_occurs -- --exact"]
 
 # The COMPOSITION gate: the one no single part can pass. It drives one report the
 # whole way through all three — intake writes it, workflow moves it and assigns a
@@ -261,4 +261,4 @@ command = ["bash", "-c", "cd components && cargo component build --release -p tr
 id = "the-whole-triage-api-works"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p triage-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p csv && cd ../reconciler && cargo test --release --test gate_triage the_whole_triage_api_works -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p triage-domain -p record-store -p id-generate -p pii-redact -p fsm-workflow -p csv && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_triage the_whole_triage_api_works -- --exact"]

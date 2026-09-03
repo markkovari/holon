@@ -62,6 +62,16 @@ pub fn warm_caches(goal: &GoalSpec, args: &Args) -> Vec<String> {
         // `bin_path` is right here — unlike the host, this one IS built in the
         // reconciler's workspace.
         format!("COMP_PLUG={}", plug_bin().display()),
+        // The gate crate, for the same reason as the two above: the composition
+        // gates are `reconciler/tests/gate_*.rs` now, and `reconciler/` is not in
+        // any goal's `base_paths` — it is the judge, not the subject. A check that
+        // ran `cd ../reconciler` found no such directory, and every branch of goal
+        // 10 failed on it, which reads as twelve branches writing bad code.
+        //
+        // A check runs `cargo test --manifest-path "$COMP_GATES/Cargo.toml"`, so
+        // the gate compiles from THIS checkout while the crate under test comes
+        // from the candidate's tree.
+        format!("COMP_GATES={}", comp_reconciler::fleet::repo_root().join("reconciler").display()),
     ];
     // `cargo` is usually a rustup shim, and under the gate's cleared environment
     // it cannot choose a toolchain — no RUSTUP_HOME, no default. Pass both, so the

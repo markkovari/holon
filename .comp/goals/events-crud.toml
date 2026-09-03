@@ -135,9 +135,17 @@ base_paths = [
   "components/audit-log/",
   "components/guestio/",
   # The gate harness a part is judged by is `reconciler/tests/gate_*.rs` now, not a
-  # shell library. It is deliberately NOT in this list: a part is judged by the gate
-  # and does not get to read it, which was true of `gate-lib.sh` too — that entry
-  # showed the shared PLUMBING (how a gate boots a host), never the assertions.
+  # shell library, and `reconciler/` is deliberately NOT in this list: it is the
+  # judge, not the subject, and shipping it would make every branch compile the
+  # whole reconciler workspace before it could be marked.
+  #
+  # That is not what keeps the assertions away from a part — `base_paths` is the
+  # tree the GATE materialises and runs over, while a part reads only what its
+  # `context` names. The earlier note here said the opposite, and the check command
+  # that followed from it ran `cd ../reconciler` inside a sandbox that had no such
+  # directory. Twelve branches of one run failed on a missing directory and it read
+  # as twelve branches writing bad code. The gate crate arrives as `$COMP_GATES`
+  # instead, next to `$COMP_HOST`, for exactly the reason that one does.
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -168,4 +176,4 @@ keep_members = [
 id = "events-answers-real-requests"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p events-domain -p record-store -p id-generate -p quota -p qr -p fsm-workflow -p auth-guard -p rate-limiter -p audit-log -p notify-prefs -p notify-inbox -p mail-http -p scheduler-timer && cd ../reconciler && cargo test --release --test gate_events events_created_read_amended_and_cancelled -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p events-domain -p record-store -p id-generate -p quota -p qr -p fsm-workflow -p auth-guard -p rate-limiter -p audit-log -p notify-prefs -p notify-inbox -p mail-http -p scheduler-timer && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_events events_created_read_amended_and_cancelled -- --exact"]
