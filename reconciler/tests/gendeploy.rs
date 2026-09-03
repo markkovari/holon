@@ -128,17 +128,24 @@ fn a_generation_runs_one_branch_per_environment() {
         { "id": "llm", "config": { "mock-model": "mock-agent", "mock-script": MOCK_SCRIPT } },
         { "id": "gate", "config": { "gate-script": "{\"be-42\":\"42\"}" } },
     ]);
+    // The versions here are the packages' own, and they have drifted once: the
+    // `graph:*` interfaces went 0.1.0 -> 0.2.0 in #158 and these edges did not
+    // follow, so every link silently failed to match. `save` then refused with
+    // `unsatisfied_imports` and NAMED the candidate for each gap — a member that
+    // exports something close but not the version asked for. Nothing caught it
+    // because no CI job runs this file. `llm:inference` really is still 0.1.0.
+    //
     // `graph:run/driver` does `use graph:agent/writer.{...}` and `use
     // graph:fitness.{check}`, so a component that imports graph:run also imports
     // those two as TYPE-transitive instance imports — the probe needs them
     // satisfied even though it never calls them. Hence the probe edges for
     // graph:agent and graph:fitness alongside the one it actually uses.
     let edges = json!([
-        { "plug": "driver", "socket": "probe",  "iface": "graph:run/driver@0.1.0" },
-        { "plug": "writer", "socket": "probe",  "iface": "graph:agent/writer@0.1.0" },
-        { "plug": "gate",   "socket": "probe",  "iface": "graph:fitness/evaluator@0.1.0" },
-        { "plug": "writer", "socket": "driver", "iface": "graph:agent/writer@0.1.0" },
-        { "plug": "gate",   "socket": "driver", "iface": "graph:fitness/evaluator@0.1.0" },
+        { "plug": "driver", "socket": "probe",  "iface": "graph:run/driver@0.2.0" },
+        { "plug": "writer", "socket": "probe",  "iface": "graph:agent/writer@0.2.0" },
+        { "plug": "gate",   "socket": "probe",  "iface": "graph:fitness/evaluator@0.2.0" },
+        { "plug": "writer", "socket": "driver", "iface": "graph:agent/writer@0.2.0" },
+        { "plug": "gate",   "socket": "driver", "iface": "graph:fitness/evaluator@0.2.0" },
         { "plug": "llm",    "socket": "writer", "iface": "llm:inference/inference@0.1.0" },
     ]);
     // Linked, not fused: the whole point is separate components the host links in
