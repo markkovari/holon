@@ -1,8 +1,30 @@
-# A shop that scans things — 🔴 TODO, nothing written yet
+# A shop that scans things — 🟡 the decoder exists, the shop does not
 
-**Status: a note, not a worklist item.** No component, no contract, no gates, no
-`.toml`. Written down so the idea stops living in a chat window; deliberately not
-started. Do not run this — there is nothing to run.
+**Status: half done.** `components/barcode-read` is written, built and gated —
+the capability half of this note is finished. The SHOP half is still a note: no
+domain crate, no contract, no `.toml`, nothing to run.
+
+The decoder settled the question this note was mostly about, and the answer was
+yes: a linear-barcode scanline decoder fits in `wasm32-wasip2` with no host
+behind it. The built component is 179 KB and imports nothing but the `wasi:*`
+boilerplate Rust's std pulls in — no capability import, no contract. So it is in
+`CATALOG.md` under "Capabilities — reusable as-is", and the contract-only list
+did not grow.
+
+What it decodes, against fixtures rendered by an encoder that is not its own:
+EAN-13, EAN-8, UPC-A and Code 128, upright, upside down, sideways, and with a
+thumb over the bottom third. Blank paper decodes to nothing, which is the
+constant-returner test. Every answer is verified against its own check digit
+before it is returned.
+
+The ceiling is stated in the crate and not hidden: a label held at 30 degrees is
+not decoded. Rows and columns are scanned, each in both directions, and nothing
+projects a line at an angle.
+
+Eighteen randomly generated codes the decoder had never seen were run through it
+before any of this was believed, and the first pass found a real bug —
+`0166131860910` came back as `166131860910`, a leading zero stripped as if every
+such code were a UPC-A. Three of those random codes are now fixtures.
 
 ## What is wanted
 
@@ -39,11 +61,10 @@ image in a fixture, or it exports `UNIMPLEMENTED:` and says so in `CATALOG.md`.
 One `apps/<name>.toml`, both audiences behind one ingress, delivered through one of
 the four lanes in `docs/SELFHOST.md`.
 
-## Why it is 🔴 and staying there
+## Why the shop half is still a note
 
-Two reasons, and neither is the barcode.
-
-**It is two goals wearing one name.** The decoder is a capability with a
+**It is two goals wearing one name** — which is now literally true: the decoder
+shipped on its own, and what is left is the application. The decoder is a capability with a
 deterministic gate — an image fixture in, known digits out, and a wrong decoder
 fails loudly. The shop is an application with auth, roles, money and stock, and
 `eshop-basket`, `eshop-catalog`, `eshop-ordering` and `money` already exist to build
@@ -58,13 +79,17 @@ and a shopper" — that question is now asked automatically on every run includi
 decomposed ones, and here it should be asked by a person first, because the answer
 probably shortens the goal to "wire these together and scan a barcode".
 
-## What would make it 🟡
+## What is left
 
-- A decision on whether the decoder is pure compute in-guest, with a spike that
-  either decodes one fixture image or says why it cannot.
-- An image fixture set with known-correct digits, checked in — including a rotated
-  and a partially-occluded one, because a decoder that only reads a clean render is
-  a decoder that works in the test and not in a shop.
-- The split named: one goal for `barcode:read`, one for the app.
-- The app's contract written, if it is decomposed — which it probably is: catalogue,
-  basket and admin are three parts that share a product shape.
+- ~~A decision on whether the decoder is pure compute in-guest~~ — yes, measured.
+- ~~An image fixture set with known-correct digits, checked in~~ — eleven of them,
+  rotated and occluded included.
+- ~~The split named~~ — the decoder is its own component and shipped alone.
+- **The app's contract**, which it needs because it is decomposed: catalogue,
+  basket and admin are three parts sharing one product shape.
+- **The capability search asked by a person first.** Still not done, and still
+  the next thing: `auth:identity` for the two audiences, `records:store` for the
+  catalogue, `money:amount` for prices, `event:bus` for stock. The answer
+  probably shortens the goal to "wire these together and scan a barcode", and
+  writing the contract before asking is how a goal gets written for work the
+  pool already does.

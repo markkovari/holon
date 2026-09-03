@@ -1,0 +1,48 @@
+// barcode:read — a barcode image into its digits and its symbology.
+//
+// The formats a shop actually meets: EAN-13 and EAN-8 (Europe), UPC-A
+// (imports), and Code 128 (shelf and price labels). QR is a different problem —
+// two-dimensional, error-corrected, a different decoder entirely — and waits
+// for a reason to exist.
+//
+// Pure compute: no state, no host imports. A linear barcode carries nothing
+// vertically, so a decoder needs one line of pixels rather than an image
+// pipeline, and that is what lets this be a real component instead of the
+// thirteenth contract with nothing behind it.
+package barcode:read@0.1.0;
+
+/// Decode a barcode from an image.
+interface reader {
+    /// What was read.
+    record symbol {
+        /// The digits or characters the code carries, check digit included —
+        /// what is printed under the bars.
+        text: string,
+        /// Which symbology it turned out to be: `ean-13`, `ean-8`, `upc-a` or
+        /// `code-128`. The caller does not say which to expect; a shop scans
+        /// whatever is on the box.
+        symbology: string,
+    }
+
+    /// Why a decode failed.
+    variant read-error {
+        /// The bytes are not a PNG this can read.
+        bad-image(string),
+        /// The image was read and no symbol in it survived its own check
+        /// digit. Not the same as a bad image, and the difference is what
+        /// tells a shopper "hold it steadier" from "that is not a photo".
+        not-found,
+    }
+
+    /// Decode the first barcode found in a PNG image.
+    ///
+    /// Every answer has been verified against its own check digit, so a wrong
+    /// read is overwhelmingly likely to come back `not-found` rather than as a
+    /// product code that was never on the box.
+    decode-png: func(image: list<u8>) -> result<symbol, read-error>;
+}
+
+/// `barcode:read` decodes linear barcodes; pure compute, no host imports.
+world barcode {
+    export reader;
+}

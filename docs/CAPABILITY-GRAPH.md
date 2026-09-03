@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**213 components, 103 interfaces with a provider and at least one consumer, 459 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
+**214 components, 103 interfaces with a provider and at least one consumer, 459 import edges, 17 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
 
 That total counts what was BUILT. `components/CATALOG.md` counts source crates and is larger by however many declare their own `[workspace]` and so are never built — `components/Cargo.toml` names them. Both numbers are right; they answer different questions, and this one is the one you can compose against.
 
@@ -409,6 +409,7 @@ Not a finding. A capability library is allowed to be ahead of its callers, and s
 | `abtest-domain` | `wasi:http/incoming-handler` |
 | `auth-guard` | `auth:identity/jwt` |
 | `auth-guard` | `auth:identity/oidc` |
+| `barcode-read` | `barcode:read/reader` |
 | `bigadd` | `demo:bigadd/bignum` |
 | `calc` | `demo:calc/arith` |
 | `event-pusher` | `wasmcloud:messaging/handler` |

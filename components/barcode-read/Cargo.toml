@@ -1,0 +1,26 @@
+[package]
+name = "barcode-read"
+description = "Linear barcode decoding — EAN-13/EAN-8/UPC-A/Code-128 from a PNG (barcode:read)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# `rlib` as well as `cdylib`, so `tests/` can link the pure decoder directly.
+# Testing through generated bindings would test wit-bindgen; the fixtures are
+# about whether a real image decodes.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+# Pure-Rust PNG, no C and no image-processing framework behind it. The decoder
+# itself needs no dependency at all — this is only how pixels come out of a file.
+png = { version = "0.17", default-features = false }
+
+[package.metadata.component]
+package = "barcode:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "barcode"
