@@ -68,9 +68,17 @@ base_paths = [
   "components/anthropic-provider/",
   "components/record-store/",
   # The gate harness a part is judged by is `reconciler/tests/gate_*.rs` now, not a
-  # shell library. It is deliberately NOT in this list: a part is judged by the gate
-  # and does not get to read it, which was true of `gate-lib.sh` too — that entry
-  # showed the shared PLUMBING (how a gate boots a host), never the assertions.
+  # shell library, and `reconciler/` is deliberately NOT in this list: it is the
+  # judge, not the subject, and shipping it would make every branch compile the
+  # whole reconciler workspace before it could be marked.
+  #
+  # That is not what keeps the assertions away from a part — `base_paths` is the
+  # tree the GATE materialises and runs over, while a part reads only what its
+  # `context` names. The earlier note here said the opposite, and the check command
+  # that followed from it ran `cd ../reconciler` inside a sandbox that had no such
+  # directory. Twelve branches of one run failed on a missing directory and it read
+  # as twelve branches writing bad code. The gate crate arrives as `$COMP_GATES`
+  # instead, next to `$COMP_HOST`, for exactly the reason that one does.
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -140,7 +148,7 @@ context = [
 id = "invoices-refuses-money-it-cannot-add"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_invoice invoices_open_as_drafts_and_the_limit_is_per_subject -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider -p record-store && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_invoice invoices_open_as_drafts_and_the_limit_is_per_subject -- --exact"]
 
 [[part]]
 name = "copilot"
@@ -176,7 +184,7 @@ context = [
 id = "copilot-lets-money-do-the-arithmetic"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_copilot a_suggestion_is_allocated_to_the_cent_and_described_by_the_model -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider -p record-store && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_copilot a_suggestion_is_allocated_to_the_cent_and_described_by_the_model -- --exact"]
 
 [[part]]
 name = "posting"
@@ -217,7 +225,7 @@ context = [
 id = "posting-happens-exactly-once"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_invoice posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider -p record-store && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_invoice posting_writes_one_balanced_entry_and_a_retry_is_not_a_second_charge -- --exact"]
 
 # The join, and it uses no fixture: the invoice is opened through `invoices`, its lines
 # suggested through `copilot`, and it is posted through `posting` — 10.00 into three shares,
@@ -227,4 +235,4 @@ command = ["bash", "-c", "cd components && cargo component build --release -p in
 id = "the-whole-invoice-copilot-api-works"
 required = true
 weight = 1
-command = ["bash", "-c", "cd components && cargo component build --release -p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider -p record-store && cd ../reconciler && cargo test --release --test gate_copilot the_whole_invoice_api_works -- --exact"]
+command = ["bash", "-c", "cd components && cargo component build --release --target wasm32-wasip2 -p invoice-copilot-domain -p auth-guard -p rate-limiter -p audit-log -p money -p ledger -p idempotency-guard -p ai-inference -p anthropic-provider -p record-store && cargo test --release --manifest-path \"$COMP_GATES/Cargo.toml\" --test gate_copilot the_whole_invoice_api_works -- --exact"]

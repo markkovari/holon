@@ -35,6 +35,25 @@ pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
+/// Where the components were built, from `$CARGO_TARGET_DIR` when something set it.
+///
+/// The second half of the bug `host_bin` documents, and the more dangerous half. A
+/// goal run gives every check a SHARED cargo target dir (`goalrun/setup.rs` sets
+/// `CARGO_TARGET_DIR`) because a fresh one per candidate makes a cargo gate
+/// unaffordable. `repo_root()` is `CARGO_MANIFEST_DIR` — baked in at compile time,
+/// pointing at the developer's checkout — so a gate that resolves artifacts through
+/// it judges the artifacts on THIS machine no matter what the candidate wrote. It
+/// passes, every time, for every branch, including one that changed nothing.
+///
+/// `components/gate-lib.sh` read `${CARGO_TARGET_DIR:-components/target}` and this is
+/// the same line in Rust.
+pub fn components_target() -> PathBuf {
+    match std::env::var("CARGO_TARGET_DIR") {
+        Ok(p) if !p.trim().is_empty() => PathBuf::from(p),
+        _ => repo_root().join("components/target"),
+    }
+}
+
 /// The host binary, from `$COMP_HOST` when something set it and from the checkout
 /// otherwise.
 ///
@@ -139,9 +158,11 @@ impl Drop for Gate {
 /// Keyed by content, so a rerun against an unchanged tree reuses the artifact rather
 /// than composing again.
 pub fn compose(crate_name: &str) -> Option<PathBuf> {
-    use comp_reconciler::plug::{compose_to, default_dirs, Catalog};
-    let root = repo_root();
-    let catalog = Catalog::scan(&default_dirs(&root));
+    use comp_reconciler::plug::{compose_to, Catalog};
+    let target = components_target();
+    let dirs: Vec<PathBuf> =
+        ["wasm32-wasip2/release", "wasm32-wasip2/debug"].iter().map(|d| target.join(d)).collect();
+    let catalog = Catalog::scan(&dirs);
     // Same asymmetry as `no_host`, and for the same reason: under a goal run the
     // check command has already built what it needs, so an empty catalogue here is
     // the harness being wrong rather than a checkout being cold — and a skip would
@@ -165,7 +186,7 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
         eprintln!("SKIPPED [{crate_name}]: not built — run `just build`");
         return None;
     }
-    match compose_to(crate_name, &catalog, &root.join("components/target")) {
+    match compose_to(crate_name, &catalog, &target) {
         Ok(path) => Some(path),
         Err(e) => panic!("[{crate_name}] does not compose: {e}"),
     }
@@ -177,9 +198,8 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
 /// not broken anything, and a gate that fails for a missing file trains people to
 /// ignore gate failures.
 pub fn artifacts(app: &str, composed: &str) -> Option<(PathBuf, PathBuf)> {
-    let root = repo_root();
     let host = host_bin();
-    let wasm = root.join("components/target").join(composed);
+    let wasm = components_target().join(composed);
     if !host.exists() {
         eprintln!("SKIPPED [{app}]: no comp-host — cargo build --release --manifest-path host/Cargo.toml --bin comp-host");
         return None;
@@ -490,8 +510,8 @@ pub fn assert_unauthenticated(gate: &Gate, method: &str, path: &str, body: Optio
 /// instead of calling `auth:identity/authorizer` passes every behavioural check and
 /// has done the thing the contract exists to prevent.
 pub fn requires_capability(crate_name: &str, interface: &str, why: &str) {
-    let path = repo_root()
-        .join("components/target/wasm32-wasip2/release")
+    let path = components_target()
+        .join("wasm32-wasip2/release")
         .join(format!("{}.wasm", crate_name.replace('-', "_")));
     let Ok(bytes) = std::fs::read(&path) else {
         panic!("cannot read {path:?} to check its imports — run `just build`");
