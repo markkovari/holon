@@ -348,6 +348,25 @@ jobs:
             test-args: --bins -- --skip surrealkv_test
           - workspace: cli
             test-args: --bins
+          # `lattice` was in no job at all. It COMPILES here — the reconciler and the
+          # host both depend on it — so nothing was red, and its nine unit tests had
+          # simply never run: the wire vocabulary, the snapshot round trip, and the
+          # in-memory inventory's expiry. Found by listing the workspaces against the
+          # matrix rather than by anything failing, which is the only way a whole
+          # workspace goes missing quietly.
+          #
+          # Measured by removal, as this file insists: nats-server and surreal off
+          # PATH and `comp-host` moved aside, `--lib` is 9 passed, 0 failed.
+          #
+          # `--lib` and not the whole workspace, deliberately.
+          # `tests/inventory_ttl.rs` spawns a real `nats-server` to prove that two
+          # processes asking one bucket for different TTLs are told what the bucket
+          # actually holds — one process cannot observe that. Without the binary it
+          # SKIPS, and a skip returns `ok`, so naming it here would buy a green tick
+          # for a test that did not run. It stays a local check until this runner
+          # installs nats-server.
+          - workspace: lattice
+            test-args: --lib
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
