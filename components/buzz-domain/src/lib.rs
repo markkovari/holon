@@ -579,9 +579,10 @@ fn body(request: &IncomingRequest) -> Result<Value, Outcome> {
 
 /// The most a request body may be, before the component stops reading it.
 ///
-/// There was no ceiling anywhere: 148 of 150 components accumulated whatever
-/// arrived until the guest hit wasmtime's 64 MiB per-store memory cap and TRAPPED,
-/// which reaches the caller as a closed connection saying nothing about a size.
+/// There was no ceiling anywhere: when this was measured, 148 of the tree's 150
+/// components accumulated whatever arrived until the guest hit wasmtime's 64 MiB
+/// per-store memory cap and TRAPPED, which reaches the caller as a closed
+/// connection saying nothing about a size.
 /// A component that answers JSON has no business reading sixteen megabytes, and
 /// the ones that legitimately handle uploads police it themselves with a 413 and a
 /// granted max-size — those are left alone.

@@ -59,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          for bin in comp-checks comp-plug comp-field comp-relay comp-goalrun comp-goald; do
+          for bin in comp-checks comp-plug comp-relay comp-goalrun comp-goald; do
             ( cd reconciler && cargo build --release --bin "$bin" )
             cp "reconciler/target/release/$bin" dist/
           done

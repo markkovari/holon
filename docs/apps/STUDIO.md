@@ -1,6 +1,6 @@
 # studio — components describe themselves, and compose themselves
 
-This repo assembles 109 components by hand: **55 `wac plug` lines** in a Justfile,
+This repo assembles every component by hand: **55 `wac plug` lines** in a Justfile,
 and a `tools/gen-catalog.py` that scrapes WIT with **five regexes** to build a
 catalog nothing consumes programmatically. Both work. Both are blind the same way —
 nothing in the loop reads the *binary* contract, so nothing can answer the only
@@ -112,7 +112,7 @@ Two traps the emitters handle explicitly:
 ## Run it
 
 ```bash
-just host-studio    # composes, builds the SPA, serves :3054, seeds all 109 components
+just host-studio    # composes, builds the SPA, serves :3054, seeds every component
 # click components in to place them, drag an export handle onto a matching import,
 # then read the wac plug / .wac / workload tabs and hit Compose.
 

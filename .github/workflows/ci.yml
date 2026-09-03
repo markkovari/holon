@@ -254,9 +254,13 @@ jobs:
       # IN PROCESS via `plug::compose_to` (ADR-0087), so `comp-plug` is no longer a
       # gate dependency — it is still built below because `console_session` spawns it.
       #
-      # `comp-field` is no longer built here. It existed to read a JSON field for the
-      # shell gates and now has no caller in the tree; it is still shipped by
-      # `install.sh` and `release.yml`, so the crate stays.
+      # `comp-field` is gone entirely. It existed to read a JSON field for the shell
+      # gates, at 15.3 ms of `python3` start-up per call across 106 call sites; those
+      # gates are Rust now and read JSON with `serde_json`. It had no caller left in
+      # the tree, no mention in any document, and the `just gate-field-bench` its own
+      # header pointed at had already been deleted — a released binary nobody ran.
+      # ADR-0097's rule, one level up from a generated file: ask what reads it, and if
+      # the answer is nothing, delete it and keep the program.
       - name: Build the binaries the gates and suites spawn
         run: |
           cargo build --release --manifest-path host/Cargo.toml --bin comp-host
