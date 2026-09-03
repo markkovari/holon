@@ -39,7 +39,7 @@
     "@bytecodealliance/jco": "^1.23.0",
     "@bytecodealliance/preview2-shim": "^0.17.0",
     "@fastify/static": "^10.1.2",
-    "fastify": "^5.2.0"
+    "fastify": "^5.12.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
