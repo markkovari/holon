@@ -238,7 +238,13 @@ function runClaude({ system, prompt, images = [] }) {
       clearTimeout(timer)
       cleanup()
       if (code !== 0) {
-        reject(new Error(`claude -p exited ${code}: ${err.trim().slice(0, 300)}`))
+        // stdout, not just stderr: `claude -p` prints its own refusals — usage
+        // limit reached, auth expired — to STDOUT and exits 1 with stderr
+        // EMPTY. Reporting only stderr turned twelve dead branches into
+        // `claude -p exited 1: ` twelve times, which named nothing at all and
+        // cost a run to re-diagnose by hand.
+        const why = [err.trim(), out.trim()].filter(Boolean).join(' | ') || '(no output)'
+        reject(new Error(`claude -p exited ${code}: ${why.slice(0, 300)}`))
         return
       }
       resolve(out)
