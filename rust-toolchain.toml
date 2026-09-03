@@ -63,6 +63,27 @@
 # Raising this alone is safe only while that number stays inside what the host
 # provides, and `reconciler/tests/gate_*.rs` is the check: they compose real
 # components and boot a real host, so a mismatch fails them all at once.
+# ONE FILE, FOR THE WHOLE REPOSITORY
+#
+# There were three. `host/` and `reconciler/` each carried `channel = "stable"`
+# since #158, so this pin governed `components/` and nothing else — and the claim in
+# #201 that "the pin takes effect" was verified at the repo ROOT, which is exactly
+# where it was true and told you nothing about the two workspaces that disagreed.
+#
+# It hides locally, because `stable` resolves to this same version today, so
+# `rustc --version` reads 1.98.0 in all three directories. It does NOT hide in CI,
+# and this is why: `stable-x86_64-…` and `1.98.0-x86_64-…` are separate rustup
+# installations with separate TARGET SETS. `rustup target add wasm32-wasip2` at the
+# root adds it to 1.98.0 and not to stable. So:
+#
+#   * `just build` runs at the root   -> 1.98.0, has the target, builds 213 components
+#   * `cargo test` runs in reconciler -> stable, and exports RUSTUP_TOOLCHAIN=stable
+#   * `newversion.rs` spawns `cargo build --target wasm32-wasip2` from that test,
+#     inherits stable, and dies with `can't find crate for core`
+#
+# It passed on a developer machine only because that machine had already added wasip2
+# to stable for something else. CI found it the first time anything ran the fleet
+# suites, which is the argument for running them.
 [toolchain]
 channel = "1.98.0"
 # Installed automatically on a fresh checkout, so `just build` does not fail on a
