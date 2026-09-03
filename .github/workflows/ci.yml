@@ -114,6 +114,7 @@ jobs:
             components -> target
             host -> target
             reconciler -> target
+            cli -> target
 
       # The project's own entry point, not an approximation of it. CI that
       # builds differently from the repo is CI that answers a question nobody
@@ -261,6 +262,14 @@ jobs:
           cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
+          cargo build --release --manifest-path cli/Cargo.toml --bin holon
+
+      # Which binaries, established by asking the suites rather than by adding one
+      # per failure. The fleet suites resolve exactly two by PATH — `comp-host` and
+      # `cli/.../holon` — and three more through `CARGO_BIN_EXE_*`, which cargo builds
+      # for a test automatically and no step has to. `secretcli` wanted `holon` and
+      # said so plainly ("cargo build --release in cli/"), which is the only reason
+      # this was one round trip and not four.
 
       # COMP_HOST is set even though the fallback path is the one the step above
       # builds, and that is the point: with it set, `gatelib::host_bin` finds no
