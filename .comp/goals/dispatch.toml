@@ -118,6 +118,51 @@ title = "A field-service dispatch API, in three parts that share one capability"
 contract = "components/dispatch-domain/CONTRACT.md"
 writable = []
 
+# WHAT A RUN SHIPS, and it is not the repository.
+#
+# Without this the run refuses before spending anything: "the base tree is 19.9 MB,
+# over the 7.2 MB a run can ship — scope the goal with base_paths to the crate it
+# touches (a monorepo cannot ship whole)". This spec had no `base_paths`, no
+# `workspace_manifest` and no `keep_members` when it was written, because it was
+# written and never run. The `--smoke` pass costs nothing and found it.
+#
+# The crate under test, plus every capability its world imports — a part cannot
+# compose against a WIT it was not shipped.
+base_paths = [
+  "components/dispatch-domain/",
+  "components/record-store/",
+  "components/id-generate/",
+  # The capabilities these parts compose against.
+  "components/pii-redact/",
+  "components/fsm-workflow/",
+  "components/geo/",
+  "components/csv/",
+  "components/Cargo.toml",
+  "wit/deps/",
+  "host/wit/deps/",
+  # The guest-side shared code every domain crate depends on by PATH. A spec that
+  # keeps a member and not its path dependency ships a workspace cargo cannot load:
+  # "failed to load manifest for workspace member". Eight of the nine specs here were
+  # missing these — `guestio` and `guestfmt` landed after the goals were written and
+  # nothing re-ran them, so nothing said so.
+  "components/guestfmt/",
+  "components/guestio/",
+]
+# The workspace is trimmed to these members, so `cargo` in the sandbox does not go
+# looking for 200 crates that were not shipped.
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "dispatch-domain",
+  "record-store",
+  "id-generate",
+  "pii-redact",
+  "fsm-workflow",
+  "geo",
+  "csv",
+  "guestfmt",
+  "guestio",
+]
+
 [[part]]
 name = "requests"
 text = """

@@ -72,6 +72,13 @@ base_paths = [
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
+  # The guest-side shared code every domain crate depends on by PATH. A spec that
+  # keeps a member and not its path dependency ships a workspace cargo cannot load:
+  # "failed to load manifest for workspace member". Eight of the nine specs here were
+  # missing these — `guestio` and `guestfmt` landed after the goals were written and
+  # nothing re-ran them, so nothing said so.
+  "components/guestfmt/",
+  "components/guestio/",
 ]
 workspace_manifest = "components/Cargo.toml"
 keep_members = [
@@ -87,6 +94,8 @@ keep_members = [
   "llm-inference",
   "anthropic-provider",
   "record-store",
+  "guestfmt",
+  "guestio",
 ]
 
 [[part]]
