@@ -887,8 +887,24 @@ pub struct Shim {
 }
 
 impl Shim {
+    /// The shim, or a loud skip — and a PANIC when somebody named one that is not there.
+    ///
+    /// Same asymmetry as `host_bin`/`no_host`, for the same reason. Nobody promised a
+    /// model on the default port, so a machine without one has broken nothing and a
+    /// skip is right. But `SHIM_URL` is a statement: someone started a shim, or told
+    /// CI where one is. If that address does not answer, the honest outcome is a
+    /// failure, because the alternative is what this repository keeps rediscovering —
+    /// a gate that returns `None`, which every caller turns into `return`, which
+    /// `cargo test` prints as `ok`.
+    ///
+    /// This does NOT make the model gates run in CI. The runner has no shim and sets
+    /// no `SHIM_URL`, so they still skip and still report `ok`; real coverage there
+    /// wants a service container. What it fixes is the case that bit a person rather
+    /// than a runner: a shim that was started and died, or a typo'd `SHIM_URL`, now
+    /// says so instead of quietly buying five green ticks.
     pub fn probe(gate_name: &str) -> Option<Self> {
-        let url = std::env::var("SHIM_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".into());
+        let stated = std::env::var("SHIM_URL").ok().filter(|u| !u.trim().is_empty());
+        let url = stated.clone().unwrap_or_else(|| "http://127.0.0.1:8787".into());
         let alive = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(2))
             .build()
@@ -897,6 +913,13 @@ impl Shim {
             .map(|r| r.status().as_u16() == 404)
             .unwrap_or(false);
         if !alive {
+            assert!(
+                stated.is_none(),
+                "[{gate_name}] SHIM_URL is set to `{url}` and nothing answers there. \
+                 Something stated where the model is, so this is a harness fault and not \
+                 a machine without one — reporting a pass for a gate that never called a \
+                 model is worse than reporting a failure."
+            );
             eprintln!(
                 "SKIPPED [{gate_name}]: no model shim at {url} — start one with \
                  `just openai-shim` (a local mlx server) or `just claude-shim` (a \
