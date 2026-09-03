@@ -29,7 +29,7 @@ ROLE="${HOLON_ROLE:-worker}"
 # that also drives the loop and serves apps.
 case "$ROLE" in
   worker) DEFAULT_BINS="comp-checks" ;;
-  full)   DEFAULT_BINS="comp-checks comp-host comp-plug comp-field comp-relay comp-goalrun comp-goald holon" ;;
+  full)   DEFAULT_BINS="comp-checks comp-host comp-plug comp-relay comp-goalrun comp-goald holon" ;;
   *)      echo "install.sh: HOLON_ROLE must be 'worker' or 'full', got '$ROLE'" >&2; exit 2 ;;
 esac
 BINS="${HOLON_BINS:-$DEFAULT_BINS}"
