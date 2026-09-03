@@ -72,6 +72,33 @@ jobs:
         with:
           tool: cargo-component@0.21.1,wasm-tools,just
 
+      # nats-server, and it buys more than any other line in this file.
+      #
+      # FORTY-ONE reconciler suites spawn a fleet, and a fleet is NATS. Without the
+      # binary every one of them was excluded, and this file's own note said so —
+      # "drop nats-server from PATH -> 21 of the rest spawn NATS". They were not run
+      # anywhere, by anything, and one of them (`gendeploy`) had been RED since #158
+      # over a drifted interface version that nothing was watching (#214).
+      #
+      # Measured before adding it, on a machine matching this runner — nats-server
+      # present, no model shim, no SurrealDB:
+      #
+      #     57 passed, 4 failed, 6 ignored, in 469s
+      #
+      # The four are `gate_dispatch`, red on purpose because goal 10's parts are
+      # stubs, and they stay out of the list below for that reason.
+      #
+      # Not `taiki-e/install-action`: it does not carry nats-server. A pinned release
+      # tarball is two lines and cannot surprise this job on a morning nobody touched
+      # a workflow — the same reasoning the `actionlint` step gives for pinning.
+      - name: Install nats-server
+        run: |
+          ver=v2.10.22
+          url="https://github.com/nats-io/nats-server/releases/download/${ver}/nats-server-${ver}-linux-amd64.tar.gz"
+          curl -fsSL "$url" | tar xz --strip-components=1 -C /usr/local/bin \
+            "nats-server-${ver}-linux-amd64/nats-server"
+          nats-server --version
+
       # THREE workspaces, not one. This job builds `comp-host` (for the `publish`
       # suite) and the reconciler's test binaries, and with only `components`
       # declared those two compiled from scratch on every run:
@@ -87,6 +114,7 @@ jobs:
             components -> target
             host -> target
             reconciler -> target
+            cli -> target
 
       # The project's own entry point, not an approximation of it. CI that
       # builds differently from the repo is CI that answers a question nobody
@@ -234,6 +262,14 @@ jobs:
           cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
+          cargo build --release --manifest-path cli/Cargo.toml --bin holon
+
+      # Which binaries, established by asking the suites rather than by adding one
+      # per failure. The fleet suites resolve exactly two by PATH — `comp-host` and
+      # `cli/.../holon` — and three more through `CARGO_BIN_EXE_*`, which cargo builds
+      # for a test automatically and no step has to. `secretcli` wanted `holon` and
+      # said so plainly ("cargo build --release in cli/"), which is the only reason
+      # this was one round trip and not four.
 
       # COMP_HOST is set even though the fallback path is the one the step above
       # builds, and that is the point: with it set, `gatelib::host_bin` finds no
@@ -265,6 +301,32 @@ jobs:
           --test gate_events_closed --test gate_courier --test gate_stepup --test gate_reminders
           --test gate_answer --test gate_copilot --test gate_verdict --test gate_reply --test gate_assist
           --test gate_relay --test gate_notify
+
+      # THE FLEET SUITES — 41 of them, and until this commit nothing ran a single one.
+      #
+      # Every one spawns NATS, which is why they were all excluded and why the
+      # `nats-server` step above exists. Kept as a SEPARATE step rather than folded
+      # into the list above so a fleet failure is legible on its own: these are the
+      # slow ones, they share a machine, and mixing them into the artifact suites
+      # would make one red tick mean either.
+      #
+      # `gate_dispatch` is deliberately absent — goal 10's gate, stubs answering 501
+      # on purpose, and adding it would make this permanently red.
+      - name: Test the suites that spawn a fleet
+        working-directory: reconciler
+        env:
+          COMP_HOST: ${{ github.workspace }}/host/target/release/comp-host
+        run: >-
+          cargo test --release
+          --test agent --test artifacts --test bigstatement --test blink --test capgraph_stress
+          --test claude_shim_live --test coldstart --test compose --test contrast_audit_live
+          --test crossnode --test driver --test e2e --test envbranch --test environments
+          --test fitness --test forge --test gendeploy --test generation --test graph --test ha
+          --test inference --test leader --test learning --test memory --test mockllm
+          --test newversion --test photo_critic_live --test projects --test reveal
+          --test scaling --test search --test secretcli --test select --test slug_live
+          --test staleness --test state --test tagged --test tagged_loop --test trace_live
+          --test treesize --test vgit
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is

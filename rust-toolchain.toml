@@ -36,7 +36,22 @@
 # reintroduces exactly this failure on a morning nobody touched the code. An exact
 # version fails loudly at `rustup` instead, which is a better place to find out.
 #
-# WHEN TO RAISE IT
+# AFTER PULLING THIS FILE, REBUILD ONCE
+#
+#   just build force=1
+#
+# A checkout that predates this pin holds components compiled by whatever rustc was
+# default then. Rebuilding only what you touch leaves the tree MIXED, and a
+# composition that mixes two toolchains fails the same way a too-new one does:
+#
+#   instance export `exit-with-code` has the wrong type
+#
+# which every gate reports as `the component never served /health`. That is
+# indistinguishable from the pin not working, and it cost a wrong diagnosis on the day
+# this file was written — the tree was half 0.2.9 and half 0.2.12 and nothing said so.
+# `just build force=1` is 50 seconds and settles it.
+#
+# WHEN TO RAISE THE PIN
 #
 # When `wrpc-runtime-wasmtime` takes a wasmtime newer than 45, raise both together and
 # re-measure with the command that produced the table above:
@@ -48,6 +63,27 @@
 # Raising this alone is safe only while that number stays inside what the host
 # provides, and `reconciler/tests/gate_*.rs` is the check: they compose real
 # components and boot a real host, so a mismatch fails them all at once.
+# ONE FILE, FOR THE WHOLE REPOSITORY
+#
+# There were three. `host/` and `reconciler/` each carried `channel = "stable"`
+# since #158, so this pin governed `components/` and nothing else — and the claim in
+# #201 that "the pin takes effect" was verified at the repo ROOT, which is exactly
+# where it was true and told you nothing about the two workspaces that disagreed.
+#
+# It hides locally, because `stable` resolves to this same version today, so
+# `rustc --version` reads 1.98.0 in all three directories. It does NOT hide in CI,
+# and this is why: `stable-x86_64-…` and `1.98.0-x86_64-…` are separate rustup
+# installations with separate TARGET SETS. `rustup target add wasm32-wasip2` at the
+# root adds it to 1.98.0 and not to stable. So:
+#
+#   * `just build` runs at the root   -> 1.98.0, has the target, builds 213 components
+#   * `cargo test` runs in reconciler -> stable, and exports RUSTUP_TOOLCHAIN=stable
+#   * `newversion.rs` spawns `cargo build --target wasm32-wasip2` from that test,
+#     inherits stable, and dies with `can't find crate for core`
+#
+# It passed on a developer machine only because that machine had already added wasip2
+# to stable for something else. CI found it the first time anything ran the fleet
+# suites, which is the argument for running them.
 [toolchain]
 channel = "1.98.0"
 # Installed automatically on a fresh checkout, so `just build` does not fail on a
