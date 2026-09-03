@@ -45,8 +45,9 @@ runs on very little.
 
 ### 2. No request body had a ceiling — 38 components capped
 
-Two of 150 components limited how much they would read; the rest accumulated
-whatever arrived until the guest hit wasmtime's 64 MiB per-store cap and **trapped**
+When this was measured the tree held 150 components, and two of them limited how much
+they would read; the rest accumulated whatever arrived until the guest hit wasmtime's
+64 MiB per-store cap and **trapped**
 — which reaches the caller as a closed connection saying nothing about a size.
 
 `MAX_BODY_BYTES = 16 MiB` is a backstop, not a content policy. It is deliberately
