@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**213 components, 102 interfaces with a provider and at least one consumer, 455 import edges, 17 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
+**213 components, 103 interfaces with a provider and at least one consumer, 459 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
 
 That total counts what was BUILT. `components/CATALOG.md` counts source crates and is larger by however many declare their own `[workspace]` and so are never built — `components/Cargo.toml` names them. Both numbers are right; they answer different questions, and this one is the one you can compose against.
 
@@ -27,11 +27,11 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 15 | `id:generate/generator` | `id-generate` | `abtest-domain`, `arena-domain`, `binder-domain`, `clinic-domain`, `dev-portal`, `events-domain`, `flags-domain`, `helpdesk-domain`, `link-shortener`, `pipeline-domain`, `poll-domain`, `pulse-domain`, `saga-domain`, `scribe-domain`, `throttle-domain` |
 | 14 | `event:bus/bus` | `event-bus` | `abtest-domain`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `eshop-payment`, `flags-domain`, `moderation-domain`, `pipeline-domain`, `pulse-domain`, `saga-domain`, `status-page`, `throttle-domain`, `track-domain`, `vet-domain` |
 | 11 | `auth:identity/rbac` | `auth-guard` | `accounts-app`, `booked-domain`, `dev-portal`, `events-domain`, `helpdesk-domain`, `lms-domain`, `photosocial-domain`, `tempo-domain`, `track-domain`, `transit-domain`, `vet-domain` |
-| 9 | `fsm:workflow/engine` | `fsm-workflow` | `eshop-ordering`, `events-domain`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
+| 10 | `fsm:workflow/engine` | `fsm-workflow` | `dispatch-domain`, `eshop-ordering`, `events-domain`, `helpdesk-domain`, `saga-domain`, `status-page`, `track-domain`, `treasury-ledger-domain`, `triage-domain`, `vet-domain` |
 | 9 | `idempotency:guard/store` | `idempotency-guard` | `billing-ledger`, `eshop-catalog`, `eshop-ordering`, `invoice-copilot-domain`, `jobs-domain`, `saga-domain`, `treasury-ledger-domain`, `webhook-ingest`, `webhook-relay` |
+| 8 | `csv:codec/codec` | `csv` | `billing-ledger`, `clinic-domain`, `csv-report`, `dispatch-domain`, `sheet-ingest`, `stash-domain`, `triage-domain`, `vet-domain` |
 | 7 | `ai:inference/inference` | `ai-inference` | `doc-search-domain`, `invoice-copilot-domain`, `moderation-domain`, `support-desk-domain`, `track-domain`, `triage-assist-domain`, `vet-domain` |
 | 7 | `blob:store/blobstore` | `blob-store` | `artifact-cache`, `events-domain`, `platform-domain`, `studio-domain`, `upload-drop`, `vet-domain`, `virt-git` |
-| 7 | `csv:codec/codec` | `csv` | `billing-ledger`, `clinic-domain`, `csv-report`, `sheet-ingest`, `stash-domain`, `triage-domain`, `vet-domain` |
 | 7 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `doc-search-domain`, `events-domain`, `platform-domain`, `support-desk-domain`, `throttle-domain` |
 | 7 | `ratelimit:guard/limiter` | `rate-limiter` | `auth-guard`, `invoice-copilot-domain`, `link-shortener`, `moderation-domain`, `throttle-domain`, `triage-assist-domain`, `webhook-relay` |
 | 6 | `outbox:dispatch/queue` | `outbox` | `billing-ledger`, `dev-portal`, `jobs-domain`, `pipeline-domain`, `support-desk-domain`, `webhook-relay` |
@@ -40,13 +40,13 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 5 | `knowledge:graph/store` | `knowledge-graph` | `console-domain`, `contract-registry`, `graph-probe`, `graph-viz-domain`, `knowledge-memory` |
 | 5 | `llm:inference/inference` | `anthropic-provider` | `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe`, `photosocial-domain` |
 | 5 | `notify:dispatch/dispatcher` | `notify-dispatch` | `dev-portal`, `status-page`, `support-desk-domain`, `track-domain`, `webhook-relay` |
+| 5 | `pii:redact/redactor` | `pii-redact` | `dispatch-domain`, `paste-bin`, `triage-assist-domain`, `triage-domain`, `vet-domain` |
 | 5 | `qr:encode/encoder` | `qr` | `binder-domain`, `events-domain`, `mfa-authgate`, `poll-domain`, `transit-domain` |
 | 5 | `webhook:sign/signer` | `webhook-sign` | `dev-portal`, `events-domain`, `track-domain`, `upload-drop`, `webhook-relay` |
 | 4 | `git:forge/repo` | `github-forge` | `console-domain`, `forge-probe`, `graph-selector`, `select-probe` |
 | 4 | `graph:agent/writer` | `agent-writer` | `agent-driver`, `agent-probe`, `graph-selector`, `select-probe` |
 | 4 | `md:render/renderer` | `markdown` | `helpdesk-domain`, `paste-bin`, `track-domain`, `vet-domain` |
 | 4 | `money:amount/arithmetic` | `money` | `billing-ledger`, `invoice-copilot-domain`, `treasury-ledger-domain`, `vet-domain` |
-| 4 | `pii:redact/redactor` | `pii-redact` | `paste-bin`, `triage-assist-domain`, `triage-domain`, `vet-domain` |
 | 4 | `policy:guard/guard` | `policy-guard` | `dev-portal`, `moderation-domain`, `platform-domain`, `track-domain` |
 | 4 | `sched:timer/timer` | `scheduler-timer` | `events-domain`, `saga-domain`, `status-page`, `vet-domain` |
 | 4 | `secrets:vault/vault` | `secrets-vault` | `login-app`, `mfa-authgate`, `platform-domain`, `vet-domain` |
@@ -88,6 +88,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `email:template/renderer` | `email-render` | `booked-domain` |
 | 1 | `experiment:assign/assigner` | `experiment-assign` | `abtest-domain` |
 | 1 | `featureflags:guard/evaluator` | `feature-flags` | `flags-domain` |
+| 1 | `geo:resolve/coords` | `geo` | `dispatch-domain` |
 | 1 | `graph:run/driver` | `agent-driver` | `driver-probe` |
 | 1 | `graph:select/selector` | `graph-selector` | `select-probe` |
 | 1 | `i18n:catalog/catalog` | `i18n-catalog` | `vet-domain` |
@@ -152,16 +153,16 @@ graph LR
   auth_identity_rbac --> many_auth_identity_rbac["11 consumers"]
   fsm_workflow_engine(["fsm:workflow/engine"])
   fsm_workflow[fsm-workflow] --> fsm_workflow_engine
-  fsm_workflow_engine --> many_fsm_workflow_engine["9 consumers"]
+  fsm_workflow_engine --> many_fsm_workflow_engine["10 consumers"]
   idempotency_guard_store(["idempotency:guard/store"])
   idempotency_guard[idempotency-guard] --> idempotency_guard_store
   idempotency_guard_store --> many_idempotency_guard_store["9 consumers"]
+  csv_codec_codec(["csv:codec/codec"])
+  csv[csv] --> csv_codec_codec
+  csv_codec_codec --> many_csv_codec_codec["8 consumers"]
   ai_inference_inference(["ai:inference/inference"])
   ai_inference[ai-inference] --> ai_inference_inference
   ai_inference_inference --> many_ai_inference_inference["7 consumers"]
-  blob_store_blobstore(["blob:store/blobstore"])
-  blob_store[blob-store] --> blob_store_blobstore
-  blob_store_blobstore --> many_blob_store_blobstore["7 consumers"]
 ```
 
 ## Which apps is this component inside?
@@ -412,7 +413,6 @@ Not a finding. A capability library is allowed to be ahead of its callers, and s
 | `calc` | `demo:calc/arith` |
 | `event-pusher` | `wasmcloud:messaging/handler` |
 | `expr` | `demo:expr/language` |
-| `geo` | `geo:resolve/coords` |
 | `gherkin-validate` | `gherkin:validate/validator` |
 | `glob` | `demo:glob/matcher` |
 | `login-app` | `login:app/auth` |
