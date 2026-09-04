@@ -6,6 +6,18 @@ pub fn build(b: *std.Build) void {
     _ = optimize;
 
     // ------------------------------------------------------------------------
+    // Step: build (Builds all WASM components and stamps metadata via xtask)
+    // ------------------------------------------------------------------------
+    const default_step = b.step("build", "Build all WASM components and stamp metadata");
+    const build_cmd = b.addSystemCommand(&.{
+        "cargo",
+        "xtask",
+        "build",
+    });
+    default_step.dependOn(&build_cmd.step);
+    b.default_step = default_step;
+
+    // ------------------------------------------------------------------------
     // Step: test (runs parallel nextest across workspaces)
     // ------------------------------------------------------------------------
     const test_step = b.step("test", "Run all tests across workspaces in parallel via cargo-nextest");
@@ -71,48 +83,13 @@ pub fn build(b: *std.Build) void {
     // Step: compose-grocery (Programmatic pipeline for grocery app)
     // ------------------------------------------------------------------------
     const compose_grocery_step = b.step("compose-grocery", "Build grocery UI and compose grocery-domain WASM component");
-    const ui_build = b.addSystemCommand(&.{
-        "npm",
-        "--prefix",
-        "examples/grocery/ui",
-        "run",
-        "build",
-    });
-
-    const wasm_build = b.addSystemCommand(&.{
+    const compose_grocery_cmd = b.addSystemCommand(&.{
         "cargo",
-        "build",
-        "--manifest-path",
-        "components/Cargo.toml",
-        "--release",
-        "--target",
-        "wasm32-wasip2",
-        "-p",
-        "grocery-assets",
-        "-p",
-        "grocery-domain",
-        "-p",
-        "barcode-read",
+        "xtask",
+        "compose",
+        "grocery",
     });
-    wasm_build.step.dependOn(&ui_build.step);
-
-    const comp_plug = b.addSystemCommand(&.{
-        "cargo",
-        "run",
-        "--manifest-path",
-        "reconciler/Cargo.toml",
-        "--release",
-        "--bin",
-        "comp-plug",
-        "--",
-        "grocery-domain",
-        "--dir",
-        "components/target/grocery-override",
-        "--out",
-        "components/target/composed",
-    });
-    comp_plug.step.dependOn(&wasm_build.step);
-    compose_grocery_step.dependOn(&comp_plug.step);
+    compose_grocery_step.dependOn(&compose_grocery_cmd.step);
 
     // ------------------------------------------------------------------------
     // Step: check (Fast workspace check)
@@ -120,13 +97,8 @@ pub fn build(b: *std.Build) void {
     const check_step = b.step("check", "Run cargo check across grocery domain and wasip2 components");
     const check_cmd = b.addSystemCommand(&.{
         "cargo",
+        "xtask",
         "check",
-        "--manifest-path",
-        "components/Cargo.toml",
-        "--target",
-        "wasm32-wasip2",
-        "-p",
-        "grocery-domain",
     });
     check_step.dependOn(&check_cmd.step);
 }
