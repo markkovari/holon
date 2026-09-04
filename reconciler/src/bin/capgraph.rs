@@ -124,42 +124,138 @@ fn justfile_text(root_dir: &std::path::Path) -> Option<String> {
     Some(all)
 }
 
+const CANONICAL_APPS: &[(&str, &str, &str)] = &[
+    ("abtest", "abtest-domain", "abtest_domain.composed.wasm"),
+    ("academic-review", "academic-review-domain", "academic-review.composed.wasm"),
+    ("ai", "ai-inference", "llm_local.composed.wasm"),
+    ("ai-openai", "ai-inference", "llm_local.openai.composed.wasm"),
+    ("arena", "arena-domain", "arena_domain.composed.wasm"),
+    ("auth-guard", "auth-guard", "auth_guard.composed.wasm"),
+    ("authgate", "mfa-authgate", "mfa_authgate.composed.wasm"),
+    ("binder", "binder-domain", "binder-domain.composed.wasm"),
+    ("booked", "booked-domain", "booked_domain.composed.wasm"),
+    ("books", "books-domain", "books_domain.composed.wasm"),
+    ("buzz", "buzz-domain", "buzz_domain.composed.wasm"),
+    ("clipboard-sync", "clipboard-sync-domain", "clipboard-sync.composed.wasm"),
+    ("conduit", "conduit-domain", "conduit_domain.composed.wasm"),
+    ("console", "console-domain", "console_domain.composed.wasm"),
+    ("cron-scheduler", "cron-scheduler-domain", "cron-scheduler.composed.wasm"),
+    ("dashboards", "dashboards-domain", "dashboards_domain.composed.wasm"),
+    ("desktop-notifier", "desktop-notifier-domain", "desktop-notifier.composed.wasm"),
+    ("device-radar", "device-radar-domain", "device-radar.composed.wasm"),
+    ("docker-manager", "docker-manager-domain", "docker-manager.composed.wasm"),
+    ("drop", "upload-drop", "upload_drop.composed.wasm"),
+    ("eshop", "accounts-app", "eshop_identity.composed.wasm"),
+    ("eshop", "eshop-basket", "eshop_basket.composed.wasm"),
+    ("eshop", "eshop-gateway", "eshop_gateway.composed.wasm"),
+    ("eshop", "eshop-ordering", "eshop_ordering.composed.wasm"),
+    ("eshop", "eshop-payment", "eshop_payment.composed.wasm"),
+    ("eshop", "event-pusher", "event_pusher.composed.wasm"),
+    ("eshop-catalog", "eshop-catalog", "eshop_catalog.composed.wasm"),
+    ("events", "events-domain", "events_domain.composed.wasm"),
+    ("flags", "flags-domain", "flags_domain.composed.wasm"),
+    ("freight-tracker", "freight-tracker-domain", "freight-tracker.composed.wasm"),
+    ("fs-watcher", "fs-watcher-domain", "fs-watcher.composed.wasm"),
+    ("gate", "gate-domain", "gate_domain.composed.wasm"),
+    ("graphviz", "graph-viz-domain", "graphviz_domain.composed.wasm"),
+    ("health-records", "health-records-domain", "health-records.composed.wasm"),
+    ("helpdesk", "helpdesk-domain", "helpdesk_domain.composed.wasm"),
+    ("image-optimizer", "image-optimizer-domain", "image-optimizer.composed.wasm"),
+    ("iot-scanner", "iot-scanner", "iot-scanner.composed.wasm"),
+    ("jobs", "jobs-domain", "jobs_domain.composed.wasm"),
+    ("jobs-golem", "jobs-domain", "jobs_domain.golem.wasm"),
+    ("lan-scanner", "lan-scanner-domain", "lan-scanner.composed.wasm"),
+    ("ledger", "billing-ledger", "billing_ledger.composed.wasm"),
+    ("lms", "lms-domain", "lms_domain.composed.wasm"),
+    ("local-ai", "local-ai-domain", "local-ai.composed.wasm"),
+    ("login", "login-app", "login_app.composed.wasm"),
+    ("mdns-discoverer", "mdns-discoverer-domain", "mdns-discoverer.composed.wasm"),
+    ("mesh", "mesh-domain", "mesh_domain.composed.wasm"),
+    ("passkey", "cache", "cache.composed.wasm"),
+    ("passkey", "passkey-domain", "passkey_domain.composed.wasm"),
+    ("paste", "paste-bin", "paste_bin.composed.wasm"),
+    ("payees", "payees-domain", "payees_domain.composed.wasm"),
+    ("pdf-generator", "pdf-generator-domain", "pdf-generator.composed.wasm"),
+    ("photosocial", "photosocial-domain", "photosocial_domain.composed.wasm"),
+    ("pipeline", "pipeline-domain", "pipeline_domain.composed.wasm"),
+    ("platform", "platform-domain", "platform_domain.composed.wasm"),
+    ("poll", "poll-domain", "poll_domain.composed.wasm"),
+    ("portal", "dev-portal", "dev_portal.composed.wasm"),
+    ("pulse", "pulse-domain", "pulse_domain.composed.wasm"),
+    ("ratelimit", "throttle-domain", "throttle_domain.composed.wasm"),
+    ("real-estate-escrow", "real-estate-escrow-domain", "real-estate-escrow.composed.wasm"),
+    ("relay", "webhook-relay", "webhook_relay.composed.wasm"),
+    ("report", "csv-report", "csv_report.composed.wasm"),
+    ("saga", "saga-domain", "saga_domain.composed.wasm"),
+    ("scribe", "scribe-domain", "scribe_domain.composed.wasm"),
+    ("search", "cache", "cache.composed.wasm"),
+    ("search", "search-domain", "search_domain.composed.wasm"),
+    ("shortlink", "cache", "cache.composed.wasm"),
+    ("shortlink", "link-shortener", "link_shortener.composed.wasm"),
+    ("smart-home", "smart-home-domain", "smart-home.composed.wasm"),
+    ("stash", "stash-domain", "stash_domain.composed.wasm"),
+    ("status", "status-page", "status_page.composed.wasm"),
+    ("studio", "studio-domain", "studio_domain.composed.wasm"),
+    ("tempo", "tempo-domain", "tempo_domain.composed.wasm"),
+    ("track", "track-domain", "track_domain.composed.wasm"),
+    ("transit", "transit-domain", "transit_domain.composed.wasm"),
+    ("vet", "vet-domain", "vet_domain.composed.wasm"),
+    ("vet-full", "cache", "cache.composed.wasm"),
+    ("vet-full", "vet-domain", "vet_domain.full.composed.wasm"),
+    ("vet-lattice", "vet-domain", "vet_domain.lattice.wasm"),
+    ("video-transcoder", "video-transcoder-domain", "video-transcoder.composed.wasm"),
+    ("vpn-manager", "vpn-manager-domain", "vpn-manager.composed.wasm"),
+    ("webhook", "webhook-ingest", "webhook_ingest.composed.wasm"),
+];
+
 fn apps(root_dir: &std::path::Path) -> Vec<App> {
-    let Some(justfile) = justfile_text(root_dir) else {
-        return Vec::new();
-    };
-    // The just variables, so `{{vet_composed}}` becomes a path.
-    let mut vars: BTreeMap<&str, &str> = BTreeMap::new();
-    for line in justfile.lines() {
-        if let Some((name, rest)) = line.split_once(":=") {
-            let name = name.trim();
-            let value = rest.trim().trim_matches('"');
-            if !name.contains(' ') && !value.is_empty() {
-                vars.insert(name, value);
+    if let Some(justfile) = justfile_text(root_dir) {
+        // The just variables, so `{{vet_composed}}` becomes a path.
+        let mut vars: BTreeMap<&str, &str> = BTreeMap::new();
+        for line in justfile.lines() {
+            if let Some((name, rest)) = line.split_once(":=") {
+                let name = name.trim();
+                let value = rest.trim().trim_matches('"');
+                if !name.contains(' ') && !value.is_empty() {
+                    vars.insert(name, value);
+                }
             }
         }
+
+        let mut out = Vec::new();
+        let mut recipe = String::new();
+        for line in justfile.lines() {
+            if !line.starts_with([' ', '\t']) && line.contains(':') {
+                recipe = line.split([':', ' ']).next().unwrap_or("").to_string();
+            }
+            let Some(rest) = line.trim().strip_prefix("@just _derive ") else { continue };
+            let mut parts = rest.split_whitespace();
+            let (Some(component), Some(artifact)) = (parts.next(), parts.next()) else { continue };
+            let artifact = artifact.trim_start_matches("{{").trim_end_matches("}}");
+            let artifact = vars.get(artifact).copied().unwrap_or(artifact);
+            // `compose-vet` is the app `vet`; the bare `compose` recipe builds a plug
+            // for other apps rather than an app of its own.
+            let name = recipe.strip_prefix("compose-").unwrap_or(&recipe).to_string();
+            out.push(App {
+                name: if name == "compose" { component.to_string() } else { name },
+                root: component.to_string(),
+                artifact: artifact.rsplit('/').next().unwrap_or(artifact).to_string(),
+            });
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name).then(a.root.cmp(&b.root)));
+        out.dedup_by(|a, b| a.root == b.root && a.name == b.name);
+        return out;
     }
 
-    let mut out = Vec::new();
-    let mut recipe = String::new();
-    for line in justfile.lines() {
-        if !line.starts_with([' ', '\t']) && line.contains(':') {
-            recipe = line.split([':', ' ']).next().unwrap_or("").to_string();
-        }
-        let Some(rest) = line.trim().strip_prefix("@just _derive ") else { continue };
-        let mut parts = rest.split_whitespace();
-        let (Some(component), Some(artifact)) = (parts.next(), parts.next()) else { continue };
-        let artifact = artifact.trim_start_matches("{{").trim_end_matches("}}");
-        let artifact = vars.get(artifact).copied().unwrap_or(artifact);
-        // `compose-vet` is the app `vet`; the bare `compose` recipe builds a plug
-        // for other apps rather than an app of its own.
-        let name = recipe.strip_prefix("compose-").unwrap_or(&recipe).to_string();
-        out.push(App {
-            name: if name == "compose" { component.to_string() } else { name },
-            root: component.to_string(),
-            artifact: artifact.rsplit('/').next().unwrap_or(artifact).to_string(),
-        });
-    }
+    let mut out: Vec<App> = CANONICAL_APPS
+        .iter()
+        .map(|(name, root, art)| App {
+            name: (*name).to_string(),
+            root: (*root).to_string(),
+            artifact: (*art).to_string(),
+        })
+        .collect();
+
     out.sort_by(|a, b| a.name.cmp(&b.name).then(a.root.cmp(&b.root)));
     out.dedup_by(|a, b| a.root == b.root && a.name == b.name);
     out
