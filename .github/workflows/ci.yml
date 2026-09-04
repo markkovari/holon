@@ -85,8 +85,9 @@ jobs:
       #
       #     57 passed, 4 failed, 6 ignored, in 469s
       #
-      # The four are `gate_dispatch`, red on purpose because goal 10's parts are
-      # stubs, and they stay out of the list below for that reason.
+      # The four were `gate_dispatch`, red on purpose while goal 10's parts were
+      # stubs. Goal 10 landed in #220, so they pass and it runs with the artifact
+      # suites — the measurement above is left as it was taken.
       #
       # Not `taiki-e/install-action`: it does not carry nats-server. A pinned release
       # tarball is two lines and cannot surprise this job on a morning nobody touched
@@ -284,11 +285,11 @@ jobs:
       # measure by removal: move `comp-host` aside and this step must go RED, not
       # quiet.
       #
-      # `gate_dispatch` is deliberately NOT in the list below. It is goal 10's gate
-      # and it is supposed to FAIL — `components/dispatch-domain`'s three parts are
-      # stubs answering 501, on purpose, because a goal whose gates already pass is
-      # refused by the base pre-check rather than run. Add it here only when the goal
-      # has landed, and expect red until then.
+      # `gate_dispatch` was deliberately absent from the list below for as long as
+      # `components/dispatch-domain` was three stubs answering 501 — a goal whose
+      # gates already pass is refused by the base pre-check rather than run, so it
+      # was supposed to be red. Goal 10 landed in #220 and the parts are real, so
+      # it joins the list: the four checks that judged the run now guard it.
       - name: Test the reconciler suites that read built artifacts
         working-directory: reconciler
         env:
@@ -304,7 +305,7 @@ jobs:
           --test gate_triage_assist --test gate_invoice --test gate_support_desk --test gate_docsearch
           --test gate_events_closed --test gate_courier --test gate_stepup --test gate_reminders
           --test gate_answer --test gate_copilot --test gate_verdict --test gate_reply --test gate_assist
-          --test gate_relay --test gate_notify
+          --test gate_relay --test gate_notify --test gate_dispatch
 
       # THE FLEET SUITES — 41 of them, and until this commit nothing ran a single one.
       #
@@ -314,8 +315,8 @@ jobs:
       # slow ones, they share a machine, and mixing them into the artifact suites
       # would make one red tick mean either.
       #
-      # `gate_dispatch` is deliberately absent — goal 10's gate, stubs answering 501
-      # on purpose, and adding it would make this permanently red.
+      # `gate_dispatch` is not here: it reads built artifacts and spawns no fleet,
+      # so it belongs to the step above, which is where it now runs.
       - name: Test the suites that spawn a fleet
         working-directory: reconciler
         env:
