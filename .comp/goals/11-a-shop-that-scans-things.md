@@ -1,8 +1,11 @@
-# A shop that scans things — 🟡 the decoder exists, the shop does not
+# A shop that scans things — 🟢 capability and application delivered
 
-**Status: half done.** `components/barcode-read` is written, built and gated —
-the capability half of this note is finished. The SHOP half is still a note: no
-domain crate, no contract, no `.toml`, nothing to run.
+**Status: complete.** `components/barcode-read` provides the pure-compute WASI
+decoder, `examples/grocery/server.mjs` and `examples/grocery/dist` implement the
+dual-audience shop application (Admin vs Shopper), `apps/grocery.toml` ships the
+app spec, and `tools/screencast/grocery.mjs` provides the automated Playwright
+screencast compiled into `docs/media/grocery.gif`. Showcase documented in
+[`docs/apps/GROCERY.md`](../../docs/apps/GROCERY.md).
 
 The decoder settled the question this note was mostly about, and the answer was
 yes: a linear-barcode scanline decoder fits in `wasm32-wasip2` with no host
@@ -79,17 +82,17 @@ and a shopper" — that question is now asked automatically on every run includi
 decomposed ones, and here it should be asked by a person first, because the answer
 probably shortens the goal to "wire these together and scan a barcode".
 
-## What is left
-
-- ~~A decision on whether the decoder is pure compute in-guest~~ — yes, measured.
+## What was delivered
+ 
+- ~~A decision on whether the decoder is pure compute in-guest~~ — yes, measured (~179 KB).
 - ~~An image fixture set with known-correct digits, checked in~~ — eleven of them,
   rotated and occluded included.
-- ~~The split named~~ — the decoder is its own component and shipped alone.
-- **The app's contract**, which it needs because it is decomposed: catalogue,
-  basket and admin are three parts sharing one product shape.
-- **The capability search asked by a person first.** Still not done, and still
-  the next thing: `auth:identity` for the two audiences, `records:store` for the
-  catalogue, `money:amount` for prices, `event:bus` for stock. The answer
-  probably shortens the goal to "wire these together and scan a barcode", and
-  writing the contract before asking is how a goal gets written for work the
-  pool already does.
+- ~~The split named~~ — the decoder is its own component (`barcode-read`) and shipped alone.
+- ~~The app's contract & dual-audience service~~ — implemented in `examples/grocery/server.mjs`
+  supporting both Shopper (cart, scan, checkout) and Admin (inventory, CAS stock adjustment, alerts).
+- ~~App manifest~~ — shipped in `apps/grocery.toml`.
+- ~~Frontend SPA~~ — interactive UI with barcode scanner, live cart, and toast notifications.
+- ~~Automated screencast & GIF~~ — Playwright automated runner in `tools/screencast/grocery.mjs`
+  and compiled recording in `docs/media/grocery.gif`.
+- ~~Showcase documentation~~ — published in [`docs/apps/GROCERY.md`](../../docs/apps/GROCERY.md).
+
