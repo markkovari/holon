@@ -130,6 +130,9 @@ impl Guest for Component {
 
 /// Serve the baked React SPA via ui:assets: exact path, or fall back to /index.html
 fn serve_static(route: &str) -> Outcome {
+    if route.contains("..") {
+        return Outcome::Err(400, "Invalid path: Directory traversal not permitted".into());
+    }
     let want = if route == "/" || route.is_empty() {
         "/index.html"
     } else {
