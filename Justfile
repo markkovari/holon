@@ -135,6 +135,7 @@ ghcr_owner := env_var_or_default("GHCR_OWNER", "markkovari")
 trackassets_wasm := rel / "track_assets.wasm"
 eshopcatalog_wasm := rel / "eshop_catalog.wasm"
 eshopcatalog_composed := "components/target/eshop_catalog.composed.wasm"
+grocery_composed := "components/target/grocery_domain.composed.wasm"
 eshopbasket_composed := "components/target/eshop_basket.composed.wasm"
 eshopordering_composed := "components/target/eshop_ordering.composed.wasm"
 eshoppayment_composed := "components/target/eshop_payment.composed.wasm"
@@ -517,6 +518,9 @@ openai-shim port="8787" model="":
 
 gemini-shim port="8788" model="gemini-2.5-flash":
     @GEMINI_MODEL="{{model}}" PORT="{{port}}" node tools/gemini-shim.mjs
+
+antigravity-shim port="8789" model="gemini-2.5-flash":
+    @ANTIGRAVITY_MODEL="{{model}}" PORT="{{port}}" node tools/antigravity-shim.mjs
 
 # Push the capability graph into the store the knowledge pool lives in (ADR-0091).
 #
@@ -906,6 +910,10 @@ screencast-events:
 # track-assets component's build.rs embeds it. Run before compose-track.
 build-track-ui:
     cd examples/track/ui && npm install && npm run build
+
+# Build the grocery SPA (Vite + React + TS) into components/grocery-assets/static
+build-grocery-ui:
+    cd examples/grocery/ui && ([ -d node_modules ] || npm install) && npm run build
 
 
 

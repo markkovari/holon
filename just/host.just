@@ -374,6 +374,14 @@ host-track: compose-track
         --config default-tenant=track \
       --component ../{{track_composed}} --addr 0.0.0.0:3025
 
+# Run the grocery shop app on the native Rust host. The React SPA is BAKED into
+# the component (grocery-assets) — no --static-dir. Real barcode:read WASI capability.
+host-grocery: compose-grocery
+    cd host && \
+      cargo run --release --bin comp-host -- \
+        --app grocery --config default-tenant=grocery \
+      --component ../{{grocery_composed}} --addr 0.0.0.0:3055
+
 # Run the binder on the native host. Bound to 0.0.0.0 on purpose: this is the app
 # you open from another machine on the tailnet, so `http://<this-host>:3210` works
 # without a tunnel. The store is in memory — restart it and the collection is gone,

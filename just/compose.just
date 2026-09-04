@@ -266,6 +266,15 @@ compose-paste: build
 compose-track: build-track-ui compose compose-ai
     @just _derive track-domain {{track_composed}}
 
+# Compose grocery-domain (docs/apps/GROCERY.md) with barcode:read and grocery-assets (embedded React SPA)
+compose-grocery: build-grocery-ui
+    cd components && cargo build --release --target wasm32-wasip2 -p grocery-assets -p grocery-domain -p barcode-read
+    @mkdir -p components/target/grocery-override
+    @cp components/target/wasm32-wasip2/release/grocery_assets.wasm components/target/grocery-override/
+    @cd reconciler && cargo build --release --quiet --bin comp-plug
+    @cp "$(./reconciler/target/release/comp-plug grocery-domain --dir components/target/grocery-override --out components/target/composed)" {{grocery_composed}}
+    @echo "composed grocery-domain -> {{grocery_composed}}"
+
 # Compose binder-domain (docs/apps/BINDER.md — a Pokemon card binder) with the three
 # capabilities it imports: card:identify (a vision model's answer into typed fields),
 # price:history (what a card was worth, carried across gaps) and portfolio:value
