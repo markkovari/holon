@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-117 interfaces.
+118 interfaces.
 
 ## `ai:inference/inference@0.1.0`
 
@@ -272,6 +272,24 @@ Adding a *function* to an interface is compatible; adding a case to a
       rate-limited(u32),
       internal(string),
     }
+  }
+```
+
+## `barcode:read/reader@0.1.0`
+
+```wit
+  interface reader {
+    record symbol {
+      text: string,
+      symbology: string,
+    }
+
+    variant read-error {
+      bad-image(string),
+      not-found,
+    }
+
+    decode-png: func(image: list<u8>) -> result<symbol, read-error>;
   }
 ```
 
