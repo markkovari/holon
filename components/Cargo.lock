@@ -1115,6 +1115,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "grocery-assets"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "grocery-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
