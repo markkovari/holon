@@ -115,6 +115,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "comp-metadata"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -397,6 +405,7 @@ dependencies = [
  "anyhow",
  "clap",
  "colored",
+ "comp-metadata",
  "serde",
  "toml",
 ]

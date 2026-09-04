@@ -85,157 +85,7 @@ struct Args {
     diagram_top: usize,
 }
 
-/// An application, and the component it is composed from.
-///
-/// Discovered dynamically from:
-/// 1. The application manifests in `apps/*.toml`.
-/// 2. Components exporting the WASI HTTP entry point (`wasi:http/incoming-handler`).
-struct App {
-    name: String,
-    root: String,
-    artifact: String,
-}
-
-fn apps(root_dir: &std::path::Path) -> Vec<App> {
-    let mut out = Vec::new();
-    let mut roots_seen = BTreeSet::new();
-
-    // Collect all built or source component directory names under components/
-    let mut component_names = BTreeSet::new();
-    if let Ok(entries) = std::fs::read_dir(root_dir.join("components")) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                if let Some(name) = entry.file_name().to_str() {
-                    component_names.insert(name.to_string());
-                }
-            }
-        }
-    }
-
-    // 1. Read registered applications from apps/*.toml
-    if let Ok(entries) = std::fs::read_dir(root_dir.join("apps")) {
-        let mut toml_files: Vec<std::path::PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| p.extension().is_some_and(|ext| ext == "toml"))
-            .collect();
-        toml_files.sort();
-
-        for path in toml_files {
-            let Ok(content) = std::fs::read_to_string(&path) else { continue };
-            let mut name = None;
-            let mut artifact = None;
-            let mut root = None;
-            for line in content.lines() {
-                let trimmed = line.trim();
-                if let Some((k, v)) = trimmed.split_once('=') {
-                    let k = k.trim();
-                    let v = v.trim().trim_matches('"');
-                    match k {
-                        "name" => name = Some(v.to_string()),
-                        "artifact" => artifact = Some(v.to_string()),
-                        "root" => root = Some(v.to_string()),
-                        _ => {}
-                    }
-                }
-            }
-
-            if let (Some(name), Some(art)) = (name, artifact) {
-                let art_file = art.rsplit('/').next().unwrap_or(&art).to_string();
-                let stem = art_file
-                    .strip_suffix(".composed.wasm")
-                    .or_else(|| art_file.strip_suffix(".wasm"))
-                    .unwrap_or(&art_file)
-                    .replace('_', "-");
-
-                let root_name = root.unwrap_or_else(|| {
-                    if component_names.contains(&format!("{name}-domain")) {
-                        format!("{name}-domain")
-                    } else if component_names.contains(&format!("{stem}-domain")) {
-                        format!("{stem}-domain")
-                    } else if component_names.contains(&stem) {
-                        stem.clone()
-                    } else {
-                        // Match normalized names (e.g. graphviz-domain -> graph-viz-domain)
-                        let norm_stem = stem.replace('-', "");
-                        let norm_domain = format!("{norm_stem}domain");
-                        component_names
-                            .iter()
-                            .find(|c| {
-                                let norm_c = c.replace('-', "");
-                                norm_c == norm_stem || norm_c == norm_domain
-                            })
-                            .cloned()
-                            .unwrap_or(stem)
-                    }
-                });
-
-                roots_seen.insert(root_name.clone());
-                out.push(App {
-                    name,
-                    root: root_name,
-                    artifact: art_file,
-                });
-            }
-        }
-    }
-
-    // 2. Discover HTTP application components dynamically from WIT exports
-    let mut names_seen: BTreeSet<String> = out.iter().map(|a| a.name.clone()).collect();
-    for comp in &component_names {
-        if roots_seen.contains(comp) {
-            continue;
-        }
-        // Exclude test harnesses, probes and internal infrastructure
-        if comp.ends_with("-probe")
-            || comp.ends_with("-suite")
-            || comp == "adversary"
-            || comp == "contrast-audit"
-            || comp == "http-serve"
-        {
-            continue;
-        }
-
-        let app_name = comp
-            .strip_suffix("-domain")
-            .or_else(|| comp.strip_suffix("-app"))
-            .unwrap_or(comp)
-            .to_string();
-        if names_seen.contains(&app_name) {
-            continue;
-        }
-
-        let wit_dir = root_dir.join("components").join(comp).join("wit");
-        let mut exports_http = false;
-        if let Ok(entries) = std::fs::read_dir(&wit_dir) {
-            for entry in entries.flatten() {
-                if entry.path().extension().is_some_and(|ext| ext == "wit") {
-                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                        if content.contains("wasi:http/incoming-handler") {
-                            exports_http = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        if exports_http || comp.ends_with("-app") {
-            let art_file = format!("{}.composed.wasm", comp.replace('-', "_"));
-            roots_seen.insert(comp.clone());
-            names_seen.insert(app_name.clone());
-            out.push(App {
-                name: app_name,
-                root: comp.clone(),
-                artifact: art_file,
-            });
-        }
-    }
-
-    out.sort_by(|a, b| a.name.cmp(&b.name).then(a.root.cmp(&b.root)));
-    out.dedup_by(|a, b| a.root == b.root && a.name == b.name);
-    out
-}
+use comp_metadata::app::App;
 
 fn main() -> Result<(), String> {
     let args = Args::parse();
@@ -310,7 +160,7 @@ fn main() -> Result<(), String> {
 
     if let Some(query) = &args.find {
         let mut apps_of: BTreeMap<String, usize> = BTreeMap::new();
-        for app in apps(&root) {
+        for app in comp_metadata::app::discover_apps(&root) {
             for part in catalog.closure(&app.root) {
                 *apps_of.entry(part).or_default() += 1;
             }
@@ -348,7 +198,7 @@ fn main() -> Result<(), String> {
     }
 
     match args.format.as_str() {
-        "json" => println!("{}", json(&catalog, &by_iface, &orphans, &apps(&root))),
+        "json" => println!("{}", json(&catalog, &by_iface, &orphans, &comp_metadata::app::discover_apps(&root))),
         "surql" => {
             let generation = args.gen.unwrap_or_else(|| {
                 std::time::SystemTime::now()
@@ -356,11 +206,11 @@ fn main() -> Result<(), String> {
                     .map(|d| d.as_secs())
                     .unwrap_or(0)
             });
-            println!("{}", surql(&catalog, &apps(&root), generation));
+            println!("{}", surql(&catalog, &comp_metadata::app::discover_apps(&root), generation));
         }
         "mermaid" => println!("{}", mermaid(&by_iface, args.diagram_top)),
         "md" => {
-            println!("{}", markdown(&catalog, &by_iface, &orphans, args.diagram_top, &apps(&root)))
+            println!("{}", markdown(&catalog, &by_iface, &orphans, args.diagram_top, &comp_metadata::app::discover_apps(&root)))
         }
         other => return Err(format!("unknown format {other:?} — md, json, mermaid or surql")),
     }
