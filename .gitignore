@@ -60,9 +60,8 @@ examples/*/test-results/
 # the repo so the build is reproducible offline.
 sweep.json
 
-# A local scratch database written by an MCP tool in some sessions. Not the
-# project's, 1.5 MB, and it landed in a commit once by way of `git add -A`.
-ruvector.db
+# A local scratch database written by an MCP tool in some sessions.
+*ruvector*
 
 # .NET build output for the C# polyglot reproduction (docs/POLYGLOT.md). The
 # source and the csproj are committed; 164 MB of runtime packs are not.
