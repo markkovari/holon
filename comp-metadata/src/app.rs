@@ -13,11 +13,41 @@ pub struct AppSpec {
     #[serde(default)]
     pub port: Option<u16>,
     #[serde(default)]
-    pub static_dir: Option<String>,
+    pub static_dir: Option<toml::Value>,
     #[serde(default)]
-    pub kv: Option<String>,
+    pub kv: Option<toml::Value>,
     #[serde(default)]
     pub root: Option<String>,
+}
+
+impl AppSpec {
+    pub fn kv_as_string(&self) -> Option<String> {
+        self.kv.as_ref().map(|v| match v {
+            toml::Value::String(s) => s.clone(),
+            toml::Value::Table(t) => {
+                if let Some(toml::Value::String(n)) = t.get("name") {
+                    n.clone()
+                } else {
+                    v.to_string()
+                }
+            },
+            _ => v.to_string(),
+        })
+    }
+
+    pub fn static_dir_as_string(&self) -> Option<String> {
+        self.static_dir.as_ref().map(|v| match v {
+            toml::Value::String(s) => s.clone(),
+            toml::Value::Array(a) => {
+                if let Some(toml::Value::String(s)) = a.first() {
+                    s.clone()
+                } else {
+                    v.to_string()
+                }
+            }
+            _ => v.to_string(),
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -34,8 +64,9 @@ pub fn registered_apps(root_dir: &Path) -> Vec<AppSpec> {
             let p = entry.path();
             if p.extension().map_or(false, |e| e == "toml") {
                 if let Ok(content) = fs::read_to_string(&p) {
-                    if let Ok(spec) = toml::from_str::<AppSpec>(&content) {
-                        apps.push(spec);
+                    match toml::from_str::<AppSpec>(&content) {
+                        Ok(spec) => apps.push(spec),
+                        Err(e) => eprintln!("Error parsing {:?}: {}", p, e),
                     }
                 }
             }

@@ -796,7 +796,7 @@ mod tests {
             eprintln!("skipped: nothing built — run `just build`");
             return;
         }
-        let out = surql(&catalog, &apps(&root), 42);
+        let out = surql(&catalog, &comp_metadata::app::discover_apps(&root), 42);
 
         /// Tables a rebuild is allowed to create rows in and delete rows from.
         /// `about` is here and `memory` is not: the edge is an index over a tag,
@@ -896,8 +896,8 @@ mod tests {
             eprintln!("skipped: nothing built — run `just build`");
             return;
         }
-        let one = surql(&catalog, &apps(&root), 1);
-        let two = surql(&catalog, &apps(&root), 2);
+        let one = surql(&catalog, &comp_metadata::app::discover_apps(&root), 1);
+        let two = surql(&catalog, &comp_metadata::app::discover_apps(&root), 2);
 
         let edge_ids = |s: &str| {
             s.lines()

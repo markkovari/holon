@@ -360,10 +360,9 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
 
     // Check spec for port/kv/static_dir
     let specs = comp_metadata::app::registered_apps(Path::new("."));
-    let spec = specs.iter().find(|s| s.name == app);
-    let default_port = spec.and_then(|s| s.port).unwrap_or(3055);
-    let default_kv = spec.and_then(|s| s.kv.clone()).unwrap_or_else(|| "sqlite".to_string());
-    let static_dir = spec.and_then(|s| s.static_dir.clone());
+    let app_spec = specs.iter().find(|s| s.name == app);
+    let default_port = app_spec.and_then(|s| s.port).unwrap_or(3055);
+    let default_kv = app_spec.and_then(|s| s.kv_as_string()).unwrap_or_else(|| "sqlite".to_string());
 
     if !Path::new(&artifact_path).exists() {
         println!("{}", format!("Artifact {artifact_path} not found. Composing {app} first...").yellow());
@@ -392,7 +391,7 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
         &format!("default-tenant={app}"),
     ]);
 
-    if let Some(dir) = static_dir {
+    if let Some(dir) = app_spec.and_then(|s| s.static_dir_as_string()) {
         if Path::new(&dir).exists() {
             host_cmd.args(["--static-dir", &dir]);
         }
@@ -414,7 +413,7 @@ fn list_apps() -> Result<()> {
     let apps = comp_metadata::app::registered_apps(Path::new("."));
     for a in apps {
         let port_str = a.port.map_or("-".to_string(), |p| p.to_string());
-        let kv_str = a.kv.unwrap_or_else(|| "-".to_string());
+        let kv_str = a.kv_as_string().unwrap_or_else(|| "-".to_string());
         let domain_str = a.domain.unwrap_or_else(|| "-".to_string());
         println!("{:<20} {:<8} {:<10} {:<30}", a.name, port_str, kv_str, domain_str);
     }
