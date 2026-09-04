@@ -81,6 +81,7 @@ path = "src/bin/catalog.rs"
 
 
 [dependencies]
+comp-metadata = { path = "../comp-metadata" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
 # broker; `--nats-url` selects the one implementation that ships.

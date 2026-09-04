@@ -64,20 +64,6 @@ enum Commands {
     List,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct AppSpec {
-    name: String,
-    #[serde(default)]
-    domain: Option<String>,
-    #[serde(default)]
-    artifact: Option<String>,
-    #[serde(default)]
-    port: Option<u16>,
-    #[serde(default)]
-    static_dir: Option<String>,
-    #[serde(default)]
-    kv: Option<String>,
-}
 
 fn run_cmd(cmd: &mut Command, desc: &str) -> Result<()> {
     println!("{} {}", "→".cyan().bold(), desc.bold());
@@ -158,6 +144,7 @@ fn build_components(force: bool) -> Result<()> {
         "components/target/wasm32-wasip1/release",
         "components/target/wasm32-wasip1/debug",
     ];
+    let registered = comp_metadata::component::registered_components(Path::new("."));
     for dir in stale_dirs {
         let p = Path::new(dir);
         if p.is_dir() {
@@ -167,8 +154,7 @@ fn build_components(force: bool) -> Result<()> {
                     if file_path.extension().map_or(false, |e| e == "wasm") {
                         let stem = file_path.file_stem().unwrap().to_string_lossy();
                         let name = stem.replace('_', "-");
-                        let crate_cargo = PathBuf::from("components").join(&name).join("Cargo.toml");
-                        if !crate_cargo.exists() {
+                        if !registered.contains(&name) {
                             let _ = fs::remove_file(&file_path);
                             pruned += 1;
                         }
@@ -185,10 +171,9 @@ fn build_components(force: bool) -> Result<()> {
             if file_path.extension().map_or(false, |e| e == "wasm") {
                 let stem = file_path.file_stem().unwrap().to_string_lossy();
                 let name = stem.replace('_', "-");
-                let crate_cargo = PathBuf::from("components").join(&name).join("Cargo.toml");
                 let stamp = marker_dir.join(&name);
 
-                if !crate_cargo.exists() {
+                if !registered.contains(&name) {
                     let _ = fs::remove_file(&file_path);
                     let _ = fs::remove_file(&stamp);
                     println!("pruned {} — components/{}/Cargo.toml is gone", name, name);
@@ -349,17 +334,11 @@ fn compose_app(app: Option<&str>) -> Result<()> {
             }
             let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
-            // Destination artifact
-            let spec_path = format!("apps/{name}.toml");
-            let dest = if let Ok(spec_bytes) = fs::read_to_string(&spec_path) {
-                if let Ok(spec) = toml::from_str::<AppSpec>(&spec_bytes) {
-                    spec.artifact.unwrap_or_else(|| format!("components/target/{name}.composed.wasm"))
-                } else {
-                    format!("components/target/{name}.composed.wasm")
-                }
-            } else {
-                format!("components/target/{name}.composed.wasm")
-            };
+            let apps = comp_metadata::app::discover_apps(Path::new("."));
+            let dest = apps.into_iter()
+                .find(|a| a.name == name)
+                .map(|a| format!("components/target/{}", a.artifact))
+                .unwrap_or_else(|| format!("components/target/{name}.composed.wasm"));
 
             if let Some(parent) = Path::new(&dest).parent() {
                 fs::create_dir_all(parent)?;
@@ -372,19 +351,19 @@ fn compose_app(app: Option<&str>) -> Result<()> {
 }
 
 fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
-    // Read spec if available
-    let spec_path = format!("apps/{app}.toml");
-    let (artifact_path, default_port, default_kv, static_dir) = if let Ok(content) = fs::read_to_string(&spec_path) {
-        let spec: AppSpec = toml::from_str(&content).context("Parsing app spec")?;
-        (
-            spec.artifact.unwrap_or_else(|| format!("components/target/{app}_domain.composed.wasm")),
-            spec.port.unwrap_or(3055),
-            spec.kv.unwrap_or_else(|| "sqlite".to_string()),
-            spec.static_dir,
-        )
-    } else {
-        (format!("components/target/{app}_domain.composed.wasm"), 3055, "sqlite".to_string(), None)
-    };
+    // Discover the app to get the canonical artifact path
+    let apps = comp_metadata::app::discover_apps(Path::new("."));
+    let artifact_path = apps.iter()
+        .find(|a| a.name == app)
+        .map(|a| format!("components/target/{}", a.artifact))
+        .unwrap_or_else(|| format!("components/target/{app}_domain.composed.wasm"));
+
+    // Check spec for port/kv/static_dir
+    let specs = comp_metadata::app::registered_apps(Path::new("."));
+    let spec = specs.iter().find(|s| s.name == app);
+    let default_port = spec.and_then(|s| s.port).unwrap_or(3055);
+    let default_kv = spec.and_then(|s| s.kv.clone()).unwrap_or_else(|| "sqlite".to_string());
+    let static_dir = spec.and_then(|s| s.static_dir.clone());
 
     if !Path::new(&artifact_path).exists() {
         println!("{}", format!("Artifact {artifact_path} not found. Composing {app} first...").yellow());
@@ -432,21 +411,7 @@ fn list_apps() -> Result<()> {
     println!("{:<20} {:<8} {:<10} {:<30}", "APP", "PORT", "KV", "DOMAIN");
     println!("{:-<20} {:-<8} {:-<10} {:-<30}", "", "", "", "");
 
-    let mut apps = Vec::new();
-    if let Ok(entries) = fs::read_dir("apps") {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.extension().map_or(false, |e| e == "toml") {
-                if let Ok(content) = fs::read_to_string(&p) {
-                    if let Ok(spec) = toml::from_str::<AppSpec>(&content) {
-                        apps.push(spec);
-                    }
-                }
-            }
-        }
-    }
-
-    apps.sort_by(|a, b| a.name.cmp(&b.name));
+    let apps = comp_metadata::app::registered_apps(Path::new("."));
     for a in apps {
         let port_str = a.port.map_or("-".to_string(), |p| p.to_string());
         let kv_str = a.kv.unwrap_or_else(|| "-".to_string());
