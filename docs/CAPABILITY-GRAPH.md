@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**216 components, 104 interfaces with a provider and at least one consumer, 461 import edges, 16 interfaces exported but unconsumed in-tree, 80 applications composed from them.**
+**220 components, 105 interfaces with a provider and at least one consumer, 464 import edges, 18 interfaces exported but unconsumed in-tree, 80 applications composed from them.**
 
 That total counts what was BUILT. `components/CATALOG.md` counts source crates and is larger by however many declare their own `[workspace]` and so are never built — `components/Cargo.toml` names them. Both numbers are right; they answer different questions, and this one is the one you can compose against.
 
@@ -34,11 +34,11 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 7 | `blob:store/blobstore` | `blob-store` | `artifact-cache`, `events-domain`, `platform-domain`, `studio-domain`, `upload-drop`, `vet-domain`, `virt-git` |
 | 7 | `quota:meter/meter` | `quota` | `billing-ledger`, `dev-portal`, `doc-search-domain`, `events-domain`, `platform-domain`, `support-desk-domain`, `throttle-domain` |
 | 7 | `ratelimit:guard/limiter` | `rate-limiter` | `auth-guard`, `invoice-copilot-domain`, `link-shortener`, `moderation-domain`, `throttle-domain`, `triage-assist-domain`, `webhook-relay` |
+| 6 | `knowledge:graph/store` | `knowledge-graph` | `agent-retriever`, `console-domain`, `contract-registry`, `graph-probe`, `graph-viz-domain`, `knowledge-memory` |
+| 6 | `llm:inference/inference` | `anthropic-provider` | `agent-bootstrapper`, `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe`, `photosocial-domain` |
 | 6 | `outbox:dispatch/queue` | `outbox` | `billing-ledger`, `dev-portal`, `jobs-domain`, `pipeline-domain`, `support-desk-domain`, `webhook-relay` |
 | 6 | `search:index/index` | `search-index` | `clinic-domain`, `doc-search-domain`, `knowledge-memory`, `search-domain`, `track-domain`, `vet-domain` |
 | 5 | `cache:store/cache` | `cache` | `doc-search-domain`, `link-shortener`, `passkey-domain`, `search-domain`, `vet-domain` |
-| 5 | `knowledge:graph/store` | `knowledge-graph` | `console-domain`, `contract-registry`, `graph-probe`, `graph-viz-domain`, `knowledge-memory` |
-| 5 | `llm:inference/inference` | `anthropic-provider` | `agent-writer`, `ai-inference`, `knowledge-memory`, `llm-probe`, `photosocial-domain` |
 | 5 | `notify:dispatch/dispatcher` | `notify-dispatch` | `dev-portal`, `status-page`, `support-desk-domain`, `track-domain`, `webhook-relay` |
 | 5 | `pii:redact/redactor` | `pii-redact` | `dispatch-domain`, `paste-bin`, `triage-assist-domain`, `triage-domain`, `vet-domain` |
 | 5 | `qr:encode/encoder` | `qr` | `binder-domain`, `events-domain`, `mfa-authgate`, `poll-domain`, `transit-domain` |
@@ -114,6 +114,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 1 | `price:history/history` | `price-history` | `binder-domain` |
 | 1 | `quiz:grade/grader` | `quiz-grade` | `lms-domain` |
 | 1 | `resilience:breaker/breaker` | `resilience` | `mesh-domain` |
+| 1 | `retrieve:agent/retriever` | `agent-retriever` | `retriever-probe` |
 | 1 | `rrule:recur/recur` | `rrule` | `booked-domain` |
 | 1 | `shaper:limit/limiter` | `shaper` | `gate-domain` |
 | 1 | `sheet:ingest/reader` | `sheet-ingest` | `binder-domain` |
@@ -413,6 +414,8 @@ Not a finding. A capability library is allowed to be ahead of its callers, and s
 | component | interface |
 | --- | --- |
 | `abtest-domain` | `wasi:http/incoming-handler` |
+| `agent-bootstrapper` | `graph:agent/writer` |
+| `auction-domain` | `acme:auction/marketplace` |
 | `auth-guard` | `auth:identity/jwt` |
 | `auth-guard` | `auth:identity/oidc` |
 | `bigadd` | `demo:bigadd/bignum` |
