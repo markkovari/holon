@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Product } from "../types/grocery";
 import * as api from "../api/client";
 import { useAuth } from "./useAuth";
@@ -18,9 +18,13 @@ export function useGrocery() {
   const [newPrice, setNewPrice] = useState("3.99");
   const [newStock, setNewStock] = useState("20");
 
+  const toastTimerRef = useRef<any>(null);
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3200);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = setTimeout(() => setToastMessage(null), 3200);
   }, []);
 
   const loadProducts = useCallback(async () => {
@@ -69,7 +73,8 @@ export function useGrocery() {
   useEffect(() => {
     loadProducts();
     auth.initAuth();
-  }, [loadProducts, auth.initAuth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const adjustStock = useCallback(
     async (barcode: string, delta: number) => {
@@ -108,10 +113,10 @@ export function useGrocery() {
             newCategory === "Produce"
               ? "🥑"
               : newCategory === "Dairy"
-              ? "🥛"
-              : newCategory === "Bakery"
-              ? "🍞"
-              : "📦",
+                ? "🥛"
+                : newCategory === "Bakery"
+                  ? "🍞"
+                  : "📦",
           description: `Registered via barcode scan (${newSymbology})`,
         });
 
