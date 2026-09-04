@@ -87,174 +87,150 @@ struct Args {
 
 /// An application, and the component it is composed from.
 ///
-/// Discovered from the `Justfile`, which is now able to answer this: every
-/// showcase used to spell out its own `wac plug` chain, so "what is this app made
-/// of" was a hand-written list that drifted. Since the chains became `_derive
-/// <component> <artifact>` calls, the recipe states only the ROOT — and the rest
-/// is derived from the artifact, which means this graph cannot disagree with what
-/// actually gets composed.
+/// Discovered dynamically from:
+/// 1. The application manifests in `apps/*.toml`.
+/// 2. Components exporting the WASI HTTP entry point (`wasi:http/incoming-handler`).
 struct App {
     name: String,
     root: String,
     artifact: String,
 }
 
-/// The Justfile and everything it imports, concatenated.
-///
-/// `import` splices a file in, so a `compose-*` recipe in `just/compose.just` is
-/// exactly as much a part of the interface as one in the root file. Reading only
-/// the root makes two thirds of the apps invisible — and this graph's failure mode
-/// for an app it cannot see is not an error, it is a smaller graph, which is why
-/// this is worth a function rather than a line.
-///
-/// Read off the `import` lines rather than by globbing `just/`: a fragment nobody
-/// imports is not part of the interface, and finding it here would make this
-/// disagree with what `just` itself runs.
-fn justfile_text(root_dir: &std::path::Path) -> Option<String> {
-    let root = std::fs::read_to_string(root_dir.join("Justfile")).ok()?;
-    let mut all = root.clone();
-    for line in root.lines() {
-        let Some(rest) = line.trim().strip_prefix("import ") else { continue };
-        let path = rest.trim().trim_matches(|c| c == '\'' || c == '"');
-        if let Ok(text) = std::fs::read_to_string(root_dir.join(path)) {
-            all.push('\n');
-            all.push_str(&text);
+fn apps(root_dir: &std::path::Path) -> Vec<App> {
+    let mut out = Vec::new();
+    let mut roots_seen = BTreeSet::new();
+
+    // Collect all built or source component directory names under components/
+    let mut component_names = BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(root_dir.join("components")) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                if let Some(name) = entry.file_name().to_str() {
+                    component_names.insert(name.to_string());
+                }
+            }
         }
     }
-    Some(all)
-}
 
-const CANONICAL_APPS: &[(&str, &str, &str)] = &[
-    ("abtest", "abtest-domain", "abtest_domain.composed.wasm"),
-    ("academic-review", "academic-review-domain", "academic-review.composed.wasm"),
-    ("ai", "ai-inference", "llm_local.composed.wasm"),
-    ("ai-openai", "ai-inference", "llm_local.openai.composed.wasm"),
-    ("arena", "arena-domain", "arena_domain.composed.wasm"),
-    ("auth-guard", "auth-guard", "auth_guard.composed.wasm"),
-    ("authgate", "mfa-authgate", "mfa_authgate.composed.wasm"),
-    ("binder", "binder-domain", "binder-domain.composed.wasm"),
-    ("booked", "booked-domain", "booked_domain.composed.wasm"),
-    ("books", "books-domain", "books_domain.composed.wasm"),
-    ("buzz", "buzz-domain", "buzz_domain.composed.wasm"),
-    ("clipboard-sync", "clipboard-sync-domain", "clipboard-sync.composed.wasm"),
-    ("conduit", "conduit-domain", "conduit_domain.composed.wasm"),
-    ("console", "console-domain", "console_domain.composed.wasm"),
-    ("cron-scheduler", "cron-scheduler-domain", "cron-scheduler.composed.wasm"),
-    ("dashboards", "dashboards-domain", "dashboards_domain.composed.wasm"),
-    ("desktop-notifier", "desktop-notifier-domain", "desktop-notifier.composed.wasm"),
-    ("device-radar", "device-radar-domain", "device-radar.composed.wasm"),
-    ("docker-manager", "docker-manager-domain", "docker-manager.composed.wasm"),
-    ("drop", "upload-drop", "upload_drop.composed.wasm"),
-    ("eshop", "accounts-app", "eshop_identity.composed.wasm"),
-    ("eshop", "eshop-basket", "eshop_basket.composed.wasm"),
-    ("eshop", "eshop-gateway", "eshop_gateway.composed.wasm"),
-    ("eshop", "eshop-ordering", "eshop_ordering.composed.wasm"),
-    ("eshop", "eshop-payment", "eshop_payment.composed.wasm"),
-    ("eshop", "event-pusher", "event_pusher.composed.wasm"),
-    ("eshop-catalog", "eshop-catalog", "eshop_catalog.composed.wasm"),
-    ("events", "events-domain", "events_domain.composed.wasm"),
-    ("flags", "flags-domain", "flags_domain.composed.wasm"),
-    ("freight-tracker", "freight-tracker-domain", "freight-tracker.composed.wasm"),
-    ("fs-watcher", "fs-watcher-domain", "fs-watcher.composed.wasm"),
-    ("gate", "gate-domain", "gate_domain.composed.wasm"),
-    ("graphviz", "graph-viz-domain", "graphviz_domain.composed.wasm"),
-    ("health-records", "health-records-domain", "health-records.composed.wasm"),
-    ("helpdesk", "helpdesk-domain", "helpdesk_domain.composed.wasm"),
-    ("image-optimizer", "image-optimizer-domain", "image-optimizer.composed.wasm"),
-    ("iot-scanner", "iot-scanner", "iot-scanner.composed.wasm"),
-    ("jobs", "jobs-domain", "jobs_domain.composed.wasm"),
-    ("jobs-golem", "jobs-domain", "jobs_domain.golem.wasm"),
-    ("lan-scanner", "lan-scanner-domain", "lan-scanner.composed.wasm"),
-    ("ledger", "billing-ledger", "billing_ledger.composed.wasm"),
-    ("lms", "lms-domain", "lms_domain.composed.wasm"),
-    ("local-ai", "local-ai-domain", "local-ai.composed.wasm"),
-    ("login", "login-app", "login_app.composed.wasm"),
-    ("mdns-discoverer", "mdns-discoverer-domain", "mdns-discoverer.composed.wasm"),
-    ("mesh", "mesh-domain", "mesh_domain.composed.wasm"),
-    ("passkey", "cache", "cache.composed.wasm"),
-    ("passkey", "passkey-domain", "passkey_domain.composed.wasm"),
-    ("paste", "paste-bin", "paste_bin.composed.wasm"),
-    ("payees", "payees-domain", "payees_domain.composed.wasm"),
-    ("pdf-generator", "pdf-generator-domain", "pdf-generator.composed.wasm"),
-    ("photosocial", "photosocial-domain", "photosocial_domain.composed.wasm"),
-    ("pipeline", "pipeline-domain", "pipeline_domain.composed.wasm"),
-    ("platform", "platform-domain", "platform_domain.composed.wasm"),
-    ("poll", "poll-domain", "poll_domain.composed.wasm"),
-    ("portal", "dev-portal", "dev_portal.composed.wasm"),
-    ("pulse", "pulse-domain", "pulse_domain.composed.wasm"),
-    ("ratelimit", "throttle-domain", "throttle_domain.composed.wasm"),
-    ("real-estate-escrow", "real-estate-escrow-domain", "real-estate-escrow.composed.wasm"),
-    ("relay", "webhook-relay", "webhook_relay.composed.wasm"),
-    ("report", "csv-report", "csv_report.composed.wasm"),
-    ("saga", "saga-domain", "saga_domain.composed.wasm"),
-    ("scribe", "scribe-domain", "scribe_domain.composed.wasm"),
-    ("search", "cache", "cache.composed.wasm"),
-    ("search", "search-domain", "search_domain.composed.wasm"),
-    ("shortlink", "cache", "cache.composed.wasm"),
-    ("shortlink", "link-shortener", "link_shortener.composed.wasm"),
-    ("smart-home", "smart-home-domain", "smart-home.composed.wasm"),
-    ("stash", "stash-domain", "stash_domain.composed.wasm"),
-    ("status", "status-page", "status_page.composed.wasm"),
-    ("studio", "studio-domain", "studio_domain.composed.wasm"),
-    ("tempo", "tempo-domain", "tempo_domain.composed.wasm"),
-    ("track", "track-domain", "track_domain.composed.wasm"),
-    ("transit", "transit-domain", "transit_domain.composed.wasm"),
-    ("vet", "vet-domain", "vet_domain.composed.wasm"),
-    ("vet-full", "cache", "cache.composed.wasm"),
-    ("vet-full", "vet-domain", "vet_domain.full.composed.wasm"),
-    ("vet-lattice", "vet-domain", "vet_domain.lattice.wasm"),
-    ("video-transcoder", "video-transcoder-domain", "video-transcoder.composed.wasm"),
-    ("vpn-manager", "vpn-manager-domain", "vpn-manager.composed.wasm"),
-    ("webhook", "webhook-ingest", "webhook_ingest.composed.wasm"),
-];
+    // 1. Read registered applications from apps/*.toml
+    if let Ok(entries) = std::fs::read_dir(root_dir.join("apps")) {
+        let mut toml_files: Vec<std::path::PathBuf> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|ext| ext == "toml"))
+            .collect();
+        toml_files.sort();
 
-fn apps(root_dir: &std::path::Path) -> Vec<App> {
-    if let Some(justfile) = justfile_text(root_dir) {
-        // The just variables, so `{{vet_composed}}` becomes a path.
-        let mut vars: BTreeMap<&str, &str> = BTreeMap::new();
-        for line in justfile.lines() {
-            if let Some((name, rest)) = line.split_once(":=") {
-                let name = name.trim();
-                let value = rest.trim().trim_matches('"');
-                if !name.contains(' ') && !value.is_empty() {
-                    vars.insert(name, value);
+        for path in toml_files {
+            let Ok(content) = std::fs::read_to_string(&path) else { continue };
+            let mut name = None;
+            let mut artifact = None;
+            let mut root = None;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    let k = k.trim();
+                    let v = v.trim().trim_matches('"');
+                    match k {
+                        "name" => name = Some(v.to_string()),
+                        "artifact" => artifact = Some(v.to_string()),
+                        "root" => root = Some(v.to_string()),
+                        _ => {}
+                    }
+                }
+            }
+
+            if let (Some(name), Some(art)) = (name, artifact) {
+                let art_file = art.rsplit('/').next().unwrap_or(&art).to_string();
+                let stem = art_file
+                    .strip_suffix(".composed.wasm")
+                    .or_else(|| art_file.strip_suffix(".wasm"))
+                    .unwrap_or(&art_file)
+                    .replace('_', "-");
+
+                let root_name = root.unwrap_or_else(|| {
+                    if component_names.contains(&format!("{name}-domain")) {
+                        format!("{name}-domain")
+                    } else if component_names.contains(&format!("{stem}-domain")) {
+                        format!("{stem}-domain")
+                    } else if component_names.contains(&stem) {
+                        stem.clone()
+                    } else {
+                        // Match normalized names (e.g. graphviz-domain -> graph-viz-domain)
+                        let norm_stem = stem.replace('-', "");
+                        let norm_domain = format!("{norm_stem}domain");
+                        component_names
+                            .iter()
+                            .find(|c| {
+                                let norm_c = c.replace('-', "");
+                                norm_c == norm_stem || norm_c == norm_domain
+                            })
+                            .cloned()
+                            .unwrap_or(stem)
+                    }
+                });
+
+                roots_seen.insert(root_name.clone());
+                out.push(App {
+                    name,
+                    root: root_name,
+                    artifact: art_file,
+                });
+            }
+        }
+    }
+
+    // 2. Discover HTTP application components dynamically from WIT exports
+    let mut names_seen: BTreeSet<String> = out.iter().map(|a| a.name.clone()).collect();
+    for comp in &component_names {
+        if roots_seen.contains(comp) {
+            continue;
+        }
+        // Exclude test harnesses, probes and internal infrastructure
+        if comp.ends_with("-probe")
+            || comp.ends_with("-suite")
+            || comp == "adversary"
+            || comp == "contrast-audit"
+            || comp == "http-serve"
+        {
+            continue;
+        }
+
+        let app_name = comp
+            .strip_suffix("-domain")
+            .or_else(|| comp.strip_suffix("-app"))
+            .unwrap_or(comp)
+            .to_string();
+        if names_seen.contains(&app_name) {
+            continue;
+        }
+
+        let wit_dir = root_dir.join("components").join(comp).join("wit");
+        let mut exports_http = false;
+        if let Ok(entries) = std::fs::read_dir(&wit_dir) {
+            for entry in entries.flatten() {
+                if entry.path().extension().is_some_and(|ext| ext == "wit") {
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        if content.contains("wasi:http/incoming-handler") {
+                            exports_http = true;
+                            break;
+                        }
+                    }
                 }
             }
         }
 
-        let mut out = Vec::new();
-        let mut recipe = String::new();
-        for line in justfile.lines() {
-            if !line.starts_with([' ', '\t']) && line.contains(':') {
-                recipe = line.split([':', ' ']).next().unwrap_or("").to_string();
-            }
-            let Some(rest) = line.trim().strip_prefix("@just _derive ") else { continue };
-            let mut parts = rest.split_whitespace();
-            let (Some(component), Some(artifact)) = (parts.next(), parts.next()) else { continue };
-            let artifact = artifact.trim_start_matches("{{").trim_end_matches("}}");
-            let artifact = vars.get(artifact).copied().unwrap_or(artifact);
-            // `compose-vet` is the app `vet`; the bare `compose` recipe builds a plug
-            // for other apps rather than an app of its own.
-            let name = recipe.strip_prefix("compose-").unwrap_or(&recipe).to_string();
+        if exports_http || comp.ends_with("-app") {
+            let art_file = format!("{}.composed.wasm", comp.replace('-', "_"));
+            roots_seen.insert(comp.clone());
+            names_seen.insert(app_name.clone());
             out.push(App {
-                name: if name == "compose" { component.to_string() } else { name },
-                root: component.to_string(),
-                artifact: artifact.rsplit('/').next().unwrap_or(artifact).to_string(),
+                name: app_name,
+                root: comp.clone(),
+                artifact: art_file,
             });
         }
-        out.sort_by(|a, b| a.name.cmp(&b.name).then(a.root.cmp(&b.root)));
-        out.dedup_by(|a, b| a.root == b.root && a.name == b.name);
-        return out;
     }
-
-    let mut out: Vec<App> = CANONICAL_APPS
-        .iter()
-        .map(|(name, root, art)| App {
-            name: (*name).to_string(),
-            root: (*root).to_string(),
-            artifact: (*art).to_string(),
-        })
-        .collect();
 
     out.sort_by(|a, b| a.name.cmp(&b.name).then(a.root.cmp(&b.root)));
     out.dedup_by(|a, b| a.root == b.root && a.name == b.name);
