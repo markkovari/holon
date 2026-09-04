@@ -264,6 +264,14 @@ test-fast:
     done
     (cd reconciler && cargo test --release --lib --bins)
 
+# Fast, parallel test runner across all workspaces using cargo-nextest.
+test-nextest:
+    cargo xtask test
+
+# Programmatic build runner (compilation, composition, fast testing) via cargo xtask.
+xtask +args:
+    cargo xtask {{args}}
+
 # The unit of work here is an ARTIFACT, not the workspace.
 #
 # A no-op `just build` used to take 5.4s, of which 0.13s was the only part that
