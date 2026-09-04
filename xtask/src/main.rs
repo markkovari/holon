@@ -528,12 +528,20 @@ fn main() -> Result<()> {
         }
 
         Commands::Clean => {
-            println!("{}", "Cleaning targets and build stamps...".yellow().bold());
-            let _ = fs::remove_dir_all("components/target/.build-stamps");
-            let mut cmd = Command::new("cargo");
-            cmd.arg("clean");
-            run_cmd(&mut cmd, "cargo clean")?;
-            println!("{}", "✔ Cleaned successfully!".green().bold());
+            println!("{}", "Cleaning targets and build stamps across all workspaces...".yellow().bold());
+            let workspaces = ["components", "host", "lattice", "cli", "reconciler"];
+            for ws in workspaces {
+                let manifest = format!("{ws}/Cargo.toml");
+                if Path::new(&manifest).exists() {
+                    let mut cmd = Command::new("cargo");
+                    cmd.args(["clean", "--manifest-path", &manifest]);
+                    let _ = run_cmd(&mut cmd, &format!("cargo clean on {ws}"));
+                }
+            }
+            let _ = fs::remove_dir_all("components/target");
+            let _ = fs::remove_dir_all(".zig-cache");
+            let _ = fs::remove_dir_all("zig-out");
+            println!("{}", "✔ Cleaned all workspaces successfully!".green().bold());
         }
 
         Commands::List => {
