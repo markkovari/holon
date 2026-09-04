@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { resolve } from "path";
+import { fileURLToPath } from "node:url";
 
 // Build straight into the grocery-assets component's static/ directory
 // so build.rs embeds the bundled assets into the wasm component.
@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react()],
   base: "/",
   build: {
-    outDir: resolve(__dirname, "../../../components/grocery-assets/static"),
+    outDir: fileURLToPath(new URL("../../../components/grocery-assets/static", import.meta.url)),
     emptyOutDir: true,
   },
   server: {
