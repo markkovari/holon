@@ -32,7 +32,7 @@ line in the "honestly missing" column of one of them.
 | [08](08-a-branch-reads-what-the-swarm-learned.md) | a branch reads what the swarm learned | |
 | [09](09-a-collection-that-prices-itself.md) | a collection that prices itself — a Pokémon TCG portfolio | 🟢 three agent-ready goals, 43 red tests |
 | [10](10-a-decomposed-goal-with-a-target.md) | a decomposed goal with a target — the field-service dispatch API | 🟢 four red gates; every other decomposed goal is spent |
-| [11](11-a-shop-that-scans-things.md) | a shop that scans things — `barcode:read` and a grocery app | 🔴 a note, nothing written |
+| [11](11-a-shop-that-scans-things.md) | a shop that scans things — `barcode:read` and a grocery app | ✅ done; capability, app, RBAC & GIF |
 
 Each file carries its own tag and its `writable`/`check` block; the table is only
 so the list is visible without an `ls`.
