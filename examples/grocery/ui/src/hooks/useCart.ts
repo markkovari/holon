@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Product, CartItem, OrderReceipt } from "../types/grocery";
 import * as api from "../api/client";
 
@@ -8,6 +8,9 @@ export interface UseCartOptions {
 }
 
 export function useCart(options?: UseCartOptions) {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   const [cart, setCart] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [checkoutReceipt, setCheckoutReceipt] = useState<OrderReceipt | null>(null);
@@ -16,7 +19,7 @@ export function useCart(options?: UseCartOptions) {
   const addToCart = useCallback(
     (product: Product) => {
       if (product.stock <= 0) {
-        options?.showToast?.(`Out of stock: ${product.name}`);
+        optionsRef.current?.showToast?.(`Out of stock: ${product.name}`);
         return;
       }
 
@@ -24,7 +27,7 @@ export function useCart(options?: UseCartOptions) {
         const existing = prev.find((i) => i.product.barcode === product.barcode);
         if (existing) {
           if (existing.quantity >= product.stock) {
-            options?.showToast?.(`Maximum stock reached for ${product.name}`);
+            optionsRef.current?.showToast?.(`Maximum stock reached for ${product.name}`);
             return prev;
           }
           return prev.map((i) =>
@@ -35,9 +38,9 @@ export function useCart(options?: UseCartOptions) {
         }
         return [...prev, { product, quantity: 1 }];
       });
-      options?.showToast?.(`Added ${product.name} to basket`);
+      optionsRef.current?.showToast?.(`Added ${product.name} to basket`);
     },
-    [options]
+    []
   );
 
   const updateCartQty = useCallback((barcode: string, delta: number) => {
@@ -80,16 +83,16 @@ export function useCart(options?: UseCartOptions) {
       });
       setCart([]);
       setIsCartOpen(false);
-      if (options?.onCheckoutSuccess) {
-        await options.onCheckoutSuccess();
+      if (optionsRef.current?.onCheckoutSuccess) {
+        await optionsRef.current.onCheckoutSuccess();
       }
-      options?.showToast?.("Order confirmed! Inventory updated.");
+      optionsRef.current?.showToast?.("Order confirmed! Inventory updated.");
     } catch (err: any) {
       alert(`Checkout failed: ${err.message}`);
     } finally {
       setLoading(false);
     }
-  }, [cart, cartTotalCents, cartItemCount, options]);
+  }, [cart, cartTotalCents, cartItemCount]);
 
   return {
     cart,

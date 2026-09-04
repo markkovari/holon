@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { User, Role, LoginPayload, RegisterPayload } from "../types/grocery";
 import * as api from "../api/client";
 
@@ -8,6 +8,9 @@ export interface UseAuthOptions {
 }
 
 export function useAuth(options?: UseAuthOptions) {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [adminViewMode, setAdminViewMode] = useState<"console" | "storefront">("console");
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -38,22 +41,22 @@ export function useAuth(options?: UseAuthOptions) {
       } else {
         setAdminViewMode("storefront");
       }
-      if (user && options?.onAuthSuccess) {
-        await options.onAuthSuccess(user);
+      if (user && optionsRef.current?.onAuthSuccess) {
+        await optionsRef.current.onAuthSuccess(user);
       }
     } catch {
       setCurrentUser(null);
       setAdminViewMode("storefront");
     }
-  }, [loadAdminUsers, options]);
+  }, [loadAdminUsers]);
 
   const handleLogin = useCallback(
     async (payload: LoginPayload) => {
       const auth = await api.loginUser(payload);
       setCurrentUser(auth.user);
-      options?.showToast?.(`Signed in as ${auth.user.name} (${auth.user.role.toUpperCase()})`);
-      if (options?.onAuthSuccess) {
-        await options.onAuthSuccess(auth.user);
+      optionsRef.current?.showToast?.(`Signed in as ${auth.user.name} (${auth.user.role.toUpperCase()})`);
+      if (optionsRef.current?.onAuthSuccess) {
+        await optionsRef.current.onAuthSuccess(auth.user);
       }
       if (auth.user.role === "admin") {
         setAdminViewMode("console");
@@ -62,16 +65,16 @@ export function useAuth(options?: UseAuthOptions) {
         setAdminViewMode("storefront");
       }
     },
-    [loadAdminUsers, options]
+    [loadAdminUsers]
   );
 
   const handleRegister = useCallback(
     async (payload: RegisterPayload) => {
       const auth = await api.registerUser(payload);
       setCurrentUser(auth.user);
-      options?.showToast?.(`Account created! Welcome, ${auth.user.name}`);
-      if (options?.onAuthSuccess) {
-        await options.onAuthSuccess(auth.user);
+      optionsRef.current?.showToast?.(`Account created! Welcome, ${auth.user.name}`);
+      if (optionsRef.current?.onAuthSuccess) {
+        await optionsRef.current.onAuthSuccess(auth.user);
       }
       if (auth.user.role === "admin") {
         setAdminViewMode("console");
@@ -80,7 +83,7 @@ export function useAuth(options?: UseAuthOptions) {
         setAdminViewMode("storefront");
       }
     },
-    [loadAdminUsers, options]
+    [loadAdminUsers]
   );
 
   const handleLogout = useCallback(async () => {
@@ -91,14 +94,14 @@ export function useAuth(options?: UseAuthOptions) {
     }
     setCurrentUser(null);
     setAdminViewMode("storefront");
-    options?.showToast?.("Signed out. Switched to guest mode.");
-  }, [options]);
+    optionsRef.current?.showToast?.("Signed out. Switched to guest mode.");
+  }, []);
 
   const handleUpdateUserRole = useCallback(
     async (userId: string, newRole: Role) => {
       try {
         const updated = await api.updateUserRole(userId, newRole);
-        options?.showToast?.(`Updated ${updated.name}'s role to ${newRole.toUpperCase()}`);
+        optionsRef.current?.showToast?.(`Updated ${updated.name}'s role to ${newRole.toUpperCase()}`);
         await loadAdminUsers();
         if (currentUser?.id === userId) {
           setCurrentUser(updated);
@@ -107,10 +110,10 @@ export function useAuth(options?: UseAuthOptions) {
           }
         }
       } catch (err: any) {
-        options?.showToast?.(`Error: ${err.message}`);
+        optionsRef.current?.showToast?.(`Error: ${err.message}`);
       }
     },
-    [currentUser, loadAdminUsers, options]
+    [currentUser, loadAdminUsers]
   );
 
   const handleDeleteUser = useCallback(
@@ -118,26 +121,26 @@ export function useAuth(options?: UseAuthOptions) {
       if (!confirm("Are you sure you want to remove this user?")) return;
       try {
         await api.deleteUser(userId);
-        options?.showToast?.("User successfully removed.");
+        optionsRef.current?.showToast?.("User successfully removed.");
         await loadAdminUsers();
       } catch (err: any) {
-        options?.showToast?.(`Error: ${err.message}`);
+        optionsRef.current?.showToast?.(`Error: ${err.message}`);
       }
     },
-    [loadAdminUsers, options]
+    [loadAdminUsers]
   );
 
   const handleAdminCreateUser = useCallback(
     async (payload: RegisterPayload) => {
       try {
         const res = await api.registerUser(payload);
-        options?.showToast?.(`User ${res.user.username} created successfully!`);
+        optionsRef.current?.showToast?.(`User ${res.user.username} created successfully!`);
         await loadAdminUsers();
       } catch (err: any) {
-        options?.showToast?.(`Error: ${err.message}`);
+        optionsRef.current?.showToast?.(`Error: ${err.message}`);
       }
     },
-    [loadAdminUsers, options]
+    [loadAdminUsers]
   );
 
   return {
