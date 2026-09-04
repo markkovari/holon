@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**214 components, 103 interfaces with a provider and at least one consumer, 459 import edges, 17 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
+**216 components, 104 interfaces with a provider and at least one consumer, 461 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
 
 That total counts what was BUILT. `components/CATALOG.md` counts source crates and is larger by however many declare their own `[workspace]` and so are never built — `components/Cargo.toml` names them. Both numbers are right; they answer different questions, and this one is the one you can compose against.
 
@@ -52,6 +52,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 4 | `secrets:vault/vault` | `secrets-vault` | `login-app`, `mfa-authgate`, `platform-domain`, `vet-domain` |
 | 4 | `session:store/store` | `session-store` | `login-app`, `mfa-authgate`, `passkey-domain`, `support-desk-domain` |
 | 4 | `slug:generate/generator` | `slug` | `conduit-domain`, `link-shortener`, `paste-bin`, `slug-probe` |
+| 4 | `ui:assets/files` | `console-assets` | `console-domain`, `grocery-domain`, `track-domain`, `vet-domain` |
 | 3 | `audit:log/recorder` | `audit-log` | `auth-guard`, `triage-assist-domain`, `webhook-relay` |
 | 3 | `ledger:doubleentry/ledger` | `ledger` | `books-domain`, `invoice-copilot-domain`, `treasury-ledger-domain` |
 | 3 | `notify:inbox/inbox` | `notify-inbox` | `events-domain`, `notify-prefs`, `notify-probe` |
@@ -60,7 +61,6 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 3 | `pdf:codec/codec` | `pdf` | `books-domain`, `lms-domain`, `tempo-domain` |
 | 3 | `proxy:route/router` | `proxy-route` | `eshop-gateway`, `event-pusher`, `mesh-domain` |
 | 3 | `svg:chart/charts` | `svg-chart` | `dashboards-domain`, `lms-domain`, `poll-domain` |
-| 3 | `ui:assets/files` | `console-assets` | `console-domain`, `track-domain`, `vet-domain` |
 | 3 | `upload:policy/gate` | `upload-policy` | `events-domain`, `upload-drop`, `vet-domain` |
 | 3 | `validate:schema/validator` | `validate` | `csv-report`, `paste-bin`, `vet-domain` |
 | 2 | `audit:log/query` | `audit-log` | `triage-assist-domain`, `webhook-relay` |
@@ -73,6 +73,7 @@ The number in the first column is the answer. One consumer means an edit; thirty
 | 2 | `zip:archive/archiver` | `zip` | `sheet-ingest`, `stash-domain` |
 | 1 | `ai:local/local` | `llm-local` | `local-ai-domain` |
 | 1 | `artifact:cache/store` | `artifact-cache` | `artifact-probe` |
+| 1 | `barcode:read/reader` | `barcode-read` | `grocery-domain` |
 | 1 | `bytes:codec/codec` | `bytes-codec` | `codec-probe` |
 | 1 | `cache:store/sink` | `cache-backing` | `cache` |
 | 1 | `cache:store/source` | `cache-backing` | `cache` |
@@ -409,7 +410,6 @@ Not a finding. A capability library is allowed to be ahead of its callers, and s
 | `abtest-domain` | `wasi:http/incoming-handler` |
 | `auth-guard` | `auth:identity/jwt` |
 | `auth-guard` | `auth:identity/oidc` |
-| `barcode-read` | `barcode:read/reader` |
 | `bigadd` | `demo:bigadd/bignum` |
 | `calc` | `demo:calc/arith` |
 | `event-pusher` | `wasmcloud:messaging/handler` |
