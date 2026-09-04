@@ -21,6 +21,8 @@
 //! guest_write_all!();     // defines `write_all(&OutputStream, &[u8]) -> bool`
 //! ```
 
+#![allow(clippy::crate_in_macro_def)]
+
 /// Define the `write_all` helper: write every byte, waiting when the stream is full.
 ///
 /// The prose here deliberately avoids the literal `fn write_all` + `(` — the lint in
