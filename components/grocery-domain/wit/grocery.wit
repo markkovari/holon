@@ -1,0 +1,26 @@
+// grocery:app — a grocery shop application with real-time barcode scanning.
+//
+// Dual-role authorization:
+//   - Shopper: scans barcodes to look up groceries, browses catalog, manages cart,
+//     and conducts checkout transactions that decrement inventory stock in real time.
+//   - Inventory Admin: inspects live stock, receives low-stock alerts, adjusts stock,
+//     and intakes incoming merchandise by decoding barcodes directly via barcode:read.
+//
+// Powered by the real `barcode:read` WASI component — zero mock dictionaries.
+package grocery:app@0.1.0;
+
+world grocery-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // The pure-compute linear barcode decoder (EAN-13, EAN-8, UPC-A, Code-128).
+    import barcode:read/reader@0.1.0;
+
+    // The embedded React SPA.
+    import ui:assets/files@0.1.0;
+
+    // Persistence across requests (memory, sqlite, etc.)
+    import wasi:keyvalue/store@0.2.0-draft;
+
+    // Timestamps.
+    import wasi:clocks/wall-clock@0.2.0;
+}
