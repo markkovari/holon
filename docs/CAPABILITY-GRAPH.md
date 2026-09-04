@@ -9,7 +9,7 @@ actually do, the way a hand-maintained dependency list does.
 
 Three layers: an INTERFACE is provided by one component and imported by several; a COMPONENT is composed into one or more applications; an APPLICATION is a root component plus everything `wac` pulls in behind it. The three answer different questions, and the second is the one that was missing — `rate-limiter` has almost no direct consumers and is inside twenty-two apps, because it rides in as a plug of `auth-guard`.
 
-**216 components, 104 interfaces with a provider and at least one consumer, 461 import edges, 16 interfaces exported but unconsumed in-tree, 81 applications composed from them.**
+**216 components, 104 interfaces with a provider and at least one consumer, 461 import edges, 16 interfaces exported but unconsumed in-tree, 80 applications composed from them.**
 
 That total counts what was BUILT. `components/CATALOG.md` counts source crates and is larger by however many declare their own `[workspace]` and so are never built — `components/Cargo.toml` names them. Both numbers are right; they answer different questions, and this one is the one you can compose against.
 
@@ -174,70 +174,72 @@ This is the number to look at before changing a component, and before deleting o
 
 | apps | component | which |
 | --: | --- | --- |
-| 46 | `record-store` | `academic-review`, `arena`, `authgate`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `drop`, `eshop`, `eshop-catalog`, `events`, `freight-tracker`, `gate`, `health-records`, `helpdesk`, `jobs`, `jobs-golem`, `ledger`, `lms`, `mesh`, `passkey`, `paste`, `payees`, `photosocial`, `platform`, `poll`, `portal`, `pulse`, `real-estate-escrow`, `relay`, `report`, `saga`, `scribe`, `search`, `shortlink`, `smart-home`, `stash`, `status`, `studio`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 31 | `rate-limiter` | `academic-review`, `auth-guard`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `ratelimit`, `real-estate-escrow`, `relay`, `shortlink`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 29 | `audit-log` | `academic-review`, `auth-guard`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `relay`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 27 | `auth-guard` | `academic-review`, `binder`, `booked`, `books`, `buzz`, `conduit`, `dashboards`, `device-radar`, `eshop`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `lms`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `smart-home`, `stash`, `tempo`, `track`, `transit`, `vet`, `vet-full`, `vet-lattice` |
-| 14 | `id-generate` | `abtest`, `arena`, `binder`, `events`, `flags`, `helpdesk`, `pipeline`, `poll`, `portal`, `pulse`, `ratelimit`, `saga`, `scribe`, `shortlink` |
-| 13 | `event-bus` | `abtest`, `eshop`, `eshop-catalog`, `flags`, `pipeline`, `pulse`, `ratelimit`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
-| 9 | `fsm-workflow` | `eshop`, `events`, `helpdesk`, `saga`, `status`, `track`, `vet`, `vet-full`, `vet-lattice` |
-| 8 | `idempotency-guard` | `eshop`, `eshop-catalog`, `jobs`, `jobs-golem`, `ledger`, `relay`, `saga`, `webhook` |
-| 7 | `anthropic-provider` | `ai`, `ai-openai`, `photosocial`, `track`, `vet`, `vet-full`, `vet-lattice` |
-| 7 | `blob-store` | `drop`, `events`, `platform`, `studio`, `vet`, `vet-full`, `vet-lattice` |
-| 7 | `csv` | `binder`, `ledger`, `report`, `stash`, `vet`, `vet-full`, `vet-lattice` |
-| 6 | `cache` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
-| 6 | `cache-backing` | `passkey`, `search`, `shortlink`, `vet`, `vet-full`, `vet-lattice` |
-| 6 | `markdown` | `helpdesk`, `paste`, `track`, `vet`, `vet-full`, `vet-lattice` |
-| 6 | `outbox` | `jobs`, `jobs-golem`, `ledger`, `pipeline`, `portal`, `relay` |
-| 6 | `scheduler-timer` | `events`, `saga`, `status`, `vet`, `vet-full`, `vet-lattice` |
-| 6 | `secrets-vault` | `authgate`, `login`, `platform`, `vet`, `vet-full`, `vet-lattice` |
-| 5 | `console-assets` | `console`, `track`, `vet`, `vet-full`, `vet-lattice` |
-| 5 | `pagination` | `report`, `track`, `vet`, `vet-full`, `vet-lattice` |
+| 53 | `record-store` | `academic-review`, `arena`, `authgate`, `booked`, `books`, `buzz`, `clinic`, `conduit`, `dashboards`, `dispatch`, `doc-search`, `drop`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `events`, `freight-tracker`, `gate`, `health-records`, `helpdesk`, `invoice-copilot`, `jobs`, `ledger`, `lms`, `mesh`, `moderation`, `passkey`, `paste`, `payees`, `photosocial`, `platform`, `poll`, `portal`, `pulse`, `real-estate-escrow`, `relay`, `report`, `saga`, `scribe`, `search`, `shortlink`, `smart-home`, `stash`, `status`, `studio`, `support-desk`, `tempo`, `track`, `transit`, `treasury-ledger`, `triage`, `triage-assist`, `vet` |
+| 37 | `rate-limiter` | `academic-review`, `accounts`, `binder`, `booked`, `books`, `buzz`, `clinic`, `conduit`, `dashboards`, `device-radar`, `doc-search`, `eshop-basket`, `eshop-ordering`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `invoice-copilot`, `lms`, `moderation`, `payees`, `photosocial`, `platform`, `portal`, `ratelimit`, `real-estate-escrow`, `relay`, `shortlink`, `smart-home`, `stash`, `support-desk`, `tempo`, `track`, `transit`, `treasury-ledger`, `triage-assist`, `vet` |
+| 35 | `audit-log` | `academic-review`, `accounts`, `binder`, `booked`, `books`, `buzz`, `clinic`, `conduit`, `dashboards`, `device-radar`, `doc-search`, `eshop-basket`, `eshop-ordering`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `invoice-copilot`, `lms`, `moderation`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `relay`, `smart-home`, `stash`, `support-desk`, `tempo`, `track`, `transit`, `treasury-ledger`, `triage-assist`, `vet` |
+| 34 | `auth-guard` | `academic-review`, `accounts`, `binder`, `booked`, `books`, `buzz`, `clinic`, `conduit`, `dashboards`, `device-radar`, `doc-search`, `eshop-basket`, `eshop-ordering`, `events`, `freight-tracker`, `health-records`, `helpdesk`, `invoice-copilot`, `lms`, `moderation`, `payees`, `photosocial`, `platform`, `portal`, `real-estate-escrow`, `smart-home`, `stash`, `support-desk`, `tempo`, `track`, `transit`, `treasury-ledger`, `triage-assist`, `vet` |
+| 15 | `id-generate` | `abtest`, `arena`, `binder`, `clinic`, `events`, `flags`, `helpdesk`, `pipeline`, `poll`, `portal`, `pulse`, `ratelimit`, `saga`, `scribe`, `shortlink` |
+| 14 | `event-bus` | `abtest`, `eshop-basket`, `eshop-catalog`, `eshop-ordering`, `eshop-payment`, `flags`, `moderation`, `pipeline`, `pulse`, `ratelimit`, `saga`, `status`, `track`, `vet` |
+| 10 | `fsm-workflow` | `dispatch`, `eshop-ordering`, `events`, `helpdesk`, `saga`, `status`, `track`, `treasury-ledger`, `triage`, `vet` |
+| 8 | `anthropic-provider` | `doc-search`, `invoice-copilot`, `moderation`, `photosocial`, `support-desk`, `track`, `triage-assist`, `vet` |
+| 8 | `csv` | `binder`, `clinic`, `dispatch`, `ledger`, `report`, `stash`, `triage`, `vet` |
+| 8 | `idempotency-guard` | `eshop-catalog`, `eshop-ordering`, `invoice-copilot`, `jobs`, `ledger`, `relay`, `saga`, `treasury-ledger` |
+| 7 | `ai-inference` | `doc-search`, `invoice-copilot`, `moderation`, `support-desk`, `track`, `triage-assist`, `vet` |
+| 7 | `quota` | `doc-search`, `events`, `ledger`, `platform`, `portal`, `ratelimit`, `support-desk` |
+| 6 | `outbox` | `jobs`, `ledger`, `pipeline`, `portal`, `relay`, `support-desk` |
+| 5 | `blob-store` | `drop`, `events`, `platform`, `studio`, `vet` |
+| 5 | `cache` | `doc-search`, `passkey`, `search`, `shortlink`, `vet` |
+| 5 | `cache-backing` | `doc-search`, `passkey`, `search`, `shortlink`, `vet` |
+| 5 | `notify-dispatch` | `portal`, `relay`, `status`, `support-desk`, `track` |
+| 5 | `pii-redact` | `dispatch`, `paste`, `triage`, `triage-assist`, `vet` |
 | 5 | `qr` | `authgate`, `binder`, `events`, `poll`, `transit` |
-| 5 | `quota` | `events`, `ledger`, `platform`, `portal`, `ratelimit` |
-| 5 | `search-index` | `search`, `track`, `vet`, `vet-full`, `vet-lattice` |
-| 5 | `upload-policy` | `drop`, `events`, `vet`, `vet-full`, `vet-lattice` |
-| 5 | `validate` | `paste`, `report`, `vet`, `vet-full`, `vet-lattice` |
+| 5 | `search-index` | `clinic`, `doc-search`, `search`, `track`, `vet` |
 | 5 | `webhook-sign` | `drop`, `events`, `portal`, `relay`, `track` |
-| 4 | `ai-inference` | `track`, `vet`, `vet-full`, `vet-lattice` |
-| 4 | `lock-mutex` | `booked`, `vet`, `vet-full`, `vet-lattice` |
-| 4 | `money` | `ledger`, `vet`, `vet-full`, `vet-lattice` |
-| 4 | `notify-dispatch` | `portal`, `relay`, `status`, `track` |
-| 4 | `otp` | `authgate`, `vet`, `vet-full`, `vet-lattice` |
-| 4 | `pii-redact` | `paste`, `vet`, `vet-full`, `vet-lattice` |
-| 3 | `i18n-catalog` | `vet`, `vet-full`, `vet-lattice` |
+| 4 | `console-assets` | `console`, `grocery`, `track`, `vet` |
+| 4 | `markdown` | `helpdesk`, `paste`, `track`, `vet` |
+| 4 | `money` | `invoice-copilot`, `ledger`, `treasury-ledger`, `vet` |
+| 4 | `policy-guard` | `moderation`, `platform`, `portal`, `track` |
+| 4 | `scheduler-timer` | `events`, `saga`, `status`, `vet` |
+| 4 | `secrets-vault` | `authgate`, `login`, `platform`, `vet` |
+| 4 | `session-store` | `authgate`, `login`, `passkey`, `support-desk` |
+| 3 | `ledger` | `books`, `invoice-copilot`, `treasury-ledger` |
+| 3 | `otp` | `authgate`, `doc-search`, `vet` |
+| 3 | `pagination` | `report`, `track`, `vet` |
 | 3 | `pdf` | `books`, `lms`, `tempo` |
-| 3 | `policy-guard` | `platform`, `portal`, `track` |
-| 3 | `session-store` | `authgate`, `login`, `passkey` |
 | 3 | `slug` | `conduit`, `paste`, `shortlink` |
 | 3 | `svg-chart` | `dashboards`, `lms`, `poll` |
-| 2 | `cron` | `jobs`, `jobs-golem` |
-| 2 | `golem-bridge` | `jobs`, `jobs-golem` |
+| 3 | `upload-policy` | `drop`, `events`, `vet` |
+| 3 | `validate` | `paste`, `report`, `vet` |
 | 2 | `knowledge-graph` | `console`, `graphviz` |
+| 2 | `lock-mutex` | `booked`, `vet` |
 | 2 | `metrics-collect` | `abtest`, `search` |
-| 2 | `proxy-route` | `eshop`, `mesh` |
+| 2 | `proxy-route` | `eshop-gateway`, `mesh` |
 | 2 | `wit-reflect` | `platform`, `studio` |
 | 2 | `zip` | `binder`, `stash` |
 | 1 | `anthropic-vision` | `binder` |
+| 1 | `barcode-read` | `grocery` |
 | 1 | `browser-automation` | `pdf-generator` |
 | 1 | `card-identify` | `binder` |
 | 1 | `config-store` | `login` |
 | 1 | `container-docker` | `docker-manager` |
 | 1 | `crdt` | `scribe` |
+| 1 | `cron` | `jobs` |
 | 1 | `deck-build` | `binder` |
 | 1 | `desktop-clipboard` | `clipboard-sync` |
 | 1 | `email-render` | `booked` |
 | 1 | `experiment-assign` | `abtest` |
 | 1 | `feature-flags` | `flags` |
 | 1 | `fs-watcher` | `fs-watcher` |
+| 1 | `geo` | `dispatch` |
 | 1 | `github-forge` | `console` |
+| 1 | `golem-bridge` | `jobs` |
+| 1 | `i18n-catalog` | `vet` |
 | 1 | `iban` | `payees` |
 | 1 | `ical` | `booked` |
 | 1 | `image-optimizer` | `image-optimizer` |
 | 1 | `iot-scanner` | `device-radar` |
 | 1 | `jsonpatch` | `relay` |
 | 1 | `lan-scanner` | `lan-scanner` |
-| 1 | `ledger` | `books` |
 | 1 | `llm-local` | `local-ai` |
 | 1 | `mail-http` | `events` |
 | 1 | `mdns-discovery` | `mdns-discoverer` |
@@ -265,15 +267,14 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | --- | --- | --: | --- |
 | **abtest** | `abtest-domain` | 4 | `abtest_domain.composed.wasm` |
 | **academic-review** | `academic-review-domain` | 4 | `academic-review.composed.wasm` |
-| **ai** | `ai-inference` | 1 | `llm_local.composed.wasm` |
-| **ai-openai** | `ai-inference` | 1 | `llm_local.openai.composed.wasm` |
+| **accounts** | `accounts-app` | 3 | `accounts_app.composed.wasm` |
 | **arena** | `arena-domain` | 2 | `arena_domain.composed.wasm` |
-| **auth-guard** | `auth-guard` | 2 | `auth_guard.composed.wasm` |
 | **authgate** | `mfa-authgate` | 5 | `mfa_authgate.composed.wasm` |
 | **binder** | `binder-domain` | 13 | `binder-domain.composed.wasm` |
 | **booked** | `booked-domain` | 8 | `booked_domain.composed.wasm` |
 | **books** | `books-domain` | 6 | `books_domain.composed.wasm` |
 | **buzz** | `buzz-domain` | 4 | `buzz_domain.composed.wasm` |
+| **clinic** | `clinic-domain` | 7 | `clinic_domain.composed.wasm` |
 | **clipboard-sync** | `clipboard-sync-domain` | 1 | `clipboard-sync.composed.wasm` |
 | **conduit** | `conduit-domain` | 5 | `conduit_domain.composed.wasm` |
 | **console** | `console-domain` | 3 | `console_domain.composed.wasm` |
@@ -281,27 +282,28 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **dashboards** | `dashboards-domain` | 5 | `dashboards_domain.composed.wasm` |
 | **desktop-notifier** | `desktop-notifier-domain` | 1 | `desktop-notifier.composed.wasm` |
 | **device-radar** | `device-radar-domain` | 4 | `device-radar.composed.wasm` |
+| **dispatch** | `dispatch-domain` | 5 | `dispatch_domain.composed.wasm` |
+| **doc-search** | `doc-search-domain` | 11 | `doc_search_domain.composed.wasm` |
 | **docker-manager** | `docker-manager-domain` | 1 | `docker-manager.composed.wasm` |
 | **drop** | `upload-drop` | 4 | `upload_drop.composed.wasm` |
-| **eshop** | `accounts-app` | 3 | `eshop_identity.composed.wasm` |
-| **eshop** | `eshop-basket` | 5 | `eshop_basket.composed.wasm` |
-| **eshop** | `eshop-gateway` | 1 | `eshop_gateway.composed.wasm` |
-| **eshop** | `eshop-ordering` | 7 | `eshop_ordering.composed.wasm` |
-| **eshop** | `eshop-payment` | 1 | `eshop_payment.composed.wasm` |
-| **eshop** | `event-pusher` | 1 | `event_pusher.composed.wasm` |
+| **eshop-basket** | `eshop-basket` | 5 | `eshop_basket.composed.wasm` |
 | **eshop-catalog** | `eshop-catalog` | 3 | `eshop_catalog.composed.wasm` |
+| **eshop-gateway** | `eshop-gateway` | 1 | `eshop_gateway.composed.wasm` |
+| **eshop-ordering** | `eshop-ordering` | 7 | `eshop_ordering.composed.wasm` |
+| **eshop-payment** | `eshop-payment` | 1 | `eshop_payment.composed.wasm` |
 | **events** | `events-domain` | 15 | `events_domain.composed.wasm` |
 | **flags** | `flags-domain` | 3 | `flags_domain.composed.wasm` |
 | **freight-tracker** | `freight-tracker-domain` | 4 | `freight-tracker.composed.wasm` |
 | **fs-watcher** | `fs-watcher-domain` | 1 | `fs-watcher.composed.wasm` |
 | **gate** | `gate-domain` | 2 | `gate_domain.composed.wasm` |
 | **graphviz** | `graph-viz-domain` | 1 | `graphviz_domain.composed.wasm` |
+| **grocery** | `grocery-domain` | 2 | `grocery_domain.composed.wasm` |
 | **health-records** | `health-records-domain` | 4 | `health-records.composed.wasm` |
 | **helpdesk** | `helpdesk-domain` | 7 | `helpdesk_domain.composed.wasm` |
 | **image-optimizer** | `image-optimizer-domain` | 1 | `image-optimizer.composed.wasm` |
-| **iot-scanner** | `iot-scanner` | 0 | `iot-scanner.composed.wasm` |
+| **insta** | `insta-domain` | 0 | `insta_domain.composed.wasm` |
+| **invoice-copilot** | `invoice-copilot-domain` | 9 | `invoice_copilot_domain.composed.wasm` |
 | **jobs** | `jobs-domain` | 5 | `jobs_domain.composed.wasm` |
-| **jobs-golem** | `jobs-domain` | 5 | `jobs_domain.golem.wasm` |
 | **lan-scanner** | `lan-scanner-domain` | 1 | `lan-scanner.composed.wasm` |
 | **ledger** | `billing-ledger` | 6 | `billing_ledger.composed.wasm` |
 | **lms** | `lms-domain` | 7 | `lms_domain.composed.wasm` |
@@ -309,11 +311,12 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **login** | `login-app` | 3 | `login_app.composed.wasm` |
 | **mdns-discoverer** | `mdns-discoverer-domain` | 1 | `mdns-discoverer.composed.wasm` |
 | **mesh** | `mesh-domain` | 3 | `mesh_domain.composed.wasm` |
-| **passkey** | `cache` | 1 | `cache.composed.wasm` |
+| **moderation** | `moderation-domain` | 8 | `moderation_domain.composed.wasm` |
 | **passkey** | `passkey-domain` | 5 | `passkey_domain.composed.wasm` |
 | **paste** | `paste-bin` | 5 | `paste_bin.composed.wasm` |
 | **payees** | `payees-domain` | 5 | `payees_domain.composed.wasm` |
 | **pdf-generator** | `pdf-generator-domain` | 1 | `pdf-generator.composed.wasm` |
+| **photo-critic** | `photo-critic` | 0 | `photo_critic.composed.wasm` |
 | **photosocial** | `photosocial-domain` | 5 | `photosocial_domain.composed.wasm` |
 | **pipeline** | `pipeline-domain` | 3 | `pipeline_domain.composed.wasm` |
 | **platform** | `platform-domain` | 9 | `platform_domain.composed.wasm` |
@@ -326,24 +329,22 @@ Read off the artifact, not off a build file. Every showcase used to name its own
 | **report** | `csv-report` | 4 | `csv_report.composed.wasm` |
 | **saga** | `saga-domain` | 6 | `saga_domain.composed.wasm` |
 | **scribe** | `scribe-domain` | 4 | `scribe_domain.composed.wasm` |
-| **search** | `cache` | 1 | `cache.composed.wasm` |
 | **search** | `search-domain` | 5 | `search_domain.composed.wasm` |
-| **shortlink** | `cache` | 1 | `cache.composed.wasm` |
 | **shortlink** | `link-shortener` | 6 | `link_shortener.composed.wasm` |
 | **smart-home** | `smart-home-domain` | 4 | `smart-home.composed.wasm` |
 | **stash** | `stash-domain` | 6 | `stash_domain.composed.wasm` |
 | **status** | `status-page` | 5 | `status_page.composed.wasm` |
 | **studio** | `studio-domain` | 3 | `studio_domain.composed.wasm` |
+| **support-desk** | `support-desk-domain` | 10 | `support_desk_domain.composed.wasm` |
 | **tempo** | `tempo-domain` | 5 | `tempo_domain.composed.wasm` |
 | **track** | `track-domain` | 15 | `track_domain.composed.wasm` |
 | **transit** | `transit-domain` | 5 | `transit_domain.composed.wasm` |
+| **treasury-ledger** | `treasury-ledger-domain` | 8 | `treasury_ledger_domain.composed.wasm` |
+| **triage** | `triage-domain` | 4 | `triage_domain.composed.wasm` |
+| **triage-assist** | `triage-assist-domain` | 7 | `triage_assist_domain.composed.wasm` |
 | **vet** | `vet-domain` | 25 | `vet_domain.composed.wasm` |
-| **vet-full** | `cache` | 1 | `cache.composed.wasm` |
-| **vet-full** | `vet-domain` | 25 | `vet_domain.full.composed.wasm` |
-| **vet-lattice** | `vet-domain` | 25 | `vet_domain.lattice.wasm` |
 | **video-transcoder** | `video-transcoder-domain` | 1 | `video-transcoder.composed.wasm` |
 | **vpn-manager** | `vpn-manager-domain` | 1 | `vpn-manager.composed.wasm` |
-| **webhook** | `webhook-ingest` | 1 | `webhook_ingest.composed.wasm` |
 
 ### The apps, and the capabilities they share
 
@@ -357,19 +358,15 @@ graph LR
   app_academic_review --> auth_guard([auth-guard])
   app_academic_review --> rate_limiter([rate-limiter])
   app_academic_review --> record_store([record-store])
-  app_ai["ai"]
-  app_ai --> anthropic_provider([anthropic-provider])
-  app_ai_openai["ai-openai"]
-  app_ai_openai --> anthropic_provider([anthropic-provider])
+  app_accounts["accounts"]
+  app_accounts --> audit_log([audit-log])
+  app_accounts --> auth_guard([auth-guard])
+  app_accounts --> rate_limiter([rate-limiter])
   app_arena["arena"]
   app_arena --> id_generate([id-generate])
   app_arena --> record_store([record-store])
-  app_auth_guard["auth-guard"]
-  app_auth_guard --> audit_log([audit-log])
-  app_auth_guard --> rate_limiter([rate-limiter])
   app_authgate["authgate"]
   app_authgate --> record_store([record-store])
-  app_authgate --> secrets_vault([secrets-vault])
   app_binder["binder"]
   app_binder --> audit_log([audit-log])
   app_binder --> auth_guard([auth-guard])
@@ -391,6 +388,13 @@ graph LR
   app_buzz --> auth_guard([auth-guard])
   app_buzz --> rate_limiter([rate-limiter])
   app_buzz --> record_store([record-store])
+  app_clinic["clinic"]
+  app_clinic --> audit_log([audit-log])
+  app_clinic --> auth_guard([auth-guard])
+  app_clinic --> csv([csv])
+  app_clinic --> id_generate([id-generate])
+  app_clinic --> rate_limiter([rate-limiter])
+  app_clinic --> record_store([record-store])
   app_clipboard_sync["clipboard-sync"]
   app_conduit["conduit"]
   app_conduit --> audit_log([audit-log])
@@ -398,6 +402,7 @@ graph LR
   app_conduit --> rate_limiter([rate-limiter])
   app_conduit --> record_store([record-store])
   app_console["console"]
+  app_cron_scheduler["cron-scheduler"]
 ```
 
 
