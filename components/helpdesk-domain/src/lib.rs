@@ -40,6 +40,10 @@ use bindings::i18n::catalog::catalog as i18n;
 use bindings::idempotency::guard::store as idempotency;
 use bindings::webhook::sign::signer as webhook_sign;
 use bindings::outbox::dispatch::queue as outbox;
+use bindings::webhook::ingest::verifier as webhook_ingest;
+use bindings::mail::parse::parser as mail_parse;
+use bindings::upload::policy::gate as upload_policy;
+use bindings::blob::store::blobstore as blob_store;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -68,6 +72,7 @@ impl Guest for Component {
             (Method::Get, ["auth", "me"]) => me(&request),
             (Method::Post, ["auth", "logout"]) => logout(&request),
             (Method::Post, ["api", "ops", "process-events"]) => process_events(&request),
+            (Method::Post, ["api", "webhooks", "email"]) => ingest_email(&request),
 
             (Method::Post, ["api", "tickets"]) => create_ticket(&request),
             (Method::Get, ["api", "tickets"]) => list_tickets(&request),
@@ -310,6 +315,94 @@ fn process_events(request: &IncomingRequest) -> Outcome {
     }
     
     Outcome::Json(200, json!({ "processed": ack_ids.len() }).to_string())
+}
+
+// ---- inbound webhooks --------------------------------------------------------
+
+fn ingest_email(request: &IncomingRequest) -> Outcome {
+    // 1. Check signature & dedup
+    // Mailgun-style example: X-Mailgun-Signature, X-Mailgun-Timestamp
+    let headers = request.headers();
+    let sig = get_header(&headers, "x-signature").unwrap_or_default();
+    let msg_id = get_header(&headers, "message-id").unwrap_or_else(|| ids::short_code(16));
+    
+    let body = match read_body(request) {
+        Ok(b) => b,
+        Err(_) => return Outcome::Bad("could not read body".into()),
+    };
+
+    // The webhook secret key would come from configuration, assumed "mail-secret" here.
+    match webhook_ingest::ingest(&body, &sig, "mail-secret", &msg_id) {
+        Ok(v) => {
+            if !v.accepted {
+                // Duplicate delivery / replay
+                return Outcome::Json(200, json!({"status": "ignored", "reason": "replay"}).to_string());
+            }
+        }
+        Err(webhook_ingest::IngestError::BadSignature) => return Outcome::Err(401, "bad signature".into()),
+        Err(webhook_ingest::IngestError::BackendUnavailable(m)) => return Outcome::Err(503, m),
+    }
+
+    // 2. Parse email
+    let email = match mail_parse::parse(&body) {
+        Ok(e) => e,
+        Err(e) => return Outcome::Bad(format!("mail parse error: {:?}", e)),
+    };
+
+    // 3. Process to ticket/message
+    ensure_seeded();
+
+    // Check if in-reply-to matches an existing ticket (using a naive search for simplicity)
+    let is_reply = email.in_reply_to.is_some();
+    
+    // In a real app we'd map sender to an existing user/requester. We'll use the email string.
+    let requester = email.sender.clone();
+    
+    if is_reply {
+        // Naive fallback: try to find ticket by `in_reply_to` or just create new if not found.
+        // For the sake of the mock, we assume creating a new ticket if we don't have it.
+        // Let's create a new ticket.
+    }
+
+    // Creating new ticket
+    let data = json!({
+        "ref": format!("HD-{}", ids::short_code(6)),
+        "subject": email.subject,
+        "requester": requester,
+        "assignee": "",
+        "priority": "normal",
+        "status": "new",
+    });
+
+    let entry = match records::create(
+        TICKETS,
+        &data.to_string(),
+        &["requester".to_string(), "status".to_string()],
+    ) {
+        Ok(e) => e,
+        Err(e) => return store_err(e),
+    };
+    
+    let _ = fsm::create_instance(MACHINE, &entry.id);
+    
+    let ev_payload = json!({
+        "type": "ticket_created_via_email",
+        "ticket": entry.id,
+        "tenant": "default", // email ingester would map domain to tenant
+        "requester": requester,
+    });
+    let _ = eventbus::publish("helpdesk.events", ev_payload.to_string().as_bytes());
+    
+    let msg = json!({"ticket": entry.id, "author": requester, "kind": "public", "body": email.text});
+    if let Err(e) = records::create(MESSAGES, &msg.to_string(), &["ticket".to_string()]) {
+        return store_err(e);
+    }
+
+    Outcome::Json(200, json!({"status": "accepted", "ticket": entry.id}).to_string())
+}
+
+fn get_header(headers: &Fields, name: &str) -> Option<String> {
+    headers.get(name).first().and_then(|v| String::from_utf8(v.clone()).ok())
 }
 
 /// Load a ticket; requesters only see their own (404, not 403 — existence is

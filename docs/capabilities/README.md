@@ -9,8 +9,8 @@ unchanged.
 
 | for | read |
 |---|---|
-| every component, its package, deps, config knobs, size, reusability | [`../../components/CATALOG.md`](../../components/CATALOG.md) |
-| what a component *really* imports, read out of the built wasm | [`../CAPABILITY-GRAPH.md`](../CAPABILITY-GRAPH.md) |
+| every component, its package, deps, config knobs, size, reusability | dynamically via `knowledge-graph` |
+| what a component *really* imports, read out of the built wasm | dynamically via `knowledge-graph` |
 | what a capability is *for*, in a caller's words | its own `wit/*.wit` doc comments — enforced by a lint ([ADR-0094](../adr/0094-a-capability-describes-itself-in-a-callers-words.md)) |
 
 A hand-maintained table here would be a fourth, differently-wrong copy. The two

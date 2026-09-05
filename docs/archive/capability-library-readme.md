@@ -6,8 +6,8 @@
 >
 > | for | read |
 > |---|---|
-> | the component list (it says "40+"; there are ~200) | [`components/CATALOG.md`](../../components/CATALOG.md), generated |
-> | what each component actually imports | [`docs/CAPABILITY-GRAPH.md`](../CAPABILITY-GRAPH.md), generated from the built artifacts |
+> | the component list (it says "40+"; there are ~200) | `knowledge-graph` |
+> | what each component actually imports | `knowledge-graph` |
 > | how to consume `auth:identity` | [`docs/capabilities/USAGE.md`](../capabilities/USAGE.md) |
 > | what runs today | [`docs/CURRENT.md`](../CURRENT.md) |
 > | how to run it on your own machines | [`docs/SELFHOST.md`](../SELFHOST.md) |
