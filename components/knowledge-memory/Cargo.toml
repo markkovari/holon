@@ -23,6 +23,9 @@ world = "knowledge-memory"
 
 [package.metadata.component.target.dependencies]
 "knowledge:graph" = { path = "../knowledge-graph/wit" }
+"event:bus" = { path = "../event-bus/wit" }
+"records:store" = { path = "../record-store/wit" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
 "search:index" = { path = "../search-index/wit" }
 "llm:inference" = { path = "../llm-inference/wit" }
 # Transitive: the worlds of the three above name these, so the packages have to

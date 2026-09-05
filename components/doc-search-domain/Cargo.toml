@@ -30,6 +30,7 @@ world = "doc-search-domain"
 "audit:log" = { path = "../audit-log/wit" }
 "otp:totp" = { path = "../otp/wit" }
 "quota:meter" = { path = "../quota/wit" }
+"event:bus" = { path = "../event-bus/wit" }
 "search:index" = { path = "../search-index/wit" }
 "cache:store" = { path = "../cache/wit" }
 "ai:inference" = { path = "../ai-inference/wit" }
