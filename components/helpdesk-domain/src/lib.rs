@@ -44,6 +44,10 @@ use bindings::webhook::ingest::verifier as webhook_ingest;
 use bindings::mail::parse::parser as mail_parse;
 use bindings::upload::policy::gate as upload_policy;
 use bindings::blob::store::blobstore as blob_store;
+use bindings::assignment::router::router as assignment;
+use bindings::search::index::index as search;
+use bindings::sched::timer::timer as timer;
+use bindings::wasi::clocks::wall_clock;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -76,11 +80,13 @@ impl Guest for Component {
 
             (Method::Post, ["api", "tickets"]) => create_ticket(&request),
             (Method::Get, ["api", "tickets"]) => list_tickets(&request),
+            (Method::Get, ["api", "tickets", "search"]) => search_tickets(&request),
             (Method::Get, ["api", "tickets", id]) => get_ticket(&request, id),
             (Method::Post, ["api", "tickets", id, "messages"]) => add_message(&request, id),
             (Method::Post, ["api", "tickets", id, "state"]) => change_state(&request, id),
             (Method::Post, ["api", "tickets", id, "assign"]) => assign(&request, id),
             (Method::Get, ["api", "tickets", id, "history"]) => ticket_history(&request, id),
+            (Method::Post, ["api", "internal", "timers", "fire"]) => timers_fire(&request),
             _ => Outcome::NotFound,
         };
         emit(response_out, result);
@@ -364,12 +370,19 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
         // Let's create a new ticket.
     }
 
+    // Route to an agent using the assignment component
+    let mock_agents = vec![
+        assignment::AgentWorkload { agent_id: "agent-1".into(), open_tickets: 3 },
+        assignment::AgentWorkload { agent_id: "agent-2".into(), open_tickets: 1 },
+    ];
+    let assignee = assignment::route(&mock_agents, "load-balanced").unwrap_or_default();
+
     // Creating new ticket
     let data = json!({
         "ref": format!("HD-{}", ids::short_code(6)),
         "subject": email.subject,
         "requester": requester,
-        "assignee": "",
+        "assignee": assignee,
         "priority": "normal",
         "status": "new",
     });
@@ -469,11 +482,19 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
     if !PRIORITIES.contains(&priority.as_str()) {
         return Outcome::Bad(format!("priority must be one of {PRIORITIES:?}"));
     }
+    
+    // Route to an agent using the assignment component
+    let mock_agents = vec![
+        assignment::AgentWorkload { agent_id: "agent-1".into(), open_tickets: 3 },
+        assignment::AgentWorkload { agent_id: "agent-2".into(), open_tickets: 1 },
+    ];
+    let assignee = assignment::route(&mock_agents, "load-balanced").unwrap_or_default();
+
     let data = json!({
         "ref": format!("HD-{}", ids::short_code(6)),
         "subject": req.subject,
         "requester": p.subject,
-        "assignee": "",
+        "assignee": assignee,
         "priority": priority,
         "status": "new",
     });
@@ -501,7 +522,64 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
     // record usage post-hoc just to be sure, though reserve already decremented
     let _ = quota::record_usage(&p.tenant, 1, 1000, month_secs);
     
+    // schedule SLA timers
+    let now = wall_clock::now().seconds;
+    let _ = timer::schedule_at(&format!("sla:first-response:{}", entry.id), now + 86400, &[]);
+    let _ = timer::schedule_at(&format!("sla:resolution:{}", entry.id), now + 259200, &[]);
+    
+    // index for search
+    let search_tags = vec![
+        format!("tenant:{}", p.tenant),
+        format!("status:new"),
+        format!("assignee:{}", assignee),
+    ];
+    let _ = search::index_doc(&entry.id, &format!("{} {}", req.subject, req.body), &search_tags);
+    
     Outcome::Json(201, ticket_json(&entry).to_string())
+}
+
+fn search_tickets(request: &IncomingRequest) -> Outcome {
+    let p = match introspect(request) {
+        Ok(p) => p,
+        Err(o) => return o,
+    };
+    if !is_agent(&p) {
+        return Outcome::Forbidden("only agents can search tickets".into());
+    }
+
+    let url = request.path_with_query().unwrap_or_default();
+    let query_string = url.split('?').nth(1).unwrap_or("");
+    let mut q = String::new();
+    let mut status_filter = None;
+
+    for pair in query_string.split('&') {
+        let mut kv = pair.split('=');
+        let k = kv.next().unwrap_or("");
+        let v = kv.next().unwrap_or("");
+        if k == "q" {
+            q = v.replace("%20", " ").replace('+', " ");
+        } else if k == "status" {
+            status_filter = Some(v.to_string());
+        }
+    }
+
+    let mut tags = vec![format!("tenant:{}", p.tenant)];
+    if let Some(s) = status_filter {
+        tags.push(format!("status:{}", s));
+    }
+
+    match search::query(&q, search::Mode::Any, &tags, 50) {
+        Ok(hits) => {
+            let mut tickets = Vec::new();
+            for hit in hits {
+                if let Ok(entry) = records::get(TICKETS, &hit.id) {
+                    tickets.push(ticket_json(&entry));
+                }
+            }
+            Outcome::Json(200, json!({ "tickets": tickets }).to_string())
+        }
+        Err(e) => Outcome::Err(503, format!("search error: {:?}", e)),
+    }
 }
 
 fn list_tickets(request: &IncomingRequest) -> Outcome {
@@ -622,6 +700,25 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
     };
     let status = apply_events(&entry, &data, events)
         .unwrap_or_else(|| data["status"].as_str().unwrap_or("").into());
+        
+    // check if we need to cancel SLA timers
+    if agent && data["status"].as_str().unwrap_or("") == "new" {
+        let _ = timer::cancel(&format!("sla:first-response:{}", id));
+    }
+    if status == "solved" || status == "closed" {
+        let _ = timer::cancel(&format!("sla:resolution:{}", id));
+        let _ = timer::cancel(&format!("sla:first-response:{}", id));
+    }
+        
+    // update search index
+    let search_tags = vec![
+        format!("tenant:{}", p.tenant),
+        format!("status:{}", status),
+        format!("assignee:{}", data["assignee"].as_str().unwrap_or("")),
+    ];
+    let search_text = format!("{} {}", data["subject"].as_str().unwrap_or(""), req.body);
+    let _ = search::index_doc(id, &search_text, &search_tags);
+    
     Outcome::Json(201, json!({"id": created.id, "kind": kind, "status": status}).to_string())
 }
 
@@ -761,6 +858,47 @@ fn mirror_status(entry: &records::Entry, data: &Value, state: &str) {
     data["status"] = json!(state);
     // revision 0 = last-write-wins; the FSM already serialized the transition.
     let _ = records::update(TICKETS, &entry.id, &data.to_string(), 0);
+}
+
+// ---- SLA Timer Breach --------------------------------------------------------
+
+fn timers_fire(request: &IncomingRequest) -> Outcome {
+    #[derive(Deserialize)]
+    struct Req {
+        key: String,
+    }
+    let req: Req = match parse(request) {
+        Ok(v) => v,
+        Err(m) => return Outcome::Bad(m),
+    };
+    
+    if req.key.starts_with("sla:first-response:") || req.key.starts_with("sla:resolution:") {
+        let ticket_id = req.key.split(':').nth(2).unwrap_or("");
+        if ticket_id.is_empty() {
+            return Outcome::Bad("invalid key".into());
+        }
+        
+        let entry = match records::get(TICKETS, ticket_id) {
+            Ok(e) => e,
+            Err(_) => return Outcome::NotFound,
+        };
+        let mut data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
+        let status = data["status"].as_str().unwrap_or("");
+        
+        if status != "solved" && status != "closed" {
+            data["priority"] = json!("urgent");
+            let _ = records::update(TICKETS, ticket_id, &data.to_string(), entry.revision);
+            
+            let ev_payload = json!({
+                "type": "sla_breached",
+                "ticket": ticket_id,
+                "key": req.key,
+            });
+            let _ = eventbus::publish("helpdesk.events", ev_payload.to_string().as_bytes());
+        }
+    }
+    
+    Outcome::Json(200, json!({"status": "ok"}).to_string())
 }
 
 // ---- helpers ---------------------------------------------------------------------
