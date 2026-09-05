@@ -174,3 +174,47 @@ path = "src/bin/photoserve.rs"
 [[bin]]
 name = "comp-contrastserve"
 path = "src/bin/contrastserve.rs"
+
+[[bin]]
+name = "comp-browser"
+path = "src/bin/browser.rs"
+
+[[bin]]
+name = "comp-docker"
+path = "src/bin/docker.rs"
+
+[[bin]]
+name = "comp-clipboard"
+path = "src/bin/clipboard.rs"
+
+[[bin]]
+name = "comp-imageopt"
+path = "src/bin/imageopt.rs"
+
+[[bin]]
+name = "comp-lanscan"
+path = "src/bin/lanscan.rs"
+
+[[bin]]
+name = "comp-llmlocal"
+path = "src/bin/llmlocal.rs"
+
+[[bin]]
+name = "comp-mdns"
+path = "src/bin/mdns.rs"
+
+[[bin]]
+name = "comp-cron"
+path = "src/bin/cron.rs"
+
+[[bin]]
+name = "comp-uinotify"
+path = "src/bin/uinotify.rs"
+
+[[bin]]
+name = "comp-ffmpeg"
+path = "src/bin/ffmpeg.rs"
+
+[[bin]]
+name = "comp-wireguard"
+path = "src/bin/wireguard.rs"

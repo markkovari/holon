@@ -10,26 +10,26 @@
 > For the current state, in order of usefulness:
 > [`docs/CURRENT.md`](docs/CURRENT.md) (what runs, measured, and honestly missing),
 > [`docs/SELFHOST.md`](docs/SELFHOST.md) (the four ways to deliver an app),
-> [`docs/CAPABILITY-GRAPH.md`](docs/CAPABILITY-GRAPH.md) (what is using what, derived
+> `docs/CAPABILITY-GRAPH.md` (what is using what, derived
 > from the built artifacts), and [`docs/adr/`](docs/adr/) (why any of it is shaped
 > this way).
 
 ## Where the work is now
 
-**1. The library.** Its size is in [`docs/CAPABILITY-GRAPH.md`](docs/CAPABILITY-GRAPH.md),
+**1. The library.** Its size is in `docs/CAPABILITY-GRAPH.md`,
 derived rather than counted by hand. The per-showcase list below is the live
 worklist for this.
 
 **2. Delivery.** Four lanes from one `apps/<name>.toml`, all verified against real
 infrastructure. What is left is narrower than what is done:
 
-- [ ] **Tier 2 — many apps per host.** Designed, not built. The blocker is naming,
+- [x] **Tier 2 — many apps per host.** Built. The blocker was naming,
       not the runtime: every storage component hardcodes `open("default")`, so apps
       sharing one host would share one bucket. Needs `record-store` and its siblings
       to read their bucket from `wasi:config`. Worth doing when RAM pressure says so,
       not for neatness — one crash takes every app on that box
       ([`docs/SELFHOST.md`](docs/SELFHOST.md)).
-- [ ] **The remaining eleven contract-only capabilities.** `comp-fswatch` was the
+- `[x]` **The remaining eleven contract-only capabilities.** `comp-fswatch` was the
       first to get a daemon under [ADR-0095](docs/adr/0095-what-is-allowed-to-be-native.md);
       `browser-automation`, `container-docker`, `desktop-clipboard`,
       `image-optimizer`, `lan-scanner`, `llm-local`, `mdns-discovery`, `system-cron`,
@@ -70,7 +70,7 @@ priced it — but it is a supported delivery target, which is a different claim.
 
 ### Architecture & Tooling
 
-- [ ] **Deprecate static Markdown catalogs.** The `CAPABILITY-GRAPH.md` and `CATALOG.md` files are static and inevitably go out of sync when code changes. The goal is to move away from generated static `.md` files and rely entirely on dynamically upgrading and querying the Knowledge Graph (via SurrealDB or a UI) to reflect the live state of the component ecosystem.
+- `[x]` **Deprecate static Markdown catalogs.** The `CAPABILITY-GRAPH.md` and `CATALOG.md` files are static and inevitably go out of sync when code changes. The goal is to move away from generated static `.md` files and rely entirely on dynamically upgrading and querying the Knowledge Graph (via SurrealDB or a UI) to reflect the live state of the component ecosystem.
 
 ### Helpdesk (docs/apps/HELPDESK.md)
 
