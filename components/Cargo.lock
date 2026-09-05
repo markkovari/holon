@@ -157,6 +157,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "assignment"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "audit-log"
 version = "0.1.0"
 dependencies = [

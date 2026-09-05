@@ -1,0 +1,19 @@
+package assignment:router@0.1.0;
+
+interface router {
+    /// A single agent and their current workload.
+    record agent-workload {
+        /// The agent's unique identifier.
+        agent-id: string,
+        /// The number of open tickets currently assigned to the agent.
+        open-tickets: u32,
+    }
+
+    /// Route a ticket to an agent based on the provided strategy.
+    /// Returns the chosen `agent-id`, or none if the list is empty.
+    route: func(agents: list<agent-workload>, strategy: string) -> option<string>;
+}
+
+world assignment-router {
+    export router;
+}

@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-119 interfaces.
+120 interfaces.
 
 ## `ai:inference/inference@0.1.0`
 
@@ -99,6 +99,19 @@ Adding a *function* to an interface is compatible; adding a case to a
     put: func(claim: string, bytes: list<u8>, content-type: string) -> result<string, cache-error>;
 
     abandon: func(claim: string) -> result<_, cache-error>;
+  }
+```
+
+## `assignment:router/router@0.1.0`
+
+```wit
+  interface router {
+    record agent-workload {
+      agent-id: string,
+      open-tickets: u32,
+    }
+
+    route: func(agents: list<agent-workload>, strategy: string) -> option<string>;
   }
 ```
 
