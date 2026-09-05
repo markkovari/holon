@@ -41,4 +41,10 @@ world helpdesk-domain {
     import id:generate/generator@0.1.0;
     // safe Markdown -> HTML for message bodies.
     import md:render/renderer@0.1.0;
+    
+    // authorization, quotas, rate limiting, and auditing (Rung 2).
+    import policy:guard/guard@0.1.0;
+    import quota:meter/meter@0.1.0;
+    import ratelimit:guard/limiter@0.1.0;
+    import audit:log/recorder@0.1.0;
 }
