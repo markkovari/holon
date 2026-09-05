@@ -25,7 +25,14 @@ use bindings::fsm::workflow::engine as fsm;
 use bindings::id::generate::generator as ids;
 use bindings::md::render::renderer as md;
 use bindings::records::store::store as records;
-
+use bindings::ratelimit::guard::limiter as ratelimit;
+use bindings::ratelimit::guard::limiter::LimitError;
+use bindings::quota::meter::meter as quota;
+use bindings::quota::meter::meter::QuotaError;
+use bindings::policy::guard::guard as policy;
+use bindings::policy::guard::guard::Attr;
+use bindings::audit::log::recorder as audit;
+use bindings::audit::log::types::Event;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -212,6 +219,34 @@ fn is_agent(p: &Principal) -> bool {
     p.roles.iter().any(|r| r == "agent" || r == "admin")
 }
 
+fn is_allowed(p: &Principal, action: &str, ticket_id: &str, status: &str) -> bool {
+    let principal_attrs = vec![
+        Attr { key: "subject".into(), value: p.subject.clone() },
+        Attr { key: "tenant".into(), value: p.tenant.clone() },
+        Attr { key: "roles".into(), value: p.roles.join(",") },
+    ];
+    let target_attrs = vec![
+        Attr { key: "id".into(), value: ticket_id.into() },
+        Attr { key: "status".into(), value: status.into() },
+    ];
+    policy::enforce("helpdesk", action, &principal_attrs, &target_attrs)
+}
+
+fn audit_log(p: &Principal, action: &str, target: &str, outcome: &str) {
+    let e = Event {
+        id: "".into(),
+        trace_id: "".into(),
+        span_id: "".into(),
+        timestamp: 0,
+        event: action.into(),
+        outcome: outcome.into(),
+        tenant: p.tenant.clone(),
+        subject: p.subject.clone(),
+        detail: target.into(),
+    };
+    let _ = audit::record_event(&e);
+}
+
 /// Load a ticket; requesters only see their own (404, not 403 — existence is
 /// not leaked across requesters).
 fn load_ticket(p: &Principal, id: &str) -> Result<(records::Entry, Value), Outcome> {
@@ -235,6 +270,12 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
+    
+    let rl_key = format!("{}:ticket_create", p.tenant);
+    if let Err(LimitError::Locked(secs)) = ratelimit::check(&rl_key) {
+        return Outcome::Auth(AuthError::RateLimited(secs));
+    }
+    
     #[derive(Deserialize)]
     struct Req {
         subject: String,
@@ -243,9 +284,23 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
         priority: Option<String>,
     }
     let req: Req = match parse(request) {
-        Ok(v) => v,
-        Err(m) => return Outcome::Bad(m),
+        Ok(v) => {
+            // successful parse, clear rate limit
+            let _ = ratelimit::reset(&rl_key);
+            v
+        },
+        Err(m) => {
+            let _ = ratelimit::record_failure(&rl_key);
+            return Outcome::Bad(m);
+        }
     };
+    
+    // quota check: 1000 tickets per month limit
+    let month_secs = 30 * 24 * 60 * 60;
+    if let Err(QuotaError::Exceeded(_)) = quota::reserve(&p.tenant, 1, 1000, month_secs) {
+        return Outcome::Err(402, "quota exceeded".into());
+    }
+    
     if req.subject.is_empty() || req.subject.len() > 200 {
         return Outcome::Bad("subject must be 1..200 chars".into());
     }
@@ -277,6 +332,10 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
     if let Err(e) = records::create(MESSAGES, &msg.to_string(), &["ticket".to_string()]) {
         return store_err(e);
     }
+    
+    // record usage post-hoc just to be sure, though reserve already decremented
+    let _ = quota::record_usage(&p.tenant, 1, 1000, month_secs);
+    
     Outcome::Json(201, ticket_json(&entry).to_string())
 }
 
@@ -398,13 +457,15 @@ fn change_state(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
-    if !is_agent(&p) {
-        return Outcome::Forbidden("lifecycle events are agent-only".into());
-    }
     let (entry, data) = match load_ticket(&p, id) {
         Ok(t) => t,
         Err(o) => return o,
     };
+    
+    let status = data["status"].as_str().unwrap_or("");
+    if !is_allowed(&p, "change_state", id, status) {
+        return Outcome::Forbidden("abac: forbidden to change state".into());
+    }
     #[derive(Deserialize)]
     struct Req {
         event: String,
@@ -419,12 +480,17 @@ fn change_state(request: &IncomingRequest, id: &str) -> Outcome {
     match fsm::fire(MACHINE, id, &req.event) {
         Ok(status) => {
             mirror_status(&entry, &data, &status.state);
+            audit_log(&p, &format!("state:{}", req.event), id, "allow");
             Outcome::Json(200, json!({"status": status.state, "done": status.done}).to_string())
         }
         Err(fsm::FsmError::IllegalTransition(current)) => {
+            audit_log(&p, &format!("state:{}", req.event), id, "deny");
             Outcome::Err(409, format!("cannot {} from {current}", req.event))
         }
-        Err(e) => Outcome::Err(503, format!("fsm: {e:?}")),
+        Err(e) => {
+            audit_log(&p, &format!("state:{}", req.event), id, "error");
+            Outcome::Err(503, format!("fsm: {e:?}"))
+        }
     }
 }
 
@@ -433,13 +499,15 @@ fn assign(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
-    if !is_agent(&p) {
-        return Outcome::Forbidden("assignment is agent-only".into());
-    }
     let (entry, mut data) = match load_ticket(&p, id) {
         Ok(t) => t,
         Err(o) => return o,
     };
+    
+    let status = data["status"].as_str().unwrap_or("");
+    if !is_allowed(&p, "assign", id, status) {
+        return Outcome::Forbidden("abac: forbidden to assign".into());
+    }
     #[derive(Deserialize)]
     struct Req {
         subject: String,
@@ -456,7 +524,10 @@ fn assign(request: &IncomingRequest, id: &str) -> Outcome {
         }
     }
     match records::update(TICKETS, id, &data.to_string(), entry.revision) {
-        Ok(e) => Outcome::Json(200, ticket_json(&e).to_string()),
+        Ok(e) => {
+            audit_log(&p, "assign", id, "allow");
+            Outcome::Json(200, ticket_json(&e).to_string())
+        }
         Err(e) => store_err(e),
     }
 }
