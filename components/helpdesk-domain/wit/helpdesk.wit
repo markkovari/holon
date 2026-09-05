@@ -62,4 +62,11 @@ world helpdesk-domain {
     import mail:parse/parser@0.1.0;
     import upload:policy/gate@0.1.0;
     import blob:store/blobstore@0.1.0;
+
+    // SLA + search + assignment (Rung 5).
+    import assignment:router/router@0.1.0;
+    import sched:timer/timer@0.1.0;
+    import search:index/index@0.1.0;
+    
+    import wasi:clocks/wall-clock@0.2.0;
 }

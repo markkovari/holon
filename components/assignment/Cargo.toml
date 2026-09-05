@@ -1,0 +1,15 @@
+[package]
+name = "assignment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[package.metadata.component]
+package = "component:assignment"
