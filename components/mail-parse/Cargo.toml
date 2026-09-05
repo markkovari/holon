@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+mailparse = "0.16.1"
 wit-bindgen-rt = { workspace = true, features = ["bitflags"] }
 
 [lib]
