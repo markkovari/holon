@@ -1,0 +1,22 @@
+package mail:parse@0.1.0;
+
+interface parser {
+    variant parse-error {
+        malformed(string),
+    }
+
+    record email {
+        sender: string,
+        subject: string,
+        text: string,
+        html: option<string>,
+        in-reply-to: option<string>,
+        // ignoring attachments for now
+    }
+
+    parse: func(raw: list<u8>) -> result<email, parse-error>;
+}
+
+world mail-parse {
+    export parser;
+}

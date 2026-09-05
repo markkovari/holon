@@ -56,4 +56,10 @@ world helpdesk-domain {
     import idempotency:guard/store@0.1.0;
     import webhook:sign/signer@0.1.0;
     import outbox:dispatch/queue@0.1.0;
+    
+    // inbound email via webhooks (Rung 4).
+    import webhook:ingest/verifier@0.1.0;
+    import mail:parse/parser@0.1.0;
+    import upload:policy/gate@0.1.0;
+    import blob:store/blobstore@0.1.0;
 }
