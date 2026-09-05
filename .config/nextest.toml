@@ -1,0 +1,33 @@
+# Nextest configuration for Holon
+# Documentation: https://nexte.st/book/configuration.html
+
+[profile.default]
+# Run all tests even if some fail, giving a complete diagnostic report
+fail-fast = false
+
+# Per-test timeout: flag slow tests at 15s and terminate at 60s
+slow-timeout = { period = "15s", terminate-after = 4 }
+
+# Default filter expression:
+# - Exclude offline databases (SurrealDB is not running locally by default)
+# - Exclude held-out goal stubs (semver-range is an open goal with intentionally failing stubs)
+default-filter = 'not test(surrealkv_test) and not test(semver_range)'
+
+# CI profile: fail fast to conserve runner minutes, enable 1 retry for transient network calls
+[profile.ci]
+fail-fast = true
+retries = 1
+slow-timeout = { period = "30s", terminate-after = 3 }
+default-filter = 'not test(surrealkv_test) and not test(semver_range)'
+
+# Test groups: constrain tests that bind local ports or temporary daemons
+[test-groups]
+isolated-ports = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'test(inventory_ttl) or test(gate_) or test(coldstart)'
+test-group = 'isolated-ports'
+
+[[profile.ci.overrides]]
+filter = 'test(inventory_ttl) or test(gate_) or test(coldstart)'
+test-group = 'isolated-ports'

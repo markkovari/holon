@@ -68,6 +68,10 @@ priced it — but it is a supported delivery target, which is a different claim.
 
 ## TODO — next up
 
+### Architecture & Tooling
+
+- [ ] **Deprecate static Markdown catalogs.** The `CAPABILITY-GRAPH.md` and `CATALOG.md` files are static and inevitably go out of sync when code changes. The goal is to move away from generated static `.md` files and rely entirely on dynamically upgrading and querying the Knowledge Graph (via SurrealDB or a UI) to reflect the live state of the component ecosystem.
+
 ### Helpdesk (docs/apps/HELPDESK.md)
 
 - [ ] Rungs 2–7: multi-tenant + API keys + quotas, event-bus fan-out +

@@ -58,10 +58,10 @@ jobs:
       - name: Install the wasm target
         run: rustup target add wasm32-wasip2
 
-      - name: Install cargo-component, wasm-tools and just
+      - name: Install cargo-component and wasm-tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-component@0.21.1,wasm-tools,just
+          tool: cargo-component@0.21.1,wasm-tools
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -71,7 +71,7 @@ jobs:
       # be what the repository builds, including the `wasm-tools metadata add` name
       # stamp that `wit-reflect` asserts.
       - name: Build
-        run: just build force=1
+        run: cargo xtask build --force
 
       - name: Build comp-oci
         working-directory: reconciler

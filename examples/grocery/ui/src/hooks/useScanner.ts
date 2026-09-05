@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { ScanResult, Role } from "../types/grocery";
 import * as api from "../api/client";
 
@@ -9,6 +9,9 @@ export interface UseScannerOptions {
 }
 
 export function useScanner(options?: UseScannerOptions) {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -19,21 +22,21 @@ export function useScanner(options?: UseScannerOptions) {
       setScanError(null);
       setScanResult(null);
 
-      const activeRole = options?.activeRole || "shopper";
+      const activeRole = optionsRef.current?.activeRole || "shopper";
       try {
         const result = await api.scanBarcodeBytes(bytes, activeRole);
         setScanResult(result);
-        options?.showToast?.(
+        optionsRef.current?.showToast?.(
           `Decoded: ${result.barcode.text} (${result.barcode.symbology.toUpperCase()})`
         );
-        options?.onScanSuccess?.(result);
+        optionsRef.current?.onScanSuccess?.(result);
       } catch (err: any) {
         setScanError(err.message || "Failed to decode barcode.");
       } finally {
         setScanning(false);
       }
     },
-    [options]
+    []
   );
 
   const handleTestFixture = useCallback(

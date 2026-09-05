@@ -8,10 +8,10 @@ results; it never talks to a specific model. Any component that exports
 
 This example runs the **MOCK** provider: a deterministic, offline
 `llm-inference` component composed into `ai-inference` with
-[`wac plug`](../../Justfile) via:
+[`wac plug`](../../reconciler/src/plug.rs) via:
 
 ```sh
-just compose-ai   # ai_assist.wasm + llm_inference.wasm -> ai_assist.composed.wasm
+cargo xtask compose ai   # ai_assist.wasm + llm_inference.wasm -> ai_assist.composed.wasm
 ```
 
 The result, `ai_assist.composed.wasm`, exports **only**

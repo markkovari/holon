@@ -62,15 +62,15 @@ jobs:
       # generates every `bindings.rs`, which are gitignored — so without this step
       # nothing in components/ even parses, and the failure looks like missing
       # modules rather than a missing tool.
-      # `just` and `wasm-tools` are not conveniences here: `just build` runs a
+      # `wasm-tools` is not a convenience here: `cargo xtask build` runs a
       # `wasm-tools metadata add` pass that stamps each artifact's name back on,
       # because wasm32-wasip2 components come out anonymous. `wit-reflect`
       # asserts that name, so a raw `cargo build` produces a tree that fails its
       # own tests — which is exactly what this workflow's first run did.
-      - name: Install cargo-component, wasm-tools and just
+      - name: Install cargo-component and wasm-tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-component@0.21.1,wasm-tools,just
+          tool: cargo-component@0.21.1,wasm-tools
 
       # nats-server, and it buys more than any other line in this file.
       #
@@ -124,7 +124,7 @@ jobs:
       # cache restore can bring those back alongside artifacts it did not verify.
       # CI is the one place that should always do the whole thing.
       - name: Build
-        run: just build force=1
+        run: cargo xtask build --force
 
       - name: Test
         working-directory: components
