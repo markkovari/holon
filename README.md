@@ -65,9 +65,7 @@ without one: `--allow` bounds the *command*, not the tree it runs over, and
 `cargo test` on a tree an agent wrote runs that tree's `build.rs`.
 
 ```bash
-just compose-gate                    # components -> one .wasm
-just selfhost-render gate            # read the unit and route before trusting them
-just selfhost-deploy gate my-vps     # ship it
+cargo xtask compose gate                # components -> one .wasm
 ```
 
 HTTP is not the only trigger. `sched:timer`, `event:bus` and `cron:expr` are
@@ -176,7 +174,7 @@ CHECKOUT=~/src/widgets REPO=acme/widgets bash goal-demo.sh real     # goal → P
 | what the swarm remembers | `components/knowledge-memory`, [ADR-0084](docs/adr/0084-two-retrievers-and-an-optimistic-database.md) |
 | how two halves of one goal agree | `components/contract-registry`, `reconciler/src/compose.rs`, [ADR-0086](docs/adr/0086-parts-negotiate-a-contract.md) |
 | the worklist — goals a person has written | [`.comp/goals/`](.comp/goals/) |
-| the browser surface: author a goal, read a run as a graph | [`docs/apps/CONSOLE.md`](docs/apps/CONSOLE.md) — `just host-console` |
+| the browser surface: author a goal, read a run as a graph | [`docs/apps/CONSOLE.md`](docs/apps/CONSOLE.md) — `cargo xtask host console` |
 
 ## Status
 

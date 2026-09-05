@@ -85,85 +85,7 @@ struct Args {
     diagram_top: usize,
 }
 
-/// An application, and the component it is composed from.
-///
-/// Discovered from the `Justfile`, which is now able to answer this: every
-/// showcase used to spell out its own `wac plug` chain, so "what is this app made
-/// of" was a hand-written list that drifted. Since the chains became `_derive
-/// <component> <artifact>` calls, the recipe states only the ROOT — and the rest
-/// is derived from the artifact, which means this graph cannot disagree with what
-/// actually gets composed.
-struct App {
-    name: String,
-    root: String,
-    artifact: String,
-}
-
-/// The Justfile and everything it imports, concatenated.
-///
-/// `import` splices a file in, so a `compose-*` recipe in `just/compose.just` is
-/// exactly as much a part of the interface as one in the root file. Reading only
-/// the root makes two thirds of the apps invisible — and this graph's failure mode
-/// for an app it cannot see is not an error, it is a smaller graph, which is why
-/// this is worth a function rather than a line.
-///
-/// Read off the `import` lines rather than by globbing `just/`: a fragment nobody
-/// imports is not part of the interface, and finding it here would make this
-/// disagree with what `just` itself runs.
-fn justfile_text(root_dir: &std::path::Path) -> Option<String> {
-    let root = std::fs::read_to_string(root_dir.join("Justfile")).ok()?;
-    let mut all = root.clone();
-    for line in root.lines() {
-        let Some(rest) = line.trim().strip_prefix("import ") else { continue };
-        let path = rest.trim().trim_matches(|c| c == '\'' || c == '"');
-        if let Ok(text) = std::fs::read_to_string(root_dir.join(path)) {
-            all.push('\n');
-            all.push_str(&text);
-        }
-    }
-    Some(all)
-}
-
-fn apps(root_dir: &std::path::Path) -> Vec<App> {
-    let Some(justfile) = justfile_text(root_dir) else {
-        return Vec::new();
-    };
-    // The just variables, so `{{vet_composed}}` becomes a path.
-    let mut vars: BTreeMap<&str, &str> = BTreeMap::new();
-    for line in justfile.lines() {
-        if let Some((name, rest)) = line.split_once(":=") {
-            let name = name.trim();
-            let value = rest.trim().trim_matches('"');
-            if !name.contains(' ') && !value.is_empty() {
-                vars.insert(name, value);
-            }
-        }
-    }
-
-    let mut out = Vec::new();
-    let mut recipe = String::new();
-    for line in justfile.lines() {
-        if !line.starts_with([' ', '\t']) && line.contains(':') {
-            recipe = line.split([':', ' ']).next().unwrap_or("").to_string();
-        }
-        let Some(rest) = line.trim().strip_prefix("@just _derive ") else { continue };
-        let mut parts = rest.split_whitespace();
-        let (Some(component), Some(artifact)) = (parts.next(), parts.next()) else { continue };
-        let artifact = artifact.trim_start_matches("{{").trim_end_matches("}}");
-        let artifact = vars.get(artifact).copied().unwrap_or(artifact);
-        // `compose-vet` is the app `vet`; the bare `compose` recipe builds a plug
-        // for other apps rather than an app of its own.
-        let name = recipe.strip_prefix("compose-").unwrap_or(&recipe).to_string();
-        out.push(App {
-            name: if name == "compose" { component.to_string() } else { name },
-            root: component.to_string(),
-            artifact: artifact.rsplit('/').next().unwrap_or(artifact).to_string(),
-        });
-    }
-    out.sort_by(|a, b| a.name.cmp(&b.name).then(a.root.cmp(&b.root)));
-    out.dedup_by(|a, b| a.root == b.root && a.name == b.name);
-    out
-}
+use comp_metadata::app::App;
 
 fn main() -> Result<(), String> {
     let args = Args::parse();
@@ -238,7 +160,7 @@ fn main() -> Result<(), String> {
 
     if let Some(query) = &args.find {
         let mut apps_of: BTreeMap<String, usize> = BTreeMap::new();
-        for app in apps(&root) {
+        for app in comp_metadata::app::discover_apps(&root) {
             for part in catalog.closure(&app.root) {
                 *apps_of.entry(part).or_default() += 1;
             }
@@ -276,7 +198,7 @@ fn main() -> Result<(), String> {
     }
 
     match args.format.as_str() {
-        "json" => println!("{}", json(&catalog, &by_iface, &orphans, &apps(&root))),
+        "json" => println!("{}", json(&catalog, &by_iface, &orphans, &comp_metadata::app::discover_apps(&root))),
         "surql" => {
             let generation = args.gen.unwrap_or_else(|| {
                 std::time::SystemTime::now()
@@ -284,11 +206,11 @@ fn main() -> Result<(), String> {
                     .map(|d| d.as_secs())
                     .unwrap_or(0)
             });
-            println!("{}", surql(&catalog, &apps(&root), generation));
+            println!("{}", surql(&catalog, &comp_metadata::app::discover_apps(&root), generation));
         }
         "mermaid" => println!("{}", mermaid(&by_iface, args.diagram_top)),
         "md" => {
-            println!("{}", markdown(&catalog, &by_iface, &orphans, args.diagram_top, &apps(&root)))
+            println!("{}", markdown(&catalog, &by_iface, &orphans, args.diagram_top, &comp_metadata::app::discover_apps(&root)))
         }
         other => return Err(format!("unknown format {other:?} — md, json, mermaid or surql")),
     }
@@ -874,7 +796,7 @@ mod tests {
             eprintln!("skipped: nothing built — run `just build`");
             return;
         }
-        let out = surql(&catalog, &apps(&root), 42);
+        let out = surql(&catalog, &comp_metadata::app::discover_apps(&root), 42);
 
         /// Tables a rebuild is allowed to create rows in and delete rows from.
         /// `about` is here and `memory` is not: the edge is an index over a tag,
@@ -974,8 +896,8 @@ mod tests {
             eprintln!("skipped: nothing built — run `just build`");
             return;
         }
-        let one = surql(&catalog, &apps(&root), 1);
-        let two = surql(&catalog, &apps(&root), 2);
+        let one = surql(&catalog, &comp_metadata::app::discover_apps(&root), 1);
+        let two = surql(&catalog, &comp_metadata::app::discover_apps(&root), 2);
 
         let edge_ids = |s: &str| {
             s.lines()
