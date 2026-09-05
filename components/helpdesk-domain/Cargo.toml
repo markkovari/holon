@@ -28,6 +28,15 @@ world = "helpdesk-domain"
 # auth.wit's own world imports these; needed to merge the auth:identity package.
 "ratelimit:guard" = { path = "../rate-limiter/wit" }
 "audit:log" = { path = "../audit-log/wit" }
+"policy:guard" = { path = "../policy-guard/wit" }
+"quota:meter" = { path = "../quota/wit" }
+"event:bus" = { path = "../event-bus/wit" }
+"notify:dispatch" = { path = "../notify-dispatch/wit" }
+"email:template" = { path = "../email-render/wit" }
+"i18n:catalog" = { path = "../i18n-catalog/wit" }
+"idempotency:guard" = { path = "../idempotency-guard/wit" }
+"webhook:sign" = { path = "../webhook-sign/wit" }
+"outbox:dispatch" = { path = "../outbox/wit" }
 "records:store" = { path = "../record-store/wit" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }
 "fsm:workflow" = { path = "../fsm-workflow/wit" }
