@@ -160,6 +160,10 @@ dependencies = [
 name = "assignment"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
@@ -2413,6 +2417,9 @@ name = "search-index"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "guestio",
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 

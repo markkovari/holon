@@ -16,4 +16,8 @@ interface router {
 
 world assignment-router {
     export router;
+    export wasi:http/incoming-handler@0.2.0;
+    
+    import event:bus/bus@0.1.0;
+    import records:store/store@0.1.0;
 }
