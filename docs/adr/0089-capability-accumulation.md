@@ -143,7 +143,7 @@ Ordered by what unblocks the most with the least new machinery:
 
 0. **The graph.** *Done, since this ADR was written:* `comp-capgraph` derives
    who-imports-what-from-whom from the built artifacts and writes
-   [`docs/CAPABILITY-GRAPH.md`](../CAPABILITY-GRAPH.md) — 150 components, 80
+   `docs/CAPABILITY-GRAPH.md` — 150 components, 80
    consumed interfaces, 300 import edges, and the number that decides whether an
    interface may change at all. `just capgraph` regenerates it and a test fails
    when the committed copy goes stale. This is the substrate the three steps below

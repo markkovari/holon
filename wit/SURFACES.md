@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-118 interfaces.
+119 interfaces.
 
 ## `ai:inference/inference@0.1.0`
 
@@ -1884,6 +1884,26 @@ Adding a *function* to an interface is compatible; adding a case to a
     whoami: func(token: string) -> result<identity, auth-error>;
 
     logout: func(token: string) -> result<_, auth-error>;
+  }
+```
+
+## `mail:parse/parser@0.1.0`
+
+```wit
+  interface parser {
+    variant parse-error {
+      malformed(string),
+    }
+
+    record email {
+      sender: string,
+      subject: string,
+      text: string,
+      html: option<string>,
+      in-reply-to: option<string>,
+    }
+
+    parse: func(raw: list<u8>) -> result<email, parse-error>;
   }
 ```
 

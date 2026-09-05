@@ -7,7 +7,7 @@ Last revised after ADR-0096.
 
 This page is about the **runtime and delivery** half of the repository — the thing
 that runs a composed component and gets it onto a machine. For the library it runs,
-see [`CAPABILITY-GRAPH.md`](CAPABILITY-GRAPH.md); for the four ways to deliver an
+see `CAPABILITY-GRAPH.md`; for the four ways to deliver an
 app, [`SELFHOST.md`](SELFHOST.md). The agentic loop that was this page's headline is
 **paused** ([README](../README.md#the-agentic-loop--paused-and-kept)) — its machinery
 below still runs and is still measured.
