@@ -47,4 +47,13 @@ world helpdesk-domain {
     import quota:meter/meter@0.1.0;
     import ratelimit:guard/limiter@0.1.0;
     import audit:log/recorder@0.1.0;
+    
+    // events out, notifications, signed webhooks (Rung 3).
+    import event:bus/bus@0.1.0;
+    import notify:dispatch/dispatcher@0.1.0;
+    import email:template/renderer@0.1.0;
+    import i18n:catalog/catalog@0.1.0;
+    import idempotency:guard/store@0.1.0;
+    import webhook:sign/signer@0.1.0;
+    import outbox:dispatch/queue@0.1.0;
 }
