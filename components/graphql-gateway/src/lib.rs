@@ -1,3 +1,4 @@
+//! graphql-gateway — Serves a unified GraphQL schema aggregating multiple components.
 mod bindings;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
