@@ -25,4 +25,6 @@ world host-imports {
     // enforcing a revision guard has to read, compare and write across three
     // calls, which is not a guard at all (ADR-0065).
     import comp:store/cas@0.1.0;
+    // The core interface for spawning and messaging stateful actors.
+    import actor:entity/actor@0.1.0;
 }

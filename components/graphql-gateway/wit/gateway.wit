@@ -1,0 +1,8 @@
+package markkovari:holon@0.1.0;
+
+world graphql-gateway {
+    include wasi:http/proxy@0.2.0;
+
+    import comp:store/cas@0.1.0;
+    import proxy:route/router@0.1.0;
+}
