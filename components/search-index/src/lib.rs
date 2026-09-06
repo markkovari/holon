@@ -46,8 +46,14 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::search::index::index::{Guest, Hit, Mode, SearchError};
+use bindings::exports::search::index::index::{Guest as IndexGuest, Hit, Mode, SearchError};
 use bindings::wasi::keyvalue::store as kv;
+use crate::bindings::exports::wasi::http::incoming_handler::Guest as HttpGuest;
+use crate::bindings::wasi::http::types::{IncomingRequest, ResponseOutparam, OutgoingResponse, OutgoingBody, Fields};
+use crate::bindings::event::bus::bus as eventbus;
+use crate::bindings::records::store::store as records;
+use serde::Deserialize;
+use serde_json::{json, Value};
 
 struct Component;
 
@@ -285,7 +291,7 @@ fn cleanup_postings(bucket: &kv::Bucket, id: &str) -> Result<bool, SearchError> 
 
 // ---- guest ---------------------------------------------------------------
 
-impl Guest for Component {
+impl IndexGuest for Component {
     fn index_doc(id: String, text: String, tags: Vec<String>) -> Result<(), SearchError> {
         let bucket = open()?;
 
@@ -420,6 +426,95 @@ impl Guest for Component {
         let bucket = open()?;
         read_count(&bucket)
     }
+}
+
+impl HttpGuest for Component {
+    fn handle(_request: IncomingRequest, response_out: ResponseOutparam) {
+        let events = match eventbus::poll("helpdesk.events", "search_indexer", 50) {
+            Ok(evs) => evs,
+            Err(_) => {
+                emit(response_out, 503, "eventbus error".into());
+                return;
+            }
+        };
+
+        let mut ack_ids = Vec::new();
+
+        for ev in events {
+            let payload: Value = serde_json::from_slice(&ev.payload).unwrap_or(Value::Null);
+            
+            if payload["type"].as_str() == Some("ticket_created") || payload["type"].as_str() == Some("message_added") || payload["type"].as_str() == Some("state_changed") || payload["type"].as_str() == Some("ticket_assigned") {
+                if let Some(ticket_id) = payload["ticket"].as_str() {
+                    // Fetch ticket
+                    if let Ok(entry) = records::get("tickets", ticket_id) {
+                        let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
+                        
+                        // We also need messages to properly index the whole thread
+                        let mut full_text = data["subject"].as_str().unwrap_or("").to_string();
+                        
+                        // Try to get messages to append to full text
+                        if let Ok(messages) = records::find_by("messages", "ticket", &json!(ticket_id).to_string()) {
+                            for m in messages {
+                                let md: Value = serde_json::from_str(&m.data).unwrap_or(Value::Null);
+                                if let Some(body) = md["body"].as_str() {
+                                    full_text.push_str(" ");
+                                    full_text.push_str(body);
+                                }
+                            }
+                        }
+
+                        let search_tags = vec![
+                            format!("tenant:{}", payload["tenant"].as_str().unwrap_or("")),
+                            format!("status:{}", data["status"].as_str().unwrap_or("")),
+                            format!("assignee:{}", data["assignee"].as_str().unwrap_or("")),
+                        ];
+                        
+                        let _ = Component::index_doc(ticket_id.to_string(), full_text, search_tags);
+                    }
+                }
+            }
+            
+            ack_ids.push(ev.id);
+        }
+        
+        if !ack_ids.is_empty() {
+            let _ = eventbus::ack("helpdesk.events", "search_indexer", &ack_ids);
+        }
+        
+        emit(response_out, 200, json!({ "processed": ack_ids.len() }).to_string());
+    }
+}
+
+fn emit(out: ResponseOutparam, status: u16, body: String) {
+    let headers = Fields::new();
+    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let response = OutgoingResponse::new(headers);
+    response.set_status_code(status).unwrap();
+    let out_body = response.body().unwrap();
+    ResponseOutparam::set(out, Ok(response));
+    let stream = out_body.write().unwrap();
+    write_all(&stream, body.as_bytes());
+    drop(stream);
+    OutgoingBody::finish(out_body, None).unwrap();
+}
+
+fn write_all(stream: &bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        let ready = match stream.check_write() {
+            Ok(0) => {
+                stream.subscribe().block();
+                continue;
+            }
+            Ok(n) => n as usize,
+            Err(_) => return,
+        };
+        let take = ready.min(bytes.len());
+        if stream.write(&bytes[..take]).is_err() {
+            return;
+        }
+        bytes = &bytes[take..];
+    }
+    let _ = stream.blocking_flush();
 }
 
 bindings::export!(Component with_types_in bindings);

@@ -63,10 +63,11 @@ world helpdesk-domain {
     import upload:policy/gate@0.1.0;
     import blob:store/blobstore@0.1.0;
 
-    // SLA + search + assignment (Rung 5).
-    import assignment:router/router@0.1.0;
+    // SLA (Rung 5).
     import sched:timer/timer@0.1.0;
-    import search:index/index@0.1.0;
     
     import wasi:clocks/wall-clock@0.2.0;
+    
+    // stateful actors
+    import actor:entity/actor@0.1.0;
 }

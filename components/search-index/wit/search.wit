@@ -62,6 +62,10 @@ interface index {
 /// clock. No required config knobs.
 world search-index {
     export index;
+    export wasi:http/incoming-handler@0.2.0;
+    
+    import event:bus/bus@0.1.0;
+    import records:store/store@0.1.0;
     import wasi:keyvalue/store@0.2.0-draft;
     import wasi:clocks/wall-clock@0.2.0;
 }
