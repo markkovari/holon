@@ -2834,9 +2834,6 @@ name = "search-index"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "guestio",
- "serde",
- "serde_json",
  "wit-bindgen-rt",
 ]
 
