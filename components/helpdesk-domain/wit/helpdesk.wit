@@ -70,4 +70,6 @@ world helpdesk-domain {
     
     // stateful actors
     import actor:entity/actor@0.1.0;
+    
+    import crdt:merge/merger@0.1.0;
 }

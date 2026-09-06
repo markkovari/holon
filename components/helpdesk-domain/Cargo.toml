@@ -55,3 +55,4 @@ world = "helpdesk-domain"
 "wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
 "wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
 "actor:entity" = { path = "../actor-entity/wit" }
+"crdt:merge" = { path = "../crdt/wit" }

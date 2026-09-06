@@ -21,6 +21,7 @@ use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
+use bindings::crdt::merge::merger as crdt;
 use bindings::fsm::workflow::engine as fsm;
 use bindings::id::generate::generator as ids;
 use bindings::md::render::renderer as md;
@@ -117,6 +118,23 @@ fn usage_json() -> Outcome {
 
 // ---- seeding ---------------------------------------------------------------
 
+fn store_crdt_new(collection: &str, data: &Value, indexes: &[String]) -> Result<records::Entry, Outcome> {
+    let now = wall_clock::now().seconds;
+    let state = crdt::lww_new(&data.to_string(), now, "system").map_err(|_| Outcome::Err(500, "crdt".into()))?;
+    records::create(collection, &state, indexes).map_err(store_err)
+}
+
+fn store_crdt_update(collection: &str, id: &str, state_str: &str, data: &Value, revision: u64) -> Result<records::Entry, Outcome> {
+    let now = wall_clock::now().seconds;
+    let state = crdt::lww_set(state_str, &data.to_string(), now, "system").map_err(|_| Outcome::Err(500, "crdt".into()))?;
+    records::update(collection, id, &state, revision).map_err(store_err)
+}
+
+fn parse_crdt_value(state: &str) -> Value {
+    let v = crdt::value(state).unwrap_or_default();
+    serde_json::from_str(&v).unwrap_or(Value::Null)
+}
+
 /// Idempotent: register the ticket lifecycle machine. Gated on one record so
 /// steady-state requests pay a single count() read.
 fn ensure_seeded() {
@@ -145,7 +163,7 @@ fn ensure_seeded() {
         terminal: vec!["closed".into()],
     };
     let _ = fsm::define(MACHINE, &def);
-    let _ = records::create("meta", "{\"seeded\":true}", &[]);
+    let _ = store_crdt_new("meta", &json!({"seeded":true}), &[]);
 }
 
 // ---- auth ------------------------------------------------------------------
@@ -390,13 +408,13 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
         "status": "new",
     });
 
-    let entry = match records::create(
+    let entry = match store_crdt_new(
         TICKETS,
-        &data.to_string(),
+        &data,
         &["requester".to_string(), "status".to_string()],
     ) {
         Ok(e) => e,
-        Err(e) => return store_err(e),
+        Err(e) => return e,
     };
     
     let _ = fsm::create_instance(MACHINE, &entry.id);
@@ -410,8 +428,8 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
     let _ = eventbus::publish("helpdesk.events", ev_payload.to_string().as_bytes());
     
     let msg = json!({"ticket": entry.id, "author": requester, "kind": "public", "body": email.text});
-    if let Err(e) = records::create(MESSAGES, &msg.to_string(), &["ticket".to_string()]) {
-        return store_err(e);
+    if let Err(e) = store_crdt_new(MESSAGES, &msg, &["ticket".to_string()]) {
+        return e;
     }
 
     Outcome::Json(200, json!({"status": "accepted", "ticket": entry.id}).to_string())
@@ -429,7 +447,7 @@ fn load_ticket(p: &Principal, id: &str) -> Result<(records::Entry, Value), Outco
         Err(records::StoreError::NotFound) => return Err(Outcome::NotFound),
         Err(e) => return Err(store_err(e)),
     };
-    let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
+    let data = parse_crdt_value(&entry.data);
     if !is_agent(p) && data["requester"].as_str() != Some(p.subject.as_str()) {
         return Err(Outcome::NotFound);
     }
@@ -503,13 +521,13 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
     }
     
     // Save to the store for list/search operations
-    let entry = match records::create(
+    let entry = match store_crdt_new(
         TICKETS,
-        &data.to_string(),
+        &data,
         &["requester".to_string(), "status".to_string()],
     ) {
         Ok(e) => e,
-        Err(e) => return store_err(e),
+        Err(e) => return e,
     };
     let _ = fsm::create_instance(MACHINE, &entry.id);
     let ev_payload = json!({
@@ -520,8 +538,8 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
     });
     let _ = eventbus::publish("helpdesk.events", ev_payload.to_string().as_bytes());
     let msg = json!({"ticket": entry.id, "author": p.subject, "kind": "public", "body": req.body});
-    if let Err(e) = records::create(MESSAGES, &msg.to_string(), &["ticket".to_string()]) {
-        return store_err(e);
+    if let Err(e) = store_crdt_new(MESSAGES, &msg, &["ticket".to_string()]) {
+        return e;
     }
     
     // record usage post-hoc just to be sure, though reserve already decremented
@@ -580,7 +598,7 @@ fn get_ticket(request: &IncomingRequest, id: &str) -> Outcome {
     let messages: Vec<Value> = messages
         .iter()
         .filter_map(|m| {
-            let d: Value = serde_json::from_str(&m.data).unwrap_or(Value::Null);
+            let d = parse_crdt_value(&m.data);
             if !agent && d["kind"] == "internal" {
                 return None;
             }
@@ -636,9 +654,9 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
     }
     let kind = if req.internal { "internal" } else { "public" };
     let msg = json!({"ticket": id, "author": p.subject, "kind": kind, "body": req.body});
-    let created = match records::create(MESSAGES, &msg.to_string(), &["ticket".to_string()]) {
+    let created = match store_crdt_new(MESSAGES, &msg, &["ticket".to_string()]) {
         Ok(e) => e,
-        Err(e) => return store_err(e),
+        Err(e) => return e,
     };
     
     // Send message to the ticket actor
@@ -781,7 +799,7 @@ fn assign(request: &IncomingRequest, id: &str) -> Outcome {
             data["status"] = json!(status.state);
         }
     }
-    match records::update(TICKETS, id, &data.to_string(), entry.revision) {
+    match store_crdt_update(TICKETS, id, &entry.data, &data, entry.revision) {
         Ok(e) => {
             audit_log(&p, "assign", id, "allow");
             let ev_payload = json!({
@@ -793,7 +811,7 @@ fn assign(request: &IncomingRequest, id: &str) -> Outcome {
             let _ = eventbus::publish("helpdesk.events", ev_payload.to_string().as_bytes());
             Outcome::Json(200, ticket_json(&e).to_string())
         }
-        Err(e) => store_err(e),
+        Err(e) => e,
     }
 }
 
@@ -837,7 +855,7 @@ fn mirror_status(entry: &records::Entry, data: &Value, state: &str) {
     let mut data = data.clone();
     data["status"] = json!(state);
     // revision 0 = last-write-wins; the FSM already serialized the transition.
-    let _ = records::update(TICKETS, &entry.id, &data.to_string(), 0);
+    let _ = store_crdt_update(TICKETS, &entry.id, &entry.data, &data, 0);
 }
 
 // ---- SLA Timer Breach --------------------------------------------------------
@@ -862,12 +880,12 @@ fn timers_fire(request: &IncomingRequest) -> Outcome {
             Ok(e) => e,
             Err(_) => return Outcome::NotFound,
         };
-        let mut data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
+        let mut data = parse_crdt_value(&entry.data);
         let status = data["status"].as_str().unwrap_or("");
         
         if status != "solved" && status != "closed" {
             data["priority"] = json!("urgent");
-            let _ = records::update(TICKETS, ticket_id, &data.to_string(), entry.revision);
+            let _ = store_crdt_update(TICKETS, ticket_id, &entry.data, &data, entry.revision);
             
             let ev_payload = json!({
                 "type": "sla_breached",
@@ -884,7 +902,7 @@ fn timers_fire(request: &IncomingRequest) -> Outcome {
 // ---- helpers ---------------------------------------------------------------------
 
 fn ticket_json(entry: &records::Entry) -> Value {
-    let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
+    let data = parse_crdt_value(&entry.data);
     json!({
         "id": entry.id,
         "ref": data["ref"],
