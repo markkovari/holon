@@ -493,9 +493,28 @@ fn emit(out: ResponseOutparam, status: u16, body: String) {
     let out_body = response.body().unwrap();
     ResponseOutparam::set(out, Ok(response));
     let stream = out_body.write().unwrap();
-    stream.blocking_write_and_flush(body.as_bytes()).unwrap();
+    write_all(&stream, body.as_bytes());
     drop(stream);
     OutgoingBody::finish(out_body, None).unwrap();
+}
+
+fn write_all(stream: &bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        let ready = match stream.check_write() {
+            Ok(0) => {
+                stream.subscribe().block();
+                continue;
+            }
+            Ok(n) => n as usize,
+            Err(_) => return,
+        };
+        let take = ready.min(bytes.len());
+        if stream.write(&bytes[..take]).is_err() {
+            return;
+        }
+        bytes = &bytes[take..];
+    }
+    let _ = stream.blocking_flush();
 }
 
 bindings::export!(Component with_types_in bindings);

@@ -112,15 +112,15 @@ impl Guest for Component {
                                 "data": value,
                                 "errors": _errors
                             }).to_string();
-                            let _ = stream.blocking_write_and_flush(out_json.as_bytes());
+                            write_all(&stream, out_json.as_bytes());
                         } else {
-                            let _ = stream.blocking_write_and_flush(b"{\"error\": \"graphql execution failed\"}");
+                            write_all(&stream, b"{\"error\": \"graphql execution failed\"}");
                         }
                     } else {
-                        let _ = stream.blocking_write_and_flush(b"{\"error\": \"missing query\"}");
+                        write_all(&stream, b"{\"error\": \"missing query\"}");
                     }
                 } else {
-                    let _ = stream.blocking_write_and_flush(b"{\"error\": \"invalid json\"}");
+                    write_all(&stream, b"{\"error\": \"invalid json\"}");
                 }
                 
                 let _ = OutgoingBody::finish(out, None);
@@ -151,12 +151,32 @@ fn read_body(request: &IncomingRequest) -> Vec<u8> {
                         }
                         buf.extend_from_slice(&c);
                     }
-                    Err(_) => break, // Simplified for brevity
+                    Err(bindings::wasi::io::streams::StreamError::Closed) => break,
+                    Err(_) => return Vec::new(),
                 }
             }
         }
     }
     buf
+}
+
+fn write_all(stream: &bindings::wasi::io::streams::OutputStream, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        let ready = match stream.check_write() {
+            Ok(0) => {
+                stream.subscribe().block();
+                continue;
+            }
+            Ok(n) => n as usize,
+            Err(_) => return,
+        };
+        let take = ready.min(bytes.len());
+        if stream.write(&bytes[..take]).is_err() {
+            return;
+        }
+        bytes = &bytes[take..];
+    }
+    let _ = stream.blocking_flush();
 }
 
 bindings::export!(Component with_types_in bindings);
