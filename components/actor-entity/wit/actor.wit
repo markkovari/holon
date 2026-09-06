@@ -1,0 +1,47 @@
+package actor:entity@0.1.0;
+
+/// Core interface for interacting with stateful Actor instances.
+interface actor {
+    /// Errors that can occur when interacting with an actor.
+    variant actor-error {
+        /// The actor could not be found or is not running.
+        not-found,
+        /// The actor crashed or failed to process the message.
+        internal-error(string),
+        /// The state could not be loaded or saved.
+        storage-error(string),
+    }
+
+    /// Spawns a new actor instance with the given ID and initial state.
+    /// `state` is opaque JSON/bytes that the actor uses to initialize itself.
+    spawn: func(id: string, state: list<u8>) -> result<_, actor-error>;
+
+    /// Sends a typed message to a running actor instance.
+    /// `message` is opaque JSON/bytes representing the event or command.
+    send: func(id: string, message: list<u8>) -> result<_, actor-error>;
+
+    /// Requests a snapshot of the actor's current state.
+    /// Returns the opaque state representation.
+    snapshot: func(id: string) -> result<list<u8>, actor-error>;
+}
+
+/// Interface that Actor implementations must export to receive messages.
+interface handler {
+    /// Called by the host when the actor is spawned.
+    on-spawn: func(id: string, state: list<u8>) -> result<_, string>;
+
+    /// Called by the host when a message is sent to this actor.
+    on-message: func(message: list<u8>) -> result<_, string>;
+
+    /// Called by the host to take a snapshot of the actor's current state.
+    on-snapshot: func() -> list<u8>;
+}
+
+world actor-host {
+    export actor;
+}
+
+world actor-guest {
+    export handler;
+    import actor;
+}

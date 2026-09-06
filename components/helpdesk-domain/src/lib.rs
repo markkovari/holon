@@ -42,10 +42,9 @@ use bindings::webhook::sign::signer as webhook_sign;
 use bindings::outbox::dispatch::queue as outbox;
 use bindings::webhook::ingest::verifier as webhook_ingest;
 use bindings::mail::parse::parser as mail_parse;
-use bindings::upload::policy::gate as upload_policy;
-use bindings::blob::store::blobstore as blob_store;
 use bindings::sched::timer::timer as timer;
 use bindings::wasi::clocks::wall_clock;
+use bindings::actor::entity::actor as actor_system;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -496,6 +495,14 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
         "priority": priority,
         "status": "new",
     });
+    
+    // Spawn the ticket actor
+    let ticket_id = format!("ticket:{}", ids::short_code(16));
+    if let Err(e) = actor_system::spawn(&ticket_id, data.to_string().as_bytes()) {
+        return Outcome::Err(503, format!("actor spawn error: {:?}", e));
+    }
+    
+    // Save to the store for list/search operations
     let entry = match records::create(
         TICKETS,
         &data.to_string(),
@@ -633,6 +640,16 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(e) => e,
         Err(e) => return store_err(e),
     };
+    
+    // Send message to the ticket actor
+    let actor_msg = json!({
+        "type": "AddMessage",
+        "author": p.subject,
+        "body": req.body,
+        "internal": req.internal,
+    });
+    let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
+    
     let ev_payload = json!({
         "type": "message_added",
         "ticket": id,
@@ -694,6 +711,14 @@ fn change_state(request: &IncomingRequest, id: &str) -> Outcome {
     if !AGENT_EVENTS.contains(&req.event.as_str()) {
         return Outcome::Bad(format!("event must be one of {AGENT_EVENTS:?}"));
     }
+    
+    // Send message to the ticket actor
+    let actor_msg = json!({
+        "type": "ChangeState",
+        "event": req.event,
+    });
+    let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
+    
     match fsm::fire(MACHINE, id, &req.event) {
         Ok(status) => {
             mirror_status(&entry, &data, &status.state);
@@ -742,6 +767,14 @@ fn assign(request: &IncomingRequest, id: &str) -> Outcome {
         Err(m) => return Outcome::Bad(m),
     };
     data["assignee"] = json!(req.subject);
+    
+    // Send message to the ticket actor
+    let actor_msg = json!({
+        "type": "Assign",
+        "assignee": req.subject,
+    });
+    let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
+    
     // taking a ticket triages it out of `new`.
     if data["status"] == "new" {
         if let Ok(status) = fsm::fire(MACHINE, id, "triage") {
