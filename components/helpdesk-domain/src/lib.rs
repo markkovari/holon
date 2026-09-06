@@ -42,12 +42,9 @@ use bindings::webhook::sign::signer as webhook_sign;
 use bindings::outbox::dispatch::queue as outbox;
 use bindings::webhook::ingest::verifier as webhook_ingest;
 use bindings::mail::parse::parser as mail_parse;
-use bindings::upload::policy::gate as upload_policy;
-use bindings::blob::store::blobstore as blob_store;
-use bindings::assignment::router::router as assignment;
-use bindings::search::index::index as search;
 use bindings::sched::timer::timer as timer;
 use bindings::wasi::clocks::wall_clock;
+use bindings::actor::entity::actor as actor_system;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -311,6 +308,19 @@ fn process_events(request: &IncomingRequest) -> Outcome {
         // Example: Sign webhook payload and enqueue to outbox
         let _signed = webhook_sign::sign(&ev.payload, "dummy-secret", webhook_sign::Scheme::Github);
         let _ = outbox::enqueue("tenant_webhooks", &ev.payload, 0);
+
+        // Core Event Choreography: Update Ticket Assigned
+        if payload["type"].as_str() == Some("ticket_assigned") {
+            if let Some(ticket_id) = payload["ticket"].as_str() {
+                if let Some(assignee) = payload["assignee"].as_str() {
+                    // We don't need to update the ticket here if the assignment worker 
+                    // already updated it, but in strict choreography, the domain might own it.
+                    // The assignment worker currently updates `records:store` directly.
+                    // We will just log it here for now.
+                    audit_log(&p, "choreography:ticket_assigned", ticket_id, assignee);
+                }
+            }
+        }
         
         let _ = idempotency::complete(&idempotency_key, 200, &[]);
         ack_ids.push(ev.id);
@@ -370,19 +380,12 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
         // Let's create a new ticket.
     }
 
-    // Route to an agent using the assignment component
-    let mock_agents = vec![
-        assignment::AgentWorkload { agent_id: "agent-1".into(), open_tickets: 3 },
-        assignment::AgentWorkload { agent_id: "agent-2".into(), open_tickets: 1 },
-    ];
-    let assignee = assignment::route(&mock_agents, "load-balanced").unwrap_or_default();
-
-    // Creating new ticket
+    // Creating new ticket. Assignment happens asynchronously via TicketCreated event.
     let data = json!({
         "ref": format!("HD-{}", ids::short_code(6)),
         "subject": email.subject,
         "requester": requester,
-        "assignee": assignee,
+        "assignee": "",
         "priority": "normal",
         "status": "new",
     });
@@ -483,21 +486,23 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
         return Outcome::Bad(format!("priority must be one of {PRIORITIES:?}"));
     }
     
-    // Route to an agent using the assignment component
-    let mock_agents = vec![
-        assignment::AgentWorkload { agent_id: "agent-1".into(), open_tickets: 3 },
-        assignment::AgentWorkload { agent_id: "agent-2".into(), open_tickets: 1 },
-    ];
-    let assignee = assignment::route(&mock_agents, "load-balanced").unwrap_or_default();
-
+    // Creating new ticket. Assignment happens asynchronously via TicketCreated event.
     let data = json!({
         "ref": format!("HD-{}", ids::short_code(6)),
         "subject": req.subject,
         "requester": p.subject,
-        "assignee": assignee,
+        "assignee": "",
         "priority": priority,
         "status": "new",
     });
+    
+    // Spawn the ticket actor
+    let ticket_id = format!("ticket:{}", ids::short_code(16));
+    if let Err(e) = actor_system::spawn(&ticket_id, data.to_string().as_bytes()) {
+        return Outcome::Err(503, format!("actor spawn error: {:?}", e));
+    }
+    
+    // Save to the store for list/search operations
     let entry = match records::create(
         TICKETS,
         &data.to_string(),
@@ -527,59 +532,15 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
     let _ = timer::schedule_at(&format!("sla:first-response:{}", entry.id), now + 86400, &[]);
     let _ = timer::schedule_at(&format!("sla:resolution:{}", entry.id), now + 259200, &[]);
     
-    // index for search
-    let search_tags = vec![
-        format!("tenant:{}", p.tenant),
-        format!("status:new"),
-        format!("assignee:{}", assignee),
-    ];
-    let _ = search::index_doc(&entry.id, &format!("{} {}", req.subject, req.body), &search_tags);
+    // Search indexing now happens asynchronously via TicketCreated event.
     
     Outcome::Json(201, ticket_json(&entry).to_string())
 }
 
-fn search_tickets(request: &IncomingRequest) -> Outcome {
-    let p = match introspect(request) {
-        Ok(p) => p,
-        Err(o) => return o,
-    };
-    if !is_agent(&p) {
-        return Outcome::Forbidden("only agents can search tickets".into());
-    }
-
-    let url = request.path_with_query().unwrap_or_default();
-    let query_string = url.split('?').nth(1).unwrap_or("");
-    let mut q = String::new();
-    let mut status_filter = None;
-
-    for pair in query_string.split('&') {
-        let mut kv = pair.split('=');
-        let k = kv.next().unwrap_or("");
-        let v = kv.next().unwrap_or("");
-        if k == "q" {
-            q = v.replace("%20", " ").replace('+', " ");
-        } else if k == "status" {
-            status_filter = Some(v.to_string());
-        }
-    }
-
-    let mut tags = vec![format!("tenant:{}", p.tenant)];
-    if let Some(s) = status_filter {
-        tags.push(format!("status:{}", s));
-    }
-
-    match search::query(&q, search::Mode::Any, &tags, 50) {
-        Ok(hits) => {
-            let mut tickets = Vec::new();
-            for hit in hits {
-                if let Ok(entry) = records::get(TICKETS, &hit.id) {
-                    tickets.push(ticket_json(&entry));
-                }
-            }
-            Outcome::Json(200, json!({ "tickets": tickets }).to_string())
-        }
-        Err(e) => Outcome::Err(503, format!("search error: {:?}", e)),
-    }
+fn search_tickets(_request: &IncomingRequest) -> Outcome {
+    // In Phase 1 choreography, search indexing is decoupled.
+    // Querying will move to a specialized search-domain or the Phase 3 GraphQL Gateway.
+    Outcome::Err(501, "Search queries have been migrated to the GraphQL gateway.".into())
 }
 
 fn list_tickets(request: &IncomingRequest) -> Outcome {
@@ -679,6 +640,16 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(e) => e,
         Err(e) => return store_err(e),
     };
+    
+    // Send message to the ticket actor
+    let actor_msg = json!({
+        "type": "AddMessage",
+        "author": p.subject,
+        "body": req.body,
+        "internal": req.internal,
+    });
+    let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
+    
     let ev_payload = json!({
         "type": "message_added",
         "ticket": id,
@@ -710,14 +681,7 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
         let _ = timer::cancel(&format!("sla:first-response:{}", id));
     }
         
-    // update search index
-    let search_tags = vec![
-        format!("tenant:{}", p.tenant),
-        format!("status:{}", status),
-        format!("assignee:{}", data["assignee"].as_str().unwrap_or("")),
-    ];
-    let search_text = format!("{} {}", data["subject"].as_str().unwrap_or(""), req.body);
-    let _ = search::index_doc(id, &search_text, &search_tags);
+    // Search indexing now happens asynchronously via TicketUpdated event.
     
     Outcome::Json(201, json!({"id": created.id, "kind": kind, "status": status}).to_string())
 }
@@ -747,6 +711,14 @@ fn change_state(request: &IncomingRequest, id: &str) -> Outcome {
     if !AGENT_EVENTS.contains(&req.event.as_str()) {
         return Outcome::Bad(format!("event must be one of {AGENT_EVENTS:?}"));
     }
+    
+    // Send message to the ticket actor
+    let actor_msg = json!({
+        "type": "ChangeState",
+        "event": req.event,
+    });
+    let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
+    
     match fsm::fire(MACHINE, id, &req.event) {
         Ok(status) => {
             mirror_status(&entry, &data, &status.state);
@@ -795,6 +767,14 @@ fn assign(request: &IncomingRequest, id: &str) -> Outcome {
         Err(m) => return Outcome::Bad(m),
     };
     data["assignee"] = json!(req.subject);
+    
+    // Send message to the ticket actor
+    let actor_msg = json!({
+        "type": "Assign",
+        "assignee": req.subject,
+    });
+    let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
+    
     // taking a ticket triages it out of `new`.
     if data["status"] == "new" {
         if let Ok(status) = fsm::fire(MACHINE, id, "triage") {

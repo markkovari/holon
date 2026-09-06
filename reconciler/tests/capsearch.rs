@@ -171,6 +171,11 @@ const DELIBERATE: &[(&str, &str)] = &[
          `static-assets`. These are app-local by nature (ADR-0089): a bundle is \
          wanted by exactly the app it was built for",
     ),
+    (
+        "actor:entity/handler",
+        "actor instances implement this handler interface to process messages and \
+         lifecycle events. Each actor type (like ticket-actor) has its own implementation.",
+    ),
 ];
 
 /// Nobody built the same thing twice.

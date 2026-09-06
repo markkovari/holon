@@ -331,7 +331,7 @@ jobs:
           --test newversion --test photo_critic_live --test projects --test reveal
           --test scaling --test search --test secretcli --test select --test slug_live
           --test staleness --test state --test tagged --test tagged_loop --test trace_live
-          --test treesize --test vgit
+          --test treesize --test vgit --test graphql_gateway
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows
   # the run named after the file path, and the log is "log not found" — which is

@@ -24,6 +24,7 @@ path = "wit"
 world = "search-domain"
 
 [package.metadata.component.target.dependencies]
+"event:bus" = { path = "../event-bus/wit" }
 "search:index" = { path = "../search-index/wit" }
 "records:store" = { path = "../record-store/wit" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }

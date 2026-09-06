@@ -27,6 +27,7 @@ world = "clinic-domain"
 "records:store" = { path = "../record-store/wit" }
 "id:generate" = { path = "../id-generate/wit" }
 "auth:identity" = { path = "../../wit" }
+"event:bus" = { path = "../event-bus/wit" }
 "search:index" = { path = "../search-index/wit" }
 "csv:codec" = { path = "../csv/wit" }
 # auth.wit's own world imports these; needed to merge the auth:identity package.
