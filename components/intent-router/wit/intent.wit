@@ -1,0 +1,9 @@
+package holon:intent@0.1.0;
+
+/// The intent-router HTTP backend.
+world intent-router {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // llm inference for semantic routing
+    import llm:inference/inference@0.1.0;
+}

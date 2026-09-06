@@ -14,7 +14,19 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-120 interfaces.
+121 interfaces.
+
+## `actor:entity/handler@0.1.0`
+
+```wit
+  interface handler {
+    on-spawn: func(id: string, state: list<u8>) -> result<_, string>;
+
+    on-message: func(message: list<u8>) -> result<_, string>;
+
+    on-snapshot: func() -> list<u8>;
+  }
+```
 
 ## `ai:inference/inference@0.1.0`
 
