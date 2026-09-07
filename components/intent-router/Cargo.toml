@@ -1,0 +1,32 @@
+[package]
+name = "intent-router"
+description = "AI-Driven intent routing gateway mapping natural language to Holon domains"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+guestfmt = { path = "../guestfmt" }
+guestio = { path = "../guestio" }
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "holon:intent"
+
+[package.metadata.component.target]
+path = "wit"
+world = "intent-router"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"llm:inference" = { path = "../llm-inference/wit" }
