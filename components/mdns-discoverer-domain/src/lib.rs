@@ -26,11 +26,19 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>mDNS Discoverer</title></head><body><h1>mDNS Discoverer</h1><button onclick="fetch('/api/discover').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Discover Services</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "discover"]) => {
-                
-        let outcome = discovery::discover();
-        Outcome::Json(200, json!({ "services": outcome }).to_string())
-        
+            (Method::Get, ["api", "discover"]) => match discovery::discover() {
+                Ok(services) => Outcome::Json(
+                    200,
+                    json!({
+                        "services": services.iter().map(|s| json!({
+                            "name": s.name,
+                            "host": s.host,
+                            "port": s.port,
+                        })).collect::<Vec<_>>(),
+                    })
+                    .to_string(),
+                ),
+                Err(discovery::MdnsError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

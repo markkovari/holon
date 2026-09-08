@@ -1,7 +1,29 @@
-package web:browser@0.1.0;
+// web:browser — capture a page's rendered content, as a contract a host can satisfy.
+//
+// The first version of this was `snapshot: func(url: string) -> string`, and the
+// shape is why it shipped as a fake: any string satisfies it, including
+// "UNIMPLEMENTED: ...". A contract nothing can fail is a contract that proves
+// nothing.
+package web:browser@0.2.0;
+
 interface automation {
-    snapshot: func(url: string) -> string;
+    variant browser-error {
+        /// url's host is not one the daemon was told it may visit.
+        not-permitted(string),
+        /// navigation or launch failed, or the daemon could not be reached.
+        unavailable(string),
+    }
+
+    /// The rendered HTML of `url`, after a real browser has loaded it.
+    snapshot: func(url: string) -> result<string, browser-error>;
 }
+
 world component {
     export automation;
+    /// The daemon lives outside the sandbox — see ADR-0095: driving a real
+    /// browser process needs a process, which a wasm32-wasip2 guest cannot
+    /// start. This is how it is reached, and the manifest's egress list
+    /// decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

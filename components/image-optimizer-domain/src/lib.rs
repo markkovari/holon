@@ -26,11 +26,11 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>Image Optimizer</title></head><body><h1>Image Optimizer</h1><button onclick="fetch('/api/optimize').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Optimize Image</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "optimize"]) => {
-                
-        let outcome = optimizer::optimize("photo.jpg");
-        Outcome::Json(200, json!({ "result": outcome }).to_string())
-        
+            (Method::Get, ["api", "optimize"]) => match optimizer::optimize("photo.jpg") {
+                Ok(path) => Outcome::Json(200, json!({ "result": path }).to_string()),
+                Err(optimizer::ImageError::NotPermitted(d)) => Outcome::Err(403, d),
+                Err(optimizer::ImageError::NoSuchFile(d)) => Outcome::Err(404, d),
+                Err(optimizer::ImageError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

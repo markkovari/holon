@@ -26,11 +26,10 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>PDF Generator</title></head><body><h1>PDF Generator</h1><button onclick="fetch('/api/snapshot').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Generate PDF</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "snapshot"]) => {
-                
-        let outcome = automation::snapshot("https://example.com");
-        Outcome::Json(200, json!({ "pdf": outcome }).to_string())
-        
+            (Method::Get, ["api", "snapshot"]) => match automation::snapshot("https://example.com") {
+                Ok(html) => Outcome::Json(200, json!({ "pdf": html }).to_string()),
+                Err(automation::BrowserError::NotPermitted(d)) => Outcome::Err(403, d),
+                Err(automation::BrowserError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

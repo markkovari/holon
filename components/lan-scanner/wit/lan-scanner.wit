@@ -1,7 +1,43 @@
-package net:lan@0.1.0;
+// net:lan — which hosts on the local network answer, as a contract a host can satisfy.
+//
+// The first version of this was `scan: func() -> string`, and the shape is why
+// it shipped as a fake: a single string can hold any sentence, so a made-up
+// host list satisfied it exactly as well as a real answer would have.
+//
+// Scanning a LAN needs raw sockets / the ability to open many outbound TCP
+// connections against addresses a caller does not supply — a wasm32-wasip2
+// guest has neither. So the scan runs in a native daemon (ADR-0095) and this
+// component is an HTTP client to it, the same shape as fs-watcher.
+//
+// The CIDRs in scope are a daemon-side `--allow-cidr` decision, not a caller
+// argument: a scan request carries no target, exactly as fs-watcher's allowed
+// directories are daemon-side rather than named by the caller.
+package net:lan@0.2.0;
+
 interface scanner {
-    scan: func() -> string;
+    /// One host, as the scan saw it.
+    record host {
+        ip: string,
+        reachable: bool,
+    }
+
+    variant scan-error {
+        /// The scanner is there and could not answer — including "nobody
+        /// configured any --allow-cidr", which makes a scan meaningless
+        /// rather than merely empty.
+        unavailable(string),
+    }
+
+    /// Every host in the daemon's allowed CIDRs, and whether each answered.
+    /// An empty list is a legitimate answer: every allowed host was
+    /// unreachable, which is a fact about the network and not a failure.
+    scan: func() -> result<list<host>, scan-error>;
 }
+
 world component {
     export scanner;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

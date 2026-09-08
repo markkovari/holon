@@ -1,7 +1,30 @@
-package os:desktop@0.1.0;
+// os:desktop — the desktop session's clipboard, as a contract a host can satisfy.
+//
+// The first version of this was `read: func() -> string`, and the shape is
+// why it shipped as a fake: a single string can hold any sentence, so a
+// plausible-looking answer satisfied it exactly as well as a real one would
+// have. A contract nothing can fail is a contract that proves nothing.
+package os:desktop@0.2.0;
+
 interface clipboard {
-    read: func() -> string;
+    variant clipboard-error {
+        /// The clipboard has no text on it — not an image, not empty in the
+        /// sense of "not tried yet". Distinct from unavailable so a caller
+        /// can tell "there is nothing to read" from "ask again later".
+        empty,
+        /// The daemon is there and could not answer — no desktop session, no
+        /// pasteboard, a headless environment. Retryable.
+        unavailable(string),
+    }
+
+    /// The clipboard's current text, if any.
+    read: func() -> result<string, clipboard-error>;
 }
+
 world component {
     export clipboard;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

@@ -63,11 +63,15 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `ai:local/local@0.1.0`
+## `ai:local/local@0.2.0`
 
 ```wit
   interface local {
-    infer: func(prompt: string) -> string;
+    variant infer-error {
+      unavailable(string),
+    }
+
+    infer: func(prompt: string) -> result<string, infer-error>;
   }
 ```
 
@@ -1969,19 +1973,31 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `media:image/optimizer@0.1.0`
+## `media:image/optimizer@0.2.0`
 
 ```wit
   interface optimizer {
-    optimize: func(img: string) -> string;
+    variant image-error {
+      not-permitted(string),
+      no-such-file(string),
+      unavailable(string),
+    }
+
+    optimize: func(img: string) -> result<string, image-error>;
   }
 ```
 
-## `media:video/ffmpeg@0.1.0`
+## `media:video/ffmpeg@0.2.0`
 
 ```wit
   interface ffmpeg {
-    transcode: func(input: string) -> string;
+    variant transcode-error {
+      not-permitted(string),
+      no-such-file(string),
+      unavailable(string),
+    }
+
+    transcode: func(input: string) -> result<string, transcode-error>;
   }
 ```
 
@@ -2043,27 +2059,59 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `net:lan/scanner@0.1.0`
+## `net:lan/scanner@0.2.0`
 
 ```wit
   interface scanner {
-    scan: func() -> string;
+    record host {
+      ip: string,
+      reachable: bool,
+    }
+
+    variant scan-error {
+      unavailable(string),
+    }
+
+    scan: func() -> result<list<host>, scan-error>;
   }
 ```
 
-## `net:mdns/discovery@0.1.0`
+## `net:mdns/discovery@0.2.0`
 
 ```wit
   interface discovery {
-    discover: func() -> string;
+    record service {
+      name: string,
+      host: string,
+      port: u16,
+    }
+
+    variant mdns-error {
+      unavailable(string),
+    }
+
+    discover: func() -> result<list<service>, mdns-error>;
   }
 ```
 
-## `net:vpn/wireguard@0.1.0`
+## `net:vpn/wireguard@0.2.0`
 
 ```wit
   interface wireguard {
-    status: func() -> string;
+    record peer {
+      public-key: string,
+      endpoint: string,
+      latest-handshake: u64,
+      rx-bytes: u64,
+      tx-bytes: u64,
+    }
+
+    variant wg-error {
+      not-permitted(string),
+      unavailable(string),
+    }
+
+    status: func() -> result<list<peer>, wg-error>;
   }
 ```
 
@@ -2160,19 +2208,35 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `os:container/docker@0.1.0`
+## `os:container/docker@0.2.0`
 
 ```wit
   interface docker {
-    ps: func() -> string;
+    record container {
+      id: string,
+      image: string,
+      status: string,
+      name: string,
+    }
+
+    variant docker-error {
+      unavailable(string),
+    }
+
+    ps: func() -> result<list<container>, docker-error>;
   }
 ```
 
-## `os:desktop/clipboard@0.1.0`
+## `os:desktop/clipboard@0.2.0`
 
 ```wit
   interface clipboard {
-    read: func() -> string;
+    variant clipboard-error {
+      empty,
+      unavailable(string),
+    }
+
+    read: func() -> result<string, clipboard-error>;
   }
 ```
 
@@ -2208,19 +2272,32 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `os:system/cron@0.1.0`
+## `os:system/cron@0.2.0`
 
 ```wit
   interface cron {
-    list-jobs: func() -> string;
+    record job {
+      schedule: string,
+      command: string,
+    }
+
+    variant cron-error {
+      unavailable(string),
+    }
+
+    list-jobs: func() -> result<list<job>, cron-error>;
   }
 ```
 
-## `os:ui/notifications@0.1.0`
+## `os:ui/notifications@0.2.0`
 
 ```wit
   interface notifications {
-    notify: func(msg: string) -> string;
+    variant notify-error {
+      unavailable(string),
+    }
+
+    notify: func(msg: string) -> result<_, notify-error>;
   }
 ```
 
@@ -3200,11 +3277,16 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
-## `web:browser/automation@0.1.0`
+## `web:browser/automation@0.2.0`
 
 ```wit
   interface automation {
-    snapshot: func(url: string) -> string;
+    variant browser-error {
+      not-permitted(string),
+      unavailable(string),
+    }
+
+    snapshot: func(url: string) -> result<string, browser-error>;
   }
 ```
 
