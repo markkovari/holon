@@ -380,25 +380,37 @@ rediscover.
 One line each, and where the work lives. Anything with a goal number is on the
 worklist in [`.comp/goals/`](../.comp/goals/).
 
-**Twelve capabilities are contracts with nothing behind them**
+**Twelve capabilities that were contracts with nothing behind them — now daemons**
 
 `browser-automation`, `container-docker`, `desktop-clipboard`, `fs-watcher`,
 `image-optimizer`, `lan-scanner`, `llm-local`, `mdns-discovery`, `system-cron`,
-`ui-notifier`, `video-ffmpeg`, `vpn-wireguard`. Every export returns an
-`UNIMPLEMENTED:` marker, and `CATALOG.md` lists them as **contract only**.
+`ui-notifier`, `video-ffmpeg`, `vpn-wireguard`.
 
 None of them can be finished where they live: watching a filesystem needs a
 watch syscall, scanning a LAN needs raw sockets, transcoding needs a
 subprocess, and a `wasm32-wasip2` component has none of those. What each one
-DOES give is the interface a host-side implementation has to satisfy, which is
-the same shape as `wasi:keyvalue` — a contract the host answers.
+gives is the interface a host-side implementation has to satisfy, which is the
+same shape as `wasi:keyvalue` — a contract the host answers (ADR-0095).
 
-Each shipped returning a plausible constant instead: `"mocked_clipboard_text_123"`,
-`"192.168.1.1, 192.168.1.10"`, `"wg0 is UP, 2 peers connected"`. That is worse
-than returning nothing, because no caller and no reader of the catalogue could
-tell them apart from components that work. The `-domain` apps in front of them
-are real — auth, records, keyvalue, HTTP — and now report the marker instead of
-the fiction.
+Each now has a native daemon behind it in `reconciler/src/bin/` (`comp-fswatch`,
+`comp-browser`, `comp-docker`, `comp-clipboard`, `comp-imageopt`, `comp-lanscan`,
+`comp-llmlocal`, `comp-mdns`, `comp-cron`, `comp-uinotify`, `comp-ffmpeg`,
+`comp-wireguard`), each with its own allow-list where the input can come from a
+model (a directory, a host, an interface, a CIDR) — no shared daemon, no shared
+allow-list, per ADR-0095's "`container-docker` and `ui-notifier` do not deserve
+the same blast radius". The component side dials its daemon over
+`wasi:http/outgoing-handler`, address given by `wasi:config/store`, exactly like
+`checks-runner` dials `comp-checks`.
+
+They used to ship returning a plausible constant instead:
+`"mocked_clipboard_text_123"`, `"192.168.1.1, 192.168.1.10"`,
+`"wg0 is UP, 2 peers connected"` — worse than returning nothing, because no
+caller and no reader of the catalogue could tell them apart from components
+that work. What's left to note honestly: several of these daemons need
+something this box may not have (a running Docker/WireGuard/Ollama, a real
+desktop session, an installed Chrome or `ffmpeg` binary) and report
+`unavailable` rather than fail silently when it's missing — that boundary is
+the daemon's, not the component's.
 
 **The loop's judgement**
 

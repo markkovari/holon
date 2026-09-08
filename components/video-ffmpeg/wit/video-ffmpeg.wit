@@ -1,7 +1,31 @@
-package media:video@0.1.0;
+// media:video — re-encode a video into another format, as a contract a host
+// can satisfy.
+//
+// `transcode` used to be `func(input: string) -> string`, and any sentence
+// satisfied it: the earlier lib.rs returned an `UNIMPLEMENTED:` marker no
+// caller could tell apart from a real path. The daemon behind this needs an
+// ffmpeg process, which a wasm32-wasip2 guest does not have (ADR-0095), so the
+// work happens in `comp-ffmpeg` and this component is an HTTP client to it.
+package media:video@0.2.0;
+
 interface ffmpeg {
-    transcode: func(input: string) -> string;
+    variant transcode-error {
+        /// The input's directory is not one the daemon was permitted to read.
+        not-permitted(string),
+        /// The input does not exist or is not a file.
+        no-such-file(string),
+        /// The daemon is there and could not answer, or ffmpeg itself failed.
+        unavailable(string),
+    }
+
+    /// Transcode `input` to a fixed target format, returning the output path.
+    transcode: func(input: string) -> result<string, transcode-error>;
 }
+
 world component {
     export ffmpeg;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

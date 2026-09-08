@@ -82,7 +82,7 @@ path = "src/bin/catalog.rs"
 
 [dependencies]
 comp-metadata = { path = "../comp-metadata" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "process"] }
 # The fabric, as traits. The reconciler holds `Arc<dyn ...>` and never names a
 # broker; `--nats-url` selects the one implementation that ships.
 comp-lattice = { path = "../lattice" }
@@ -124,6 +124,17 @@ http-body-util = "0.1"
 bytes = "1"
 
 async-trait = "0.1"
+
+# The daemons behind the twelve host capabilities (ADR-0095). Each dependency
+# below is used by exactly one comp-<x> binary; they are listed here rather
+# than in per-binary crates because this whole file is already that shape (see
+# wac-graph, hyper, p256 above) — one native crate, many single-purpose bins.
+bollard = "0.17"       # comp-docker: talks to the docker socket
+arboard = "3"          # comp-clipboard: reads the desktop clipboard
+mdns-sd = "0.11"       # comp-mdns: browses mDNS/DNS-SD
+notify-rust = "4"      # comp-uinotify: raises a desktop notification
+image = "0.25"         # comp-imageopt: decodes/re-encodes images
+headless_chrome = "1"  # comp-browser: drives a real Chrome/Chromium process
 
 [dev-dependencies]
 miniz_oxide = "0.8"

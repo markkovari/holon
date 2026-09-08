@@ -1,0 +1,53 @@
+# Local pre-push gate — install with `lefthook install` once, after
+# `brew install lefthook` (or see https://github.com/evilmartians/lefthook#install).
+# The semgrep job also needs `semgrep` on PATH: `brew install semgrep` (or
+# `pip install semgrep`).
+#
+# ## Why this exists
+#
+# PR #233 changed twelve WIT contracts from `-> string` to `-> result<T, error>`
+# and only checked the eleven capability crates it touched directly — never the
+# `*-domain` components elsewhere in the tree that import those same interfaces
+# and pattern-match on their return type. CI caught it (`clippy`,
+# `components (wasm32-wasip2)`); nothing local did, because nothing local ran
+# a workspace-wide check. Four `-domain` crates failed to compile a `Result`
+# whose error type doesn't implement `serde::Serialize` — a caller-side break
+# that a per-crate `cargo check` on the crate you're editing cannot see.
+#
+# ## Why pre-push, not pre-commit
+#
+# `cargo xtask build --force` (what CI actually runs) takes long enough that
+# forcing it on every commit would make committing something to avoid rather
+# than a checkpoint. A push is the point past which "it compiles on my
+# machine" becomes a claim about a shared branch, so that's where this gate
+# sits — a lighter `check`/`clippy`, not the full CI build, so it stays fast
+# enough to actually run.
+#
+# ## Why these two commands
+#
+# They mirror CI's `clippy` and `components (wasm32-wasip2)` jobs — the two
+# that would have failed here — using `check`/`clippy` instead of `build`+`test`
+# so the whole components workspace (245+ crates) still finishes in seconds
+# once cached, not minutes. `--exclude browser-automation` matches CI: that
+# crate needs bindings that only exist after its own component build.
+pre-push:
+  commands:
+    components-check:
+      root: "components/"
+      run: cargo component check --workspace --exclude browser-automation --target wasm32-wasip2
+    reconciler-check:
+      root: "reconciler/"
+      run: cargo check --workspace --bins
+    # Mirrors CI's semgrep job: only findings this push introduces relative to
+    # main, not the untouched backlog. Skipped with a clear message rather
+    # than blocking a push if semgrep isn't installed locally — CI still
+    # catches it either way.
+    semgrep:
+      run: |
+        if ! command -v semgrep >/dev/null 2>&1; then
+          echo "semgrep not installed locally (brew install semgrep) — skipping; CI will still run it."
+          exit 0
+        fi
+        semgrep --config p/rust --config p/security-audit --config p/secrets \
+          --exclude '**/target/**' --exclude '**/node_modules/**' \
+          --baseline-commit origin/main --error .

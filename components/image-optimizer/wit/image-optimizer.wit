@@ -1,7 +1,28 @@
-package media:image@0.1.0;
+// media:image — shrink a picture by re-encoding it, as a contract.
+package media:image@0.2.0;
+
 interface optimizer {
-    optimize: func(img: string) -> string;
+    variant image-error {
+        /// The path is not one this daemon was permitted to read or write.
+        /// Distinct from not-found so a caller can tell "you may not" from
+        /// "there is nothing there" — an allow-list is a decision, and a
+        /// caller retrying a refusal forever is worse than one that stops.
+        not-permitted(string),
+        no-such-file(string),
+        /// The daemon is there and could not answer — a decode failure, or
+        /// nothing behind the address at all. Retryable.
+        unavailable(string),
+    }
+
+    /// Re-encode `img` (a filesystem path, matching `video-ffmpeg`'s `input`
+    /// convention) at lower cost, and return the path of the result.
+    optimize: func(img: string) -> result<string, image-error>;
 }
+
 world component {
     export optimizer;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

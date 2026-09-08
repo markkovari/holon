@@ -1,7 +1,47 @@
-package net:vpn@0.1.0;
+// net:vpn — whether a WireGuard tunnel is up and which peers are connected,
+// as a contract a host can satisfy.
+//
+// The first version of this was `status: func() -> string`, and the shape is
+// why it shipped as a fake: a single string can hold any sentence, so a
+// made-up status satisfied it exactly as well as a real answer would have.
+//
+// Reading a WireGuard interface needs `wg show`, a native binary talking to a
+// kernel module — a wasm32-wasip2 guest has neither. So the read happens in a
+// native daemon (ADR-0095) and this component is an HTTP client to it, the
+// same shape as fs-watcher.
+package net:vpn@0.2.0;
+
 interface wireguard {
-    status: func() -> string;
+    /// One peer of one interface, as `wg show <iface> dump` reported it.
+    record peer {
+        public-key: string,
+        endpoint: string,
+        /// Unix seconds of the last handshake, 0 if there has never been one.
+        latest-handshake: u64,
+        rx-bytes: u64,
+        tx-bytes: u64,
+    }
+
+    variant wg-error {
+        /// The interface named is not on the daemon's allow-list. Unreachable
+        /// today: `status` takes no argument, so there is nothing for a
+        /// caller to name that could be refused. Kept for symmetry with the
+        /// other capabilities' allow-list-refusal shape, in case a future
+        /// contract takes an interface name.
+        not-permitted(string),
+        unavailable(string),
+    }
+
+    /// Peers of every interface the daemon was told to look at. An empty list
+    /// is a legitimate answer — no allowed interface has peers, or no
+    /// interface is allowed at all — and not a failure.
+    status: func() -> result<list<peer>, wg-error>;
 }
+
 world component {
     export wireguard;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

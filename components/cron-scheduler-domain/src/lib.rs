@@ -26,11 +26,18 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>Cron Scheduler</title></head><body><h1>Cron Scheduler</h1><button onclick="fetch('/api/list').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">List Jobs</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "list"]) => {
-                
-        let outcome = cron::list_jobs();
-        Outcome::Json(200, json!({ "jobs": outcome }).to_string())
-        
+            (Method::Get, ["api", "list"]) => match cron::list_jobs() {
+                Ok(jobs) => Outcome::Json(
+                    200,
+                    json!({
+                        "jobs": jobs.iter().map(|j| json!({
+                            "schedule": j.schedule,
+                            "command": j.command,
+                        })).collect::<Vec<_>>(),
+                    })
+                    .to_string(),
+                ),
+                Err(cron::CronError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

@@ -26,11 +26,9 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>Notification Center</title></head><body><h1>Notification Center</h1><button onclick="fetch('/api/notify').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Send Notification</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "notify"]) => {
-                
-        let outcome = notifications::notify("Hello from WASM!");
-        Outcome::Json(200, json!({ "status": outcome }).to_string())
-        
+            (Method::Get, ["api", "notify"]) => match notifications::notify("Hello from WASM!") {
+                Ok(()) => Outcome::Json(200, json!({ "status": "sent" }).to_string()),
+                Err(notifications::NotifyError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };
