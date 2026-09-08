@@ -494,6 +494,32 @@ jobs:
         # more than a check nobody can turn green.
         run: cargo clippy --workspace --exclude browser-automation --target wasm32-wasip2
 
+  semgrep:
+    name: semgrep
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same trick the components job uses: one ref, not the history, and
+      # `--baseline-commit` needs main's tip to diff against.
+      - name: Fetch main, so semgrep has a baseline to diff against
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
+      - name: Install semgrep
+        run: pip install semgrep==1.176.0
+
+      # `--baseline-commit` scopes this to findings the diff INTRODUCES, not
+      # the ones already on main — main has never run semgrep, so gating on
+      # every existing finding here would fail the first PR to touch this
+      # file for something nobody wrote today. The day someone clears the
+      # backlog, this can drop `--baseline-commit` and gate on the whole tree.
+      - name: Semgrep (new findings only, against main)
+        run: |
+          semgrep --config p/rust --config p/security-audit --config p/secrets \
+            --exclude '**/target/**' --exclude '**/node_modules/**' \
+            --baseline-commit origin/main --error .
+
   console:
     name: console SPA
     runs-on: ubuntu-latest

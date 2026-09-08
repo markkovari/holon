@@ -26,11 +26,11 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>Video Transcoder</title></head><body><h1>Video Transcoder</h1><button onclick="fetch('/api/transcode').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Transcode Video</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "transcode"]) => {
-                
-        let outcome = ffmpeg::transcode("input.avi");
-        Outcome::Json(200, json!({ "output": outcome }).to_string())
-        
+            (Method::Get, ["api", "transcode"]) => match ffmpeg::transcode("input.avi") {
+                Ok(path) => Outcome::Json(200, json!({ "output": path }).to_string()),
+                Err(ffmpeg::TranscodeError::NotPermitted(d)) => Outcome::Err(403, d),
+                Err(ffmpeg::TranscodeError::NoSuchFile(d)) => Outcome::Err(404, d),
+                Err(ffmpeg::TranscodeError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

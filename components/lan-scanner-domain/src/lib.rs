@@ -26,11 +26,18 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>LAN Scanner</title></head><body><h1>LAN Scanner</h1><button onclick="fetch('/api/scan').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Scan Network</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "scan"]) => {
-                
-        let outcome = scanner::scan();
-        Outcome::Json(200, json!({ "devices": outcome }).to_string())
-        
+            (Method::Get, ["api", "scan"]) => match scanner::scan() {
+                Ok(hosts) => Outcome::Json(
+                    200,
+                    json!({
+                        "hosts": hosts.iter().map(|h| json!({
+                            "ip": h.ip,
+                            "reachable": h.reachable,
+                        })).collect::<Vec<_>>(),
+                    })
+                    .to_string(),
+                ),
+                Err(scanner::ScanError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

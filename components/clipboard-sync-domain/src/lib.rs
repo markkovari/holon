@@ -26,11 +26,10 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>Clipboard Sync</title></head><body><h1>Clipboard Sync</h1><button onclick="fetch('/api/read').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Read Clipboard</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "read"]) => {
-                
-        let outcome = clipboard::read();
-        Outcome::Json(200, json!({ "clipboard": outcome }).to_string())
-        
+            (Method::Get, ["api", "read"]) => match clipboard::read() {
+                Ok(text) => Outcome::Json(200, json!({ "clipboard": text }).to_string()),
+                Err(clipboard::ClipboardError::Empty) => Outcome::Err(404, "clipboard is empty".into()),
+                Err(clipboard::ClipboardError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

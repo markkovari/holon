@@ -26,11 +26,20 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>Docker Manager</title></head><body><h1>Docker Manager</h1><button onclick="fetch('/api/ps').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">List Containers</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "ps"]) => {
-                
-        let outcome = docker::ps();
-        Outcome::Json(200, json!({ "containers": outcome }).to_string())
-        
+            (Method::Get, ["api", "ps"]) => match docker::ps() {
+                Ok(containers) => Outcome::Json(
+                    200,
+                    json!({
+                        "containers": containers.iter().map(|c| json!({
+                            "id": c.id,
+                            "image": c.image,
+                            "status": c.status,
+                            "name": c.name,
+                        })).collect::<Vec<_>>(),
+                    })
+                    .to_string(),
+                ),
+                Err(docker::DockerError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

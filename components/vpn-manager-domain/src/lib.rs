@@ -26,11 +26,22 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>VPN Manager</title></head><body><h1>VPN Manager</h1><button onclick="fetch('/api/status').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Check Status</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "status"]) => {
-                
-        let outcome = wireguard::status();
-        Outcome::Json(200, json!({ "status": outcome }).to_string())
-        
+            (Method::Get, ["api", "status"]) => match wireguard::status() {
+                Ok(peers) => Outcome::Json(
+                    200,
+                    json!({
+                        "peers": peers.iter().map(|p| json!({
+                            "public_key": p.public_key,
+                            "endpoint": p.endpoint,
+                            "latest_handshake": p.latest_handshake,
+                            "rx_bytes": p.rx_bytes,
+                            "tx_bytes": p.tx_bytes,
+                        })).collect::<Vec<_>>(),
+                    })
+                    .to_string(),
+                ),
+                Err(wireguard::WgError::NotPermitted(d)) => Outcome::Err(403, d),
+                Err(wireguard::WgError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

@@ -26,11 +26,9 @@ impl Guest for Component {
 
         let outcome = match (&method, seg.as_slice()) {
             (Method::Get, [""]) => Outcome::Html(200, r#"<!DOCTYPE html><html><head><title>Local AI</title></head><body><h1>Local AI</h1><button onclick="fetch('/api/infer').then(r=>r.json()).then(d=>document.getElementById('r').innerText=JSON.stringify(d))">Run Inference</button><div id="r"></div></body></html>"#.to_string()),
-            (Method::Get, ["api", "infer"]) => {
-                
-        let outcome = local::infer("What is the meaning of life?");
-        Outcome::Json(200, json!({ "response": outcome }).to_string())
-        
+            (Method::Get, ["api", "infer"]) => match local::infer("What is the meaning of life?") {
+                Ok(response) => Outcome::Json(200, json!({ "response": response }).to_string()),
+                Err(local::InferError::Unavailable(d)) => Outcome::Err(503, d),
             },
             _ => Outcome::Err(404, "not_found".into()),
         };

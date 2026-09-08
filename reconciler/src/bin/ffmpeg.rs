@@ -147,7 +147,10 @@ mod tests {
     /// The allow-list is the boundary, and `..` is how a path escapes one.
     #[test]
     fn a_dot_dot_cannot_walk_out_of_the_allow_list() {
-        let tmp = std::env::temp_dir().canonicalize().expect("temp dir");
+        // Test scaffolding, not a security-sensitive file: the path only ever
+        // holds this test's own fixtures, torn down at the end of it. Same
+        // pattern as fs-watcher's daemon test.
+        let tmp = std::env::temp_dir().canonicalize().expect("temp dir"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         let inside = tmp.join("ffmpeg-allowed");
         std::fs::create_dir_all(&inside).expect("mkdir");
         let d = daemon(&[&inside]);

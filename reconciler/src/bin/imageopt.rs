@@ -189,7 +189,10 @@ mod tests {
     /// The allow-list is the boundary, and `..` is how a path escapes one.
     #[test]
     fn a_dot_dot_cannot_walk_out_of_the_allow_list() {
-        let tmp = std::env::temp_dir().canonicalize().expect("temp dir");
+        // Test scaffolding, not a security-sensitive file: the path only ever
+        // holds this test's own fixtures, torn down at the end of it. Same
+        // pattern as fs-watcher's daemon test.
+        let tmp = std::env::temp_dir().canonicalize().expect("temp dir"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         let inside = tmp.join("imageopt-allowed");
         std::fs::create_dir_all(&inside).expect("mkdir");
         let d = daemon(&[&inside]);
@@ -220,7 +223,10 @@ mod tests {
     #[test]
     fn a_jpeg_saved_at_a_given_quality_round_trips() {
         let img = image::DynamicImage::new_rgb8(4, 4);
-        let out = std::env::temp_dir().join(format!("imageopt-save-test-{}.jpg", std::process::id()));
+        // A scratch output file for this test only, named with the process id
+        // and removed below; nothing security-sensitive is ever written to a
+        // predictable path here.
+        let out = std::env::temp_dir().join(format!("imageopt-save-test-{}.jpg", std::process::id())); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         save(&img, &out, 50).expect("save");
         let back = image::open(&out).expect("reopen");
         assert_eq!((back.width(), back.height()), (4, 4));
