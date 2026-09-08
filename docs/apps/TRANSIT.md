@@ -76,7 +76,7 @@ The e2e proves it: **8 validators** scan one single ticket at once; exactly
 ## Run it
 
 ```bash
-just host-transit   # composes the component, builds the React UI, serves on :3042
+cargo xtask host transit   # composes the component, builds the React UI, serves on :3042
 # register as `rider` to buy tickets + show their QR;
 # as `validator` to scan + validate.
 just e2e-transit    # auth + fares + single-use (incl. an 8-way concurrency race)
@@ -84,7 +84,7 @@ just e2e-transit    # auth + fares + single-use (incl. an 8-way concurrency race
 ```
 
 The frontend lives in `examples/transit/ui` (Vite + React + shadcn/ui);
-`just host-transit` builds it to `examples/transit/dist`, which the host serves.
+`cargo xtask host transit` builds it to `examples/transit/dist`, which the host serves.
 
 ## Rungs left
 

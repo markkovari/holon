@@ -244,7 +244,7 @@ claim about a distributed system without one is a hope.
   the gap that made a goal-built component undeployable: 59 hand-written `wac plug`
   chains live in the `Justfile`, and until now anything the loop produced needed a
   human to add the sixtieth. The derived composition is strictly more complete than
-  the hand-written one — `just compose-vet` leaves 16 capabilities dangling
+  the hand-written one — `cargo xtask compose vet` leaves 16 capabilities dangling
   (`ai:inference`, `blob:store`, `money:amount`, `otp:totp`, …) that `just plug
   vet-domain` binds. Two things it encodes because a shell version got them wrong
   first: a FLAT plug chain hoists each plug's own imports into the result and still

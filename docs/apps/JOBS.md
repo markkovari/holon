@@ -49,7 +49,7 @@ in-guest streaming loop `pulse` uses.
 The default compose plugs the **in-process** orchestrator:
 
 ```bash
-just host-jobs        # jobs-domain + outbox + inproc-workflow + cron + idempotency + records
+cargo xtask host jobs        # jobs-domain + outbox + inproc-workflow + cron + idempotency + records
 ```
 
 The in-process backend only implements the blocking `trigger` (a synchronous
@@ -139,7 +139,7 @@ contract.
 ## Run it
 
 ```bash
-just host-jobs        # native host + board on http://127.0.0.1:3038
+cargo xtask host jobs        # native host + board on http://127.0.0.1:3038
 just e2e-jobs         # lifecycle e2e: done / retry-then-succeed / DLQ / replay / exactly-once
 ```
 

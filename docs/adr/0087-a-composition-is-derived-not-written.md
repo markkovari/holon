@@ -31,7 +31,7 @@ compose-vet: compose
 So the recipe for assembling an app lived beside the app in a build file rather
 than IN the app. Two things follow, and the second is the one that matters:
 
-1. The list goes stale. `just compose-vet` names five plugs for a component that
+1. The list goes stale. `cargo xtask compose vet` names five plugs for a component that
    imports twenty-two capabilities, and the sixteen it omits — `ai:inference`,
    `blob:store`, `money:amount`, `otp:totp`, `csv:codec`, and eleven more — are
    simply left dangling in an artifact that `wasm-tools validate` is perfectly

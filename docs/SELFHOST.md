@@ -155,7 +155,7 @@ One app, one process, one hostname.
 
 ```bash
 just selfhost-bootstrap my-vps       # ONCE per box: install comp-host, wire Caddy
-just compose-gate                    # components -> one .wasm
+cargo xtask compose gate                    # components -> one .wasm
 just selfhost-render gate            # read the unit, env file and route first
 just selfhost-deploy gate my-vps     # ship it
 just selfhost-status gate my-vps

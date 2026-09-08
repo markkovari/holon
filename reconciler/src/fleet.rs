@@ -432,7 +432,7 @@ impl Fleet {
         // never heard of.
         if real_platform {
             // Derived when the hand-composed artifact is not there, for the same
-            // reason as the default `gate` above: `just compose-platform` is a
+            // reason as the default `gate` above: `cargo xtask compose platform` is a
             // second recipe nobody remembers to run, and its absence surfaced as
             // an assertion two workspaces into `just test` — hidden, until this
             // branch, behind an earlier failure that stopped cargo before it got
@@ -447,7 +447,7 @@ impl Fleet {
                     &catalog,
                     &root.join("components/target/composed"),
                 )
-                .unwrap_or_else(|e| panic!("composing platform-domain: {e} — `just build` first"))
+                .unwrap_or_else(|e| panic!("composing platform-domain: {e} — `cargo xtask build --force` first"))
             };
             let mut cp = Command::new(&host_bin);
             cp.current_dir(&root)
@@ -489,17 +489,17 @@ impl Fleet {
             // The default `gate` artifact, derived rather than assumed.
             //
             // This used to name `components/target/gate_domain.composed.wasm`, a
-            // file produced by a hand-written plug chain (`just compose-gate`), so
+            // file produced by a hand-written plug chain (`cargo xtask compose gate`), so
             // every fleet test that did not pass its own artifacts silently
             // depended on somebody having run a second, unrelated recipe. A fresh
-            // checkout that had only run `just build` got "never served to begin
+            // checkout that had only run `cargo xtask build --force` got "never served to begin
             // with" from a 120-second timeout, which says nothing about a missing
             // file.
             //
             // `plug::compose_to` derives the composition from gate-domain's own
             // imports and keys it by content, so the first caller builds it and
             // the rest reuse it. The hand-made path is still honoured when it
-            // exists, because it is what `just compose-gate` writes and there is
+            // exists, because it is what `cargo xtask compose gate` writes and there is
             // no reason to make the two disagree.
             let legacy = root.join("components/target/gate_domain.composed.wasm");
             let gate = if legacy.is_file() {
@@ -512,7 +512,7 @@ impl Fleet {
                     &root.join("components/target/composed"),
                 )
                 .unwrap_or_else(|e| {
-                    panic!("composing the default `gate` artifact: {e} — `just build` first")
+                    panic!("composing the default `gate` artifact: {e} — `cargo xtask build --force` first")
                 })
             };
             stub.args(["--artifact", &format!("gate={}", gate.display())]);

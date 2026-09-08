@@ -49,7 +49,7 @@ The export walks the owner's notes and produces:
 ## Run it
 
 ```bash
-just host-stash   # composes the component, builds the React UI, serves on :3046
+cargo xtask host stash   # composes the component, builds the React UI, serves on :3046
 # register a new account (seeded demo notes), keep notes, and hit Export .zip.
 just e2e-stash    # notes CRUD + a valid ZIP export (entry count + manifest)
 ```

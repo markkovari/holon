@@ -84,7 +84,7 @@ fn json_of(resp: ureq::Response) -> Value {
 fn upload(stem: &str) -> Value {
     let id = stem.replace('_', "-");
     let bytes = std::fs::read(rel().join(format!("{stem}.wasm")))
-        .unwrap_or_else(|e| panic!("{stem}.wasm: {e} — run `just build` first"));
+        .unwrap_or_else(|e| panic!("{stem}.wasm: {e} — run `cargo xtask build --force` first"));
     let resp = ureq::post(&format!("http://{ADDR}/api/components?id={id}"))
         .set("content-type", "application/wasm")
         .send_bytes(&bytes)
@@ -97,7 +97,7 @@ fn start_studio() -> Kill {
     let bin = root().join("host/target/release/comp-host");
     let component = root().join("components/target/studio_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-studio`)");
-    assert!(component.exists(), "composed wasm missing (just compose-studio)");
+    assert!(component.exists(), "composed wasm missing (cargo xtask compose studio)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
         .env("VET_TENANT", "studio")
@@ -126,7 +126,7 @@ fn tool(name: &str, args: &[&str]) -> (bool, String) {
     )
 }
 
-// The mesh graph: the exact composition `just compose-mesh` performs by hand.
+// The mesh graph: the exact composition `cargo xtask compose mesh` performs by hand.
 fn mesh_nodes() -> Vec<&'static str> {
     vec!["mesh-domain", "record-store", "resilience", "proxy-route"]
 }
@@ -147,7 +147,7 @@ fn studio_reflects_plans_emits_and_composes() {
     for stem in ["record_store", "resilience", "proxy_route", "zip"] {
         upload(stem);
     }
-    // Present because `just build` stamps it on — a wasm32-wasip2 artifact is
+    // Present because `cargo xtask build --force` stamps it on — a wasm32-wasip2 artifact is
     // anonymous otherwise, and a p2 component from outside this repo still will be.
     // The palette id remains the caller's (the `?id=` on the upload).
     assert_eq!(mesh["name"], "mesh-domain", "the build's metadata pass restores it");

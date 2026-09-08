@@ -19,7 +19,7 @@ const PORT = process.env.PORT || "3055";
 
 if (!existsSync(COMPONENT)) {
   console.error(`Error: Composed component not found at ${COMPONENT}.`);
-  console.error("Run `just compose-grocery` first.");
+  console.error("Run `cargo xtask compose grocery` first.");
   process.exit(1);
 }
 

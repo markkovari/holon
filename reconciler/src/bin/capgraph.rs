@@ -88,7 +88,7 @@ fn main() -> Result<(), String> {
     let root = repo_root();
     let catalog = Catalog::scan(&default_dirs(&root));
     if catalog.is_empty() {
-        return Err("nothing is built — run `just build` first".into());
+        return Err("nothing is built — run `cargo xtask build --force` first".into());
     }
 
     let edges = catalog.edges();
@@ -594,7 +594,7 @@ mod tests {
         let root = comp_reconciler::fleet::repo_root();
         let catalog = Catalog::scan(&default_dirs(&root));
         if catalog.is_empty() {
-            eprintln!("skipped: nothing built — run `just build`");
+            eprintln!("skipped: nothing built — run `cargo xtask build --force`");
             return;
         }
         let out = surql(&catalog, &comp_metadata::app::discover_apps(&root), 42);
@@ -694,7 +694,7 @@ mod tests {
         let root = comp_reconciler::fleet::repo_root();
         let catalog = Catalog::scan(&default_dirs(&root));
         if catalog.is_empty() {
-            eprintln!("skipped: nothing built — run `just build`");
+            eprintln!("skipped: nothing built — run `cargo xtask build --force`");
             return;
         }
         let one = surql(&catalog, &comp_metadata::app::discover_apps(&root), 1);

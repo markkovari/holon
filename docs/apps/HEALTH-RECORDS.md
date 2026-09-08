@@ -16,7 +16,7 @@ A composed WebAssembly application showcasing Electronic Health Records.
 
 ## Run
 ```bash
-just compose-health-records
-just host-health-records
+cargo xtask compose health-records
+cargo xtask host health-records
 just e2e-health-records
 ```

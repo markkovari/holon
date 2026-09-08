@@ -86,7 +86,7 @@ facet, not auth), and anything stream/SSE (this is the request/response one).
    a facet restricts hits and the cursor walks ranked pages without overlap.
 3. **Cache + hit-ratio + browser UI** — `cache:store` around the query; a
    search-as-you-type SPA (debounced box, live ranked list, facet chips, a
-   hit-ratio meter). `just host-search`, type and watch it rank + the ratio
+   hit-ratio meter). `cargo xtask host search`, type and watch it rank + the ratio
    climb.
 4. **Bench** — the read-path dimension: query **latency percentiles** cold vs
    warm cache, and ranking correctness (a known query returns the known doc

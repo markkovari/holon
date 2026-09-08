@@ -84,7 +84,7 @@ fn text_of(path: &str, token: &str) -> String {
 fn upload(token: &str, stem: &str) -> Value {
     let id = stem.replace('_', "-");
     let bytes = std::fs::read(rel().join(format!("{stem}.wasm")))
-        .unwrap_or_else(|e| panic!("{stem}.wasm: {e} — run `just build`"));
+        .unwrap_or_else(|e| panic!("{stem}.wasm: {e} — run `cargo xtask build --force`"));
     let resp = ureq::post(&format!("http://{PLATFORM}/api/components?id={id}"))
         .set("authorization", &format!("bearer {token}"))
         .set("content-type", "application/wasm")
@@ -149,7 +149,7 @@ fn start_all() -> (Kill, Kill) {
 
     let host = root().join("host/target/release/comp-host");
     let component = root().join("components/target/platform_domain.composed.wasm");
-    assert!(component.exists(), "composed wasm missing (just compose-platform)");
+    assert!(component.exists(), "composed wasm missing (cargo xtask compose platform)");
     let platform = Command::new(&host)
         .args(["--component", component.to_str().unwrap(), "--addr", PLATFORM, "--kv", "memory"])
         .env("VET_TENANT", "platform")

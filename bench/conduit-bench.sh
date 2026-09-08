@@ -4,7 +4,7 @@
 # (conduit-domain + auth-guard + record-store + slug) -> wasi:keyvalue backend.
 #
 # Usage: bench/conduit-bench.sh [memory|nats]
-# Prereqs: oha, a built host + composed wasm (just compose-conduit + host build).
+# Prereqs: oha, a built host + composed wasm (cargo xtask compose conduit + host build).
 set -euo pipefail
 KV="${1:-memory}"
 DIR="$(cd "$(dirname "$0")" && pwd)"

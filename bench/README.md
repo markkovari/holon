@@ -22,7 +22,7 @@ npm install
 (cd ../examples/jco-featureflags && npm install && npm run transpile)
 (cd ../examples/jco-blob         && npm install && npm run transpile)
 (cd ../examples/jco-audit        && npm install && npm run transpile)
-(cd ../examples/jco-webhook      && npm install && npm run transpile)  # composed: run `just compose-webhook` first
+(cd ../examples/jco-webhook      && npm install && npm run transpile)  # composed: run `cargo xtask compose webhook` first
 (cd ../examples/jco-session      && npm install && npm run transpile)
 (cd ../examples/jco-outbox       && npm install && npm run transpile)
 (cd ../examples/jco-secrets      && npm install && npm run transpile)
@@ -47,7 +47,7 @@ npm install
 (cd ../examples/jco-id           && npm install && npm run transpile)
 (cd ../examples/jco-record       && npm install && npm run transpile)
 (cd ../examples/jco-policy       && npm install && npm run transpile)
-(cd ../examples/jco-ai           && npm install && npm run transpile)  # composed: run `just compose-ai` first
+(cd ../examples/jco-ai           && npm install && npm run transpile)  # composed: run `cargo xtask compose ai` first
 (cd ../examples/jco-timer        && npm install && npm run transpile)
 (cd ../examples/jco-lock         && npm install && npm run transpile)
 (cd ../examples/jco-eventbus     && npm install && npm run transpile)

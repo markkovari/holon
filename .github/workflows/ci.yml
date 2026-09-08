@@ -135,7 +135,7 @@ jobs:
       # The 25 MB this job actually produced, kept so no other machine has to
       # rebuild 7.1 GB of intermediates to get them.
       #
-      # These are the bytes `just build` makes — the same entry point, with the
+      # These are the bytes `cargo xtask build --force` makes — the same entry point, with the
       # `wasm-tools metadata add` name stamp already applied — so a fetched tree is
       # the one this workflow tested, not an approximation of it. `just
       # fetch-components` pulls them by commit.

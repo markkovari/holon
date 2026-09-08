@@ -28,7 +28,7 @@ struct Args {
 
     /// Where to look for built components. Repeatable; earlier wins, and the
     /// defaults are appended — so a gate that rebuilt one crate passes its own
-    /// output and lets every plug resolve against `just build`'s.
+    /// output and lets every plug resolve against `cargo xtask build --force`'s.
     #[arg(long = "dir")]
     dirs: Vec<PathBuf>,
 
@@ -45,7 +45,7 @@ fn main() -> Result<(), String> {
     let catalog = Catalog::scan(&dirs);
     if catalog.is_empty() {
         return Err(format!(
-            "no built components under {} — run `just build`",
+            "no built components under {} — run `cargo xtask build --force`",
             dirs.iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(", ")
         ));
     }

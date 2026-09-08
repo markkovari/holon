@@ -77,7 +77,7 @@ priced it — but it is a supported delivery target, which is a different claim.
 - [ ] Rungs 2–7: multi-tenant + API keys + quotas, event-bus fan-out +
       notifications + signed webhooks, `mail-parse`, SLA timers + search,
       billing rollup, AI drafts. Rung 1 is done (`components/helpdesk-domain`,
-      `examples/jco-helpdesk`, `just host-helpdesk` on the native host + NATS).
+      `examples/jco-helpdesk`, `cargo xtask host helpdesk` on the native host + NATS).
 
 ### Conduit / RealWorld (docs/apps/CONDUIT.md) — done
 

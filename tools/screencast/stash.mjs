@@ -3,7 +3,7 @@
 // then hits Export .zip — the header button downloads stash-export.zip, built by
 // the composed zip:archive component (no zip library in the frontend).
 //
-// Prereq: from repo root  `just host-stash &`   (builds the UI, serves on :3046)
+// Prereq: from repo root  `cargo xtask host stash &`   (builds the UI, serves on :3046)
 import { chromium } from "playwright";
 
 const BASE = process.env.STASH_URL || "http://127.0.0.1:3046";

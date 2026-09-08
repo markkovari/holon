@@ -6,7 +6,7 @@
 // weeks at once, the My bookings tab lists them, and Manage shows the weekly
 // availability grid.
 //
-// Prereq: from repo root  `just host-booked &`   (builds the UI, serves on :3041)
+// Prereq: from repo root  `cargo xtask host booked &`   (builds the UI, serves on :3041)
 import { chromium } from "playwright";
 
 const BASE = process.env.BOOKED_URL || "http://127.0.0.1:3041";

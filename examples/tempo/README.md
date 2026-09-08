@@ -18,7 +18,7 @@ tests/tempo.rs           # e2e: auth + membership + edit/delete + range reports 
 
 ```bash
 # from the repo root:
-just host-tempo          # builds the UI (Vite) + composes tempo-domain + serves on :3040
+cargo xtask host tempo          # builds the UI (Vite) + composes tempo-domain + serves on :3040
 ```
 
 Open `http://127.0.0.1:3040`: **register** (`admin` to create projects/categories
@@ -42,7 +42,7 @@ Redis-backed storage in one process. `Dockerfile` builds that as one image;
 only, a POC that fits a $6 droplet:
 
 ```bash
-just compose-tempo && just build-tempo-ui            # produce the .wasm + dist
+cargo xtask compose tempo && just build-tempo-ui            # produce the .wasm + dist
 cp .env.example .env                                 # set REDIS_URL
 # hosted Redis (Upstash / DO — TLS): REDIS_URL=rediss://default:PW@host:6379
 docker compose --env-file .env up -d --build         # -> http://localhost:8080

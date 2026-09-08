@@ -15,7 +15,7 @@ those ADRs make still hold; the files they name are gone.
 `components/catalog.json` was 500 KB, generated, committed, and read by `capsearch`
 to answer two questions about a component. It carried `wasm_size_bytes` and
 `wasm_sha256_12` straight from the last build, so it was **stale by construction** —
-the moment anyone ran `just build` it disagreed with the tree, for reasons that had
+the moment anyone ran `cargo xtask build --force` it disagreed with the tree, for reasons that had
 nothing to do with the catalogue. That is also why it never had a staleness guard:
 one was impossible.
 

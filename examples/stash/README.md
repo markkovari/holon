@@ -17,7 +17,7 @@ tests/stash.rs           # e2e: notes CRUD + a valid ZIP export (parses the cent
 
 ```bash
 # from the repo root:
-just host-stash          # composes the component + builds the UI + serves on :3046
+cargo xtask host stash          # composes the component + builds the UI + serves on :3046
 ```
 
 Open `http://127.0.0.1:3046`: **register** a new account — you get a couple of

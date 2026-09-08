@@ -12,7 +12,7 @@
 //!
 //! The UI is a React SPA in `examples/binder/ui`, served by the host from
 //! `--static-dir` — this component answers `/api/*` and nothing else, so the two can
-//! be developed and deployed apart. `just host-binder` builds and serves both.
+//! be developed and deployed apart. `cargo xtask host binder` builds and serves both.
 //!
 //! What is genuinely this component's is the HTTP surface and the storage. That is
 //! the split ADR-0095 requires — the pieces meet through WIT, so each is testable on

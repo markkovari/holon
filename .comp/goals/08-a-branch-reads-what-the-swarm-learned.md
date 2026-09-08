@@ -59,7 +59,7 @@ write is a pool a tenant could use.
    written to `patterns` by the post-gate hook — the only writer that may. Until
    this exists `patterns` stays empty and retrieval runs on `solutions` + `errors`.
 
-## What to watch, not just build
+## What to watch, not cargo xtask build --force
 
 - **Herding.** Every branch reading the same top-k is an expensive way to run one
   branch. Report DISTINCT retrieved sets per generation, as loudly as the selector

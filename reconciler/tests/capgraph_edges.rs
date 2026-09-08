@@ -43,7 +43,7 @@ use serde_json::Value;
 fn catalogue() -> Option<Catalog> {
     let catalog = Catalog::scan(&default_dirs(&repo_root()));
     if catalog.is_empty() {
-        eprintln!("SKIPPED: nothing is built — run `just build`");
+        eprintln!("SKIPPED: nothing is built — run `cargo xtask build --force`");
         return None;
     }
     Some(catalog)

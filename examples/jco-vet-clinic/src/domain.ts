@@ -35,7 +35,7 @@ import { catalog as i18n } from "../gen/i18n/i18n_catalog.js";
 // paginate:cursor/cursors — opaque, signed cursor pagination for the pet list.
 import { cursors as paginate } from "../gen/pagination/pagination.js";
 // ai:inference/inference — domain AI verbs over a composed-in LLM provider
-// (the mock here; swap a real provider with `just compose-ai`). Used to draft a
+// (the mock here; swap a real provider with `cargo xtask compose ai`). Used to draft a
 // clinical summary of a pet + its visit notes for the doctor.
 import { inference as ai } from "../gen/ai/ai_inference.composed.js";
 // sched:timer/timer — durable future-job store. Books a one-shot reminder 24h

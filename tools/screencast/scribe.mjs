@@ -4,7 +4,7 @@
 // shot: both panes type at once into DIFFERENT fields and both edits survive —
 // concurrent editing, no lock. Nothing here is faked; it drives the live SPA.
 //
-// Prereq: from repo root  `just host-scribe &`   (serves on :3037)
+// Prereq: from repo root  `cargo xtask host scribe &`   (serves on :3037)
 import { chromium } from "playwright";
 
 const BASE = process.env.SCRIBE_URL || "http://127.0.0.1:3037";

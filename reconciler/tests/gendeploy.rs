@@ -73,7 +73,7 @@ impl Api {
     fn upload(&self, id: &str, file: &str, config: &str) -> u16 {
         let wasm =
             std::fs::read(repo_root().join("components/target/wasm32-wasip2/release").join(file))
-                .unwrap_or_else(|e| panic!("missing {file} — run `just build`: {e}"));
+                .unwrap_or_else(|e| panic!("missing {file} — run `cargo xtask build --force`: {e}"));
         let mut url = format!("{}/api/components?id={id}", self.base);
         if !config.is_empty() {
             url.push_str(&format!("&config={config}"));

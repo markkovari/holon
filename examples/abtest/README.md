@@ -13,7 +13,7 @@ Assignment is entirely the `experiment:assign` contract; attribution is
 ## Run it
 
 ```bash
-just host-abtest            # compose + serve on http://127.0.0.1:3018
+cargo xtask host abtest            # compose + serve on http://127.0.0.1:3018
 ```
 
 Open the page:

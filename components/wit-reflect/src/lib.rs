@@ -18,7 +18,7 @@
 //! package from the source WIT are gone. A `component-name` section can carry the
 //! crate name, but on `wasm32-wasip2` nothing writes one by default
 //! (`wasm-component-ld` doesn't; cargo-component's adapter path used to), so this
-//! repo's `just build` stamps it back with `wasm-tools metadata add`. Treat it as
+//! repo's `cargo xtask build --force` stamps it back with `wasm-tools metadata add`. Treat it as
 //! a hint, not a guarantee: a p2 component from elsewhere arrives anonymous, and
 //! an app exporting only `wasi:http` is unidentifiable either way. Hence ids.
 
@@ -850,7 +850,7 @@ mod tests {
     /// Panics with a usable message rather than skipping silently.
     fn require(name: &str) -> Vec<u8> {
         artifact(name).unwrap_or_else(|| {
-            panic!("components/target/wasm32-wasip2/release/{name}.wasm missing — run `just build` first")
+            panic!("components/target/wasm32-wasip2/release/{name}.wasm missing — run `cargo xtask build --force` first")
         })
     }
 
@@ -858,7 +858,7 @@ mod tests {
     fn inspects_a_real_component() {
         let bytes = require("mesh_domain");
         let s = <Component as InspectorGuest>::inspect(bytes).expect("mesh-domain inspects");
-        // The name is here because `just build` stamps it back on: wasm32-wasip2
+        // The name is here because `cargo xtask build --force` stamps it back on: wasm32-wasip2
         // artifacts come out anonymous (`wasm-component-ld` writes no name section,
         // where cargo-component's adapter path did). A p2 component from ANYWHERE
         // ELSE will have an empty name, which is why callers still supply ids.
@@ -886,14 +886,14 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../target/mesh_domain.composed.wasm");
         // Skipped, loudly, rather than failed. This artifact comes from a
-        // hand-written plug chain (`just compose-mesh`), so a fresh checkout that
-        // has only run `just build` does not have it — and a test that is red
+        // hand-written plug chain (`cargo xtask compose mesh`), so a fresh checkout that
+        // has only run `cargo xtask build --force` does not have it — and a test that is red
         // until someone runs a second, unrelated recipe is a test people learn to
         // ignore. `just test` reached this for the first time only after the demo
         // crate stopped failing to link, and found it red.
         let Ok(bytes) = std::fs::read(&path) else {
             eprintln!(
-                "SKIPPED: {} is not there — run `just compose-mesh` (or `just plug \
+                "SKIPPED: {} is not there — run `cargo xtask compose mesh` (or `just plug \
                  mesh-domain`). Nothing about composed artifacts was verified by \
                  this run.",
                 path.display()

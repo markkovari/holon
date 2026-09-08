@@ -44,7 +44,7 @@ from `wit/host.wit` and implemented over the in-memory store + a config map.
 
 ```bash
 # build the component first (from comp/):
-just compose-vet         # core slice  -> components/target/vet_domain.composed.wasm
+cargo xtask compose vet         # core slice  -> components/target/vet_domain.composed.wasm
 just compose-vet-full    # FULL parity -> components/target/vet_domain.full.composed.wasm
 
 # then run the host (from comp/host/) against either:

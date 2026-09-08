@@ -17,7 +17,7 @@ COMPONENT="$ROOT/components/target/conduit_domain.composed.wasm"
 BIN="$ROOT/host/target/release/comp-host"
 
 [ -x "$BIN" ] || { echo "host binary missing: $BIN (build it first)"; exit 1; }
-[ -f "$COMPONENT" ] || { echo "composed wasm missing: $COMPONENT (just compose-conduit)"; exit 1; }
+[ -f "$COMPONENT" ] || { echo "composed wasm missing: $COMPONENT (cargo xtask compose conduit)"; exit 1; }
 command -v hurl >/dev/null || { echo "hurl not installed — see https://hurl.dev"; exit 1; }
 
 VET_TENANT=conduit "$BIN" --component "$COMPONENT" --addr "$ADDR" --kv memory >/tmp/conduit-conformance-host.log 2>&1 &

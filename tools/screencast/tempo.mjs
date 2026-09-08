@@ -6,7 +6,7 @@
 // recharts), flips the range and the Mine/Everyone scope, then the Log tab runs
 // a live pomodoro timer that logs an entry on stop.
 //
-// Prereq: from repo root  `just host-tempo &`   (builds the UI, serves on :3040)
+// Prereq: from repo root  `cargo xtask host tempo &`   (builds the UI, serves on :3040)
 import { chromium } from "playwright";
 
 const BASE = process.env.TEMPO_URL || "http://127.0.0.1:3040";

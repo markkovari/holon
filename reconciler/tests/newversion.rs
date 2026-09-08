@@ -294,7 +294,7 @@ fn a_recompiled_artifact_replaces_the_running_one() {
     // interface rather than an HTTP handler.
     let wrong =
         std::fs::read(repo_root().join("components/target/wasm32-wasip2/release/slug.wasm"))
-            .expect("run `just build`");
+            .expect("run `cargo xtask build --force`");
     assert!(matches!(api.upload("ver", wrong), 200 | 201), "uploading the wrong artifact failed");
 
     let deadline = Instant::now() + Duration::from_secs(120);

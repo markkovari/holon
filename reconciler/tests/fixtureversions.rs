@@ -41,7 +41,7 @@ fn every_fixture_link_names_a_version_something_exports() {
     let catalog = Catalog::scan(&[root.join("components/target/wasm32-wasip2/release")]);
     assert!(
         catalog.names().count() > 100,
-        "only {} components built — run `just build` first",
+        "only {} components built — run `cargo xtask build --force` first",
         catalog.names().count()
     );
 

@@ -99,7 +99,7 @@ function bin(rel: string): string {
     throw new Error(
       `missing ${rel} — run:\n` +
         `  cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-trace-seed\n` +
-        `  just build && just compose-console`,
+        `  cargo xtask build --force && cargo xtask compose console`,
     );
   }
   return p;

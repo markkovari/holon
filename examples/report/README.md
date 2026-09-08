@@ -8,7 +8,7 @@ round-trip the set back out to CSV.
 ## Run it
 
 ```bash
-just host-report      # from repo root; tool on http://127.0.0.1:3022
+cargo xtask host report      # from repo root; tool on http://127.0.0.1:3022
 ```
 
 Open the page, paste a CSV (a sample is pre-filled), and **Import**: valid rows

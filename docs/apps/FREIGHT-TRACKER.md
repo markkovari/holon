@@ -16,7 +16,7 @@ A composed WebAssembly application showcasing Logistics and Freight Tracking.
 
 ## Run
 ```bash
-just compose-freight-tracker
-just host-freight-tracker
+cargo xtask compose freight-tracker
+cargo xtask host freight-tracker
 just e2e-freight-tracker
 ```

@@ -24,7 +24,7 @@ fn artifacts() -> Vec<String> {
         ("llm", "mock_provider.wasm"),
     ] {
         let p = dir.join(f);
-        assert!(p.exists(), "missing {} — run `just build`", p.display());
+        assert!(p.exists(), "missing {} — run `cargo xtask build --force`", p.display());
         out.push(format!("{id}={}", p.display()));
     }
     out

@@ -11,7 +11,7 @@
 //      offers its discoverable passkey and the credential id identifies the
 //      account
 //
-// Prereq: from repo root  `just host-passkey &`  (SPA on :3053).
+// Prereq: from repo root  `cargo xtask host passkey &`  (SPA on :3053).
 // Note: the host's kv is in-memory, so RESTART it before re-recording — "ada"
 // already existing makes step 1 (correctly) refuse to enrol without a session.
 import { chromium } from "playwright";

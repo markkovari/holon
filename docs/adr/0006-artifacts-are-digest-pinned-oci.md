@@ -16,7 +16,7 @@ Two facts force the design:
    `package root:component; world root { ... }` — the source package and world name
    are gone, because `wac plug` doesn't need them. Since moving to
    `wasm32-wasip2`, there isn't even a `component-name` section unless someone
-   stamps one; this repo's `just build` does (ADR: see `README.md` Toolchain), but
+   stamps one; this repo's `cargo xtask build --force` does (ADR: see `README.md` Toolchain), but
    a component uploaded from anywhere else arrives with no name at all. A binary
    cannot be trusted to say what it is.
 2. **Tags drift and registries lie.** `examples/jobs/k8s/jobs.yaml` references

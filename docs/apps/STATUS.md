@@ -95,7 +95,7 @@ polls; the tick is an explicit pump).
    both hops are in the transition log.
 3. **Fan-out + alerts + page** — `event:bus` transition events + a
    `notify:dispatch` webhook when `alert-url` is set; the inline page shows the
-   monitor table + a "Run checks" button. `just host-status`, add a monitor and
+   monitor table + a "Run checks" button. `cargo xtask host status`, add a monitor and
    run checks.
 4. **Bench** — the timer dimension: ticks/sec claiming N due jobs, and probe
    fan-out latency. See `bench/HOST-PERF.md` (round 11 already benches

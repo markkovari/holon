@@ -15,7 +15,7 @@ helpdesk_domain.composed.wasm
   + markdown                               md:render    (safe Markdown -> HTML replies)
 ```
 
-Built with `just compose-helpdesk`. The only remaining imports are generic
+Built with `cargo xtask compose helpdesk`. The only remaining imports are generic
 WASI (`keyvalue`, `config`, `clocks`, `random`, `http`) — bound by the host.
 
 ## The point: the lifecycle is data, not code
@@ -30,7 +30,7 @@ invisible to requesters and move the machine nowhere.
 
 ```bash
 # from comp/: build + compose the app wasm
-just compose-helpdesk       # -> components/target/helpdesk_domain.composed.wasm
+cargo xtask compose helpdesk       # -> components/target/helpdesk_domain.composed.wasm
 cp components/target/helpdesk_domain.composed.wasm examples/jco-helpdesk/
 
 cd examples/jco-helpdesk
@@ -48,7 +48,7 @@ from ONE process on the native Rust host, persisted to NATS JetStream KV:
 
 ```bash
 docker compose -f infra/compose.yaml up -d nats
-just host-helpdesk          # wasmtime host + SPA + NATS KV on 0.0.0.0:3007
+cargo xtask host helpdesk          # wasmtime host + SPA + NATS KV on 0.0.0.0:3007
 ```
 
 Benchmarks of this exact setup (NATS vs memory KV): [bench/HELPDESK-BENCH.md](../../bench/HELPDESK-BENCH.md).

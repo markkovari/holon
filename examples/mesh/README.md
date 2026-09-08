@@ -10,7 +10,7 @@ ui/                the React + shadcn SPA (Vite + Tailwind) -> dist/
 ```
 
 ```bash
-just host-mesh     # SPA + host on :3050, flaky upstream on :3051
+cargo xtask host mesh     # SPA + host on :3050, flaky upstream on :3051
 just e2e-mesh      # the full ladder against the real upstream
 just mesh-upstream # the upstream alone (survives host restarts)
 ```

@@ -17,7 +17,7 @@ tests/dashboards.rs      # e2e: seed + a valid SVG per kind + panel round-trip +
 
 ```bash
 # from the repo root:
-just host-dashboards     # composes the component + builds the UI + serves on :3043
+cargo xtask host dashboards     # composes the component + builds the UI + serves on :3043
 ```
 
 Open `http://127.0.0.1:3043`: **register** a new account — you get a demo

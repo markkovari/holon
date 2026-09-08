@@ -59,10 +59,10 @@ GET    /api/photos/{id}/my-ratings            -> View caller's current vote and 
 
 ```bash
 # 1. Compose the wasm component from contracts (auth-guard + record-store + llm-inference)
-just compose-photosocial
+cargo xtask compose photosocial
 
 # 2. Run on the native Rust host + serve on :3055
-just host-photosocial
+cargo xtask host photosocial
 
 # 3. Run the automated end-to-end integration test suite
 just e2e-photosocial

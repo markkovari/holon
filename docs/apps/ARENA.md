@@ -52,7 +52,7 @@ never leaks a seat token, so spectators can watch but not move.
 ## Run it
 
 ```bash
-just host-arena     # native host + SPA on http://127.0.0.1:3039
+cargo xtask host arena     # native host + SPA on http://127.0.0.1:3039
 # open two windows: "New game" in one, paste the id + "Join" in the other, play.
 # open a third window on the same ?game= to spectate live.
 just e2e-arena      # the rules + win-detection + live-SSE e2e

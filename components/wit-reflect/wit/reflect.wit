@@ -59,7 +59,7 @@ interface inspector {
         /// The name in the component's `component-name` custom section, or empty.
         /// A HINT, not an identity: nothing on the `wasm32-wasip2` path writes this
         /// section by default, so it is present only when someone stamped it (this
-        /// repo's `just build` does, via `wasm-tools metadata add`). A component's
+        /// repo's `cargo xtask build --force` does, via `wasm-tools metadata add`). A component's
         /// own package/world name is never preserved in the binary, so an app that
         /// exports nothing but `wasi:http` may be unidentifiable — callers supply
         /// their own ids.

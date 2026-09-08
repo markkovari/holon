@@ -16,7 +16,7 @@ A composed WebAssembly application showcasing Peer Review System.
 
 ## Run
 ```bash
-just compose-academic-review
-just host-academic-review
+cargo xtask compose academic-review
+cargo xtask host academic-review
 just e2e-academic-review
 ```

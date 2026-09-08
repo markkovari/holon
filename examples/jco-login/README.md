@@ -2,7 +2,7 @@
 
 The **multi-capability composition** demo. `login-app` is a consumer component
 that imports three capability interfaces — `session:store`, `config:store`, and
-`secrets:vault`. `wac plug` (run via `just compose-login` from repo root `comp/`)
+`secrets:vault`. `wac plug` (run via `cargo xtask compose login` from repo root `comp/`)
 satisfies all three by plugging in the matching capability components, producing
 a single `login_app.composed.wasm` that **exports only** `login:app/auth@0.1.0`
 and **imports only generic WASI** (`wasi:keyvalue/store`, `wasi:config/runtime`,
@@ -63,6 +63,6 @@ test key**. Real deployments inject a real key via `wasi:config` (or
 
 ## Regenerating the wasm
 
-`login_app.composed.wasm` is checked in. Rebuild it with `just compose-login`
+`login_app.composed.wasm` is checked in. Rebuild it with `cargo xtask compose login`
 from repo root `comp/`, which builds `login-app` and the three capability
 components and runs `wac plug` to compose them.

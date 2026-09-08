@@ -6,7 +6,7 @@ cargo nextest run --release --manifest-path reconciler/Cargo.toml -E 'test(six_m
 ```
 
 Needs `nats-server` on PATH, the built `comp-host`, and the component artifacts
-(`just build`, `just compose-gate`). Runs in about eight seconds.
+(`cargo xtask build --force`, `cargo xtask compose gate`). Runs in about eight seconds.
 
 The fixtures here are **authored** documents — what a person writes — and the test
 converts them through `spec::AppSpec::to_manifest`, the same code path a real deploy

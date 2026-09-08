@@ -86,7 +86,7 @@ And you cannot delete your last passkey — there is no password to fall back to
 ## Run it
 
 ```bash
-just host-passkey   # composes, builds the SPA, serves on :3053
+cargo xtask host passkey   # composes, builds the SPA, serves on :3053
 # open http://localhost:3053 — NOT a LAN address: WebAuthn needs a secure context,
 # and http://localhost is the only plaintext origin that qualifies.
 

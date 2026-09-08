@@ -80,7 +80,7 @@ fn start_host() -> Kill {
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/passkey_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-passkey`)");
-    assert!(component.exists(), "composed wasm missing (just compose-passkey)");
+    assert!(component.exists(), "composed wasm missing (cargo xtask compose passkey)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
         .env("VET_TENANT", "passkey")

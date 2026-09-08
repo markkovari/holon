@@ -8,7 +8,7 @@ slug), with exactly one stateful step (the record store).
 ## Run it
 
 ```bash
-just host-paste       # from repo root; bin on http://127.0.0.1:3024
+cargo xtask host paste       # from repo root; bin on http://127.0.0.1:3024
 ```
 
 Paste Markdown that contains an email or a card number, submit, and watch the

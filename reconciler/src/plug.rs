@@ -143,7 +143,7 @@ pub struct Catalog {
 impl Catalog {
     /// Read every component in `dirs`. Earlier directories win, so a gate that
     /// rebuilt one crate puts its own output first and lets the rest resolve
-    /// against what `just build` already produced.
+    /// against what `cargo xtask build --force` already produced.
     pub fn scan(dirs: &[PathBuf]) -> Self {
         let mut me = Self::default();
         for dir in dirs {
@@ -497,7 +497,7 @@ mod tests {
     fn a_surface_comes_from_the_binary() {
         let catalog = catalog();
         let Some(surface) = catalog.surface("record-store") else {
-            eprintln!("SKIPPED: nothing built — run `just build`");
+            eprintln!("SKIPPED: nothing built — run `cargo xtask build --force`");
             return;
         };
         assert!(
@@ -516,11 +516,11 @@ mod tests {
     fn composition_is_recursive_and_leaves_nothing_dangling() {
         let catalog = catalog();
         if catalog.surface("vet-domain").is_none() {
-            eprintln!("SKIPPED: nothing built — run `just build`");
+            eprintln!("SKIPPED: nothing built — run `cargo xtask build --force`");
             return;
         }
         // The hardest case in the repository, and the one the hand-written
-        // `just compose-vet` gets wrong: 22 capabilities, one of which
+        // `cargo xtask compose vet` gets wrong: 22 capabilities, one of which
         // (`auth-guard`) has capabilities of its own. A flat chain leaves those
         // inner ones dangling, which is why this asserts on the RESULT rather
         // than on the plug list.
@@ -544,7 +544,7 @@ mod tests {
         // composes vet-domain the flat way and shows the difference.
         let catalog = catalog();
         if catalog.surface("vet-domain").is_none() {
-            eprintln!("SKIPPED: nothing built — run `just build`");
+            eprintln!("SKIPPED: nothing built — run `cargo xtask build --force`");
             return;
         }
         let plugs: Vec<(String, Vec<u8>)> = wiring("vet-domain", &catalog)

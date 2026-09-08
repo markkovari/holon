@@ -137,7 +137,7 @@ fn every_branch_writes_its_own_store_and_none_writes_the_parents() {
     // could not be blamed on a link.
     let wasm =
         std::fs::read(repo_root().join("components/target/wasm32-wasip2/release/kv_probe.wasm"))
-            .expect("run `just build`");
+            .expect("run `cargo xtask build --force`");
     assert!(matches!(api.upload("kv", wasm), 200 | 201), "upload failed");
 
     let (code, dep) = api

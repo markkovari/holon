@@ -17,7 +17,7 @@ tests/jobs.rs            # e2e: done / retry-then-succeed / DLQ / replay / exact
 
 ```bash
 # from the repo root:
-just host-jobs           # composes jobs-domain (+ outbox + inproc-workflow + cron
+cargo xtask host jobs           # composes jobs-domain (+ outbox + inproc-workflow + cron
                          # + idempotency + records); board on http://127.0.0.1:3038
 ```
 

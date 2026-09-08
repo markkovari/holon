@@ -48,14 +48,14 @@ Every read is ownership-checked against the caller's token
 ## Run it
 
 ```bash
-just host-dashboards   # composes the component, builds the React UI, serves on :3043
+cargo xtask host dashboards   # composes the component, builds the React UI, serves on :3043
 # register a new account (seeded with a demo dashboard), then add panels —
 # "label value" per line, pick a kind, and the server renders the SVG.
 just e2e-dashboards    # seed + a valid SVG per kind + panel round-trip + ownership
 ```
 
 The frontend lives in `examples/dashboards/ui` (Vite + React + shadcn/ui, **no
-charting library**); `just host-dashboards` builds it to
+charting library**); `cargo xtask host dashboards` builds it to
 `examples/dashboards/dist`, which the host serves.
 
 ## Rungs left

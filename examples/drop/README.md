@@ -7,7 +7,7 @@ the policy question and signs a ticket — it never proxies the upload.
 ## Run it
 
 ```bash
-just host-drop        # from repo root; drop-box on http://127.0.0.1:3021
+cargo xtask host drop        # from repo root; drop-box on http://127.0.0.1:3021
 ```
 
 Open the page, pick a file, and watch the three steps: **① ticket** (the policy

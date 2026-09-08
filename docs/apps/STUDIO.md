@@ -61,7 +61,7 @@ The source world (`mesh-domain`) and package (`mesh:app@0.1.0`) are **gone** —
 
 What's left is the `component-name` custom section, and on `wasm32-wasip2` **nothing
 writes it by default**: `wasm-component-ld` doesn't, where cargo-component's old
-adapter path did. This repo's `just build` stamps it back on with `wasm-tools
+adapter path did. This repo's `cargo xtask build --force` stamps it back on with `wasm-tools
 metadata add` (~35 bytes, idempotent), so components built here do report a name —
 but treat it as a hint. A p2 component from anywhere else arrives anonymous.
 
@@ -112,7 +112,7 @@ Two traps the emitters handle explicitly:
 ## Run it
 
 ```bash
-just host-studio    # composes, builds the SPA, serves :3054, seeds every component
+cargo xtask host studio    # composes, builds the SPA, serves :3054, seeds every component
 # click components in to place them, drag an export handle onto a matching import,
 # then read the wac plug / .wac / workload tabs and hit Compose.
 

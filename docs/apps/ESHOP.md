@@ -4,7 +4,7 @@
 archived Dapr reference shop) rebuilt as holon components: every Dapr building
 block becomes an existing capability contract, every service a wasm component,
 and the whole thing runs three ways from the same bytes — jco-style native
-host, `just host-eshop` locally, and wasmCloud v2 WorkloadDeployments on
+host, `cargo xtask host eshop` locally, and wasmCloud v2 WorkloadDeployments on
 Kubernetes.
 
 ![eShop: sign in, add to cart, checkout, and watch the order advance through the cross-service choreography (submitted → paid) — five wasm services over one NATS lattice](../media/eshop.gif)
@@ -65,7 +65,7 @@ pump (needed on the native lane, which has no messaging plugin).
 
 ```bash
 # local — native hosts over one shared NATS (docker run -d -p 4222:4222 nats:2.10 -js)
-just host-eshop                  # storefront at http://127.0.0.1:3100
+cargo xtask host eshop                  # storefront at http://127.0.0.1:3100
 GATEWAY=http://127.0.0.1:3100 examples/eshop/smoke.sh
 
 # there was a kubernetes lane, on the wasmCloud v2 runtime-operator, driven by a

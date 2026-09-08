@@ -57,7 +57,7 @@ fn start_host() -> HostGuard {
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/buzz_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-buzz`)");
-    assert!(component.exists(), "composed wasm missing (just compose-buzz)");
+    assert!(component.exists(), "composed wasm missing (cargo xtask compose buzz)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
         .env("VET_TENANT", "buzz")

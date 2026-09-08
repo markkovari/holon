@@ -137,7 +137,7 @@ timestamps) is stated, not hidden.
 ## Build order (each rung is demoable)
 
 1. **Users & profiles** — register/login/current/update, follow/unfollow.
-   ✅ done: `components/conduit-domain` + `just compose-conduit` +
+   ✅ done: `components/conduit-domain` + `cargo xtask compose conduit` +
    `just e2e-conduit` (Rust host + `examples/conduit` e2e, all green). Runs on
    the native Rust host (`host/`), not jco — the app, its host, and its test are
    all Rust; the only JS in this repo stays in the other examples.

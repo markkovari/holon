@@ -81,12 +81,12 @@ the composition:
 ## Run it
 
 ```bash
-just host-scribe          # native host + SPA on http://127.0.0.1:3037
+cargo xtask host scribe          # native host + SPA on http://127.0.0.1:3037
 # open two browser windows on that URL (or add ?doc=notes&name=Alice) and type
 just e2e-scribe           # the convergence + live-SSE e2e
 ```
 
-Regenerate the gif (`tools/screencast/`): `just host-scribe &`, then `node
+Regenerate the gif (`tools/screencast/`): `cargo xtask host scribe &`, then `node
 tools/screencast/scribe.mjs` and `bash to-gif.sh videos/scribe/*.webm
 ../../docs/media/scribe.gif 800 10`.
 

@@ -63,7 +63,7 @@ is **no** hand-rolled auth, TF-IDF, state machine, HMAC, pub/sub, or LLM client
 `track-domain` imports `ai:inference/inference`; `ai-inference` in turn imports
 `llm:inference/inference`. That boundary is the swap point:
 
-- `just compose-track` plugs the **mock** LLM (`llm-inference`) — deterministic,
+- `cargo xtask compose track` plugs the **mock** LLM (`llm-inference`) — deterministic,
   offline, what the e2e and demo use.
 - Swap the plug for `openai-provider` (`compose-ai-openai`) and the summary is
   real — `track-domain` is unchanged. The domain never names a vendor.

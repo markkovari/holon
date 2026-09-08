@@ -59,7 +59,7 @@ impl Platform {
         let host = root.join("host/target/release/comp-host");
         assert!(host.exists(), "missing {} — cargo build --release in host/", host.display());
         // Derived when the hand-composed artifact is not there, matching
-        // `Fleet::start`: `just compose-platform` is a second recipe a fresh
+        // `Fleet::start`: `cargo xtask compose platform` is a second recipe a fresh
         // checkout has no reason to have run, and the plug list is already implied
         // by what platform-domain imports.
         let legacy = root.join("components/target/platform_domain.composed.wasm");
@@ -73,7 +73,7 @@ impl Platform {
                 &catalog,
                 &root.join("components/target/composed"),
             )
-            .unwrap_or_else(|e| panic!("composing platform-domain: {e} — `just build` first"))
+            .unwrap_or_else(|e| panic!("composing platform-domain: {e} — `cargo xtask build --force` first"))
         };
 
         let dir = tempfile::tempdir().unwrap();
@@ -407,8 +407,8 @@ pub fn read_chunked(reader: &mut std::io::BufReader<std::net::TcpStream>) -> Vec
 ///
 /// Prefers a hand-composed `gate_domain.composed.wasm` when one is there, and
 /// otherwise derives the composition from the component's own imports — the same
-/// fallback `Fleet::start` uses, so a fresh checkout that ran `just build` but not
-/// `just compose-gate` still works.
+/// fallback `Fleet::start` uses, so a fresh checkout that ran `cargo xtask build --force` but not
+/// `cargo xtask compose gate` still works.
 pub fn composed_gate() -> Vec<u8> {
     let root = repo_root();
     let legacy = root.join("components/target/gate_domain.composed.wasm");
@@ -417,5 +417,5 @@ pub fn composed_gate() -> Vec<u8> {
     }
     let catalog = comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
     comp_reconciler::plug::compose("gate-domain", &catalog)
-        .expect("gate-domain composes with what it imports — `just build` first")
+        .expect("gate-domain composes with what it imports — `cargo xtask build --force` first")
 }

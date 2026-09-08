@@ -28,7 +28,7 @@ fn artifacts() -> Vec<String> {
     let mut out = Vec::new();
     for (id, file) in [("gate", "graph_probe.wasm"), ("graph", "knowledge_graph.wasm")] {
         let p = dir.join(file);
-        assert!(p.exists(), "missing {} — run `just build`", p.display());
+        assert!(p.exists(), "missing {} — run `cargo xtask build --force`", p.display());
         out.push(format!("{id}={}", p.display()));
     }
     out

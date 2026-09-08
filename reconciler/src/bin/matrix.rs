@@ -110,7 +110,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let root = comp_reconciler::fleet::repo_root();
     // Honour the hand-composed artifact, derive it otherwise — the same rule the
-    // fleet and the suites follow, so no caller needs `just compose-gate` first.
+    // fleet and the suites follow, so no caller needs `cargo xtask compose gate` first.
     let legacy = root.join("components/target/gate_domain.composed.wasm");
     let wasm = match std::fs::read(&legacy) {
         Ok(bytes) => bytes,
@@ -118,7 +118,7 @@ fn main() -> Result<()> {
             let catalog =
                 comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
             comp_reconciler::plug::compose("gate-domain", &catalog)
-                .map_err(|e| anyhow::anyhow!("composing gate-domain: {e} — `just build` first"))?
+                .map_err(|e| anyhow::anyhow!("composing gate-domain: {e} — `cargo xtask build --force` first"))?
         }
     };
 

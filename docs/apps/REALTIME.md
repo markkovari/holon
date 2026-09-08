@@ -58,7 +58,7 @@ a TTL record, not `session-store`, to stay dependency-light.
    message as a `data:` frame. e2e: a reader thread sees a message posted by a
    *separate* request, live. The headline — real server-push on wasip2.
 3. ✅ **Presence + browser UI** — heartbeat presence + a chat SPA (served via
-   `--static-dir`, native `EventSource`); `just host-pulse`, open two windows.
+   `--static-dir`, native `EventSource`); `cargo xtask host pulse`, open two windows.
 4. ✅ **Bench** — the new dimension: **one broadcast → 150/150 concurrent
    held-open SSE connections**. See [`bench/PULSE-BENCH.md`](../../bench/PULSE-BENCH.md).
 

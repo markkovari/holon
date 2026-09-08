@@ -207,10 +207,10 @@ struct Sample {
     note: String,
 }
 
-/// The composed `gate-domain`, derived when nobody has run `just compose-gate`.
+/// The composed `gate-domain`, derived when nobody has run `cargo xtask compose gate`.
 ///
 /// Reading the hand-composed path directly meant this suite failed with a bare
-/// `NotFound` in any checkout that had only run `just build` — and, because cargo
+/// `NotFound` in any checkout that had only run `cargo xtask build --force` — and, because cargo
 /// stops at the first failing test binary, each such suite hid the next one. This
 /// is the same rule `Fleet::start` follows: honour the hand-made artifact when it
 /// is there, derive it from gate-domain's own imports when it is not.
