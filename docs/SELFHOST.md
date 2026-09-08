@@ -58,6 +58,32 @@ Measured rather than asserted — a `saga-domain` trip whose hotel leg fails:
 | no relay | `running` — `[pending, pending, pending]` |
 | relay, 1s interval | `compensated` — `[compensated, failed, pending]` |
 
+### Daemons: the twelve host capabilities need a process too
+
+ADR-0095's twelve `comp-<x>` daemons (`comp-fswatch`, `comp-docker`, `comp-ffmpeg`,
+...) are native for the same reason a relay is: a `wasm32-wasip2` component cannot
+watch a filesystem, spawn `ffmpeg`, or open a Docker socket. An app whose component
+dials one over loopback HTTP declares it the same way it declares a trigger:
+
+```toml
+[config]
+fswatch-url = "http://127.0.0.1:8000"   # what the COMPONENT is told
+
+[[daemon]]
+name = "fswatch"                         # comp-<name> is the binary
+addr = "127.0.0.1:8000"                  # what the DAEMON binds — must agree with the URL above
+allow_flag = "allow-path"                # only if this daemon takes an allow-list
+allow = ["/var/log"]
+extra_args = ["--ollama-url http://127.0.0.1:11434"]   # any other flags, verbatim
+```
+
+`check()` refuses a spec where `addr` and `[config]`'s `<name>-url` disagree — they
+are written for two different readers (a process bind address, a wasm guest's
+config) and nothing else stops them drifting apart by hand. Tier 1 renders one
+`comp-<name>.service` per daemon, `BindsTo`/`After` the app's own unit, same
+reasoning as the relay. There is no equivalent yet for the wasmCloud/Kubernetes
+lanes — a daemon a component in those lanes needs is still a manual step.
+
 ### Fused or linked, and what the hop costs
 
 Both topologies render from the same spec (`--topology`), and the choice is forced
@@ -357,8 +383,7 @@ the pure-compute ones automatically and prints which.
 | `just selfhost-specs` | derive a spec for every app that has a `host-<app>` recipe and no spec yet |
 | `just selfhost-bootstrap <host>` | one-time box prep: static comp-host, dirs, Caddy import, TS_IP |
 | `just selfhost-deploy-all <host>` | every app in `apps/` to one box |
-| `cli/src/main.rs` | tier-1 renderer, pure and tested (19 tests, incl. one that checks the flags it emits actually exist on `comp-host`). Reached as `holon node render|validate|port|ingress` |
-| `tools/gen-app-specs.py` | the spec generator behind `just selfhost-specs` |
+| `cli/src/main.rs` | tier-1 renderer, pure and tested (25 tests, incl. ones that check the flags it emits actually exist on `comp-host` and on each of the twelve ADR-0095 daemons). Reached as `holon node render|validate|port|ingress` |
 | `host/` | `comp-host` — the runtime for tiers 1 and 2 |
 | `components/platform-domain/src/render.rs` | the tier-3 renderer |
 | `reconciler/` | the tier-3 lane: reconcile, distribute, and `src/oci.rs` for registry push |

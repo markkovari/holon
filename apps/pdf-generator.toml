@@ -10,11 +10,14 @@ kv = "sqlite"
 
 components = ["pdf-generator-domain"]
 
-# `comp-browser` (ADR-0095) has to be started separately — deploy tooling
-# renders a unit for the wasm side only, not for the native daemons behind
-# the twelve host capabilities. It needs a real Chrome/Chromium binary
-# installed on the box, and at least one `--allow-host`, or every request
-# answers `unavailable`/`not-permitted`:
-#   comp-browser --addr 127.0.0.1:8001 --allow-host example.com
+# `comp-browser` (ADR-0095) gets its own systemd unit too — see [[daemon]]
+# below. `holon node render` emits comp-browser.service alongside this app's
+# unit, `--allow-host example.com` and all.
 [config]
 browser-url = "http://127.0.0.1:8001"
+
+[[daemon]]
+name = "browser"
+addr = "127.0.0.1:8001"
+allow_flag = "allow-host"
+allow = ["example.com"]
