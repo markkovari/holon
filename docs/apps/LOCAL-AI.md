@@ -1,6 +1,7 @@
 # Local AI
 
-This is a showcase application that utilizes the `local-ai` capability.
-It bridges the WebAssembly sandbox to the host environment natively.
+This is a showcase application that fronts the `llm-local` capability over HTTP
+(`components/local-ai-domain`). It bridges the WebAssembly sandbox to the host
+environment natively.
 
 ![Local AI Demo](../media/local-ai.gif)
