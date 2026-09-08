@@ -39,6 +39,19 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-imageopt", about = "Shrink an image for a component that has no codec.")]
 struct Args {
+    /// Shared secret a caller must send as `Authorization: Bearer
+    /// <token>`. Loopback binding alone is not a boundary — see
+    /// `comp_reconciler::daemon_auth`'s own doc for why. No token means
+    /// no check, logged loudly rather than silently.
+    #[arg(long)]
+    token: Option<String>,
+    /// Same, but read from a file (a systemd `LoadCredential` path)
+    /// rather than passed as a value — `--token` is `ps`-readable by
+    /// any local user, which is most of what this exists to close.
+    /// Wins over `--token` when both are given.
+    #[arg(long)]
+    token_file: Option<std::path::PathBuf>,
+
     /// Where to listen. Loopback by default: this reads and writes files and
     /// has no authentication of its own.
     #[arg(long, default_value = "127.0.0.1:8004")]
@@ -66,14 +79,27 @@ struct Daemon {
 }
 
 impl Daemon {
-    /// Is `path` inside something an operator listed?
+    /// Is `path` inside something an operator listed? Returns the CANONICAL
+    /// path when it is — the caller must act on that, not the path it was
+    /// given, or a symlink swapped in between this check and the read that
+    /// follows it resolves to somewhere this check never approved (TOCTOU).
     ///
-    /// Canonicalised on both sides before comparing, so `/allowed/../etc` is
-    /// judged as `/etc` — a prefix test on the string a caller sent would let
-    /// `..` walk straight out of the allow-list.
-    fn permits(&self, path: &Path) -> bool {
-        let Ok(real) = path.canonicalize() else { return false };
-        self.allowed.iter().any(|a| a.canonicalize().map(|a| real.starts_with(a)).unwrap_or(false))
+    /// Canonicalises the PARENT directory rather than `path` itself: `path`
+    /// (a file, not `fs-watcher`'s directory) need not exist yet for this
+    /// check — a missing file is `no-such-file`, not `not-permitted`, and
+    /// canonicalizing the whole path would fail for both the same way,
+    /// collapsing that distinction. The parent must exist and be real; a
+    /// symlink swapped in for the final component between this check and
+    /// `image::open` is a narrower race this does not close.
+    fn permits(&self, path: &Path) -> Option<PathBuf> {
+        let dir = path.parent()?;
+        let name = path.file_name()?;
+        let real_dir = dir.canonicalize().ok()?;
+        let permitted = self
+            .allowed
+            .iter()
+            .any(|a| a.canonicalize().map(|a| real_dir.starts_with(a)).unwrap_or(false));
+        permitted.then(|| real_dir.join(name))
     }
 }
 
@@ -114,14 +140,17 @@ fn save(img: &image::DynamicImage, out: &Path, quality: u8) -> image::ImageResul
 }
 
 async fn optimize(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<OptimizeReq>) -> Json<Value> {
-    let input = PathBuf::from(&req.img);
+    let requested = PathBuf::from(&req.img);
 
     // Not-permitted and no-such-file are different answers on purpose: one is
     // a decision an operator made and the other is a fact about the disk, and
     // a caller retrying a refusal forever is the worse mistake.
-    if !d.permits(&input) {
+    //
+    // Act on the CANONICAL path `permits` approved, not the one the caller
+    // sent — see `permits`'s own doc for why.
+    let Some(input) = d.permits(&requested) else {
         return Json(json!({ "error": "not-permitted", "detail": req.img }));
-    }
+    };
     if !input.is_file() {
         return Json(json!({ "error": "no-such-file", "detail": req.img }));
     }
@@ -150,6 +179,8 @@ async fn optimize(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<Optim
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-imageopt", &token);
     if args.allow_path.is_empty() {
         eprintln!(
             "comp-imageopt: no --allow-path given, so every request will be refused. \
@@ -168,7 +199,9 @@ async fn main() -> Result<()> {
         max_width: args.max_width,
         quality: args.quality,
     });
-    let app = Router::new().route("/optimize", post(optimize)).with_state(state);
+    let app = Router::new().route("/optimize", post(optimize)).with_state(state)
+        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -197,18 +230,35 @@ mod tests {
         std::fs::create_dir_all(&inside).expect("mkdir");
         let d = daemon(&[&inside]);
 
-        assert!(d.permits(&inside), "the listed directory itself");
-        assert!(!d.permits(&inside.join("..")), "the parent is not inside it");
-        assert!(!d.permits(&tmp), "nor is anything above it");
-        assert!(!d.permits(Path::new("/etc")), "nor is somewhere unrelated");
+        assert!(d.permits(&inside.join("photo.jpg")).is_some(), "a file inside the listed directory");
+        assert!(d.permits(&inside.join("../sibling.jpg")).is_none(), "a file in the parent is not inside it");
+        assert!(d.permits(&tmp.join("photo.jpg")).is_none(), "nor is anything above it");
+        assert!(d.permits(Path::new("/etc/photo.jpg")).is_none(), "nor is somewhere unrelated");
     }
 
     /// Nothing is permitted by default.
     #[test]
     fn an_unscoped_daemon_touches_nothing() {
         let d = daemon(&[]);
-        assert!(!d.permits(&std::env::temp_dir()));
-        assert!(!d.permits(Path::new("/")));
+        assert!(d.permits(&std::env::temp_dir().join("photo.jpg")).is_none());
+        assert!(d.permits(Path::new("/photo.jpg")).is_none());
+    }
+
+    /// `permits` checks the PARENT directory, not the file itself — a
+    /// missing file inside an allowed directory must come back permitted
+    /// (`no-such-file` is the caller's job to report), not `not-permitted`.
+    /// Canonicalizing the whole path instead would fail identically for
+    /// both, collapsing a real distinction the WIT contract makes.
+    #[test]
+    fn a_missing_file_in_an_allowed_directory_is_still_permitted() {
+        let tmp = std::env::temp_dir().canonicalize().expect("temp dir"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
+        let inside = tmp.join(format!("imageopt-missing-{}", std::process::id()));
+        std::fs::create_dir_all(&inside).expect("mkdir");
+        let d = daemon(&[&inside]);
+        let missing = inside.join("never-written.jpg");
+        assert!(!missing.exists());
+        assert_eq!(d.permits(&missing), Some(missing));
+        std::fs::remove_dir_all(&inside).ok();
     }
 
     #[test]

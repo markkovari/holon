@@ -68,6 +68,15 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
 
     let headers = Fields::new();
     let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    // A shared secret, if the deployment set one — see
+    // `comp_reconciler::daemon_auth`'s own doc for why loopback
+    // binding alone is not a boundary. Absent means the daemon was
+    // started with no --token, so there is nothing to send.
+    if let Ok(Some(token)) = config::get("cron-token") {
+        if !token.is_empty() {
+            let _ = headers.set(&"authorization".to_string(), &[format!("Bearer {token}").into_bytes()]);
+        }
+    }
     let req = OutgoingRequest::new(headers);
     req.set_method(&Method::Post).map_err(|_| net("set method"))?;
     req.set_scheme(Some(&scheme)).map_err(|_| net("set scheme"))?;
