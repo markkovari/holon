@@ -310,6 +310,53 @@ fn compose_app(app: Option<&str>) -> Result<()> {
             }
             println!("{} Composed grocery-domain -> {}", "✔".green(), canonical);
         }
+        Some("intent-router") => {
+            println!("{}", "Composing intent-router...".cyan().bold());
+
+            // `intent-router` imports `llm:inference/inference`, and more than one
+            // built component satisfies it — `anthropic-provider`,
+            // `openai-provider`, `mock-provider`. Nothing in the generic path
+            // below disambiguates that (grocery is the only other app that
+            // needed to), so this pins it the same way grocery pins its
+            // override: an override dir holding only the one candidate this
+            // app composes against. `mock-provider` because this app is meant
+            // to compose and run for free, offline, with no API key — see
+            // apps/intent-router.toml's own comment. A deployment wanting a
+            // real provider composes by hand against a dir holding that one
+            // instead.
+            let mut cargo_wasm = Command::new("cargo");
+            cargo_wasm.args([
+                "build",
+                "--manifest-path",
+                "components/Cargo.toml",
+                "--release",
+                "--target",
+                "wasm32-wasip2",
+                "-p",
+                "intent-router",
+                "-p",
+                "mock-provider",
+            ]);
+            run_cmd(&mut cargo_wasm, "build intent-router + mock-provider")?;
+
+            let override_dir = "components/target/intent-router-override";
+            fs::create_dir_all(override_dir)?;
+            fs::copy(
+                "components/target/wasm32-wasip2/release/mock_provider.wasm",
+                format!("{override_dir}/mock_provider.wasm"),
+            )?;
+
+            let output = Command::new(&comp_plug_bin)
+                .args(["intent-router", "--dir", override_dir])
+                .output()?;
+            if !output.status.success() {
+                anyhow::bail!("comp-plug intent-router failed: {}", String::from_utf8_lossy(&output.stderr));
+            }
+            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let dest = "components/target/intent_router.composed.wasm";
+            fs::copy(&path_str, dest)?;
+            println!("{} Composed intent-router -> {}", "✔".green(), dest);
+        }
         Some(name) => {
             println!("{}", format!("Composing {name}...").cyan().bold());
 
