@@ -51,7 +51,7 @@ fn capgraph(format: &str) -> Option<Vec<u8>> {
         .output()
         .expect("comp-capgraph did not run");
     if !out.status.success() {
-        eprintln!("SKIPPED: comp-capgraph refused --format {format} — run `just build`");
+        eprintln!("SKIPPED: comp-capgraph refused --format {format} — run `cargo xtask build --force`");
         return None;
     }
     Some(out.stdout)
@@ -169,7 +169,7 @@ fn no_build_output_is_tracked() {
 ///
 /// Neither could be checked at all until the build output came out of them: they
 /// carried `wasm_size_bytes` and `wasm_sha256_12` from the last build, so they were
-/// stale the moment anybody ran `just build`, for reasons having nothing to do with
+/// stale the moment anybody ran `cargo xtask build --force`, for reasons having nothing to do with
 /// the catalogue. That is why there was never a guard.
 #[test]
 fn the_committed_catalogue_is_not_stale() {

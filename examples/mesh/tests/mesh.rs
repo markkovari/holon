@@ -85,7 +85,7 @@ fn start_host() -> Kill {
     let bin = root().join("host/target/release/comp-host");
     let component = root().join("components/target/mesh_domain.composed.wasm");
     assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-mesh`)");
-    assert!(component.exists(), "composed wasm missing (just compose-mesh)");
+    assert!(component.exists(), "composed wasm missing (cargo xtask compose mesh)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", HOST, "--kv", "memory"])
         .env("VET_TENANT", "mesh")

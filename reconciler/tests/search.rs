@@ -70,7 +70,7 @@ fn artifacts() -> Vec<String> {
         ("schecks", "checks_runner.wasm"),
     ] {
         let p = dir.join(file);
-        assert!(p.exists(), "missing {} — run `just build`", p.display());
+        assert!(p.exists(), "missing {} — run `cargo xtask build --force`", p.display());
         out.push(format!("{id}={}", p.display()));
     }
     out

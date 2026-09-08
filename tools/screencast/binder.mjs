@@ -17,7 +17,7 @@
 //   * a deck with EIGHT Charmander across two printings, which is illegal by a rule
 //     that counts names rather than the ids the collection is keyed on.
 //
-// Prereq: from repo root  `just host-binder &`   (serves on :3210)
+// Prereq: from repo root  `cargo xtask host binder &`   (serves on :3210)
 import { chromium } from "playwright";
 
 const BASE = process.env.BINDER_URL || "http://127.0.0.1:3210";

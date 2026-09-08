@@ -10,7 +10,7 @@ ui/               React + @xyflow/react SPA (Vite + Tailwind) -> dist/
 ```
 
 ```bash
-just host-studio          # :3054, palette seeded with all 109 components
+cargo xtask host studio          # :3054, palette seeded with all 109 components
 just seed-studio          # (re)feed the palette into an already-running studio
 just e2e-studio           # the full ladder
 cd ../../components && cargo test -p wit-reflect

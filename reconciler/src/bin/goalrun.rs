@@ -608,7 +608,7 @@ pub fn artifacts(provider: &str) -> Result<Vec<String>> {
     ] {
         let p = dir.join(file);
         if !p.exists() {
-            bail!("missing {} — run `just build`", p.display());
+            bail!("missing {} — run `cargo xtask build --force`", p.display());
         }
         out.push(format!("{id}={}", p.display()));
     }

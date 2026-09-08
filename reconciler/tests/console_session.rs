@@ -19,7 +19,7 @@
 //! `inference.rs` uses one: the assertion is about the header the console SENT,
 //! and a real platform cannot be asked what it received.
 //!
-//! Skipped, loudly, when the composed artifact is missing — `just compose-console`
+//! Skipped, loudly, when the composed artifact is missing — `cargo xtask compose console`
 //! builds it.
 
 use std::io::{BufRead, BufReader, Write};
@@ -119,12 +119,12 @@ fn composed() -> Option<std::path::PathBuf> {
 #[test]
 fn the_token_lands_in_a_cookie_and_never_in_the_body() {
     let Some(artifact) = composed() else {
-        eprintln!("SKIPPED: no composed console — run `just compose-console`");
+        eprintln!("SKIPPED: no composed console — run `cargo xtask compose console`");
         return;
     };
     let host_bin = repo_root().join("host/target/release/comp-host");
     if !host_bin.exists() {
-        eprintln!("SKIPPED: no comp-host binary — run `just build`");
+        eprintln!("SKIPPED: no comp-host binary — run `cargo xtask build --force`");
         return;
     }
 

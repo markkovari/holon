@@ -16,7 +16,7 @@
 # would call.
 #
 # Prereqs: a wasmCloud host (`wash up`), NATS with JetStream on :4222, and the
-# components built (`just build` + `just compose` from comp/).
+# components built (`cargo xtask build --force` + `just compose` from comp/).
 # Deploy:  wash app put examples/vet-clinic-wasmcloud/wadm.yaml
 #          wash app deploy vet-clinic
 # Then:    curl localhost:8081/register -d '{"email":"o@acme.test","password":"ownerpass1","tenant":"acme-vet"}'

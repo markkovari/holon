@@ -5,7 +5,7 @@ per-capability calls: every request below goes browser → hyper → wasmtime �
 `helpdesk_domain.composed.wasm` (helpdesk-domain + auth-guard + record-store +
 fsm-workflow + id-generate + markdown) → `wasi:keyvalue` backend.
 
-- Host: `just host-helpdesk` (comp-host binary, release), Apple M4 (10 cores), macOS
+- Host: `cargo xtask host helpdesk` (comp-host binary, release), Apple M4 (10 cores), macOS
 - Load: `oha -z 10s -c 20` (login/spa 5s), localhost
 - Backends: NATS = JetStream KV in Docker on the same machine (durable,
   disk-persisted per write); memory = in-process HashMap
@@ -45,7 +45,7 @@ fsm-workflow + id-generate + markdown) → `wasi:keyvalue` backend.
 
 ```bash
 docker compose -f infra/compose.yaml up -d nats
-just host-helpdesk            # NATS-backed on :3007 (+ SPA)
+cargo xtask host helpdesk            # NATS-backed on :3007 (+ SPA)
 # memory variant: same binary with --kv memory
 oha -z 10s -c 20 -H "authorization: Bearer $TOKEN" http://127.0.0.1:3007/api/tickets
 ```

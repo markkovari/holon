@@ -21,7 +21,7 @@ fn composing_the_same_thing_from_several_threads_never_yields_a_partial_file() {
     let root = repo_root();
     let catalog = Catalog::scan(&default_dirs(&root));
     if catalog.bytes("platform-domain").is_none() {
-        eprintln!("SKIPPED: platform-domain is not built — run `just build`");
+        eprintln!("SKIPPED: platform-domain is not built — run `cargo xtask build --force`");
         return;
     }
 

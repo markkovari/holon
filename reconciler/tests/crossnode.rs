@@ -45,7 +45,7 @@ fn artifacts() -> Vec<String> {
         ("shaper", raw.join("shaper.wasm")),
     ];
     for (_, p) in &parts {
-        assert!(p.exists(), "missing {} — run `just build`", p.display());
+        assert!(p.exists(), "missing {} — run `cargo xtask build --force`", p.display());
     }
     parts.iter().map(|(id, p)| format!("{id}={}", p.display())).collect()
 }

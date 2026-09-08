@@ -94,7 +94,7 @@ is the request/response one).
 3. **CSV export + browser UI** — `GET /api/export` re-serializes through the same
    codec (round-trip); the SPA is a paste-box that shows imported/rejected
    tallies, the reject list with per-field errors, the paged table, and a
-   download button. `just host-report`, paste a CSV and watch it split.
+   download button. `cargo xtask host report`, paste a CSV and watch it split.
 4. **Bench** — the batch dimension: rows-per-second through parse+validate+store
    for a large CSV, and validate-only vs full-pipeline overhead. See
    `bench/REPORT-BENCH.md`.

@@ -77,7 +77,7 @@ fn artifacts() -> Vec<String> {
     .iter()
     .map(|(id, file)| {
         let p = dir.join(file);
-        assert!(p.exists(), "missing {} — run `just build`", p.display());
+        assert!(p.exists(), "missing {} — run `cargo xtask build --force`", p.display());
         format!("{id}={}", p.display())
     })
     .collect()

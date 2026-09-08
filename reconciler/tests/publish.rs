@@ -43,7 +43,7 @@ impl Publisher {
 fn component_with_digest(p: &Platform, token: &str, id: &str) -> (String, String) {
     let wasm = harness::repo_root().join("components/target/wasm32-wasip2/release/slug.wasm");
     let bytes = std::fs::read(&wasm)
-        .unwrap_or_else(|e| panic!("missing {} ({e}) — run `just build`", wasm.display()));
+        .unwrap_or_else(|e| panic!("missing {} ({e}) — run `cargo xtask build --force`", wasm.display()));
     let r = p
         .http
         .post(p.url(&format!("/api/components?id={id}")))

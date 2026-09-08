@@ -109,7 +109,7 @@ that has been panned off-screen is not mistaken for a graph that is missing node
 ## Run it
 
 ```bash
-just host-console        # composes and serves on :3055
+cargo xtask host console        # composes and serves on :3055
 just e2e-console         # Playwright against the real stack, nothing stubbed below the browser
 ```
 

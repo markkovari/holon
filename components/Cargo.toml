@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     # `ai-inference` exports `ai:inference/inference@0.1.0`, which doc-search,
     # invoice-copilot, moderation, support-desk and track-domain all import. It
-    # was never a member, so `just build` never produced it and those five could
+    # was never a member, so `cargo xtask build --force` never produced it and those five could
     # never be composed — `every_import_has_a_provider` has been failing since
     # the crate landed, and nothing ran that test until CI existed.
     #

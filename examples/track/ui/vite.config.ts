@@ -9,7 +9,7 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    // dev: proxy the API to a running `just host-track`.
+    // dev: proxy the API to a running `cargo xtask host track`.
     proxy: {
       "/api": "http://localhost:3025",
       "/auth": "http://localhost:3025",

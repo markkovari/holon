@@ -4,7 +4,7 @@
 // a live answered-count, Reveal highlights the correct one + a leaderboard, and
 // on it goes to a final podium.
 //
-// Prereq: from repo root  `just host-buzz &`   (builds the UI, serves on :3049)
+// Prereq: from repo root  `cargo xtask host buzz &`   (builds the UI, serves on :3049)
 import { chromium } from "playwright";
 
 const BASE = process.env.BUZZ_URL || "http://127.0.0.1:3049";

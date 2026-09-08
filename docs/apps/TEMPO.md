@@ -85,14 +85,14 @@ member can't widen scope), and the pomodoro timer producing an entry.
 ## Run it
 
 ```bash
-just host-tempo     # builds the React UI + runs the native host + SPA on :3040
+cargo xtask host tempo     # builds the React UI + runs the native host + SPA on :3040
 # register as admin to create projects/categories + assign membership;
 # as member to log; a project lead gets the team view.
 just e2e-tempo      # the auth + membership + aggregation + timer e2e
 ```
 
 The frontend lives in `examples/tempo/ui` (Vite + React + shadcn/ui + recharts);
-`just host-tempo` builds it to `examples/tempo/dist`, which the host serves.
+`cargo xtask host tempo` builds it to `examples/tempo/dist`, which the host serves.
 
 ## Deploy — the simple way (one process / one container)
 

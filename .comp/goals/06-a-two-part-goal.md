@@ -28,7 +28,7 @@ edit the other's files.
 ## How to run it
 
 ```bash
-just build && (cd host && cargo build --release) && (cd reconciler && cargo build --release)
+cargo xtask build --force && (cd host && cargo build --release) && (cd reconciler && cargo build --release)
 docker compose -f infra/compose.yaml up -d surreal
 
 reconciler/target/release/comp-goalrun --smoke \

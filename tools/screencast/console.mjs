@@ -46,7 +46,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function bin(rel) {
   const p = path.join(repo, rel);
-  if (!existsSync(p)) throw new Error(`missing ${rel} — run \`just compose-console\` first`);
+  if (!existsSync(p)) throw new Error(`missing ${rel} — run \`cargo xtask compose console\` first`);
   return p;
 }
 

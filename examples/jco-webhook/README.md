@@ -1,7 +1,7 @@
 # Embed webhook-ingest in-process via jco
 
 The **composition showcase** of this workspace. `webhook_ingest.wasm` here is
-the COMPOSED artifact (`just compose-webhook`): the webhook-ingest component
+the COMPOSED artifact (`cargo xtask compose webhook`): the webhook-ingest component
 plugged together with idempotency-guard via `wac`, so a single `.wasm` chains
 two reusable capabilities — HMAC signature verification + replay dedup.
 
@@ -33,5 +33,5 @@ asserts: valid first delivery → `{accepted, !replay}`; same `delivery-id` →
 `{!accepted, replay}` (the idempotency capability at work); bad signature →
 `bad-signature` (rejected before any dedup).
 
-> To refresh the composed wasm after rebuilding: `just compose-webhook` then copy
+> To refresh the composed wasm after rebuilding: `cargo xtask compose webhook` then copy
 > `components/target/webhook_ingest.composed.wasm` here as `webhook_ingest.wasm`.

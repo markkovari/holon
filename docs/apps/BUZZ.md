@@ -52,7 +52,7 @@ the **host** (authenticated, and the game's owner) can drive the phases.
 ## Run it
 
 ```bash
-just host-buzz    # composes the component, builds the React UI, serves on :3049
+cargo xtask host buzz    # composes the component, builds the React UI, serves on :3049
 # open on one device and sign in to HOST (you get a demo quiz + a PIN);
 # open on other devices and JOIN with the PIN + a nickname.
 just e2e-buzz     # the game loop + speed-weighted scoring + leaderboard + podium

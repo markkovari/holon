@@ -101,7 +101,7 @@ worth knowing before anyone quotes it.
 ## Repro
 
 ```bash
-just compose-conduit
+cargo xtask compose conduit
 cd host && cargo build --release --bin comp-host && cd ..
 PROFILE=1 bash bench/conduit-bench.sh memory
 NATS_URL=nats://127.0.0.1:4299 PROFILE=1 bash bench/conduit-bench.sh nats

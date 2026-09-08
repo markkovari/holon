@@ -4,7 +4,7 @@
 // Certificate unlocks) — then logs in as the instructor to show the gradebook
 // (table + a server-rendered class-average chart).
 //
-// Prereq: from repo root  `just host-lms &`   (builds the UI, serves on :3048)
+// Prereq: from repo root  `cargo xtask host lms &`   (builds the UI, serves on :3048)
 import { chromium } from "playwright";
 
 const BASE = process.env.LMS_URL || "http://127.0.0.1:3048";

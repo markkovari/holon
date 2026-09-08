@@ -8,7 +8,7 @@ now, it never re-sends it.
 ## Run it
 
 ```bash
-just host-authgate    # from repo root; authgate on http://127.0.0.1:3023
+cargo xtask host authgate    # from repo root; authgate on http://127.0.0.1:3023
 ```
 
 **Enroll** an account (copy the secret / scan the QR into an authenticator app),

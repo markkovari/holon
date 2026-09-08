@@ -88,7 +88,7 @@ demo; the production gate is orthogonal).
    separate request, live.
 3. **Console UI** — flag editor (toggle / % slider / kill-switch) + a 100-tile
    subject grid that re-renders on each SSE frame. Served via `--static-dir`
-   (native `EventSource`); `just host-flags`, drag the slider, watch cohorts.
+   (native `EventSource`); `cargo xtask host flags`, drag the slider, watch cohorts.
 4. **Cross-host fan-out (`event:push`)** — a rule set on host A propagates to a
    console held open on host B via NATS-KV notifications. The multi-host
    upgrade, and a bench: **one rule flip → M consoles updated**, latency

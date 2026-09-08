@@ -95,7 +95,7 @@ a socket has done nothing.
 ## Run it
 
 ```bash
-just host-mesh     # composes, builds the SPA, serves on :3050 (+ flaky upstream on :3051)
+cargo xtask host mesh     # composes, builds the SPA, serves on :3050 (+ flaky upstream on :3051)
 # hit "Hammer it" to trip the breaker, then keep clicking: 503 shed, and the
 # upstream stops seeing requests. Wait out the countdown for the half-open probe.
 

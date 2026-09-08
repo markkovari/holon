@@ -252,9 +252,9 @@ fn six_manifests_one_fleet() {
     for f in
         [&raw.join("gate_domain.wasm"), &raw.join("record_store.wasm"), &raw.join("shaper.wasm")]
     {
-        assert!(f.exists(), "missing {} — run `just build`", f.display());
+        assert!(f.exists(), "missing {} — run `cargo xtask build --force`", f.display());
     }
-    // Composed here rather than by `just compose-gate`, which is the whole point of
+    // Composed here rather than by `cargo xtask compose gate`, which is the whole point of
     // `plug`: the fused artifact is derived from what `gate-domain` imports, so this
     // test needs no second manual step and cannot run against a stale composition
     // someone built by hand three commits ago.

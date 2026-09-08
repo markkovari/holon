@@ -133,7 +133,7 @@ component, not a new contract — same choice link-shortener already made.
 ## Build order (each rung is demoable)
 
 1. **Core loop** — create/reply/list tickets, FSM, sessions. (domain + ~10 existing comps)
-   ✅ done: `components/helpdesk-domain` + `just compose-helpdesk` + `examples/jco-helpdesk` (8 e2e tests)
+   ✅ done: `components/helpdesk-domain` + `cargo xtask compose helpdesk` + `examples/jco-helpdesk` (8 e2e tests)
 2. **Multi-tenant + RBAC + API keys** — policy-guard, quota, rate-limiter, audit.
 3. **Events out** — event-bus spine, notifications, outbound signed webhooks, i18n emails.
 4. **Email in** — `mail-parse` (first new component), webhook-ingest wiring.

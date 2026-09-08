@@ -116,7 +116,7 @@ fn surfaces(root: &Path) -> Option<BTreeMap<String, String>> {
     let mut disagreements: Vec<String> = Vec::new();
     let files = artifacts(root);
     if files.is_empty() {
-        eprintln!("SKIPPED: nothing is built — run `just build`");
+        eprintln!("SKIPPED: nothing is built — run `cargo xtask build --force`");
         return None;
     }
     for f in &files {
@@ -156,7 +156,7 @@ fn surfaces(root: &Path) -> Option<BTreeMap<String, String>> {
     }
     assert!(
         disagreements.is_empty(),
-        "one interface is two shapes across the built tree:\n{}\n\nRun `just build force=1`.",
+        "one interface is two shapes across the built tree:\n{}\n\nRun `cargo xtask build --force`.",
         disagreements.join("\n")
     );
     Some(all)

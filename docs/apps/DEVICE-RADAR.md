@@ -16,7 +16,7 @@ A composed WebAssembly application showcasing a scanner for Bluetooth, WiFi, Zig
 
 ## Run
 ```bash
-just compose-device-radar
-just host-device-radar
+cargo xtask compose device-radar
+cargo xtask host device-radar
 just e2e-device-radar
 ```

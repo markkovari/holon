@@ -9,7 +9,7 @@
 //      a wasmCloud v2 WorkloadDeployment — three different deployment models
 //   4. hit Compose and get a real composed component back
 //
-// Prereq: from repo root  `just host-studio &`  (SPA + seeded palette on :3054)
+// Prereq: from repo root  `cargo xtask host studio &`  (SPA + seeded palette on :3054)
 import { chromium } from "playwright";
 
 const BASE = process.env.STUDIO_URL || "http://127.0.0.1:3054";

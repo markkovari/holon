@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the whole eshop on native hosts: 5 services + gateway, one shared NATS
 # JetStream KV (the cross-service backbone: sessions, records, event bus).
-# Ctrl-C stops everything. Prereq: `just compose-eshop` + NATS on :4222
+# Ctrl-C stops everything. Prereq: `cargo xtask compose eshop` + NATS on :4222
 # (e.g. docker run -d --name eshop-nats -p 4222:4222 nats:2.10 -js).
 set -euo pipefail
 cd "$(dirname "$0")/../.."

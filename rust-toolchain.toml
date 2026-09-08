@@ -2,7 +2,7 @@
 #
 # WHY, MEASURED RATHER THAN ASSUMED
 #
-# `just build` compiles every component for `wasm32-wasip2`, and rustc decides which
+# `cargo xtask build --force` compiles every component for `wasm32-wasip2`, and rustc decides which
 # version of `wasi:cli` those components IMPORT. `comp-host` decides which version it
 # can PROVIDE, and that is wasmtime's, which is pinned to 45 by `wrpc-runtime-wasmtime`
 # — see `host/Cargo.toml`, which says "PINNED TO 45 BY wrpc-runtime-wasmtime, not by
@@ -38,7 +38,7 @@
 #
 # AFTER PULLING THIS FILE, REBUILD ONCE
 #
-#   just build force=1
+#   cargo xtask build --force
 #
 # A checkout that predates this pin holds components compiled by whatever rustc was
 # default then. Rebuilding only what you touch leaves the tree MIXED, and a
@@ -49,7 +49,7 @@
 # which every gate reports as `the component never served /health`. That is
 # indistinguishable from the pin not working, and it cost a wrong diagnosis on the day
 # this file was written — the tree was half 0.2.9 and half 0.2.12 and nothing said so.
-# `just build force=1` is 50 seconds and settles it.
+# `cargo xtask build --force` is 50 seconds and settles it.
 #
 # WHEN TO RAISE THE PIN
 #
@@ -76,7 +76,7 @@
 # installations with separate TARGET SETS. `rustup target add wasm32-wasip2` at the
 # root adds it to 1.98.0 and not to stable. So:
 #
-#   * `just build` runs at the root   -> 1.98.0, has the target, builds 213 components
+#   * `cargo xtask build --force` runs at the root   -> 1.98.0, has the target, builds 213 components
 #   * `cargo test` runs in reconciler -> stable, and exports RUSTUP_TOOLCHAIN=stable
 #   * `newversion.rs` spawns `cargo build --target wasm32-wasip2` from that test,
 #     inherits stable, and dies with `can't find crate for core`
@@ -86,7 +86,7 @@
 # suites, which is the argument for running them.
 [toolchain]
 channel = "1.98.0"
-# Installed automatically on a fresh checkout, so `just build` does not fail on a
+# Installed automatically on a fresh checkout, so `cargo xtask build --force` does not fail on a
 # missing target and send someone looking for the wrong problem.
 targets = ["wasm32-wasip2"]
 components = ["rustfmt", "clippy"]

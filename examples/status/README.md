@@ -8,7 +8,7 @@ and `POST /api/tick` is the explicit pump (wasip2 has no background tasks).
 ## Run it
 
 ```bash
-just host-status      # from repo root; status page on http://127.0.0.1:3012
+cargo xtask host status      # from repo root; status page on http://127.0.0.1:3012
 ```
 
 `POST /api/monitors {name, url, period}` (period ≥ 10s), then click **Run

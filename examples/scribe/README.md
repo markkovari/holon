@@ -17,7 +17,7 @@ tests/scribe.rs          # e2e: concurrent-merge + out-of-order LWW + live SSE
 
 ```bash
 # from the repo root:
-just host-scribe          # composes scribe-domain (+ crdt + records + ids),
+cargo xtask host scribe          # composes scribe-domain (+ crdt + records + ids),
                           # serves the SPA on http://127.0.0.1:3037
 ```
 

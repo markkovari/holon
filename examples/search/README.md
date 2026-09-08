@@ -13,7 +13,7 @@ index); the corpus is `records:store`; the cache + hit-ratio are `cache:store` +
 ## Run it
 
 ```bash
-just host-search           # compose + serve on http://127.0.0.1:3019
+cargo xtask host search           # compose + serve on http://127.0.0.1:3019
 ```
 
 Open the page (it seeds a 10-doc corpus on load):

@@ -8,7 +8,7 @@
 //      climbs while `calls` does NOT: the upstream is no longer being dialled
 //   5. the cooldown runs out and one probe closes the circuit again
 //
-// Prereq: from repo root  `just host-mesh &`  (SPA on :3050, upstream on :3051)
+// Prereq: from repo root  `cargo xtask host mesh &`  (SPA on :3050, upstream on :3051)
 import { chromium } from "playwright";
 
 const BASE = process.env.MESH_URL || "http://127.0.0.1:3050";
