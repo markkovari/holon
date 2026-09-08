@@ -42,7 +42,7 @@
 //! syscall is the next version, and the contract above was written so that this
 //! one can be replaced without a caller changing.
 //!
-//!   comp-fswatch --addr 127.0.0.1:8car --allow-path /var/log --allow-path /tmp/x
+//!   comp-fswatch --addr 127.0.0.1:8000 --allow-path /var/log --allow-path /tmp/x
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -63,7 +63,7 @@ use serde_json::{json, Value};
 struct Args {
     /// Where to listen. Loopback by default: this hands out filesystem contents
     /// and has no authentication of its own.
-    #[arg(long, default_value = "127.0.0.1:8car")]
+    #[arg(long, default_value = "127.0.0.1:8000")]
     addr: String,
 
     /// A directory this may report on, repeatable.

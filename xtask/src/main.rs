@@ -368,7 +368,21 @@ fn compose_app(app: Option<&str>) -> Result<()> {
                 run_cmd(&mut npm, &format!("npm run build ({name} UI)"))?;
             }
 
+            // Most apps' entry point is `<name>-domain` by convention — and
+            // that has to stay the FIRST check: `fs-watcher`/`lan-scanner`/
+            // `image-optimizer` have both a bare capability crate (exports
+            // only its own library interface, nothing wasi:http can call)
+            // and a `-domain` sibling that wraps it over HTTP. Picking the
+            // bare one the moment it exists would silently regress those —
+            // it has to lose to `-domain` whenever `-domain` exists too.
+            // Only fall through to the bare name for a component that IS its
+            // own entry point with no `-domain` sibling at all
+            // (`intent-router`).
             let domain_name = if name.ends_with("-domain") {
+                name.to_string()
+            } else if Path::new(&format!("components/{name}-domain")).is_dir() {
+                format!("{name}-domain")
+            } else if Path::new(&format!("components/{name}")).is_dir() {
                 name.to_string()
             } else {
                 format!("{name}-domain")
