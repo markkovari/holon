@@ -33,6 +33,19 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-mdns", about = "Native daemon for mdns-discovery")]
 struct Args {
+    /// Shared secret a caller must send as `Authorization: Bearer
+    /// <token>`. Loopback binding alone is not a boundary — see
+    /// `comp_reconciler::daemon_auth`'s own doc for why. No token means
+    /// no check, logged loudly rather than silently.
+    #[arg(long)]
+    token: Option<String>,
+    /// Same, but read from a file (a systemd `LoadCredential` path)
+    /// rather than passed as a value — `--token` is `ps`-readable by
+    /// any local user, which is most of what this exists to close.
+    /// Wins over `--token` when both are given.
+    #[arg(long)]
+    token_file: Option<std::path::PathBuf>,
+
     /// Where to listen. Loopback by default: this hands out what is on the
     /// local network and has no authentication of its own.
     #[arg(long, default_value = "127.0.0.1:8007")]
@@ -103,6 +116,8 @@ async fn handle(State(cfg): State<Config>) -> Json<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-mdns", &token);
     let service_types = if args.service_type.is_empty() {
         vec!["_http._tcp.local.".to_string()]
     } else {
@@ -113,7 +128,9 @@ async fn main() -> Result<()> {
         "comp-mdns: listening on http://{} | browsing {:?} | timeout {}ms",
         args.addr, service_types, args.timeout_ms
     );
-    let app = Router::new().route("/discover", post(handle)).with_state(cfg);
+    let app = Router::new().route("/discover", post(handle)).with_state(cfg)
+        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;
     Ok(())

@@ -61,6 +61,19 @@ use serde_json::{json, Value};
     about = "Report directory changes to a component that cannot look."
 )]
 struct Args {
+    /// Shared secret a caller must send as `Authorization: Bearer
+    /// <token>`. Loopback binding alone is not a boundary — see
+    /// `comp_reconciler::daemon_auth`'s own doc for why. No token means
+    /// no check, logged loudly rather than silently.
+    #[arg(long)]
+    token: Option<String>,
+    /// Same, but read from a file (a systemd `LoadCredential` path)
+    /// rather than passed as a value — `--token` is `ps`-readable by
+    /// any local user, which is most of what this exists to close.
+    /// Wins over `--token` when both are given.
+    #[arg(long)]
+    token_file: Option<std::path::PathBuf>,
+
     /// Where to listen. Loopback by default: this hands out filesystem contents
     /// and has no authentication of its own.
     #[arg(long, default_value = "127.0.0.1:8000")]
@@ -114,14 +127,20 @@ fn now_ms() -> u64 {
 }
 
 impl Daemon {
-    /// Is `dir` inside something an operator listed?
+    /// Is `dir` inside something an operator listed? Returns the CANONICAL
+    /// path when it is — the caller must act on that, not the path it was
+    /// given, or a symlink swapped in between this check and the read that
+    /// follows it resolves to somewhere this check never approved (TOCTOU).
     ///
     /// Canonicalised on both sides before comparing, so `/var/log/../etc` is
     /// judged as `/etc` — a prefix test on the string a caller sent would let
     /// `..` walk straight out of the allow-list.
-    fn permits(&self, dir: &Path) -> bool {
-        let Ok(real) = dir.canonicalize() else { return false };
-        self.allowed.iter().any(|a| a.canonicalize().map(|a| real.starts_with(a)).unwrap_or(false))
+    fn permits(&self, dir: &Path) -> Option<PathBuf> {
+        let real = dir.canonicalize().ok()?;
+        self.allowed
+            .iter()
+            .any(|a| a.canonicalize().map(|a| real.starts_with(a)).unwrap_or(false))
+            .then_some(real)
     }
 
     fn snapshot(dir: &Path) -> Snapshot {
@@ -142,13 +161,16 @@ impl Daemon {
 }
 
 async fn poll(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<PollReq>) -> Json<Value> {
-    let dir = PathBuf::from(&req.dir);
-    if !d.permits(&dir) {
+    let requested = PathBuf::from(&req.dir);
+    // Act on the CANONICAL path `permits` approved, not the one the caller
+    // sent — a symlink swapped in between the check and this read would
+    // otherwise resolve somewhere the allow-list never saw.
+    let Some(dir) = d.permits(&requested) else {
         // Not-permitted and no-such-directory are different answers on purpose:
         // one is a decision an operator made and the other is a fact about the
         // disk, and a caller retrying a refusal forever is the worse mistake.
         return Json(json!({ "error": "not-permitted", "detail": req.dir }));
-    }
+    };
     if !dir.is_dir() {
         return Json(json!({ "error": "no-such-directory", "detail": req.dir }));
     }
@@ -191,6 +213,8 @@ async fn poll(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<PollReq>)
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-fswatch", &token);
     if args.allow_path.is_empty() {
         eprintln!(
             "comp-fswatch: no --allow-path given, so every request will be refused. \
@@ -205,7 +229,9 @@ async fn main() -> Result<()> {
         args.page
     );
     let state = std::sync::Arc::new(Daemon { allowed, page: args.page, seen: Mutex::default() });
-    let app = Router::new().route("/poll", post(poll)).with_state(state);
+    let app = Router::new().route("/poll", post(poll)).with_state(state)
+        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -235,18 +261,18 @@ mod tests {
         std::fs::create_dir_all(&inside).expect("mkdir");
         let d = daemon(&[&inside]);
 
-        assert!(d.permits(&inside), "the listed directory itself");
-        assert!(!d.permits(&inside.join("..")), "the parent is not inside it");
-        assert!(!d.permits(&tmp), "nor is anything above it");
-        assert!(!d.permits(Path::new("/etc")), "nor is somewhere unrelated");
+        assert!(d.permits(&inside).is_some(), "the listed directory itself");
+        assert!(d.permits(&inside.join("..")).is_none(), "the parent is not inside it");
+        assert!(d.permits(&tmp).is_none(), "nor is anything above it");
+        assert!(d.permits(Path::new("/etc")).is_none(), "nor is somewhere unrelated");
     }
 
     /// Nothing is permitted by default.
     #[test]
     fn an_unscoped_watcher_watches_nothing() {
         let d = daemon(&[]);
-        assert!(!d.permits(&std::env::temp_dir()));
-        assert!(!d.permits(Path::new("/")));
+        assert!(d.permits(&std::env::temp_dir()).is_none());
+        assert!(d.permits(Path::new("/")).is_none());
     }
 
     /// A created file, a modified one and a removed one, told apart.

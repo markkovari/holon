@@ -16,6 +16,12 @@ components = ["vpn-manager-domain"]
 [config]
 wireguard-url = "http://127.0.0.1:8011"
 
+# No `token` set here — permissive, same reasoning as the demo mock-provider
+# in intent-router.toml: this is meant to compose and run with nothing extra
+# to provision. A real deployment sharing a box with anything else should
+# set `token` here AND the matching `<name>-token` in [config] above (kept
+# in sync by `check()`) — otherwise any local process can reach this daemon
+# with no check at all (see `comp_reconciler::daemon_auth`'s own doc).
 [[daemon]]
 name = "wireguard"
 addr = "127.0.0.1:8011"

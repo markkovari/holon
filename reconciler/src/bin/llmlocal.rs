@@ -27,6 +27,19 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-llmlocal", about = "Proxy a prompt to a local Ollama server.")]
 struct Args {
+    /// Shared secret a caller must send as `Authorization: Bearer
+    /// <token>`. Loopback binding alone is not a boundary — see
+    /// `comp_reconciler::daemon_auth`'s own doc for why. No token means
+    /// no check, logged loudly rather than silently.
+    #[arg(long)]
+    token: Option<String>,
+    /// Same, but read from a file (a systemd `LoadCredential` path)
+    /// rather than passed as a value — `--token` is `ps`-readable by
+    /// any local user, which is most of what this exists to close.
+    /// Wins over `--token` when both are given.
+    #[arg(long)]
+    token_file: Option<std::path::PathBuf>,
+
     /// Where to listen. Loopback by default: this has no authentication of
     /// its own and is meant to be reached only from the sandbox host.
     #[arg(long, default_value = "127.0.0.1:8006")]
@@ -91,6 +104,8 @@ async fn infer(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<InferReq
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-llmlocal", &token);
     println!(
         "comp-llmlocal: listening on http://{} | ollama at {} | model {}",
         args.addr, args.ollama_url, args.model
@@ -100,7 +115,9 @@ async fn main() -> Result<()> {
         generate_url: format!("{}/api/generate", args.ollama_url.trim_end_matches('/')),
         model: args.model,
     });
-    let app = Router::new().route("/infer", post(infer)).with_state(state);
+    let app = Router::new().route("/infer", post(infer)).with_state(state)
+        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
