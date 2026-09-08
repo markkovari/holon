@@ -39,6 +39,19 @@ use serde_json::{json, Value};
 #[derive(Parser)]
 #[command(name = "comp-ffmpeg", about = "Native daemon for video-ffmpeg")]
 struct Args {
+    /// Shared secret a caller must send as `Authorization: Bearer
+    /// <token>`. Loopback binding alone is not a boundary — see
+    /// `comp_reconciler::daemon_auth`'s own doc for why. No token means
+    /// no check, logged loudly rather than silently.
+    #[arg(long)]
+    token: Option<String>,
+    /// Same, but read from a file (a systemd `LoadCredential` path)
+    /// rather than passed as a value — `--token` is `ps`-readable by
+    /// any local user, which is most of what this exists to close.
+    /// Wins over `--token` when both are given.
+    #[arg(long)]
+    token_file: Option<std::path::PathBuf>,
+
     /// Where to listen. Loopback by default: this runs ffmpeg on request and
     /// has no authentication of its own.
     #[arg(long, default_value = "127.0.0.1:8010")]
@@ -69,14 +82,24 @@ struct TranscodeResp {
 }
 
 impl Daemon {
-    /// Is `path` inside something an operator listed?
+    /// Is `path` inside something an operator listed? Returns the CANONICAL
+    /// path when it is — the caller must act on that, not the path it was
+    /// given, or a symlink swapped in between this check and the read that
+    /// follows it resolves to somewhere this check never approved (TOCTOU).
     ///
-    /// Canonicalised on both sides before comparing, so `/var/media/../etc`
-    /// is judged as `/etc` — a prefix test on the string a caller sent would
-    /// let `..` walk straight out of the allow-list.
-    fn permits(&self, path: &Path) -> bool {
-        let Ok(real) = path.canonicalize() else { return false };
-        self.allowed.iter().any(|a| a.canonicalize().map(|a| real.starts_with(a)).unwrap_or(false))
+    /// Canonicalises the PARENT directory rather than `path` itself: `path`
+    /// need not exist yet for this check — a missing file is `no-such-file`,
+    /// not `not-permitted`, and canonicalizing the whole path would fail for
+    /// both the same way, collapsing that distinction.
+    fn permits(&self, path: &Path) -> Option<PathBuf> {
+        let dir = path.parent()?;
+        let name = path.file_name()?;
+        let real_dir = dir.canonicalize().ok()?;
+        let permitted = self
+            .allowed
+            .iter()
+            .any(|a| a.canonicalize().map(|a| real_dir.starts_with(a)).unwrap_or(false));
+        permitted.then(|| real_dir.join(name))
     }
 }
 
@@ -88,14 +111,17 @@ fn output_path(input: &Path) -> PathBuf {
 }
 
 async fn transcode(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<TranscodeReq>) -> Json<Value> {
-    let input = PathBuf::from(&req.input);
+    let requested = PathBuf::from(&req.input);
 
     // Not-permitted and no-such-file are different answers on purpose: one is
     // a decision an operator made and the other is a fact about the disk, and
     // a caller retrying a refusal forever is the worse mistake.
-    if !d.permits(&input) {
+    //
+    // Act on the CANONICAL path `permits` approved, not the one the caller
+    // sent — see `permits`'s own doc for why.
+    let Some(input) = d.permits(&requested) else {
         return Json(json!({ "error": "not-permitted", "detail": req.input }));
-    }
+    };
     if !input.is_file() {
         return Json(json!({ "error": "no-such-file", "detail": req.input }));
     }
@@ -121,6 +147,8 @@ async fn transcode(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<Tran
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-ffmpeg", &token);
     if args.allow_path.is_empty() {
         eprintln!(
             "comp-ffmpeg: no --allow-path given, so every request will be refused. \
@@ -130,7 +158,9 @@ async fn main() -> Result<()> {
     let allowed = args.allow_path.clone();
     println!("comp-ffmpeg: listening on http://{} | {} allowed path(s)", args.addr, allowed.len());
     let state = std::sync::Arc::new(Daemon { allowed });
-    let app = Router::new().route("/transcode", post(transcode)).with_state(state);
+    let app = Router::new().route("/transcode", post(transcode)).with_state(state)
+        .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
+        .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
@@ -155,18 +185,33 @@ mod tests {
         std::fs::create_dir_all(&inside).expect("mkdir");
         let d = daemon(&[&inside]);
 
-        assert!(d.permits(&inside), "the listed directory itself");
-        assert!(!d.permits(&inside.join("..")), "the parent is not inside it");
-        assert!(!d.permits(&tmp), "nor is anything above it");
-        assert!(!d.permits(Path::new("/etc")), "nor is somewhere unrelated");
+        assert!(d.permits(&inside.join("input.avi")).is_some(), "a file inside the listed directory");
+        assert!(d.permits(&inside.join("../sibling.avi")).is_none(), "a file in the parent is not inside it");
+        assert!(d.permits(&tmp.join("input.avi")).is_none(), "nor is anything above it");
+        assert!(d.permits(Path::new("/etc/input.avi")).is_none(), "nor is somewhere unrelated");
     }
 
     /// Nothing is permitted by default.
     #[test]
     fn an_unscoped_daemon_reads_nothing() {
         let d = daemon(&[]);
-        assert!(!d.permits(&std::env::temp_dir()));
-        assert!(!d.permits(Path::new("/")));
+        assert!(d.permits(&std::env::temp_dir().join("input.avi")).is_none());
+        assert!(d.permits(Path::new("/input.avi")).is_none());
+    }
+
+    /// `permits` checks the PARENT directory, not the file itself — a
+    /// missing file inside an allowed directory must come back permitted
+    /// (`no-such-file` is the caller's job to report), not `not-permitted`.
+    #[test]
+    fn a_missing_file_in_an_allowed_directory_is_still_permitted() {
+        let tmp = std::env::temp_dir().canonicalize().expect("temp dir"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
+        let inside = tmp.join(format!("ffmpeg-missing-{}", std::process::id()));
+        std::fs::create_dir_all(&inside).expect("mkdir");
+        let d = daemon(&[&inside]);
+        let missing = inside.join("never-written.avi");
+        assert!(!missing.exists());
+        assert_eq!(d.permits(&missing), Some(missing));
+        std::fs::remove_dir_all(&inside).ok();
     }
 
     /// The output path is derived, not invented: same directory and stem,
