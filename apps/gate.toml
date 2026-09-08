@@ -1,8 +1,8 @@
 # An app, as a person writes it. This is the ONLY hand-authored file in the
 # self-hosting lane — `selfhost` renders everything else (docs/SELFHOST.md).
 #
-#   just selfhost-render gate            # see what would be written
-#   just selfhost-deploy gate my-vps     # compose, ship, restart, route
+#   holon node render apps/gate.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/gate/* to the box and `systemctl enable --now comp-gate.service`
 name = "gate"
 # Tailnet-only, which is the default — a forgotten `access` must not put an app on
 # the public internet. The name has to resolve to the box's Tailscale address (a custom
