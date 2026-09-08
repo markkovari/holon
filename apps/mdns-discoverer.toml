@@ -10,10 +10,11 @@ kv = "sqlite"
 
 components = ["mdns-discoverer-domain"]
 
-# `comp-mdns` (ADR-0095) has to be started separately — deploy tooling
-# renders a unit for the wasm side only, not for the native daemons behind
-# the twelve host capabilities. It needs multicast on the host's network
-# interface, which a container or a tailnet-only box may not have:
-#   comp-mdns --addr 127.0.0.1:8007
+# `comp-mdns` (ADR-0095) gets its own systemd unit too — see [[daemon]]
+# below. `holon node render` emits comp-mdns.service alongside this app's unit.
 [config]
 mdns-url = "http://127.0.0.1:8007"
+
+[[daemon]]
+name = "mdns"
+addr = "127.0.0.1:8007"

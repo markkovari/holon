@@ -10,11 +10,14 @@ kv = "sqlite"
 
 components = ["video-transcoder-domain"]
 
-# `comp-ffmpeg` (ADR-0095) has to be started separately — deploy tooling
-# renders a unit for the wasm side only, not for the native daemons behind
-# the twelve host capabilities. It needs a real `ffmpeg` binary on PATH and
-# at least one `--allow-path`, or every request answers `unavailable`/
-# `not-permitted`:
-#   comp-ffmpeg --addr 127.0.0.1:8010 --allow-path /var/lib/video-transcoder
+# `comp-ffmpeg` (ADR-0095) gets its own systemd unit too — see [[daemon]]
+# below. `holon node render` emits comp-ffmpeg.service alongside this app's
+# unit, `--allow-path /var/lib/video-transcoder` and all.
 [config]
 ffmpeg-url = "http://127.0.0.1:8010"
+
+[[daemon]]
+name = "ffmpeg"
+addr = "127.0.0.1:8010"
+allow_flag = "allow-path"
+allow = ["/var/lib/video-transcoder"]

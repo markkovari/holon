@@ -10,10 +10,11 @@ kv = "sqlite"
 
 components = ["docker-manager-domain"]
 
-# `comp-docker` (ADR-0095) has to be started separately — deploy tooling
-# renders a unit for the wasm side only, not for the native daemons behind
-# the twelve host capabilities. It needs a real Docker (or Docker-API-
-# compatible, e.g. OrbStack) socket reachable on the box:
-#   comp-docker --addr 127.0.0.1:8002
+# `comp-docker` (ADR-0095) gets its own systemd unit too — see [[daemon]]
+# below. `holon node render` emits comp-docker.service alongside this app's unit.
 [config]
 docker-url = "http://127.0.0.1:8002"
+
+[[daemon]]
+name = "docker"
+addr = "127.0.0.1:8002"
