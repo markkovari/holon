@@ -1,0 +1,42 @@
+# An app, as a person writes it — same shape as gate.toml, the other
+# hand-authored app.
+#
+#   just selfhost-render intent-router            # see what would be written
+#   just selfhost-deploy intent-router my-vps      # compose, ship, restart, route
+name = "intent-router"
+access = "tailnet"
+domain = "intent-router.example.com"
+artifact = "components/target/intent_router.composed.wasm"
+
+kv = "sqlite"
+
+# `intent-router` imports `llm:inference/inference` and nothing composes an
+# actual LLM provider for it anywhere in this tree yet. `mock-provider` is the
+# deterministic, offline, unable-to-spend-anything satisfier — the same swap
+# point the `llm:inference` world comment says exists for exactly this case.
+# A real deployment plugs `openai-provider` or `anthropic-provider` in here
+# instead; this file is deliberately the demoable, free-to-run default rather
+# than one that needs an API key to compose at all.
+components = ["intent-router", "mock-provider"]
+strategy = "fused"
+
+# KEEP TABLES LAST — see gate.toml's note: every key after a `[table]` header
+# belongs to that table, so `components = [...]` above this point would be
+# read as config and rejected.
+[config]
+mock-model = "mock-intent-router"
+# First match wins. Keyed on words a real query would carry, NOT on the
+# domain names themselves — the system prompt intent-router sends lists all
+# four domain names in its own instructions, so a rule keyed on
+# "helpdesk-domain" would match every request including ones about groceries.
+mock-script = '''{"rules": [
+  {"when": "printer",           "text": "{\"domain\": \"helpdesk-domain\", \"confidence\": 0.92}"},
+  {"when": "password reset",    "text": "{\"domain\": \"helpdesk-domain\", \"confidence\": 0.9}"},
+  {"when": "vet appointment",   "text": "{\"domain\": \"clinic-domain\", \"confidence\": 0.9}"},
+  {"when": "see a doctor",      "text": "{\"domain\": \"clinic-domain\", \"confidence\": 0.88}"},
+  {"when": "book a studio",     "text": "{\"domain\": \"studio-domain\", \"confidence\": 0.9}"},
+  {"when": "rehearsal space",   "text": "{\"domain\": \"studio-domain\", \"confidence\": 0.85}"},
+  {"when": "order groceries",   "text": "{\"domain\": \"grocery-domain\", \"confidence\": 0.92}"},
+  {"when": "buy some milk",     "text": "{\"domain\": \"grocery-domain\", \"confidence\": 0.87}"},
+  {"when": "*",                 "text": "{\"domain\": \"unknown\", \"confidence\": 0.0}"}
+]}'''
