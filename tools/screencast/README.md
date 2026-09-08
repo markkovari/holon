@@ -21,7 +21,7 @@ and `to-gif.sh` converts it to a palette-optimized, gifsicle-shrunk gif.
 
 ```bash
 docker compose -f ../../infra/compose.yaml up -d nats
-just host-eshop &                       # from repo root; gateway on :3100
+cargo xtask host eshop &                       # from repo root; gateway on :3100
 node eshop.mjs
 bash to-gif.sh videos/eshop/*.webm ../../docs/media/eshop.gif 800 10
 ```
@@ -52,7 +52,7 @@ bash to-gif.sh videos/conduit/*.webm ../../docs/media/conduit-conformance.gif 86
 in the other over SSE:
 
 ```bash
-just host-pulse &                       # from repo root; board on :3015
+cargo xtask host pulse &                       # from repo root; board on :3015
 node pulse.mjs
 bash to-gif.sh videos/pulse/*.webm ../../docs/media/pulse.gif 800 12
 ```
@@ -62,7 +62,7 @@ Done, the sink is taken down so events retry into the dead-letter tray, then a
 Replay redelivers — the whole retry/backoff/DLQ story live over SSE:
 
 ```bash
-just host-pipeline &                    # from repo root; board on :3016
+cargo xtask host pipeline &                    # from repo root; board on :3016
 node pipeline.mjs
 bash to-gif.sh videos/pipeline/*.webm ../../docs/media/pipeline.gif 820 12
 ```
@@ -71,7 +71,7 @@ bash to-gif.sh videos/pipeline/*.webm ../../docs/media/pipeline.gif 820 12
 monotone cohorts light up), then trip the kill-switch (all dark):
 
 ```bash
-just host-flags &                       # from repo root; console on :3017
+cargo xtask host flags &                       # from repo root; console on :3017
 node flags.mjs
 bash to-gif.sh videos/flags/*.webm ../../docs/media/flags.gif 820 12
 ```
@@ -80,7 +80,7 @@ bash to-gif.sh videos/flags/*.webm ../../docs/media/flags.gif 820 12
 weight (sticky re-bucket), convert tiles and watch per-arm rate bars pull apart:
 
 ```bash
-just host-abtest &                      # from repo root; console on :3018
+cargo xtask host abtest &                      # from repo root; console on :3018
 node abtest.mjs
 bash to-gif.sh videos/abtest/*.webm ../../docs/media/experiment.gif 840 12
 ```
@@ -89,7 +89,7 @@ bash to-gif.sh videos/abtest/*.webm ../../docs/media/experiment.gif 840 12
 filter by facet, repeat a query to see the ⚡ cached badge + hit-ratio climb:
 
 ```bash
-just host-search &                      # from repo root; console on :3019
+cargo xtask host search &                      # from repo root; console on :3019
 node search.mjs
 bash to-gif.sh videos/search/*.webm ../../docs/media/search.gif 720 12
 ```
@@ -98,7 +98,7 @@ bash to-gif.sh videos/search/*.webm ../../docs/media/search.gif 720 12
 watch the key LOCK with a countdown + the quota gauge drain, then Reset:
 
 ```bash
-just host-ratelimit &                   # from repo root; wall on :3020
+cargo xtask host ratelimit &                   # from repo root; wall on :3020
 node ratelimit.mjs
 bash to-gif.sh videos/ratelimit/*.webm ../../docs/media/ratelimit.gif 760 12
 ```
@@ -120,7 +120,7 @@ document. Each pane is a distinct replica (`?rid=`); an edit in one is merged
 server-side (crdt:merge) and pushed to the other over SSE.
 
 ```bash
-just host-scribe &                      # from repo root; editor on :3037
+cargo xtask host scribe &                      # from repo root; editor on :3037
 node scribe.mjs
 bash to-gif.sh videos/scribe/*.webm ../../docs/media/scribe.gif 800 10
 ```
@@ -130,7 +130,7 @@ flaky job retries with backoff then completes, a boom job dead-letters, then
 Replay requeues it. The SSE board self-ticks.
 
 ```bash
-just host-jobs &                        # from repo root; board on :3038
+cargo xtask host jobs &                        # from repo root; board on :3038
 node jobs.mjs
 bash to-gif.sh videos/jobs/*.webm ../../docs/media/jobs.gif 900 10
 ```
@@ -140,7 +140,7 @@ Golem backend; jobs execute as durable Golem workers and land in Done with the
 worker's climbing counter value. Records the real cluster board.
 
 ```bash
-just host-jobs &                        # the native lane (the `k8s-jobs` recipe went
+cargo xtask host jobs &                        # the native lane (the `k8s-jobs` recipe went
                                         # with the Kubernetes lane; docs/apps/JOBS.md)
 node jobs-golem.mjs                      # JOBS_URL defaults to the cluster DNS
 bash to-gif.sh videos/jobs-golem/*.webm ../../docs/media/jobs-golem.gif 820 9
@@ -151,7 +151,7 @@ Red, Bob joins as Yellow), moves validated server-side and streamed to both
 boards over SSE, red wins and the four-in-a-row glows.
 
 ```bash
-just host-arena &                       # from repo root; game on :3039
+cargo xtask host arena &                       # from repo root; game on :3039
 node arena.mjs
 bash to-gif.sh videos/arena/*.webm ../../docs/media/arena.gif 700 8
 ```
@@ -162,7 +162,7 @@ project lead: Reports charts (recharts donut + bars), range + Everyone/Mine
 toggles, and a pomodoro timer.
 
 ```bash
-just host-tempo &                       # from repo root; builds the UI + serves :3040
+cargo xtask host tempo &                       # from repo root; builds the UI + serves :3040
 node tempo.mjs                          # seeds data, then records the SPA (mobile)
 bash to-gif.sh videos/tempo/*.webm ../../docs/media/tempo.gif 400 10
 ```
@@ -173,7 +173,7 @@ after which calls come back "shed — upstream not called" and the `shed` counte
 climbs while `calls` stops. The cooldown runs out and one probe closes it again.
 
 ```bash
-just host-mesh &                        # from repo root; SPA :3050, upstream :3051
+cargo xtask host mesh &                        # from repo root; SPA :3050, upstream :3051
 node mesh.mjs
 bash to-gif.sh videos/mesh/*.webm ../../docs/media/mesh.gif 820 10
 ```
@@ -189,7 +189,7 @@ Restart the host before re-recording: its kv is in-memory, and an existing "ada"
 makes the first enrolment correctly refuse without a session.
 
 ```bash
-just host-passkey &                     # from repo root; SPA on :3053
+cargo xtask host passkey &                     # from repo root; SPA on :3053
 node passkey.mjs                        # navigates to localhost:3053 (the RP ID)
 bash to-gif.sh videos/passkey/*.webm ../../docs/media/passkey.gif 700 10
 ```
@@ -201,7 +201,7 @@ emitted forms — `wac plug` script, `.wac` file, wasmCloud workload — and hit
 for a real composed component. Needs the palette seeded, which `host-studio` does.
 
 ```bash
-just host-studio &                      # from repo root; SPA :3054, seeds 109 components
+cargo xtask host studio &                      # from repo root; SPA :3054, seeds 109 components
 node studio.mjs
 bash to-gif.sh videos/studio/*.webm ../../docs/media/studio.gif 780 6
 ```
@@ -216,7 +216,7 @@ opens is written by `comp-trace-seed` through `trace.rs` — the driver's own co
 path — so what is on screen is the shape a real run records (ADR-0092).
 
 ```bash
-just compose-console                    # from repo root; needs docker for SurrealDB
+cargo xtask compose console                    # from repo root; needs docker for SurrealDB
 node console.mjs                        # starts + tears down everything itself
 bash to-gif.sh videos/console/*.webm ../../docs/media/console.gif 900 12
 ```

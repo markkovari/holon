@@ -20,7 +20,7 @@ component embeds at build time — so the composed wasm serves its own UI.
 ## Run it
 
 ```bash
-just host-track       # from repo root; tracker on http://127.0.0.1:3025
+cargo xtask host track       # from repo root; tracker on http://127.0.0.1:3025
 ```
 
 `build-track-ui` (npm + Vite) runs automatically before the compose. Open the

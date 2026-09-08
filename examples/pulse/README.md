@@ -15,7 +15,7 @@ body while the guest keeps writing `data:` frames.
 ## Try it
 
 ```bash
-just host-pulse      # serve the SPA + API on :3015
+cargo xtask host pulse      # serve the SPA + API on :3015
 # open http://127.0.0.1:3015 in TWO windows (or ?name=Ada / ?name=Bob) and chat
 just e2e-pulse       # Rust e2e: a held-open SSE reader gets a message posted by another request
 ```

@@ -33,7 +33,7 @@ fn catalogue() -> Option<Catalog> {
     if cat.is_empty() {
         eprintln!(
             "SKIPPED: nothing is built, so no contract was checked by this run. \
-             `just build` first."
+             `cargo xtask build --force` first."
         );
         return None;
     }

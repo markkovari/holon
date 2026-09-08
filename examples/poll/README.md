@@ -5,7 +5,7 @@ serves both pages and the API, composed with four capabilities that already exis
 here.
 
 ```bash
-just host-poll        # → http://127.0.0.1:3057
+cargo xtask host poll        # → http://127.0.0.1:3057
 just e2e-poll         # the Playwright suite against the real stack
 ```
 

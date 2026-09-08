@@ -71,7 +71,7 @@ fn pool() -> Option<Vec<Capability>> {
     let root = repo_root();
     let catalog = Catalog::scan(&default_dirs(&root));
     if catalog.is_empty() {
-        eprintln!("SKIPPED: nothing is built, so no capability was searched. `just build` first.");
+        eprintln!("SKIPPED: nothing is built, so no capability was searched. `cargo xtask build --force` first.");
         return None;
     }
     // App counts are the tie-breaker; an empty map only removes the nudge.
@@ -192,7 +192,7 @@ fn the_same_capability_was_not_built_twice() {
     let root = repo_root();
     let catalog = Catalog::scan(&default_dirs(&root));
     if catalog.is_empty() {
-        eprintln!("SKIPPED: nothing is built, so no duplicate could be seen. `just build` first.");
+        eprintln!("SKIPPED: nothing is built, so no duplicate could be seen. `cargo xtask build --force` first.");
         return;
     }
 
@@ -356,7 +356,7 @@ fn the_catalogue_and_the_artifacts_agree_on_what_is_reusable() {
     let root = comp_reconciler::fleet::repo_root();
     let catalog = Catalog::scan(&default_dirs(&root));
     if catalog.is_empty() {
-        eprintln!("SKIPPED: nothing is built — run `just build`");
+        eprintln!("SKIPPED: nothing is built — run `cargo xtask build --force`");
         return;
     }
     // The PROGRAM, not a committed snapshot of what it once said. There used to be a

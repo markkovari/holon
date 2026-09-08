@@ -81,7 +81,7 @@ slot — regardless of how the host schedules the requests.
 ## Run it
 
 ```bash
-just host-booked    # composes the component, builds the React UI, serves on :3041
+cargo xtask host booked    # composes the component, builds the React UI, serves on :3041
 # register as `owner` to create a resource + weekly availability;
 # as a `member` to book free slots.
 just e2e-booked     # auth + availability + no-double-book (incl. a concurrency
@@ -89,7 +89,7 @@ just e2e-booked     # auth + availability + no-double-book (incl. a concurrency
 ```
 
 The frontend lives in `examples/booked/ui` (Vite + React + shadcn/ui);
-`just host-booked` builds it to `examples/booked/dist`, which the host serves.
+`cargo xtask host booked` builds it to `examples/booked/dist`, which the host serves.
 
 ## Rungs left
 

@@ -92,7 +92,7 @@ attempts before they cost a password hash).
    recovers after the window.
 3. **Wall UI** — a burst button + a hammer-hold, an attempt bar to the ceiling,
    a LOCKED latch with a live countdown, and a quota gauge draining/refilling.
-   Served via `--static-dir`; `just host-ratelimit`, hold the button, watch it
+   Served via `--static-dir`; `cargo xtask host ratelimit`, hold the button, watch it
    trip.
 4. **Bench** — the backpressure dimension: decision latency under a sustained
    hammer, and correctness (exactly `ceiling` allowed before the first 429; the

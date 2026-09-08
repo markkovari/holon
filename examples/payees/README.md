@@ -17,7 +17,7 @@ tests/payees.rs          # e2e: /verify + add (valid/bad) + ownership
 
 ```bash
 # from the repo root:
-just host-payees         # composes the component + builds the UI + serves on :3047
+cargo xtask host payees         # composes the component + builds the UI + serves on :3047
 ```
 
 Open `http://127.0.0.1:3047`: **register** a new account — you get a few demo

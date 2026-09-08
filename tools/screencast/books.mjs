@@ -4,7 +4,7 @@
 // unbalanced one (Post stays disabled), then shows the Reports — trial balance,
 // P&L, and a balance sheet that BALANCES.
 //
-// Prereq: from repo root  `just host-books &`   (builds the UI, serves on :3045)
+// Prereq: from repo root  `cargo xtask host books &`   (builds the UI, serves on :3045)
 import { chromium } from "playwright";
 
 const BASE = process.env.BOOKS_URL || "http://127.0.0.1:3045";

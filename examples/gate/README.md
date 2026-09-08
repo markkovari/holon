@@ -30,7 +30,7 @@ binary from `providers/golem-workflow`.)
 
 ```bash
 # from the repo root:
-just host-gate           # composes the component + builds the UI + serves on :3044
+cargo xtask host gate           # composes the component + builds the UI + serves on :3044
 ```
 
 Open `http://127.0.0.1:3044`: **Burst ×10** the rate limiter to watch the token

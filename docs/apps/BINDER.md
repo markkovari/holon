@@ -17,7 +17,7 @@ guess, and you correct the ones it got wrong. From there it is a portfolio: what
 each card cost, what it is worth, and what selling has already made.
 
 ```bash
-just host-binder      # composes, builds the SPA, serves on 0.0.0.0:3210
+cargo xtask host binder      # composes, builds the SPA, serves on 0.0.0.0:3210
 just e2e-binder       # the composed suite
 ```
 
@@ -108,7 +108,7 @@ that invention is most of the line.
 it with no tunnel:
 
 ```bash
-just host-binder &
+cargo xtask host binder &
 open http://$(hostname):3210        # or http://<tailscale-ip>:3210
 ```
 
@@ -147,7 +147,7 @@ NAMES, and counting the id the collection is keyed on reads that as four and fou
   `tools/claude-shim.mjs`: `components/anthropic-vision` reads `vision:base-url` from
   config and demands a secret only when it is pointed at `anthropic.com`, so the
   default deployment runs the vision call on a subscription with no key anywhere in
-  the app. Start the shim, then `just host-binder`. Pointing it back at the metered
+  the app. Start the shim, then `cargo xtask host binder`. Pointing it back at the metered
   API is one config line plus a granted secret (`fixtures/photo-critic.yaml` is the
   shape) — and the interface a guest sees is identical either way, which is what
   makes it a deploy-time choice.

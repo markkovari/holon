@@ -35,7 +35,7 @@ backend a vet-clinic frontend calls.
 Prereqs: a cluster with the `wasmcloud-operator`, `wadm`, and JetStream NATS
 running (the repo's `infra/k8s` sets these up), plus the in-cluster registry
 reachable from the host at `registry.wasmcloud.svc.cluster.local:5000` (NodePort
-`:30500` from the host machine). Components built: `just build && just compose`.
+`:30500` from the host machine). Components built: `cargo xtask build --force && just compose`.
 
 ```bash
 # 1. push the two components to the in-cluster registry (host-side via :30500)

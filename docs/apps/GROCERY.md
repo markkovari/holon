@@ -68,10 +68,10 @@ All reads enforce check-digit validation in WebAssembly so damaged codes or misr
 
 ```bash
 # 1. Compose the grocery domain component with the React bundle and barcode reader:
-just compose-grocery
+cargo xtask compose grocery
 
 # 2. Run the composed WebAssembly component on the native host (:3055):
-just host-grocery
+cargo xtask host grocery
 # Or: node examples/grocery/server.mjs
 
 # 3. Open in browser:

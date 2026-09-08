@@ -19,7 +19,7 @@ tests/transit.rs         # e2e: auth + fares + single-use (concurrency race) + d
 
 ```bash
 # from the repo root:
-just host-transit        # composes the component + builds the UI + serves on :3042
+cargo xtask host transit        # composes the component + builds the UI + serves on :3042
 ```
 
 Open `http://127.0.0.1:3042`: **register** as `rider` to buy fares and show their

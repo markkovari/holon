@@ -4,7 +4,7 @@
 # droplet. (For HTTPS later, front :8080 with a DO Load Balancer or Cloudflare.)
 #
 # Prereqs to BUILD locally (produce the artifacts the image copies in):
-#   just compose-tempo && just build-tempo-ui
+#   cargo xtask compose tempo && just build-tempo-ui
 #
 # Run against a hosted Redis (the usual case):
 #   cp examples/tempo/.env.example examples/tempo/.env   # set REDIS_URL=rediss://...

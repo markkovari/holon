@@ -19,7 +19,7 @@ tests/buzz.rs            # e2e: game loop + speed-weighted scoring + leaderboard
 
 ```bash
 # from the repo root:
-just host-buzz           # composes the component + builds the UI + serves on :3049
+cargo xtask host buzz           # composes the component + builds the UI + serves on :3049
 ```
 
 Open `http://127.0.0.1:3049` on one device and choose **Host a game** (sign in —

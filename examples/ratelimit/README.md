@@ -13,7 +13,7 @@ decision gate that streams each verdict.
 ## Run it
 
 ```bash
-just host-ratelimit        # compose + serve on http://127.0.0.1:3020
+cargo xtask host ratelimit        # compose + serve on http://127.0.0.1:3020
 ```
 
 Open the page (max 10 attempts / 15s window, quota 20 / 30s):

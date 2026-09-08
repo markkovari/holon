@@ -4,7 +4,7 @@
 // then adds a second — the IBAN is validated by the composed iban:validate
 // component as you type.
 //
-// Prereq: from repo root  `just host-payees &`   (builds the UI, serves on :3047)
+// Prereq: from repo root  `cargo xtask host payees &`   (builds the UI, serves on :3047)
 import { chromium } from "playwright";
 
 const BASE = process.env.PAYEES_URL || "http://127.0.0.1:3047";

@@ -18,7 +18,7 @@ tests/lms.rs             # e2e: multi-role flow + grade reconciliation + certifi
 
 ```bash
 # from the repo root:
-just host-lms            # composes the component + builds the UI + serves on :3048
+cargo xtask host lms            # composes the component + builds the UI + serves on :3048
 ```
 
 Open `http://127.0.0.1:3048`: **register** as `instructor` (you get a seeded demo

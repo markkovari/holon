@@ -16,7 +16,7 @@ A composed WebAssembly application showcasing IoT Home Automation.
 
 ## Run
 ```bash
-just compose-smart-home
-just host-smart-home
+cargo xtask compose smart-home
+cargo xtask host smart-home
 just e2e-smart-home
 ```

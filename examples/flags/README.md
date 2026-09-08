@@ -14,7 +14,7 @@ just exposes it and streams each change.
 ## Run it
 
 ```bash
-just host-flags             # compose + serve on http://127.0.0.1:3017
+cargo xtask host flags             # compose + serve on http://127.0.0.1:3017
 ```
 
 Open the page:

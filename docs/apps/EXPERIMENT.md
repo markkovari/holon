@@ -133,7 +133,7 @@ and simple gates).
 4. **Console UI** — variant weight editor + a 100-tile grid colored by arm +
    per-variant conversion-rate bars. Shift a weight and watch sticky
    reassignment; click subjects to convert and watch the winning arm's bar pull
-   ahead. `just host-abtest`.
+   ahead. `cargo xtask host abtest`.
 5. **Bench** *(follow-up)* — assignment throughput + distribution accuracy (does
    a 50/25/25 config actually split ~50/25/25 across 10k subjects?) and counter
    contention under concurrent `incr`. Distribution accuracy is already asserted

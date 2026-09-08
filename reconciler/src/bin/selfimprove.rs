@@ -273,7 +273,7 @@ fn build_probe(components: &Path, component: &str, tag: &str) -> Result<Vec<u8>>
     // Generate the WIT bindings first. cargo-component hardcodes wasip1 and is
     // used only for codegen (check is enough); a fresh source tree has no
     // `bindings.rs` until this runs, and then a plain build targets wasip2. This
-    // is exactly what `just build` does, inlined so any source tree is buildable.
+    // is exactly what `cargo xtask build --force` does, inlined so any source tree is buildable.
     let chk = Command::new("cargo")
         .current_dir(components)
         .args(["component", "check", "--release", "-p", component])

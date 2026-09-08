@@ -3,7 +3,7 @@
 // 429s), burst the throttle (GCRA spacing), and submit items to a batch that
 // coalesces and flushes. Recorded at a desktop viewport (three columns).
 //
-// Prereq: from repo root  `just host-gate &`   (builds the UI, serves on :3044)
+// Prereq: from repo root  `cargo xtask host gate &`   (builds the UI, serves on :3044)
 import { chromium } from "playwright";
 
 const BASE = process.env.GATE_URL || "http://127.0.0.1:3044";

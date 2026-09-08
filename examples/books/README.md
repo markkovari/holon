@@ -18,7 +18,7 @@ tests/books.rs           # e2e: balanced/unbalanced entries + trial/P&L/balance-
 
 ```bash
 # from the repo root:
-just host-books          # composes the component + builds the UI + serves on :3045
+cargo xtask host books          # composes the component + builds the UI + serves on :3045
 ```
 
 Open `http://127.0.0.1:3045`: **register** a new account — you get a demo chart +

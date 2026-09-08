@@ -146,7 +146,7 @@ worker over HTTP.)
 ## Run it
 
 ```bash
-just host-gate    # composes the component, builds the React UI, serves on :3044
+cargo xtask host gate    # composes the component, builds the React UI, serves on :3044
 # burst the rate limiter / throttle; submit items to a batch and watch it flush.
 just e2e-gate     # token bucket + GCRA (deterministic) + atomic batch flush +
                   # a concurrency probe that documents the shared-store CAS breach

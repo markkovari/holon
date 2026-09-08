@@ -16,7 +16,7 @@ tests/arena.rs           # e2e: create/join, rule enforcement, a win, live spect
 
 ```bash
 # from the repo root:
-just host-arena          # composes arena-domain (+ records + ids); SPA on :3039
+cargo xtask host arena          # composes arena-domain (+ records + ids); SPA on :3039
 ```
 
 Open two windows on `http://127.0.0.1:3039`: **New game** in one, paste the game

@@ -14,7 +14,7 @@ transition.
 ## Run it
 
 ```bash
-just host-pipeline          # compose + serve on http://127.0.0.1:3016
+cargo xtask host pipeline          # compose + serve on http://127.0.0.1:3016
 ```
 
 Open the page:

@@ -4,7 +4,7 @@
 // the Add-panel form takes a title, a kind and "label value" lines and a new
 // donut appears — all with no charting library in the frontend.
 //
-// Prereq: from repo root  `just host-dashboards &`   (builds the UI, serves on :3043)
+// Prereq: from repo root  `cargo xtask host dashboards &`   (builds the UI, serves on :3043)
 import { chromium } from "playwright";
 
 const BASE = process.env.DASHBOARDS_URL || "http://127.0.0.1:3043";

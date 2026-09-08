@@ -174,7 +174,7 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
              check command must build the crate and its providers before this runs, \
              and a pass for a component nothing composed is worse than a failure"
         );
-        eprintln!("SKIPPED [{crate_name}]: nothing is built — run `just build`");
+        eprintln!("SKIPPED [{crate_name}]: nothing is built — run `cargo xtask build --force`");
         return None;
     }
     if catalog.bytes(crate_name).is_none() {
@@ -183,7 +183,7 @@ pub fn compose(crate_name: &str) -> Option<PathBuf> {
             "[{crate_name}] is not in the catalogue while judging a candidate — the \
              check command must build it before this runs"
         );
-        eprintln!("SKIPPED [{crate_name}]: not built — run `just build`");
+        eprintln!("SKIPPED [{crate_name}]: not built — run `cargo xtask build --force`");
         return None;
     }
     match compose_to(crate_name, &catalog, &target) {
@@ -514,7 +514,7 @@ pub fn requires_capability(crate_name: &str, interface: &str, why: &str) {
         .join("wasm32-wasip2/release")
         .join(format!("{}.wasm", crate_name.replace('-', "_")));
     let Ok(bytes) = std::fs::read(&path) else {
-        panic!("cannot read {path:?} to check its imports — run `just build`");
+        panic!("cannot read {path:?} to check its imports — run `cargo xtask build --force`");
     };
     let surface = comp_reconciler::plug::surface(&bytes)
         .unwrap_or_else(|e| panic!("cannot read the surface of {crate_name}: {e}"));

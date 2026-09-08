@@ -4,7 +4,7 @@
 // SSE. Red stacks a column and wins; the winning line lights up in both panes.
 // Nothing is faked; it drives the live SPA.
 //
-// Prereq: from repo root  `just host-arena &`   (serves on :3039)
+// Prereq: from repo root  `cargo xtask host arena &`   (serves on :3039)
 import { chromium } from "playwright";
 
 const BASE = process.env.ARENA_URL || "http://127.0.0.1:3039";

@@ -17,7 +17,7 @@ OpenAI, Together, Groq, vLLM, or a local Ollama / llama.cpp `--api` server.
 
 ```bash
 # offline / tests — the deterministic mock provider:
-just compose-ai          # -> ai_inference.composed.wasm   (+ llm-inference mock)
+cargo xtask compose ai          # -> ai_inference.composed.wasm   (+ llm-inference mock)
 
 # production — the real OpenAI-compatible client, SAME domain layer:
 just compose-ai-openai   # -> ai_inference.openai.composed.wasm (+ openai-provider)

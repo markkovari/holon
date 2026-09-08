@@ -15,7 +15,7 @@ vet_domain.composed.wasm
   + search-index                           search:index (pet search)
 ```
 
-Built with `just compose-vet`. The only remaining imports are generic WASI
+Built with `cargo xtask compose vet`. The only remaining imports are generic WASI
 (`keyvalue`, `clocks`, `random`, `config`, `http`) — bound by the host.
 
 ## The point: nothing is language- or host-locked
@@ -35,7 +35,7 @@ Built with `just compose-vet`. The only remaining imports are generic WASI
 
 ```bash
 # from comp/: build + compose the app wasm
-just compose-vet            # -> components/target/vet_domain.composed.wasm
+cargo xtask compose vet            # -> components/target/vet_domain.composed.wasm
 cp components/target/vet_domain.composed.wasm examples/jco-vet-domain/
 
 cd examples/jco-vet-domain

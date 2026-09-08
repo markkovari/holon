@@ -18,7 +18,7 @@ tests/booked.rs          # e2e: auth + availability + no-double-book (concurrenc
 
 ```bash
 # from the repo root:
-just host-booked         # composes the component + builds the UI + serves on :3041
+cargo xtask host booked         # composes the component + builds the UI + serves on :3041
 ```
 
 Open `http://127.0.0.1:3041`: **register** as `owner` to create resources and set

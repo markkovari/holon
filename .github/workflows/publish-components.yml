@@ -20,7 +20,7 @@
 #
 # ## What it publishes
 #
-# Every `.wasm` from `just build`, at `ghcr.io/<owner>/holon/<component-name>`,
+# Every `.wasm` from `cargo xtask build --force`, at `ghcr.io/<owner>/holon/<component-name>`,
 # tagged with the first twelve hex of the component's own sha256 (ADR-0006: a tag is
 # human convenience and can never be the thing deployed). The digests are collected
 # into `components.lock` and attached to the run, so a consumer can pin what this

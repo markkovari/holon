@@ -91,7 +91,7 @@ fn no_component_reaches_for_a_host_capability_nobody_granted() {
     let catalog = Catalog::scan(&[dir.clone()]);
     assert!(
         catalog.names().count() > 100,
-        "only {} components in {} — run `just build` first",
+        "only {} components in {} — run `cargo xtask build --force` first",
         catalog.names().count(),
         dir.display()
     );

@@ -6,7 +6,7 @@
 //! against desired state, and a `comp-ingress` routing by `Host` header. All three
 //! already exist and are measured; what did not exist is a way to INSTALL them.
 //!
-//! `just host-platform` is the localhost version of exactly this topology — NATS,
+//! `cargo xtask host platform` is the localhost version of exactly this topology — NATS,
 //! the control plane, the reconciler and one node, started in a `mktemp -d` under a
 //! `trap kill`. These units are that recipe with the trap replaced by
 //! `Restart=always` and the temp directory replaced by `StateDirectory`.

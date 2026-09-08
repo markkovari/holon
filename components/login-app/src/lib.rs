@@ -3,7 +3,7 @@
 //!
 //! It imports `session:store`, `config:store` and `secrets:vault` and wires
 //! them together; `wac plug` satisfies those three imports with the real
-//! capability components at build time (see `just compose-login`), producing a
+//! capability components at build time (see `cargo xtask compose login`), producing a
 //! single self-contained component. This is the multi-capability counterpart to
 //! auth-guard composing rate-limiter: there one component imported one other;
 //! here one component imports three.

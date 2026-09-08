@@ -4,7 +4,7 @@
 // in the Dead-letter column; then Replay requeues it. The SSE board self-ticks,
 // so jobs advance on their own once enqueued.
 //
-// Prereq: from repo root  `just host-jobs &`   (serves on :3038; max-attempts=2,
+// Prereq: from repo root  `cargo xtask host jobs &`   (serves on :3038; max-attempts=2,
 // base-backoff=1s so retries/DLQ happen within the clip).
 import { chromium } from "playwright";
 

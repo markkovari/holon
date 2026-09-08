@@ -99,7 +99,7 @@ rather than importing it.
 3. **Challenge login + session + browser UI** — a live code (or a recovery code)
    mints a `session:store` session; the SPA walks enroll → activate → login.
    e2e proves a wrong code is rejected, a recovery code is **single-use**, and
-   logout revokes the session. `just host-authgate`, enroll and log in.
+   logout revokes the session. `cargo xtask host authgate`, enroll and log in.
 4. **Bench** — the crypto dimension: TOTP verify throughput and vault
    seal/unseal latency per login. See `bench/AUTHGATE-BENCH.md`.
 

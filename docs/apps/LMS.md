@@ -61,7 +61,7 @@ issues only after passing all quizzes, and a not-yet-passing student is refused.
 ## Run it
 
 ```bash
-just host-lms     # composes the component, builds the React UI, serves on :3048
+cargo xtask host lms     # composes the component, builds the React UI, serves on :3048
 # register as `instructor` (seeded a demo course) or `student` (enroll + take it).
 just e2e-lms      # multi-role flow + grade reconciliation + certificate gating
 ```

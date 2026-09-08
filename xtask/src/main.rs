@@ -382,6 +382,18 @@ fn compose_app(app: Option<&str>) -> Result<()> {
                 run_cmd(&mut npm, &format!("npm run build ({name} UI)"))?;
             }
 
+            // A handful of names predate the `<name>-domain` convention and
+            // never followed it — the old Justfile recipes named the real
+            // crate directly. Checked before the convention below, which
+            // would otherwise look for a `<name>-domain` that never existed.
+            let aliased = match name {
+                "eshop" => Some("eshop-gateway"),
+                "login" => Some("login-app"),
+                "webhook" => Some("webhook-ingest"),
+                "ai" => Some("ai-inference"),
+                _ => None,
+            };
+
             // Most apps' entry point is `<name>-domain` by convention — and
             // that has to stay the FIRST check: `fs-watcher`/`lan-scanner`/
             // `image-optimizer` have both a bare capability crate (exports
@@ -392,7 +404,9 @@ fn compose_app(app: Option<&str>) -> Result<()> {
             // Only fall through to the bare name for a component that IS its
             // own entry point with no `-domain` sibling at all
             // (`intent-router`).
-            let domain_name = if name.ends_with("-domain") {
+            let domain_name = if let Some(a) = aliased {
+                a.to_string()
+            } else if name.ends_with("-domain") {
                 name.to_string()
             } else if Path::new(&format!("components/{name}-domain")).is_dir() {
                 format!("{name}-domain")

@@ -1,6 +1,6 @@
 // Declarative composition of the login-app consumer with its three
 // capabilities, the `wac compose` counterpart to the imperative `wac plug`
-// chain in `just compose-login`. Build with `just compose-login-wac`, which
+// chain in `cargo xtask compose login`. Build with `just compose-login-wac`, which
 // passes each package's wasm via --dep.
 //
 // `wac plug` infers the wiring from matching imports/exports; this file states

@@ -845,7 +845,7 @@ Takeaways:
   of the ladder on purpose — a create-flood benches the guard's 429 path, not
   the app.
 
-Reproduce: `just host-shortlink` (add `--pool` to the recipe's flags for the
+Reproduce: `cargo xtask host shortlink` (add `--pool` to the recipe's flags for the
 pooled row), seed one link, then
 `oha -z 10s -c 50 http://127.0.0.1:3008/{code}`.
 
@@ -892,7 +892,7 @@ Takeaways:
   left out: minting floods the KV with records and drain benches the
   receiver, not the portal.
 
-Reproduce: `just host-portal` (add `--pool` for the pooled row), register +
+Reproduce: `cargo xtask host portal` (add `--pool` for the pooled row), register +
 login + create project + mint a high-limit key, then
 `oha -z 10s -c 50 -m POST -H "x-api-key: dk_…" http://127.0.0.1:3009/api/gateway/echo`.
 
@@ -973,7 +973,7 @@ Takeaways:
   app); status-page's `POST /api/tick` (probes external targets on a timer
   cadence — the bench would measure the probe target).
 
-Reproduce: `just host-relay` / `host-ledger` / `host-status` (add `--pool` to
+Reproduce: `cargo xtask host relay` / `host-ledger` / `host-status` (add `--pool` to
 the recipe's flags for the pooled rows), seed via the routes in each app's
 `GET /`, then e.g.
 `oha -z 10s -c 50 -m POST -d '{"order":42}' -H "x-relay-signature: <hex>" -H "x-relay-delivery: bench-1" http://127.0.0.1:3010/hook/{id}`.

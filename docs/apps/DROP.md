@@ -94,7 +94,7 @@ request/response one).
 3. **Signed download + browser UI** — `webhook:sign` mints an expiring link; the
    SPA shows the ticket → upload → sign flow live. e2e proves the link
    round-trips the exact bytes and a **tampered signature is refused (403)**.
-   `just host-drop`, drop a file and watch the three steps.
+   `cargo xtask host drop`, drop a file and watch the three steps.
 4. **Bench** — the control/data split dimension: ticket-mint throughput (bytes
    never touched) vs upload throughput, and signature-verify overhead per
    download. See `bench/DROP-BENCH.md`.

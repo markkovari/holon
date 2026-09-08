@@ -4,7 +4,7 @@
 // headless browser has no camera) to a big green ACCEPTED, and re-scans the same
 // single ticket to a red REJECTED "already used".
 //
-// Prereq: from repo root  `just host-transit &`   (builds the UI, serves on :3042)
+// Prereq: from repo root  `cargo xtask host transit &`   (builds the UI, serves on :3042)
 import { chromium } from "playwright";
 
 const BASE = process.env.TRANSIT_URL || "http://127.0.0.1:3042";

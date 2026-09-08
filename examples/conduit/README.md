@@ -16,7 +16,7 @@ crate.
 ```bash
 just conformance-conduit   # OFFICIAL RealWorld Hurl suite → 13/13 files green
 just e2e-conduit           # Rust e2e (ureq) spawns the host, drives the API
-just host-conduit          # serve it yourself on http://0.0.0.0:3008
+cargo xtask host conduit          # serve it yourself on http://0.0.0.0:3008
 ```
 
 `just conformance-conduit` is the headline: it runs the upstream RealWorld Hurl
