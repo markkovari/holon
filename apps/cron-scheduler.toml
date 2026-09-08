@@ -10,10 +10,11 @@ kv = "sqlite"
 
 components = ["cron-scheduler-domain"]
 
-# `comp-cron` (ADR-0095) has to be started separately — deploy tooling
-# renders a unit for the wasm side only, not for the native daemons behind
-# the twelve host capabilities. It reads the deploying user's own crontab —
-# no crontab is a real, non-error answer (an empty job list):
-#   comp-cron --addr 127.0.0.1:8008
+# `comp-cron` (ADR-0095) gets its own systemd unit too — see [[daemon]]
+# below. `holon node render` emits comp-cron.service alongside this app's unit.
 [config]
 cron-url = "http://127.0.0.1:8008"
+
+[[daemon]]
+name = "cron"
+addr = "127.0.0.1:8008"

@@ -10,11 +10,11 @@ kv = "sqlite"
 
 components = ["clipboard-sync-domain"]
 
-# `comp-clipboard` (ADR-0095) has to be started separately — deploy tooling
-# renders a unit for the wasm side only, not for the native daemons behind
-# the twelve host capabilities. It needs a real desktop session (X11/Wayland/
-# macOS pasteboard/Windows clipboard) — it will honestly answer `unavailable`
-# on a headless box rather than crash:
-#   comp-clipboard --addr 127.0.0.1:8003
+# `comp-clipboard` (ADR-0095) gets its own systemd unit too — see [[daemon]]
+# below. `holon node render` emits comp-clipboard.service alongside this app's unit.
 [config]
 clipboard-url = "http://127.0.0.1:8003"
+
+[[daemon]]
+name = "clipboard"
+addr = "127.0.0.1:8003"

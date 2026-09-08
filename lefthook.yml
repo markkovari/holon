@@ -38,6 +38,12 @@ pre-push:
     reconciler-check:
       root: "reconciler/"
       run: cargo check --workspace --bins
+    # Mirrors CI's `native workspaces (cli, --bins)` job. cli/src/main.rs is
+    # the selfhost unit renderer — a pure-function crate with its own inline
+    # test suite, cheap enough to just run in full rather than `check`.
+    cli-check:
+      root: "cli/"
+      run: cargo test
     # Mirrors CI's semgrep job: only findings this push introduces relative to
     # main, not the untouched backlog. Skipped with a clear message rather
     # than blocking a push if semgrep isn't installed locally — CI still

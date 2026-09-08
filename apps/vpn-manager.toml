@@ -10,10 +10,14 @@ kv = "sqlite"
 
 components = ["vpn-manager-domain"]
 
-# `comp-wireguard` (ADR-0095) has to be started separately — deploy tooling
-# renders a unit for the wasm side only, not for the native daemons behind
-# the twelve host capabilities. It needs a real `wg` binary and at least one
-# `--allow-interface`, or it reports zero peers rather than failing:
-#   comp-wireguard --addr 127.0.0.1:8011 --allow-interface wg0
+# `comp-wireguard` (ADR-0095) gets its own systemd unit too — see [[daemon]]
+# below. `holon node render` emits comp-wireguard.service alongside this app's
+# unit, `--allow-interface wg0` and all.
 [config]
 wireguard-url = "http://127.0.0.1:8011"
+
+[[daemon]]
+name = "wireguard"
+addr = "127.0.0.1:8011"
+allow_flag = "allow-interface"
+allow = ["wg0"]

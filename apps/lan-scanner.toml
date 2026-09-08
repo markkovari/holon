@@ -18,10 +18,14 @@ kv = "sqlite"
 # lanes to name the root and derive its links.
 components = ["lan-scanner"]
 
-# `comp-lanscan` (ADR-0095) has to be started separately — deploy tooling
-# renders a unit for the wasm side only, not for the native daemons behind
-# the twelve host capabilities. Start it alongside this app with at least one
-# `--allow-cidr`, or every request answers `unavailable`:
-#   comp-lanscan --addr 127.0.0.1:8005 --allow-cidr 192.168.1.0/24
+# `comp-lanscan` (ADR-0095) gets its own systemd unit too — see [[daemon]]
+# below. `holon node render` emits comp-lanscan.service alongside this app's
+# unit, `--allow-cidr 192.168.1.0/24` and all.
 [config]
 lanscan-url = "http://127.0.0.1:8005"
+
+[[daemon]]
+name = "lanscan"
+addr = "127.0.0.1:8005"
+allow_flag = "allow-cidr"
+allow = ["192.168.1.0/24"]

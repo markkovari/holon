@@ -28,7 +28,6 @@ tests notice.
 | file | from | regenerate |
 |---|---|---|
 | `knowledge-graph` schema | `components/*/` and built wasm | dynamic capabilities (replaces `CATALOG.md` / `CAPABILITY-GRAPH.md`) |
-| [`apps/*.md`](apps/) headers | app specs | `python3 tools/gen-app-specs.py` |
 
 ## Historical, and kept on purpose
 
