@@ -15,7 +15,7 @@
 //!     path in the request, because it can come from a model.
 //!
 //! Config (wasi:config/store):
-//!   fswatch-url    where `comp-fswatch` is listening, e.g. http://127.0.0.1:8car
+//!   fswatch-url    where `comp-fswatch` is listening, e.g. http://127.0.0.1:8000
 //!
 //! It used to return `format!("Watching {} for changes...", dir)` — a sentence
 //! shaped like an answer, which no caller could tell from a real one. That is

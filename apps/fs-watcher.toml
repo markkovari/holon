@@ -13,3 +13,11 @@ artifact = "components/target/fs-watcher.composed.wasm"
 # sqlite: one file under the unit's StateDirectory, so state survives the
 # restarts `Restart=always` makes routine.
 kv = "sqlite"
+
+# `comp-fswatch` (ADR-0095) has to be started separately — deploy tooling
+# renders a unit for the wasm side only, not for the native daemons behind
+# the twelve host capabilities. Start it alongside this app with at least one
+# `--allow-path`, or every request answers `unavailable`:
+#   comp-fswatch --addr 127.0.0.1:8000 --allow-path /var/log
+[config]
+fswatch-url = "http://127.0.0.1:8000"
