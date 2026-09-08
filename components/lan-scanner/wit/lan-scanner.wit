@@ -12,7 +12,7 @@
 // The CIDRs in scope are a daemon-side `--allow-cidr` decision, not a caller
 // argument: a scan request carries no target, exactly as fs-watcher's allowed
 // directories are daemon-side rather than named by the caller.
-package net:lan@0.1.0;
+package net:lan@0.2.0;
 
 interface scanner {
     /// One host, as the scan saw it.

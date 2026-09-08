@@ -4,7 +4,7 @@
 // it shipped as a fake: a single string can hold any sentence, so a plausible
 // list of containers satisfied it exactly as well as a real answer would
 // have. A contract nothing can fail is a contract that proves nothing.
-package os:container@0.1.0;
+package os:container@0.2.0;
 
 interface docker {
     /// One running container, as the daemon's engine reports it.

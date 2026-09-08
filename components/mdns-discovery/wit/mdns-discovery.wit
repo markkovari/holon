@@ -5,7 +5,7 @@
 // wasm32-wasip2 component does not have. See ADR-0095: the daemon behind this
 // (`comp-mdns`) is native for that reason and this component is an HTTP client
 // to it, exactly like `fs-watcher` is to `comp-fswatch`.
-package net:mdns@0.1.0;
+package net:mdns@0.2.0;
 
 interface discovery {
     /// One thing announcing itself on the network.

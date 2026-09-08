@@ -4,7 +4,7 @@
 // shape is why it shipped as a fake: any string satisfies it, including
 // "UNIMPLEMENTED: ...". A contract nothing can fail is a contract that proves
 // nothing.
-package web:browser@0.1.0;
+package web:browser@0.2.0;
 
 interface automation {
     variant browser-error {

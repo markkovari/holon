@@ -6,7 +6,7 @@
 // component does not have. See ADR-0095: the daemon behind this
 // (`comp-uinotify`) is native for that reason and this component is an HTTP
 // client to it, exactly like `fs-watcher` is to `comp-fswatch`.
-package os:ui@0.1.0;
+package os:ui@0.2.0;
 
 interface notifications {
     variant notify-error {

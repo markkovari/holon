@@ -1,5 +1,5 @@
 // media:image — shrink a picture by re-encoding it, as a contract.
-package media:image@0.1.0;
+package media:image@0.2.0;
 
 interface optimizer {
     variant image-error {

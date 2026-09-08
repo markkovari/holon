@@ -11,7 +11,7 @@
 // `triage-assist-domain` and `doc-search-domain` point `ai:inference` at
 // ../ai-inference/wit, `local-ai-domain` pointed it at ../llm-local/wit, and
 // nothing in the manifest says which a composer should believe.
-package ai:local@0.1.0;
+package ai:local@0.2.0;
 
 interface local {
     /// A local model server is not there, or refused to answer. Retryable —

@@ -9,7 +9,7 @@
 // kernel module — a wasm32-wasip2 guest has neither. So the read happens in a
 // native daemon (ADR-0095) and this component is an HTTP client to it, the
 // same shape as fs-watcher.
-package net:vpn@0.1.0;
+package net:vpn@0.2.0;
 
 interface wireguard {
     /// One peer of one interface, as `wg show <iface> dump` reported it.

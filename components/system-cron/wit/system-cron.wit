@@ -4,7 +4,7 @@
 // Reading crontab needs the host's crontab binary, which a wasm32-wasip2
 // guest does not have (ADR-0095), so the read happens in `comp-cron` and this
 // component is an HTTP client to it.
-package os:system@0.1.0;
+package os:system@0.2.0;
 
 interface cron {
     /// One scheduled job, as crontab has it.
