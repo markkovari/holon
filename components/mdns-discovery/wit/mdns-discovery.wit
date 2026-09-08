@@ -1,7 +1,37 @@
+// net:mdns — what a printer, speaker or other device is announcing on the
+// local network, as a contract a host can satisfy.
+//
+// Browsing mDNS/DNS-SD needs multicast on the host network, which a
+// wasm32-wasip2 component does not have. See ADR-0095: the daemon behind this
+// (`comp-mdns`) is native for that reason and this component is an HTTP client
+// to it, exactly like `fs-watcher` is to `comp-fswatch`.
 package net:mdns@0.1.0;
+
 interface discovery {
-    discover: func() -> string;
+    /// One thing announcing itself on the network.
+    record service {
+        /// The service instance name, e.g. `Kitchen Printer._ipp._tcp.local.`.
+        name: string,
+        host: string,
+        port: u16,
+    }
+
+    variant mdns-error {
+        /// The daemon is there and could not answer, or is not configured.
+        /// Retryable.
+        unavailable(string),
+    }
+
+    /// Everything currently announced. An empty list is a real, successful
+    /// answer — "nothing is announcing itself right now" is not an error, it
+    /// is what a quiet network looks like.
+    discover: func() -> result<list<service>, mdns-error>;
 }
+
 world component {
     export discovery;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

@@ -1,7 +1,34 @@
+// os:system — the machine's scheduled jobs, as a contract a host can satisfy.
+//
+// `list-jobs` used to be `func() -> string`, and any sentence satisfied it.
+// Reading crontab needs the host's crontab binary, which a wasm32-wasip2
+// guest does not have (ADR-0095), so the read happens in `comp-cron` and this
+// component is an HTTP client to it.
 package os:system@0.1.0;
+
 interface cron {
-    list-jobs: func() -> string;
+    /// One scheduled job, as crontab has it.
+    record job {
+        /// The five cron fields, e.g. "0 3 * * *".
+        schedule: string,
+        command: string,
+    }
+
+    variant cron-error {
+        /// The daemon is there and could not answer, or crontab itself failed
+        /// to run.
+        unavailable(string),
+    }
+
+    /// The current user's crontab. An empty list is a valid answer — no
+    /// crontab installed is not a failure.
+    list-jobs: func() -> result<list<job>, cron-error>;
 }
+
 world component {
     export cron;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

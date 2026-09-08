@@ -1,7 +1,42 @@
+// os:container — what containers are running, as a contract a host can satisfy.
+//
+// The first version of this was `ps: func() -> string`, and the shape is why
+// it shipped as a fake: a single string can hold any sentence, so a plausible
+// list of containers satisfied it exactly as well as a real answer would
+// have. A contract nothing can fail is a contract that proves nothing.
 package os:container@0.1.0;
+
 interface docker {
-    ps: func() -> string;
+    /// One running container, as the daemon's engine reports it.
+    record container {
+        /// Short form (12 chars), matching plain `docker ps` rather than the
+        /// full 64-char id — a caller wanting the long form can ask the
+        /// engine directly.
+        id: string,
+        image: string,
+        /// The engine's own status text, e.g. "Up 3 hours". Not modelled as
+        /// an enum: engines phrase this differently and a caller wanting a
+        /// health check should not be reading it anyway.
+        status: string,
+        name: string,
+    }
+
+    variant docker-error {
+        /// The daemon is there and could not answer — Docker not running, the
+        /// socket not found, or similar. Retryable.
+        unavailable(string),
+    }
+
+    /// The containers currently running. Matches `docker ps` with no `-a`:
+    /// stopped containers are not this component's concern, and an empty
+    /// list is a valid answer rather than a sign anything is wrong.
+    ps: func() -> result<list<container>, docker-error>;
 }
+
 world component {
     export docker;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

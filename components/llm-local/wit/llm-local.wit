@@ -14,13 +14,22 @@
 package ai:local@0.1.0;
 
 interface local {
-    /// One prompt in, one completion out.
-    ///
-    /// There is no implementation behind this — see the crate docs. The contract
-    /// states what a host-side runtime would have to satisfy.
-    infer: func(prompt: string) -> string;
+    /// A local model server is not there, or refused to answer. Retryable —
+    /// nobody said "no", the daemon just could not reach one.
+    variant infer-error {
+        unavailable(string),
+    }
+
+    /// One prompt in, one completion out. The daemon behind this proxies to a
+    /// locally-running model server (see the crate docs) — there is no model
+    /// running inside the sandbox.
+    infer: func(prompt: string) -> result<string, infer-error>;
 }
 
 world component {
     export local;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }

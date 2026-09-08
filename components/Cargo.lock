@@ -1733,6 +1733,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "intent-router"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "invoice-copilot-domain"
 version = "0.1.0"
 dependencies = [

@@ -1,7 +1,30 @@
+// os:ui — raise a notification on the user's desktop, as a contract a host
+// can satisfy.
+//
+// Raising a desktop notification needs the platform's notification bus
+// (D-Bus on Linux, native APIs on macOS/Windows), which a wasm32-wasip2
+// component does not have. See ADR-0095: the daemon behind this
+// (`comp-uinotify`) is native for that reason and this component is an HTTP
+// client to it, exactly like `fs-watcher` is to `comp-fswatch`.
 package os:ui@0.1.0;
+
 interface notifications {
-    notify: func(msg: string) -> string;
+    variant notify-error {
+        /// The daemon is there and could not raise the notification (no
+        /// notification bus in this environment, say), or is not configured.
+        /// Retryable.
+        unavailable(string),
+    }
+
+    /// Raise `msg` as a notification. Ok carries nothing back — there is
+    /// nothing to report beyond "it was handed to the notification bus".
+    notify: func(msg: string) -> result<_, notify-error>;
 }
+
 world component {
     export notifications;
+    /// The daemon lives outside the sandbox — see ADR-0095. This is how it is
+    /// reached, and the manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
 }
