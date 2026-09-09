@@ -33,32 +33,90 @@
 //! An empty string is empty in every convention — there is nothing to split.
 
 /// Split `s` into words per the rules above.
+///
+/// A single left-to-right scan: separators flush the current word and are
+/// dropped; everywhere else a one-character lookbehind (plus a one-character
+/// lookahead just for the acronym case) decides whether a boundary falls
+/// right before the current character.
 fn words(s: &str) -> Vec<String> {
-    unimplemented!("s: {s:?}")
+    let chars: Vec<char> = s.chars().collect();
+    let mut result = Vec::new();
+    let mut cur = String::new();
+
+    for i in 0..chars.len() {
+        let c = chars[i];
+        if c == '_' || c == '-' || c.is_whitespace() {
+            if !cur.is_empty() {
+                result.push(std::mem::take(&mut cur));
+            }
+            continue;
+        }
+
+        if i > 0 {
+            let prev = chars[i - 1];
+            let is_sep = prev == '_' || prev == '-' || prev.is_whitespace();
+            let boundary = !is_sep
+                && ((prev.is_lowercase() && c.is_uppercase())
+                    || (prev.is_uppercase()
+                        && c.is_uppercase()
+                        && chars.get(i + 1).is_some_and(|n| n.is_lowercase()))
+                    || (prev.is_alphabetic() && c.is_numeric())
+                    || (prev.is_numeric() && c.is_alphabetic()));
+            if boundary && !cur.is_empty() {
+                result.push(std::mem::take(&mut cur));
+            }
+        }
+        cur.push(c);
+    }
+    if !cur.is_empty() {
+        result.push(cur);
+    }
+    result
 }
 
 fn capitalize(word: &str) -> String {
-    unimplemented!("word: {word:?}")
+    let mut chars = word.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+    }
 }
 
 /// `s` split into words and rejoined as `snake_case`.
 pub fn to_snake(s: &str) -> String {
-    unimplemented!("s: {s:?}")
+    words(s)
+        .iter()
+        .map(|w| w.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("_")
 }
 
 /// `s` split into words and rejoined as `kebab-case`.
 pub fn to_kebab(s: &str) -> String {
-    unimplemented!("s: {s:?}")
+    words(s)
+        .iter()
+        .map(|w| w.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// `s` split into words and rejoined as `camelCase`.
 pub fn to_camel(s: &str) -> String {
-    unimplemented!("s: {s:?}")
+    let ws = words(s);
+    let mut out = String::new();
+    for (i, w) in ws.iter().enumerate() {
+        if i == 0 {
+            out.push_str(&w.to_lowercase());
+        } else {
+            out.push_str(&capitalize(w));
+        }
+    }
+    out
 }
 
 /// `s` split into words and rejoined as `PascalCase`.
 pub fn to_pascal(s: &str) -> String {
-    unimplemented!("s: {s:?}")
+    words(s).iter().map(|w| capitalize(w)).collect()
 }
 
 // ---- the component -----------------------------------------------------

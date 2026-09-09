@@ -1,46 +1,56 @@
 //! `luhn-checksum` — the mod-10 check digit used by credit-card numbers, IMEIs and
 //! national ID schemes.
 //!
-//! `tests/luhn.rs` is the specification and is not writable from here. None of the
-//! three functions below is implemented yet.
+//! `tests/luhn.rs` is the specification and is not writable from here.
 //!
 //! Pure compute: digits in, a bool/digit/string out.
-//!
-//! ## The algorithm, right to left
-//!
-//! Starting from the rightmost digit, double every second digit; if doubling
-//! pushes a digit past 9, subtract 9 (same as summing its own two digits). Sum
-//! everything. A number is valid iff that sum is a multiple of 10 — its own last
-//! digit IS the check digit, already included in the sum.
-//!
-//! To compute a check digit for a number that does not have one yet, the new
-//! digit becomes the last position once appended, so it is the one being solved
-//! for rather than summed.
-//!
-//! Three things a first attempt gets wrong:
-//!
-//!   * a non-digit character or an empty string is invalid input, not a panic —
-//!     every function here returns `false`/`None`, never unwraps a parse;
-//!   * the parity of "which digits get doubled" is counted from the RIGHT, not
-//!     the left — `"79927398713"` and `"7992739871"` double different positions;
-//!   * doubling `9` gives `18`, which folds to `9`, not `8` — fold by subtracting
-//!     9, not by taking a modulo.
+
+/// Sums the digits of `digits`, doubling every second one counted from the
+/// right. `double_rightmost` controls whether the rightmost digit itself is
+/// among the doubled ones (used by `checksum_digit`, where an as-yet-unwritten
+/// digit will land to the right of everything here). Returns `None` on empty
+/// input or a non-digit byte.
+fn folded_sum(digits: &str, double_rightmost: bool) -> Option<u32> {
+    if digits.is_empty() {
+        return None;
+    }
+    let mut sum: u32 = 0;
+    for (i, b) in digits.bytes().rev().enumerate() {
+        if !b.is_ascii_digit() {
+            return None;
+        }
+        let d = (b - b'0') as u32;
+        let doubles = (i % 2 == 0) == double_rightmost;
+        sum += if doubles {
+            let twice = d * 2;
+            if twice > 9 { twice - 9 } else { twice }
+        } else {
+            d
+        };
+    }
+    Some(sum)
+}
 
 /// Is `digits` a valid Luhn number (its own last digit is the check digit)?
 pub fn is_valid(digits: &str) -> bool {
-    unimplemented!("digits: {digits:?}")
+    // The rightmost digit is the check digit itself and is never doubled.
+    matches!(folded_sum(digits, false), Some(sum) if sum % 10 == 0)
 }
 
 /// The check digit that would make `digits` valid once appended, or `None` if
 /// `digits` is empty or contains a non-digit character.
 pub fn checksum_digit(digits: &str) -> Option<u8> {
-    unimplemented!("digits: {digits:?}")
+    // Once a digit is appended, every existing digit's doubling flips (the
+    // rightmost existing digit is no longer the rightmost overall).
+    let sum = folded_sum(digits, true)?;
+    Some(((10 - (sum % 10) as u8) % 10) as u8)
 }
 
 /// `digits` with its check digit appended, or `None` on the same bad input as
 /// [`checksum_digit`].
 pub fn append_checksum(digits: &str) -> Option<String> {
-    unimplemented!("digits: {digits:?}")
+    let check = checksum_digit(digits)?;
+    Some(format!("{digits}{check}"))
 }
 
 // ---- the component -----------------------------------------------------
