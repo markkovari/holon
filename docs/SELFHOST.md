@@ -81,8 +81,33 @@ extra_args = ["--ollama-url http://127.0.0.1:11434"]   # any other flags, verbat
 are written for two different readers (a process bind address, a wasm guest's
 config) and nothing else stops them drifting apart by hand. Tier 1 renders one
 `comp-<name>.service` per daemon, `BindsTo`/`After` the app's own unit, same
-reasoning as the relay. There is no equivalent yet for the wasmCloud/Kubernetes
-lanes — a daemon a component in those lanes needs is still a manual step.
+reasoning as the relay.
+
+**Tier 4 (wasmCloud 2.x / Kubernetes) has the same wiring now, a Deployment in
+place of a systemd unit.** `holon wadm render --api v2` emits one further
+`Deployment` + `Service` per `[[daemon]]`, built from
+`reconciler/Dockerfile.daemon` (one image, any of the twelve, picked by
+`--build-arg DAEMON=comp-<name>`), and rewrites the `<name>-url` `[config]`
+value — written for tier 1, where the daemon is a sibling process on
+127.0.0.1 — to the Service's cluster DNS name instead, since nothing on this
+lane is listening on the workload's own loopback. The workload's own
+`localResources.allowedHosts`/`allowedIpNameLookups` grant reaching and
+resolving that Service; egress here is fail-closed the same way
+`comp-host --egress` is on tiers 1/2.
+
+No token support yet on this lane — permissive, matching the demo apps'
+`[[daemon]]` tables everywhere else. Verified against a real 2.9.0
+runtime-operator: the rendered `Workload` (with the egress grants and the
+rewritten config value) is accepted and reaches `Ready: True`. The daemon's
+own container did not: pulling it needs the node's container runtime to trust
+the in-cluster registry, which on a bare local dev registry (plain HTTP, no
+TLS) is a Docker-daemon-level `insecure-registries` setting outside anything
+this renders — a real cluster's registry (GHCR, ECR, a registry with a real
+certificate) would not hit this at all. Tier 3/4's wasm *component* pulls
+already work over plain HTTP because the wasmCloud host's own OCI puller is
+configured for it (`runtime.extraArgs: [--allow-insecure-registries]`); the
+node's container runtime is a separate piece of software with its own trust
+config, unrelated to that flag.
 
 ### Fused or linked, and what the hop costs
 

@@ -63,7 +63,7 @@ use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
 use serde::Deserialize;
 
-use crate::Spec;
+use crate::{Daemon, Spec};
 
 /// One interface, as `comp-capgraph --format json` reports it.
 ///
@@ -312,6 +312,24 @@ pub fn render_workload(
         t.registry,
         dns(&spec.name)
     ));
+    if !spec.daemons.is_empty() {
+        // Egress is fail-closed here exactly as it is on `comp-host`'s own
+        // `--egress` — an app with a `[[daemon]]` needs its own daemon's Service
+        // granted explicitly, both to dial it (`allowedHosts`) and to resolve its
+        // name at all (`allowedIpNameLookups`; the operator grants that
+        // separately, so one without the other still fails). Both live under
+        // `localResources`, not on the component directly — `kubectl explain
+        // workload.spec.components --recursive` is the source of truth here;
+        // the CRD's own doc comments describe the fields but not their parent.
+        y.push_str("      localResources:\n        allowedHosts:\n");
+        for d in &spec.daemons {
+            y.push_str(&format!("          - {}\n", daemon_service_host(namespace, d)));
+        }
+        y.push_str("        allowedIpNameLookups:\n");
+        for d in &spec.daemons {
+            y.push_str(&format!("          - {}\n", daemon_fqdn(namespace, d)));
+        }
+    }
 
     // Everything the component imports that the host does not provide as standard
     // WASI has to be declared, or the workload fails to link. Derived from the
@@ -353,10 +371,114 @@ pub fn render_workload(
              version: \"0.2.0-rc.1\"\n      config:\n",
         );
         for (k, v) in &spec.config {
-            y.push_str(&format!("        {k}: \"{v}\"\n"));
+            // `<name>-url` is written for tier 1, where the daemon is a sibling
+            // process reachable at 127.0.0.1 (`check()` enforces that agreement).
+            // On this lane the daemon is its own Deployment, so the value that
+            // makes the tier-1 agreement true here is wrong — override it with
+            // where the daemon's Service actually answers, same key, different
+            // address, exactly as the daemon's own image differs per lane.
+            let value = spec
+                .daemons
+                .iter()
+                .find(|d| *k == format!("{}-url", d.name))
+                .map(|d| format!("http://{}", daemon_service_host(namespace, d)))
+                .unwrap_or_else(|| v.clone());
+            y.push_str(&format!("        {k}: \"{value}\"\n"));
         }
     }
+    for d in &spec.daemons {
+        y.push_str("---\n");
+        y.push_str(&render_daemon_deployment(d, namespace, &t.registry));
+    }
     Ok(y)
+}
+
+/// The port half of a `host:port` address (`"127.0.0.1:8000"` -> `"8000"`).
+fn addr_port(addr: &str) -> &str {
+    addr.rsplit_once(':').map(|(_, p)| p).unwrap_or(addr)
+}
+
+/// The Service name a `[[daemon]]`'s Deployment answers behind — no namespace,
+/// no port, just the bit that's also a valid k8s object name.
+fn daemon_service_name(d: &Daemon) -> String {
+    format!("{}-daemon", dns(&d.name))
+}
+
+/// The Service's cluster DNS name, no port — what `allowedIpNameLookups`
+/// grants resolving, separately from `allowedHosts` granting reaching it.
+fn daemon_fqdn(namespace: &str, d: &Daemon) -> String {
+    format!("{}.{namespace}.svc.cluster.local", daemon_service_name(d))
+}
+
+/// Where this daemon's Deployment answers inside the cluster: the FQDN above,
+/// port carried over from the spec's own `addr` (`check()` already enforces
+/// that this is the port the daemon binds).
+fn daemon_service_host(namespace: &str, d: &Daemon) -> String {
+    format!("{}:{}", daemon_fqdn(namespace, d), addr_port(&d.addr))
+}
+
+/// A `[[daemon]]`'s own Deployment + Service — the missing half of the
+/// wasmCloud/Kubernetes lane's daemon story (`docs/SELFHOST.md`: "There is no
+/// equivalent yet for the wasmCloud/Kubernetes lanes — a daemon a component in
+/// those lanes needs is still a manual step"). Built from
+/// `reconciler/Dockerfile.daemon`, one image per daemon, picked at build time
+/// by `--build-arg DAEMON=comp-<name>` — the same binary tier 1 runs as a
+/// systemd unit, in a container instead of on the box.
+///
+/// No token support yet — permissive, same reasoning tier 1's own `[[daemon]]`
+/// tables give for shipping with none set: meant to compose and run with
+/// nothing extra to provision. A real deployment sharing a namespace with
+/// anything else should wire one (a Secret + `--token-file`, mirroring tier
+/// 1's `LoadCredential`) before this is more than a demo.
+fn render_daemon_deployment(d: &Daemon, namespace: &str, registry: &str) -> String {
+    let name = daemon_service_name(d);
+    let port = addr_port(&d.addr);
+    let mut args = format!("            - --addr\n            - \"0.0.0.0:{port}\"\n");
+    if let Some(flag) = &d.allow_flag {
+        for v in &d.allow {
+            args.push_str(&format!("            - --{flag}\n            - \"{v}\"\n"));
+        }
+    }
+    for a in &d.extra_args {
+        for part in a.split_whitespace() {
+            args.push_str(&format!("            - \"{part}\"\n"));
+        }
+    }
+    format!(
+        "apiVersion: apps/v1\n\
+         kind: Deployment\n\
+         metadata:\n\
+         \x20 name: {name}\n\
+         \x20 namespace: {namespace}\n\
+         spec:\n\
+         \x20 replicas: 1\n\
+         \x20 selector:\n\
+         \x20   matchLabels:\n\
+         \x20     app: {name}\n\
+         \x20 template:\n\
+         \x20   metadata:\n\
+         \x20     labels:\n\
+         \x20       app: {name}\n\
+         \x20   spec:\n\
+         \x20     containers:\n\
+         \x20       - name: daemon\n\
+         \x20         image: {registry}/comp-{dname}:latest\n\
+         \x20         args:\n\
+         {args}\
+         ---\n\
+         apiVersion: v1\n\
+         kind: Service\n\
+         metadata:\n\
+         \x20 name: {name}\n\
+         \x20 namespace: {namespace}\n\
+         spec:\n\
+         \x20 selector:\n\
+         \x20   app: {name}\n\
+         \x20 ports:\n\
+         \x20   - port: {port}\n\
+         \x20     targetPort: {port}\n",
+        dname = dns(&d.name),
+    )
 }
 
 /// The imports a wasmCloud 2.x release host cannot satisfy, read from the artifact.
@@ -797,6 +919,48 @@ mod tests {
 
         let without_import = render_workload(&s, "ns", &Target::default(), None, false).unwrap();
         assert!(!without_import.contains("package: config"), "{without_import}");
+    }
+
+    #[test]
+    fn a_daemon_gets_its_own_deployment_and_a_rewritten_config_url() {
+        // fs-watcher's real shape: a `[[daemon]]` plus the `<name>-url` `[config]`
+        // key `check()` requires to agree with it — written for tier 1, where
+        // `comp-fswatch` is a sibling process on 127.0.0.1. On this lane it is its
+        // own Deployment, so the value that keeps tier 1's agreement true here
+        // would be wrong: nothing on this lane is listening on the workload's own
+        // loopback.
+        let s = spec(
+            "components = [\"fs-watcher-domain\"]\n\
+             [config]\n\
+             fswatch-url = \"http://127.0.0.1:8000\"\n\
+             [[daemon]]\n\
+             name = \"fswatch\"\n\
+             addr = \"127.0.0.1:8000\"\n\
+             allow_flag = \"allow-path\"\n\
+             allow = [\"/var/log\"]\n",
+        );
+        let y = render_workload(&s, "ns", &Target::default(), None, true).unwrap();
+
+        // Not the tier-1 loopback value — the daemon's own Service.
+        assert!(!y.contains("127.0.0.1:8000"), "{y}");
+        assert!(
+            y.contains("fswatch-url: \"http://fswatch-daemon.ns.svc.cluster.local:8000\""),
+            "{y}"
+        );
+
+        // Egress is fail-closed on this lane the same way it is on comp-host's
+        // own `--egress` — reaching the daemon and resolving its name are both
+        // grants the component needs spelled out, not assumed.
+        assert!(y.contains("localResources:\n        allowedHosts:\n          - fswatch-daemon.ns.svc.cluster.local:8000"), "{y}");
+        assert!(y.contains("allowedIpNameLookups:\n          - fswatch-daemon.ns.svc.cluster.local"), "{y}");
+
+        // The daemon's own Deployment + Service, appended as further documents.
+        assert!(y.contains("kind: Deployment"), "{y}");
+        assert!(y.contains("name: fswatch-daemon"), "{y}");
+        assert!(y.contains("image: registry.wasmcloud.svc.cluster.local:5000/comp-fswatch:latest"), "{y}");
+        assert!(y.contains("- --allow-path\n            - \"/var/log\""), "{y}");
+        assert!(y.contains("kind: Service"), "{y}");
+        assert!(y.contains("port: 8000"), "{y}");
     }
 
     #[test]
