@@ -51,7 +51,7 @@ The export walks the owner's notes and produces:
 ```bash
 cargo xtask host stash   # composes the component, builds the React UI, serves on :3046
 # register a new account (seeded demo notes), keep notes, and hit Export .zip.
-just e2e-stash    # notes CRUD + a valid ZIP export (entry count + manifest)
+cargo xtask compose stash && cargo test --manifest-path examples/stash/Cargo.toml    # notes CRUD + a valid ZIP export (entry count + manifest)
 ```
 
 The frontend lives in `examples/stash/ui` (Vite + React + shadcn/ui, **no zip

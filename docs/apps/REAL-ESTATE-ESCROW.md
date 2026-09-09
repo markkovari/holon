@@ -18,5 +18,5 @@ A composed WebAssembly application showcasing Real Estate Escrow Management.
 ```bash
 cargo xtask compose real-estate-escrow
 cargo xtask host real-estate-escrow
-just e2e-real-estate-escrow
+cargo xtask compose real-estate-escrow && cargo test --manifest-path examples/real-estate-escrow/Cargo.toml
 ```

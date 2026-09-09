@@ -77,7 +77,7 @@ browser). The **Reports** tab's **PDF** button downloads it. `pdf:codec` is pure
 compute (`render: document -> list<u8>`), so any showcase can reuse it for
 receipts or summaries.
 
-The whole thing is exercised by `just e2e-tempo`: admin-only project/category
+The whole thing is exercised by `cargo xtask compose tempo && cargo test --manifest-path examples/tempo/Cargo.toml`: admin-only project/category
 creation, membership-gated logging (a non-member is `403`), owner edit/delete,
 range filtering, a **project lead** seeing that project grouped by user (a plain
 member can't widen scope), and the pomodoro timer producing an entry.
@@ -88,7 +88,7 @@ member can't widen scope), and the pomodoro timer producing an entry.
 cargo xtask host tempo     # builds the React UI + runs the native host + SPA on :3040
 # register as admin to create projects/categories + assign membership;
 # as member to log; a project lead gets the team view.
-just e2e-tempo      # the auth + membership + aggregation + timer e2e
+cargo xtask compose tempo && cargo test --manifest-path examples/tempo/Cargo.toml      # the auth + membership + aggregation + timer e2e
 ```
 
 The frontend lives in `examples/tempo/ui` (Vite + React + shadcn/ui + recharts);
@@ -105,8 +105,10 @@ comp-host --component tempo.composed.wasm --addr 0.0.0.0:8080 \
   --kv redis --redis-url rediss://default:PW@host:25061 --static-dir dist
 ```
 
-Package that as **one image** (`just docker-tempo` → `examples/tempo/Dockerfile`)
-and run it anywhere:
+Package that as **one image** (`cargo xtask compose tempo`, `npm --prefix
+examples/tempo/ui run build`, then `docker build -f examples/tempo/Dockerfile -t
+tempo .` — see the Dockerfile's own header for the exact prereqs) and run it
+anywhere:
 
 ```bash
 docker run -p 8080:8080 -e REDIS_URL='rediss://default:PW@host:25061' tempo
@@ -129,7 +131,8 @@ Publish it to GHCR as a **public** OCI artifact (the wasmCloud-native pull path)
 
 ```bash
 gh auth refresh -s write:packages     # once
-just push-tempo-ghcr 0.1.0            # gh mints the token, wash does the OCI push
+gh auth token | docker login ghcr.io -u <you> --password-stdin   # wkg reads docker's credential store
+wkg oci push ghcr.io/<org>/tempo:0.1.0 components/target/tempo_domain.composed.wasm
 # make the package Public once (GitHub → Packages → tempo → visibility)
 ```
 

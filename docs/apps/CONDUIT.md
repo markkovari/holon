@@ -6,7 +6,8 @@ reference app. Chosen for one reason the other showcases can't offer: it has an
 (down to JSON envelopes and status codes), and the project ships a conformance
 suite (Hurl). "We composed it from contracts with no bespoke business crate"
 stops being our claim and becomes something a skeptic clones and runs:
-`just conformance-conduit` → all green.
+`cargo xtask compose conduit` (+ a built `comp-host`), then
+`bash examples/conduit/conformance/run.sh` → all green.
 
 ![The official RealWorld Hurl conformance suite running against the composed conduit app on the native Rust host: 13/13 files, 154 requests, all green](../media/conduit-conformance.gif)
 
@@ -138,7 +139,7 @@ timestamps) is stated, not hidden.
 
 1. **Users & profiles** — register/login/current/update, follow/unfollow.
    ✅ done: `components/conduit-domain` + `cargo xtask compose conduit` +
-   `just e2e-conduit` (Rust host + `examples/conduit` e2e, all green). Runs on
+   `cargo xtask compose conduit && cargo test --manifest-path examples/conduit/Cargo.toml` (Rust host + `examples/conduit` e2e, all green). Runs on
    the native Rust host (`host/`), not jco — the app, its host, and its test are
    all Rust; the only JS in this repo stays in the other examples.
 2. **Articles** — CRUD, slug + uniqueness, list/feed with filters, tags.
@@ -149,7 +150,8 @@ timestamps) is stated, not hidden.
 4. **Conformance** — the **official RealWorld Hurl suite** (vendored in
    `examples/conduit/conformance/hurl`, pinned from `gothinkster/realworld`
    `specs/api`). ✅ **100% green — 13/13 files, 154 requests** via
-   `just conformance-conduit` (Hurl → the composed app on the native Rust host).
+   `bash examples/conduit/conformance/run.sh` (Hurl → the composed app on the
+   native Rust host).
    *(Upstream retired the Postman/newman suite for Hurl + Bruno; we track Hurl.)*
 5. **Bench** — ✅ done: app-path HTTP bench (`bench/conduit-bench.sh`, memory vs
    NATS KV) → [`bench/CONDUIT-BENCH.md`](../../bench/CONDUIT-BENCH.md) (round 13).

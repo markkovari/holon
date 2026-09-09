@@ -80,7 +80,7 @@ facet, not auth), and anything stream/SSE (this is the request/response one).
 ## Build order (each rung is demoable)
 
 1. **Index + query** — `POST /api/index`, `POST /api/seed`, `GET /api/search`
-   (index → hydrate). `just e2e-search` seeds the corpus and asserts a rare term
+   (index → hydrate). `cargo xtask compose search && cargo test --manifest-path examples/search/Cargo.toml` seeds the corpus and asserts a rare term
    ranks its doc first and `all`-mode intersection shrinks the set.
 2. **Facets + paging** — `tags` filter + `paginate:cursor` load-more; e2e proves
    a facet restricts hits and the cursor walks ranked pages without overlap.

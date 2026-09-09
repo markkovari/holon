@@ -18,5 +18,5 @@ A composed WebAssembly application showcasing Peer Review System.
 ```bash
 cargo xtask compose academic-review
 cargo xtask host academic-review
-just e2e-academic-review
+cargo xtask compose academic-review && cargo test --manifest-path examples/academic-review/Cargo.toml
 ```

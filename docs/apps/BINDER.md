@@ -18,7 +18,7 @@ each card cost, what it is worth, and what selling has already made.
 
 ```bash
 cargo xtask host binder      # composes, builds the SPA, serves on 0.0.0.0:3210
-just e2e-binder       # the composed suite
+cargo xtask compose binder && cargo test --manifest-path examples/binder/Cargo.toml       # the composed suite
 ```
 
 The UI is a React + Vite SPA (`examples/binder/ui`) with routing — `/`, `/cards`,
@@ -58,8 +58,8 @@ is tested on its own and none can be reached except through its contract.
 | `auth:identity` | accounts and sessions; every key is scoped `u/<subject>/…` |
 | `wasi:keyvalue/store` | the collection — one bucket, named by the linker after the app (ADR-0023) |
 
-`just plug-wiring binder-domain` derives that list from the artifact's own imports
-rather than from this table.
+`comp-plug binder-domain --wiring` derives that list from the artifact's own
+imports rather than from this table.
 
 ## The rules the recording is showing
 
