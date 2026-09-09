@@ -122,7 +122,7 @@ track-assets → one self-contained `track_domain.composed.wasm`.
 ## Build order (each rung is demoable)
 
 1. **Auth + projects + issues** — register/login, admin creates a project, a
-   member files an issue. `just e2e-track` proves a non-admin can't create a
+   member files an issue. `cargo xtask compose track && cargo test --manifest-path examples/track/Cargo.toml` proves a non-admin can't create a
    project and a non-member can't write issues (403).
 2. **Lifecycle + comments + search** — `fsm:workflow` moves across the board
    (illegal move → 409); comments render markdown; `search:index` finds an issue

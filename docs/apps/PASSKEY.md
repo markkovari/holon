@@ -90,7 +90,7 @@ cargo xtask host passkey   # composes, builds the SPA, serves on :3053
 # open http://localhost:3053 — NOT a LAN address: WebAuthn needs a secure context,
 # and http://localhost is the only plaintext origin that qualifies.
 
-just e2e-passkey        # the ceremonies over HTTP, with a virtual authenticator
+cargo xtask compose passkey && cargo test --manifest-path examples/passkey/Cargo.toml        # the ceremonies over HTTP, with a virtual authenticator
 cargo test -p webauthn  # the verifier itself: 11 tests, no host
 ```
 

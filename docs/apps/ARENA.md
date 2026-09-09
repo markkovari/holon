@@ -29,7 +29,7 @@ A game is only fair if a client can't cheat, so all the rules live server-side:
 
 Win detection (four in a row along any of the four axes) and draw (full board)
 run on the server too; the winning line comes back so every viewer highlights it.
-The whole ruleset is exercised by `just e2e-arena`: out-of-turn, non-player,
+The whole ruleset is exercised by `cargo xtask compose arena && cargo test --manifest-path examples/arena/Cargo.toml`: out-of-turn, non-player,
 illegal-column, and double-move all rejected; a scripted vertical win detected;
 no moves after the end; and a **held-open SSE spectator seeing a move live**.
 
@@ -55,7 +55,7 @@ never leaks a seat token, so spectators can watch but not move.
 cargo xtask host arena     # native host + SPA on http://127.0.0.1:3039
 # open two windows: "New game" in one, paste the id + "Join" in the other, play.
 # open a third window on the same ?game= to spectate live.
-just e2e-arena      # the rules + win-detection + live-SSE e2e
+cargo xtask compose arena && cargo test --manifest-path examples/arena/Cargo.toml      # the rules + win-detection + live-SSE e2e
 ```
 
 ## Rungs left

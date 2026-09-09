@@ -80,7 +80,7 @@ showcase is the app that leans hardest on the pure-compute utilities.
 ## Build order (each rung is demoable)
 
 1. **Validate + store** — `POST /api/paste` over `validate:schema` +
-   `records:store`. `just e2e-paste` proves an empty body is rejected.
+   `records:store`. `cargo xtask compose paste && cargo test --manifest-path examples/paste/Cargo.toml` proves an empty body is rejected.
 2. **Redact at ingest** — `pii:redact` masks the body **before** the write; e2e
    proves the raw email + card never appear in `/api/raw/{id}`.
 3. **Render + slug + browser UI** — `md:render` escapes a raw `<script>` while

@@ -53,7 +53,7 @@ a TTL record, not `session-store`, to stay dependency-light.
 ## Build order (each rung is demoable)
 
 1. ✅ **Post + history** — `POST /messages`, `GET /messages?after=` (records seq
-   + event-bus publish). `just e2e-pulse` round-trips.
+   + event-bus publish). `cargo xtask compose pulse && cargo test --manifest-path examples/pulse/Cargo.toml` round-trips.
 2. ✅ **Live SSE** — `GET /events` holds the connection open and pushes each new
    message as a `data:` frame. e2e: a reader thread sees a message posted by a
    *separate* request, live. The headline — real server-push on wasip2.

@@ -84,8 +84,8 @@ priced it — but it is a supported delivery target, which is a different claim.
 - [x] The full RealWorld ("Conduit") spec as one `conduit-domain` component +
       `auth-guard` + `record-store` + `slug`, run on the native Rust host.
       **Passes the official RealWorld Hurl conformance suite 100% (13/13 files,
-      154 requests)** — `just conformance-conduit`; suite vendored + pinned under
-      `examples/conduit/conformance`. Rust e2e (`just e2e-conduit`) + app-path
+      154 requests)** — `bash examples/conduit/conformance/run.sh`; suite vendored + pinned under
+      `examples/conduit/conformance`. Rust e2e (`cargo xtask compose conduit && cargo test --manifest-path examples/conduit/Cargo.toml`) + app-path
       bench (`bench/CONDUIT-BENCH.md`, round 13). This is the first showcase
       validated against an *external, objective* test suite rather than our own.
 - [ ] Optional: password rotation + email rename in auth-guard (the two flagged
@@ -100,7 +100,7 @@ priced it — but it is a supported delivery target, which is a different claim.
       first showcase exercising **compensation + durable, resumable execution**:
       a flaky leg retries then gives up + compensates; `pump` advances one
       persisted step at a time; and the saga **survives a host kill and resumes**
-      on NATS (`just durable-saga` → PASS). `just e2e-saga` (commit + all
+      on NATS (`bash examples/saga/durability.sh` → PASS). `cargo xtask compose saga && cargo test --manifest-path examples/saga/Cargo.toml` (commit + all
       compensation/retry paths) + app-path bench (`bench/SAGA-BENCH.md`).
 - [ ] Extract a generic `saga:orchestrator` contract (arbitrary step +
       compensation definitions), and land the Golem wRPC provider so a leg can be
@@ -115,7 +115,7 @@ priced it — but it is a supported delivery target, which is a different claim.
       (real push on wasip2 — the host streams the body while the guest loops;
       no WebSocket, no wasip3 async). Composed over `record-store` (log + cursor)
       + `event-bus` (fan-out spine) + `id-generate`, with a two-pane browser SPA
-      (native `EventSource`) + presence. `just e2e-pulse` (a held-open reader
+      (native `EventSource`) + presence. `cargo xtask compose pulse && cargo test --manifest-path examples/pulse/Cargo.toml` (a held-open reader
       gets a separately-posted message) + bench: one broadcast → **150/150
       concurrent SSE connections** (`bench/PULSE-BENCH.md`).
 - [ ] Multi-host fan-out: replace per-stream polling with `event-bus` +

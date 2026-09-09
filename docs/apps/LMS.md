@@ -63,7 +63,7 @@ issues only after passing all quizzes, and a not-yet-passing student is refused.
 ```bash
 cargo xtask host lms     # composes the component, builds the React UI, serves on :3048
 # register as `instructor` (seeded a demo course) or `student` (enroll + take it).
-just e2e-lms      # multi-role flow + grade reconciliation + certificate gating
+cargo xtask compose lms && cargo test --manifest-path examples/lms/Cargo.toml      # multi-role flow + grade reconciliation + certificate gating
 ```
 
 The frontend lives in `examples/lms/ui` (Vite + React + shadcn/ui); it renders an

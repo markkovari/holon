@@ -65,8 +65,8 @@ cargo xtask compose photosocial
 cargo xtask host photosocial
 
 # 3. Run the automated end-to-end integration test suite
-just e2e-photosocial
+cargo xtask compose photosocial && cargo test --manifest-path examples/photosocial/Cargo.toml
 
 # 4. Record screencast and regenerate the GIF
-just screencast-photosocial
+node tools/screencast/photosocial.mjs
 ```

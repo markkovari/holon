@@ -18,5 +18,5 @@ A composed WebAssembly application showcasing Electronic Health Records.
 ```bash
 cargo xtask compose health-records
 cargo xtask host health-records
-just e2e-health-records
+cargo xtask compose health-records && cargo test --manifest-path examples/health-records/Cargo.toml
 ```

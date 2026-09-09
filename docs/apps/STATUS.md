@@ -88,7 +88,7 @@ polls; the tick is an explicit pump).
 ## Build order (each rung is demoable)
 
 1. **Register + probe** — `POST /api/monitors`, `POST /api/tick` over
-   `sched:timer` + outgoing HTTP. `just e2e-status` adds a self-probe (stays up)
+   `sched:timer` + outgoing HTTP. `cargo xtask compose status && cargo test --manifest-path examples/status/Cargo.toml` adds a self-probe (stays up)
    and a dead-port monitor and asserts the first tick probes both.
 2. **State machine + history** — feed `ok`/`fail` to `fsm:workflow`; e2e proves
    one failure is **degraded**, a second consecutive failure is **down**, and

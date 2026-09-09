@@ -51,7 +51,7 @@ Every read is ownership-checked against the caller's token
 cargo xtask host dashboards   # composes the component, builds the React UI, serves on :3043
 # register a new account (seeded with a demo dashboard), then add panels —
 # "label value" per line, pick a kind, and the server renders the SVG.
-just e2e-dashboards    # seed + a valid SVG per kind + panel round-trip + ownership
+cargo xtask compose dashboards && cargo test --manifest-path examples/dashboards/Cargo.toml    # seed + a valid SVG per kind + panel round-trip + ownership
 ```
 
 The frontend lives in `examples/dashboards/ui` (Vite + React + shadcn/ui, **no

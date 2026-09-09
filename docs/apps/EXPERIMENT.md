@@ -128,7 +128,7 @@ and simple gates).
    `rate`; race-free atomic counters.
 3. **`abtest-domain` + live SSE** — assign a cohort, expose/convert, results;
    `GET /api/stream` pushes each assignment + results update as a `data:` frame.
-   `just e2e-abtest` round-trips and proves a live conversion updates a separate
+   `cargo xtask compose abtest && cargo test --manifest-path examples/abtest/Cargo.toml` round-trips and proves a live conversion updates a separate
    held-open SSE connection.
 4. **Console UI** — variant weight editor + a 100-tile grid colored by arm +
    per-variant conversion-rate bars. Shift a weight and watch sticky

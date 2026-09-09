@@ -84,7 +84,7 @@ slot — regardless of how the host schedules the requests.
 cargo xtask host booked    # composes the component, builds the React UI, serves on :3041
 # register as `owner` to create a resource + weekly availability;
 # as a `member` to book free slots.
-just e2e-booked     # auth + availability + no-double-book (incl. a concurrency
+cargo xtask compose booked && cargo test --manifest-path examples/booked/Cargo.toml     # auth + availability + no-double-book (incl. a concurrency
                     # race) + recurrence expansion + a valid .ics
 ```
 

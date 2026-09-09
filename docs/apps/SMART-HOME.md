@@ -18,5 +18,5 @@ A composed WebAssembly application showcasing IoT Home Automation.
 ```bash
 cargo xtask compose smart-home
 cargo xtask host smart-home
-just e2e-smart-home
+cargo xtask compose smart-home && cargo test --manifest-path examples/smart-home/Cargo.toml
 ```

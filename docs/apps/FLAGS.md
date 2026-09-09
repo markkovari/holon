@@ -80,7 +80,7 @@ demo; the production gate is orthogonal).
 ## Build order (each rung is demoable)
 
 1. **Evaluate + set** — `GET /api/eval`, `POST/DEL /api/flags/{name}`,
-   `GET /api/flags`. `just e2e-flags` sets a 30% rule and asserts a known
+   `GET /api/flags`. `cargo xtask compose flags && cargo test --manifest-path examples/flags/Cargo.toml` sets a 30% rule and asserts a known
    subject is sticky across repeated evals.
 2. **Cohort + live SSE** — `GET /api/cohort` returns the on/off grid for N
    subjects; `set-rule` publishes on event-bus; `GET /api/stream` pushes each

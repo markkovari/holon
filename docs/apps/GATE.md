@@ -74,7 +74,7 @@ workers.
 ## Run it on Golem — exact serialization (done)
 
 The claim isn't hypothetical: `examples/gate/golem` is the same limiter as a
-**real Golem agent**, and `just gate-golem` deploys it to a local Golem and
+**real Golem agent**, and `bash examples/gate/golem-run.sh` deploys it to a local Golem and
 proves the difference.
 
 All three patterns are durable-worker versions — no store, no CAS, because the
@@ -110,7 +110,7 @@ pub trait SubmitAgent {
 ```
 
 Under the **same concurrent bursts that made `gate-domain` over-admit / re-bucket**,
-every pattern is **exact** — `just gate-golem`:
+every pattern is **exact** — `bash examples/gate/golem-run.sh`:
 
 ```
 rate limit  (token bucket, capacity 10): 24 concurrent takes
@@ -148,14 +148,14 @@ worker over HTTP.)
 ```bash
 cargo xtask host gate    # composes the component, builds the React UI, serves on :3044
 # burst the rate limiter / throttle; submit items to a batch and watch it flush.
-just e2e-gate     # token bucket + GCRA (deterministic) + atomic batch flush +
+cargo xtask compose gate && cargo test --manifest-path examples/gate/Cargo.toml     # token bucket + GCRA (deterministic) + atomic batch flush +
                   # a concurrency probe that documents the shared-store CAS breach
 ```
 
 To run the **Golem** version (deploys to a local Golem, proves exact serialization):
 
 ```bash
-just gate-golem   # all three patterns, exact under concurrent bursts
+bash examples/gate/golem-run.sh   # all three patterns, exact under concurrent bursts
 ```
 
 ## Rungs left

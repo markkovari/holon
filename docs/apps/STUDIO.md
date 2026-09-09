@@ -116,14 +116,15 @@ cargo xtask host studio    # composes, builds the SPA, serves :3054, seeds every
 # click components in to place them, drag an export handle onto a matching import,
 # then read the wac plug / .wac / workload tabs and hit Compose.
 
-just e2e-studio           # the whole ladder, against the real wac + wasm-tools
+cargo xtask compose studio && cargo test --manifest-path examples/studio/Cargo.toml           # the whole ladder, against the real wac + wasm-tools
 cd components && cargo test -p wit-reflect   # 13 tests, no host
 ```
 
 A component cannot read the filesystem — the host preopens no directories — so
-reflection has to be **fed over HTTP**. `just seed-studio` POSTs every artifact in
-`components/target/wasm32-wasip2/release`; re-running replaces rather than
-duplicates. You can also drop any `.wasm` onto the canvas from outside the repo.
+reflection has to be **fed over HTTP**: `cargo xtask host studio` POSTs every
+artifact in `components/target/wasm32-wasip2/release` on startup; re-running
+replaces rather than duplicates. You can also drop any `.wasm` onto the canvas
+from outside the repo.
 
 ## The e2e checks the claims, not the studio's opinion of itself
 

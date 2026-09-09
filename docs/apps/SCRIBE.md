@@ -33,7 +33,7 @@ than *replaces*:
 | an edit arrives **late / out of order** | title LWW ignores older; body ops anchor to a stable element id, not a position | a stale write wins because it arrived last |
 | two writes **race at the store** | optimistic revision CAS + retry; the retry re-merges (safe because merge is idempotent) | lost update |
 
-Every row is exercised by the e2e (`just e2e-scribe`): different-field survival,
+Every row is exercised by the e2e (`cargo xtask compose scribe && cargo test --manifest-path examples/scribe/Cargo.toml`): different-field survival,
 **two inserts at the same body position interleaving to `AYXC`** on every
 replica, an id-anchored delete, a **newer title winning over an older one sent
 afterward**, and a live SSE connection receiving the merged document.
@@ -83,7 +83,7 @@ the composition:
 ```bash
 cargo xtask host scribe          # native host + SPA on http://127.0.0.1:3037
 # open two browser windows on that URL (or add ?doc=notes&name=Alice) and type
-just e2e-scribe           # the convergence + live-SSE e2e
+cargo xtask compose scribe && cargo test --manifest-path examples/scribe/Cargo.toml           # the convergence + live-SSE e2e
 ```
 
 Regenerate the gif (`tools/screencast/`): `cargo xtask host scribe &`, then `node

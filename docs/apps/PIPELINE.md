@@ -95,7 +95,7 @@ above. **Not used:** `auth-guard` (anonymous, event-driven). `fsm:workflow`
 ## Build order (each rung is demoable)
 
 1. **Enqueue + snapshot** — `POST /api/events` (webhook:ingest verify+dedup →
-   outbox enqueue), `GET /api/events` snapshot. `just e2e-pipeline` round-trips.
+   outbox enqueue), `GET /api/events` snapshot. `cargo xtask compose pipeline && cargo test --manifest-path examples/pipeline/Cargo.toml` round-trips.
 2. **Relay + live SSE** — the pump claims due events and calls the sink; each
    transition publishes on event-bus; `GET /api/stream` pushes it as a `data:`
    frame. e2e: post an event, a reader thread sees it march to `acked` live.

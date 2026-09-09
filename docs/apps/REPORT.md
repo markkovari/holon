@@ -85,7 +85,7 @@ is the request/response one).
 ## Build order (each rung is demoable)
 
 1. **Parse + validate** — `POST /api/import` over `csv:codec` + `validate:schema`.
-   `just e2e-report` imports a mix of valid and invalid rows and asserts the
+   `cargo xtask compose report && cargo test --manifest-path examples/report/Cargo.toml` imports a mix of valid and invalid rows and asserts the
    split: 3 imported, 2 rejected, with the **per-field errors** surfaced
    (bad email, age over range, unknown role).
 2. **Paged report** — `GET /api/rows` over `paginate:cursor`; e2e walks the clean

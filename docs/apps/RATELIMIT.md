@@ -84,7 +84,7 @@ attempts before they cost a password hash).
 ## Build order (each rung is demoable)
 
 1. **Gate + state** — `POST /api/hit` (check + record-usage), `GET /api/state`.
-   `just e2e-ratelimit` proves N allowed then a 429 at the ceiling, and a quota
+   `cargo xtask compose ratelimit && cargo test --manifest-path examples/ratelimit/Cargo.toml` proves N allowed then a 429 at the ceiling, and a quota
    `remaining` that decrements.
 2. **Lockout + recovery + live SSE** — `record-failure` drives lockout; a locked
    key returns `retry-after`; `GET /api/stream` pushes each verdict. e2e: a

@@ -4,16 +4,15 @@ The binder (`docs/apps/BINDER.md`) composes three capabilities. Two of them are 
 arithmetic, and those two are implemented here in **Rust, C, Go, JavaScript and
 Python** — dropped into the same composition, judged by the same unedited e2e.
 
-```bash
-just e2e-binder-poly c  portfolio-value
-just e2e-binder-poly py price-history
-just e2e-binder-poly-all          # every row in the table below
-```
-
-Each run builds the component, swaps it in for the Rust build **by filename**,
-derives the composition from `binder-domain`'s own imports (ADR-0087), runs
-`examples/binder/tests/binder.rs` — 122 assertions, none of them edited — and puts
-the Rust build back on the way out.
+The alternate-language components are real and still in the tree
+(`components/portfolio-value-c`, `-cs`, `-go`; `components/price-history-go`,
+`-js`, `-py`) — what ran them in place of the Rust build, swapped by filename,
+was a `just e2e-binder-poly <lang> <capability>` recipe that no longer exists
+and was never ported to a script; there is nothing to run it with today. Each
+pass built the alternate component, derived the composition from
+`binder-domain`'s own imports (ADR-0087), ran `examples/binder/tests/binder.rs`
+— 122 assertions, none of them edited — and put the Rust build back on the way
+out.
 
 The claim is not "these toolchains emit components". It is that **the artifact
 boundary is the real boundary** (ADR-0086, ADR-0095): a composition does not know
