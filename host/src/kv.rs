@@ -1013,6 +1013,77 @@ mod tests {
     }
 
     #[test]
+    fn cas_append_from_absent_loses_nothing_under_threads() {
+        // The exact pattern record-store's chunked id-index uses: N threads race a
+        // read-current-then-CAS-append loop against ONE key that starts absent.
+        // Isolates the host's raw `set_if_revision` from wasm/composition/HTTP —
+        // if this ever loses an id, the bug is here, not in the guest.
+        let kv = std::sync::Arc::new(MemoryKv::default());
+        let threads: Vec<_> = (0..10)
+            .map(|i| {
+                let kv = kv.clone();
+                std::thread::spawn(move || {
+                    let id = format!("id-{i}");
+                    for _ in 0..100 {
+                        let (rev, mut list): (u64, Vec<String>) =
+                            match kv.get_revision(&bkt("b"), "k").unwrap() {
+                                Some((r, bytes)) => {
+                                    (r, serde_json::from_slice(&bytes).unwrap_or_default())
+                                }
+                                None => (0, Vec::new()),
+                            };
+                        if list.contains(&id) {
+                            return;
+                        }
+                        list.push(id.clone());
+                        let bytes = serde_json::to_vec(&list).unwrap();
+                        if matches!(
+                            kv.set_if_revision(&bkt("b"), "k", &bytes, rev).unwrap(),
+                            Cas::Committed(_)
+                        ) {
+                            return;
+                        }
+                    }
+                    panic!("id-{i}: 100 CAS attempts all lost the race");
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let (_, list): (u64, Vec<String>) = match kv.get_revision(&bkt("b"), "k").unwrap() {
+            Some((r, bytes)) => (r, serde_json::from_slice(&bytes).unwrap()),
+            None => panic!("key never got written"),
+        };
+        assert_eq!(list.len(), 10, "an id was lost: {list:?}");
+    }
+
+    #[test]
+    fn ten_unique_keys_set_concurrently_all_read_back() {
+        // Mirrors `put_record`: no CAS at all, just N threads each `set`ting its
+        // OWN unique key under a shared bucket, then a get for every key.
+        let kv = std::sync::Arc::new(MemoryKv::default());
+        let threads: Vec<_> = (0..10)
+            .map(|i| {
+                let kv = kv.clone();
+                std::thread::spawn(move || {
+                    kv.set(&bkt("b"), &format!("k{i}"), format!("v{i}").as_bytes()).unwrap();
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        for i in 0..10 {
+            assert_eq!(
+                kv.get(&bkt("b"), &format!("k{i}")).unwrap().as_deref(),
+                Some(format!("v{i}").as_bytes()),
+                "key k{i} vanished"
+            );
+        }
+    }
+
+    #[test]
     fn increment_counts_from_nothing_and_is_atomic_under_threads() {
         let s = Scratch::new("incr");
         let kv = std::sync::Arc::new(SqliteKv::open(&s.0).unwrap());
