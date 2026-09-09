@@ -50,6 +50,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/referral-tracker-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "referral-tracker-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "notify-dispatch",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/referral-tracker-domain/src/lib.rs",
   "components/referral-tracker-domain/wit/referral-tracker.wit",

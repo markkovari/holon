@@ -49,6 +49,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/room-booking-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "room-booking-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "quota",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/room-booking-domain/src/lib.rs",
   "components/room-booking-domain/wit/room-booking.wit",

@@ -46,6 +46,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/complaint-escalation-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "complaint-escalation-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "event-bus",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/complaint-escalation-domain/src/lib.rs",
   "components/complaint-escalation-domain/wit/complaint-escalation.wit",

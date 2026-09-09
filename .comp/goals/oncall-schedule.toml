@@ -51,6 +51,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/oncall-schedule-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "oncall-schedule-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "notify-dispatch",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/oncall-schedule-domain/src/lib.rs",
   "components/oncall-schedule-domain/wit/oncall-schedule.wit",

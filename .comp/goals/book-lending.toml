@@ -49,6 +49,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/book-lending-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "book-lending-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "id-generate",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/book-lending-domain/src/lib.rs",
   "components/book-lending-domain/wit/book-lending.wit",

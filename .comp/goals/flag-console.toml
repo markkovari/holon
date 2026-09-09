@@ -52,6 +52,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/flag-console-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "flag-console-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "feature-flags",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/flag-console-domain/src/lib.rs",
   "components/flag-console-domain/wit/flag-console.wit",

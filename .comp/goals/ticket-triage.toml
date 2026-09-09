@@ -52,6 +52,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/ticket-triage-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "ticket-triage-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "search-index",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/ticket-triage-domain/src/lib.rs",
   "components/ticket-triage-domain/wit/ticket-triage.wit",

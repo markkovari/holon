@@ -55,6 +55,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/incident-response-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "incident-response-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "event-bus",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/incident-response-domain/src/lib.rs",
   "components/incident-response-domain/wit/incident-response.wit",

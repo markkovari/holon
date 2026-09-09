@@ -61,6 +61,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/volunteer-shift-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "volunteer-shift-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "quota",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/volunteer-shift-domain/src/lib.rs",
   "components/volunteer-shift-domain/wit/volunteer-shift.wit",

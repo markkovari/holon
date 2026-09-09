@@ -50,6 +50,19 @@ base_paths = [
   "host/wit/deps/",
 ]
 writable = ["components/invoice-approval-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "invoice-approval-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "money",
+  "guestfmt",
+  "guestio",
+]
 context = [
   "components/invoice-approval-domain/src/lib.rs",
   "components/invoice-approval-domain/wit/invoice-approval.wit",
