@@ -235,19 +235,6 @@ fn load_records_many(
     Ok(out)
 }
 
-fn put_record(
-    bucket: &kv::Bucket,
-    collection: &str,
-    id: &str,
-    rec: &Stored,
-) -> Result<(), StoreError> {
-    let body = serde_json::to_vec(rec)
-        .map_err(|e| StoreError::BackendUnavailable(format!("serialize record: {e}")))?;
-    bucket
-        .set(&rec_key(collection, id), &body)
-        .map_err(|e| StoreError::BackendUnavailable(format!("set: {e:?}")))
-}
-
 // ---- chunked sorted id lists ---------------------------------------------
 //
 // An id list (the per-collection id index AND every secondary index) is a
@@ -510,7 +497,29 @@ fn ids_insert(bucket: &kv::Bucket, base: &str, id: &str) -> Result<(), StoreErro
             IdList::Chunked(m) => m,
         };
         if m.chunks.is_empty() {
-            return ids_write_chunked(bucket, base, &[id.to_string()]);
+            // Bootstrap: nothing exists yet, so both the first chunk and the
+            // manifest naming it must be CAS-guarded too — this used to be a
+            // plain `ids_write_chunked`, and two callers racing an empty index
+            // both saw `Absent`, each wrote a single-id chunk + manifest, and
+            // whichever landed last silently discarded the other's id (ten
+            // concurrent journal writes, six survived). `expected: 0` on both
+            // writes means "must not exist yet"; a loser sees `Conflict` and
+            // retries through the now-non-empty path below instead of
+            // overwriting.
+            let ckey = chunk_key(base, 0);
+            if !ids_write_chunk_guarded(bucket, &ckey, &[id.to_string()], 0)? {
+                continue;
+            }
+            let manifest =
+                Manifest { chunks: vec![ChunkMeta { seq: 0, first: id.to_string(), count: 1 }] };
+            if !manifest_write_guarded(bucket, base, &manifest)? {
+                // The chunk write above already committed our id durably —
+                // whoever won the manifest gets to name chunk 0, and the next
+                // pass finds our id already there and returns via the
+                // "already present" check below.
+                continue;
+            }
+            return Ok(());
         }
         let ci = chunk_index_for(&m, id);
         let ckey = chunk_key(base, m.chunks[ci].seq);
@@ -522,6 +531,13 @@ fn ids_insert(bucket: &kv::Bucket, base: &str, id: &str) -> Result<(), StoreErro
         let mut extra = Vec::new();
         if ids.len() > CHUNK_MAX {
             // split: right half moves to a fresh seq, manifest entry follows.
+            //
+            // ponytail: `new_seq` is derived from this iteration's (possibly
+            // stale) `m`, and the new chunk's own write below is plain, not
+            // CAS-guarded — two concurrent splits of the same chunk could pick
+            // the same `new_seq` and clobber each other's right half. Add a
+            // guard here if a collection this size (1024+ concurrent inserts
+            // landing in one chunk) turns out to matter in practice.
             let right = ids.split_off(ids.len() / 2);
             let new_seq = m.chunks.iter().map(|c| c.seq).max().unwrap_or(0) + 1;
             m.chunks[ci].first = ids[0].clone();
@@ -539,12 +555,47 @@ fn ids_insert(bucket: &kv::Bucket, base: &str, id: &str) -> Result<(), StoreErro
         if !ids_write_chunk_guarded(bucket, &ckey, &ids, crev)? {
             continue;
         }
-        extra.push((base.to_string(), enc(&m)?));
-        return ids_set_many(bucket, extra);
+        if !extra.is_empty() {
+            ids_set_many(bucket, extra)?;
+        }
+        // The manifest is ALSO guarded now, not a plain write — see
+        // `manifest_write_guarded`'s own doc for why a plain one lost ids.
+        if !manifest_write_guarded(bucket, base, &m)? {
+            continue;
+        }
+        return Ok(());
     }
     Err(StoreError::BackendUnavailable(format!(
         "id index {base}: {CAS_TRIES} attempts all lost the race"
     )))
+}
+
+/// Write the manifest only if nothing else has since our last read of it.
+///
+/// Used to be a plain `ids_set_many` write: routing metadata (`first`/`count`)
+/// derived from the chunks, so a caller working from a stale read losing a
+/// last-write-wins race to another caller only cost ordering, NOT membership
+/// — as long as the winner's write still named every chunk both callers knew
+/// about. That holds for the steady state, where the chunk SET does not
+/// change; it does not hold on a split, where the losing write can un-name a
+/// chunk the winner just added. CAS-guarding it the same way the chunk write
+/// already is closes that gap: a loser sees `Conflict` and retries rather
+/// than trusting a manifest it never confirmed landed.
+///
+/// NOT confirmed as the cause of any specific observed failure — found by
+/// reading the code alongside the bootstrap gap above, fixed on the same
+/// reasoning, not on a reproduction that isolated this write in particular.
+fn manifest_write_guarded(bucket: &kv::Bucket, base: &str, m: &Manifest) -> Result<bool, StoreError> {
+    let expected = match cas::get(bucket, base) {
+        Ok(Some(v)) => v.revision,
+        Ok(None) => 0,
+        Err(e) => return Err(StoreError::BackendUnavailable(format!("cas get manifest: {e:?}"))),
+    };
+    match cas::set(bucket, base, &enc(m)?, expected) {
+        Ok(cas::Outcome::Committed(_)) => Ok(true),
+        Ok(cas::Outcome::Conflict(_)) => Ok(false),
+        Err(e) => Err(StoreError::BackendUnavailable(format!("cas set manifest: {e:?}"))),
+    }
 }
 
 /// Remove `id`. Touches one chunk + the manifest; an emptied chunk is dropped.
@@ -692,11 +743,38 @@ impl Guest for Component {
     ) -> Result<Entry, StoreError> {
         let parsed = parse_object(&data)?;
         let bucket = open()?;
-        let id = mint_ulid();
         let ts = now();
-
         let stored = Stored { data, revision: 1, created: ts, updated: ts, index_fields };
-        put_record(&bucket, &collection, &id, &stored)?;
+
+        // `put_record` used to be a plain, unconditional `bucket.set` trusting
+        // `mint_ulid`'s 80 random bits never to repeat. A collision would
+        // silently overwrite the first document with the second's — both
+        // still indexed fine, since the index just sees the same id twice —
+        // which is the class of bug this store shouldn't have to trust never
+        // happens. CAS'd here with `expected: 0` ("must not exist yet"); a
+        // collision retries with a freshly minted id instead of clobbering.
+        // Defense-in-depth: not confirmed as the cause of any specific
+        // observed failure, and a real collision at 80 random bits should be
+        // vanishingly rare — but "should be rare" is exactly what the
+        // manifest write above was trusted on too, wrongly.
+        let mut id = mint_ulid();
+        let mut placed = false;
+        for _ in 0..CAS_TRIES {
+            match cas::set(&bucket, &rec_key(&collection, &id), &enc(&stored)?, 0) {
+                Ok(cas::Outcome::Committed(_)) => {
+                    placed = true;
+                    break;
+                }
+                Ok(cas::Outcome::Conflict(_)) => id = mint_ulid(),
+                Err(e) => return Err(StoreError::BackendUnavailable(format!("cas set record: {e:?}"))),
+            }
+        }
+        if !placed {
+            return Err(StoreError::BackendUnavailable(format!(
+                "create {collection}: {CAS_TRIES} freshly minted ids all collided"
+            )));
+        }
+
         id_index_insert(&bucket, &collection, &id)?;
         add_secondary_indexes(&bucket, &collection, &id, &parsed, &stored.index_fields)?;
 
