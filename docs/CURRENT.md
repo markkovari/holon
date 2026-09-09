@@ -412,6 +412,35 @@ desktop session, an installed Chrome or `ffmpeg` binary) and report
 `unavailable` rather than fail silently when it's missing — that boundary is
 the daemon's, not the component's.
 
+**Naming: the capability is not the app.** Every one of these twelve is a bare
+capability crate — it exports only its own WIT interface, never
+`wasi:http/incoming-handler` — so it cannot be `cargo xtask host`ed on its own.
+A separate `*-domain` component wraps it over HTTP and is the actual
+`apps/*.toml` entry point; only three of the twelve (`fs-watcher`,
+`image-optimizer`, `lan-scanner`) keep the capability's own name in that
+wrapper. The rest ship as a differently-named product:
+
+| capability crate | native daemon | HTTP wrapper crate | app name |
+|---|---|---|---|
+| `browser-automation` | `comp-browser` | `pdf-generator-domain` | `pdf-generator` |
+| `container-docker` | `comp-docker` | `docker-manager-domain` | `docker-manager` |
+| `desktop-clipboard` | `comp-clipboard` | `clipboard-sync-domain` | `clipboard-sync` |
+| `fs-watcher` | `comp-fswatch` | `fs-watcher-domain` | `fs-watcher` |
+| `image-optimizer` | `comp-imageopt` | `image-optimizer-domain` | `image-optimizer` |
+| `lan-scanner` | `comp-lanscan` | `lan-scanner-domain` | `lan-scanner` |
+| `llm-local` | `comp-llmlocal` | `local-ai-domain` | `local-ai` |
+| `mdns-discovery` | `comp-mdns` | `mdns-discoverer-domain` | `mdns-discoverer` |
+| `system-cron` | `comp-cron` | `cron-scheduler-domain` | `cron-scheduler` |
+| `ui-notifier` | `comp-uinotify` | `desktop-notifier-domain` | `desktop-notifier` |
+| `video-ffmpeg` | `comp-ffmpeg` | `video-transcoder-domain` | `video-transcoder` |
+| `vpn-wireguard` | `comp-wireguard` | `vpn-manager-domain` | `vpn-manager` |
+
+`intent-router` is the one component in the repo where this split doesn't
+apply: it exports `wasi:http/incoming-handler` itself, with no `-domain`
+sibling — it IS its own entry point. `xtask`'s domain-name resolution
+(`compose_app`) checks for a `<name>-domain` directory first and falls back to
+the bare name precisely so this one case doesn't need special-casing.
+
 **The loop's judgement**
 
 - **The pool is a closed loop now**: a failed branch writes what it failed on, each
