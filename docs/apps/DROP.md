@@ -85,7 +85,7 @@ request/response one).
 
 ## Build order (each rung is demoable)
 
-1. **Ticket** — `POST /api/tickets` over `upload:policy`. `just e2e-drop` proves
+1. **Ticket** — `POST /api/tickets` over `upload:policy`. `cargo xtask compose drop && cargo test --manifest-path examples/drop/Cargo.toml` proves
    a blocked content-type and an oversize request are both refused at ticket
    time, with **no bytes uploaded**.
 2. **Redeem + store** — `PUT /api/blob/{token}` redeems the ticket and stores to

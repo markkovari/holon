@@ -55,7 +55,7 @@ the **host** (authenticated, and the game's owner) can drive the phases.
 cargo xtask host buzz    # composes the component, builds the React UI, serves on :3049
 # open on one device and sign in to HOST (you get a demo quiz + a PIN);
 # open on other devices and JOIN with the PIN + a nickname.
-just e2e-buzz     # the game loop + speed-weighted scoring + leaderboard + podium
+cargo xtask compose buzz && cargo test --manifest-path examples/buzz/Cargo.toml     # the game loop + speed-weighted scoring + leaderboard + podium
 ```
 
 The frontend lives in `examples/buzz/ui` (Vite + React + shadcn/ui); the host

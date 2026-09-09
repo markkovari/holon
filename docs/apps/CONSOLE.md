@@ -110,7 +110,7 @@ that has been panned off-screen is not mistaken for a graph that is missing node
 
 ```bash
 cargo xtask host console        # composes and serves on :3055
-just e2e-console         # Playwright against the real stack, nothing stubbed below the browser
+npm --prefix examples/console test    # Playwright against the real stack, nothing stubbed below the browser
 ```
 
 `host-console` needs `platform-url` pointing at a running platform, and

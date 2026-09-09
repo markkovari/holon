@@ -79,7 +79,7 @@ The e2e proves it: **8 validators** scan one single ticket at once; exactly
 cargo xtask host transit   # composes the component, builds the React UI, serves on :3042
 # register as `rider` to buy tickets + show their QR;
 # as `validator` to scan + validate.
-just e2e-transit    # auth + fares + single-use (incl. an 8-way concurrency race)
+cargo xtask compose transit && cargo test --manifest-path examples/transit/Cargo.toml    # auth + fares + single-use (incl. an 8-way concurrency race)
                     # + duration window + a valid QR
 ```
 

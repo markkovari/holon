@@ -78,8 +78,8 @@ to run the front-half:
 - **`golem-bridge`** ([`components/golem-bridge`](../../components/golem-bridge)) — a
   WASM component that satisfies the same `durable:workflow/orchestrator` contract
   by POSTing to a durable Golem worker over `wasi:http/outgoing-handler`.
-- **`just compose-jobs-golem`** composes it into the queue in place of the
-  in-process backend → `jobs_domain.golem.wasm`, which now imports
+- Composing it into the queue in place of the in-process backend produces
+  `jobs_domain.golem.wasm`, which now imports
   `wasi:http/outgoing-handler` + `wasi:keyvalue` + `wasi:config` (all v2 host
   interfaces). `durable:workflow` is fully satisfied in-wasm.
 - **`examples/jobs/k8s/jobs.yaml`** is the `WorkloadDeployment`: the fused
@@ -140,7 +140,7 @@ contract.
 
 ```bash
 cargo xtask host jobs        # native host + board on http://127.0.0.1:3038
-just e2e-jobs         # lifecycle e2e: done / retry-then-succeed / DLQ / replay / exactly-once
+cargo xtask compose jobs && cargo test --manifest-path examples/jobs/Cargo.toml         # lifecycle e2e: done / retry-then-succeed / DLQ / replay / exactly-once
 ```
 
 `CFG_MAX_ATTEMPTS` (default here 2) and `CFG_BASE_BACKOFF` (1s) tune the outbox so

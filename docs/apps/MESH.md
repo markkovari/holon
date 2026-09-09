@@ -99,12 +99,13 @@ cargo xtask host mesh     # composes, builds the SPA, serves on :3050 (+ flaky u
 # hit "Hammer it" to trip the breaker, then keep clicking: 503 shed, and the
 # upstream stops seeing requests. Wait out the countdown for the half-open probe.
 
-just e2e-mesh          # the whole ladder against the real upstream (see below)
+cargo xtask compose mesh && cargo test --manifest-path examples/mesh/Cargo.toml          # the whole ladder against the real upstream (see below)
 cargo test -p resilience   # the state machine, exhaustively, no host
 ```
 
-`just mesh-upstream` runs the flaky server alone if you want it to survive host
-restarts.
+`cargo build --release --manifest-path examples/mesh/Cargo.toml --bin flaky &&
+examples/mesh/target/release/flaky 127.0.0.1:3051` runs the flaky server alone
+if you want it to survive host restarts.
 
 The e2e (`examples/mesh/tests/mesh.rs`) proves: a healthy call takes one attempt;
 a two-request blip is ridden out by retries (and `total_ms` shows the backoff
@@ -141,6 +142,6 @@ breaker and a missing route does not.
 - **Fallbacks** — a cached or static response when the circuit is open, so shed
   load degrades instead of erroring (`cache:store` is already a component).
 - **The breaker on Golem** — one durable worker per circuit, as `gate` did
-  (`just gate-golem`), for exact serialization under a burst.
+  (`bash examples/gate/golem-run.sh`), for exact serialization under a burst.
 - **Wire it into an existing app** — `eshop-gateway` and `event-pusher` both call
   upstreams through `proxy:route` with no breaker at all.

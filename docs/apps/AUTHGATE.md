@@ -91,7 +91,7 @@ rather than importing it.
 ## Build order (each rung is demoable)
 
 1. **Enroll + seal** — `POST /api/enroll` over `otp:totp` + `secrets:vault`.
-   `just e2e-authgate` provisions a secret, derives a real RFC-6238 code from it,
+   `cargo xtask compose authgate && cargo test --manifest-path examples/authgate/Cargo.toml` provisions a secret, derives a real RFC-6238 code from it,
    and asserts the account is `pending` with the secret sealed in the vault.
 2. **Activate + recovery** — a first correct code flips to `enrolled` and issues
    recovery codes; e2e proves a wrong first code is refused and re-activation is

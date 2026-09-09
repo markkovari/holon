@@ -77,7 +77,7 @@ demo can show both the committed path and the compensating path on demand.
 5. **Durability** (rung 3) — all state is in `records:store` + `fsm` (both
    KV-backed). Kill the host mid-saga, restart, `POST /internal/pump` → the saga
    resumes exactly where it left off. Nothing is held in component memory.
-   (`just durable-saga` proves it end to end.)
+   (`bash examples/saga/durability.sh` proves it end to end.)
 
 ## Component map
 
@@ -98,21 +98,21 @@ capabilities into contracts.
 
 1. ✅ **Happy path** — start → flight → hotel → car → committed; durable state,
    fsm status + history, step events. (`saga-domain` + fsm + records + idempotency
-   + event-bus, `just e2e-saga`.)
+   + event-bus, `cargo xtask compose saga && cargo test --manifest-path examples/saga/Cargo.toml`.)
 2. ✅ **Compensation** — `failLeg` fails a leg → compensate booked legs in
    reverse; idempotency proves each undo runs once. e2e asserts the rollback and
    the first-leg-fails (nothing to undo) case.
 3. ✅ **Durability + retries** — a flaky leg retries via `sched:timer` and either
    recovers or (past the ceiling) compensates; `pump` advances one persisted step
    at a time; the saga **survives a host kill and resumes** on NATS
-   (`just durable-saga` → PASS).
+   (`bash examples/saga/durability.sh` → PASS).
 4. ✅ **Bench** — app-path round, memory vs NATS: the first bench of a *stateful
    workflow* path. See [`bench/SAGA-BENCH.md`](../../bench/SAGA-BENCH.md).
 5. ✅ **Golem-backed legs** — a leg is booked by invoking a real durable
    [Golem](../capabilities/GOLEM.md) worker over `wasi:http/outgoing-handler` (the same worker the
    `golem-workflow` provider bridges to). Send a trip with `golemUrl` + `golemHost`
    and each leg becomes a crash-proof workflow while the saga still owns
-   compensation. Live proof: `just saga-golem` → the saga commits with
+   compensation. Live proof: `bash examples/saga/golem-legs.sh` → the saga commits with
    golem-issued refs (`FL-golem-1`) and the leg's durable worker state advances.
 
 ### Golem-backed legs — how the hop works

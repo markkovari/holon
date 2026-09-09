@@ -42,7 +42,7 @@ same component guards a payment form, an onboarding flow, or a batch import.
 cargo xtask host payees   # composes the component, builds the React UI, serves on :3047
 # register a new account (seeded demo payees), then add a payee — the IBAN is
 # validated as you type, and a typo is refused with the reason.
-just e2e-payees    # /verify + add (valid stored, bad-check/length/country rejected) + ownership
+cargo xtask compose payees && cargo test --manifest-path examples/payees/Cargo.toml    # /verify + add (valid stored, bad-check/length/country rejected) + ownership
 ```
 
 The frontend lives in `examples/payees/ui` (Vite + React + shadcn/ui); the Add

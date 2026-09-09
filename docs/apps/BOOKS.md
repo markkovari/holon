@@ -61,7 +61,7 @@ All three come from one `ledger::trial_balance` call plus the account types:
 cargo xtask host books   # composes the component, builds the React UI, serves on :3045
 # register a new account (seeded a demo chart + entries), post balanced journal
 # entries, and read the trial balance / P&L / balance sheet (+ PDF).
-just e2e-books    # balanced posts, unbalanced rejected, trial balances,
+cargo xtask compose books && cargo test --manifest-path examples/books/Cargo.toml    # balanced posts, unbalanced rejected, trial balances,
                   # balance sheet balances, statements PDF renders
 ```
 
