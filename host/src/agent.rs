@@ -88,7 +88,6 @@ pub struct Agent {
     pub lattice: String,
     pub engine: Arc<wasmtime::Engine>,
     pub kv: crate::Kv,
-    pub cache_backing: crate::CacheBacking,
     /// Where a granted secret is fetched from (ADR-0051). Carried on the agent so
     /// the wRPC-served path and the HTTP path build identical stores.
     pub platform_url: String,
@@ -438,6 +437,9 @@ async fn start(
             |e| {
                 Arc::new(Instance {
                     scope: e.scope.clone(),
+                    // Resizing a running instance's replica count, not restarting
+                    // it — its cache carries over, same as its scope does.
+                    cache_backing: e.cache_backing.clone(),
                     pre: e.pre.clone(),
                     remotes: e.remotes.clone(),
                     count: cmd.count.max(1),
@@ -475,6 +477,10 @@ async fn start(
     let t_fetch = t0.elapsed();
     let count = cmd.count.max(1);
     let scope = Arc::new(cmd.into_scope(&agent.limits));
+    // Fresh for this instance alone — see `CacheBacking`'s own doc for why a
+    // process-global one would let two tenants' `cache:store` collide.
+    let cache_backing: crate::CacheBacking =
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
 
     // Every granted reference must resolve before this instance serves anything.
     //
@@ -622,7 +628,7 @@ async fn start(
             let serve_client =
                 crate::rpc::client(nats.clone(), &agent.lattice, &id, Some(&id)).await?;
             let (kv, cache, sc, rem) =
-                (agent.kv.clone(), agent.cache_backing.clone(), scope.clone(), remotes.clone());
+                (agent.kv.clone(), cache_backing.clone(), scope.clone(), remotes.clone());
             let engine = agent.engine.clone();
             let platform = agent.platform_url.clone();
             let n = crate::rpc::serve_exports_over(
@@ -650,7 +656,7 @@ async fn start(
         .instances
         .write()
         .unwrap()
-        .insert(id.clone(), Arc::new(Instance { scope: scope.clone(), pre, remotes, count }));
+        .insert(id.clone(), Arc::new(Instance { scope: scope.clone(), cache_backing, pre, remotes, count }));
     if let Some(host) = ingress_host {
         crate::sync::writing(&agent.routes).insert(host.to_ascii_lowercase(), id.clone());
     }
