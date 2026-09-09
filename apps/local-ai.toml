@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render local-ai
-#   just selfhost-deploy local-ai my-vps
+#   holon node render apps/local-ai.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/local-ai/* to the box and `systemctl enable --now comp-local-ai.service`
 name = "local-ai"
 domain = "local-ai.example.com"
 artifact = "components/target/local-ai.composed.wasm"

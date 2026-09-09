@@ -1,8 +1,8 @@
 # An app, as a person writes it — same shape as gate.toml, the other
 # hand-authored app.
 #
-#   just selfhost-render intent-router            # see what would be written
-#   just selfhost-deploy intent-router my-vps      # compose, ship, restart, route
+#   holon node render apps/intent-router.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/intent-router/* to the box and `systemctl enable --now comp-intent-router.service`
 name = "intent-router"
 access = "tailnet"
 domain = "intent-router.example.com"

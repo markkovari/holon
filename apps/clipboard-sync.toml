@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render clipboard-sync
-#   just selfhost-deploy clipboard-sync my-vps
+#   holon node render apps/clipboard-sync.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/clipboard-sync/* to the box and `systemctl enable --now comp-clipboard-sync.service`
 name = "clipboard-sync"
 domain = "clipboard-sync.example.com"
 artifact = "components/target/clipboard-sync.composed.wasm"

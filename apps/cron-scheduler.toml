@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render cron-scheduler
-#   just selfhost-deploy cron-scheduler my-vps
+#   holon node render apps/cron-scheduler.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/cron-scheduler/* to the box and `systemctl enable --now comp-cron-scheduler.service`
 name = "cron-scheduler"
 domain = "cron-scheduler.example.com"
 artifact = "components/target/cron-scheduler.composed.wasm"

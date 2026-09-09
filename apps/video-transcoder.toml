@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render video-transcoder
-#   just selfhost-deploy video-transcoder my-vps
+#   holon node render apps/video-transcoder.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/video-transcoder/* to the box and `systemctl enable --now comp-video-transcoder.service`
 name = "video-transcoder"
 domain = "video-transcoder.example.com"
 artifact = "components/target/video-transcoder.composed.wasm"

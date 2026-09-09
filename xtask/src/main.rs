@@ -439,6 +439,18 @@ fn compose_app(app: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// Kills every daemon this started when `host_app` returns, success or not —
+/// otherwise a `cargo xtask host` a developer Ctrl-C'd leaves the daemon
+/// bound to its port, and the next run fails to bind it.
+struct DaemonGuard(Vec<std::process::Child>);
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        for child in &mut self.0 {
+            let _ = child.kill();
+        }
+    }
+}
+
 fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
     // Discover the app to get the canonical artifact path
     let apps = comp_metadata::app::discover_apps(Path::new("."));
@@ -463,6 +475,44 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
     build_host.args(["build", "--manifest-path", "host/Cargo.toml", "--release", "--bin", "comp-host"]);
     run_cmd(&mut build_host, "build comp-host")?;
 
+    // Start every daemon this app declares — `cargo xtask host` used to leave
+    // this to a second terminal, silently unusable for any of the twelve
+    // ADR-0095 capabilities until someone remembered to run the daemon by
+    // hand.
+    let daemons = app_spec.map(|s| s.daemons.as_slice()).unwrap_or_default();
+    let mut running = Vec::new();
+    for d in daemons {
+        let mut build = Command::new("cargo");
+        build.args([
+            "build",
+            "--manifest-path",
+            "reconciler/Cargo.toml",
+            "--release",
+            "--bin",
+            &format!("comp-{}", d.name),
+        ]);
+        run_cmd(&mut build, &format!("build comp-{}", d.name))?;
+
+        let mut cmd = Command::new(format!("reconciler/target/release/comp-{}", d.name));
+        cmd.args(["--addr", &d.addr]);
+        if let Some(flag) = &d.allow_flag {
+            for v in &d.allow {
+                cmd.args([format!("--{flag}"), v.clone()]);
+            }
+        }
+        for a in &d.extra_args {
+            for part in a.split_whitespace() {
+                cmd.arg(part);
+            }
+        }
+        if let Some(t) = &d.token {
+            cmd.args(["--token", t]);
+        }
+        println!("{}", format!("  + daemon: comp-{} on {}", d.name, d.addr).cyan());
+        running.push(cmd.spawn().with_context(|| format!("spawning comp-{}", d.name))?);
+    }
+    let _guard = DaemonGuard(running);
+
     let bind_addr = addr.map(|a| a.to_string()).unwrap_or_else(|| format!("0.0.0.0:{default_port}"));
     let kv_mode = kv.map(|k| k.to_string()).unwrap_or(default_kv);
 
@@ -479,6 +529,18 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
         "--config",
         &format!("default-tenant={app}"),
     ]);
+
+    // The `<name>-url`/`<name>-token` config a daemon-backed component reads,
+    // and the egress allow-list to actually reach it — comp-host denies all
+    // outbound HTTP by default, so a component and its daemon both running
+    // was still an `unavailable` without this.
+    for d in daemons {
+        host_cmd.args(["--config", &format!("{}-url=http://{}", d.name, d.addr)]);
+        if let Some(t) = &d.token {
+            host_cmd.args(["--config", &format!("{}-token={t}", d.name)]);
+        }
+        host_cmd.args(["--egress", &d.addr, "--allow-private-egress"]);
+    }
 
     if let Some(dir) = app_spec.and_then(|s| s.static_dir_as_string()) {
         if Path::new(&dir).exists() {

@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render desktop-notifier
-#   just selfhost-deploy desktop-notifier my-vps
+#   holon node render apps/desktop-notifier.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/desktop-notifier/* to the box and `systemctl enable --now comp-desktop-notifier.service`
 name = "desktop-notifier"
 domain = "desktop-notifier.example.com"
 artifact = "components/target/desktop-notifier.composed.wasm"

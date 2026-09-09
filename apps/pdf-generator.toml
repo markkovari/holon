@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render pdf-generator
-#   just selfhost-deploy pdf-generator my-vps
+#   holon node render apps/pdf-generator.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/pdf-generator/* to the box and `systemctl enable --now comp-pdf-generator.service`
 name = "pdf-generator"
 domain = "pdf-generator.example.com"
 artifact = "components/target/pdf-generator.composed.wasm"
