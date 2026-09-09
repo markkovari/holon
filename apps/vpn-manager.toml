@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render vpn-manager
-#   just selfhost-deploy vpn-manager my-vps
+#   holon node render apps/vpn-manager.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/vpn-manager/* to the box and `systemctl enable --now comp-vpn-manager.service`
 name = "vpn-manager"
 domain = "vpn-manager.example.com"
 artifact = "components/target/vpn-manager.composed.wasm"

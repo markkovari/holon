@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render mdns-discoverer
-#   just selfhost-deploy mdns-discoverer my-vps
+#   holon node render apps/mdns-discoverer.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/mdns-discoverer/* to the box and `systemctl enable --now comp-mdns-discoverer.service`
 name = "mdns-discoverer"
 domain = "mdns-discoverer.local"
 artifact = "components/target/mdns-discoverer.composed.wasm"

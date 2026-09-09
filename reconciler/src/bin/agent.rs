@@ -22,8 +22,9 @@
 //! It deploys apps this box ALREADY HAS a unit for. An agent that installed new apps
 //! because a file said to would mean a commit to one branch of one repository can
 //! start arbitrary services on this machine; the blast radius of a compromised CI is
-//! then every box running the agent. Adding an app stays a deliberate
-//! `just selfhost-deploy`, and this keeps the ones already there current.
+//! then every box running the agent. Adding an app stays a deliberate operator step
+//! (`holon node render`, then copy the unit to the box and `systemctl enable --now`
+//! it), and this keeps the ones already there current.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -54,7 +55,8 @@ fn main() {
                 eprintln!(
                     "comp-agent --lock-url <url> [--interval 300] [--once] [--dry-run]\n\n\
                      Keeps the apps this box already runs at the digest the lock names.\n\
-                     Installs nothing new: adding an app is `just selfhost-deploy`."
+                     Installs nothing new: adding an app is a manual `holon node render` \
+                     plus a copy to the box, not something this does for you."
                 );
                 return;
             }

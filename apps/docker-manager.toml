@@ -1,7 +1,7 @@
 # Hand-authored — same shape as gate.toml/fs-watcher.toml.
 #
-#   just selfhost-render docker-manager
-#   just selfhost-deploy docker-manager my-vps
+#   holon node render apps/docker-manager.toml --out target/selfhost   # write the unit/env/route
+#   then copy target/selfhost/docker-manager/* to the box and `systemctl enable --now comp-docker-manager.service`
 name = "docker-manager"
 domain = "docker-manager.example.com"
 artifact = "components/target/docker-manager.composed.wasm"

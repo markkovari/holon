@@ -18,6 +18,25 @@ pub struct AppSpec {
     pub kv: Option<toml::Value>,
     #[serde(default)]
     pub root: Option<String>,
+    /// The ADR-0095 native daemons this app's component dials over loopback.
+    #[serde(default, rename = "daemon")]
+    pub daemons: Vec<Daemon>,
+}
+
+/// One native daemon this app needs running alongside it — the subset of
+/// `cli::Daemon`'s fields xtask needs to spawn one for local dev.
+#[derive(Debug, Deserialize, Clone)]
+pub struct Daemon {
+    pub name: String,
+    pub addr: String,
+    #[serde(default)]
+    pub allow_flag: Option<String>,
+    #[serde(default)]
+    pub allow: Vec<String>,
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 impl AppSpec {

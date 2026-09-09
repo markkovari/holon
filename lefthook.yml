@@ -44,6 +44,11 @@ pre-push:
     cli-check:
       root: "cli/"
       run: cargo test
+    # xtask has no CI job at all (checked: not in ci.yml's matrix) — this is
+    # the only thing that builds it before a push, local or not.
+    xtask-check:
+      root: "xtask/"
+      run: cargo build
     # Mirrors CI's semgrep job: only findings this push introduces relative to
     # main, not the untouched backlog. Skipped with a clear message rather
     # than blocking a push if semgrep isn't installed locally — CI still
