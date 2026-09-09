@@ -1,0 +1,68 @@
+title = "oncall:schedule — only a team lead edits someone else's shift"
+
+text = """
+Implement components/oncall-schedule-domain/src/handlers.rs — nothing in it is
+implemented yet, every route currently returns 501.
+
+Router (scaffold): `/health`, `POST /test/token`
+`{"subject","roles":["engineer"|"lead"]}`.
+
+Routes:
+  POST /api/shifts        {"engineer":"<subject>","starts_at":<u64>}   any authenticated (shifts:write)
+  GET  /api/shifts                                                       any authenticated (shifts:read)
+  POST /api/shifts/{id}/reassign  {"engineer":"<subject>"}               see below
+
+Store in `shifts`: {engineer, starts_at}. `POST /api/shifts` creates a shift for ANY
+engineer (so a lead can schedule others, and an engineer can put themself on-call) — the
+interesting check is only on reassignment.
+
+ROW-LEVEL RULE: an engineer may reassign only THEIR OWN shift (to themself is pointless
+but not forbidden); a lead may reassign anyone's. Register (once) with
+`policy:guard/guard.set-rules("oncallschedule", ...)`:
+  - id "engineer-reassigns-own", action "reassign", allow, priority 10,
+    [{left:"resource.engineer", op:eq, right:"principal.subject"}]
+  - id "lead-overrides", action "reassign", allow, priority 5,
+    [{left:"principal.roles", op:has, right:"lead"}]
+Enforce before reassigning; default deny -> 403.
+
+On a successful reassign, notify the NEW engineer:
+`notify:dispatch/dispatcher.send({channel: Webhook, target: "https://example.test/notify",
+subject: "", body: "<engineer> is now on call"})` — ignore the result (never blocks the
+response; a webhook failure is not the caller's problem).
+
+Audit-log every create/reassign.
+"""
+
+component = "oncall-schedule-domain"
+
+base_paths = [
+  "components/oncall-schedule-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/notify-dispatch/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/oncall-schedule-domain/src/handlers.rs"]
+context = [
+  "components/oncall-schedule-domain/src/lib.rs",
+  "components/oncall-schedule-domain/wit/oncall-schedule.wit",
+  "components/notify-dispatch/wit/",
+  "components/policy-guard/wit/",
+  "components/record-store/wit/",
+  "components/audit-log/wit/",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/oncall-schedule-domain/gate.sh"]

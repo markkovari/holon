@@ -1,0 +1,66 @@
+title = "room:booking — book a room, cancel your own booking"
+
+text = """
+Implement components/room-booking-domain/src/handlers.rs — nothing in it is
+implemented yet, every route currently returns 501.
+
+Router (scaffold): `/health`, `POST /test/token` `{"subject","roles":["member"|"admin"]}`.
+Your file owns `/api/`.
+
+Routes:
+  POST /api/rooms                {"name"}                  admin only (rooms:write)
+  GET  /api/rooms                                            any authenticated (rooms:read)
+  POST /api/rooms/{id}/book       {"date":"2024-01-01"}     any authenticated (bookings:write)
+  POST /api/bookings/{id}/cancel                             see below
+
+Store `rooms`: {name}. Store `bookings`: {room_id, date, subject, cancelled: false}. `book`
+fails 409 `already_booked` if an uncancelled booking exists for the same `room_id`+`date`.
+
+QUOTA before booking: at most 2 bookings per member per rolling day (86400 seconds) —
+`quota:meter/meter.reserve(subject, 1, 2, 86400)`; on `err(exceeded(_))` -> 429
+`{"error":"quota_exceeded"}`, create nothing.
+
+ROW-LEVEL RULE: only the member who made a booking — or an admin — may cancel it. Register
+(once) with `policy:guard/guard.set-rules("roombooking", ...)`:
+  - id "booker-cancels", action "cancel", allow, priority 10,
+    [{left:"resource.subject", op:eq, right:"principal.subject"}]
+  - id "admin-overrides", action "cancel", allow, priority 5,
+    [{left:"principal.roles", op:has, right:"admin"}]
+Enforce before cancelling; default deny -> 403.
+
+Audit-log every create/book/cancel.
+"""
+
+component = "room-booking-domain"
+
+base_paths = [
+  "components/room-booking-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/quota/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/room-booking-domain/src/handlers.rs"]
+context = [
+  "components/room-booking-domain/src/lib.rs",
+  "components/room-booking-domain/wit/room-booking.wit",
+  "components/quota/wit/",
+  "components/policy-guard/wit/",
+  "components/record-store/wit/",
+  "components/audit-log/wit/",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/room-booking-domain/gate.sh"]

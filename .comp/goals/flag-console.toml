@@ -1,0 +1,69 @@
+title = "flag:console — toggle a flag, scoped to your own service"
+
+text = """
+Implement components/flag-console-domain/src/handlers.rs — nothing in it is
+implemented yet, every route currently returns 501.
+
+Router (scaffold): `/health`, `POST /test/token`
+`{"subject","roles":["engineer:<service>"|"admin"]}` — an engineer's role string encodes
+which service they own, e.g. `"engineer:billing"`.
+
+Routes:
+  POST /api/services                {"name"}                     admin only (services:write)
+  GET  /api/services                                              any authenticated (services:read)
+  POST /api/services/{name}/flags/{flag}   {"enabled":true|false}  see below
+
+`services` collection just records which service names exist (so `GET` has something to
+list); flags themselves live in `featureflags:guard`, not duplicated into records:store.
+
+ROW-LEVEL RULE: an engineer may only toggle a flag for the service THEY are scoped to
+(their role is literally `"engineer:<service>"`); admin may toggle any. Register (once)
+with `policy:guard/guard.set-rules("flagconsole", ...)`:
+  - id "engineer-owns-service", action "toggle", allow, priority 10,
+    [{left:"principal.roles", op:has, right:"resource.owner_role"}]
+    where `resource.owner_role` is the string `format!("engineer:{service_name}")` you
+    build from the route's `{name}` segment — the condition compares it against the
+    principal's comma-joined roles list via `has`.
+  - id "admin-overrides", action "toggle", allow, priority 5,
+    [{left:"principal.roles", op:has, right:"admin"}]
+Enforce before the toggle; default deny -> 403.
+
+On allow, call `featureflags:guard/evaluator.set_rule("{name}.{flag}", "flagconsole",
+Rule::Enabled or Rule::Disabled)` — signature is `set_rule(flag, tenant, rule)`, flag key
+is `"<service>.<flag>"`, tenant is the fixed string `"flagconsole"`. Audit-log every
+create/toggle.
+"""
+
+component = "flag-console-domain"
+
+base_paths = [
+  "components/flag-console-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/feature-flags/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/flag-console-domain/src/handlers.rs"]
+context = [
+  "components/flag-console-domain/src/lib.rs",
+  "components/flag-console-domain/wit/flag-console.wit",
+  "components/feature-flags/wit/",
+  "components/policy-guard/wit/",
+  "components/record-store/wit/",
+  "components/audit-log/wit/",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/flag-console-domain/gate.sh"]

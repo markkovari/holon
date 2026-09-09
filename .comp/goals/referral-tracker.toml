@@ -1,0 +1,67 @@
+title = "referral:tracker — a recruiter owns their own postings"
+
+text = """
+Implement components/referral-tracker-domain/src/handlers.rs — nothing in it
+is implemented yet, every route currently returns 501.
+
+Router (scaffold): `/health`, `POST /test/token`
+`{"subject","roles":["recruiter"|"employee"]}`.
+
+Routes:
+  POST /api/postings                {"title"}                       recruiter only (postings:write); recruiter becomes the posting's `owner`
+  GET  /api/postings                                                  any authenticated (postings:read)
+  POST /api/postings/{id}/referrals {"candidate_email"}              any authenticated (referrals:write)
+  POST /api/postings/{id}/close                                       see below
+
+Store `postings`: {title, owner, status: "open"|"closed"}. Store `referrals`: {posting_id,
+referred_by, candidate_email}.
+
+ROW-LEVEL RULE: only the recruiter who OWNS a posting — no admin override for this one, on
+purpose, matching how referrals really work: even a senior recruiter cannot close a
+colleague's req — may close it. Register (once) with
+`policy:guard/guard.set-rules("referraltracker", ...)`:
+  - id "owner-closes", action "close", allow, priority 10,
+    [{left:"resource.owner", op:eq, right:"principal.subject"}]
+Enforce before closing; default deny -> 403 (this means a second recruiter is ALWAYS denied,
+which is exactly the point — do not add an override rule).
+
+On a successful referral, notify the posting's owner:
+`notify:dispatch/dispatcher.send({channel: Webhook, target: "https://example.test/notify",
+subject: "", body: "new referral for <title>"})`, ignoring the result.
+
+Audit-log every create/referral/close.
+"""
+
+component = "referral-tracker-domain"
+
+base_paths = [
+  "components/referral-tracker-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/notify-dispatch/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/referral-tracker-domain/src/handlers.rs"]
+context = [
+  "components/referral-tracker-domain/src/lib.rs",
+  "components/referral-tracker-domain/wit/referral-tracker.wit",
+  "components/notify-dispatch/wit/",
+  "components/policy-guard/wit/",
+  "components/record-store/wit/",
+  "components/audit-log/wit/",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/referral-tracker-domain/gate.sh"]
