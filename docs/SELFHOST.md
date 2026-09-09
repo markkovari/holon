@@ -96,18 +96,26 @@ resolving that Service; egress here is fail-closed the same way
 `comp-host --egress` is on tiers 1/2.
 
 No token support yet on this lane — permissive, matching the demo apps'
-`[[daemon]]` tables everywhere else. Verified against a real 2.9.0
-runtime-operator: the rendered `Workload` (with the egress grants and the
-rewritten config value) is accepted and reaches `Ready: True`. The daemon's
-own container did not: pulling it needs the node's container runtime to trust
-the in-cluster registry, which on a bare local dev registry (plain HTTP, no
-TLS) is a Docker-daemon-level `insecure-registries` setting outside anything
-this renders — a real cluster's registry (GHCR, ECR, a registry with a real
-certificate) would not hit this at all. Tier 3/4's wasm *component* pulls
-already work over plain HTTP because the wasmCloud host's own OCI puller is
-configured for it (`runtime.extraArgs: [--allow-insecure-registries]`); the
-node's container runtime is a separate piece of software with its own trust
-config, unrelated to that flag.
+`[[daemon]]` tables everywhere else. Verified end to end against a real 2.9.0
+runtime-operator (`examples/fs-watcher/k8s-verify.sh`): the rendered
+`Workload` (egress grants, rewritten config value) reaches `Ready: True`, the
+daemon's own Deployment serves a real `POST /poll`, and the app answers a
+real `GET /api/watch` through it.
+
+The one snag along the way, worth recording because it cost real time: the
+node's container runtime pulling the daemon's image is separate software
+from the wasmCloud host's own OCI puller (`runtime.extraArgs:
+[--allow-insecure-registries]` only configures the latter), so a bare local
+dev registry (plain HTTP, no TLS) that the wasm *component* pulls from fine
+still gets `ErrImagePull` for the daemon's container. The fix on a local
+cluster whose node shares the host's own image store (true of kind, k3d, and
+OrbStack's built-in k8s) needs no registry trust at all: `docker build` the
+image locally and patch the Deployment to `imagePullPolicy: Never` — which
+is exactly what the local dev image cache is for, and the verify script does
+this after applying the rendered manifest rather than the renderer changing
+what it emits. A cluster without that sharing needs its registry to actually
+be TLS-terminated (GHCR, ECR, …), same as any real deployment would use
+regardless.
 
 ### Fused or linked, and what the hop costs
 
