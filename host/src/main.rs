@@ -97,8 +97,13 @@ use bindings::wasi::keyvalue::store;
 // host-side impl does. (See kv.rs.)
 
 pub type Kv = Arc<dyn KvBackend>;
-/// the cache component's backing store (flat key -> bytes), shares the same Kv
-/// under a reserved bucket.
+/// The `cache:store` component's backing map (flat guest key -> bytes).
+///
+/// One per INSTANCE, not one per process — `cache:store`'s own WIT carries no
+/// bucket/name parameter the way `wasi:keyvalue::store::open` does, so nothing
+/// stops two different tenants composing the same cache component and
+/// choosing the same key. A process-global map here would let that collide;
+/// each `Instance` getting its own means there is nothing to collide with.
 pub type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 
 // ---- the instance table ---------------------------------------------------
@@ -110,6 +115,9 @@ pub type CacheBacking = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 /// boot for the only component it would ever run.
 pub struct Instance {
     pub scope: SharedScope,
+    /// This instance's own `cache:store` backing — never shared with another
+    /// instance. See `CacheBacking`'s own doc for why that matters.
+    pub cache_backing: CacheBacking,
     /// The HTTP world, when this component exports one.
     ///
     /// `None` for a plug: it exports interfaces other components call, not a door
@@ -1078,7 +1086,6 @@ async fn main() -> Result<()> {
             kv::DEFAULT_SHARED
         );
     }
-    let cache_backing: CacheBacking = Arc::new(Mutex::new(HashMap::new()));
     let static_dir: Arc<Option<std::path::PathBuf>> =
         Arc::new(args.static_dir.clone().map(std::path::PathBuf::from));
 
@@ -1154,7 +1161,13 @@ async fn main() -> Result<()> {
             let id = scope.id();
             instances.write().unwrap().insert(
                 id.clone(),
-                Arc::new(Instance { scope, pre, remotes: Default::default(), count: 1 }),
+                Arc::new(Instance {
+                    scope,
+                    cache_backing: Arc::new(Mutex::new(HashMap::new())),
+                    pre,
+                    remotes: Default::default(),
+                    count: 1,
+                }),
             );
             // The catch-all exists ONLY here. A lattice node routes by Host header
             // and 404s on a miss — a fallback there would send one tenant's traffic
@@ -1190,7 +1203,6 @@ async fn main() -> Result<()> {
                 lattice: args.lattice.clone(),
                 engine: engine.clone(),
                 kv: kv_backend.clone(),
-                cache_backing: cache_backing.clone(),
                 instances: instances.clone(),
                 routes: routes.clone(),
                 limits: limits.clone(),
@@ -1260,7 +1272,6 @@ async fn main() -> Result<()> {
         let io = TokioIo::new(stream);
         let engine = engine.clone();
         let kv_backend = kv_backend.clone();
-        let cache_backing = cache_backing.clone();
         let instances = instances.clone();
         let routes = routes.clone();
         let static_dir = static_dir.clone();
@@ -1270,7 +1281,6 @@ async fn main() -> Result<()> {
             let service = hyper::service::service_fn(move |req| {
                 let engine = engine.clone();
                 let kv_backend = kv_backend.clone();
-                let cache_backing = cache_backing.clone();
                 let instances = instances.clone();
                 let routes = routes.clone();
                 let static_dir = static_dir.clone();
@@ -1286,8 +1296,7 @@ async fn main() -> Result<()> {
                     let Some(instance) = resolve(&routes, &instances, &req) else {
                         return Ok(not_found());
                     };
-                    handle_request(engine, instance, kv_backend, cache_backing, platform_url, req)
-                        .await
+                    handle_request(engine, instance, kv_backend, platform_url, req).await
                 }
             });
             if let Err(e) = http1::Builder::new().serve_connection(io, service).await {
@@ -1484,7 +1493,6 @@ async fn handle_request(
     engine: Arc<Engine>,
     instance: Arc<Instance>,
     kv: Kv,
-    cache_backing: CacheBacking,
     platform_url: String,
     req: hyper::Request<hyper::body::Incoming>,
 ) -> Result<hyper::Response<HyperOutgoingBody>> {
@@ -1492,7 +1500,7 @@ async fn handle_request(
         &engine,
         instance.scope.clone(),
         kv,
-        cache_backing,
+        instance.cache_backing.clone(),
         instance.remotes.clone(),
         platform_url,
     );
