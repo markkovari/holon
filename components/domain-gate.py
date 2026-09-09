@@ -17,6 +17,11 @@ import urllib.error
 BASE = sys.argv[1]
 ROLE_SCOPES = json.loads(sys.argv[2])
 SCENARIO_PATH = sys.argv[3]
+# BASE is a fixed http://127.0.0.1:<port> the CALLING gate.sh hard-codes (never
+# request data), so the scheme is pinned here rather than trusted implicitly —
+# the thing a urllib audit actually cares about (no file://, no surprise host).
+if not BASE.startswith("http://127.0.0.1:") and not BASE.startswith("https://127.0.0.1:"):
+    raise SystemExit(f"refusing non-loopback base url: {BASE!r}")
 
 
 def api(method, path, data=None, token=None):
@@ -28,6 +33,9 @@ def api(method, path, data=None, token=None):
         headers["content-type"] = "application/json"
     req = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
     try:
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected
+        # BASE is scheme-checked above (loopback http/https only) and path/data
+        # come from this gate's own scenario code, never external input.
         r = urllib.request.urlopen(req, timeout=10)
         b = r.read()
         return r.status, (json.loads(b) if b else None)
