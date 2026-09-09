@@ -63,7 +63,7 @@ use anyhow::{bail, Context, Result};
 use clap::ValueEnum;
 use serde::Deserialize;
 
-use crate::{Daemon, Spec};
+use crate::selfhost::{Daemon, Spec};
 
 /// One interface, as `comp-capgraph --format json` reports it.
 ///
