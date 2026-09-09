@@ -1227,6 +1227,7 @@ fn main() -> Result<()> {
                     // has not been composed yet — that is `compose-<app>`'s error to
                     // give, not this one's.
                     let art = std::path::Path::new(&s.artifact);
+                    let mut imports_config = false;
                     if art.exists() {
                         let blocked = wadm::unsupported_on_v2(art)?;
                         if !blocked.is_empty() {
@@ -1239,6 +1240,7 @@ fn main() -> Result<()> {
                                 blocked.join(", ")
                             );
                         }
+                        imports_config = wadm::imports_wasi_config(art)?;
                     } else {
                         eprintln!(
                             "  note: {} is not composed, so its imports were not checked against \
@@ -1246,7 +1248,7 @@ fn main() -> Result<()> {
                             s.artifact
                         );
                     }
-                    wadm::render_workload(&s, &namespace, &t, g.as_ref())?
+                    wadm::render_workload(&s, &namespace, &t, g.as_ref(), imports_config)?
                 }
                 wadm::ApiVersion::V1 => wadm::render(&s, topology, api, &t, g.as_ref())?,
             };

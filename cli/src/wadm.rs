@@ -284,6 +284,7 @@ pub fn render_workload(
     namespace: &str,
     t: &Target,
     graph: Option<&Graph>,
+    imports_config: bool,
 ) -> Result<String> {
     let root = root_of(spec);
     let mut y = String::new();
@@ -338,7 +339,15 @@ pub fn render_workload(
              version: \"0.2.0-draft\"\n",
         );
     }
-    if !spec.config.is_empty() {
+    // Gated on the ARTIFACT, not `spec.config`: a component can import
+    // `wasi:config/store` structurally (pulled in by a shared dependency) with
+    // nothing in its own `[config]` table — `flags` does. `spec.config.is_empty()`
+    // said "nothing to declare" and skipped the interface entirely, which left the
+    // import unlinked and the workload failed to start: "instance export `get` has
+    // the wrong type: function implementation is missing". Declaring it with an
+    // empty `config:` still satisfies the link; the app's own `get` calls just see
+    // nothing there, same as any other lane.
+    if imports_config {
         y.push_str(
             "    - namespace: wasi\n      package: config\n      interfaces: [store]\n      \
              version: \"0.2.0-rc.1\"\n      config:\n",
@@ -373,6 +382,27 @@ pub fn unsupported_on_v2(artifact: &std::path::Path) -> Result<Vec<String>> {
     // declaration in `hostInterfaces`.
     const SATISFIABLE: &[&str] = &["wasi:", "wasmcloud:"];
 
+    let mut bad: Vec<String> = component_imports(artifact)?
+        .into_iter()
+        .filter(|i| !SATISFIABLE.iter().any(|ok| i.starts_with(ok)))
+        .collect();
+    bad.sort();
+    bad.dedup();
+    Ok(bad)
+}
+
+/// Does the artifact actually import `wasi:config/store`? Read from the binary
+/// for the same reason `unsupported_on_v2` does: a shared dependency can pull the
+/// import in whether or not the app itself ever calls `get` — `flags` does, with
+/// an empty `[config]` table — and gating `hostInterfaces` on `spec.config` alone
+/// left that import unlinked (`function implementation is missing`).
+pub fn imports_wasi_config(artifact: &std::path::Path) -> Result<bool> {
+    Ok(component_imports(artifact)?.iter().any(|i| i.starts_with("wasi:config/store")))
+}
+
+/// Every `import ...;` line `wasm-tools component wit` reports for `artifact`,
+/// namespace:package/interface, no version.
+fn component_imports(artifact: &std::path::Path) -> Result<Vec<String>> {
     let out = std::process::Command::new("wasm-tools")
         .args(["component", "wit"])
         .arg(artifact)
@@ -386,15 +416,11 @@ pub fn unsupported_on_v2(artifact: &std::path::Path) -> Result<Vec<String>> {
         );
     }
     let wit = String::from_utf8_lossy(&out.stdout);
-    let mut bad: Vec<String> = wit
+    Ok(wit
         .lines()
         .filter_map(|l| l.trim().strip_prefix("import "))
         .map(|l| l.trim_end_matches(';').to_string())
-        .filter(|i| !SATISFIABLE.iter().any(|ok| i.starts_with(ok)))
-        .collect();
-    bad.sort();
-    bad.dedup();
-    Ok(bad)
+        .collect())
 }
 
 /// Render the wadm Application for one app.
@@ -734,7 +760,7 @@ mod tests {
         assert!(v1.contains("kind: Application"), "{v1}");
         assert!(v1.contains("type: spreadscaler"), "{v1}");
 
-        let v2 = render_workload(&s, "wasmcloud-v2", &t, Some(&graph())).unwrap();
+        let v2 = render_workload(&s, "wasmcloud-v2", &t, Some(&graph()), false).unwrap();
         assert!(v2.contains("apiVersion: runtime.wasmcloud.dev/v1alpha1"), "{v2}");
         assert!(v2.contains("kind: Workload"), "{v2}");
         // No traits at all in v2 — replicas live on a WorkloadDeployment.
@@ -747,7 +773,7 @@ mod tests {
         let s = spec(
             "components = [\"gate-domain\", \"record-store\"]\n[config]\ngrace-period-secs = \"5\"\n",
         );
-        let v2 = render_workload(&s, "wasmcloud-v2", &Target::default(), Some(&graph())).unwrap();
+        let v2 = render_workload(&s, "wasmcloud-v2", &Target::default(), Some(&graph()), true).unwrap();
 
         // "invalid reference format" — v1 needs the oci:// prefix and v2 rejects it.
         assert!(!v2.contains("oci://"), "{v2}");
@@ -760,18 +786,32 @@ mod tests {
     }
 
     #[test]
+    fn wasi_config_is_declared_from_the_artifact_not_the_spec_table() {
+        // `flags` imports `wasi:config/store` (pulled in by a shared dependency)
+        // with an empty `[config]` table of its own. Gating on `spec.config.is_empty()`
+        // skipped the interface and the workload failed at link time on a real
+        // 2.9.0 host: "function implementation is missing".
+        let s = spec("components = [\"flags-domain\"]\n");
+        let with_import = render_workload(&s, "ns", &Target::default(), None, true).unwrap();
+        assert!(with_import.contains("package: config"), "{with_import}");
+
+        let without_import = render_workload(&s, "ns", &Target::default(), None, false).unwrap();
+        assert!(!without_import.contains("package: config"), "{without_import}");
+    }
+
+    #[test]
     fn the_root_component_comes_from_the_spec_rather_than_a_guessed_suffix() {
         // Most apps name it `<app>-domain`, but lan-scanner's component is just
         // `lan-scanner`. The guess deploys either way — neither wadm nor the
         // operator resolves by that name — so it fails as a misleading manifest
         // rather than as an error.
         let named = spec("components = [\"lan-scanner\"]\n");
-        let v2 = render_workload(&named, "ns", &Target::default(), None).unwrap();
+        let v2 = render_workload(&named, "ns", &Target::default(), None, false).unwrap();
         assert!(v2.contains("- name: lan-scanner\n"), "{v2}");
 
         // With no list, the convention is still the best available answer.
         let bare = spec("");
-        let v2b = render_workload(&bare, "ns", &Target::default(), None).unwrap();
+        let v2b = render_workload(&bare, "ns", &Target::default(), None, false).unwrap();
         assert!(v2b.contains("- name: gate-domain\n"), "{v2b}");
     }
 
