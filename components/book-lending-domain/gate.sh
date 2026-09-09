@@ -29,8 +29,7 @@ for _ in $(seq 1 60); do
   sleep 0.25
 done
 
-python3 components/domain-gate.py "http://127.0.0.1:$PORT" '{"librarian": ["books:write", "books:read", "loans:write", "loans:return"], "patron": ["books:read", "loans:write", "loans:return"]}' \
-  "components/$DOMAIN/gate_scenario.py"
+hurl --variable "base=http://127.0.0.1:$PORT" "components/$DOMAIN/scenario.hurl"
 STATUS=$?
 if [ $STATUS -ne 0 ]; then
   echo "gate FAILED — host log:"; tail -n 60 /tmp/gate-$DOMAIN-host.log
