@@ -1,0 +1,30 @@
+# One image, any of the twelve ADR-0095 daemons — `comp-fswatch`, `comp-docker`,
+# `comp-ffmpeg`, ... — picked by build arg rather than one Dockerfile each, since
+# they're all plain Rust binaries in this one crate.
+#
+# Build (context = the repo root):
+#   docker build -f reconciler/Dockerfile.daemon --build-arg DAEMON=comp-fswatch \
+#     -t comp-fswatch .
+# Run:
+#   docker run -p 8000:8000 comp-fswatch --addr 0.0.0.0:8000 --allow-path /watch
+#
+# This is the missing half of the wasmCloud/Kubernetes lane's daemon story
+# (docs/SELFHOST.md: "no equivalent yet ... still a manual step") — `holon wadm
+# render --api v2` emits a Deployment from this image alongside the app's own
+# Workload for every `[[daemon]]` the spec declares.
+FROM rust:1-slim-bookworm AS build
+ARG DAEMON
+WORKDIR /src
+COPY reconciler ./reconciler
+COPY lattice ./lattice
+COPY comp-metadata ./comp-metadata
+RUN cd reconciler && cargo build --release --bin "${DAEMON}"
+
+FROM debian:bookworm-slim
+ARG DAEMON
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# Copied to a fixed path — the ARG isn't available at CMD time, and a shell CMD
+# that reads it from the environment would need it re-passed on every `docker run`.
+COPY --from=build /src/reconciler/target/release/${DAEMON} /usr/local/bin/daemon
+ENTRYPOINT ["/usr/local/bin/daemon"]
