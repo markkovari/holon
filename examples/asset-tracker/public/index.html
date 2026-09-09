@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asset Tracker</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; }
+  .row { display: flex; gap: .5rem; margin-bottom: .75rem; flex-wrap: wrap; }
+  input { padding: .4rem; }
+  button { padding: .4rem .8rem; cursor: pointer; }
+  table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #8884; }
+  .tag { font-family: monospace; opacity: .7; }
+  .status-available { color: #2a2; }
+  .status-checked_out { color: #a52; }
+  #err { color: #c33; margin: .5rem 0; min-height: 1.2em; }
+  #who { opacity: .75; font-size: .9em; }
+  #app { display: none; }
+</style>
+</head>
+<body>
+<h1>🗂️ Asset Tracker</h1>
+
+<section id="login">
+  <div class="row">
+    <input id="email" type="email" placeholder="email" value="admin@example.test">
+    <input id="password" type="password" placeholder="password" value="adminpass123">
+    <button onclick="login()">Log in</button>
+  </div>
+  <div class="row">
+    <input id="reg-email" type="email" placeholder="new account email">
+    <input id="reg-password" type="password" placeholder="new account password">
+    <select id="reg-role"><option value="staff">staff</option><option value="admin">admin</option></select>
+    <button onclick="register()">Register</button>
+  </div>
+</section>
+
+<section id="app">
+  <div class="row">
+    <span id="who"></span>
+    <button onclick="logout()" style="margin-left:auto">Log out</button>
+  </div>
+  <div class="row">
+    <input id="new-asset-name" placeholder="new asset name (admin only)">
+    <button onclick="createAsset()">+ Add asset</button>
+  </div>
+  <table>
+    <thead><tr><th>Name</th><th>Tag</th><th>Status</th><th>Holder</th><th></th></tr></thead>
+    <tbody id="assets"></tbody>
+  </table>
+</section>
+
+<div id="err"></div>
+
+<script>
+let token = localStorage.getItem('at_token') || '';
+let me = null;
+
+function err(msg) { document.getElementById('err').textContent = msg || ''; }
+
+async function api(path, opts = {}) {
+  const headers = opts.headers || {};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  if (opts.body) headers['content-type'] = 'application/json';
+  const res = await fetch(path, { ...opts, headers });
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error((body && body.error) || ('http ' + res.status));
+  return body;
+}
+
+async function register() {
+  err('');
+  try {
+    await api('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: document.getElementById('reg-email').value,
+        password: document.getElementById('reg-password').value,
+        role: document.getElementById('reg-role').value,
+      }),
+    });
+    err('registered — now log in with those credentials');
+  } catch (e) { err(e.message); }
+}
+
+async function login() {
+  err('');
+  try {
+    const r = await api('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: document.getElementById('email').value,
+        password: document.getElementById('password').value,
+      }),
+    });
+    token = r.access_token;
+    localStorage.setItem('at_token', token);
+    await enter();
+  } catch (e) { err(e.message); }
+}
+
+function logout() {
+  token = '';
+  localStorage.removeItem('at_token');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login').style.display = 'block';
+}
+
+async function enter() {
+  me = await api('/auth/me');
+  document.getElementById('who').textContent = `${me.subject} (${me.roles.join(', ') || 'no role'})`;
+  document.getElementById('login').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  await refresh();
+}
+
+async function refresh() {
+  err('');
+  try {
+    const r = await api('/api/assets');
+    const rows = r.assets.map(a => `
+      <tr>
+        <td>${a.name}</td>
+        <td class="tag">${a.tag}</td>
+        <td class="status-${a.status}">${a.status}</td>
+        <td>${a.holder || '—'}</td>
+        <td>
+          ${a.status === 'available'
+            ? `<button onclick="doCheckout('${a.id}')">Check out</button>`
+            : `<button onclick="doCheckin('${a.id}')">Check in</button>`}
+          ${me.roles.includes('admin') ? `<button onclick="doDelete('${a.id}')">Delete</button>` : ''}
+        </td>
+      </tr>`).join('');
+    document.getElementById('assets').innerHTML = rows;
+  } catch (e) { err(e.message); }
+}
+
+async function createAsset() {
+  err('');
+  try {
+    const name = document.getElementById('new-asset-name').value;
+    await api('/api/assets', { method: 'POST', body: JSON.stringify({ name }) });
+    document.getElementById('new-asset-name').value = '';
+    await refresh();
+  } catch (e) { err(e.message); }
+}
+
+async function doCheckout(id) {
+  err('');
+  try { await api(`/api/assets/${id}/checkout`, { method: 'POST' }); await refresh(); }
+  catch (e) { err(e.message); }
+}
+
+async function doCheckin(id) {
+  err('');
+  try { await api(`/api/assets/${id}/checkin`, { method: 'POST' }); await refresh(); }
+  catch (e) { err(e.message); }
+}
+
+async function doDelete(id) {
+  err('');
+  try { await api(`/api/assets/${id}`, { method: 'DELETE' }); await refresh(); }
+  catch (e) { err(e.message); }
+}
+
+if (token) { enter().catch(() => logout()); }
+</script>
+</body>
+</html>
