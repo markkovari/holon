@@ -1,0 +1,21 @@
+// case:conv — turn an identifier written in one case convention into another.
+//
+// Pure compute: no imports, no state.
+package case:conv@0.1.0;
+
+/// snake_case, kebab-case, camelCase and PascalCase, in either direction.
+interface conv {
+    /// `s` split into words and rejoined as `snake_case`.
+    to-snake: func(s: string) -> string;
+    /// `s` split into words and rejoined as `kebab-case`.
+    to-kebab: func(s: string) -> string;
+    /// `s` split into words and rejoined as `camelCase`.
+    to-camel: func(s: string) -> string;
+    /// `s` split into words and rejoined as `PascalCase`.
+    to-pascal: func(s: string) -> string;
+}
+
+/// `case-conv` provides all four; pure compute, no host imports.
+world case-conv {
+    export conv;
+}

@@ -1,0 +1,22 @@
+[package]
+name = "luhn-checksum"
+description = "Luhn (mod-10) checksum — validate, compute, and append (luhn:checksum)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# See `components/bytes-codec`: the bindings are gated on wasm32 so `cargo test`
+# can link the crate for the held-out specification.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "luhn:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "luhn-checksum"
