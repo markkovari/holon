@@ -33,10 +33,9 @@ def api(method, path, data=None, token=None):
         headers["content-type"] = "application/json"
     req = urllib.request.Request(BASE + path, data=body, headers=headers, method=method)
     try:
-        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected
         # BASE is scheme-checked above (loopback http/https only) and path/data
         # come from this gate's own scenario code, never external input.
-        r = urllib.request.urlopen(req, timeout=10)
+        r = urllib.request.urlopen(req, timeout=10)  # nosemgrep: dynamic-urllib-use-detected
         b = r.read()
         return r.status, (json.loads(b) if b else None)
     except urllib.error.HTTPError as e:
