@@ -15,9 +15,9 @@ Routes:
   POST   /api/shifts/{id}/signups/{signup_id}/cancel            see below
 
 Store shifts in the `shifts` collection: {title, slots, filled}. `signup` fails 409
-`no_slots` when `filled >= slots`; otherwise increments `filled` and creates a record in
-`signups`: {shift_id, subject, at}. Cancelling decrements `filled` back and marks the
-signup record `{"cancelled": true}`.
+`no_slots` when `filled >= slots`; otherwise increments `filled`, creates a record in
+`signups`: {shift_id, subject, at}, and answers 201 `{"signup_id": id, "id": id}`.
+Cancelling decrements `filled` back and marks the signup record `{"cancelled": true}`.
 
 QUOTA, before it lets `signup` reserve a slot: a volunteer may sign up for at most 3 shifts
 per rolling week. Call `quota:meter/meter.reserve(subject, 1, 3, 604800)` — a 7-day window
