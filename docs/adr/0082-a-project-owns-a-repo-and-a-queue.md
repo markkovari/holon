@@ -2,7 +2,12 @@
 
 *Where the repo, the credentials and the work-to-be-done finally live.*
 
-**Status:** accepted; the project model and the queue are built, the runner deliberately is not — see *What is deliberately not built here*.
+**Status, corrected 2026-09-09:** accepted; the project model and the queue are
+built. **The runner described as deliberately absent below is not absent
+anymore** — `reconciler/src/bin/goalrun.rs` (`comp-goalrun`) is the agent-driver
+and `reconciler/src/bin/checks.rs` (`comp-checks`) is the gate, both real and
+tested (see ADR-0081's corrected status). What genuinely remains unbuilt:
+multi-repo, auto-retry, and budget enforcement (ADR-0081 §3, fuel).
 
 ## The gap
 
@@ -129,10 +134,8 @@ nothing has measured yet.
 
 ## What is deliberately not built here
 
-- **The runner.** A goal can be started and its run recorded; what a run *does*
-  needs the agent and the gate, which do not exist. The queue is buildable and
-  testable now, and pretending otherwise would produce a state machine with
-  nothing behind it.
+- ~~**The runner.**~~ Built since this was written — see the corrected status
+  note at the top of this file.
 - **Multi-repo**, as above.
 - **Auto-retry**, as above.
 - **Budget enforcement.** The field exists on a project; nothing spends against
