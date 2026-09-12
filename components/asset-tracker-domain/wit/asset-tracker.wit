@@ -1,0 +1,44 @@
+// asset:tracker — who has the projector, and who is allowed to say it's back.
+//
+// A small internal-tools app, not a toy: real login (auth:identity/accounts),
+// real RBAC (auth:identity/authorizer — staff vs admin), and a real row-level
+// rule (policy:guard — an item may only be checked back in by the staff
+// member who holds it, or by an admin) layered on top of RBAC. RBAC alone
+// cannot express "this specific row, this specific holder" — that is exactly
+// the gap policy:guard exists to fill (see its own WIT doc).
+//
+// Every import is already implemented, tested and composed elsewhere in this
+// repository; this is a new arrangement of existing capabilities, not new
+// capability code.
+package asset:tracker@0.1.0;
+
+world asset-tracker-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    // Login + RBAC. `accounts` for real register/login (no fixture tokens),
+    // `authorizer` to guard every route, `rbac` to seed the admin role once.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    // The row-level rule RBAC cannot express: holder-or-admin may check in.
+    import policy:guard/guard@0.1.0;
+
+    // assets + checkouts, both typed JSON records.
+    import records:store/store@0.1.0;
+
+    // a compliance trail: every create/checkout/checkin is an event.
+    import audit:log/recorder@0.1.0;
+
+    // human-friendly asset tags ("TAG-7K2Q9M"), not raw ULIDs in the UI.
+    import id:generate/generator@0.1.0;
+
+    import wasi:clocks/wall-clock@0.2.0;
+
+    // auth.wit's own `authority` world pulls these in transitively; naming
+    // them here is what lets `wac` merge that package when auth-guard composes
+    // in underneath (see moderation-domain's Cargo.toml, same shape).
+    import ratelimit:guard/limiter@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+}
