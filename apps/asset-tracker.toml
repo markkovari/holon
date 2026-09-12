@@ -1,0 +1,14 @@
+# Hand-authored (not a goalrun candidate): RBAC + row-level ownership over
+# existing capabilities (auth-guard, policy-guard, records-store, audit-log,
+# id-generate), fronted by a small hand-written SPA.
+#
+#   cargo xtask compose asset-tracker
+#   cargo xtask host asset-tracker
+name = "asset-tracker"
+domain = "asset-tracker.example.com"
+artifact = "components/target/asset_tracker_domain.composed.wasm"
+port = 3061
+static_dir = "examples/asset-tracker/public"
+
+# sqlite: one file under the unit's StateDirectory, so state survives restarts.
+kv = "sqlite"
