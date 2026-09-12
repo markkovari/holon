@@ -1,0 +1,82 @@
+title = "ticket:triage — search tickets, resolve only your own queue's"
+
+text = """
+Implement components/ticket-triage-domain/src/handlers.rs — nothing in it is
+implemented yet, every route currently returns 501.
+
+Router (scaffold): `/health`, `POST /test/token`
+`{"subject","roles":["agent:<queue>"|"lead"]}` — an agent's role encodes their queue, e.g.
+`"agent:billing"`.
+
+Routes:
+  POST /api/tickets            {"subject":"...","body":"...","queue":"billing"}   any authenticated (tickets:write)
+  GET  /api/tickets/search?q=&queue=                                               any authenticated (tickets:read)
+  POST /api/tickets/{id}/resolve                                                    see below
+
+Store in `tickets`: {subject, body, queue, status: "open"|"resolved"}. On create, also
+index it: `search:index/index.index_doc(id, "{subject} {body}", ["queue:{queue}"])` so
+`GET .../search` can call `search::query(q, Mode::Any, ["queue:{queue}"], 20)` when `queue`
+is given (empty `q` still searches — pass it through as-is) and hydrate each hit's `id`
+back from `records::get`.
+
+ROW-LEVEL RULE: an agent may resolve only a ticket in THEIR OWN queue; a lead may resolve
+any. Register (once) with `policy:guard/guard.set-rules("tickettriage", ...)`:
+  - id "agent-owns-queue", action "resolve", allow, priority 10,
+    [{left:"principal.roles", op:has, right:"resource.owner_role"}]
+    where `resource.owner_role` is `format!("agent:{queue}")` built from the ticket's own
+    `queue` field.
+  - id "lead-overrides", action "resolve", allow, priority 5,
+    [{left:"principal.roles", op:has, right:"lead"}]
+Enforce before resolving; default deny -> 403. Resolving also removes the ticket from the
+search index (`search::remove(id)`) — a resolved ticket should not show up in triage
+search anymore.
+
+Audit-log every create/resolve.
+"""
+
+component = "ticket-triage-domain"
+
+base_paths = [
+  "components/ticket-triage-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/search-index/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/ticket-triage-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "ticket-triage-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "search-index",
+  "guestfmt",
+  "guestio",
+]
+context = [
+  "components/ticket-triage-domain/src/lib.rs",
+  "components/ticket-triage-domain/wit/ticket-triage.wit",
+  "components/search-index/wit/search.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/ticket-triage-domain/gate.sh"]

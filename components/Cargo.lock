@@ -362,6 +362,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "book-lending-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "booked-domain"
 version = "0.1.0"
 dependencies = [
@@ -600,6 +611,17 @@ dependencies = [
  "either",
  "memchr",
  "unreachable",
+]
+
+[[package]]
+name = "complaint-escalation-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -1127,6 +1149,17 @@ name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
+
+[[package]]
+name = "flag-console-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
 
 [[package]]
 name = "flags-domain"
@@ -1700,6 +1733,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "incident-response-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1752,6 +1796,17 @@ dependencies = [
 
 [[package]]
 name = "intent-router"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "invoice-approval-domain"
 version = "0.1.0"
 dependencies = [
  "guestfmt",
@@ -2238,6 +2293,17 @@ checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
  "libm",
+]
+
+[[package]]
+name = "oncall-schedule-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
 ]
 
 [[package]]
@@ -2753,6 +2819,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "referral-tracker-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "resilience"
 version = "0.1.0"
 dependencies = [
@@ -2773,6 +2850,17 @@ dependencies = [
 name = "roman"
 version = "0.1.0"
 dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "room-booking-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
@@ -3296,6 +3384,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ticket-triage-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3533,6 +3632,17 @@ name = "void"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
+
+[[package]]
+name = "volunteer-shift-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
 
 [[package]]
 name = "vpn-manager-domain"

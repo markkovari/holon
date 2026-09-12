@@ -1,0 +1,26 @@
+// invoice:approval — an approver scoped to their own department
+//
+// Composed from existing capabilities, not new capability code: auth:identity
+// for RBAC, policy:guard for the row-level rule RBAC cannot express,
+// records:store + audit:log for storage and a compliance trail, and one more
+// distinctive capability this app actually needs.
+package invoice:approval@0.1.0;
+
+world invoice-approval-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    import policy:guard/guard@0.1.0;
+    import records:store/store@0.1.0;
+    import audit:log/recorder@0.1.0;
+
+    import money:amount/arithmetic@0.1.0;
+
+    import wasi:clocks/wall-clock@0.2.0;
+    import ratelimit:guard/limiter@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+}
