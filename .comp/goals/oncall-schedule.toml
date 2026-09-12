@@ -67,10 +67,10 @@ keep_members = [
 context = [
   "components/oncall-schedule-domain/src/lib.rs",
   "components/oncall-schedule-domain/wit/oncall-schedule.wit",
-  "components/notify-dispatch/wit/",
-  "components/policy-guard/wit/",
-  "components/record-store/wit/",
-  "components/audit-log/wit/",
+  "components/notify-dispatch/wit/notify.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
   ".comp/context/auth-consumer.wit",
 ]
 

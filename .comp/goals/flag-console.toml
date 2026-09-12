@@ -68,10 +68,10 @@ keep_members = [
 context = [
   "components/flag-console-domain/src/lib.rs",
   "components/flag-console-domain/wit/flag-console.wit",
-  "components/feature-flags/wit/",
-  "components/policy-guard/wit/",
-  "components/record-store/wit/",
-  "components/audit-log/wit/",
+  "components/feature-flags/wit/featureflags.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
   ".comp/context/auth-consumer.wit",
 ]
 
