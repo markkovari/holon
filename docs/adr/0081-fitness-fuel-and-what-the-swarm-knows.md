@@ -1,9 +1,17 @@
 # ADR-0081 — fitness, fuel, and what the swarm knows
 
-> **Status, as of ADR-0086.** §2 (knowledge) is built — see ADR-0084 for what
-> survived contact and what did not. The rest — fuel as money, escrow, suspension,
-> the tier router and its bandit — is still proposed and unbuilt. Where this
-> document and ADR-0084 disagree, ADR-0084 measured it.
+> **Status, corrected 2026-09-09.** §2 (knowledge) is built — see ADR-0084 for
+> what survived contact and what did not. **§1 (fitness) is also built, and this
+> file's own earlier status line was wrong about it** — `reconciler/src/bin/checks.rs`
+> and `reconciler/src/bin/goalrun.rs` (887 + 2682 lines, 21 tests, all passing)
+> implement the gate-and-score design exactly as specified here: `required`
+> checks are the gate, the weighted fraction of all checks is the score, and a
+> branch is shown held-out files it may not write. What is NOT built from §1:
+> only two of the five completion states exist in code (`accepted`,
+> `exhausted` — `plateaued`, `refuted`, `abandoned` do not appear in
+> `goalrun.rs` at all). §3 (fuel as money, escrow, suspension, the tier router
+> and its bandit) is still proposed and unbuilt, as before. Where this document
+> and ADR-0084 disagree, ADR-0084 measured it.
 
 *Three mechanisms a parallel agentic graph cannot run without: how a branch is
 judged, how branches share what they learn, and how they are stopped.*
