@@ -1,0 +1,27 @@
+// luhn:checksum — the mod-10 check digit used by credit-card numbers, IMEIs and
+// national ID schemes.
+//
+// Pure compute: no imports, no state.
+package luhn:checksum@0.1.0;
+
+/// Luhn (mod-10) validation and generation over a string of ASCII digits.
+interface checksum {
+    /// Is `digits` a valid Luhn number (including its check digit)?
+    ///
+    /// A non-digit character or an empty string is not valid — this never panics,
+    /// it returns false.
+    is-valid: func(digits: string) -> bool;
+
+    /// The check digit that would make `digits` valid, or none if `digits` is
+    /// empty or contains a non-digit character.
+    checksum-digit: func(digits: string) -> option<u8>;
+
+    /// `digits` with its check digit appended, or none on the same bad input as
+    /// `checksum-digit`.
+    append-checksum: func(digits: string) -> option<string>;
+}
+
+/// `luhn-checksum` provides all three; pure compute, no host imports.
+world luhn-checksum {
+    export checksum;
+}

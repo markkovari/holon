@@ -1,0 +1,69 @@
+# Found the same way bytes-codec was: a small, self-contained transform that is
+# easy to get subtly wrong (acronym boundaries, digit boundaries, empty input)
+# and cheap to check against known identifiers.
+title = "case:conv — snake, kebab, camel and pascal case conversion"
+
+text = """
+Implement `to_snake`, `to_kebab`, `to_camel` and `to_pascal` in
+components/case-conv/src/lib.rs, plus the two private helpers they need
+(`words`, `capitalize`) — none of the six is implemented, each currently panics
+with `unimplemented!()`.
+
+`tests/case.rs` is the specification. You can read it and you may NOT edit it.
+
+Splitting into words: `_`, `-` and whitespace are explicit separators, consumed
+and never emitted. Inside a run with no separators, a new word starts at:
+
+  * a lowercase-to-uppercase transition (`myVar` -> `my`, `Var`);
+  * the LAST letter of an uppercase run, when followed by a lowercase letter —
+    the acronym boundary (`HTTPServer` -> `HTTP`, `Server`, not `H`, `TTPServer`);
+  * a letter/digit transition in either direction (`Sensor2` -> `Sensor`, `2`).
+
+Consecutive separators collapse and leading/trailing separators produce no
+empty word (`_foo_` is one word, `foo`).
+
+Rejoining: `snake`/`kebab` lowercase every word and join with `_`/`-`. `camel`
+lowercases the first word and Capitalizes every other (first letter upper, rest
+lower — so `HTTP` normalizes to `Http`), no separator. `pascal` Capitalizes
+every word, no separator. An empty string is empty in every convention.
+
+No dependencies — this is a character-class scan, nothing more.
+"""
+
+component = "case-conv"
+
+base_paths = [
+  "components/case-conv/",
+  "components/Cargo.toml",
+  "components/spec-gate.sh",
+]
+writable = ["components/case-conv/src/lib.rs"]
+context = ["components/case-conv/tests/case.rs"]
+
+# THE goal: ordinary lower/upper boundaries in all four directions.
+[[check]]
+id = "ordinary-boundaries"
+weight = 3
+command = ["bash", "components/spec-gate.sh", "case-conv", "case",
+  "plain_lowercase_word_boundaries_split_on_uppercase",
+  "snake_and_kebab_round_trip_into_camel_and_pascal",
+  "already_correct_case_round_trips_unchanged"]
+
+# The two boundary rules a first attempt gets wrong: acronyms and digits.
+[[check]]
+id = "acronym-and-digit-boundaries"
+weight = 3
+command = ["bash", "components/spec-gate.sh", "case-conv", "case",
+  "an_acronym_run_splits_before_its_last_letter_not_its_first",
+  "multiple_acronyms_each_split_correctly",
+  "a_digit_boundary_is_its_own_word_either_direction"]
+
+# Separator collapsing and empty/degenerate input.
+[[check]]
+id = "edge-cases"
+weight = 2
+command = ["bash", "components/spec-gate.sh", "case-conv", "case",
+  "consecutive_separators_collapse_and_edges_produce_no_empty_word",
+  "an_empty_string_is_empty_in_every_convention",
+  "a_single_word_is_stable_across_conventions",
+  "an_all_uppercase_run_with_no_following_lowercase_is_one_word"]

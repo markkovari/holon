@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-121 interfaces.
+123 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -479,6 +479,20 @@ Adding a *function* to an interface is compatible; adding a case to a
     parse: func(answer: string) -> result<guess, identify-error>;
 
     prompt: func() -> string;
+  }
+```
+
+## `case:conv/conv@0.1.0`
+
+```wit
+  interface conv {
+    to-snake: func(s: string) -> string;
+
+    to-kebab: func(s: string) -> string;
+
+    to-camel: func(s: string) -> string;
+
+    to-pascal: func(s: string) -> string;
   }
 ```
 
@@ -1913,6 +1927,18 @@ Adding a *function* to an interface is compatible; adding a case to a
     whoami: func(token: string) -> result<identity, auth-error>;
 
     logout: func(token: string) -> result<_, auth-error>;
+  }
+```
+
+## `luhn:checksum/checksum@0.1.0`
+
+```wit
+  interface checksum {
+    is-valid: func(digits: string) -> bool;
+
+    checksum-digit: func(digits: string) -> option<u8>;
+
+    append-checksum: func(digits: string) -> option<string>;
   }
 ```
 
