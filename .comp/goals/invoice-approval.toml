@@ -1,0 +1,80 @@
+title = "invoice:approval — an approver scoped to their own department"
+
+text = """
+Implement components/invoice-approval-domain/src/handlers.rs — nothing in it is
+implemented yet, every route currently returns 501.
+
+Router (scaffold): `/health`, `POST /test/token`
+`{"subject","roles":["approver:<dept>"|"clerk"]}` — an approver's role encodes their
+department, e.g. `"approver:engineering"`.
+
+Routes:
+  POST /api/invoices              {"vendor","dept","amount":"1099.00","currency":"USD"}   clerk/approver (invoices:write)
+  GET  /api/invoices                                                                       any authenticated (invoices:read)
+  POST /api/invoices/{id}/approve                                                          see below
+
+Store in `invoices`: {vendor, dept, amount_units, currency, status: "pending"|"approved"}.
+Parse the amount with `money:amount/arithmetic.parse(decimal, currency)` — reject a bad
+decimal/currency string with 400 `bad_amount` before creating the record. `approve` on an
+already-approved invoice -> 409 `already_approved`.
+
+ROW-LEVEL RULE: an approver may only approve an invoice in THEIR OWN department (role
+`"approver:<dept>"`). Register (once) with
+`policy:guard/guard.set-rules("invoiceapproval", ...)`:
+  - id "approver-owns-dept", action "approve", allow, priority 10,
+    [{left:"principal.roles", op:has, right:"resource.owner_role"}]
+    where `resource.owner_role` is `format!("approver:{dept}")` built from the invoice's
+    own `dept` field.
+There is deliberately no admin-override rule here — a clerk role can never approve
+anything, matching how invoice approval actually works: no one department's rubber stamp
+covers another's. Default deny -> 403 for a mismatched department.
+
+Audit-log every create/approve, with `detail` carrying the invoice id.
+"""
+
+component = "invoice-approval-domain"
+
+base_paths = [
+  "components/invoice-approval-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/money/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/invoice-approval-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "invoice-approval-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "money",
+  "guestfmt",
+  "guestio",
+]
+context = [
+  "components/invoice-approval-domain/src/lib.rs",
+  "components/invoice-approval-domain/wit/invoice-approval.wit",
+  "components/money/wit/money.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/invoice-approval-domain/gate.sh"]

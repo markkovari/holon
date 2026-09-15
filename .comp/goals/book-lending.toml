@@ -1,0 +1,79 @@
+title = "book:lending — borrow a book, only the borrower (or a librarian) returns it"
+
+text = """
+Implement components/book-lending-domain/src/handlers.rs — nothing in it is
+implemented yet, every route currently returns 501.
+
+Router (scaffold): `/health`, `POST /test/token`
+`{"subject","roles":["patron"|"librarian"]}`.
+
+Routes:
+  POST /api/books          {"title"}                  librarian only (books:write); a
+                                                          human-friendly call number is
+                                                          minted via `id:generate/generator.
+                                                          short_code(6)` as `"BK-<code>"`
+  GET  /api/books                                        any authenticated (books:read)
+  POST /api/books/{id}/borrow                             any authenticated (loans:write)
+  POST /api/loans/{id}/return                             see below
+
+Store `books`: {title, call_number, status: "available"|"borrowed"}. Store `loans`:
+{book_id, borrower, returned: false}. `borrow` on a non-available book -> 409
+`not_available`.
+
+ROW-LEVEL RULE: only the patron who borrowed a book — or a librarian — may return it.
+Register (once) with `policy:guard/guard.set-rules("booklending", ...)`:
+  - id "borrower-returns", action "return", allow, priority 10,
+    [{left:"resource.borrower", op:eq, right:"principal.subject"}]
+  - id "librarian-overrides", action "return", allow, priority 5,
+    [{left:"principal.roles", op:has, right:"librarian"}]
+Enforce before returning; default deny -> 403.
+
+Audit-log every create/borrow/return.
+"""
+
+component = "book-lending-domain"
+
+base_paths = [
+  "components/book-lending-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/id-generate/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/book-lending-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "book-lending-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "id-generate",
+  "guestfmt",
+  "guestio",
+]
+context = [
+  "components/book-lending-domain/src/lib.rs",
+  "components/book-lending-domain/wit/book-lending.wit",
+  "components/id-generate/wit/id.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/book-lending-domain/gate.sh"]

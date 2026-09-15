@@ -1,0 +1,85 @@
+title = "incident:response — an incident, an assigned responder, and admin override"
+
+text = """
+Implement components/incident-response-domain/src/handlers.rs — nothing in it is
+implemented yet, every route currently returns 501.
+
+The router (src/lib.rs, not yours to change) answers `/health` and mints a test token at
+`POST /test/token` `{"subject","roles":["responder"|"admin"]}`. Your file owns `/api/`.
+
+Routes:
+  POST /api/incidents               {"title","severity":"low"|"high"}   any authenticated (incidents:write)
+  GET  /api/incidents                                                    any authenticated (incidents:read)
+  POST /api/incidents/{id}/assign   {"responder":"<subject>"}            admin only (incidents:assign)
+  POST /api/incidents/{id}/resolve                                       see below
+
+Store in `incidents`: {title, severity, status: "open"|"assigned"|"resolved", assignee}.
+`assign` sets `assignee` and `status: "assigned"`; fails 409 `already_resolved` if the
+incident is resolved.
+
+ROW-LEVEL RULE: only the assigned responder — or an admin — may resolve an incident.
+Register (once, idempotently) with `policy:guard/guard.set-rules("incidentresponse", ...)`:
+
+  - id "assignee-resolves", action "resolve", allow, priority 10,
+    conditions: [{left: "resource.assignee", op: eq, right: "principal.subject"}]
+  - id "admin-overrides", action "resolve", allow, priority 5,
+    conditions: [{left: "principal.roles", op: has, right: "admin"}]
+
+Enforce with `policy::enforce("incidentresponse", "resolve", principal_attrs, resource_attrs)`
+(`resource_attrs` carries the incident's `assignee`). Default deny: no match -> 403. An
+unassigned incident (`assignee` empty) can never satisfy either rule, so `resolve` on one
+must answer 409 `not_assigned` before the policy check even runs.
+
+On a successful resolve, publish to the bus: `event:bus/bus.publish("incident.resolved",
+<the incident id as UTF-8 bytes>)`.
+
+Audit-log every create/assign/resolve with outcome "allow"/"deny" and the incident id as
+`detail`.
+"""
+
+component = "incident-response-domain"
+
+base_paths = [
+  "components/incident-response-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/event-bus/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/incident-response-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "incident-response-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "event-bus",
+  "guestfmt",
+  "guestio",
+]
+context = [
+  "components/incident-response-domain/src/lib.rs",
+  "components/incident-response-domain/wit/incident-response.wit",
+  "components/event-bus/wit/eventbus.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/incident-response-domain/gate.sh"]

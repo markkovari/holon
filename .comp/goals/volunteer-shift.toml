@@ -1,0 +1,91 @@
+title = "volunteer:shift — sign up for a shift, cancel your own"
+
+text = """
+Implement components/volunteer-shift-domain/src/handlers.rs — nothing in it is
+implemented yet, every route currently returns 501.
+
+The router (src/lib.rs, not yours to change) answers `/health` and mints a test token at
+`POST /test/token` `{"subject","roles":["volunteer"|"coordinator"]}` via
+`auth:identity/session`. Your file owns everything under `/api/`.
+
+Routes:
+  POST   /api/shifts                {"title","slots":<u32>}   coordinator only (shifts:write)
+  GET    /api/shifts                                          any authenticated (shifts:read)
+  POST   /api/shifts/{id}/signup                               volunteer/coordinator (signups:write)
+  POST   /api/shifts/{id}/signups/{signup_id}/cancel            see below
+
+Store shifts in the `shifts` collection: {title, slots, filled}. `signup` fails 409
+`no_slots` when `filled >= slots`; otherwise increments `filled`, creates a record in
+`signups`: {shift_id, subject, at}, and answers 201 `{"signup_id": id, "id": id}`.
+Cancelling decrements `filled` back and marks the signup record `{"cancelled": true}`.
+
+QUOTA, before it lets `signup` reserve a slot: a volunteer may sign up for at most 3 shifts
+per rolling week. Call `quota:meter/meter.reserve(subject, 1, 3, 604800)` — a 7-day window
+in seconds — BEFORE creating the signup record; on `err(exceeded(_))` answer 429
+`{"error":"quota_exceeded"}` and create nothing.
+
+ROW-LEVEL RULE (the hard part): only the volunteer who made a signup — or a coordinator —
+may cancel it. RBAC (`signups:write`) only says a volunteer may cancel SOME signup; it says
+nothing about whose. Register (once, idempotently — gate on a `meta` collection record like
+the existing domains do) two rules with `policy:guard/guard.set-rules("volunteershift", ...)`:
+
+  - id "signup-owner-cancels", action "cancel", allow, priority 10,
+    conditions: [{left: "resource.subject", op: eq, right: "principal.subject"}]
+  - id "coordinator-overrides", action "cancel", allow, priority 5,
+    conditions: [{left: "principal.roles", op: has, right: "coordinator"}]
+
+Then call `policy::enforce("volunteershift", "cancel", principal_attrs, resource_attrs)`
+before cancelling — `principal_attrs` carries `subject` and `roles` (comma-joined),
+`resource_attrs` carries `subject` (the signup's own subject field). Default is deny: no
+matching rule means 403.
+
+Audit-log (`audit:log/recorder`) every create/signup/cancel with `event`,
+`outcome` ("allow"/"deny"), `tenant`, `subject`, `detail` (the target id).
+"""
+
+component = "volunteer-shift-domain"
+
+base_paths = [
+  "components/volunteer-shift-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/quota/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/volunteer-shift-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "volunteer-shift-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "quota",
+  "guestfmt",
+  "guestio",
+]
+context = [
+  "components/volunteer-shift-domain/src/lib.rs",
+  "components/volunteer-shift-domain/wit/volunteer-shift.wit",
+  "components/quota/wit/quota.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/volunteer-shift-domain/gate.sh"]
