@@ -157,6 +157,8 @@ const server = createServer((req, res) => {
     return;
   }
 
+  console.error(`[gemini-shim] Received ${req.method} ${req.url}`);
+
   const isAnthropic = req.url.startsWith('/v1/messages');
   const isOpenAi = req.url.startsWith('/v1/chat/completions');
 
