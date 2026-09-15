@@ -46,7 +46,6 @@ base_paths = [
   "components/guestfmt/",
   "components/guestio/",
   "components/Cargo.toml",
-  "components/domain-gate.py",
   "wit/",
   "host/wit/deps/",
 ]
