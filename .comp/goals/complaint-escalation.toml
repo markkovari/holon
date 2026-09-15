@@ -1,0 +1,76 @@
+title = "complaint:escalation — an assigned agent, or a supervisor, may resolve"
+
+text = """
+Implement components/complaint-escalation-domain/src/handlers.rs — nothing in
+it is implemented yet, every route currently returns 501.
+
+Router (scaffold, not yours): `/health`, `POST /test/token`
+`{"subject","roles":["agent"|"supervisor"]}`. Your file owns `/api/`.
+
+Routes:
+  POST /api/complaints              {"summary"}                any authenticated (complaints:write)
+  GET  /api/complaints                                          any authenticated (complaints:read)
+  POST /api/complaints/{id}/assign  {"agent":"<subject>"}       supervisor only (complaints:assign)
+  POST /api/complaints/{id}/escalate                            assigned agent OR supervisor
+  POST /api/complaints/{id}/resolve                             assigned agent OR supervisor
+
+Store in `complaints`: {summary, status: "open"|"assigned"|"escalated"|"resolved", assignee}.
+`escalate`/`resolve` on an unassigned complaint -> 409 `not_assigned`.
+
+ROW-LEVEL RULE, one domain "complaintescalation", two actions ("escalate" and "resolve")
+covered by the SAME two rules (`action` may be "*" to cover both, or register both actions —
+your choice, as long as both are covered):
+  - id "assignee-acts", allow, priority 10, [{left:"resource.assignee", op:eq, right:"principal.subject"}]
+  - id "supervisor-overrides", allow, priority 5, [{left:"principal.roles", op:has, right:"supervisor"}]
+Enforce before both `escalate` and `resolve`; default deny -> 403.
+
+On `resolve`, publish `event:bus/bus.publish("complaint.resolved", <id bytes>)`.
+Audit-log every create/assign/escalate/resolve.
+"""
+
+component = "complaint-escalation-domain"
+
+base_paths = [
+  "components/complaint-escalation-domain/",
+  "components/auth-guard/",
+  "components/rate-limiter/",
+  "components/audit-log/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/event-bus/",
+  "components/guestfmt/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "components/domain-gate.py",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/complaint-escalation-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "complaint-escalation-domain",
+  "auth-guard",
+  "rate-limiter",
+  "audit-log",
+  "policy-guard",
+  "record-store",
+  "event-bus",
+  "guestfmt",
+  "guestio",
+]
+context = [
+  "components/complaint-escalation-domain/src/lib.rs",
+  "components/complaint-escalation-domain/wit/complaint-escalation.wit",
+  "components/event-bus/wit/eventbus.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/complaint-escalation-domain/gate.sh"]
