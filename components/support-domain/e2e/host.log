@@ -1,5 +1,0 @@
-    Finished `release` profile [optimized] target(s) in 0.14s
-     Running `/Users/markkovari/DEV/markkovari/holon/host/target/release/comp-host --app support-domain --component /Users/markkovari/DEV/markkovari/holon/components/target/composed/support-domain.0ed2f9f5164264b9.wasm --addr '127.0.0.1:3000' --kv sqlite --config default-tenant=support`
-comp-host: serving /Users/markkovari/DEV/markkovari/holon/components/target/composed/support-domain.0ed2f9f5164264b9.wasm on http://127.0.0.1:3000 as local/support-domain/root
-comp-host: kv backend = sqlite | allocator = pooling
-comp-host: egress = DENY ALL (pass --egress to allow outbound HTTP)
