@@ -187,7 +187,9 @@ fn report(repo: &Path, root: &Path, goal_path: &str) -> Option<Row> {
 fn main() {
     let repo = repo();
     let root = measured_root(&repo);
-    let goal_paths: Vec<String> = std::env::args().skip(1).collect();
+    // Goal file paths, not a security decision — nosemgrep precedent already
+    // set for env::args() elsewhere in this crate (ffmpeg.rs, imageopt.rs).
+    let goal_paths: Vec<String> = std::env::args().skip(1).collect(); // nosemgrep: rust.lang.security.args.args
     let rows: Vec<Row> = goal_paths.iter().filter_map(|g| report(&repo, &root, g)).collect();
     if rows.len() > 1 {
         let (tr, tw) = rows.iter().fold((0usize, 0usize), |(a, b), r| (a + r.reused, b + r.written));
