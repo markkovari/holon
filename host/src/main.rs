@@ -780,8 +780,8 @@ struct Args {
     /// requests that aren't API routes. Omit for API-only.
     #[arg(long)]
     static_dir: Option<String>,
-    /// Key-value backend: memory | sqlite | redis | nats. The wasm component is
-    /// identical for all four — only the host store changes.
+    /// Key-value backend: memory | sqlite | redis | nats | surreal. The wasm
+    /// component is identical for all five — only the host store changes.
     ///
     /// Defaults to `nats` on a lattice node and `memory` for a single-app run. That
     /// difference is deliberate: NATS is already mandatory on a lattice, and it is
@@ -796,6 +796,10 @@ struct Args {
     /// File for `--kv sqlite`. Defaults to `$STATE_DIRECTORY/kv.db`, which systemd
     /// sets for a unit with `StateDirectory=` — private to the app's uid under
     /// `DynamicUser=yes`. Falls back to ./comp-kv.db when run by hand.
+    ///
+    /// Doubles as the SurrealDB HTTP endpoint for `--kv surreal` (e.g.
+    /// `http://127.0.0.1:8000`) — that backend has no dedicated flag, the same
+    /// way it has no dedicated slot in `kv::build`.
     #[arg(long)]
     sqlite_path: Option<String>,
     /// NATS URL for `--kv nats`, or a comma-separated list of them.

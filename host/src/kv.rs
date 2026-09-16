@@ -876,6 +876,224 @@ impl KvBackend for SqliteKv {
     }
 }
 
+/// A store every replica can reach over HTTP, backed by a real SurrealDB — the
+/// gate for this is `surrealkv_test.rs`, deliberately outside this file.
+///
+/// Keys are `{bucket}\x1f{key}`, the SAME separator the flat stores (redis) use
+/// (see this module's own doc comment) — one `kv` table, not one per bucket,
+/// so `list_keys` stays a single query rather than a table-per-tenant scan.
+///
+/// Unauthenticated: `build()` has no password parameter for any backend, and a
+/// Basic header naming a user an `--unauthenticated` server does not have is
+/// REFUSED, not ignored (the same bug `comp-trace-seed`'s docs describe) — so
+/// this never sends one, and only ever talks to a server started that way.
+pub struct SurrealKv {
+    url: String,
+    agent: ureq::Agent,
+    defined: std::sync::atomic::AtomicBool,
+}
+
+impl SurrealKv {
+    /// `replicas` has no equivalent over plain HTTP `/sql` — SurrealDB's own
+    /// replication is a server-side concern, not a per-connection setting —
+    /// so it is accepted (every backend's `connect` takes the same shape) and
+    /// unused here, unlike `NatsKv` where it selects the JetStream bucket's
+    /// replica count.
+    pub fn connect(url: &str, _replicas: usize) -> Result<Self> {
+        // `ureq`, not `reqwest::blocking`: every `KvBackend` method is sync, but
+        // the host itself is async, and `reqwest::blocking` drives its sync API
+        // with a hidden tokio runtime that panics the moment it is called from
+        // inside one that is already running — which every call here is.
+        let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(10)).build();
+        Ok(Self {
+            url: url.trim_end_matches('/').to_string(),
+            agent,
+            defined: std::sync::atomic::AtomicBool::new(false),
+        })
+    }
+
+    fn ensure_defined(&self) {
+        if self.defined.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let _ = self.send(
+            "DEFINE NAMESPACE IF NOT EXISTS comp; USE NS comp; DEFINE DATABASE IF NOT EXISTS kv; \
+             USE DB kv; DEFINE TABLE IF NOT EXISTS kv SCHEMALESS;",
+        );
+    }
+
+    /// POST one or more statements to `/sql`; returns every statement's own
+    /// `result`, in order — a transaction's meaningful value is rarely the
+    /// last one (`COMMIT` itself returns nothing), so the caller picks the
+    /// index that matches the query it sent. Errors if ANY statement failed:
+    /// a 200 whose statements were rejected is SurrealDB's normal response
+    /// shape for that, not a transport error.
+    fn send(&self, surql: &str) -> Result<Vec<serde_json::Value>> {
+        let resp = self
+            .agent
+            .post(&format!("{}/sql", self.url))
+            .set("accept", "application/json")
+            .set("surreal-ns", "comp")
+            .set("surreal-db", "kv")
+            .send_string(surql);
+        let resp = match resp {
+            Ok(r) => r,
+            Err(ureq::Error::Status(code, r)) => {
+                let body = r.into_string().unwrap_or_default();
+                anyhow::bail!("SurrealDB HTTP {code}: {body}");
+            }
+            Err(e) => anyhow::bail!("reaching SurrealDB: {e}"),
+        };
+        let text = resp.into_string().context("reading SurrealDB's response")?;
+        let statements: Vec<serde_json::Value> =
+            serde_json::from_str(&text).context("SurrealDB's response was not the expected JSON")?;
+        if let Some(bad) = statements.iter().find(|s| s["status"] != "OK") {
+            anyhow::bail!("SurrealDB: {}", bad["result"]);
+        }
+        Ok(statements.into_iter().map(|s| s["result"].clone()).collect())
+    }
+
+    /// This bucket+key's record id, backtick-quoted (ASCII, unlike
+    /// `comp-capgraph`'s `⟨...⟩` form) — `send_string` mangles the multi-byte
+    /// angle brackets somewhere between here and SurrealDB's lexer, backticks
+    /// do not, and SurrealDB's own responses already echo ids this way.
+    fn rid(bucket: &BucketId, key: &str) -> String {
+        format!("kv:`{}`", format!("{}\x1f{key}", bucket.as_str()).replace('`', ""))
+    }
+
+    fn lit(s: &str) -> String {
+        serde_json::Value::String(s.to_string()).to_string()
+    }
+}
+
+impl KvBackend for SurrealKv {
+    /// The entire reason this backend exists: one SurrealDB, reached over the
+    /// network, is one store no matter which replica asks.
+    fn shared(&self) -> bool {
+        true
+    }
+
+    fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
+        self.ensure_defined();
+        let records = self.send(&format!("SELECT val FROM {};", Self::rid(bucket, key)))?;
+        let Some(v) = records.first().and_then(|rows| rows.get(0)).and_then(|r| r["val"].as_str()) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, v)
+                .context("SurrealDB returned non-base64 value")?,
+        ))
+    }
+
+    fn set(&self, bucket: &BucketId, key: &str, value: &[u8]) -> Result<()> {
+        self.ensure_defined();
+        let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, value);
+        let rid = Self::rid(bucket, key);
+        // The revision moves for a plain `set` too, or a guarded write could
+        // land on top of one and never know (same rule every backend follows).
+        // A transaction, not a bare UPSERT: the new rev depends on reading the
+        // old one first, and those two steps must not straddle another write.
+        self.send(&format!(
+            "BEGIN;\n\
+             LET $cur = (SELECT rev FROM {rid})[0].rev OR 0;\n\
+             UPSERT {rid} SET bucket = {bucket_lit}, key = {key_lit}, val = {value_lit}, rev = $cur + 1;\n\
+             COMMIT;",
+            bucket_lit = Self::lit(bucket.as_str()),
+            key_lit = Self::lit(key),
+            value_lit = Self::lit(&encoded),
+        ))?;
+        Ok(())
+    }
+
+    fn delete(&self, bucket: &BucketId, key: &str) -> Result<()> {
+        self.ensure_defined();
+        self.send(&format!("DELETE {};", Self::rid(bucket, key)))?;
+        Ok(())
+    }
+
+    fn exists(&self, bucket: &BucketId, key: &str) -> Result<bool> {
+        self.ensure_defined();
+        let results = self.send(&format!("SELECT VALUE id FROM {};", Self::rid(bucket, key)))?;
+        Ok(results.first().and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()))
+    }
+
+    fn list_keys(&self, bucket: &BucketId) -> Result<Vec<String>> {
+        self.ensure_defined();
+        let results = self.send(&format!(
+            "SELECT VALUE key FROM kv WHERE bucket = {} ORDER BY key;",
+            Self::lit(bucket.as_str())
+        ))?;
+        Ok(results
+            .first()
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect())
+    }
+
+    fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
+        self.ensure_defined();
+        let current = self.get(bucket, key)?;
+        let n: u64 =
+            current.as_deref().map(|v| String::from_utf8_lossy(v).trim().parse().unwrap_or(0)).unwrap_or(0);
+        let next = n.saturating_add(delta);
+        self.set(bucket, key, next.to_string().as_bytes())?;
+        Ok(next)
+    }
+
+    fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<Versioned>> {
+        self.ensure_defined();
+        let records = self.send(&format!("SELECT rev, val FROM {};", Self::rid(bucket, key)))?;
+        let Some(row) = records.first().and_then(|rows| rows.get(0)) else { return Ok(None) };
+        let rev = row["rev"].as_u64().unwrap_or(0);
+        let value = row["val"]
+            .as_str()
+            .map(|v| base64::Engine::decode(&base64::engine::general_purpose::STANDARD, v))
+            .transpose()
+            .context("SurrealDB returned non-base64 value")?
+            .unwrap_or_default();
+        Ok(Some((rev, value)))
+    }
+
+    /// Not atomic against a concurrent writer the way sqlite's IMMEDIATE
+    /// transaction is: the read and the conditional write are two round trips
+    /// to a server this process does not hold a lock on. A real CAS needs a
+    /// single statement SurrealDB evaluates as one operation, which its `IF`
+    /// inside a transaction gives — see the SurrealQL below.
+    fn set_if_revision(&self, bucket: &BucketId, key: &str, value: &[u8], expected: u64) -> Result<Cas> {
+        self.ensure_defined();
+        let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, value);
+        // Five statements — BEGIN, two LETs, the IF/RETURN, COMMIT — and the
+        // one with the answer is the IF/RETURN, index 3: COMMIT's own result
+        // is always null, which is why `send` hands back every statement's
+        // result rather than guessing which one the caller wants.
+        let results = self.send(&format!(
+            "BEGIN;\n\
+             LET $row = (SELECT rev FROM {rid})[0];\n\
+             LET $cur = $row.rev OR 0;\n\
+             IF $cur == {expected} {{\n\
+             \tUPSERT {rid} SET bucket = {bucket_lit}, key = {key_lit}, val = {value_lit}, rev = $cur + 1;\n\
+             \tRETURN {{ committed: true, rev: $cur + 1 }};\n\
+             }} ELSE {{\n\
+             \tRETURN {{ committed: false, rev: $cur }};\n\
+             }};\n\
+             COMMIT;",
+            rid = Self::rid(bucket, key),
+            bucket_lit = Self::lit(bucket.as_str()),
+            key_lit = Self::lit(key),
+            value_lit = Self::lit(&encoded),
+        ))?;
+        let result = results.get(3).cloned().unwrap_or(serde_json::Value::Null);
+        let rev = result["rev"].as_u64().unwrap_or(0);
+        if result["committed"].as_bool().unwrap_or(false) {
+            Ok(Cas::Committed(rev))
+        } else {
+            Ok(Cas::Conflict(rev))
+        }
+    }
+}
+
 /// Build the backend named by `--kv`.
 /// The backend a lattice node picks when nobody says otherwise.
 ///
@@ -899,7 +1117,11 @@ pub async fn build(
         "redis" => Ok(Arc::new(RedisKv::connect(redis_url)?)),
         "sqlite" => Ok(Arc::new(SqliteKv::open(sqlite_path)?)),
         "nats" => Ok(Arc::new(NatsKv::connect(nats_url, replicas).await?)),
-        other => anyhow::bail!("unknown --kv backend: {other} (use memory|redis|nats|sqlite)"),
+        // `sqlite_path` doubles as the SurrealDB URL here — this backend has
+        // no dedicated slot in `build`'s signature, and every backend already
+        // takes its own "location" through whichever string param fits.
+        "surreal" => Ok(Arc::new(SurrealKv::connect(sqlite_path, replicas)?)),
+        other => anyhow::bail!("unknown --kv backend: {other} (use memory|redis|nats|sqlite|surreal)"),
     }
 }
 
