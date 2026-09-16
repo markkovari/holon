@@ -234,6 +234,28 @@ pub fn repo_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
 }
 
+/// Keep one demo app's fleet serving forever, printing its ingress port. Shared by
+/// the `comp-<app>serve` bins (contrastserve, photoserve, ...), which differed only
+/// in these arguments.
+pub fn serve_fixture(tag: &str, wasm_name: &str, fixture_stem: &str) -> ! {
+    let home = std::env::var("HOME").unwrap();
+    let key = format!("{home}/.comp-secrets/anthropic");
+    let dir = repo_root().join("components/target/wasm32-wasip2/release");
+    let art = vec![format!("gate={}", dir.join(wasm_name).display())];
+    let fixture = repo_root().join(format!("fixtures/{fixture_stem}.yaml"));
+    let fleet = Fleet::start_with_secrets(
+        tag,
+        &[fixture.to_str().unwrap()],
+        &art,
+        &[format!("vault://acme/anthropic=@{key}")],
+    );
+    println!("{}_INGRESS_PORT={}", tag.to_uppercase(), fleet.ingress_port);
+    println!("host header: {tag}.acme.test");
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
 /// Children write to a file rather than to /dev/null: several assertions are about
 /// what a process SAID — the phase timings a host prints, the reason a reconciler
 /// gives — and a test that cannot read them has to guess.

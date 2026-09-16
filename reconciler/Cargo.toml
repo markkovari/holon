@@ -71,6 +71,12 @@ path = "src/bin/goald.rs"
 name = "comp-capgraph"
 path = "src/bin/capgraph.rs"
 
+# What a goal's app is made of, and how much of it the run had to write —
+# formerly tools/reuse-ratio.py.
+[[bin]]
+name = "comp-reuse-ratio"
+path = "src/bin/reuseratio.rs"
+
 # The component catalogue, derived from the SOURCES. Deliberately a second binary
 # rather than a `--format` on capgraph: that one reads built artifacts and answers
 # what a component really imports, this reads sources and answers what it is FOR, and
