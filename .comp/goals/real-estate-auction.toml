@@ -1,0 +1,55 @@
+title = "realestate:auction — strict bidding rules and contract generation"
+
+text = """
+Implement components/real-estate-auction-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/auctions              {"property":<string>,"min":<u32>} (agent)
+  GET    /api/auctions                                                (any)
+  POST   /api/auctions/{id}/bid     {"amount":<u32>}                  (bidder)
+  POST   /api/auctions/{id}/close                                     (escrow)
+
+Store auctions in `auctions` and bids in `bids`. Bidding uses `idempotency:guard/store` to prevent double-charging or race conditions on the highest bid. Closing the auction uses `legal:pdf/generator` to render a final sale contract.
+
+RBAC: Creating requires `agent`. Bidding requires `bidder`. Closing requires `escrow`. Enforce via `policy:guard/guard`.
+"""
+
+component = "real-estate-auction-domain"
+
+base_paths = [
+  "components/real-estate-auction-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/idempotency-guard/",
+  "components/pdf-generator/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/real-estate-auction-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "real-estate-auction-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "idempotency-guard",
+  "pdf-generator",
+]
+context = [
+  "components/real-estate-auction-domain/src/lib.rs",
+  "components/real-estate-auction-domain/wit/real-estate-auction.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/idempotency-guard/wit/idempotency.wit",
+  "components/pdf-generator/wit/legal.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/real-estate-auction-domain/gate.sh"]

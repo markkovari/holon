@@ -1,0 +1,11 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running `reconciler/target/debug/comp-goalrun --checkout . --repo markkovari/holon --llm-key /Users/markkovari/.comp-secrets/anthropic --github-token /Users/markkovari/.comp-secrets/ghpat --goal .comp/goals/complaint-escalation.toml --branches 6 --rounds 2 --skip-above 1.0 --provider anthropic --llm-base-url 'http://127.0.0.1:8788/v1'`
+goal: Implement components/complaint-escalation-domain/src/handlers.rs — nothing in
+repo: markkovari/holon  base: main  branches: 6  rounds: 2  model: claude-haiku-4-5-20251001
+gate allows: ["bash"]
+gate host:   /Users/markkovari/DEV/markkovari/holon/host/target/release/comp-host (found)
+comp-checks: listening on http://127.0.0.1:56484 | base (sent per request) | 1 allowed command(s) | 120s timeout
+comp-checks: auth bearer token required
+starting fleet …
+comp-checks: seed — 0/0 passed, score 0, ACCEPTED
+gate: base 164c2bbd seeded (57 files)

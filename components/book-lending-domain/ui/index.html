@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Lending System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="toast-container"></div>
+    
+    <div class="auth-overlay" id="auth-overlay">
+        <div class="auth-card glass-panel">
+            <div class="auth-header">
+                <h2>Library System</h2>
+                <p>Sign in to access the catalog</p>
+            </div>
+            <div class="auth-roles">
+                <div class="role-card" id="login-lib">
+                    <div class="role-icon">👩‍🏫</div>
+                    <h3>Librarian</h3>
+                    <p>lib@example.test</p>
+                </div>
+                <div class="role-card" id="login-alice">
+                    <div class="role-icon">👩‍🎓</div>
+                    <h3>Alice</h3>
+                    <p>alice@example.test</p>
+                </div>
+                <div class="role-card" id="login-bob">
+                    <div class="role-icon">👨‍🎓</div>
+                    <h3>Bob</h3>
+                    <p>bob@example.test</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <nav class="navbar glass-panel">
+        <div class="logo">Central Library</div>
+        <div class="nav-right">
+            <span id="user-display" class="user-display"></span>
+            <button id="logout-btn" class="secondary-btn">Logout</button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <!-- Librarian Actions -->
+        <section id="librarian-actions" class="actions-section hidden glass-panel">
+            <h2>Add New Book</h2>
+            <form id="create-book-form" class="inline-form">
+                <div class="form-group flex-2">
+                    <label for="book-title">Title</label>
+                    <input type="text" id="book-title" placeholder="e.g., The Left Hand of Darkness" required>
+                </div>
+                <button type="submit" class="primary-btn">Add to Catalog</button>
+            </form>
+        </section>
+
+        <section class="books-section glass-panel">
+            <div class="section-header">
+                <h2>Library Catalog</h2>
+                <button id="refresh-btn" class="secondary-btn">Refresh</button>
+            </div>
+            <div id="books-list" class="books-grid">
+                <!-- Book cards injected here -->
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

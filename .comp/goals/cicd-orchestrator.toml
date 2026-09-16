@@ -1,0 +1,57 @@
+title = "cicd:orchestrator — build pipelines and artifact storage"
+
+text = """
+Implement components/cicd-orchestrator-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/pipelines             {"repo":<string>}                 (devops)
+  GET    /api/pipelines                                               (developer)
+  POST   /api/pipelines/{id}/run                                      (developer)
+
+Store pipelines in the `pipelines` collection. Running a pipeline creates an OCI image via `container:oci/builder`, stores build logs in `blob:store/blobstore`, and fires a completion webhook using `webhook:sign/signer`.
+
+RBAC: Creating pipelines requires the `devops` role. Running requires `developer`. Enforce via `policy:guard/guard`.
+"""
+
+component = "cicd-orchestrator-domain"
+
+base_paths = [
+  "components/cicd-orchestrator-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/blob-store/",
+  "components/oci-builder/",
+  "components/webhook-sign/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/cicd-orchestrator-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "cicd-orchestrator-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "blob-store",
+  "oci-builder",
+  "webhook-sign",
+]
+context = [
+  "components/cicd-orchestrator-domain/src/lib.rs",
+  "components/cicd-orchestrator-domain/wit/cicd-orchestrator.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/blob-store/wit/blob.wit",
+  "components/oci-builder/wit/container.wit",
+  "components/webhook-sign/wit/webhook.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/cicd-orchestrator-domain/gate.sh"]

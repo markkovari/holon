@@ -1,0 +1,150 @@
+:root {
+    --primary: #3b82f6;
+    --primary-dark: #2563eb;
+    --secondary: #1e293b;
+    --bg-gradient: linear-gradient(135deg, #0f172a 0%, #172554 100%);
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --danger: #ef4444;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Inter', sans-serif;
+}
+
+body {
+    background: var(--bg-gradient);
+    color: var(--text-main);
+    min-height: 100vh;
+}
+
+.glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+}
+
+/* Authentication Overlay */
+.auth-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+.auth-overlay.hidden {
+    display: none;
+}
+.auth-card {
+    padding: 3rem;
+    width: 100%;
+    max-width: 600px;
+    text-align: center;
+}
+.auth-header { margin-bottom: 2.5rem; }
+.auth-header h2 { font-size: 2.2rem; margin-bottom: 0.5rem; color: var(--primary); }
+.auth-roles { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+.role-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    padding: 1.5rem;
+    border-radius: 12px;
+    cursor: pointer;
+    flex: 1 1 140px;
+    transition: all 0.3s ease;
+}
+.role-card:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: translateY(-5px);
+    border-color: var(--primary);
+}
+.role-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
+
+/* Navbar */
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    margin: 1rem;
+}
+.logo { font-weight: 700; font-size: 1.5rem; color: var(--primary); }
+.nav-right { display: flex; align-items: center; gap: 1rem; }
+
+/* Buttons & Forms */
+button {
+    cursor: pointer;
+    border: none;
+    padding: 0.6rem 1.2rem;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+.primary-btn { background: var(--primary); color: white; }
+.primary-btn:hover { background: var(--primary-dark); transform: scale(1.05); }
+.secondary-btn { background: var(--secondary); color: white; border: 1px solid var(--glass-border); }
+.secondary-btn:hover { background: #334155; }
+.danger-btn { background: var(--danger); color: white; }
+
+.inline-form { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; width: 100%; }
+.form-group { display: flex; flex-direction: column; gap: 0.5rem; }
+.flex-1 { flex: 1; }
+.flex-2 { flex: 2; }
+.flex-3 { flex: 3; }
+
+input, select {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--glass-border);
+    color: white;
+    padding: 0.7rem;
+    border-radius: 8px;
+    outline: none;
+    width: 100%;
+}
+input:focus, select:focus { border-color: var(--primary); }
+select option { background: #1e293b; }
+
+/* Main layout */
+.container { padding: 2rem; max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
+.actions-section { padding: 2rem; }
+.actions-section h2 { margin-bottom: 1.5rem; font-size: 1.4rem; color: #cbd5e1; }
+.hidden { display: none !important; }
+
+/* Tickets Grid */
+.tickets-section { padding: 2rem; }
+.section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
+.tickets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem; }
+.ticket-card {
+    padding: 1.5rem;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    transition: transform 0.2s;
+}
+.ticket-card:hover { transform: translateY(-3px); border-color: rgba(255,255,255,0.3); }
+.ticket-subject { font-size: 1.2rem; font-weight: 600; color: white; }
+.ticket-body { color: var(--text-muted); font-size: 0.95rem; line-height: 1.4; flex-grow: 1; }
+.ticket-queue { font-size: 0.8rem; background: var(--primary-dark); padding: 0.2rem 0.6rem; border-radius: 4px; align-self: flex-start; }
+
+/* Toast */
+#toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+.toast {
+    background: var(--glass-bg); backdrop-filter: blur(10px); border: 1px solid var(--glass-border);
+    padding: 1rem 1.5rem; border-radius: 8px; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s forwards;
+}
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fadeOut { to { opacity: 0; visibility: hidden; } }

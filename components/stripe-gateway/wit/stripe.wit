@@ -1,0 +1,22 @@
+package payment:stripe@0.1.0;
+
+interface gateway {
+    /// Errors from the Stripe gateway
+    variant error {
+        config-missing,
+        http-error(string),
+        api-error(string),
+        invalid-request(string),
+    }
+
+    /// Charge a card via Stripe API using the provided token/source.
+    /// Amount is in minor units (e.g. cents).
+    charge: func(amount: s64, currency: string, source: string, description: option<string>) -> result<string, error>;
+}
+
+world stripe-gateway {
+    import wasi:config/store@0.2.0-rc.1;
+    import wasi:http/outgoing-handler@0.2.0;
+
+    export gateway;
+}

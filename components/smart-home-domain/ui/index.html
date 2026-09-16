@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Holon Smart Home Hub</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="toast-container"></div>
+    
+    <header class="app-header">
+        <div class="logo">
+            <div class="logo-icon"></div>
+            Holon <span>Smart Hub</span>
+        </div>
+        <div class="auth-controls" id="auth-controls">
+            <button id="login-admin" class="secondary-btn">Login as Admin</button>
+            <button id="login-user" class="secondary-btn">Login as User</button>
+        </div>
+        <div class="user-info hidden" id="user-info">
+            <span id="current-user"></span>
+            <button id="logout-btn" class="secondary-btn">Logout</button>
+        </div>
+    </header>
+
+    <main class="app-main">
+        <section id="auth-section" class="card">
+            <h2>Welcome Home</h2>
+            <p>Please log in to control your devices.</p>
+        </section>
+
+        <section id="dashboard-section" class="hidden">
+            <div class="dashboard-header">
+                <h2>Your Devices</h2>
+                <div id="admin-controls" class="hidden">
+                    <form id="create-device-form" class="inline-form">
+                        <input type="text" id="new-device-name" placeholder="New device name..." required>
+                        <button type="submit" class="primary-btn">Add Device</button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="devices-grid" class="devices-grid">
+                <!-- Devices will be rendered here -->
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

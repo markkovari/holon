@@ -11,7 +11,7 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::audit::log::types::{AuditError, Event};
+use bindings::exports::audit::log::types::{AuditError, Event};
 use bindings::exports::audit::log::query::Guest as Query;
 use bindings::exports::audit::log::recorder::Guest as Recorder;
 use bindings::wasi::clocks::wall_clock;

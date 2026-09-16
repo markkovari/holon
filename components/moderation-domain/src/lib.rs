@@ -41,16 +41,16 @@ guestio::guest_bearer!();
 
 struct Component;
 
-/// What a handler answers with: a status and a JSON body.
-pub struct Reply {
-    pub status: u16,
-    /// `Value::Null` means no body at all — see `no_content`.
-    pub json: Value,
+pub enum Reply {
+    Json(u16, Value),
+    Html(String),
+    Css(String),
+    Js(String),
 }
 
 impl Reply {
     pub fn json(status: u16, body: Value) -> Self {
-        Reply { status, json: body }
+        Reply::Json(status, body)
     }
     pub fn err(status: u16, code: &str) -> Self {
         Reply::json(status, json!({ "error": code }))
@@ -245,7 +245,10 @@ impl Guest for Component {
         // The router: `/health`, the token and the fixture here, everything else to
         // the part that owns it.
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
-        let Reply { status, json: payload } = match seg.as_slice() {
+        let reply = match seg.as_slice() {
+            [] | ["index.html"] => Reply::Html(include_str!("../ui/index.html").to_string()),
+            ["styles.css"] => Reply::Css(include_str!("../ui/styles.css").to_string()),
+            ["app.js"] => Reply::Js(include_str!("../ui/app.js").to_string()),
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "token"] => mint(&body),
             ["test", "seed"] => seed(),
@@ -268,15 +271,22 @@ impl Guest for Component {
             _ => Reply::err(404, "not_found"),
         };
 
+        let (status, content_type, payload_bytes) = match reply {
+            Reply::Html(s) => (200, b"text/html; charset=utf-8".to_vec(), s.into_bytes()),
+            Reply::Css(s) => (200, b"text/css; charset=utf-8".to_vec(), s.into_bytes()),
+            Reply::Js(s) => (200, b"application/javascript; charset=utf-8".to_vec(), s.into_bytes()),
+            Reply::Json(s, p) => (s, b"application/json".to_vec(), if p.is_null() { vec![] } else { p.to_string().into_bytes() }),
+        };
+
         let headers = Fields::new();
-        let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+        let _ = headers.set("content-type", &[content_type]);
         let resp = OutgoingResponse::new(headers);
         let _ = resp.set_status_code(status);
         let out = resp.body().expect("body");
         ResponseOutparam::set(response_out, Ok(resp));
         if let Ok(stream) = out.write() {
-            if !payload.is_null() {
-                let _ = write_all(&stream, payload.to_string().as_bytes());
+            if !payload_bytes.is_empty() {
+                let _ = write_all(&stream, &payload_bytes);
             }
             drop(stream);
         }
