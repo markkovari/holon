@@ -1,4 +1,0 @@
-[gemini-shim] /v1/messages & /v1/chat/completions on http://127.0.0.1:8788 -> gemini -p CLI
-[gemini-shim] Received POST /v1/messages
-[gemini-shim (cli)] FAILED after 189ms [queued 0ms]: gemini -p exited 1: Warning: GEMINI_API_KEY or GOOGLE_API_KEY is not set.
-Gemini API error (403): {"code":403,"message":"Method doesn't allow unregistered callers (callers without established identity). Please use API Key or other form of API consumer identity to call this API.","status":"PERMISSION_DENIED"}
