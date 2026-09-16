@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-124 interfaces.
+125 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -3311,6 +3311,22 @@ Adding a *function* to an interface is compatible; adding a case to a
     commit-changes: func(base: string, changes: list<path-change>, author: string, when: u64, message: string) -> result<string, git-error>;
 
     diff: func(before: string, after: string) -> result<list<changed>, git-error>;
+  }
+```
+
+## `vision:describe/describer@0.1.0`
+
+```wit
+  interface describer {
+    variant describe-error {
+      invalid-request(string),
+      provider-denied(string),
+      provider-unavailable(string),
+      bad-response(string),
+      no-content,
+    }
+
+    describe: func(image: list<u8>, media-type: string, prompt: string) -> result<string, describe-error>;
   }
 ```
 
