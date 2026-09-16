@@ -1,3 +1,5 @@
+//! Support desk dashboard for managing user requests
+
 #[allow(warnings)]
 mod bindings;
 

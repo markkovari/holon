@@ -1,3 +1,5 @@
+//! E-commerce fulfillment flow handling orders
+
 #[allow(warnings)]
 mod bindings;
 mod handlers;

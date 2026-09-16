@@ -1,3 +1,5 @@
+//! Process payments via Stripe
+
 #[allow(warnings)]
 mod bindings;
 use bindings::exports::payment::stripe::gateway::{Error, Guest};
