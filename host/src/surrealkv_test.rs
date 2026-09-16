@@ -22,10 +22,10 @@ use crate::tenant::BucketId;
 const SURREAL_IMAGE: &str = "surrealdb/surrealdb:v3.1.3";
 
 /// A SurrealDB container that dies with the test. `--unauthenticated`, not
-/// `--user root --pass ...`: `kv::build` has no password parameter for any
-/// backend (a Basic header naming a user an unauthenticated server does not
-/// have is REFUSED, not ignored), so this only ever talks to a server that
-/// takes unauthenticated writes.
+/// `--user root --pass ...`: this suite passes `kv::build` an empty token
+/// (a Basic header naming a user an unauthenticated server does not have is
+/// REFUSED, not ignored), so it only ever talks to a server that takes
+/// unauthenticated writes.
 struct Surreal {
     name: String,
     port: u16,
@@ -82,7 +82,7 @@ fn bucket(tag: &str) -> BucketId {
 }
 
 async fn backend(url: &str) -> std::sync::Arc<dyn kv::KvBackend> {
-    kv::build("surreal", "", "", url, 1).await.expect("`surreal` must be a backend `kv::build` knows")
+    kv::build("surreal", "", "", url, 1, "").await.expect("`surreal` must be a backend `kv::build` knows")
 }
 
 macro_rules! surreal_test {
@@ -211,7 +211,7 @@ surreal_test!(a_second_handle_sees_the_first_handles_writes, |db| {
 });
 
 surreal_test!(an_unknown_backend_still_names_the_ones_that_exist, |db| {
-    let err = match kv::build("postgres", "", "", &db.url(), 1).await {
+    let err = match kv::build("postgres", "", "", &db.url(), 1, "").await {
         Err(e) => e.to_string(),
         Ok(_) => panic!("`postgres` is not a backend"),
     };

@@ -30,10 +30,12 @@ mod rpc;
 mod secrets;
 mod sync;
 mod tenant;
-// The gate for `--kv surreal`, kept out of `kv.rs` on purpose: the file that
-// implements a backend must not be the file that judges it.
+// The gate for `--kv surreal`/`--kv turso`, kept out of `kv.rs` on purpose:
+// the file that implements a backend must not be the file that judges it.
 #[cfg(test)]
 mod surrealkv_test;
+#[cfg(test)]
+mod turso_test;
 use kv::KvBackend;
 use tenant::{BucketId, InstanceId, Limits, SharedScope, StartCommand};
 
@@ -780,8 +782,8 @@ struct Args {
     /// requests that aren't API routes. Omit for API-only.
     #[arg(long)]
     static_dir: Option<String>,
-    /// Key-value backend: memory | sqlite | redis | nats | surreal. The wasm
-    /// component is identical for all five — only the host store changes.
+    /// Key-value backend: memory | sqlite | redis | nats | surreal | turso.
+    /// The wasm component is identical for all six — only the host store changes.
     ///
     /// Defaults to `nats` on a lattice node and `memory` for a single-app run. That
     /// difference is deliberate: NATS is already mandatory on a lattice, and it is
@@ -797,11 +799,17 @@ struct Args {
     /// sets for a unit with `StateDirectory=` — private to the app's uid under
     /// `DynamicUser=yes`. Falls back to ./comp-kv.db when run by hand.
     ///
-    /// Doubles as the SurrealDB HTTP endpoint for `--kv surreal` (e.g.
-    /// `http://127.0.0.1:8000`) — that backend has no dedicated flag, the same
-    /// way it has no dedicated slot in `kv::build`.
+    /// Doubles as the HTTP endpoint for `--kv surreal` (e.g.
+    /// `http://127.0.0.1:8000`) and `--kv turso` (e.g. `https://<db>.turso.io`)
+    /// — neither backend has a dedicated flag, the same way neither has a
+    /// dedicated slot in `kv::build`. Only one is ever active per process.
     #[arg(long)]
     sqlite_path: Option<String>,
+    /// Auth token, as a FILE path, for `--kv surreal` (optional — an
+    /// `--unauthenticated` server takes none) or `--kv turso` (required for
+    /// hosted Turso; a self-hosted `sqld` usually takes none either).
+    #[arg(long)]
+    kv_token: Option<String>,
     /// NATS URL for `--kv nats`, or a comma-separated list of them.
     ///
     /// List every server in the cluster. A client given one address does learn the
@@ -1014,8 +1022,14 @@ async fn main() -> Result<()> {
         .clone()
         .or_else(|| args.lattice_nats.clone())
         .unwrap_or_else(|| "127.0.0.1:4222".into());
+    let kv_token = args
+        .kv_token
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     let kv_backend: Kv =
-        kv::build(&kv_kind, &args.redis_url, &nats_url, &sqlite_path, args.kv_replicas).await?;
+        kv::build(&kv_kind, &args.redis_url, &nats_url, &sqlite_path, args.kv_replicas, &kv_token).await?;
     // An explicit 1 is a choice, and it is still worth saying out loud once. The
     // automatic path warns from inside `store_for`, where it knows whether the
     // fallback actually happened rather than guessing here.
