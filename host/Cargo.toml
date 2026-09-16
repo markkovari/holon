@@ -34,6 +34,12 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 # Fetching a granted secret from the platform (ADR-0051). rustls rather than the
 # system store so a node needs no OpenSSL wherever it is installed.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# For SurrealKv: values are arbitrary bytes, SurrealQL string literals are not.
+base64 = "0.22"
+# `reqwest::blocking` spins up its own tokio runtime, which panics when called
+# from inside one that's already running (every KvBackend method is sync, but
+# the host itself is async) — SurrealKv needs a client with no such conflict.
+ureq = { version = "2", features = ["json", "tls"] }
 http-body-util = "0.1"
 bytes = "1"
 anyhow = "1"

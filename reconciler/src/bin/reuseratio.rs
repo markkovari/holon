@@ -2,27 +2,35 @@
 //!
 //!     comp-reuse-ratio .comp/goals/triage-assist.toml [...]
 //!
-//! Two numbers per app, each from a different source so one cannot be talked up:
+//! Two numbers per app, from the capability graph (`comp-capgraph`, ADR-0091) —
+//! rows a query can join against, kept current by the build — rather than by
+//! shelling out to `comp-plug`/`wasm-tools` and regexing their output or a
+//! `.wit` file per invocation:
 //!
-//!   COMPOSITION   the components `comp-plug` actually wires in, derived from the
-//!                 compiled artifact's imports — not from a list anybody
-//!                 maintains by hand.
-//!   CAPABILITIES  the interfaces the compiled component IMPORTS, against the
-//!                 ones its world offers. A world can offer a capability a part
-//!                 never calls; only the import proves it was reached for, which
-//!                 is what the gates assert.
+//!   COMPOSITION   the other artifacts this app's `carries` edges name — the
+//!                 same wiring `comp-plug` computes, already projected.
+//!   CAPABILITIES  the interfaces this artifact's `imports` edges name — what
+//!                 the compiled binary actually calls.
 //!
-//! The ratio is component-based: reused / (reused + written). It is a ratio of
-//! what EXISTS to what was AUTHORED for this app, which is the question "did the
-//! pool carry the weight".
+//! What this trades away: the graph's `imports` edges are derived from the
+//! BUILT artifact (same as the old `wasm-tools` reading), not from the `.wit`
+//! world source, so there is no record here of a capability a world OFFERS but
+//! nothing calls — the old "world offers N, UNUSED: ..." half of the report.
+//! That is a real capability this version does not have, not an oversight;
+//! restoring it means projecting the world's declared surface into the graph
+//! too, which is a `comp-capgraph` schema change, not one to make from here.
 //!
-//! `REUSE_ROOT` points this at another checkout — a worktree of a landed pull
-//! request, which is the only tree where the written side is the run's actual
-//! work rather than the stubs the repository keeps.
+//! Also: the graph reflects whatever `comp-capgraph`'s last run projected, not
+//! necessarily this exact tree — unlike the artifact-derived path this
+//! replaces, which read the measured tree's own build. `REUSE_ROOT` still
+//! selects which tree's goal spec and written files are read (the stub check
+//! below), just no longer which tree's build the composition numbers come from.
+//!
+//!     comp-reuse-ratio --surreal-url http://malna.tail3a9c.ts.net:8000 <goal>...
 
-use regex::Regex;
+use clap::Parser;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
@@ -32,89 +40,107 @@ fn measured_root(repo: &Path) -> PathBuf {
     std::env::var("REUSE_ROOT").map(PathBuf::from).unwrap_or_else(|_| repo.to_path_buf())
 }
 
-/// Where built components are looked for: the measured tree first, the
-/// repository second — earlier directories win, the same catalogue `comp-plug`
-/// uses in a gate.
-fn target_dirs(root: &Path, repo: &Path) -> Vec<String> {
-    let mut dirs = Vec::new();
-    for r in [root, repo] {
-        for d in ["wasm32-wasip2", "wasm32-wasip1"] {
-            let path = r.join("components/target").join(d).join("debug");
-            if path.is_dir() {
-                dirs.push("--dir".into());
-                dirs.push(path.display().to_string());
-            }
-        }
-    }
-    dirs
+#[derive(Parser)]
+#[command(name = "comp-reuse-ratio", about = "What a goal's app is made of, and how much of it the run had to write")]
+struct Args {
+    /// Goal spec paths, e.g. `.comp/goals/triage-assist.toml`.
+    goals: Vec<String>,
+    /// The capability graph's SurrealDB endpoint (comp-capgraph, ADR-0091).
+    #[arg(long, default_value = "http://malna.tail3a9c.ts.net:8000")]
+    surreal_url: String,
+    /// Password for that database, as a FILE path — same convention as
+    /// `comp-goalrun --surreal-password`. Absent means unauthenticated.
+    #[arg(long)]
+    surreal_password: Option<PathBuf>,
 }
 
-fn plugs(repo: &Path, root: &Path, crate_name: &str) -> Vec<String> {
-    let re = Regex::new(r"plugs: (.*)").unwrap();
-    let Ok(out) = Command::new(repo.join("reconciler/target/release/comp-plug"))
-        .arg(crate_name)
-        .arg("--wiring")
-        .args(target_dirs(root, repo))
-        .current_dir(root)
-        .output()
-    else {
-        return Vec::new();
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    re.captures(&stdout)
-        .map(|c| c[1].split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect())
+/// A thin client over SurrealDB's `/sql` HTTP endpoint — the same wire
+/// protocol `reconciler/src/trace.rs` already uses, at the `comp`/`goalmemory`
+/// coordinates `comp-capgraph --format surql` projects into.
+struct Surreal {
+    url: String,
+    password: Option<String>,
+    client: reqwest::blocking::Client,
+}
+
+impl Surreal {
+    fn new(url: String, password: Option<String>) -> Self {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
+        Self { url: url.trim_end_matches('/').to_string(), password, client }
+    }
+
+    /// Run one SurrealQL statement and return its `result` array. Empty on any
+    /// failure (unreachable database, bad auth, a rejected statement) — a
+    /// measurement tool that cannot reach its data source reports nothing for
+    /// that app rather than crashing the whole run over one.
+    fn query(&self, surql: &str) -> Vec<Value> {
+        let mut req = self.client.post(format!("{}/sql", self.url));
+        if let Some(p) = &self.password {
+            req = req.basic_auth("root", Some(p));
+        }
+        let Ok(resp) = req
+            .header("accept", "application/json")
+            .header("surreal-ns", "comp")
+            .header("surreal-db", "goalmemory")
+            .body(surql.to_string())
+            .send()
+        else {
+            return Vec::new();
+        };
+        if !resp.status().is_success() {
+            return Vec::new();
+        }
+        let Ok(text) = resp.text() else { return Vec::new() };
+        let Ok(statements) = serde_json::from_str::<Vec<Value>>(&text) else { return Vec::new() };
+        statements
+            .into_iter()
+            .last()
+            .and_then(|s| s.get("result").cloned())
+            .and_then(|r| r.as_array().cloned())
+            .unwrap_or_default()
+    }
+}
+
+/// A JSON string literal, so a crate name cannot carry SurrealQL syntax
+/// (matches `comp-capgraph`'s own `lit()`, ADR-0080's reasoning).
+fn lit(s: &str) -> String {
+    Value::String(s.to_string()).to_string()
+}
+
+/// A SurrealDB record id in `comp-capgraph`'s escaped form — same escaping, so
+/// ids always agree with what the projection wrote.
+fn rid(table: &str, id: &str) -> String {
+    format!("{table}:⟨{}⟩", id.replace('⟩', ""))
+}
+
+fn first_array<'a>(rows: &'a [Value], field: &str) -> Vec<&'a str> {
+    rows.first()
+        .and_then(|row| row.get(field))
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default()
 }
 
-/// The interfaces the UNCOMPOSED artifact imports — what the code actually calls.
-fn artifact_imports(root: &Path, crate_name: &str) -> Vec<String> {
-    let wasm = format!("{}.wasm", crate_name.replace('-', "_"));
-    let re = Regex::new(r"import ([a-z0-9:-]+/[a-z0-9-]+)").unwrap();
-    for d in ["wasm32-wasip2", "wasm32-wasip1"] {
-        let path = root.join("components/target").join(d).join("debug").join(&wasm);
-        if !path.exists() {
-            continue;
-        }
-        let Ok(out) = Command::new("wasm-tools").args(["component", "wit"]).arg(&path).output() else {
-            continue;
-        };
-        let wit = String::from_utf8_lossy(&out.stdout);
-        return unique_sorted(re.captures_iter(&wit).map(|c| c[1].to_string()));
-    }
-    Vec::new()
+/// The other artifacts wired into the app whose domain component is
+/// `crate_name` — `comp-capgraph`'s `carries` edges, minus the root itself
+/// (which `carries` includes; see `capgraph.rs`'s own comment on why).
+fn wired_peers(surreal: &Surreal, crate_name: &str) -> Vec<String> {
+    let rows = surreal.query(&format!(
+        "SELECT ->carries->artifact.name AS parts FROM app WHERE root = {};",
+        lit(crate_name)
+    ));
+    first_array(&rows, "parts").into_iter().filter(|s| *s != crate_name).map(String::from).collect()
 }
 
-fn world_imports(root: &Path, crate_name: &str) -> Vec<String> {
-    let re = Regex::new(r"import ([a-z0-9:-]+/[a-z0-9-]+)@").unwrap();
-    let Some(text) = find_wit(&root.join("components").join(crate_name).join("wit")) else {
-        return Vec::new();
-    };
-    unique_sorted(re.captures_iter(&text).map(|c| c[1].to_string()))
-}
-
-fn unique_sorted(items: impl Iterator<Item = String>) -> Vec<String> {
-    let mut v: Vec<String> = items.collect();
-    v.sort();
-    v.dedup();
-    v
-}
-
-/// The first `.wit` file found walking `dir` — matches Python's `os.walk`,
-/// which returned on the first hit.
-fn find_wit(dir: &Path) -> Option<String> {
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else { continue };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|e| e == "wit") {
-                return std::fs::read_to_string(&path).ok();
-            }
-        }
-    }
-    None
+/// The interfaces `crate_name`'s compiled artifact imports — `comp-capgraph`'s
+/// `imports` edges, read out of the binary the same way `wasm-tools` did.
+fn imported_interfaces(surreal: &Surreal, crate_name: &str) -> Vec<String> {
+    let rows =
+        surreal.query(&format!("SELECT ->imports->interface.name AS imported FROM {};", rid("artifact", crate_name)));
+    first_array(&rows, "imported").into_iter().map(String::from).collect()
 }
 
 struct Row {
@@ -122,7 +148,7 @@ struct Row {
     written: usize,
 }
 
-fn report(repo: &Path, root: &Path, goal_path: &str) -> Option<Row> {
+fn report(root: &Path, surreal: &Surreal, goal_path: &str) -> Option<Row> {
     let text = std::fs::read_to_string(goal_path).ok()?;
     let goal: toml::Value = toml::from_str(&text).ok()?;
     let title = goal.get("title").and_then(|t| t.as_str()).unwrap_or(goal_path).to_string();
@@ -159,12 +185,10 @@ fn report(repo: &Path, root: &Path, goal_path: &str) -> Option<Row> {
         return None;
     }
 
-    let wired = plugs(repo, root, &crate_name);
+    let wired = wired_peers(surreal, &crate_name);
     let reused = wired.len();
     let written = 1; // the goal writes exactly its own crate
-    let offered = world_imports(root, &crate_name);
-    let called = artifact_imports(root, &crate_name);
-    let reached = offered.iter().filter(|i| called.contains(i)).count();
+    let called = imported_interfaces(surreal, &crate_name);
 
     let ratio = reused as f64 / (reused + written) as f64;
     println!("\n=== {title}");
@@ -176,21 +200,20 @@ fn report(repo: &Path, root: &Path, goal_path: &str) -> Option<Row> {
         ratio * 100.0,
         reused / written
     );
-    println!("  CAPABILITIES world offers {}, artifact imports {reached}:", offered.len());
-    for i in &offered {
-        let tag = if called.contains(i) { "called  " } else { "UNUSED  " };
-        println!("      {tag} {i}");
-    }
+    println!("  CAPABILITIES artifact imports {} interface(s): {}", called.len(), called.join(", "));
     Some(Row { reused, written })
 }
 
 fn main() {
-    let repo = repo();
-    let root = measured_root(&repo);
-    // Goal file paths, not a security decision — nosemgrep precedent already
-    // set for env::args() elsewhere in this crate (ffmpeg.rs, imageopt.rs).
-    let goal_paths: Vec<String> = std::env::args().skip(1).collect(); // nosemgrep: rust.lang.security.args.args
-    let rows: Vec<Row> = goal_paths.iter().filter_map(|g| report(&repo, &root, g)).collect();
+    let args = Args::parse();
+    let root = measured_root(&repo());
+    let password = args
+        .surreal_password
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string());
+    let surreal = Surreal::new(args.surreal_url, password);
+
+    let rows: Vec<Row> = args.goals.iter().filter_map(|g| report(&root, &surreal, g)).collect();
     if rows.len() > 1 {
         let (tr, tw) = rows.iter().fold((0usize, 0usize), |(a, b), r| (a + r.reused, b + r.written));
         println!(
