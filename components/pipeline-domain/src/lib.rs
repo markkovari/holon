@@ -58,7 +58,10 @@ impl Guest for Component {
             }
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
-                    (Method::Get, [""]) => usage_json(),
+                    (Method::Get, [""]) | (Method::Get, ["index.html"]) => Outcome::Html(include_str!("../ui/index.html").to_string()),
+                    (Method::Get, ["styles.css"]) => Outcome::Css(include_str!("../ui/styles.css").to_string()),
+                    (Method::Get, ["app.js"]) => Outcome::Js(include_str!("../ui/app.js").to_string()),
+                    (Method::Get, ["api", "info"]) => usage_json(),
                     (Method::Post, ["api", "events"]) => enqueue_event(&request),
                     (Method::Get, ["api", "events"]) => snapshot(&path),
                     (Method::Post, ["api", "sink"]) => set_sink(&request),
@@ -73,6 +76,9 @@ impl Guest for Component {
 }
 
 enum Outcome {
+    Html(String),
+    Css(String),
+    Js(String),
     Json(u16, String),
     Err(u16, String),
 }
@@ -359,16 +365,19 @@ fn query_i64(path: &str, key: &str) -> Option<i64> {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
+        Outcome::Html(html) => respond(response_out, 200, "text/html; charset=utf-8", html.as_bytes()),
+        Outcome::Css(css) => respond(response_out, 200, "text/css; charset=utf-8", css.as_bytes()),
+        Outcome::Js(js) => respond(response_out, 200, "application/javascript; charset=utf-8", js.as_bytes()),
+        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
         Outcome::Err(code, msg) => {
-            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
+            respond(response_out, code, "application/json", json!({ "error": msg }).to_string().as_bytes())
         }
     }
 }
 
-fn respond(response_out: ResponseOutparam, status: u16, body: &[u8]) {
+fn respond(response_out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);

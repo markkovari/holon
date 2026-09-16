@@ -1,0 +1,54 @@
+title = "clinic:telehealth — telehealth appointments and medical records"
+
+text = """
+Implement components/clinic-telehealth-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/appointments           {"date":<string>,"physician_id":<string>}  (patient)
+  GET    /api/appointments                                                      (physician)
+  POST   /api/records                (multipart with DICOM file)                (physician)
+
+Store appointments in the `appointments` collection. Uploading a DICOM file will first parse it using `medical:dicom/parser` to extract patient metadata, redact sensitive information using `pii:redact/redactor`, and save the result into `records` using `records:store/store`.
+
+RBAC: `physician` role is required for GET /api/appointments and POST /api/records.
+"""
+
+component = "clinic-telehealth-domain"
+
+base_paths = [
+  "components/clinic-telehealth-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/pii-redact/",
+  "components/dicom-parser/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/clinic-telehealth-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "clinic-telehealth-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "pii-redact",
+  "dicom-parser",
+]
+context = [
+  "components/clinic-telehealth-domain/src/lib.rs",
+  "components/clinic-telehealth-domain/wit/clinic-telehealth.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/pii-redact/wit/redact.wit",
+  "components/dicom-parser/wit/dicom.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/clinic-telehealth-domain/gate.sh"]

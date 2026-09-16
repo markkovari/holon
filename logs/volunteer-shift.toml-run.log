@@ -1,0 +1,19 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running `reconciler/target/debug/comp-goalrun --checkout . --repo markkovari/holon --llm-key /Users/markkovari/.comp-secrets/anthropic --github-token /Users/markkovari/.comp-secrets/ghpat --goal .comp/goals/volunteer-shift.toml --branches 6 --rounds 2 --skip-above 1.0 --provider anthropic --llm-base-url 'http://127.0.0.1:8788/v1'`
+goal: Implement components/volunteer-shift-domain/src/handlers.rs — nothing in it is
+repo: markkovari/holon  base: main  branches: 6  rounds: 2  model: claude-haiku-4-5-20251001
+gate allows: ["bash"]
+gate host:   /Users/markkovari/DEV/markkovari/holon/host/target/release/comp-host (found)
+comp-checks: listening on http://127.0.0.1:55652 | base (sent per request) | 1 allowed command(s) | 120s timeout
+comp-checks: auth bearer token required
+starting fleet …
+comp-checks: seed — 0/0 passed, score 0, ACCEPTED
+gate: base 164c2bbd seeded (57 files)
+comp-checks: composition — 1/1 passed, score 1000, ACCEPTED
+
+REFUSED — this gate cannot judge anything:
+
+  · `behaves-under-real-http` already passes on the base tree, so it cannot judge a candidate. Make it fail against the code as it stands, or mark it `may_pass_base = true` if it is a regression check that is supposed to be green.
+
+Nothing was spent. A gate that passes on the code as it stands 
+accepts a candidate that changes nothing.

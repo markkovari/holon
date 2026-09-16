@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Support Desk</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <div class="logo">
+                <span class="logo-icon">🎧</span> Support Desk
+            </div>
+            <button class="primary-btn" onclick="showCreateModal()">New Ticket</button>
+        </header>
+        
+        <main>
+            <div class="layout">
+                <!-- Sidebar: Ticket List -->
+                <aside class="sidebar">
+                    <div class="sidebar-header">
+                        <h2>Tickets</h2>
+                    </div>
+                    <div class="ticket-list" id="ticketList">
+                        <!-- Tickets loaded here -->
+                    </div>
+                </aside>
+
+                <!-- Main Content: Ticket Details -->
+                <section class="ticket-details" id="ticketDetails">
+                    <div class="empty-state">
+                        Select a ticket to view details
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create Ticket Modal -->
+    <div class="modal" id="createModal">
+        <div class="modal-content">
+            <h2>Create New Ticket</h2>
+            <div class="form-group">
+                <label>Title</label>
+                <input type="text" id="newTitle" placeholder="Brief summary of the issue">
+            </div>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea id="newDescription" rows="4" placeholder="Detailed explanation..."></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="secondary-btn" onclick="hideCreateModal()">Cancel</button>
+                <button class="primary-btn" onclick="createTicket()">Submit</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

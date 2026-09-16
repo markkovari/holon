@@ -121,6 +121,18 @@ impl Guest for Component {
         };
 
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
+        
+        // Static UI Serving
+        if seg.is_empty() || seg.as_slice() == ["index.html"] {
+            return serve_static(response_out, include_str!("../ui/index.html"), "text/html");
+        }
+        if seg.as_slice() == ["styles.css"] {
+            return serve_static(response_out, include_str!("../ui/styles.css"), "text/css");
+        }
+        if seg.as_slice() == ["app.js"] {
+            return serve_static(response_out, include_str!("../ui/app.js"), "application/javascript");
+        }
+
         let Reply { status, json: payload } = match seg.as_slice() {
             ["health"] => Reply::json(200, json!({ "ok": true })),
             ["test", "token"] => mint(&body),
@@ -142,6 +154,20 @@ impl Guest for Component {
         }
         let _ = OutgoingBody::finish(out, None);
     }
+}
+
+fn serve_static(response_out: ResponseOutparam, content: &str, content_type: &str) {
+    let headers = Fields::new();
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
+    let resp = OutgoingResponse::new(headers);
+    let _ = resp.set_status_code(200);
+    let out = resp.body().expect("body");
+    ResponseOutparam::set(response_out, Ok(resp));
+    if let Ok(stream) = out.write() {
+        let _ = write_all(&stream, content.as_bytes());
+        drop(stream);
+    }
+    let _ = OutgoingBody::finish(out, None);
 }
 
 bindings::export!(Component with_types_in bindings);

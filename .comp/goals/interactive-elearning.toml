@@ -1,0 +1,52 @@
+title = "learning:interactive — courses, quizzes, and automated grading"
+
+text = """
+Implement components/interactive-elearning-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/courses                 {"title":<string>}                 (admin)
+  GET    /api/courses                                                    (student, instructor)
+  POST   /api/courses/{id}/enroll                                        (student)
+  POST   /api/courses/{id}/video      {"video_id":<string>}              (instructor)
+
+Store courses in the `courses` collection. Enrollment requires the `student` role. Video uploads trigger the `media:video/transcoder` component to downsample the file for streaming. 
+
+RBAC: Creating courses requires `admin`. Uploading videos requires `instructor`. Enforce this via `policy:guard/guard`.
+"""
+
+component = "interactive-elearning-domain"
+
+base_paths = [
+  "components/interactive-elearning-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/video-transcoder/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/interactive-elearning-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "interactive-elearning-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "video-transcoder",
+]
+context = [
+  "components/interactive-elearning-domain/src/lib.rs",
+  "components/interactive-elearning-domain/wit/interactive-elearning.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/video-transcoder/wit/media.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/interactive-elearning-domain/gate.sh"]

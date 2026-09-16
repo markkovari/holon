@@ -1,0 +1,10 @@
+sandbox: 12 base path(s), 1 check(s)
+--- bash components/incident-response-domain/gate.sh
+Caused by:
+    wasm trap: wasm `unreachable` instruction executed
+)
+    exit 3
+
+1 check(s) failed on the base tree, which is what should happen.
+Read the reasons above: a compile or compose error is a BROKEN SANDBOX, not a
+judgeable check. Only 'never calls …' / behavioural failures mean the tree is right.

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Commerce Fulfillment Engine</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app" class="app-container">
+        <!-- Auth View -->
+        <div id="auth-view" class="view glass-panel active">
+            <div class="logo">📦 NexusCommerce</div>
+            <h1>Welcome Back</h1>
+            <p>Sign in to access the fulfillment engine.</p>
+            
+            <div class="input-group">
+                <label>Access Role</label>
+                <select id="role-select">
+                    <option value="customer">Customer (Buy Products)</option>
+                    <option value="fulfillment">Fulfillment Staff (Ship Orders)</option>
+                </select>
+            </div>
+            <button id="login-btn" class="primary-btn">Authenticate</button>
+        </div>
+
+        <!-- Dashboard View -->
+        <div id="dashboard-view" class="view hidden">
+            <nav class="navbar glass-panel">
+                <div class="logo">📦 NexusCommerce</div>
+                <div class="user-info">
+                    <span id="user-role-badge" class="badge"></span>
+                    <button id="logout-btn" class="text-btn">Sign Out</button>
+                </div>
+            </nav>
+
+            <main class="dashboard-content">
+                <!-- Customer Section -->
+                <section id="customer-section" class="role-section hidden">
+                    <div class="glass-panel">
+                        <h2>Purchase Product</h2>
+                        <p class="subtitle">Mock product purchase using Stripe Gateway</p>
+                        
+                        <div class="product-card">
+                            <div class="product-info">
+                                <h3>Quantum Mechanical Keyboard</h3>
+                                <p class="price">$29.99</p>
+                            </div>
+                            <div class="buy-controls">
+                                <input type="number" id="qty-input" value="1" min="1" max="10">
+                                <button id="buy-btn" class="primary-btn">Buy with Stripe</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Fulfillment Section -->
+                <section id="fulfillment-section" class="role-section hidden">
+                    <div class="glass-panel">
+                        <h2>Orders Queue</h2>
+                        <p class="subtitle">Process and ship paid orders.</p>
+                        <div class="controls">
+                            <button id="refresh-orders-btn" class="secondary-btn">Refresh</button>
+                        </div>
+                        <div id="orders-list" class="orders-grid">
+                            <!-- Orders will be dynamically inserted here -->
+                        </div>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+    
+    <div id="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

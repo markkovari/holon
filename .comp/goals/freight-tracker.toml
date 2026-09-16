@@ -1,0 +1,54 @@
+title = "freight:tracker — delivery routing, status updates, and fleet dispatch"
+
+text = """
+Implement components/freight-tracker-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/deliveries            {"origin":<coords>,"dest":<coords>}        (dispatcher)
+  GET    /api/deliveries                                                       (driver, dispatcher)
+  POST   /api/deliveries/{id}/route                                            (driver)
+
+Store deliveries in the `deliveries` collection. Routing uses `geo:routing/directions` to get the shortest path. Emits an event on `event:bus/bus` when a delivery is created or routed.
+
+RBAC: Creating deliveries requires the `dispatcher` role. Routing requires `driver` role. Enforce this via `policy:guard/guard`.
+"""
+
+component = "freight-tracker-domain"
+
+base_paths = [
+  "components/freight-tracker-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/event-bus/",
+  "components/geo-routing/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/freight-tracker-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "freight-tracker-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "event-bus",
+  "geo-routing",
+]
+context = [
+  "components/freight-tracker-domain/src/lib.rs",
+  "components/freight-tracker-domain/wit/freight-tracker.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/event-bus/wit/event.wit",
+  "components/geo-routing/wit/geo.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/freight-tracker-domain/gate.sh"]

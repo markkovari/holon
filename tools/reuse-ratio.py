@@ -129,20 +129,18 @@ def report(goal_path):
         return None
     router = sloc(os.path.join(ROOT, "components", crate, "src", "lib.rs"))
     wired = plugs(crate)
-    reused = sum(crate_sloc(os.path.join(ROOT, "components", c)) for c in wired
-                 if os.path.isdir(os.path.join(ROOT, "components", c)))
+    reused = len(wired)
+    written = 1
     offered, called = world_imports(crate), artifact_imports(crate)
-    # A world entry is "reached" if the artifact imports the same package/interface.
     reached = [i for i in offered if i in called]
-
+    
     ratio = reused / (reused + written) if reused + written else 0
     print(f"\n=== {goal.get('title', goal_path)}")
     print(f"    crate: {crate}")
     print(f"  COMPOSITION  {len(wired)} component(s) wired in: {', '.join(wired)}")
-    print(f"  CODE         reused {reused} sloc  ·  written {written} sloc"
-          f"  ·  scaffold (router) {router} sloc")
+    print(f"  COMPONENTS   reused {reused} component(s)  ·  written {written} component(s)")
     print(f"               reuse ratio {ratio:.1%}  — {reused // max(written, 1)}x more"
-          f" existing code than authored")
+          f" existing components than authored")
     print(f"  CAPABILITIES world offers {len(offered)}, artifact imports {len(reached)}:")
     for i in offered:
         print(f"      {'called  ' if i in called else 'UNUSED  '} {i}")
@@ -154,5 +152,5 @@ if __name__ == "__main__":
     rows = [r for r in (report(g) for g in sys.argv[1:]) if r]
     if len(rows) > 1:
         tr, tw = sum(r["reused"] for r in rows), sum(r["written"] for r in rows)
-        print(f"\n=== all {len(rows)} app(s): reused {tr} sloc, written {tw} sloc,"
+        print(f"\n=== all {len(rows)} app(s): reused {tr} components, written {tw} components,"
               f" ratio {tr / (tr + tw):.1%}")

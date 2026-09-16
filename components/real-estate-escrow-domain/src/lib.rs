@@ -36,7 +36,9 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-            (Method::Get, [""]) => serve_html(),
+            (Method::Get, [""]) | (Method::Get, ["index.html"]) => Outcome::Html(include_str!("../ui/index.html").to_string()),
+            (Method::Get, ["styles.css"]) => Outcome::Css(include_str!("../ui/styles.css").to_string()),
+            (Method::Get, ["app.js"]) => Outcome::Js(include_str!("../ui/app.js").to_string()),
             (Method::Post, ["api", "register"]) => register(&request),
             (Method::Post, ["api", "login"]) => login(&request),
             (Method::Post, ["api", "logout"]) => logout(&request),
@@ -50,7 +52,9 @@ impl Guest for Component {
 }
 
 enum Outcome {
-    Html(u16, String),
+    Html(String),
+    Css(String),
+    Js(String),
     Json(u16, String),
     Err(u16, String),
     Auth(AuthError),
@@ -60,23 +64,7 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-fn serve_html() -> Outcome {
-    let html = r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>real-estate-escrow</title>
-    <style>body { font-family: sans-serif; margin: 2rem; }</style>
-</head>
-<body>
-    <h1>real-estate-escrow (Real Estate Escrow Management)</h1>
-    <div id="app">Please interact via API for now.</div>
-    <script>
-        console.log("App loaded.");
-    </script>
-</body>
-</html>"#;
-    Outcome::Html(200, html.to_string())
-}
+// Removed serve_html() as it is now served directly via Outcome::Html
 
 guestio::guest_bearer!();
 
@@ -108,7 +96,10 @@ fn register(request: &IncomingRequest) -> Outcome {
     let email = b["email"].as_str().unwrap_or("").trim().to_string();
     let password = b["password"].as_str().unwrap_or("").to_string();
     match accounts::register(&email, &password, TENANT) {
-        Ok(p) => Outcome::Json(201, json!({ "subject": p.subject }).to_string()),
+        Ok(p) => {
+            let _ = bindings::auth::identity::rbac::assign_role(TENANT, &p.subject, "agent");
+            Outcome::Json(201, json!({ "subject": p.subject }).to_string())
+        }
         Err(e) => Outcome::Auth(e),
     }
 }
@@ -192,7 +183,9 @@ fn list_items(request: &IncomingRequest) -> Outcome {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, body, content_type) = match result {
-        Outcome::Html(c, b) => (c, b, b"text/html".to_vec()),
+        Outcome::Html(b) => (200, b, b"text/html; charset=utf-8".to_vec()),
+        Outcome::Css(b) => (200, b, b"text/css; charset=utf-8".to_vec()),
+        Outcome::Js(b) => (200, b, b"application/javascript; charset=utf-8".to_vec()),
         Outcome::Json(c, b) => (c, b, b"application/json".to_vec()),
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string(), b"application/json".to_vec()),
         Outcome::Auth(e) => {
