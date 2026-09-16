@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-123 interfaces.
+124 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -150,6 +150,28 @@ Adding a *function* to an interface is compatible; adding a case to a
     use types.{event, audit-error};
 
     record-event: func(e: event) -> result<_, audit-error>;
+  }
+```
+
+## `audit:log/types@0.1.0`
+
+```wit
+  interface types {
+    record event {
+      id: string,
+      trace-id: string,
+      span-id: string,
+      timestamp: u64,
+      event: string,
+      outcome: string,
+      tenant: string,
+      subject: string,
+      detail: string,
+    }
+
+    variant audit-error {
+      backend-unavailable(string),
+    }
   }
 ```
 
@@ -2426,6 +2448,21 @@ Adding a *function* to an interface is compatible; adding a case to a
   }
 ```
 
+## `payment:stripe/gateway@0.1.0`
+
+```wit
+  interface gateway {
+    variant error {
+      config-missing,
+      http-error(string),
+      api-error(string),
+      invalid-request(string),
+    }
+
+    charge: func(amount: s64, currency: string, source: string, description: option<string>) -> result<string, error>;
+  }
+```
+
 ## `pdf:codec/codec@0.1.0`
 
 ```wit
@@ -3274,22 +3311,6 @@ Adding a *function* to an interface is compatible; adding a case to a
     commit-changes: func(base: string, changes: list<path-change>, author: string, when: u64, message: string) -> result<string, git-error>;
 
     diff: func(before: string, after: string) -> result<list<changed>, git-error>;
-  }
-```
-
-## `vision:describe/describer@0.1.0`
-
-```wit
-  interface describer {
-    variant describe-error {
-      invalid-request(string),
-      provider-denied(string),
-      provider-unavailable(string),
-      bad-response(string),
-      no-content,
-    }
-
-    describe: func(image: list<u8>, media-type: string, prompt: string) -> result<string, describe-error>;
   }
 ```
 
