@@ -12,7 +12,8 @@ use serde_json::{json, Value};
 
 guestio::guest_write_all!();
 guestio::guest_bearer!();
-guestio::guest_read_body_text!(16 * 1024 * 1024);
+const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+guestio::guest_read_body_text!(MAX_BODY_BYTES);
 
 pub struct Reply {
     pub status: u16,
