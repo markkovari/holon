@@ -223,3 +223,41 @@ fn main() {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lit_escapes_a_quote_so_a_crate_name_cannot_carry_surql_syntax() {
+        assert_eq!(lit(r#"a"; DROP TABLE app; --"#), r#""a\"; DROP TABLE app; --""#);
+    }
+
+    #[test]
+    fn rid_strips_a_stray_closing_angle_bracket_rather_than_letting_it_close_early() {
+        assert_eq!(rid("artifact", "weird⟩name"), "artifact:⟨weirdname⟩");
+    }
+
+    #[test]
+    fn rid_is_stable_for_an_ordinary_name() {
+        assert_eq!(rid("app", "flags"), "app:⟨flags⟩");
+    }
+
+    #[test]
+    fn first_array_reads_the_named_field_of_the_first_row() {
+        let rows = serde_json::json!([{"parts": ["a", "b"]}]);
+        assert_eq!(first_array(rows.as_array().unwrap(), "parts"), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn first_array_is_empty_for_no_rows() {
+        let rows: Vec<Value> = vec![];
+        assert!(first_array(&rows, "parts").is_empty());
+    }
+
+    #[test]
+    fn first_array_is_empty_when_the_field_is_missing() {
+        let rows = serde_json::json!([{}]);
+        assert!(first_array(rows.as_array().unwrap(), "parts").is_empty());
+    }
+}
