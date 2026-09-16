@@ -1,109 +1,114 @@
-//! `stepup` — the second factor, and the mark the `answer` part reads.
-
+use crate::{cfg_u64, now_secs, Reply, Route};
 use crate::bindings::auth::identity::authorizer as authz;
-use crate::bindings::auth::identity::types as auth_types;
+use crate::bindings::auth::identity::types::Permission;
 use crate::bindings::otp::totp::authenticator as totp;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
-use crate::{cfg_u64, now_secs, Reply, Route};
 use serde_json::{json, Value};
 
-fn authorize(route: &Route) -> Result<auth_types::Principal, Reply> {
-    if route.bearer.is_empty() {
-        return Err(Reply::err(401, "unauthenticated"));
-    }
-    let required = auth_types::Permission { target: "docs".into(), action: "read".into() };
-    match authz::authorize(&route.bearer, &required) {
-        Ok(p) => Ok(p),
-        Err(auth_types::AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
-        Err(auth_types::AuthError::BackendUnavailable(_))
-        | Err(auth_types::AuthError::Internal(_)) => Err(Reply::err(503, "auth_unavailable")),
-        Err(_) => Err(Reply::err(401, "unauthenticated")),
+pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
+    let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
+    match (method, seg.as_slice()) {
+        (Method::Post, ["api", "mfa", "enroll"]) => enroll(route),
+        (Method::Post, ["api", "mfa", "verify"]) => verify(route, body),
+        (Method::Get, ["api", "mfa"]) => status(route),
+        _ => Reply::err(404, "not_found"),
     }
 }
 
-/// The one lookup `answer` also does: the `stepups` row for a subject, by the
-/// contract's indexed field, JSON-encoded the way `find-by` wants it.
-fn find_stepup(subject: &str) -> Option<records::Entry> {
-    let key = serde_json::to_string(subject).unwrap_or_default();
-    records::find_by("stepups", "subject", &key).ok().and_then(|v| v.into_iter().next())
-}
-
-fn upsert_stepup(subject: &str, doc: &Value) -> Result<(), ()> {
-    match find_stepup(subject) {
-        Some(entry) => records::update("stepups", &entry.id, &doc.to_string(), entry.revision)
-            .map(|_| ())
-            .map_err(|_| ()),
-        None => records::create("stepups", &doc.to_string(), &["subject".to_string()])
-            .map(|_| ())
-            .map_err(|_| ()),
+fn authorize_perm(route: &Route, action: &str) -> Result<String, Reply> {
+    let perm = Permission { target: "docs".to_string(), action: action.to_string() };
+    match authz::authorize(&route.bearer, &perm) {
+        Ok(p) => Ok(p.subject),
+        Err(err) => {
+            use crate::bindings::auth::identity::types::AuthError;
+            let reply = match err {
+                AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                _ => Reply::err(401, "unauthenticated"),
+            };
+            Err(reply)
+        }
     }
 }
 
-fn enroll(subject: &str) -> Reply {
-    let provisioned = match totp::provision("docsearch", subject) {
-        Ok(p) => p,
-        Err(_) => return Reply::err(503, "totp_unavailable"),
+fn enroll(route: &Route) -> Reply {
+    let subject = match authorize_perm(route, "read") {
+        Ok(s) => s,
+        Err(r) => return r,
     };
-    // Enrolled is not verified: verified_at resets to 0, even on a re-enroll.
-    let doc = json!({ "subject": subject, "verified_at": 0, "secret": provisioned.secret });
-    match upsert_stepup(subject, &doc) {
-        Ok(()) => Reply::json(201, json!({ "secret": provisioned.secret, "uri": provisioned.uri })),
-        Err(()) => Reply::err(500, "stepup_failed"),
+    
+    let prov = match totp::provision("docsearch", &subject) {
+        Ok(p) => p,
+        Err(_) => return Reply::err(500, "provision_failed"),
+    };
+
+    let doc = json!({
+        "subject": subject,
+        "verified_at": 0,
+        "secret": prov.secret
+    });
+    
+    let entries = records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
+    if let Some(existing) = entries.first() {
+        if records::update("stepups", &existing.id, &doc.to_string(), existing.revision).is_err() {
+            return Reply::err(500, "store_error");
+        }
+    } else {
+        if records::create("stepups", &doc.to_string(), &["subject".to_string()]).is_err() {
+            return Reply::err(500, "store_error");
+        }
     }
+
+    Reply::json(201, json!({ "secret": prov.secret, "uri": prov.uri }))
 }
 
-fn verify(subject: &str, body: &str) -> Reply {
+fn verify(route: &Route, body: &str) -> Reply {
+    let subject = match authorize_perm(route, "read") {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let code = req.get("code").and_then(Value::as_str).unwrap_or("");
 
-    let entry = match find_stepup(subject) {
+    let entries = records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
+    let entry = match entries.first() {
         Some(e) => e,
         None => return Reply::err(409, "not_enrolled"),
     };
-    let data: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
-    let secret = match data.get("secret").and_then(Value::as_str) {
-        Some(s) if !s.is_empty() => s,
-        _ => return Reply::err(409, "not_enrolled"),
-    };
+    
+    let doc: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    let secret = doc.get("secret").and_then(Value::as_str).unwrap_or("");
 
     match totp::verify(secret, code, 30, 6, 1) {
         Ok(true) => {
-            let doc = json!({ "subject": subject, "verified_at": now_secs(), "secret": secret });
-            match records::update("stepups", &entry.id, &doc.to_string(), entry.revision) {
-                Ok(_) => Reply::json(200, json!({ "verified": true })),
-                Err(_) => Reply::err(500, "stepup_failed"),
+            let mut updated = doc.clone();
+            updated["verified_at"] = json!(now_secs());
+            if records::update("stepups", &entry.id, &updated.to_string(), entry.revision).is_err() {
+                return Reply::err(500, "store_error");
             }
+            Reply::json(200, json!({ "verified": true }))
         }
-        // A wrong code neither verifies nor un-verifies: `verified_at` is untouched.
         Ok(false) => Reply::err(401, "bad_code"),
         Err(_) => Reply::err(503, "totp_unavailable"),
     }
 }
 
-fn status(subject: &str) -> Reply {
-    let ttl = cfg_u64("stepup-ttl-secs", 900);
-    match find_stepup(subject) {
-        Some(entry) => {
-            let data: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
-            let verified_at = data.get("verified_at").and_then(Value::as_u64).unwrap_or(0);
-            let verified = verified_at > 0 && now_secs().saturating_sub(verified_at) < ttl;
-            Reply::json(200, json!({ "enrolled": true, "verified": verified }))
-        }
-        None => Reply::json(200, json!({ "enrolled": false, "verified": false })),
-    }
-}
-
-pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
-    let principal = match authorize(route) {
-        Ok(p) => p,
+fn status(route: &Route) -> Reply {
+    let subject = match authorize_perm(route, "read") {
+        Ok(s) => s,
         Err(r) => return r,
     };
-    let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
-    match (method, seg.as_slice()) {
-        (Method::Post, ["api", "mfa", "enroll"]) => enroll(&principal.subject),
-        (Method::Post, ["api", "mfa", "verify"]) => verify(&principal.subject, body),
-        (Method::Get, ["api", "mfa"]) => status(&principal.subject),
-        _ => Reply::err(404, "not_found"),
+    
+    let entries = records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
+    if let Some(entry) = entries.first() {
+        let doc: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+        let verified_at = doc.get("verified_at").and_then(Value::as_u64).unwrap_or(0);
+        let ttl = cfg_u64("stepup-ttl-secs", 900);
+        let verified = verified_at > 0 && (now_secs() - verified_at) <= ttl;
+        Reply::json(200, json!({ "enrolled": true, "verified": verified }))
+    } else {
+        Reply::json(200, json!({ "enrolled": false, "verified": false }))
     }
 }

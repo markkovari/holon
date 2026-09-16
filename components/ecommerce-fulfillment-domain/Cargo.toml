@@ -1,0 +1,42 @@
+[package]
+name = "ecommerce-fulfillment-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+guestio = { path = "../guestio" }
+guestfmt = { path = "../guestfmt" }
+serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+uuid = { version = "1.7.0", features = ["v4"] }
+
+[package.metadata.component]
+package = "domain:ecommerce-component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "ecommerce-fulfillment"
+
+[package.metadata.component.target.dependencies]
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+"wasi:keyvalue" = { path = "../../wit/deps/wasi-keyvalue-0.2.0-draft" }
+"comp:store" = { path = "../../host/wit/deps/comp-store" }
+"auth:identity" = { path = "../../wit" }
+"ratelimit:guard" = { path = "../rate-limiter/wit" }
+"audit:log" = { path = "../audit-log/wit" }
+"policy:guard" = { path = "../policy-guard/wit" }
+"records:store" = { path = "../record-store/wit" }
+"ledger:doubleentry" = { path = "../ledger/wit" }
+"fsm:workflow" = { path = "../fsm-workflow/wit" }
+"payment:stripe" = { path = "../stripe-gateway/wit" }

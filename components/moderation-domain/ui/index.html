@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Moderation Feed</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🛡️</div>
+      <span>Holon <span style="font-size: 0.75rem; color: #a5b4fc; font-weight: 600;">// Moderation Feed</span></span>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-primary" onclick="seedData()">Run Test Seed</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="grid-container">
+      <div class="column">
+        <div class="column-header">
+          <h3>Intake / Submit</h3>
+          <p>Submit text for moderation</p>
+        </div>
+        <div class="card">
+          <textarea id="intakeText" placeholder="Enter content to submit..." rows="4"></textarea>
+          <button class="btn-primary" style="margin-top: 1rem; width: 100%; justify-content: center;" onclick="submitItem()">Submit Content</button>
+        </div>
+        
+        <div class="column-header" style="margin-top: 2rem;">
+          <h3>Moderation Queue</h3>
+          <p>Pending items awaiting verdict</p>
+        </div>
+        <div id="queueList"></div>
+      </div>
+
+      <div class="column">
+        <div class="column-header">
+          <h3>Review Panel</h3>
+          <p>Provide a verdict on a pending item</p>
+        </div>
+        <div class="card" id="reviewPanel">
+          <div style="color: var(--text-muted); text-align: center; padding: 2rem;">Select an item from the queue</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PhotoSocial // AI Critique & Attribute Ratings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">📸</div>
+      <span>PhotoSocial <span style="font-size: 0.75rem; color: #a5b4fc; font-weight: 600;">// AI Critique</span></span>
+    </div>
+    <div class="nav-actions">
+      <div id="userDisplay" class="user-pill">
+        <span id="userName">Guest</span>
+        <span id="userRole" class="role-badge role-user">viewer</span>
+      </div>
+      <button class="btn-secondary" id="authBtn" onclick="toggleAuthModal()">Sign In</button>
+      <button class="btn-primary" id="uploadBtn" onclick="openUploadModal()">+ Upload Photo</button>
+      <button class="btn-admin" id="adminBtn" onclick="openAdminModal()" style="display: none;">⚙ Admin Studio</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="feed-header">
+      <div>
+        <h1 style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.25rem;">Community Photography Feed</h1>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">Uploaded by creators, reviewed by AI, evaluated on admin-curated criteria.</p>
+      </div>
+      <div class="feed-tabs">
+        <button class="feed-tab active" onclick="loadPhotos('latest', this)">Latest</button>
+        <button class="feed-tab" onclick="loadPhotos('top', this)">Top Voted</button>
+      </div>
+    </div>
+
+    <div class="gallery-grid" id="galleryGrid">
+      <!-- Dynamically populated -->
+    </div>
+  </main>
+
+  <!-- Photo Detail Modal -->
+  <div class="modal-overlay" id="photoModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modalTitle" style="font-weight: 800; font-size: 1.2rem;">Photo Details</h3>
+        <button class="close-btn" onclick="closeModal('photoModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <img id="modalImg" class="modal-photo-img" src="" alt="Photo">
+        
+        <div class="critique-box">
+          <div class="critique-title">✨ AI Curator Analysis</div>
+          <div id="modalAiNarrative" style="margin-bottom: 0.6rem; font-style: italic; color: #e2e8f0;"></div>
+          <div id="modalAiCritique" style="color: #94a3b8; font-size: 0.82rem; white-space: pre-line;"></div>
+        </div>
+
+        <div>
+          <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 0.6rem; display: flex; justify-content: space-between;">
+            <span>Rate Evaluated Attributes</span>
+            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">(Admin configured)</span>
+          </h4>
+          <div class="rating-sliders" id="ratingSliders">
+            <!-- Sliders for attributes -->
+          </div>
+          <button class="btn-primary" style="margin-top: 0.75rem; width: 100%; justify-content: center;" onclick="submitRatings()">Submit Ratings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upload Modal -->
+  <div class="modal-overlay" id="uploadModal">
+    <div class="modal-content" style="max-width: 550px;">
+      <div class="modal-header">
+        <h3 style="font-weight: 800;">Upload Photographic Artwork</h3>
+        <button class="close-btn" onclick="closeModal('uploadModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Select Photo File or Image Preset</label>
+          <div class="dropzone" id="dropzone" onclick="document.getElementById('uploadFileInput').click()">
+            <div class="dropzone-icon">📁</div>
+            <div class="dropzone-text">Click or Drag & Drop Image File Here</div>
+            <div class="dropzone-hint">Supports JPEG, PNG, WebP, AVIF up to 10MB</div>
+            <input type="file" id="uploadFileInput" accept="image/*" style="display: none;" onchange="handleFileSelected(event)">
+          </div>
+          <div class="file-preview" id="filePreview">
+            <img id="previewImg" src="" alt="Preview">
+            <button class="file-remove-btn" onclick="clearSelectedFile(event)">&times;</button>
+          </div>
+        </div>
+
+        <div class="form-group" id="urlInputGroup" style="margin-top: 0.25rem;">
+          <label class="form-label">Or Image URL / Preset</label>
+          <input class="form-input" id="uploadImgUrl" value="https://images.unsplash.com/photo-1514565131-fce0801e5785?w=800" oninput="handleUrlInput()">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Photo Title</label>
+          <input class="form-input" id="uploadTitle" placeholder="e.g. Midnight in Kyoto" value="Midnight Reflections">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Artist Notes & Intent</label>
+          <textarea class="form-input" id="uploadDesc" rows="3" placeholder="Describe the scene, lighting, camera settings...">Captured with a prime 50mm f/1.4 lens under neon rain. Focused on reflection symmetry.</textarea>
+        </div>
+        <button class="btn-primary" style="width: 100%; justify-content: center;" id="uploadSubmitBtn" onclick="submitPhoto()">Upload & Request AI Critique</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Studio Modal -->
+  <div class="modal-overlay" id="adminModal">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h3 style="font-weight: 800; color: #f59e0b;">⚙ Admin Attribute Studio (RBAC Gated)</h3>
+        <button class="close-btn" onclick="closeModal('adminModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 0.85rem; color: var(--text-muted);">Only users with the <strong>admin</strong> role can define or remove scoring attributes.</p>
+        <div class="admin-attr-list" id="adminAttrList">
+          <!-- Active attributes -->
+        </div>
+
+        <div style="background: rgba(0,0,0,0.3); border: 1px dashed var(--border); border-radius: 8px; padding: 1rem;">
+          <h4 style="font-size: 0.9rem; font-weight: 700; margin-bottom: 0.6rem;">+ Create New Attribute</h4>
+          <div class="form-group" style="margin-bottom: 0.5rem;">
+            <label class="form-label">Attribute Name</label>
+            <input class="form-input" id="newAttrName" placeholder="e.g. Emotional Impact">
+          </div>
+          <div class="form-group" style="margin-bottom: 0.75rem;">
+            <label class="form-label">Description</label>
+            <input class="form-input" id="newAttrDesc" placeholder="e.g. Visual storytelling, mood, and resonance">
+          </div>
+          <button class="btn-primary" onclick="submitNewAttribute()">Add Admin Attribute</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auth Modal -->
+  <div class="modal-overlay" id="authModal">
+    <div class="modal-content" style="max-width: 420px;">
+      <div class="modal-header">
+        <h3 style="font-weight: 800;">Sign In / Switch Role</h3>
+        <button class="close-btn" onclick="closeModal('authModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Email</label>
+          <input class="form-input" id="authEmail" value="admin@holon.test">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input class="form-input" id="authPassword" type="password" value="admin1234">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Account Role</label>
+          <select class="form-input" id="authRole">
+            <option value="admin">Admin (Full RBAC Management)</option>
+            <option value="user">User / Creator (Upload & Rate)</option>
+          </select>
+        </div>
+        <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+          <button class="btn-primary" style="flex: 1; justify-content: center;" onclick="handleAuth('login')">Sign In</button>
+          <button class="btn-secondary" style="flex: 1; justify-content: center;" onclick="handleAuth('register')">Register</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

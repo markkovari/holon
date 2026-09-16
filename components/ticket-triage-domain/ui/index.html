@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ticket Triage System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="toast-container"></div>
+    
+    <div class="auth-overlay" id="auth-overlay">
+        <div class="auth-card glass-panel">
+            <div class="auth-header">
+                <h2>Ticket Triage</h2>
+                <p>Select your role to continue</p>
+            </div>
+            <div class="auth-roles">
+                <div class="role-card" id="login-lead">
+                    <div class="role-icon">👩‍💼</div>
+                    <h3>Lead Agent</h3>
+                    <p>lead@example.test</p>
+                </div>
+                <div class="role-card" id="login-agent-billing">
+                    <div class="role-icon">💳</div>
+                    <h3>Billing Agent</h3>
+                    <p>agent-b@example.test</p>
+                </div>
+                <div class="role-card" id="login-agent-search">
+                    <div class="role-icon">🔍</div>
+                    <h3>Search Agent</h3>
+                    <p>agent-s@example.test</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <nav class="navbar glass-panel">
+        <div class="logo">Ticket Triage</div>
+        <div class="nav-right">
+            <span id="user-display" class="user-display"></span>
+            <button id="logout-btn" class="secondary-btn">Logout</button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <!-- Create Ticket -->
+        <section class="actions-section glass-panel">
+            <h2>Create Ticket</h2>
+            <form id="create-ticket-form" class="inline-form">
+                <div class="form-group flex-2">
+                    <label for="ticket-subject">Subject</label>
+                    <input type="text" id="ticket-subject" placeholder="e.g., double charge" required>
+                </div>
+                <div class="form-group flex-3">
+                    <label for="ticket-body">Body</label>
+                    <input type="text" id="ticket-body" placeholder="e.g., charged twice for the same order" required>
+                </div>
+                <div class="form-group flex-1">
+                    <label for="ticket-queue">Queue</label>
+                    <select id="ticket-queue" required>
+                        <option value="billing">Billing</option>
+                        <option value="search">Search</option>
+                    </select>
+                </div>
+                <button type="submit" class="primary-btn">Create Ticket</button>
+            </form>
+        </section>
+
+        <!-- Search Tickets -->
+        <section class="actions-section glass-panel">
+            <h2>Search Tickets</h2>
+            <form id="search-ticket-form" class="inline-form">
+                <div class="form-group flex-2">
+                    <label for="search-query">Query</label>
+                    <input type="text" id="search-query" placeholder="e.g., charge" required>
+                </div>
+                <div class="form-group flex-1">
+                    <label for="search-queue">Queue</label>
+                    <select id="search-queue" required>
+                        <option value="billing">Billing</option>
+                        <option value="search">Search</option>
+                    </select>
+                </div>
+                <button type="submit" class="primary-btn">Search</button>
+            </form>
+        </section>
+
+        <!-- Search Results -->
+        <section class="tickets-section glass-panel hidden" id="search-results-section">
+            <div class="section-header">
+                <h2>Search Results</h2>
+            </div>
+            <div id="tickets-list" class="tickets-grid">
+                <!-- Ticket cards injected here -->
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

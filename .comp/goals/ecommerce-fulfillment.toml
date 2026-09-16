@@ -1,0 +1,59 @@
+title = "ecommerce:fulfillment — shopping cart, checkout, and warehouse FSM"
+
+text = """
+Implement components/ecommerce-fulfillment-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/cart                  {"item_id":<string>,"qty":<u32>}  (shopper)
+  GET    /api/cart                                                    (shopper)
+  POST   /api/checkout                                                (shopper)
+  POST   /api/orders/{id}/pack                                        (warehouse)
+  POST   /api/orders/{id}/ship                                        (warehouse)
+
+Store cart items in the `carts` collection keyed by subject. Checkout calculates total using `money:amount/arithmetic`, processes payment via `payment:stripe/gateway`, and initiates an FSM via `fsm:workflow/engine` in state "Pending". Packing transitions FSM to "Packed". Shipping transitions to "Shipped".
+
+RBAC: Packing and shipping endpoints require the `warehouse` role. Enforce this via `policy:guard/guard` checking `principal.roles`.
+"""
+
+component = "ecommerce-fulfillment-domain"
+
+base_paths = [
+  "components/ecommerce-fulfillment-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/fsm-workflow/",
+  "components/money/",
+  "components/stripe-gateway/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/ecommerce-fulfillment-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "ecommerce-fulfillment-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "fsm-workflow",
+  "money",
+  "stripe-gateway",
+]
+context = [
+  "components/ecommerce-fulfillment-domain/src/lib.rs",
+  "components/ecommerce-fulfillment-domain/wit/ecommerce-fulfillment.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/fsm-workflow/wit/fsm.wit",
+  "components/money/wit/money.wit",
+  "components/stripe-gateway/wit/stripe.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/ecommerce-fulfillment-domain/gate.sh"]

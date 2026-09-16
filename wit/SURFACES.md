@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-123 interfaces.
+125 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -150,6 +150,28 @@ Adding a *function* to an interface is compatible; adding a case to a
     use types.{event, audit-error};
 
     record-event: func(e: event) -> result<_, audit-error>;
+  }
+```
+
+## `audit:log/types@0.1.0`
+
+```wit
+  interface types {
+    record event {
+      id: string,
+      trace-id: string,
+      span-id: string,
+      timestamp: u64,
+      event: string,
+      outcome: string,
+      tenant: string,
+      subject: string,
+      detail: string,
+    }
+
+    variant audit-error {
+      backend-unavailable(string),
+    }
   }
 ```
 
@@ -2423,6 +2445,21 @@ Adding a *function* to an interface is compatible; adding a case to a
     clamp-limit: func(requested: u32) -> result<u32, cursor-error>;
 
     build-page: func(first: option<position>, last: option<position>, more-before: bool, more-after: bool) -> page-info;
+  }
+```
+
+## `payment:stripe/gateway@0.1.0`
+
+```wit
+  interface gateway {
+    variant error {
+      config-missing,
+      http-error(string),
+      api-error(string),
+      invalid-request(string),
+    }
+
+    charge: func(amount: s64, currency: string, source: string, description: option<string>) -> result<string, error>;
   }
 ```
 
