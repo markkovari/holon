@@ -76,9 +76,15 @@ fn read_body(req: IncomingRequest) -> String {
     let incoming_body = req.consume().expect("request body should be readable");
     let stream = incoming_body.stream().expect("stream should be available");
     let mut buf = Vec::new();
+    const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
     loop {
         match stream.blocking_read(1024) {
-            Ok(bytes) => buf.extend(bytes),
+            Ok(bytes) => {
+                buf.extend(bytes);
+                if buf.len() > MAX_BODY_BYTES {
+                    break;
+                }
+            }
             Err(crate::bindings::wasi::io::streams::StreamError::Closed) => break,
             Err(_) => break,
         }

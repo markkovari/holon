@@ -55,9 +55,11 @@ impl Guest for Component {
             let out = req.body().map_err(|_| net("body"))?;
             {
                 let stream = out.write().map_err(|_| net("write stream"))?;
-                stream
-                    .blocking_write_and_flush(&body_bytes)
-                    .map_err(|e| net(&format!("body write: {:?}", e)))?;
+                for chunk in body_bytes.chunks(4096) {
+                    stream
+                        .blocking_write_and_flush(chunk)
+                        .map_err(|e| net(&format!("body write: {:?}", e)))?;
+                }
             }
             OutgoingBody::finish(out, None).map_err(|_| net("finish body"))?;
         }
