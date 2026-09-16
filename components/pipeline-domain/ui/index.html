@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CI/CD Orchestrator // Pipeline Domain</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🚀</div>
+      <span>Pipeline <span style="font-size: 0.75rem; color: #a5b4fc; font-weight: 600;">// Orchestrator</span></span>
+    </div>
+    <div class="nav-actions">
+      <button class="btn-primary" id="enqueueBtn" onclick="openEnqueueModal()">+ Enqueue Event</button>
+      <div class="sink-toggle">
+        <label for="sinkSwitch" style="font-size: 0.85rem; font-weight: 600; color: #e2e8f0;">Downstream Sink:</label>
+        <label class="switch">
+          <input type="checkbox" id="sinkSwitch" checked onchange="toggleSink(this.checked)">
+          <span class="slider round"></span>
+        </label>
+        <span id="sinkStatusText" style="font-size: 0.85rem; font-weight: 700; color: #10b981; min-width: 32px;">UP</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="dashboard-header">
+      <div>
+        <h1 style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.25rem;">Live Event Stream</h1>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">Real-time SSE monitoring of outbox dispatch, backoff, and dead-letters.</p>
+      </div>
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-val" id="statPending">0</div>
+          <div class="stat-label">Pending</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="statInFlight">0</div>
+          <div class="stat-label">In Flight</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-val" id="statDead">0</div>
+          <div class="stat-label" style="color: #f43f5e;">Dead</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feed-grid">
+      <div class="feed-col">
+        <h3 class="col-title">Live Transitions (SSE)</h3>
+        <div class="log-window" id="eventLog">
+          <div style="padding: 1rem; color: #94a3b8; font-style: italic; text-align: center; font-size: 0.85rem;">Waiting for events...</div>
+        </div>
+      </div>
+      <div class="feed-col">
+        <h3 class="col-title" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>Dead Letters</span>
+          <button class="btn-secondary" style="font-size: 0.7rem; padding: 0.25rem 0.5rem;" onclick="loadDeadLetters()">Refresh</button>
+        </h3>
+        <div class="log-window" id="deadLettersList" style="background: rgba(244, 63, 94, 0.05); border-color: rgba(244, 63, 94, 0.2);">
+          <div style="padding: 1rem; color: #94a3b8; font-style: italic; text-align: center; font-size: 0.85rem;">No dead letters.</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Enqueue Modal -->
+  <div class="modal-overlay" id="enqueueModal">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 style="font-weight: 800;">Enqueue Pipeline Event</h3>
+        <button class="close-btn" onclick="closeModal('enqueueModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Topic</label>
+          <input class="form-input" id="eventTopic" value="build.started">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Payload (JSON)</label>
+          <textarea class="form-input" id="eventPayload" rows="4">{"repo": "holon-core", "commit": "a1b2c3d"}</textarea>
+        </div>
+        <button class="btn-primary" style="width: 100%; justify-content: center;" onclick="submitEvent()">Submit Event</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

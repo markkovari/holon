@@ -1,0 +1,55 @@
+title = "hr:payroll — salary disbursements, taxation, and ledgers"
+
+text = """
+Implement components/hr-payroll-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/employees               {"name":<string>,"salary":<u32>}     (hr)
+  GET    /api/employees                                                    (hr)
+  POST   /api/payroll/run                                                  (hr)
+  GET    /api/payroll/history                                              (auditor, employee)
+
+Store employees in the `employees` collection. Running payroll computes taxes via `finance:tax/calculator` and credits employee accounts using `ledger:doubleentry/ledger`.
+
+RBAC: Creating employees and running payroll require the `hr` role. Viewing history requires `auditor` or the `employee` subject matching the request.
+"""
+
+component = "hr-payroll-domain"
+
+base_paths = [
+  "components/hr-payroll-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/ledger/",
+  "components/tax-calculator/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/hr-payroll-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "hr-payroll-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "ledger",
+  "tax-calculator",
+]
+context = [
+  "components/hr-payroll-domain/src/lib.rs",
+  "components/hr-payroll-domain/wit/hr-payroll.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/ledger/wit/ledger.wit",
+  "components/tax-calculator/wit/finance.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/hr-payroll-domain/gate.sh"]

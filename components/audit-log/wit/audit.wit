@@ -63,6 +63,7 @@ interface query {
 /// What the `audit-log` component provides: record + query, backed by a kv store
 /// and a clock. The kv backend (NATS, etc.) is bound at deploy time, never here.
 world audit-log {
+    export types;
     export recorder;
     export query;
     import wasi:keyvalue/store@0.2.0-draft;

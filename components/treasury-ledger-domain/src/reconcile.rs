@@ -1,173 +1,178 @@
-//! `reconcile` — see CONTRACT.md.
-//!
-//! The auditor: it does not trust stored balances. For every opened account it walks the
-//! WHOLE journal (paged — `list_records` does not hand back everything in one call) and
-//! recomputes opening + credits - debits with `money`'s exact arithmetic, then compares that
-//! against what the account currently holds. Same idempotency key -> same report, verbatim,
-//! forever (the idempotency-guard is the source of truth for that, not a HashMap here).
-
+use crate::{Reply, Route};
 use crate::bindings::auth::identity::authorizer as authz;
-use crate::bindings::auth::identity::types as auth_types;
+use crate::bindings::auth::identity::types::Permission;
 use crate::bindings::idempotency::guard::store as idem;
 use crate::bindings::money::amount::arithmetic as money;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
-use crate::{Reply, Route};
 use serde_json::{json, Value};
 
-fn authorize(route: &Route, action: &str) -> Result<auth_types::Principal, Reply> {
-    if route.bearer.is_empty() {
-        return Err(Reply::err(401, "unauthenticated"));
-    }
-    let required = auth_types::Permission { target: "transfers".into(), action: action.into() };
-    match authz::authorize(&route.bearer, &required) {
-        Ok(p) => Ok(p),
-        Err(auth_types::AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
-        Err(auth_types::AuthError::BackendUnavailable(_))
-        | Err(auth_types::AuthError::Internal(_)) => Err(Reply::err(503, "auth_unavailable")),
-        Err(_) => Err(Reply::err(401, "unauthenticated")),
+pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
+    let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
+    match (method, seg.as_slice()) {
+        (Method::Post, ["api", "reconcile"]) => reconcile(route, body),
+        (Method::Get, ["api", "journal"]) => list_journal(route),
+        _ => Reply::err(404, "not_found"),
     }
 }
 
-/// The whole journal, oldest-write-order, PAGED — a reconciliation that stops at the first
-/// page agrees with the books right up to the point they disagree.
-fn read_journal() -> Result<Vec<Value>, ()> {
-    let mut lines = Vec::new();
-    let mut after = String::new();
-    loop {
-        let page = records::list_records("journal", 200, &after).map_err(|_| ())?;
-        let empty = page.entries.is_empty();
-        for e in &page.entries {
-            if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
-                lines.push(v);
-            }
-        }
-        if empty || page.next.is_empty() {
-            break;
-        }
-        after = page.next;
-    }
-    Ok(lines)
-}
-
-fn compute_reconcile(body: &str) -> Result<Value, &'static str> {
-    let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
-    let opened = req.get("opened").and_then(Value::as_array).cloned().unwrap_or_default();
-    let lines = read_journal().map_err(|_| "store_unavailable")?;
-
-    let mut drift = Vec::new();
-    let mut checked = 0u64;
-    for o in &opened {
-        let account_id = o.get("account").and_then(Value::as_str).unwrap_or("").to_string();
-        if account_id.is_empty() {
-            continue;
-        }
-        let opening_units = o.get("units").and_then(Value::as_i64).unwrap_or(0);
-
-        let entry = match records::get("accounts", &account_id) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        let acct: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
-        let currency = acct.get("currency").and_then(Value::as_str).unwrap_or("EUR").to_string();
-        let actual_units = acct.get("units").and_then(Value::as_i64).unwrap_or(0);
-        checked += 1;
-
-        let mut expected = money::Amount { units: opening_units, currency: currency.clone() };
-        for line in &lines {
-            let units = line.get("units").and_then(Value::as_i64).unwrap_or(0);
-            let delta = money::Amount { units, currency: currency.clone() };
-            if line.get("to").and_then(Value::as_str) == Some(account_id.as_str()) {
-                if let Ok(a) = money::add(&expected, &delta) {
-                    expected = a;
-                }
-            } else if line.get("from").and_then(Value::as_str) == Some(account_id.as_str()) {
-                if let Ok(a) = money::subtract(&expected, &delta) {
-                    expected = a;
-                }
-            }
-        }
-
-        let actual = money::Amount { units: actual_units, currency };
-        if let Ok(c) = money::compare(&expected, &actual) {
-            if c != 0 {
-                drift.push(json!({
-                    "account": account_id,
-                    "expected": expected.units,
-                    "actual": actual.units,
-                    "delta": actual.units - expected.units,
-                }));
-            }
+fn authorize_perm(route: &Route, action: &str) -> Result<String, Reply> {
+    let perm = Permission { target: "transfers".to_string(), action: action.to_string() };
+    match authz::authorize(&route.bearer, &perm) {
+        Ok(p) => Ok(p.subject),
+        Err(err) => {
+            use crate::bindings::auth::identity::types::AuthError;
+            let reply = match err {
+                AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                _ => Reply::err(401, "unauthenticated"),
+            };
+            Err(reply)
         }
     }
-
-    Ok(json!({
-        "checked": checked,
-        "drift": drift,
-        "balanced": drift.is_empty(),
-        "journal_lines": lines.len(),
-    }))
 }
 
 fn reconcile(route: &Route, body: &str) -> Reply {
-    if let Err(e) = authorize(route, "read") {
-        return e;
+    if let Err(r) = authorize_perm(route, "read") {
+        return r;
     }
+    
     if route.idempotency_key.is_empty() {
         return Reply::err(400, "idempotency_key_required");
     }
-
-    match idem::begin(&route.idempotency_key, 3600) {
+    
+    let ttl = crate::cfg("idempotency-ttl-secs", "86400").parse::<u64>().unwrap_or(86400);
+    match idem::begin(&route.idempotency_key, ttl) {
         Ok(Some(cached)) => {
-            let v: Value = serde_json::from_slice(&cached.body).unwrap_or(json!({}));
-            return Reply::json(cached.status, v);
+            return Reply {
+                status: cached.status,
+                json: serde_json::from_slice(&cached.body).unwrap_or(json!({})),
+            };
         }
         Ok(None) => {}
         Err(idem::IdemError::InProgress) => return Reply::err(409, "in_progress"),
-        Err(idem::IdemError::BackendUnavailable(_)) => {
-            return Reply::err(503, "idempotency_unavailable")
+        Err(idem::IdemError::BackendUnavailable(_)) => return Reply::err(503, "idempotency_unavailable"),
+    }
+    
+    let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
+    let opened = req.get("opened").and_then(Value::as_array).unwrap_or(&vec![]).clone();
+    
+    let mut journal_lines = 0;
+    let mut all_journal_lines = Vec::new();
+    let mut after = String::new();
+    loop {
+        let page = match records::list_records("journal", 200, &after) {
+            Ok(p) => p,
+            Err(_) => return Reply::err(503, "store_unavailable"),
+        };
+        let empty = page.entries.is_empty();
+        for e in page.entries {
+            if let Ok(v) = serde_json::from_str::<Value>(&e.data) {
+                all_journal_lines.push(v);
+                journal_lines += 1;
+            }
+        }
+        if empty || page.next.is_empty() { break; }
+        after = page.next;
+    }
+    
+    let mut drift = Vec::new();
+    
+    for opening in &opened {
+        let account_id = opening.get("account").and_then(Value::as_str).unwrap_or("");
+        let start_units = opening.get("units").and_then(Value::as_i64).unwrap_or(0);
+        
+        let account_entry = match records::get("accounts", account_id) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let account_doc: Value = serde_json::from_str(&account_entry.data).unwrap_or(json!({}));
+        let currency = account_doc.get("currency").and_then(Value::as_str).unwrap_or("EUR").to_string();
+        let actual_units = account_doc.get("units").and_then(Value::as_i64).unwrap_or(0);
+        let actual_amount = money::Amount { units: actual_units, currency: currency.clone() };
+        
+        let mut expected_amount = money::Amount { units: start_units, currency: currency.clone() };
+        
+        for j in &all_journal_lines {
+            let from_acc = j.get("from").and_then(Value::as_str).unwrap_or("");
+            let to_acc = j.get("to").and_then(Value::as_str).unwrap_or("");
+            let units = j.get("units").and_then(Value::as_i64).unwrap_or(0);
+            
+            if from_acc == account_id {
+                let diff = money::Amount { units, currency: currency.clone() };
+                expected_amount = money::subtract(&expected_amount, &diff).unwrap_or(expected_amount);
+            }
+            if to_acc == account_id {
+                let diff = money::Amount { units, currency: currency.clone() };
+                expected_amount = money::add(&expected_amount, &diff).unwrap_or(expected_amount);
+            }
+        }
+        
+        if expected_amount.units != actual_amount.units {
+            drift.push(json!({
+                "account": account_id,
+                "expected": expected_amount.units,
+                "actual": actual_amount.units,
+                "delta": actual_amount.units - expected_amount.units
+            }));
         }
     }
-
-    let resp = match compute_reconcile(body) {
-        Ok(v) => v,
-        Err(code) => {
-            let _ = idem::forget(&route.idempotency_key);
-            return Reply::err(503, code);
-        }
-    };
-
-    let _ = idem::complete(&route.idempotency_key, 200, resp.to_string().as_bytes());
-    Reply::json(200, resp)
+    
+    let balanced = drift.is_empty();
+    
+    let res = json!({
+        "checked": opened.len(),
+        "drift": drift,
+        "balanced": balanced,
+        "journal_lines": journal_lines
+    });
+    
+    if !route.idempotency_key.is_empty() {
+        let body_bytes = serde_json::to_vec(&res).unwrap();
+        let _ = idem::complete(&route.idempotency_key, 200, &body_bytes);
+    }
+    
+    Reply::json(200, res)
 }
 
-fn journal(route: &Route) -> Reply {
-    if let Err(e) = authorize(route, "read") {
-        return e;
+fn list_journal(route: &Route) -> Reply {
+    if let Err(r) = authorize_perm(route, "read") {
+        return r;
     }
-    let limit_param = route.param("limit");
-    let limit: usize = if limit_param.is_empty() { 50 } else { limit_param.parse().unwrap_or(50) };
-    let limit = limit.clamp(1, 500);
-
-    let mut lines = match read_journal() {
-        Ok(l) => l,
-        Err(_) => return Reply::err(503, "store_unavailable"),
-    };
+    
+    let limit_str = route.param("limit");
+    let limit = limit_str.parse::<u32>().unwrap_or(50).min(500);
+    
+    let mut lines = Vec::new();
+    let mut after = String::new();
+    loop {
+        let page = match records::list_records("journal", limit, &after) {
+            Ok(p) => p,
+            Err(_) => return Reply::err(503, "store_unavailable"),
+        };
+        let empty = page.entries.is_empty();
+        for e in page.entries {
+            if let Ok(mut v) = serde_json::from_str::<Value>(&e.data) {
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("id".into(), json!(e.id));
+                }
+                lines.push(v);
+                if lines.len() >= limit as usize {
+                    break;
+                }
+            }
+        }
+        if lines.len() >= limit as usize { break; }
+        if empty || page.next.is_empty() { break; }
+        after = page.next;
+    }
+    
     lines.sort_by(|a, b| {
         a.get("at")
             .and_then(Value::as_str)
             .unwrap_or("")
             .cmp(b.get("at").and_then(Value::as_str).unwrap_or(""))
     });
-    lines.truncate(limit);
-    Reply::json(200, json!({ "lines": lines }))
-}
-
-pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
-    let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
-    match (method, seg.as_slice()) {
-        (Method::Post, ["api", "reconcile"]) => reconcile(route, body),
-        (Method::Get, ["api", "journal"]) => journal(route),
-        _ => Reply::err(404, "not_found"),
-    }
+    
+    Reply::json(200, json!({"lines": lines}))
 }

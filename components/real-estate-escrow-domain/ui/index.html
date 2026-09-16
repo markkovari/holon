@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real Estate Escrow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Auth Overlay -->
+  <div class="auth-overlay" id="authOverlay">
+    <div class="auth-card">
+      <div class="logo" style="justify-content: center; margin-bottom: 1.5rem; font-size: 1.5rem;">
+        <div class="logo-icon">🏠</div>
+        Escrow // <span style="font-size: 1rem; color: var(--accent); font-weight: 600;">Agent Login</span>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Email</label>
+        <input class="form-input" id="authEmail" type="email" placeholder="agent@holon.test">
+      </div>
+      <div class="form-group" style="margin-top: 1rem;">
+        <label class="form-label">Password</label>
+        <input class="form-input" id="authPassword" type="password" placeholder="agent1234">
+      </div>
+      <div class="form-group" style="margin-top: 1rem; display: none;">
+        <label class="form-label">Role</label>
+        <select class="form-input" id="authRole">
+          <option value="agent">Agent</option>
+        </select>
+      </div>
+      <div style="display: flex; gap: 1rem; margin-top: 1.5rem;">
+        <button class="btn-primary" style="flex: 1; justify-content: center;" onclick="handleAuth('login')">Login</button>
+        <button class="btn-secondary" style="flex: 1; justify-content: center;" onclick="handleAuth('register')">Register</button>
+      </div>
+    </div>
+  </div>
+
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🏠</div>
+      <span>Real Estate <span style="font-size: 0.75rem; color: #a5b4fc; font-weight: 600;">// Escrow</span></span>
+    </div>
+    <div class="nav-actions">
+      <div class="user-badge" id="userBadge">
+        <span id="userName">Guest</span>
+        <button class="btn-secondary" style="font-size: 0.75rem; padding: 0.25rem 0.5rem;" onclick="logout()">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="dashboard-header">
+      <div>
+        <h1 style="font-size: 1.5rem; font-weight: 800; margin-bottom: 0.25rem;">Escrow Transactions</h1>
+        <p style="font-size: 0.85rem; color: var(--text-muted);">Manage real estate escrow holding and releases.</p>
+      </div>
+      <button class="btn-primary" id="createTxBtn" onclick="openCreateModal()">+ New Transaction</button>
+    </div>
+
+    <div class="tx-grid" id="txGrid">
+      <div style="grid-column: 1 / -1; padding: 3rem; text-align: center; color: var(--text-muted);">
+        Loading transactions...
+      </div>
+    </div>
+  </main>
+
+  <!-- Create Modal -->
+  <div class="modal-overlay" id="createModal" style="display: none;">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3 style="font-weight: 800;">New Escrow Transaction</h3>
+        <button class="close-btn" onclick="closeModal('createModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Property Address / Title</label>
+          <input class="form-input" id="txName" value="123 Main St, Springfield">
+        </div>
+        <button class="btn-primary" style="width: 100%; justify-content: center; margin-top: 1rem;" id="submitTxBtn" onclick="submitTransaction()">Create Transaction</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

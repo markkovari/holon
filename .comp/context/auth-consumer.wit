@@ -6,7 +6,7 @@
 // those belong to the auth-guard component, not to anything that consumes it, and a part that
 // wants them can read wit/auth.wit. This exists so a smaller model spends its context on what
 // it will actually call: ~700 tokens here versus ~5600 for the whole package.
-package is split so an implementation can compose the pieces:
+package comp:auth@0.1.0;
 //   jwt      — stateless signature/claims verification
 //   oidc     — IdP-agnostic discovery + JWKS + code exchange (no vendor APIs)
 //   session  — stateful, server-side sessions (refresh + revoke)

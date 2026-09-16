@@ -36,21 +36,29 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-            (Method::Get, [""]) => serve_html(),
-            (Method::Post, ["api", "register"]) => register(&request),
-            (Method::Post, ["api", "login"]) => login(&request),
-            (Method::Post, ["api", "logout"]) => logout(&request),
-            (Method::Get, ["api", "me"]) => me(&request),
-            (Method::Get, ["api", "items"]) => list_items(&request),
-            (Method::Post, ["api", "items"]) => create_item(&request),
-            _ => Outcome::Err(404, "not_found".into()),
+            (Method::Get, [""]) | (Method::Get, ["index.html"]) => Some(Outcome::Html(200, include_str!("../ui/index.html").to_string())),
+            (Method::Get, ["styles.css"]) => Some(Outcome::Css(200, include_str!("../ui/styles.css").to_string())),
+            (Method::Get, ["app.js"]) => Some(Outcome::Js(200, include_str!("../ui/app.js").to_string())),
+            (Method::Post, ["api", "register"]) => Some(register(&request)),
+            (Method::Post, ["api", "login"]) => Some(login(&request)),
+            (Method::Post, ["api", "logout"]) => Some(logout(&request)),
+            (Method::Get, ["api", "me"]) => Some(me(&request)),
+            (Method::Get, ["api", "items"]) => Some(list_items(&request)),
+            (Method::Post, ["api", "items"]) => Some(create_item(&request)),
+            (Method::Post, ["api", "items", id, "toggle"]) => toggle_item(&request, id),
+            _ => Some(Outcome::Err(404, "not_found".into())),
         };
-        emit(response_out, outcome);
+
+        if let Some(out) = outcome {
+            emit(response_out, out);
+        }
     }
 }
 
 enum Outcome {
     Html(u16, String),
+    Css(u16, String),
+    Js(u16, String),
     Json(u16, String),
     Err(u16, String),
     Auth(AuthError),
@@ -60,23 +68,7 @@ fn now() -> u64 {
     wall_clock::now().seconds
 }
 
-fn serve_html() -> Outcome {
-    let html = r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>smart-home</title>
-    <style>body { font-family: sans-serif; margin: 2rem; }</style>
-</head>
-<body>
-    <h1>smart-home (IoT Home Automation)</h1>
-    <div id="app">Please interact via API for now.</div>
-    <script>
-        console.log("App loaded.");
-    </script>
-</body>
-</html>"#;
-    Outcome::Html(200, html.to_string())
-}
+
 
 guestio::guest_bearer!();
 
@@ -150,17 +142,12 @@ fn create_item(request: &IncomingRequest) -> Outcome {
         Err(o) => return o,
     };
 
-    // RBAC check: Only admins can create items
-    if !p.roles.contains(&"admin".to_string()) {
-        return Outcome::Err(403, "forbidden".into());
-    }
-
     let b = match body(request) {
         Ok(v) => v,
         Err(o) => return o,
     };
     let name = b["name"].as_str().unwrap_or("").trim().to_string();
-    let d = json!({ "name": name, "owner": p.subject, "created": now() });
+    let d = json!({ "name": name, "owner": p.subject, "created": now(), "state": "off" });
     match records::create("devices", &d.to_string(), &["owner".to_string()]) {
         Ok(rec) => {
             let mut v: Value = serde_json::from_str(&rec.data).unwrap_or(d);
@@ -189,9 +176,40 @@ fn list_items(request: &IncomingRequest) -> Outcome {
     Outcome::Json(200, json!({ "items": items }).to_string())
 }
 
+fn toggle_item(request: &IncomingRequest, id: &str) -> Option<Outcome> {
+    let p = match introspect(request) {
+        Ok(p) => p,
+        Err(o) => return Some(o),
+    };
+
+    let entry = match records::get("devices", id) {
+        Ok(e) => e,
+        Err(_) => return Some(Outcome::Err(404, "not_found".into())),
+    };
+
+    let mut v: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    if v["owner"].as_str() != Some(&p.subject) && !p.roles.contains(&"admin".to_string()) {
+        return Some(Outcome::Err(403, "forbidden".into()));
+    }
+
+    let current_state = v["state"].as_str().unwrap_or("off");
+    let new_state = if current_state == "on" { "off" } else { "on" };
+    v["state"] = json!(new_state);
+
+    match records::update("devices", id, &v.to_string(), entry.revision) {
+        Ok(_) => {
+            v["id"] = json!(id);
+            Some(Outcome::Json(200, v.to_string()))
+        }
+        Err(_) => Some(Outcome::Err(500, "store error".into())),
+    }
+}
+
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     let (code, body, content_type) = match result {
         Outcome::Html(c, b) => (c, b, b"text/html".to_vec()),
+        Outcome::Css(c, b) => (c, b, b"text/css".to_vec()),
+        Outcome::Js(c, b) => (c, b, b"application/javascript".to_vec()),
         Outcome::Json(c, b) => (c, b, b"application/json".to_vec()),
         Outcome::Err(c, m) => (c, json!({ "error": m }).to_string(), b"application/json".to_vec()),
         Outcome::Auth(e) => {

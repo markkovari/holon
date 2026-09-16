@@ -1,0 +1,54 @@
+title = "iot:smarthome — device telemetry and scheduled automation"
+
+text = """
+Implement components/iot-smarthome-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/devices               {"type":<string>,"location":<string>}   (admin)
+  GET    /api/devices                                                       (resident, guest)
+  POST   /api/devices/{id}/state    {"on":<bool>}                           (resident)
+
+Store devices in the `devices` collection. Changing device state issues an MQTT publish via `iot:mqtt/broker` and audit-logs the event with `audit:log/recorder`.
+
+RBAC: Creating devices requires the `admin` role. Toggling state requires `resident`. Enforce this via `policy:guard/guard`.
+"""
+
+component = "iot-smarthome-domain"
+
+base_paths = [
+  "components/iot-smarthome-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/audit-log/",
+  "components/mqtt-broker/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/iot-smarthome-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "iot-smarthome-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "audit-log",
+  "mqtt-broker",
+]
+context = [
+  "components/iot-smarthome-domain/src/lib.rs",
+  "components/iot-smarthome-domain/wit/iot-smarthome.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/audit-log/wit/audit.wit",
+  "components/mqtt-broker/wit/iot.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/iot-smarthome-domain/gate.sh"]

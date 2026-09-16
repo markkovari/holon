@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Volunteer Shift Scheduler</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="toast-container"></div>
+    
+    <div class="auth-overlay" id="auth-overlay">
+        <div class="auth-card glass-panel">
+            <div class="auth-header">
+                <h2>Volunteer Scheduler</h2>
+                <p>Sign in to continue</p>
+            </div>
+            <div class="auth-roles">
+                <div class="role-card" id="login-coord">
+                    <div class="role-icon">👑</div>
+                    <h3>Coordinator</h3>
+                    <p>Manage shifts</p>
+                </div>
+                <div class="role-card" id="login-vol-a">
+                    <div class="role-icon">🙋</div>
+                    <h3>Volunteer A</h3>
+                    <p>vol-a@example.test</p>
+                </div>
+                <div class="role-card" id="login-vol-b">
+                    <div class="role-icon">🙋</div>
+                    <h3>Volunteer B</h3>
+                    <p>vol-b@example.test</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <nav class="navbar glass-panel">
+        <div class="logo">Volunteer Scheduler</div>
+        <div class="nav-right">
+            <span id="user-display" class="user-display"></span>
+            <button id="logout-btn" class="secondary-btn">Logout</button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <!-- Coordinator Actions -->
+        <section id="coordinator-actions" class="actions-section hidden glass-panel">
+            <h2>Create New Shift</h2>
+            <form id="create-shift-form" class="inline-form">
+                <div class="form-group">
+                    <label for="shift-title">Shift Title</label>
+                    <input type="text" id="shift-title" placeholder="e.g., Saturday setup" required>
+                </div>
+                <div class="form-group">
+                    <label for="shift-slots">Total Slots</label>
+                    <input type="number" id="shift-slots" min="1" value="1" required>
+                </div>
+                <button type="submit" class="primary-btn">Create Shift</button>
+            </form>
+        </section>
+
+        <!-- Volunteer Actions -->
+        <section id="volunteer-info" class="actions-section hidden glass-panel">
+            <h2>Your Volunteer Dashboard</h2>
+            <p>You can sign up for a maximum of 3 shifts per week.</p>
+        </section>
+
+        <section class="shifts-section glass-panel">
+            <div class="section-header">
+                <h2>Available Shifts</h2>
+                <button id="refresh-btn" class="secondary-btn">Refresh</button>
+            </div>
+            <div id="shifts-list" class="shifts-grid">
+                <!-- Shift cards injected here -->
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

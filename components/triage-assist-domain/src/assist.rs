@@ -1,146 +1,107 @@
-//! `assist` — what the model thinks is wrong, and how badly.
-//!
-//! Reads the report FROM THE STORE (never the request body, which is empty for
-//! this route), asks the model the two questions the contract names, and writes
-//! the answer onto the report. A provider that is down leaves the report
-//! exactly as it was: the store write only happens after both model calls
-//! succeed.
-
+use crate::{ledger, Reply, Route};
 use crate::bindings::ai::inference::inference as ai;
-use crate::bindings::auth::identity::authorizer as auth;
-use crate::bindings::auth::identity::types as auth_types;
+use crate::bindings::ai::inference::inference::Length;
+use crate::bindings::auth::identity::authorizer as authz;
+use crate::bindings::auth::identity::types::{AuthError, Permission};
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
-use crate::{ledger, now_secs, rfc3339, Reply, Route};
 use serde_json::{json, Value};
 
-const SEVERITIES: [&str; 3] = ["critical", "major", "minor"];
-
-/// Authorize the route's bearer for `action` on `reports`, per CONTRACT.md's
-/// failure table. `authorize` (not a hand-rolled JWT parse) does verification
-/// and the scope check in one call.
-fn authorize(route: &Route, action: &str) -> Result<auth_types::Principal, Reply> {
-    if route.bearer.is_empty() {
-        return Err(Reply::err(401, "unauthenticated"));
-    }
-    let required = auth_types::Permission { target: "reports".into(), action: action.into() };
-    match auth::authorize(&route.bearer, &required) {
-        Ok(p) => Ok(p),
-        Err(auth_types::AuthError::InsufficientScope(_)) => Err(Reply::err(403, "forbidden")),
-        Err(auth_types::AuthError::BackendUnavailable(_))
-        | Err(auth_types::AuthError::Internal(_)) => Err(Reply::err(503, "auth_unavailable")),
-        Err(_) => Err(Reply::err(401, "unauthenticated")),
-    }
-}
-
 pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
-    // route.segments == ["api", "reports", "<id>", "assist"]
-    let id = match route.segments.get(2) {
-        Some(id) => id.clone(),
-        None => return Reply::err(404, "not_found"),
-    };
-    match method {
-        Method::Post => handle_post(route, &id),
-        Method::Get => handle_get(route, &id),
+    let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
+    match (method, seg.as_slice()) {
+        (Method::Post, ["api", "reports", id, "assist"]) => create_assist(route, id),
+        (Method::Get, ["api", "reports", id, "assist"]) => get_assist(route, id),
         _ => Reply::err(404, "not_found"),
     }
 }
 
-fn handle_get(route: &Route, id: &str) -> Reply {
-    if let Err(reply) = authorize(route, "read") {
-        return reply;
-    }
-    let entry = match records::get("reports", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
-    let doc: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
-    match doc.get("assist") {
-        Some(assist) if !assist.is_null() => Reply::json(200, assist.clone()),
-        _ => Reply::err(404, "not_assisted"),
+fn authorize_perm(route: &Route, action: &str) -> Result<String, Reply> {
+    let perm = Permission { target: "reports".to_string(), action: action.to_string() };
+    match authz::authorize(&route.bearer, &perm) {
+        Ok(p) => Ok(p.subject),
+        Err(err) => {
+            let reply = match err {
+                AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                _ => Reply::err(401, "unauthenticated"),
+            };
+            Err(reply)
+        }
     }
 }
 
-fn handle_post(route: &Route, id: &str) -> Reply {
-    let principal = match authorize(route, "write") {
-        Ok(p) => p,
-        Err(reply) => return reply,
+fn create_assist(route: &Route, id: &str) -> Reply {
+    let subject = match authorize_perm(route, "write") {
+        Ok(s) => s,
+        Err(r) => return r,
     };
 
     let entry = match records::get("reports", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
     };
-    let mut doc: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
-
-    // Already assisted: a 409 naming the stored severity, not a second model call.
-    if let Some(assist) = doc.get("assist") {
-        if !assist.is_null() {
-            let severity = assist.get("severity").and_then(Value::as_str).unwrap_or("").to_string();
-            return Reply::json(409, json!({ "error": "already_assisted", "severity": severity }));
-        }
+    let mut report: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    
+    if report.get("assist").is_some() {
+        let severity = report["assist"].get("severity").and_then(Value::as_str).unwrap_or("");
+        return Reply::json(409, json!({
+            "error": "already_assisted",
+            "severity": severity
+        }));
     }
 
-    // The stored (masked) title + body — never the request, which is empty here.
-    let title = doc.get("title").and_then(Value::as_str).unwrap_or("");
-    let body = doc.get("body").and_then(Value::as_str).unwrap_or("");
+    let title = report.get("title").and_then(Value::as_str).unwrap_or("");
+    let body = report.get("body").and_then(Value::as_str).unwrap_or("");
     let text = format!("{}\n{}", title, body);
 
-    let labels: Vec<String> = SEVERITIES.iter().map(|s| s.to_string()).collect();
-    let score = match ai::classify(&text, &labels) {
-        Ok(s) => s,
-        Err(_) => {
-            ledger::note(
-                &route.trace,
-                "reports.assist",
-                "error",
-                &principal.subject,
-                "classify unavailable",
-            );
-            return Reply::err(503, "assist_unavailable");
+    let labels = vec!["critical".to_string(), "major".to_string(), "minor".to_string()];
+    let classify_result = ai::classify(&text, &labels);
+    let summarize_result = ai::summarize(&text, Length::Brief, "what is broken and where");
+
+    match (classify_result, summarize_result) {
+        (Ok(class), Ok(summary)) => {
+            if !labels.contains(&class.label) {
+                ledger::note(&route.trace, "reports.assist", "error", &subject, "unexpected_severity");
+                return Reply::err(502, "unexpected_severity");
+            }
+            let assist_data = json!({
+                "severity": class.label,
+                "confidence": class.confidence,
+                "summary": summary,
+                "assisted_at": crate::rfc3339(crate::now_secs())
+            });
+            report["assist"] = assist_data.clone();
+            if records::update("reports", id, &report.to_string(), entry.revision).is_err() {
+                return Reply::err(500, "store_error");
+            }
+            ledger::note(&route.trace, "reports.assist", "ok", &subject, id);
+            
+            Reply::json(200, json!({
+                "severity": class.label,
+                "confidence": class.confidence,
+                "summary": summary
+            }))
         }
-    };
-    if !SEVERITIES.contains(&score.label.as_str()) {
-        return Reply::err(502, "unexpected_severity");
-    }
-
-    let summary = match ai::summarize(&text, ai::Length::Brief, "what is broken and where") {
-        Ok(s) => s,
-        Err(_) => {
-            ledger::note(
-                &route.trace,
-                "reports.assist",
-                "error",
-                &principal.subject,
-                "summarize unavailable",
-            );
-            return Reply::err(503, "assist_unavailable");
+        _ => {
+            ledger::note(&route.trace, "reports.assist", "error", &subject, "assist_unavailable");
+            Reply::err(503, "assist_unavailable")
         }
-    };
-
-    // Only now, with both model calls in hand, do we touch the store: a 503 path
-    // must leave the report exactly as it was.
-    let assist = json!({
-        "severity": score.label,
-        // Stored and answered exactly as returned — 0..=1000 milli-units, not a percentage.
-        "confidence": score.confidence,
-        "summary": summary,
-        "assisted_at": rfc3339(now_secs()),
-    });
-    doc["assist"] = assist.clone();
-
-    if records::update("reports", id, &doc.to_string(), entry.revision).is_err() {
-        return Reply::err(503, "assist_unavailable");
     }
+}
 
-    // subject is principal.subject — what authorize returned — never the bearer token.
-    ledger::note(
-        &route.trace,
-        "reports.assist",
-        "ok",
-        &principal.subject,
-        &format!("severity={}", score.label),
-    );
-
-    Reply::json(200, assist)
+fn get_assist(route: &Route, id: &str) -> Reply {
+    if let Err(r) = authorize_perm(route, "read") {
+        return r;
+    }
+    let entry = match records::get("reports", id) {
+        Ok(e) => e,
+        Err(_) => return Reply::err(404, "not_found"),
+    };
+    let report: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    if let Some(assist) = report.get("assist") {
+        Reply::json(200, assist.clone())
+    } else {
+        Reply::err(404, "not_assisted")
+    }
 }

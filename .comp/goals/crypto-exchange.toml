@@ -1,0 +1,58 @@
+title = "crypto:exchange — order books, ledger transfers, and on-chain deposits"
+
+text = """
+Implement components/crypto-exchange-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/deposits              {"txid":<string>}                 (trader)
+  POST   /api/orders                {"pair":<string>,"price":<u32>}   (trader)
+  GET    /api/orders                                                  (trader)
+  GET    /api/compliance/report                                       (compliance)
+
+Store orders in the `orders` collection. Processing a deposit verifies the transaction on-chain via `crypto:blockchain/rpc`, then credits the user's account using `ledger:doubleentry/ledger`. Orders are highly rate-limited by `ratelimit:guard/limiter`.
+
+RBAC: Creating orders requires `trader`. Viewing reports requires `compliance`. Enforce via `policy:guard/guard`.
+"""
+
+component = "crypto-exchange-domain"
+
+base_paths = [
+  "components/crypto-exchange-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/ledger/",
+  "components/rate-limiter/",
+  "components/blockchain-rpc/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/crypto-exchange-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "crypto-exchange-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "ledger",
+  "rate-limiter",
+  "blockchain-rpc",
+]
+context = [
+  "components/crypto-exchange-domain/src/lib.rs",
+  "components/crypto-exchange-domain/wit/crypto-exchange.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/ledger/wit/ledger.wit",
+  "components/rate-limiter/wit/ratelimit.wit",
+  "components/blockchain-rpc/wit/crypto.wit",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/crypto-exchange-domain/gate.sh"]
