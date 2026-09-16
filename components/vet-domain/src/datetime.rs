@@ -21,12 +21,15 @@ pub fn parse_unix_seconds(s: &str) -> Option<i64> {
     let year: i64 = dp.next()?.parse().ok()?;
     let month: i64 = dp.next()?.parse().ok()?;
     let day: i64 = dp.next()?.parse().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    // Bounding the year isn't just range-checking for its own sake: an
+    // adversarial digit string here (the field has no length limit) overflows
+    // the `era * 146_097` multiply in `days_from_civil` below.
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || !(-9999..=9999).contains(&year) {
         return None;
     }
 
     // time + optional offset.
-    let (time_part, offset_secs) = split_offset(rest);
+    let (time_part, offset_secs) = split_offset(rest)?;
     let (mut hour, mut min, mut sec) = (0i64, 0i64, 0i64);
     if !time_part.is_empty() {
         let mut tp = time_part.splitn(3, ':');
@@ -37,7 +40,10 @@ pub fn parse_unix_seconds(s: &str) -> Option<i64> {
         let sec_int = sec_field.split('.').next().unwrap_or("0");
         sec = sec_int.parse().ok()?;
     }
-    if hour > 23 || min > 59 || sec > 60 {
+    // Lower-bounded too, not just `> 23`: a field like "-080006000000000608"
+    // parses fine as a huge negative i64 and would otherwise sail through an
+    // upper-bound-only check, then overflow `hour * 3600` below.
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&min) || !(0..=60).contains(&sec) {
         return None;
     }
 
@@ -48,24 +54,33 @@ pub fn parse_unix_seconds(s: &str) -> Option<i64> {
 }
 
 /// Split a `HH:MM:SS` + offset tail into (time, offset-seconds-from-UTC).
-fn split_offset(rest: &str) -> (&str, i64) {
+/// `None` for an offset whose hour/minute is out of range — including an
+/// adversarial digit string, which would otherwise overflow `oh * 3600` below.
+fn split_offset(rest: &str) -> Option<(&str, i64)> {
     if rest.is_empty() {
-        return (rest, 0);
+        return Some((rest, 0));
     }
     if let Some(stripped) = rest.strip_suffix('Z').or_else(|| rest.strip_suffix('z')) {
-        return (stripped, 0);
+        return Some((stripped, 0));
     }
-    // find a +/- that introduces an offset (skip index 0 — never a sign there).
-    if let Some(pos) = rest[1..].find(['+', '-']).map(|i| i + 1) {
+    // find a +/- that introduces an offset (skip the first char — never a sign
+    // there). Skipping by char, not by byte index 1: `rest` is untrusted and a
+    // multi-byte first char would put byte 1 mid-character, which a raw `[1..]`
+    // slice panics on.
+    let skip_first = rest.char_indices().nth(1).map_or(rest.len(), |(i, _)| i);
+    if let Some(pos) = rest[skip_first..].find(['+', '-']).map(|i| i + skip_first) {
         let (time, off) = rest.split_at(pos);
         let sign = if off.starts_with('-') { -1 } else { 1 };
         let off = &off[1..];
         let mut op = off.splitn(2, ':');
         let oh: i64 = op.next().and_then(|h| h.parse().ok()).unwrap_or(0);
         let om: i64 = op.next().and_then(|m| m.parse().ok()).unwrap_or(0);
-        return (time, sign * (oh * 3600 + om * 60));
+        if !(0..=23).contains(&oh) || !(0..=59).contains(&om) {
+            return None;
+        }
+        return Some((time, sign * (oh * 3600 + om * 60)));
     }
-    (rest, 0)
+    Some((rest, 0))
 }
 
 /// Days since the unix epoch (1970-01-01) for a civil date. Howard Hinnant's

@@ -1,0 +1,21 @@
+[package]
+name = "cron-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
+arbitrary = "1"
+
+[[bin]]
+name = "parse_field"
+path = "fuzz_targets/parse_field.rs"
+test = false
+doc = false
+bench = false
