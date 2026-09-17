@@ -191,12 +191,16 @@ impl Comparator {
 /// minor the patch is. Treating `^` as "same major" is the common bug, and on a
 /// 0.x dependency it is the expensive one.
 fn caret(v: Version) -> Vec<Comparator> {
+    // `+1` is `saturating`, not plain: major/minor/patch parse straight from
+    // input with no upper bound, so a version component of exactly `u64::MAX`
+    // would otherwise overflow here. Saturating just means "nothing is above
+    // this bound", which is the right answer for an unrepresentable version.
     let upper = if v.major > 0 {
-        Version { major: v.major + 1, minor: 0, patch: 0, pre: vec![] }
+        Version { major: v.major.saturating_add(1), minor: 0, patch: 0, pre: vec![] }
     } else if v.minor > 0 {
-        Version { major: 0, minor: v.minor + 1, patch: 0, pre: vec![] }
+        Version { major: 0, minor: v.minor.saturating_add(1), patch: 0, pre: vec![] }
     } else {
-        Version { major: 0, minor: 0, patch: v.patch + 1, pre: vec![] }
+        Version { major: 0, minor: 0, patch: v.patch.saturating_add(1), pre: vec![] }
     };
     vec![Comparator { op: Op::Gte, version: v }, Comparator { op: Op::Lt, version: upper }]
 }
@@ -205,9 +209,9 @@ fn caret(v: Version) -> Vec<Comparator> {
 /// minor is what may move.
 fn tilde(v: Version, written: usize) -> Vec<Comparator> {
     let upper = if written >= 2 {
-        Version { major: v.major, minor: v.minor + 1, patch: 0, pre: vec![] }
+        Version { major: v.major, minor: v.minor.saturating_add(1), patch: 0, pre: vec![] }
     } else {
-        Version { major: v.major + 1, minor: 0, patch: 0, pre: vec![] }
+        Version { major: v.major.saturating_add(1), minor: 0, patch: 0, pre: vec![] }
     };
     vec![Comparator { op: Op::Gte, version: v }, Comparator { op: Op::Lt, version: upper }]
 }

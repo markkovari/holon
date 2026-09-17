@@ -108,6 +108,13 @@ pub fn parse_tree(payload: &[u8]) -> Result<Vec<Entry>, String> {
     while i < payload.len() {
         let sp = payload[i..].iter().position(|b| *b == b' ').ok_or("tree entry has no space")? + i;
         let nul = payload[i..].iter().position(|b| *b == 0).ok_or("tree entry has no NUL")? + i;
+        // Found independently, so an entry with no real space before its NUL —
+        // where the next space byte the scan finds is actually inside the
+        // 20-byte binary id that follows — would otherwise put `sp` past `nul`
+        // and panic slicing `payload[sp + 1..nul]` below.
+        if sp >= nul {
+            return Err("tree entry's space is not before its NUL".into());
+        }
         if nul + 21 > payload.len() {
             return Err("tree entry is truncated before its id".into());
         }

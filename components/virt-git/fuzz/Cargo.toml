@@ -1,0 +1,28 @@
+[package]
+name = "virt-git-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sha1 = "0.10"
+
+[[bin]]
+name = "parse_tree"
+path = "fuzz_targets/parse_tree.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_commit"
+path = "fuzz_targets/parse_commit.rs"
+test = false
+doc = false
+bench = false

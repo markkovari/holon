@@ -1,0 +1,20 @@
+[package]
+name = "rrule-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "parse_date"
+path = "fuzz_targets/parse_date.rs"
+test = false
+doc = false
+bench = false

@@ -401,7 +401,7 @@ edited down after the reference exists, never before.**
 
 ### Reuse, measured three ways
 
-`tools/reuse-ratio.py` reports from three independent sources: the components `comp-plug`
+`comp-reuse-ratio` (`reconciler/src/bin/reuseratio.rs`) reports from three independent sources: the components `comp-plug`
 wires in (derived from the compiled artifact's imports), non-comment Rust lines on each
 side, and the interfaces the artifact IMPORTS against the ones its world offers. Generated
 `bindings.rs` is excluded from both sides — including it would flatter reuse by tens of
