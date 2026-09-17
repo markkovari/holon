@@ -118,7 +118,14 @@ fn parse_field(
         let mut v = start;
         while v <= end {
             bits[(v - lo) as usize] = true;
-            v += step;
+            // `step` is parsed with no upper bound, so a field like
+            // "59/4294967237" overflows a plain `+=`. In a release build
+            // (overflow-checks off) that wraps back near 0 — always `<= end`
+            // again — which is an infinite loop, not just a panic.
+            v = match v.checked_add(step) {
+                Some(next) => next,
+                None => break,
+            };
         }
     }
     Ok((bits, star))
