@@ -42,10 +42,7 @@ struct ContactReq {
 
 fn create_contact(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: ContactReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, ContactReq);
     if req.name.is_empty() {
         return Reply::err(400, "name is required");
     }
@@ -84,10 +81,7 @@ struct DealReq {
 
 fn create_deal(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: DealReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, DealReq);
     if req.title.is_empty() {
         return Reply::err(400, "title is required");
     }

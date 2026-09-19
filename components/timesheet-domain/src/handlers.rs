@@ -74,10 +74,7 @@ struct ProjectReq {
 
 fn create_project(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: ProjectReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, ProjectReq);
     if req.name.is_empty() {
         return Reply::err(400, "name is required");
     }
@@ -119,10 +116,7 @@ struct EntryReq {
 
 fn create_entry(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: EntryReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, EntryReq);
     if req.project_id.is_empty() || req.hours <= 0.0 {
         return Reply::err(400, "project_id and a positive hours value are required");
     }

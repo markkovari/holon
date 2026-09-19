@@ -38,10 +38,7 @@ struct PostReq {
 
 fn create_post(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: PostReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, PostReq);
     if req.title.is_empty() {
         return Reply::err(400, "title is required");
     }

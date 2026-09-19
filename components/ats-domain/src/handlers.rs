@@ -42,10 +42,7 @@ struct PostingReq {
 fn create_posting(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "posting.create", "");
-    let req: PostingReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, PostingReq);
     if req.title.is_empty() {
         return Reply::err(400, "title is required");
     }
@@ -98,10 +95,7 @@ fn add_candidate(route: &Route, posting_id: &str, body: &str) -> Reply {
         return Reply::err(404, "not_found");
     };
     guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &assigned_to), principal, "candidate.create", posting_id);
-    let req: CandidateReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, CandidateReq);
     if req.name.is_empty() {
         return Reply::err(400, "name is required");
     }

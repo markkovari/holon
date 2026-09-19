@@ -38,10 +38,7 @@ struct ClientReq {
 
 fn create_client(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: ClientReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, ClientReq);
     if req.name.is_empty() {
         return Reply::err(400, "name is required");
     }
@@ -83,10 +80,7 @@ struct InvoiceReq {
 
 fn create_invoice(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: InvoiceReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, InvoiceReq);
     if req.client_id.is_empty() || req.line_items.is_empty() {
         return Reply::err(400, "client_id and at least one line item are required");
     }

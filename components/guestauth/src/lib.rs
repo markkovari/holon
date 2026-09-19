@@ -428,6 +428,21 @@ macro_rules! guest_deny_unless {
     };
 }
 
+/// Parse a request body into `$ty`, or refuse with 400 — the same
+/// three-line shape every `POST`/`PUT` handler here writes before its real
+/// work, differing only in the target type. `let req: ClientReq = match
+/// serde_json::from_str(body) { ... };` becomes `let req =
+/// guestauth::guest_parse_body!(body, ClientReq);`.
+#[macro_export]
+macro_rules! guest_parse_body {
+    ($body:expr, $ty:ty) => {
+        match serde_json::from_str::<$ty>($body) {
+            Ok(v) => v,
+            Err(_) => return Reply::err(400, "bad_json"),
+        }
+    };
+}
+
 /// Define `entries_json`: a page of `records:store` entries as a JSON array,
 /// each entry's stored id merged into its own document — the same helper
 /// `billing-domain`, `crm-domain`, `ats-domain`, `timesheet-domain`,

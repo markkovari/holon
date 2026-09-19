@@ -43,10 +43,7 @@ struct SpotReq {
 fn create_spot(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "spot.create", "");
-    let req: SpotReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, SpotReq);
     let label = req.label.trim().to_string();
     if label.is_empty() {
         return Reply::err(400, "label is required");
@@ -81,10 +78,7 @@ struct ReservationReq {
 
 fn reserve(route: &Route, spot_id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: ReservationReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, ReservationReq);
     // Half-open windows must have positive length; checked BEFORE conflicts.
     if req.end <= req.start {
         return Reply::err(400, "end must be after start");

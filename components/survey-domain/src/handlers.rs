@@ -40,10 +40,7 @@ struct SurveyReq {
 fn create_survey(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.create", "");
-    let req: SurveyReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, SurveyReq);
     if req.title.is_empty() || req.questions.is_empty() {
         return Reply::err(400, "title and questions are required");
     }
@@ -103,10 +100,7 @@ struct ResponseReq {
 /// policy call.
 fn create_response(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: ResponseReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, ResponseReq);
     let survey = match records::get("surveys", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

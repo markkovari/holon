@@ -41,10 +41,7 @@ struct ReportReq {
 /// `employee` set to the caller's subject.
 fn create_report(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let req: ReportReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let req = guestauth::guest_parse_body!(body, ReportReq);
     if req.amount == 0 {
         return Reply::err(400, "amount is required");
     }
