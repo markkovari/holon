@@ -10,15 +10,20 @@
 
 use crate::cost::cost_cents;
 
-/// One attempt's usage: input tokens, output tokens, and the model that answered.
-pub type Usage<'a> = (u32, u32, &'a str);
+/// One attempt's usage: input tokens, output tokens, the model that answered,
+/// and whether it ran during that model's off-peak window (only DeepSeek's
+/// price depends on this — see `cost.rs`; every other model ignores it).
+pub type Usage<'a> = (u32, u32, &'a str, bool);
 
 /// The total cost, in whole cents, of every attempt in a run.
 ///
 /// The sum of each attempt priced by `cost_cents` — not a re-derivation, so the
 /// per-model pricing lives in exactly one place. An empty run has spent nothing.
 pub fn spent_cents(attempts: &[Usage]) -> u64 {
-    attempts.iter().map(|(input, output, model)| cost_cents(*input, *output, model)).sum()
+    attempts
+        .iter()
+        .map(|(input, output, model, off_peak)| cost_cents(*input, *output, model, *off_peak))
+        .sum()
 }
 
 /// Has this run spent past its cap? `cap_cents` of 0 means no cap, so a run with
@@ -44,7 +49,7 @@ mod tests {
     #[test]
     fn one_attempt_is_its_own_cost() {
         // 1M haiku input = 100 cents (see cost.rs).
-        assert_eq!(spent_cents(&[(1_000_000, 0, "claude-haiku-4-5-20251001")]), 100);
+        assert_eq!(spent_cents(&[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]), 100);
     }
 
     #[test]
@@ -52,8 +57,8 @@ mod tests {
         // 100 (1M haiku input) + 500 (1M haiku output) = 600.
         assert_eq!(
             spent_cents(&[
-                (1_000_000, 0, "claude-haiku-4-5-20251001"),
-                (0, 1_000_000, "claude-haiku-4-5-20251001"),
+                (1_000_000, 0, "claude-haiku-4-5-20251001", false),
+                (0, 1_000_000, "claude-haiku-4-5-20251001", false),
             ]),
             600
         );
@@ -64,27 +69,39 @@ mod tests {
         // haiku 1M input (100) + opus 1M input (1500) = 1600.
         assert_eq!(
             spent_cents(&[
-                (1_000_000, 0, "claude-haiku-4-5-20251001"),
-                (1_000_000, 0, "claude-opus-5"),
+                (1_000_000, 0, "claude-haiku-4-5-20251001", false),
+                (1_000_000, 0, "claude-opus-5", false),
             ]),
             1600
         );
     }
 
     #[test]
+    fn an_off_peak_deepseek_attempt_is_priced_cheaper_than_the_same_attempt_peak() {
+        assert_eq!(
+            spent_cents(&[(1_000_000, 0, "deepseek-flash", true)]),
+            15
+        );
+        assert_eq!(
+            spent_cents(&[(1_000_000, 0, "deepseek-flash", false)]),
+            30
+        );
+    }
+
+    #[test]
     fn a_zero_cap_means_no_cap_so_never_over() {
-        assert_eq!(super::over_budget(0, &[(1_000_000, 1_000_000, "claude-opus-5")]), false);
+        assert_eq!(super::over_budget(0, &[(1_000_000, 1_000_000, "claude-opus-5", false)]), false);
     }
 
     #[test]
     fn spend_equal_to_the_cap_is_within_it() {
         // 1M haiku input = 100 cents; cap 100 is not exceeded.
-        assert_eq!(super::over_budget(100, &[(1_000_000, 0, "claude-haiku-4-5-20251001")]), false);
+        assert_eq!(super::over_budget(100, &[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]), false);
     }
 
     #[test]
     fn one_cent_over_the_cap_is_over() {
-        assert_eq!(super::over_budget(99, &[(1_000_000, 0, "claude-haiku-4-5-20251001")]), true);
+        assert_eq!(super::over_budget(99, &[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]), true);
     }
 
     #[test]

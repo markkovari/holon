@@ -30,6 +30,10 @@ name = "comp-oci"
 path = "src/bin/oci.rs"
 
 [[bin]]
+name = "comp-offpeak"
+path = "src/bin/offpeak.rs"
+
+[[bin]]
 name = "comp-plug"
 path = "src/bin/plug.rs"
 

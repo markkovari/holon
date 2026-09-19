@@ -17,9 +17,18 @@
 /// MOST EXPENSIVE tier, never free — a budget that treats an unknown model as
 /// free is not a budget. The result rounds UP: underspending a cap is fine,
 /// overspending it because of a floor is the failure this exists to prevent.
-pub fn cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str) -> u64 {
+///
+/// `off_peak` only changes the price of a DeepSeek model — see
+/// [`offpeak::deepseek_off_peak`](crate::offpeak::deepseek_off_peak) for what
+/// counts as off-peak. Every other model ignores it; DeepSeek is the only
+/// provider in this table whose price is a function of the clock.
+pub fn cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str, off_peak: bool) -> u64 {
     // Price table: (input cents per million, output cents per million)
-    let (input_price, output_price) = if model.contains("haiku") {
+    let (input_price, output_price) = if model.contains("deepseek-flash") {
+        if off_peak { (15u64, 60u64) } else { (30u64, 120u64) }
+    } else if model.contains("deepseek") {
+        if off_peak { (66u64, 198u64) } else { (132u64, 396u64) }
+    } else if model.contains("haiku") {
         (100u64, 500u64)
     } else if model.contains("sonnet") {
         (300u64, 1500u64)
@@ -41,48 +50,72 @@ mod tests {
     use super::cost_cents;
 
     // Prices, cents per million tokens (input, output), pinned by these tests:
-    //   haiku   100 /  500
-    //   sonnet  300 / 1500
-    //   opus   1500 / 7500
+    //   haiku            100 /  500
+    //   sonnet           300 / 1500
+    //   opus            1500 / 7500
+    //   deepseek-flash off-peak  15 /   60, peak  30 /  120
+    //   deepseek (v4-pro) off-peak 66 / 198, peak 132 / 396
     //   unknown -> opus (the most expensive known tier)
     // A model is matched by the tier name appearing in its id, e.g.
-    // "claude-haiku-4-5-20251001" is haiku.
+    // "claude-haiku-4-5-20251001" is haiku. `off_peak` only affects deepseek.
 
     #[test]
     fn a_million_input_tokens_of_haiku_is_its_input_price() {
-        assert_eq!(cost_cents(1_000_000, 0, "claude-haiku-4-5-20251001"), 100);
+        assert_eq!(cost_cents(1_000_000, 0, "claude-haiku-4-5-20251001", false), 100);
     }
 
     #[test]
     fn a_million_output_tokens_of_haiku_is_its_output_price() {
-        assert_eq!(cost_cents(0, 1_000_000, "claude-haiku-4-5-20251001"), 500);
+        assert_eq!(cost_cents(0, 1_000_000, "claude-haiku-4-5-20251001", false), 500);
     }
 
     #[test]
     fn input_and_output_are_summed_at_the_tier_price() {
         // sonnet: 300 input + 1500 output per million.
-        assert_eq!(cost_cents(1_000_000, 1_000_000, "claude-sonnet-5"), 1800);
+        assert_eq!(cost_cents(1_000_000, 1_000_000, "claude-sonnet-5", false), 1800);
     }
 
     #[test]
     fn opus_is_the_dear_tier() {
-        assert_eq!(cost_cents(1_000_000, 0, "claude-opus-5"), 1500);
+        assert_eq!(cost_cents(1_000_000, 0, "claude-opus-5", false), 1500);
     }
 
     #[test]
     fn an_unknown_model_is_charged_the_most_expensive_tier_not_free() {
         // Unknown -> opus input price, never 0.
-        assert_eq!(cost_cents(1_000_000, 0, "some-other-vendor/model"), 1500);
+        assert_eq!(cost_cents(1_000_000, 0, "some-other-vendor/model", false), 1500);
     }
 
     #[test]
     fn a_tiny_usage_rounds_up_to_a_whole_cent_rather_than_down_to_zero() {
         // One haiku input token is 100/1_000_000 of a cent — rounds UP to 1.
-        assert_eq!(cost_cents(1, 0, "claude-haiku-4-5-20251001"), 1);
+        assert_eq!(cost_cents(1, 0, "claude-haiku-4-5-20251001", false), 1);
     }
 
     #[test]
     fn zero_usage_is_zero() {
-        assert_eq!(cost_cents(0, 0, "claude-haiku-4-5-20251001"), 0);
+        assert_eq!(cost_cents(0, 0, "claude-haiku-4-5-20251001", false), 0);
+    }
+
+    #[test]
+    fn deepseek_flash_is_half_price_off_peak() {
+        assert_eq!(cost_cents(1_000_000, 1_000_000, "deepseek-flash", true), 75);
+        assert_eq!(cost_cents(1_000_000, 1_000_000, "deepseek-flash", false), 150);
+    }
+
+    #[test]
+    fn deepseek_v4_pro_is_half_price_off_peak() {
+        assert_eq!(cost_cents(1_000_000, 1_000_000, "deepseek-v4-pro", true), 264);
+        assert_eq!(cost_cents(1_000_000, 1_000_000, "deepseek-v4-pro", false), 528);
+    }
+
+    #[test]
+    fn deepseek_flash_is_cheaper_than_haiku_even_at_peak() {
+        // The whole point of the low-budget path: flash beats haiku even
+        // without the off-peak discount.
+        assert!(
+            cost_cents(1_000_000, 0, "deepseek-flash", false)
+                < cost_cents(1_000_000, 0, "claude-haiku-4-5-20251001", false)
+        );
     }
 }

@@ -26,6 +26,7 @@ pub mod generation;
 pub mod memory;
 pub mod money;
 pub mod oci;
+pub mod offpeak;
 pub mod plan;
 /// Composition as a library call — wrap `wac`, do not run it.
 pub mod plug;
