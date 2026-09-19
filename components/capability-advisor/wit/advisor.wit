@@ -1,0 +1,12 @@
+// comp:advisor — an HTTP door onto `jev:decision/decision::evaluate`, so
+// NATIVE code (the `goalrun` binary, plain Rust) can ask Jev a batch of
+// questions without linking WIT bindings itself. Native code cannot consume
+// a WIT import directly — only a composed wasm component can — so this
+// exists purely to be a callable HTTP service, the same shape as
+// `select-probe`/`forge-probe`.
+package comp:advisor@0.1.0;
+
+world capability-advisor {
+    export wasi:http/incoming-handler@0.2.0;
+    import jev:decision/decision@0.1.0;
+}

@@ -1,0 +1,29 @@
+name = "jev-router"
+access = "tailnet"
+domain = "jev-router.example.com"
+artifact = "components/target/jev_router.composed.wasm"
+kv = "sqlite"
+components = ["jev-router", "mock-jev-provider"]
+strategy = "fused"
+
+# Wired to `mock-jev-provider` for a free, deterministic, runnable demo — the
+# same choice `apps/intent-router.toml` makes for `llm:inference`. The real
+# backend for production is `typesafe-provider`; see `fixtures/jev-secret.yaml`
+# for how that's wired with a secret reference.
+
+# `jev:confidence-threshold` is left unset (defaults to 650/1000 in
+# jev-router's own code) — a colon-namespaced key cannot survive this tier's
+# CFG_<KEY> env-var translation (see `cli/src/selfhost.rs::check`), the same
+# reason `openai-provider`/`anthropic-provider`'s own colon-namespaced config
+# is only ever wired through the `comp/v1` reconciler tier, never this one.
+
+# KEEP TABLES LAST
+[config]
+mock-model = "mock-jev-1"
+mock-script = '''{"rules": [
+  {"when": "printer", "selected": "helpdesk-domain", "confidence": 0.94},
+  {"when": "appointment", "selected": "clinic-domain", "confidence": 0.9},
+  {"when": "practice room", "selected": "studio-domain", "confidence": 0.88},
+  {"when": "groceries", "selected": "grocery-domain", "confidence": 0.85},
+  {"when": "*", "selected": "helpdesk-domain", "confidence": 0.2, "flat": true}
+]}'''

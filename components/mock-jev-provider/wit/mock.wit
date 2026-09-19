@@ -1,0 +1,20 @@
+// mock:jev — `jev:decision`, scripted. Deterministic, free, offline.
+//
+// Same reason `mock-provider` exists for `llm:inference`: a router's branching
+// logic (high confidence -> route, low/flat -> disambiguate) has to be
+// assertable against a specific, repeatable answer, and a real provider costs
+// money and answers differently each run. This is the swap point being used
+// for what it was designed for.
+//
+// It imports NO network, on purpose and provably: the world below has no
+// `wasi:http`, so a test using it cannot accidentally reach a real provider.
+//
+// Config (wasi:config/store):
+//   mock-script  JSON. See src/lib.rs for the shape.
+//   mock-model   what `describe` reports, default "mock-jev-1"
+package mock:jev@0.1.0;
+
+world mock-jev-provider {
+    export jev:decision/decision@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

@@ -241,6 +241,21 @@ impl Trace {
         self.event(run, None, kind, json!({ "query": query, "hits": hits }));
     }
 
+    /// How many of `capsearch`'s hits `capability-advisor` confirmed actually
+    /// fit the goal, vs. matched only on term overlap. A separate event from
+    /// `capsearch` itself: this only fires when an advisor was configured AND
+    /// reachable, so its absence in a run's history means "not asked", never
+    /// "asked and found nothing" (`capsearch`'s own hit/miss split already
+    /// carries that answer).
+    pub fn capsearch_confirmed(&self, run: &str, confirmed: usize, rejected: usize) {
+        self.event(
+            run,
+            None,
+            "capsearch-confirmed",
+            json!({ "confirmed": confirmed, "rejected": rejected }),
+        );
+    }
+
     /// How the run ended: `merged`, `failed`, `exhausted`, `interrupted`.
     pub fn run_resolved(&self, run: &str, outcome: &str, winner: Option<&str>, url: &str) {
         self.send(&format!(

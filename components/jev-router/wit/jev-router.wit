@@ -1,0 +1,7 @@
+package holon:jev-router@0.1.0;
+
+world jev-router {
+    export wasi:http/incoming-handler@0.2.0;
+    import jev:decision/decision@0.1.0;
+    import wasi:config/store@0.2.0-rc.1;
+}
