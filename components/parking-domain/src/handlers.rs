@@ -11,6 +11,7 @@ use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
 use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashSet};
 
 const POLICY_DOMAIN: &str = "reservations";
 
@@ -24,6 +25,9 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         (Method::Post, ["api", "spots", id, "reservations"]) => reserve(route, id, body),
         (Method::Get, ["api", "reservations"]) => list_reservations(route),
         (Method::Post, ["api", "reservations", id, "cancel"]) => cancel(route, id),
+        (Method::Post, ["api", "lot", "seed"]) => seed_lot(route),
+        (Method::Get, ["api", "lot"]) => get_lot(route),
+        (Method::Get, ["api", "spots", id, "history"]) => spot_history(route, id),
         _ => Reply::err(404, "not_found"),
     }
 }
@@ -209,4 +213,138 @@ fn entries_json(entries: &[records::Entry]) -> Vec<Value> {
             v
         })
         .collect()
+}
+
+/// A lot-seeded spot carries BOTH `floor` and `number`; an ad-hoc spot made
+/// through `POST /api/spots` carries neither. That difference is the only
+/// thing telling the two populations apart in the shared `spots` collection.
+fn is_lot_spot(data: &str) -> bool {
+    let v: Value = serde_json::from_str(data).unwrap_or(json!({}));
+    v.get("floor").and_then(Value::as_u64).is_some()
+        && v.get("number").and_then(Value::as_u64).is_some()
+}
+
+/// `admin`-only and idempotent: seed exactly 150 lot spots (3 floors × 50,
+/// `"F1-01"`..`"F3-50"`). A marker record in `meta` — the same trick
+/// `guest_owner_or_admin_policy!` uses for its rule registration — makes a
+/// second call create NOTHING more.
+fn seed_lot(route: &Route) -> Reply {
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    if !is_admin(&principal) {
+        audit("lot.seed", "deny", &principal.subject, "");
+        return Reply::err(403, "forbidden");
+    }
+    let already = matches!(
+        records::find_by("meta", "kind", "\"lot_seeded\""),
+        Ok(entries) if !entries.is_empty()
+    );
+    if !already {
+        for floor in 1..=3u32 {
+            for number in 1..=50u32 {
+                let data = json!({
+                    "label": format!("F{}-{:02}", floor, number),
+                    "floor": floor,
+                    "number": number,
+                })
+                .to_string();
+                if records::create("spots", &data, &[]).is_err() {
+                    return Reply::err(500, "store_error");
+                }
+            }
+        }
+        let marker = json!({"kind": "lot_seeded"}).to_string();
+        let _ = records::create("meta", &marker, &["kind".to_string()]);
+    }
+    let total = match list_all("spots") {
+        Ok(entries) => entries.iter().filter(|e| is_lot_spot(&e.data)).count(),
+        Err(_) => return Reply::err(500, "store_error"),
+    };
+    audit("lot.seed", "allow", &principal.subject, "");
+    Reply::json(200, json!({"total": total}))
+}
+
+/// Any authenticated caller: every lot-seeded spot, grouped by floor. `taken`
+/// is computed live on every call — never stored — from active reservations
+/// whose HALF-OPEN window covers `now`: `start <= now < end`, the same
+/// comparison the overlap rule above uses. An unseeded lot is `{"floors": []}`.
+fn get_lot(route: &Route) -> Reply {
+    if introspect(route).is_err() {
+        return Reply::err(401, "unauthorized");
+    }
+    let entries = match list_all("spots") {
+        Ok(e) => e,
+        Err(_) => return Reply::err(500, "store_error"),
+    };
+    let reservations = match list_all("reservations") {
+        Ok(e) => e,
+        Err(_) => return Reply::err(500, "store_error"),
+    };
+    let now = crate::now_secs();
+    let mut taken: HashSet<String> = HashSet::new();
+    for e in &reservations {
+        let v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
+        if v.get("status").and_then(Value::as_str) != Some("active") {
+            continue;
+        }
+        let start = v.get("start").and_then(Value::as_u64).unwrap_or(0);
+        let end = v.get("end").and_then(Value::as_u64).unwrap_or(0);
+        if start <= now && now < end {
+            if let Some(sid) = v.get("spot_id").and_then(Value::as_str) {
+                taken.insert(sid.to_string());
+            }
+        }
+    }
+    let mut by_floor: BTreeMap<u64, Vec<Value>> = BTreeMap::new();
+    for e in &entries {
+        let v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
+        let floor = match v.get("floor").and_then(Value::as_u64) {
+            Some(f) => f,
+            None => continue,
+        };
+        let number = match v.get("number").and_then(Value::as_u64) {
+            Some(n) => n,
+            None => continue,
+        };
+        by_floor.entry(floor).or_default().push(json!({
+            "id": e.id,
+            "number": number,
+            "taken": taken.contains(&e.id),
+        }));
+    }
+    let floors: Vec<Value> = by_floor
+        .into_iter()
+        .map(|(floor, mut spots)| {
+            spots.sort_by_key(|s| s.get("number").and_then(Value::as_u64).unwrap_or(0));
+            json!({"floor": floor, "spots": spots})
+        })
+        .collect();
+    Reply::json(200, json!({"floors": floors}))
+}
+
+/// `admin`-only: every reservation ever made on a spot — active AND cancelled
+/// — oldest first, whether the spot is lot-seeded or ad-hoc. A spot with no
+/// reservations answers `[]`, not 404; only a spot that does not exist is 404.
+fn spot_history(route: &Route, id: &str) -> Reply {
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    if !is_admin(&principal) {
+        audit("spot.history", "deny", &principal.subject, id);
+        return Reply::err(403, "forbidden");
+    }
+    if records::get("spots", id).is_err() {
+        return Reply::err(404, "not_found");
+    }
+    let spot_json = serde_json::to_string(id).unwrap_or_default();
+    let entries = match records::find_by("reservations", "spot_id", &spot_json) {
+        Ok(e) => e,
+        Err(_) => return Reply::err(500, "store_error"),
+    };
+    let mut reservations = entries_json(&entries);
+    reservations.sort_by_key(|r| r.get("start").and_then(Value::as_u64).unwrap_or(0));
+    Reply::json(200, json!({"spot_id": id, "reservations": reservations}))
 }
