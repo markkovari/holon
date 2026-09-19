@@ -1,0 +1,226 @@
+title = "marketplace:domain — a 5-part decomposed marketplace"
+
+text = """
+Build the five UNIMPLEMENTED parts of `components/marketplace-domain`
+against `CONTRACT.md` — a multi-vendor marketplace with real fsm-driven
+lifecycles, a real double-entry payout ledger, and two distinct Jev
+integrations. The router (`src/lib.rs`), the WIT world, the Cargo.toml, and
+all five parts' STUB files already exist and build clean; every stub
+currently answers `501`. Nothing here is yours to scaffold — it is yours to
+implement, one file per part, against the shared contract and nothing else.
+
+Read `CONTRACT.md` in full before writing anything. It is the only thing the
+five parts share — a shape, a route, a status code not written there is not
+agreed, and a part that invents one risks disagreeing with a sibling in a
+way only the composition gate (not your own) will catch.
+
+The five machines and the ledger math are `fsm:workflow/engine` and
+`ledger:doubleentry/ledger` — real, already-composed capability components,
+not something any part re-implements. `CONTRACT.md`'s closing section names
+exactly which capability backs which piece of logic; use it, do not
+hand-roll it.
+"""
+
+contract = "components/marketplace-domain/CONTRACT.md"
+writable = []
+
+base_paths = [
+  "components/marketplace-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/audit-log/",
+  "components/rate-limiter/",
+  "components/fsm-workflow/",
+  "components/ledger/",
+  "components/jev-decision/",
+  "components/guestauth/",
+  "components/guestio/",
+  "components/guestfmt/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "marketplace-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "audit-log",
+  "rate-limiter",
+  "fsm-workflow",
+  "ledger",
+  "jev-decision",
+  "guestauth",
+  "guestio",
+  "guestfmt",
+]
+
+[[part]]
+name = "catalog"
+text = """
+Implement `components/marketplace-domain/src/catalog.rs` — CONTRACT.md's
+"Part 1 — catalog.rs" section, in full: listings (created, auto-labeled by
+Jev's `choose`, listed, fetched, delisted, category overridden) and
+multi-item order placement with an atomic stock check across every line
+before any listing's stock is decremented.
+
+The Jev call: build a `choose` request per CONTRACT.md's "Jev usage"
+section — `state` is the listing's title plus description, `options` is
+the fixed six-category taxonomy. A Jev failure must still create the
+listing (`category` falls back to `"other"`, `category_confidence` to `0`)
+— never let an advisory call block the real write it advises on.
+
+`fsm:workflow/engine::define("order", ...)` needs to be called before the
+first `create-instance` — do this idempotently (check `get-definition`
+first, or just call `define` every time you need the machine and accept
+that redefining an identical definition is harmless, per CONTRACT.md's own
+note on this).
+"""
+writable = ["components/marketplace-domain/src/catalog.rs"]
+context = [
+  "components/marketplace-domain/CONTRACT.md",
+  "components/marketplace-domain/src/lib.rs",
+  "components/marketplace-domain/wit/marketplace-domain.wit",
+  "components/fsm-workflow/wit/fsm.wit",
+  "components/jev-decision/wit/decision.wit",
+  "components/billing-domain/src/handlers.rs",
+]
+[[part.check]]
+id = "catalog-behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/marketplace-domain/gate-catalog.sh"]
+
+[[part]]
+name = "fulfillment"
+text = """
+Implement `components/marketplace-domain/src/fulfillment.rs` — CONTRACT.md's
+"Part 2 — fulfillment.rs" section: pay (captures payment, fires the order's
+`pay` event, posts the SALE ledger entry), ship (fires shipment + order
+transitions), the shipment-delivered route (fires BOTH machines, shipment
+first per the cross-machine rule — read it closely), refund (validates the
+refund amount against what remains, posts the REFUND ledger entry), and
+returns (request/approve/reject, gated on the order already being
+`delivered`).
+
+You post ledger entries directly into the SAME `ledger_entries` collection
+`ledger.rs` reads — CONTRACT.md is explicit that parts share storage, not
+code. Validate every entry with `ledger:doubleentry/ledger::validate`
+before storing it; an entry that fails validation is a bug in this file,
+not something to catch and turn into an HTTP error.
+"""
+writable = ["components/marketplace-domain/src/fulfillment.rs"]
+context = [
+  "components/marketplace-domain/CONTRACT.md",
+  "components/marketplace-domain/src/lib.rs",
+  "components/marketplace-domain/wit/marketplace-domain.wit",
+  "components/fsm-workflow/wit/fsm.wit",
+  "components/ledger/wit/ledger.wit",
+  "components/billing-domain/src/handlers.rs",
+]
+[[part.check]]
+id = "fulfillment-behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/marketplace-domain/gate-fulfillment.sh"]
+
+[[part]]
+name = "trust"
+text = """
+Implement `components/marketplace-domain/src/trust.rs` — CONTRACT.md's
+"Part 3 — trust.rs" section: open a dispute (gated on the order NOT yet
+being `delivered`, runs the Jev `gate` advisory, never lets a Jev failure
+block dispute creation), list disputes (own for a buyer, all for admin),
+resolve a dispute (records the admin's own resolution — never reads the
+Jev fields to decide), and vendor reputation (dispute rate + a
+retroactive fraud-flag count, both computed by reading `orders`/`listings`/
+`disputes` directly — read CONTRACT.md's exact definition of `fraud_flags`
+closely, it is a specific rule about a vendor's FIRST order, not a general
+heuristic).
+
+The Jev call: build a `gate` request per CONTRACT.md's "Jev usage" section
+— `state` is the dispute's reason plus the order's total, the hints are
+given verbatim in the contract. `probability >= 500` → `jev_recommendation
+= "refund"`, else `"deny"`.
+"""
+writable = ["components/marketplace-domain/src/trust.rs"]
+context = [
+  "components/marketplace-domain/CONTRACT.md",
+  "components/marketplace-domain/src/lib.rs",
+  "components/marketplace-domain/wit/marketplace-domain.wit",
+  "components/fsm-workflow/wit/fsm.wit",
+  "components/jev-decision/wit/decision.wit",
+  "components/billing-domain/src/handlers.rs",
+]
+[[part.check]]
+id = "trust-behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/marketplace-domain/gate-trust.sh"]
+
+[[part]]
+name = "ledger"
+text = """
+Implement `components/marketplace-domain/src/ledger.rs` — CONTRACT.md's
+"Part 4 — ledger.rs" section: a vendor's balance and the platform's own
+cash/fees balances, both by loading every `ledger_entries` document via
+`records::list_records`, converting each to a `ledger:doubleentry/ledger`
+`entry`, and calling `trial-balance` — never sum the lines by hand, that is
+exactly the "two parts silently disagree" failure CONTRACT.md warns about.
+An account with no postings at all is a balance of `0`, not an error
+(`trial-balance` simply omits accounts with nothing posted to them — check
+for the account in the result's list rather than assuming it is there).
+
+The payout route posts a ledger entry that zeroes a vendor's current
+balance (debit the vendor for exactly their current net balance, credit
+`platform:cash`) — refuses with `400 {"error":"nothing_owed"}` if that
+balance is `0` or negative.
+"""
+writable = ["components/marketplace-domain/src/ledger.rs"]
+context = [
+  "components/marketplace-domain/CONTRACT.md",
+  "components/marketplace-domain/src/lib.rs",
+  "components/marketplace-domain/wit/marketplace-domain.wit",
+  "components/ledger/wit/ledger.wit",
+  "components/billing-domain/src/handlers.rs",
+]
+[[part.check]]
+id = "ledger-behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/marketplace-domain/gate-ledger.sh"]
+
+[[part]]
+name = "messaging"
+text = """
+Implement `components/marketplace-domain/src/messaging.rs` — CONTRACT.md's
+"Part 5 — messaging.rs" section: a buyer opens an inquiry on a listing
+(reading the listing directly to copy its `vendor` field and to 404 on a
+missing/delisted one — this part does not call `catalog.rs`'s code, it
+reads the `listings` collection `catalog.rs` writes to), lists inquiries
+scoped by role (buyer sees their own, vendor sees ones about their
+listings, admin sees all), and a threaded messages sub-resource where
+either party to the inquiry (buyer or vendor, or admin) may read and post,
+403 for anyone else.
+"""
+writable = ["components/marketplace-domain/src/messaging.rs"]
+context = [
+  "components/marketplace-domain/CONTRACT.md",
+  "components/marketplace-domain/src/lib.rs",
+  "components/marketplace-domain/wit/marketplace-domain.wit",
+  "components/billing-domain/src/handlers.rs",
+]
+[[part.check]]
+id = "messaging-behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/marketplace-domain/gate-messaging.sh"]
+
+[[check]]
+id = "composition-behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/marketplace-domain/gate-composition.sh"]

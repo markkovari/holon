@@ -1,0 +1,9 @@
+name = "marketplace"
+access = "tailnet"
+domain = "marketplace.example.com"
+artifact = "components/target/marketplace_domain.composed.wasm"
+port = 3939
+static_dir = "examples/marketplace/public"
+kv = "sqlite"
+components = ["marketplace-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter", "fsm-workflow", "ledger", "jev-decision"]
+strategy = "fused"
