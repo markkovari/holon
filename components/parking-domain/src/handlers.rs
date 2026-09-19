@@ -45,10 +45,7 @@ fn create_spot(route: &Route, body: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        audit("spot.create", "deny", &principal.subject, "");
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "spot.create", "");
     let req: SpotReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -169,10 +166,7 @@ fn cancel(route: &Route, id: &str) -> Reply {
     };
     let mut res: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let subject = res.get("subject").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("cancel", &principal, &subject) {
-        audit("reservation.cancel", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("cancel", &principal, &subject), principal, "reservation.cancel", id);
     if res.get("status").and_then(Value::as_str) == Some("cancelled") {
         return Reply::err(400, "already cancelled");
     }
@@ -221,10 +215,7 @@ fn seed_lot(route: &Route) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        audit("lot.seed", "deny", &principal.subject, "");
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "lot.seed", "");
     let already = matches!(
         records::find_by("meta", "kind", "\"lot_seeded\""),
         Ok(entries) if !entries.is_empty()
@@ -320,10 +311,7 @@ fn spot_history(route: &Route, id: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        audit("spot.history", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "spot.history", id);
     if records::get("spots", id).is_err() {
         return Reply::err(404, "not_found");
     }

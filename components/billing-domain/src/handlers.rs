@@ -144,10 +144,7 @@ fn send_invoice(route: &Route, id: &str) -> Reply {
     };
     let mut inv: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = inv.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("edit", &principal, &owner) {
-        audit("invoice.send", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "invoice.send", id);
     if inv.get("status").and_then(Value::as_str) != Some("draft") {
         return Reply::err(400, "only a draft invoice can be sent");
     }
@@ -169,10 +166,7 @@ fn pay_invoice(route: &Route, id: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        audit("invoice.pay", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "invoice.pay", id);
     let entry = match records::get("invoices", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

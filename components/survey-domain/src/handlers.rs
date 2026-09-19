@@ -42,10 +42,7 @@ fn create_survey(route: &Route, body: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        audit("survey.create", "deny", &principal.subject, "");
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.create", "");
     let req: SurveyReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -170,10 +167,7 @@ fn results(route: &Route, id: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        audit("survey.results", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.results", id);
     if records::get("surveys", id).is_err() {
         return Reply::err(404, "not_found");
     }
@@ -209,10 +203,7 @@ fn close_survey(route: &Route, id: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        audit("survey.close", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.close", id);
     let entry = match records::get("surveys", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

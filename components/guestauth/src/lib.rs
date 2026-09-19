@@ -393,6 +393,24 @@ macro_rules! guest_owner_or_admin_policy {
     };
 }
 
+/// Refuse with an audited 403 unless `$cond` holds — the same three lines
+/// every RBAC/ABAC check in every SaaS app here writes before its real work:
+/// `is_admin(&principal)`, `owns_or_admin("edit", &principal, &owner)`, or a
+/// domain's own bespoke rule (`timesheet-domain`'s `enforce(...)` call) all
+/// fit, since `$cond` is any boolean expression. A few call sites across
+/// these apps skipped the audit call on denial before this existed — an
+/// inconsistency this closes rather than preserves, since a 403 with no
+/// audit trail is a gap in exactly the record `audit:log` exists for.
+#[macro_export]
+macro_rules! guest_deny_unless {
+    ($cond:expr, $principal:expr, $event:expr, $detail:expr) => {
+        if !($cond) {
+            audit($event, "deny", &$principal.subject, $detail);
+            return Reply::err(403, "forbidden");
+        }
+    };
+}
+
 /// Define `entries_json`: a page of `records:store` entries as a JSON array,
 /// each entry's stored id merged into its own document — the same helper
 /// `billing-domain`, `crm-domain`, `ats-domain`, `timesheet-domain`,

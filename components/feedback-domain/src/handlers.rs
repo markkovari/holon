@@ -123,9 +123,7 @@ fn set_status(route: &Route, id: &str, body: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "post.status", id);
     let entry = match records::get("posts", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
@@ -157,10 +155,7 @@ fn delete_post(route: &Route, id: &str) -> Reply {
     };
     let post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let author = post.get("author").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("delete", &principal, &author) {
-        audit("post.delete", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("delete", &principal, &author), principal, "post.delete", id);
     match records::delete("posts", id) {
         Ok(()) => {
             audit("post.delete", "allow", &principal.subject, id);
