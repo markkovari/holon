@@ -4,16 +4,10 @@
 //! `crm-domain` enforce their own ownership rule. Approving or rejecting a
 //! report is `admin`-only, checked directly against `principal.roles` — a
 //! role, not a row, decides that one (mirrors `billing-domain::pay_invoice`).
-//!
-//! GOAL (`.comp/goals/expense-report.toml`): this file is UNIMPLEMENTED. The
-//! five handlers below return `501`. The dispatch table, the ABAC helper
-//! (`owns_or_admin`, from `guest_owner_or_admin_policy!` below), and every
-//! import already wired are not the part being asked for — fill in the
-//! bodies.
 
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
-use crate::{Reply, Route};
+use crate::{audit, introspect, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
 const POLICY_DOMAIN: &str = "reports";
@@ -33,7 +27,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
 }
 
 /// `{"amount": <u32 cents>, "note": <string>}`.
-#[allow(dead_code)]
 #[derive(serde::Deserialize)]
 struct ReportReq {
     #[serde(default)]
@@ -46,42 +39,121 @@ struct ReportReq {
 /// Stores it in the `reports` collection with `status: "submitted"` and
 /// `employee` set to the caller's subject.
 fn create_report(route: &Route, body: &str) -> Reply {
-    let _ = (route, body);
-    Reply::err(501, "not_implemented: create a report with status \"submitted\", employee = caller's subject")
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let req: ReportReq = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Reply::err(400, "bad_json"),
+    };
+    if req.amount == 0 {
+        return Reply::err(400, "amount is required");
+    }
+    let data = json!({
+        "employee": principal.subject,
+        "amount": req.amount,
+        "note": req.note,
+        "status": "submitted",
+    })
+    .to_string();
+    match records::create("reports", &data, &["employee".to_string()]) {
+        Ok(entry) => {
+            audit("report.create", "allow", &principal.subject, &entry.id);
+            Reply::json(201, json!({"id": entry.id, "status": "submitted"}))
+        }
+        Err(_) => Reply::err(500, "store_error"),
+    }
 }
 
 /// `admin` sees every report; an `employee` sees only their own
 /// (`records::find_by("reports", "employee", ...)`, the same shape as
 /// `billing-domain::list_invoices`).
 fn list_reports(route: &Route) -> Reply {
-    let _ = route;
-    Reply::err(501, "not_implemented: admin sees every report, employee sees only their own")
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let result = if is_admin(&principal) {
+        records::list_records("reports", 100, "").map(|p| p.entries)
+    } else {
+        let employee_json = serde_json::to_string(&principal.subject).unwrap_or_default();
+        records::find_by("reports", "employee", &employee_json)
+    };
+    match result {
+        Ok(entries) => Reply::json(200, json!({"reports": entries_json(&entries)})),
+        Err(_) => Reply::err(500, "store_error"),
+    }
 }
 
 /// `owns_or_admin("view", ...)` gates this — the report's own `employee`, or
 /// an admin.
 fn get_report(route: &Route, id: &str) -> Reply {
-    let _ = (route, id);
-    Reply::err(501, "not_implemented: owns_or_admin gates this by the report's employee field")
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let entry = match records::get("reports", id) {
+        Ok(e) => e,
+        Err(_) => return Reply::err(404, "not_found"),
+    };
+    let mut report: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    let employee = report.get("employee").and_then(Value::as_str).unwrap_or("").to_string();
+    if !owns_or_admin("view", &principal, &employee) {
+        audit("report.view", "deny", &principal.subject, id);
+        return Reply::err(403, "forbidden");
+    }
+    if let Value::Object(ref mut m) = report {
+        m.insert("id".to_string(), json!(entry.id));
+    }
+    Reply::json(200, report)
 }
 
 /// `admin`-only. `submitted -> approved`; refuse a report not currently
 /// `submitted`.
 fn approve_report(route: &Route, id: &str) -> Reply {
-    let _ = (route, id);
-    Reply::err(501, "not_implemented: admin-only, submitted -> approved")
+    transition(route, id, "approved", "report.approve")
 }
 
 /// `admin`-only. `submitted -> rejected`; refuse a report not currently
 /// `submitted`.
 fn reject_report(route: &Route, id: &str) -> Reply {
-    let _ = (route, id);
-    Reply::err(501, "not_implemented: admin-only, submitted -> rejected")
+    transition(route, id, "rejected", "report.reject")
+}
+
+/// The shared `submitted -> <other>` move. Admin-only, checked directly
+/// against the role — unlike `get`/`list`, this isn't about who OWNS the
+/// report (even the employee who filed it cannot approve their own), it's
+/// about who is trusted to sign off on the money.
+fn transition(route: &Route, id: &str, next: &str, action: &str) -> Reply {
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    if !is_admin(&principal) {
+        audit(action, "deny", &principal.subject, id);
+        return Reply::err(403, "forbidden");
+    }
+    let entry = match records::get("reports", id) {
+        Ok(e) => e,
+        Err(_) => return Reply::err(404, "not_found"),
+    };
+    let mut report: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    if report.get("status").and_then(Value::as_str) != Some("submitted") {
+        return Reply::err(400, "only a submitted report can be approved or rejected");
+    }
+    report["status"] = json!(next);
+    match records::update("reports", id, &report.to_string(), entry.revision) {
+        Ok(_) => {
+            audit(action, "allow", &principal.subject, id);
+            Reply::json(200, json!({"id": id, "status": next}))
+        }
+        Err(_) => Reply::err(409, "conflict"),
+    }
 }
 
 /// The stored document with the store's id merged in — same helper
 /// `billing-domain`/`crm-domain` each carry.
-#[allow(dead_code)]
 fn entries_json(entries: &[records::Entry]) -> Vec<Value> {
     entries
         .iter()
