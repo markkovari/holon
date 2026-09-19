@@ -323,7 +323,7 @@ fn list_listings(route: &Route) -> Reply {
     let mut entries = page.entries;
     // "Newest first" is a property of the store's own creation stamp, not of
     // whatever order `list_records` happened to hand the page back in.
-    entries.sort_by(|a, b| b.created.cmp(&a.created));
+    entries.sort_by_key(|a| std::cmp::Reverse(a.created));
 
     let mut listings = Vec::new();
     for entry in entries.iter() {

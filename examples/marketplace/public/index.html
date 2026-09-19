@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Marketplace</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.25rem; }
+  input, textarea { display: block; width: 100%; margin: 0.25rem 0 0.75rem; padding: 0.4rem; box-sizing: border-box; }
+  button { padding: 0.4rem 0.8rem; cursor: pointer; }
+  section { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd; }
+  .muted { color: #888; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<h1>Marketplace</h1>
+<p class="muted">Scaffold — the five decomposed parts (listings, fulfillment, disputes, ledger, messages) are not implemented yet. This page will grow once they are.</p>
+
+<section id="auth">
+  <h2>Sign in</h2>
+  <input id="email" placeholder="email">
+  <input id="password" type="password" placeholder="password">
+  <select id="role"><option value="buyer">buyer</option><option value="vendor">vendor</option><option value="admin">admin</option></select>
+  <button onclick="register()">Register</button>
+  <button onclick="login()">Login</button>
+  <p id="who" class="muted"></p>
+</section>
+
+<section id="placeholders">
+  <p class="muted">Listings, orders, disputes, ledger and messages views land once catalog.rs / fulfillment.rs / trust.rs / ledger.rs / messaging.rs are implemented.</p>
+</section>
+
+<script>
+let token = "";
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({"content-type": "application/json"}, opts.headers || {});
+  if (token) opts.headers["authorization"] = "Bearer " + token;
+  const r = await fetch(path, opts);
+  return r.json().catch(() => ({}));
+}
+async function register() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const role = document.getElementById("role").value;
+  await api("/register", {method: "POST", body: JSON.stringify({email, password, role})});
+  await login();
+}
+async function login() {
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const r = await api("/login", {method: "POST", body: JSON.stringify({email, password})});
+  token = r.access_token || "";
+  const me = await api("/me");
+  document.getElementById("who").textContent = token ? ("signed in as " + me.subject + " (" + (me.roles || []).join(",") + ")") : "sign-in failed";
+}
+</script>
+</body>
+</html>

@@ -303,13 +303,11 @@ fn reputation(route: &Route, subject: &str) -> Reply {
     let order_ids: HashSet<&str> = orders.iter().map(|(_, id, _)| id.as_str()).collect();
 
     let mut fraud_flags = 0u64;
-    let mut earlier_orders = 0u64;
-    for (_, _, order) in &orders {
+    for (earlier_orders, (_, _, order)) in orders.iter().enumerate() {
         let total = order.get("total").map(as_int).unwrap_or(0);
         if earlier_orders == 0 && total > LARGE_ORDER {
             fraud_flags += 1;
         }
-        earlier_orders += 1;
     }
 
     let mut dispute_count = 0u64;
