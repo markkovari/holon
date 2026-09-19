@@ -166,6 +166,13 @@ const DELIBERATE: &[(&str, &str)] = &[
          mock. Swapping the model is a composition, which is the whole point",
     ),
     (
+        "jev:decision/decision",
+        "the same provider boundary for discrete decisions: `typesafe-provider` is \
+         the real Jev API, `jev-decision` a trivial reference impl (mirrors \
+         `llm-inference`'s own built-in mock), `mock-jev-provider` a scripted one \
+         for deterministic tests. Swapping the provider is a composition",
+    ),
+    (
         "ui:assets/files",
         "one bundle per SPA — `console-assets`, `track-assets` — plus the generic \
          `static-assets`. These are app-local by nature (ADR-0089): a bundle is \

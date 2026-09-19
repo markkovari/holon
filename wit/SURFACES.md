@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-125 interfaces.
+126 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -1603,6 +1603,98 @@ Adding a *function* to an interface is compatible; adding a case to a
     }
 
     scan: func() -> list<device>;
+  }
+```
+
+## `jev:decision/decision@0.1.0`
+
+```wit
+  interface decision {
+    variant decision-error {
+      invalid-request(string),
+      provider-denied(string),
+      provider-unavailable(string),
+      bad-response(string),
+    }
+
+    record option-score {
+      label: string,
+      score: u32,
+    }
+
+    record choice-request {
+      state: string,
+      instructions: string,
+      options: list<string>,
+    }
+
+    record choice-result {
+      selected: string,
+      confidence: u32,
+      distribution: list<option-score>,
+      flat: bool,
+    }
+
+    record score-request {
+      state: string,
+      instructions: string,
+      levels: list<string>,
+    }
+
+    record score-result {
+      value: f32,
+      confidence: u32,
+      distribution: list<option-score>,
+    }
+
+    record gate-request {
+      state: string,
+      instructions: string,
+      true-hint: string,
+      false-hint: string,
+    }
+
+    record gate-result {
+      probability: u32,
+    }
+
+    record gate-criteria {
+      true-hint: string,
+      false-hint: string,
+    }
+
+    variant question-kind {
+      choice(list<string>),
+      score(list<string>),
+      gate(gate-criteria),
+    }
+
+    record question {
+      id: string,
+      instructions: string,
+      kind: question-kind,
+    }
+
+    variant answer-kind {
+      choice(choice-result),
+      score(score-result),
+      gate(gate-result),
+    }
+
+    record answered {
+      id: string,
+      outcome: result<answer-kind, decision-error>,
+    }
+
+    choose: func(req: choice-request) -> result<choice-result, decision-error>;
+
+    score: func(req: score-request) -> result<score-result, decision-error>;
+
+    gate: func(req: gate-request) -> result<gate-result, decision-error>;
+
+    evaluate: func(state: string, questions: list<question>) -> result<list<answered>, decision-error>;
+
+    describe: func() -> tuple<string, bool>;
   }
 ```
 
