@@ -1,0 +1,9 @@
+name = "parking"
+access = "tailnet"
+domain = "parking.example.com"
+artifact = "components/target/parking_domain.composed.wasm"
+port = 3938
+static_dir = "examples/parking/public"
+kv = "sqlite"
+components = ["parking-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter"]
+strategy = "fused"
