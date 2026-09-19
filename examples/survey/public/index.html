@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holon Surveys</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #1a1d29; }
+  header { background: #2a1f4d; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input, select, button { font: inherit; padding: 8px 10px; border: 1px solid #d7d9e4; border-radius: 6px; }
+  input, select { width: 100%; margin-bottom: 8px; }
+  button { background: #5b3fd6; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { background: #4a30b8; }
+  button.ghost { background: transparent; color: #5b3fd6; border: 1px solid #5b3fd6; }
+  .survey { border-top: 1px solid #eee; padding: 12px 0; }
+  .survey:first-child { border-top: none; }
+  .q { color: #666; font-size: 13px; margin: 2px 0; }
+  .ans { margin-left: 10px; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .status-open { background: #d4f4dd; color: #157347; }
+  .status-closed { background: #eee; color: #555; }
+  .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
+  [hidden] { display: none !important; }
+  .muted { color: #888; font-size: 13px; }
+  .actions { margin-top: 8px; display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <header><h1>Holon Surveys</h1><span></span></header>
+  <main style="max-width:380px">
+    <section>
+      <h2 id="auth-title">Log in</h2>
+      <input id="email" type="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <select id="role" hidden><option value="respondent">respondent</option><option value="admin">admin</option></select>
+      <button id="submit-btn" onclick="submitAuth()">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="toggle-text">No account?</span>
+        <a href="#" onclick="toggleMode();return false" id="toggle-link">Register</a>
+      </p>
+      <div id="auth-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<div id="app" hidden>
+  <header><h1>Holon Surveys</h1><span id="who"></span> <button class="ghost" onclick="logout()" style="width:auto">Log out</button></header>
+  <main>
+    <section id="create-section" hidden>
+      <h2>New survey</h2>
+      <input id="s-title" placeholder="Title">
+      <input id="s-questions" placeholder="Questions, separated by |">
+      <button onclick="createSurvey()" style="width:auto">Create survey</button>
+    </section>
+
+    <section>
+      <h2>Surveys</h2>
+      <div id="survey-list" class="muted">Loading…</div>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('survey_token') || '';
+let mode = 'login';
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]
+  ));
+}
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submit-btn').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('toggle-text').textContent = mode === 'login' ? 'No account?' : 'Already have one?';
+  document.getElementById('toggle-link').textContent = mode === 'login' ? 'Register' : 'Log in';
+  document.getElementById('role').hidden = mode === 'login';
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({'content-type': 'application/json'}, opts.headers || {});
+  if (token) opts.headers['authorization'] = 'Bearer ' + token;
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+async function submitAuth() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.textContent = '';
+  try {
+    if (mode === 'register') {
+      const role = document.getElementById('role').value;
+      await api('/register', {method: 'POST', body: JSON.stringify({email, password, role})});
+    }
+    const r = await api('/login', {method: 'POST', body: JSON.stringify({email, password})});
+    token = r.access_token;
+    localStorage.setItem('survey_token', token);
+    showApp();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+function logout() {
+  api('/logout', {method: 'POST'}).catch(() => {});
+  token = '';
+  localStorage.removeItem('survey_token');
+  location.reload();
+}
+
+async function showApp() {
+  document.getElementById('auth').hidden = true;
+  document.getElementById('app').hidden = false;
+  let me;
+  try {
+    me = await api('/me');
+    document.getElementById('who').textContent = me.subject + ' (' + (me.roles[0] || 'respondent') + ')';
+  } catch (e) { logout(); return; }
+  window.isAdmin = (me.roles || []).includes('admin');
+  document.getElementById('create-section').hidden = !window.isAdmin;
+  refresh();
+}
+
+async function createSurvey() {
+  const title = document.getElementById('s-title').value.trim();
+  const raw = document.getElementById('s-questions').value;
+  const questions = raw.split('|').map(s => s.trim()).filter(Boolean);
+  if (!title || !questions.length) { alert('Title and at least one question are required.'); return; }
+  try {
+    await api('/api/surveys', {method: 'POST', body: JSON.stringify({title, questions})});
+    document.getElementById('s-title').value = '';
+    document.getElementById('s-questions').value = '';
+    refresh();
+  } catch (e) { alert(String(e.message || e)); }
+}
+
+async function submitResponse(id) {
+  const inputs = Array.from(document.querySelectorAll('input[data-survey="' + id + '"]'));
+  const answers = inputs.map(i => i.value);
+  try {
+    await api('/api/surveys/' + id + '/responses', {method: 'POST', body: JSON.stringify({answers})});
+    refresh();
+  } catch (e) { alert(String(e.message || e)); }
+}
+
+async function closeSurvey(id) {
+  try {
+    await api('/api/surveys/' + id + '/close', {method: 'POST'});
+    refresh();
+  } catch (e) { alert(String(e.message || e)); }
+}
+
+async function viewResults(id) {
+  const el = document.getElementById('results-' + id);
+  try {
+    const r = await api('/api/surveys/' + id + '/results');
+    const rows = (r.responses || []).map(resp => {
+      const ans = (resp.answers || []).map(a => '<div class="q ans">• ' + esc(a) + '</div>').join('');
+      return '<div class="survey"><strong>' + esc(resp.respondent) + '</strong>' + ans + '</div>';
+    }).join('');
+    el.innerHTML = '<div class="muted" style="margin-top:8px">' + (r.response_count || 0) + ' response(s)</div>' + rows;
+  } catch (e) {
+    el.innerHTML = '<div class="err">' + esc(String(e.message || e)) + '</div>';
+  }
+}
+
+async function refresh() {
+  const list = document.getElementById('survey-list');
+  let surveys = [];
+  try {
+    const r = await api('/api/surveys');
+    surveys = r.surveys || [];
+  } catch (e) {
+    list.innerHTML = '<div class="err">' + esc(String(e.message || e)) + '</div>';
+    return;
+  }
+  if (!surveys.length) {
+    list.innerHTML = '<span class="muted">No surveys yet.</span>';
+    return;
+  }
+  list.innerHTML = surveys.map(s => {
+    const qs = s.questions || [];
+    const questionList = qs.map(q => '<div class="q">• ' + esc(q) + '</div>').join('');
+    let answerBlock = '';
+    if (s.status === 'open') {
+      const inputs = qs.map((q, i) =>
+        '<input data-survey="' + esc(s.id) + '" data-q="' + i + '" placeholder="' + esc(q) + '">'
+      ).join('');
+      answerBlock = '<div style="margin-top:8px">' + inputs +
+        '<button onclick="submitResponse(\'' + s.id + '\')" style="width:auto">Submit response</button></div>';
+    }
+    let adminActions = '';
+    if (window.isAdmin) {
+      adminActions += '<button class="ghost" onclick="viewResults(\'' + s.id + '\')" style="width:auto">Results</button>';
+      if (s.status === 'open') {
+        adminActions += '<button class="ghost" onclick="closeSurvey(\'' + s.id + '\')" style="width:auto">Close</button>';
+      }
+    }
+    return '<div class="survey">' +
+      '<div><strong>' + esc(s.title) + '</strong> ' +
+      '<span class="status status-' + esc(s.status) + '">' + esc(s.status) + '</span></div>' +
+      questionList +
+      answerBlock +
+      (adminActions ? '<div class="actions">' + adminActions + '</div>' : '') +
+      '<div id="results-' + esc(s.id) + '"></div>' +
+      '</div>';
+  }).join('');
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>
