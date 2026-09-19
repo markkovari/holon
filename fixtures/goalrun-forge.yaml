@@ -23,6 +23,18 @@ components:
   - id: selector
     host_needs: []
 
+  # `land`'s Jev advisory (see `graph-selector`'s module doc) — mocked here for
+  # the same reason `goalrun.rs`'s own `artifacts()` defaults to
+  # `mock_jev_provider.wasm`: this demo/self-host path stays free and
+  # deterministic. A real `typesafe-provider` + a secret is a deployment
+  # choice, not this default.
+  - id: jev
+    config:
+      mock-model: mock-jev-1
+      mock-script: '{"rules": [{"when": "*", "probability": 0.05}]}'
+    host_needs:
+      - wasi:config/store
+
   - id: forge
     config:
       forge-repo: FORGE_REPO
@@ -45,6 +57,9 @@ links:
   - from: selector
     import: git:forge/repo@0.1.0
     to: forge
+  - from: selector
+    import: jev:decision/decision@0.1.0
+    to: jev
 
 ingress:
   host: goalland.acme.test
