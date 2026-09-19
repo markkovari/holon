@@ -1,0 +1,38 @@
+# The real DeepSeek API behind `openai-provider`, unchanged: DeepSeek speaks
+# the OpenAI chat-completions contract (base URL `https://api.deepseek.com`,
+# no `/v1` — confirmed against their own quick-start docs), so this is a
+# config swap, not a new provider. The key comes from the vault (ADR-0010),
+# never from this file — see `reconciler/tests/deepseek_live.rs`.
+
+version: comp/v1
+app: llm
+tenant: acme
+strategy: linked
+
+components:
+  - id: gate
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: llm
+    config:
+      openai:base-url: https://api.deepseek.com
+      openai:model: deepseek-flash
+    secrets:
+      - key: openai-api-key
+        ref: vault://acme/deepseek
+    host_needs:
+      - wasi:http/outgoing-handler
+      - wasi:config/store
+      - comp:secrets/reader
+    egress:
+      - api.deepseek.com:443
+
+links:
+  - from: gate
+    import: llm:inference/inference@0.1.0
+    to: llm
+
+ingress:
+  host: llm.acme.test
+  component: gate
