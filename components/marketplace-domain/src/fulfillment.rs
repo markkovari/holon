@@ -4,7 +4,7 @@ use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::ledger::doubleentry::ledger;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
-use crate::{is_admin, Reply, Route};
+use crate::{audit, is_admin, Reply, Route};
 use serde_json::{json, Value};
 
 /// The authenticated principal, or an early `401` — wraps the same
@@ -84,6 +84,7 @@ fn pay(route: &Route, order_id: &str) -> Reply {
     let order: Value = serde_json::from_str(&order_entry.data).unwrap_or(json!({}));
     let buyer = order.get("buyer").and_then(Value::as_str).unwrap_or("");
     if principal.subject != buyer {
+        audit("payment.pay", "deny", &principal.subject, order_id);
         return Reply::err(403, "forbidden");
     }
     if !can_fire("order", order_id, "pay") {
@@ -152,6 +153,7 @@ fn pay(route: &Route, order_id: &str) -> Reply {
     if records::create("ledger_entries", &stored.to_string(), &[]).is_err() {
         return Reply::err(500, "store_error");
     }
+    audit("payment.pay", "allow", &principal.subject, order_id);
     Reply::json(200, json!({"order_id": order_id, "status": "paid"}))
 }
 
@@ -163,6 +165,7 @@ fn ship(route: &Route, order_id: &str, body: &str) -> Reply {
     };
     let order: Value = serde_json::from_str(&order_entry.data).unwrap_or(json!({}));
     if !is_admin(&principal) && !order_has_vendor(&order, principal.subject.as_str()) {
+        audit("order.ship", "deny", &principal.subject, order_id);
         return Reply::err(403, "forbidden");
     }
     if !can_fire("order", order_id, "ship") {
@@ -189,12 +192,14 @@ fn ship(route: &Route, order_id: &str, body: &str) -> Reply {
     if fsm::fire("order", order_id, "ship").is_err() {
         return Reply::err(409, "illegal_transition");
     }
+    audit("order.ship", "allow", &principal.subject, order_id);
     Reply::json(200, json!({"id": shipment_id, "order_id": order_id, "status": "in_transit"}))
 }
 
 fn deliver(route: &Route, shipment_id: &str) -> Reply {
     let principal = authenticated!(route);
     if !is_admin(&principal) {
+        audit("shipment.deliver", "deny", &principal.subject, shipment_id);
         return Reply::err(403, "forbidden");
     }
     let shipment_entry = match records::get("shipments", shipment_id) {
@@ -216,12 +221,14 @@ fn deliver(route: &Route, shipment_id: &str) -> Reply {
     if fsm::fire("shipment", shipment_id, "deliver").is_err() {
         return Reply::json(409, json!({"error": "illegal_transition", "machine": "shipment"}));
     }
+    audit("shipment.deliver", "allow", &principal.subject, shipment_id);
     Reply::json(200, json!({"id": shipment_id, "order_id": order_id, "status": "delivered"}))
 }
 
 fn refund(route: &Route, order_id: &str, body: &str) -> Reply {
     let principal = authenticated!(route);
     if !is_admin(&principal) {
+        audit("payment.refund", "deny", &principal.subject, order_id);
         return Reply::err(403, "forbidden");
     }
     let order_entry = match records::get("orders", order_id) {
@@ -292,6 +299,7 @@ fn refund(route: &Route, order_id: &str, body: &str) -> Reply {
     if records::create("ledger_entries", &stored.to_string(), &[]).is_err() {
         return Reply::err(500, "store_error");
     }
+    audit("payment.refund", "allow", &principal.subject, order_id);
     Reply::json(200, json!({"order_id": order_id, "refunded_amount": refunded + amount}))
 }
 
@@ -304,6 +312,7 @@ fn request_return(route: &Route, order_id: &str, body: &str) -> Reply {
     let order: Value = serde_json::from_str(&order_entry.data).unwrap_or(json!({}));
     let buyer = order.get("buyer").and_then(Value::as_str).unwrap_or("");
     if principal.subject != buyer {
+        audit("return.request", "deny", &principal.subject, order_id);
         return Reply::err(403, "forbidden");
     }
     let delivered = matches!(
@@ -327,12 +336,15 @@ fn request_return(route: &Route, order_id: &str, body: &str) -> Reply {
     if fsm::create_instance("return", &return_id).is_err() {
         return Reply::err(500, "fsm_error");
     }
+    audit("return.request", "allow", &principal.subject, &return_id);
     Reply::json(201, json!({"id": return_id, "order_id": order_id, "status": "requested"}))
 }
 
 fn decide_return(route: &Route, return_id: &str, approve: bool) -> Reply {
     let principal = authenticated!(route);
+    let event_name = if approve { "return.approve" } else { "return.reject" };
     if !is_admin(&principal) {
+        audit(event_name, "deny", &principal.subject, return_id);
         return Reply::err(403, "forbidden");
     }
     if records::get("returns", return_id).is_err() {
@@ -342,5 +354,6 @@ fn decide_return(route: &Route, return_id: &str, approve: bool) -> Reply {
     if fsm::fire("return", return_id, event).is_err() {
         return Reply::err(409, "illegal_transition");
     }
+    audit(event_name, "allow", &principal.subject, return_id);
     Reply::json(200, json!({"id": return_id, "status": state}))
 }
