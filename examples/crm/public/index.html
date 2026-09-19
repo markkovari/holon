@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holon CRM</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #1a1d29; }
+  header { background: #1a1d29; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  #who { font-size: 13px; color: #b8bcd4; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input, select, button, textarea { font: inherit; padding: 8px 10px; border: 1px solid #d7d9e4; border-radius: 6px; }
+  input, select, textarea { width: 100%; margin-bottom: 8px; }
+  button { background: #4a4de7; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { background: #3a3dd0; }
+  button.ghost { background: transparent; color: #4a4de7; border: 1px solid #4a4de7; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
+  .stage { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .stage-lead { background: #e8e9fb; color: #4a4de7; }
+  .stage-qualified { background: #fff3cd; color: #916800; }
+  .stage-proposal { background: #cde7ff; color: #0a5ea8; }
+  .stage-won { background: #d4f4dd; color: #157347; }
+  .stage-lost { background: #fbdcdc; color: #b02a2a; }
+  .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
+  [hidden] { display: none !important; }
+  .muted { color: #888; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="auth" class="auth-screen">
+  <header><h1>Holon CRM</h1><span></span></header>
+  <main style="max-width:380px">
+    <section>
+      <h2 id="auth-title">Log in</h2>
+      <input id="email" type="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <select id="role" hidden><option value="rep">rep</option><option value="admin">admin</option></select>
+      <button id="submit-btn" onclick="submitAuth()">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="toggle-text">No account?</span>
+        <a href="#" onclick="toggleMode();return false" id="toggle-link">Register</a>
+      </p>
+      <div id="auth-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<div id="app" hidden>
+  <header><h1>Holon CRM</h1><span id="who"></span> <button class="ghost" onclick="logout()" style="width:auto">Log out</button></header>
+  <main>
+    <section>
+      <h2>New contact</h2>
+      <div class="row">
+        <input id="c-name" placeholder="Name">
+        <input id="c-email" placeholder="Email">
+        <input id="c-company" placeholder="Company">
+        <button onclick="createContact()" style="max-width:120px">Add</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Contacts</h2>
+      <table id="contacts-table"><thead><tr><th>Name</th><th>Email</th><th>Company</th></tr></thead><tbody></tbody></table>
+    </section>
+
+    <section>
+      <h2>New deal</h2>
+      <div class="row">
+        <input id="d-title" placeholder="Deal title">
+        <input id="d-amount" type="number" placeholder="Amount">
+        <button onclick="createDeal()" style="max-width:120px">Add</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Deals</h2>
+      <table id="deals-table"><thead><tr><th>Title</th><th>Amount</th><th>Owner</th><th>Stage</th><th></th></tr></thead><tbody></tbody></table>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('crm_token') || '';
+let mode = 'login';
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submit-btn').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('toggle-text').textContent = mode === 'login' ? 'No account?' : 'Already have one?';
+  document.getElementById('toggle-link').textContent = mode === 'login' ? 'Register' : 'Log in';
+  document.getElementById('role').hidden = mode === 'login';
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({'content-type': 'application/json'}, opts.headers || {});
+  if (token) opts.headers['authorization'] = 'Bearer ' + token;
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+async function submitAuth() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.textContent = '';
+  try {
+    if (mode === 'register') {
+      const role = document.getElementById('role').value;
+      await api('/register', {method: 'POST', body: JSON.stringify({email, password, role})});
+    }
+    const r = await api('/login', {method: 'POST', body: JSON.stringify({email, password})});
+    token = r.access_token;
+    localStorage.setItem('crm_token', token);
+    showApp();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+function logout() {
+  api('/logout', {method: 'POST'}).catch(() => {});
+  token = '';
+  localStorage.removeItem('crm_token');
+  location.reload();
+}
+
+async function showApp() {
+  document.getElementById('auth').hidden = true;
+  document.getElementById('app').hidden = false;
+  try {
+    const me = await api('/me');
+    document.getElementById('who').textContent = me.subject + ' (' + (me.roles[0] || 'rep') + ')';
+  } catch (e) { logout(); return; }
+  refresh();
+}
+
+async function createContact() {
+  const name = document.getElementById('c-name').value;
+  const email = document.getElementById('c-email').value;
+  const company = document.getElementById('c-company').value;
+  if (!name) return;
+  await api('/api/contacts', {method: 'POST', body: JSON.stringify({name, email, company})});
+  document.getElementById('c-name').value = '';
+  document.getElementById('c-email').value = '';
+  document.getElementById('c-company').value = '';
+  refresh();
+}
+
+async function createDeal() {
+  const title = document.getElementById('d-title').value;
+  const amount = parseFloat(document.getElementById('d-amount').value || '0');
+  if (!title) return;
+  await api('/api/deals', {method: 'POST', body: JSON.stringify({title, amount})});
+  document.getElementById('d-title').value = '';
+  document.getElementById('d-amount').value = '';
+  refresh();
+}
+
+async function moveStage(id, stage) {
+  await api(`/api/deals/${id}/stage`, {method: 'POST', body: JSON.stringify({stage})});
+  refresh();
+}
+
+const NEXT_STAGE = {lead: 'qualified', qualified: 'proposal', proposal: 'won'};
+
+async function refresh() {
+  const contacts = await api('/api/contacts');
+  const tbody = document.querySelector('#contacts-table tbody');
+  tbody.innerHTML = (contacts.contacts || []).map(c =>
+    `<tr><td>${c.name}</td><td>${c.email || ''}</td><td>${c.company || ''}</td></tr>`
+  ).join('');
+
+  const deals = await api('/api/deals');
+  const dtbody = document.querySelector('#deals-table tbody');
+  dtbody.innerHTML = (deals.deals || []).map(d => {
+    const next = NEXT_STAGE[d.stage];
+    const btn = next ? `<button onclick="moveStage('${d.id}','${next}')" style="width:auto">-> ${next}</button>` : '';
+    return `<tr><td>${d.title}</td><td>$${d.amount || 0}</td><td>${d.owner}</td>` +
+      `<td><span class="stage stage-${d.stage}">${d.stage}</span></td><td>${btn}</td></tr>`;
+  }).join('');
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>

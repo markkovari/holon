@@ -1,0 +1,31 @@
+[package]
+name = "capability-advisor"
+description = "HTTP door onto jev:decision::evaluate for capability-discovery confirmation (comp:advisor)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+guestio = { path = "../guestio" }
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "comp:advisor"
+
+[package.metadata.component.target]
+path = "wit"
+world = "capability-advisor"
+
+[package.metadata.component.target.dependencies]
+"jev:decision" = { path = "../jev-decision/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }

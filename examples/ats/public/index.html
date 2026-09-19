@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holon ATS</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #1a1d29; }
+  header { background: #2e1a3d; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input, select, button { font: inherit; padding: 8px 10px; border: 1px solid #d7d9e4; border-radius: 6px; }
+  input, select { width: 100%; margin-bottom: 8px; }
+  button { background: #7c3aed; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { background: #6829d6; }
+  button.ghost { background: transparent; color: #7c3aed; border: 1px solid #7c3aed; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
+  .stage { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; background: #ece3fb; color: #6829d6; }
+  .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
+  [hidden] { display: none !important; }
+  .muted { color: #888; font-size: 13px; }
+  code { background: #f0f0f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <header><h1>Holon ATS</h1><span></span></header>
+  <main style="max-width:380px">
+    <section>
+      <h2 id="auth-title">Log in</h2>
+      <input id="email" type="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <select id="role" hidden><option value="interviewer">interviewer</option><option value="admin">admin</option></select>
+      <button id="submit-btn" onclick="submitAuth()">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="toggle-text">No account?</span>
+        <a href="#" onclick="toggleMode();return false" id="toggle-link">Register</a>
+      </p>
+      <div id="auth-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<div id="app" hidden>
+  <header><h1>Holon ATS</h1><span id="who"></span> <button class="ghost" onclick="logout()" style="width:auto">Log out</button></header>
+  <main>
+    <section id="new-posting">
+      <h2>New posting <span class="muted">(admin only)</span></h2>
+      <div class="row">
+        <input id="p-title" placeholder="Title">
+        <input id="p-assigned" placeholder="Assigned interviewer subject id">
+        <button onclick="createPosting()" style="max-width:120px">Add</button>
+      </div>
+      <p class="muted">A subject id looks like <code>usr_...</code> — copy it from an interviewer's "My subject id" line below after they register.</p>
+    </section>
+
+    <section>
+      <h2>My subject id</h2>
+      <p><code id="my-subject"></code></p>
+    </section>
+
+    <section>
+      <h2>Postings</h2>
+      <table id="postings-table"><thead><tr><th>Title</th><th>Assigned to</th><th></th></tr></thead><tbody></tbody></table>
+    </section>
+
+    <section id="candidates-section" hidden>
+      <h2>Candidates for <span id="posting-title"></span></h2>
+      <div class="row">
+        <input id="cand-name" placeholder="Candidate name">
+        <input id="cand-email" placeholder="Email">
+        <button onclick="addCandidate()" style="max-width:120px">Add</button>
+      </div>
+      <table id="candidates-table"><thead><tr><th>Name</th><th>Stage</th><th></th></tr></thead><tbody></tbody></table>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('ats_token') || '';
+let mode = 'login';
+let currentPosting = null;
+const NEXT_STAGE = {applied: 'screening', screening: 'interview', interview: 'offer', offer: 'hired'};
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submit-btn').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('toggle-text').textContent = mode === 'login' ? 'No account?' : 'Already have one?';
+  document.getElementById('toggle-link').textContent = mode === 'login' ? 'Register' : 'Log in';
+  document.getElementById('role').hidden = mode === 'login';
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({'content-type': 'application/json'}, opts.headers || {});
+  if (token) opts.headers['authorization'] = 'Bearer ' + token;
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+async function submitAuth() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.textContent = '';
+  try {
+    if (mode === 'register') {
+      const role = document.getElementById('role').value;
+      await api('/register', {method: 'POST', body: JSON.stringify({email, password, role})});
+    }
+    const r = await api('/login', {method: 'POST', body: JSON.stringify({email, password})});
+    token = r.access_token;
+    localStorage.setItem('ats_token', token);
+    showApp();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+function logout() {
+  api('/logout', {method: 'POST'}).catch(() => {});
+  token = '';
+  localStorage.removeItem('ats_token');
+  location.reload();
+}
+
+async function showApp() {
+  document.getElementById('auth').hidden = true;
+  document.getElementById('app').hidden = false;
+  let me;
+  try {
+    me = await api('/me');
+    document.getElementById('who').textContent = me.subject + ' (' + (me.roles[0] || 'interviewer') + ')';
+    document.getElementById('my-subject').textContent = me.subject;
+  } catch (e) { logout(); return; }
+  window.isAdmin = (me.roles || []).includes('admin');
+  document.getElementById('new-posting').hidden = !window.isAdmin;
+  refresh();
+}
+
+async function createPosting() {
+  const title = document.getElementById('p-title').value;
+  const assigned_to = document.getElementById('p-assigned').value;
+  if (!title) return;
+  await api('/api/postings', {method: 'POST', body: JSON.stringify({title, assigned_to})});
+  document.getElementById('p-title').value = '';
+  document.getElementById('p-assigned').value = '';
+  refresh();
+}
+
+async function openPosting(id, title) {
+  currentPosting = id;
+  document.getElementById('posting-title').textContent = title;
+  document.getElementById('candidates-section').hidden = false;
+  const r = await api(`/api/postings/${id}/candidates`);
+  const tbody = document.querySelector('#candidates-table tbody');
+  tbody.innerHTML = (r.candidates || []).map(c => {
+    const next = NEXT_STAGE[c.stage];
+    const btn = next ? `<button onclick="moveStage('${c.id}','${next}')" style="width:auto">-> ${next}</button>` : '';
+    return `<tr><td>${c.name}</td><td><span class="stage">${c.stage}</span></td><td>${btn}</td></tr>`;
+  }).join('');
+}
+
+async function addCandidate() {
+  const name = document.getElementById('cand-name').value;
+  const email = document.getElementById('cand-email').value;
+  if (!name || !currentPosting) return;
+  await api(`/api/postings/${currentPosting}/candidates`, {method: 'POST', body: JSON.stringify({name, email})});
+  document.getElementById('cand-name').value = '';
+  document.getElementById('cand-email').value = '';
+  openPosting(currentPosting, document.getElementById('posting-title').textContent);
+}
+
+async function moveStage(id, stage) {
+  await api(`/api/candidates/${id}/stage`, {method: 'POST', body: JSON.stringify({stage})});
+  openPosting(currentPosting, document.getElementById('posting-title').textContent);
+}
+
+async function refresh() {
+  const r = await api('/api/postings');
+  const tbody = document.querySelector('#postings-table tbody');
+  tbody.innerHTML = (r.postings || []).map(p =>
+    `<tr><td>${p.title}</td><td><code>${p.assigned_to}</code></td><td><button onclick="openPosting('${p.id}','${p.title}')" style="width:auto">Open</button></td></tr>`
+  ).join('');
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>

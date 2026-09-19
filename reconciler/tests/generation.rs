@@ -168,6 +168,7 @@ fn artifacts() -> Vec<String> {
         ("sprobe", "select_probe.wasm"),
         ("gselect", "graph_selector.wasm"),
         ("gforge", "github_forge.wasm"),
+        ("gjev", "mock_jev_provider.wasm"),
     ] {
         let p = dir.join(file);
         assert!(p.exists(), "missing {} — run `cargo xtask build --force`", p.display());

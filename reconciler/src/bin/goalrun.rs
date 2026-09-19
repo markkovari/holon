@@ -96,6 +96,15 @@ pub struct Args {
     /// takes unauthenticated writes, which is a legitimate local setup.
     #[arg(long)]
     surreal_password: Option<PathBuf>,
+    /// A `capability-advisor` instance (see `components/capability-advisor`),
+    /// e.g. `http://127.0.0.1:8300`.
+    ///
+    /// OPT-IN, and absent by default — same shape as `--surreal-url`. Given
+    /// one, `search_the_pool`'s lexical hits each get one Jev question before
+    /// they reach `POOL.md`; absent, or unreachable, every hit is trusted
+    /// exactly as it is today. Never blocks a run either way.
+    #[arg(long)]
+    capability_advisor_url: Option<String>,
     /// Forget entries nothing has read in this many days. 0 turns decay off.
     ///
     /// Swept by the run that uses the pool, because a decay nothing drives is the
@@ -604,6 +613,11 @@ pub fn artifacts(provider: &str) -> Result<Vec<String>> {
         ("gate", "checks_runner.wasm"),
         ("sprobe", "select_probe.wasm"),
         ("selector", "graph_selector.wasm"),
+        // `graph-selector::land`'s Jev advisory (see its module doc) — mocked
+        // here for the same reason `mllm` is: the demo path stays free and
+        // deterministic. A real `typesafe_provider.wasm` + a secret is a
+        // deployment choice, not this demo's default.
+        ("jev", "mock_jev_provider.wasm"),
         ("forge", "github_forge.wasm"),
     ] {
         let p = dir.join(file);
@@ -1483,7 +1497,12 @@ fn main() -> Result<()> {
     // question mandatory in both directions, and the path that decomposes a goal
     // into parts is the one where "does this already exist" is asked per PART and
     // therefore most likely to be answered yes.
-    let reuse = pool::search_the_pool(&goal.text, &run, trace.as_ref());
+    let (reuse, capability_confirmed) = pool::search_the_pool(
+        &goal.text,
+        &run,
+        trace.as_ref(),
+        args.capability_advisor_url.as_deref(),
+    );
 
     // --- a DECOMPOSED goal ---------------------------------------------------
     //
@@ -1505,6 +1524,7 @@ fn main() -> Result<()> {
             seed,
             trace.as_ref(),
             &reuse,
+            capability_confirmed.as_ref(),
         );
     }
 
@@ -1538,7 +1558,7 @@ fn main() -> Result<()> {
         Bounds { branches: args.branches, max_rounds: args.rounds, max_tokens: 0, patience: 0 };
 
     let mut plan = plan;
-    if let Some(entry) = pool::pool_context(&reuse) {
+    if let Some(entry) = pool::pool_context(&reuse, capability_confirmed.as_ref()) {
         if let Some(ctx) = plan["context"].as_array_mut() {
             ctx.push(entry);
         }
@@ -1832,6 +1852,9 @@ fn decomposed(
     // What the catalogue answered about this goal, searched by the caller so one
     // run asks once and both paths ask at all (ADR-0094).
     reuse: &[comp_reconciler::capsearch::Capability],
+    // Which of `reuse` a capability-advisor confirmed, if one was configured
+    // and reachable — `None` means every hit is trusted unfiltered.
+    capability_confirmed: Option<&std::collections::BTreeSet<String>>,
 ) -> Result<()> {
     let registry = Registry {
         url: format!("http://127.0.0.1:{port}"),
@@ -1905,7 +1928,7 @@ fn decomposed(
     // Every part's context, not one branch's: a decomposed run has no single branch
     // to put this in, and a part that reimplements `auth-guard` fails ADR-0089's
     // gate whether or not anyone told it the component exists.
-    let pool_entry = pool::pool_context(reuse);
+    let pool_entry = pool::pool_context(reuse, capability_confirmed);
 
     let parts: Vec<Part> = goal
         .parts

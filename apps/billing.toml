@@ -1,0 +1,9 @@
+name = "billing"
+access = "tailnet"
+domain = "billing.example.com"
+artifact = "components/target/billing_domain.composed.wasm"
+port = 3931
+static_dir = "examples/billing/public"
+kv = "sqlite"
+components = ["billing-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter"]
+strategy = "fused"

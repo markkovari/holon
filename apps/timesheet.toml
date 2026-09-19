@@ -1,0 +1,9 @@
+name = "timesheet"
+access = "tailnet"
+domain = "timesheet.example.com"
+artifact = "components/target/timesheet_domain.composed.wasm"
+port = 3933
+static_dir = "examples/timesheet/public"
+kv = "sqlite"
+components = ["timesheet-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter"]
+strategy = "fused"

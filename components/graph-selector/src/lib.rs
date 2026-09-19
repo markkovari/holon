@@ -20,14 +20,28 @@
 //! The attempt log. A selector given "this branch tried nine times" would sooner
 //! or later reward persistence, and how hard a branch worked is not a property of
 //! the code it produced.
+//!
+//! ## The Jev advisory
+//!
+//! `land` asks `jev:decision/decision::gate` one question about the winner,
+//! AFTER `decide()` has already picked it: does this look like a stub, a
+//! deletion of existing functionality, or otherwise a failure to implement the
+//! goal, rather than a genuine attempt? This is deliberately NOT a second
+//! selection signal — `decide()` runs first, is not passed the answer, and
+//! cannot be. It is a note on the PR the deterministic gate already accepted,
+//! the same way `because` is: something a person reads, never something the
+//! code that already decided the winner acts on. A Jev failure (timeout, rate
+//! limit, a bad key) never blocks `land` — it becomes the least interesting
+//! possible line in the PR body, not an error.
 
 #[allow(warnings)]
 mod bindings;
 
 use bindings::exports::graph::select::selector::{
-    Chosen, Decision, Entry, Guest, LandError, Landing, Opened, Outcome, SelectError,
+    Chosen, Decision, Entry, File, Guest, LandError, Landing, Opened, Outcome, SelectError,
 };
 use bindings::git::forge::repo as forge;
+use bindings::jev::decision::decision::{self as jev, DecisionError, GateRequest, GateResult};
 
 struct Component;
 
@@ -63,6 +77,90 @@ fn because(winner: &Entry, runner_up: Option<&Entry>) -> String {
         // generation had two equally good branches, which is worth knowing and
         // is invisible if the report only names a winner.
         format!("indistinguishable from {}, and it came first", other.branch)
+    }
+}
+
+/// Milli-probability, 0..=1000. At or above this, the advisory line becomes a
+/// visible warning rather than a quiet confirmation.
+const CONCERN_THRESHOLD: u32 = 500;
+
+/// A cheap sanity check, not a code review — the winner's files are capped
+/// here rather than sent in full, since noticing "this looks suspiciously
+/// empty or stubbed" needs far less than every byte of a large candidate.
+const STATE_BYTE_CAP: usize = 20_000;
+
+/// The winning candidate's files, as the `state` a Noul question judges. Capped
+/// and truncated rather than sent whole, and truncation is said out loud —
+/// a truncated file must never be mistaken for a short one.
+fn advisory_state(files: &[File]) -> String {
+    let mut out = String::new();
+    for (i, f) in files.iter().enumerate() {
+        let header = format!("=== {} ===\n", f.path);
+        if out.len() + header.len() + f.content.len() > STATE_BYTE_CAP {
+            out.push_str(&format!(
+                "=== truncated: {} more file(s) omitted ===\n",
+                files.len() - i
+            ));
+            break;
+        }
+        out.push_str(&header);
+        out.push_str(&f.content);
+        out.push('\n');
+    }
+    out
+}
+
+/// The Noul question `land` asks about the winner, before it ever reaches the
+/// forge. `instructions` names the goal from `p.title` (the only field a
+/// caller is guaranteed to have filled with something short); `p.body` is the
+/// fallback, truncated, since it can be arbitrarily long free text.
+fn advisory_request(winner: &Entry, p: &Landing) -> GateRequest {
+    let goal = if !p.title.is_empty() {
+        p.title.clone()
+    } else {
+        p.body.chars().take(200).collect()
+    };
+    GateRequest {
+        state: advisory_state(&winner.files),
+        instructions: format!(
+            "The goal was: {goal}. Does the code below look like a stub, a \
+             deletion of existing functionality, or otherwise fail to \
+             implement the goal — rather than a genuine, substantive attempt \
+             at it?"
+        ),
+        true_hint: "The files are empty, trivially stubbed, mostly deletions, \
+            or otherwise do not implement what the goal asked for."
+            .to_string(),
+        false_hint: "The files contain a genuine, substantive attempt to \
+            implement the goal, even if imperfect."
+            .to_string(),
+    }
+}
+
+/// Exactly one line for the PR body. Never absent (a silent guard is a guard
+/// nobody trusts) and never a reason to fail `land` — a Jev failure is the
+/// least interesting thing that can happen here, not an error the caller
+/// needs to handle.
+fn advisory_line(result: Result<GateResult, DecisionError>) -> String {
+    match result {
+        Ok(r) if r.probability >= CONCERN_THRESHOLD => format!(
+            "⚠ Jev advisory: this candidate may not fully implement the goal \
+             (concern {:.0}%). Human review recommended before merging.",
+            r.probability as f64 / 10.0
+        ),
+        Ok(r) => format!(
+            "Jev advisory: looks like a substantive implementation (concern {:.0}%).",
+            r.probability as f64 / 10.0
+        ),
+        Err(e) => {
+            let detail = match e {
+                DecisionError::InvalidRequest(m) => format!("invalid request: {m}"),
+                DecisionError::ProviderDenied(m) => format!("provider denied: {m}"),
+                DecisionError::ProviderUnavailable(m) => format!("provider unavailable: {m}"),
+                DecisionError::BadResponse(m) => format!("bad response: {m}"),
+            };
+            format!("Jev advisory: unavailable ({detail}).")
+        }
     }
 }
 
@@ -139,6 +237,11 @@ impl Guest for Component {
         };
         let winner = &entries[chosen.index as usize];
 
+        // Advisory-only, and asked AFTER the winner is already decided — see
+        // the module doc. Its answer can add a line to the PR; it cannot
+        // change `chosen`, `winner`, or whether this proposal happens at all.
+        let advisory = advisory_line(jev::gate(&advisory_request(winner, &p)));
+
         // The changes come from the branch that won, and from nowhere else.
         // There is no argument by which a caller could supply them.
         let proposal = forge::Proposal {
@@ -148,7 +251,10 @@ impl Guest for Component {
             // What decided it travels with the proposal. A reviewer looking at
             // one pull request cannot otherwise see that seven other branches
             // tried and what they scored.
-            body: format!("{}\n\nSelected: {} — {}.", p.body, chosen.branch, chosen.because),
+            body: format!(
+                "{}\n\nSelected: {} — {}.\n{}",
+                p.body, chosen.branch, chosen.because, advisory
+            ),
             message: p.message,
             changes: winner
                 .files
@@ -173,7 +279,6 @@ bindings::export!(Component with_types_in bindings);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bindings::exports::graph::select::selector::File;
 
     fn entry(branch: &str, accepted: bool, score: u32, files: usize, tokens: u32) -> Entry {
         Entry {
@@ -287,5 +392,80 @@ mod tests {
     #[test]
     fn a_generation_of_nothing_has_no_winner() {
         assert!(decide(&[]).is_err());
+    }
+
+    // ---- the Jev advisory ----------------------------------------------
+
+    fn landing(title: &str, body: &str) -> Landing {
+        Landing {
+            branch: "b".into(),
+            base: "main".into(),
+            title: title.into(),
+            body: body.into(),
+            message: "m".into(),
+        }
+    }
+
+    #[test]
+    fn the_advisory_question_names_the_goal_from_the_title() {
+        let winner = entry("tight", true, 1000, 1, 10);
+        let req = advisory_request(&winner, &landing("add a cache", "long context nobody wants"));
+        assert!(req.instructions.contains("add a cache"));
+        assert!(!req.instructions.contains("long context"), "title wins over body");
+    }
+
+    #[test]
+    fn the_advisory_question_falls_back_to_a_truncated_body_with_no_title() {
+        let winner = entry("tight", true, 1000, 1, 10);
+        let long_body = "x".repeat(500);
+        let req = advisory_request(&winner, &landing("", &long_body));
+        assert!(req.instructions.len() < long_body.len(), "the body must be truncated, not echoed whole");
+    }
+
+    #[test]
+    fn advisory_state_includes_every_file_under_the_cap() {
+        let winner = entry("tight", true, 1000, 3, 10);
+        let state = advisory_state(&winner.files);
+        for f in &winner.files {
+            assert!(state.contains(&f.path), "missing {}", f.path);
+        }
+    }
+
+    #[test]
+    fn advisory_state_truncates_past_the_byte_cap_and_says_so() {
+        let files = vec![
+            File { path: "a.rs".into(), content: "x".repeat(STATE_BYTE_CAP) },
+            File { path: "b.rs".into(), content: "this must not appear".into() },
+        ];
+        let state = advisory_state(&files);
+        assert!(!state.contains("this must not appear"));
+        assert!(state.contains("truncated"), "a truncation must say so, not look like a short file");
+    }
+
+    #[test]
+    fn a_high_concern_probability_becomes_a_visible_warning() {
+        let line = advisory_line(Ok(GateResult { probability: 900 }));
+        assert!(line.starts_with('⚠'));
+        assert!(line.contains("90%"));
+    }
+
+    #[test]
+    fn a_low_concern_probability_is_a_quiet_confirmation() {
+        let line = advisory_line(Ok(GateResult { probability: 50 }));
+        assert!(!line.starts_with('⚠'));
+        assert!(line.contains("substantive"));
+    }
+
+    #[test]
+    fn exactly_at_the_threshold_counts_as_concerning() {
+        let line = advisory_line(Ok(GateResult { probability: CONCERN_THRESHOLD }));
+        assert!(line.starts_with('⚠'));
+    }
+
+    #[test]
+    fn a_jev_failure_is_visible_but_never_an_error() {
+        let line = advisory_line(Err(DecisionError::ProviderUnavailable("timed out".into())));
+        assert!(line.contains("unavailable"));
+        assert!(line.contains("timed out"));
     }
 }

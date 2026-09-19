@@ -1,0 +1,9 @@
+name = "crm"
+access = "tailnet"
+domain = "crm.example.com"
+artifact = "components/target/crm_domain.composed.wasm"
+port = 3930
+static_dir = "examples/crm/public"
+kv = "sqlite"
+components = ["crm-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter"]
+strategy = "fused"

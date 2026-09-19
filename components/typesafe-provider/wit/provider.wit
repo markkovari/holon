@@ -1,0 +1,8 @@
+package typesafe:provider@0.1.0;
+
+world typesafe-provider {
+    export jev:decision/decision@0.1.0;
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+    import comp:secrets/reader@0.1.0;
+}
