@@ -1,0 +1,226 @@
+title = "parking:reservations — a whole new app, with real overlap logic"
+
+text = """
+Build a brand new component from scratch: `components/parking-domain`, a
+parking spot reservation tool. NOTHING exists yet under that path — you are
+creating the crate, not filling in a stub.
+
+## The domain
+
+Two collections in `records:store`:
+
+  spots         {label: string}
+  reservations  {spot_id: string, subject: string, start: u64, end: u64,
+                 status: "active"|"cancelled"}
+
+`start`/`end` are Unix seconds. A reservation's window is HALF-OPEN
+`[start, end)` — two reservations for the SAME spot overlap only if
+`a.start < b.end AND b.start < a.end`. Two reservations that merely touch at
+a boundary (one ends exactly when the other starts) do NOT overlap and are
+both allowed.
+
+Routes:
+
+  POST   /api/spots                          {"label":<string>}              (admin)
+  GET    /api/spots                                                          (any authenticated)
+  POST   /api/spots/{id}/reservations        {"start":<u64>,"end":<u64>}     (any authenticated)
+  GET    /api/reservations                                                   (any authenticated)
+  POST   /api/reservations/{id}/cancel                                       (owner or admin)
+
+Rules:
+  - Only `admin` may create a spot.
+  - `GET /api/spots` lists every spot for anyone authenticated (id, label).
+  - Reserving a spot: `end` must be strictly greater than `start` (400 if
+    not, BEFORE checking for conflicts); the spot must exist (404 if not);
+    the new window must not OVERLAP any EXISTING reservation on that spot
+    whose `status` is `active` — a conflict is refused with 409. Cancelled
+    reservations do not block new ones. The reservation is created with
+    `status: "active"` and `subject` set to the caller's own subject.
+  - `GET /api/reservations`: an ordinary `member` sees only their OWN
+    reservations (active and cancelled); `admin` sees every reservation.
+  - `POST /api/reservations/{id}/cancel`: the reservation's own subject, or
+    an admin, may cancel it — anyone else gets 403. Cancelling a reservation
+    that is already `cancelled` is refused with 400. `guest_owner_or_admin_policy!`
+    is already invoked in handlers.rs and gives you `owns_or_admin(action,
+    principal, resource_value)` for exactly this check — see
+    `components/billing-domain/src/handlers.rs` in context for the same
+    pattern applied to invoices.
+
+Roles: `admin`, `member` (the default for anyone who registers without
+naming a role, or names one this app does not grant).
+
+## The overlap check, concretely
+
+To check whether a new `[start, end)` conflicts with anything on a spot,
+pull every reservation on that spot (`records::find_by("reservations",
+"spot_id", ...)` — the JSON-encoded spot id), filter in Rust to
+`status == "active"`, and test the half-open overlap condition above against
+each. There is no need for `records::query`'s multi-filter form here since
+only one field (`spot_id`) is indexed and the status/time checks happen in
+Rust after fetching.
+
+## The record-store surface (exact — guessing this wrong is how past runs
+## of other goals died silently)
+
+    use crate::bindings::records::store::store as records;
+
+    records::create(collection: &str, data: &str, index_fields: &[String]) -> Result<Entry, StoreError>
+    records::get(collection: &str, id: &str)                               -> Result<Entry, StoreError>
+    records::update(collection: &str, id: &str, data: &str, expected_revision: u64) -> Result<Entry, StoreError>
+    records::list_records(collection: &str, limit: u32, after: &str)       -> Result<Page, StoreError>
+    records::find_by(collection: &str, field: &str, value: &str)           -> Result<Vec<Entry>, StoreError>
+
+    struct Entry  { id: String, data: String, revision: u64, created: u64, … }
+    struct Page   { entries: Vec<Entry>, next: String }
+
+`find_by` wants the JSON ENCODING of the value, not the bare value — a
+string field indexes under `"the-value"`, quotes included
+(`serde_json::to_string(&x)`, not `x` itself). A field is only queryable if
+it was named in `index_fields` when the record was created.
+
+## What already exists and how to use it
+
+This app is built with the exact same recipe as `components/billing-domain`
+(a full worked example is in `context` below — its `Cargo.toml`, WIT world,
+router, handlers, gate, hurl scenario and static SPA are all real, working
+files. Read them). This domain KEEPS `policy:guard`, unlike a simpler
+sibling goal that dropped it — you need `guest_owner_or_admin_policy!` for
+the cancel-ownership check above.
+
+Router (`components/parking-domain/src/lib.rs`) — same `guestauth`/`guestio`
+macro sequence every app in this repo uses:
+
+    pub use guestauth::Route;
+    pub const TENANT: &str = "parking";
+    const ROLES: &[&str] = &["admin", "member"];
+    guestio::guest_write_all!();
+    guestio::guest_bearer!();
+    const MAX_BODY_BYTES: usize = 1024 * 1024;
+    guestio::guest_read_body_text!(MAX_BODY_BYTES);
+    guestauth::guest_auth_reply!();
+    guestauth::guest_introspect!();
+    guestauth::guest_role_check!(is_admin, "admin");
+    guestauth::guest_audit!(TENANT);
+    guestauth::guest_accounts_endpoints!(TENANT, ROLES, "member");
+    guestauth::guest_emit!();
+    guestauth::guest_saas_router!();
+
+`components/parking-domain/Cargo.toml` MUST depend on `guestfmt`, `guestio`
+AND `guestauth` (three sibling path dependencies, same three lines as
+billing-domain's `Cargo.toml` in context) — a past run of a similar goal
+failed every branch because `guestfmt` was left out of the workspace scope;
+do not repeat that. It also needs `policy:guard` in
+`[package.metadata.component.target.dependencies]`, same as
+billing-domain's.
+
+`components/parking-domain/wit/parking-domain.wit` — same shape as
+billing-domain's WIT world:
+
+    package parking:reservations@0.1.0;
+    world parking-domain {
+        export wasi:http/incoming-handler@0.2.0;
+        import auth:identity/accounts@0.1.0;
+        import auth:identity/authorizer@0.1.0;
+        import auth:identity/session@0.1.0;
+        import auth:identity/rbac@0.1.0;
+        import auth:identity/types@0.1.0;
+        import policy:guard/guard@0.1.0;
+        import records:store/store@0.1.0;
+        import audit:log/recorder@0.1.0;
+        import ratelimit:guard/limiter@0.1.0;
+        import wasi:clocks/wall-clock@0.2.0;
+        import wasi:http/outgoing-handler@0.2.0;
+    }
+
+`components/parking-domain/gate.sh` and
+`components/parking-domain/scenario.hurl` ALREADY EXIST — they are this
+goal's held-out judge, shown to you in `context` below but NOT in
+`writable`: you may read them to know exactly what is asserted, but you may
+not edit them, and nothing you write may assume a different port, static
+dir, or component list than what `gate.sh` already names (port 3938,
+`examples/parking/public`, includes `policy-guard` in the build). Read
+`scenario.hurl` closely — it is the literal specification of every route's
+status codes and response shapes, including the exact overlap boundary
+cases (adjacent windows allowed, overlapping windows refused); matching it
+exactly is the goal.
+
+`examples/parking/public/index.html` — one file, inline style/script, no
+build step: a login/register screen, a spot list, a "reserve this spot"
+form (start/end as datetime inputs converted to Unix seconds), "my
+reservations" with a cancel button, and (visible only when the logged-in
+user is admin) a create-spot form and a view of every reservation. Model
+this on billing-domain's `examples/billing/public/index.html` in context
+for the shape (fetch calls, token storage, screen switching), not its
+content.
+
+`apps/parking.toml` — same shape as `apps/billing.toml` in context: name
+`parking`, port 3938, `static_dir = "examples/parking/public"`,
+`components = ["parking-domain", "auth-guard", "policy-guard",
+"record-store", "audit-log", "rate-limiter"]`, `kv = "sqlite"`,
+`strategy = "fused"`.
+"""
+
+component = "parking-domain"
+
+base_paths = [
+  "components/parking-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/audit-log/",
+  "components/rate-limiter/",
+  "components/guestauth/",
+  "components/guestio/",
+  "components/guestfmt/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+
+writable = [
+  "components/parking-domain/Cargo.toml",
+  "components/parking-domain/wit/parking-domain.wit",
+  "components/parking-domain/src/lib.rs",
+  "components/parking-domain/src/handlers.rs",
+  "examples/parking/public/index.html",
+  "apps/parking.toml",
+]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "parking-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "audit-log",
+  "rate-limiter",
+  "guestauth",
+  "guestio",
+  "guestfmt",
+]
+
+context = [
+  "components/billing-domain/Cargo.toml",
+  "components/billing-domain/wit/billing.wit",
+  "components/billing-domain/src/lib.rs",
+  "components/billing-domain/src/handlers.rs",
+  "components/billing-domain/gate.sh",
+  "components/billing-domain/scenario.hurl",
+  "examples/billing/public/index.html",
+  "apps/billing.toml",
+  "components/guestauth/src/lib.rs",
+  "components/record-store/wit/record.wit",
+  ".comp/context/auth-consumer.wit",
+  # This goal's own held-out gate and e2e scenario, shown up front rather than
+  # hidden: a branch cannot WRITE these (they are not in `writable`), but
+  # seeing exactly what is asserted buys the same information in one prompt
+  # instead of a whole wasted generation writing blind.
+  "components/parking-domain/gate.sh",
+  "components/parking-domain/scenario.hurl",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/parking-domain/gate.sh"]
