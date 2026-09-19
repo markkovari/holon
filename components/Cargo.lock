@@ -215,6 +215,7 @@ dependencies = [
 name = "ats-domain"
 version = "0.1.0"
 dependencies = [
+ "guestauth",
  "guestfmt",
  "guestio",
  "serde",
@@ -318,6 +319,7 @@ dependencies = [
 name = "billing-domain"
 version = "0.1.0"
 dependencies = [
+ "guestauth",
  "guestfmt",
  "guestio",
  "serde",
@@ -770,6 +772,7 @@ dependencies = [
 name = "crm-domain"
 version = "0.1.0"
 dependencies = [
+ "guestauth",
  "guestfmt",
  "guestio",
  "serde",
@@ -1178,6 +1181,7 @@ dependencies = [
 name = "feedback-domain"
 version = "0.1.0"
 dependencies = [
+ "guestauth",
  "guestfmt",
  "guestio",
  "serde",
@@ -1548,6 +1552,10 @@ dependencies = [
  "rand_core 0.6.4",
  "subtle",
 ]
+
+[[package]]
+name = "guestauth"
+version = "0.1.0"
 
 [[package]]
 name = "guestfmt"
@@ -3527,6 +3535,7 @@ dependencies = [
 name = "timesheet-domain"
 version = "0.1.0"
 dependencies = [
+ "guestauth",
  "guestfmt",
  "guestio",
  "serde",
