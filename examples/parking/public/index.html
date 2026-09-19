@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holon Parking</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f5f6fa; color: #1a1d29; }
+  header { background: #1c2b4a; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input, select, button { font: inherit; padding: 8px 10px; border: 1px solid #d7d9e4; border-radius: 6px; }
+  input, select { width: 100%; margin-bottom: 8px; }
+  button { background: #2f5fbf; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { background: #244b97; }
+  button.ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.6); }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .status-active { background: #d4f4dd; color: #157347; }
+  .status-cancelled { background: #f0dede; color: #a33333; }
+  .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
+  [hidden] { display: none !important; }
+  .muted { color: #888; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <header><h1>Holon Parking</h1><span></span></header>
+  <main style="max-width:380px">
+    <section>
+      <h2 id="auth-title">Log in</h2>
+      <input id="email" type="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <select id="role" hidden>
+        <option value="member">member</option>
+        <option value="admin">admin</option>
+      </select>
+      <button id="submit-btn" onclick="submitAuth()">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="toggle-text">No account?</span>
+        <a href="#" onclick="toggleMode();return false" id="toggle-link">Register</a>
+      </p>
+      <div id="auth-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <h1>Holon Parking</h1>
+    <span><span id="who"></span> <button class="ghost" onclick="logout()" style="width:auto">Log out</button></span>
+  </header>
+  <main>
+    <section id="admin-create" hidden>
+      <h2>New spot (admin)</h2>
+      <div class="row">
+        <input id="s-label" placeholder="Label, e.g. A1">
+        <button onclick="createSpot()" style="max-width:140px">Add spot</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Spots</h2>
+      <table id="spots-table">
+        <thead><tr><th>Label</th><th>ID</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Reserve a spot</h2>
+      <select id="r-spot"></select>
+      <div class="row">
+        <input id="r-start" type="datetime-local">
+        <input id="r-end" type="datetime-local">
+      </div>
+      <button onclick="reserve()">Reserve</button>
+      <div id="r-err" class="err"></div>
+    </section>
+
+    <section>
+      <h2 id="res-title">My reservations</h2>
+      <table id="res-table">
+        <thead><tr><th>Spot</th><th>Reserved by</th><th>Start</th><th>End</th><th>Status</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('parking_token') || '';
+let mode = 'login';
+let spotLabels = {};
+let isAdmin = false;
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submit-btn').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('toggle-text').textContent = mode === 'login' ? 'No account?' : 'Already have one?';
+  document.getElementById('toggle-link').textContent = mode === 'login' ? 'Register' : 'Log in';
+  document.getElementById('role').hidden = mode === 'login';
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({'content-type': 'application/json'}, opts.headers || {});
+  if (token) opts.headers['authorization'] = 'Bearer ' + token;
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+async function submitAuth() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.textContent = '';
+  try {
+    if (mode === 'register') {
+      const role = document.getElementById('role').value;
+      await api('/register', {method: 'POST', body: JSON.stringify({email, password, role})});
+    }
+    const r = await api('/login', {method: 'POST', body: JSON.stringify({email, password})});
+    token = r.access_token;
+    localStorage.setItem('parking_token', token);
+    showApp();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+function logout() {
+  api('/logout', {method: 'POST'}).catch(() => {});
+  token = '';
+  localStorage.removeItem('parking_token');
+  location.reload();
+}
+
+async function showApp() {
+  document.getElementById('auth').hidden = true;
+  document.getElementById('app').hidden = false;
+  let me;
+  try {
+    me = await api('/me');
+  } catch (e) { logout(); return; }
+  document.getElementById('who').textContent = me.subject + ' (' + ((me.roles || [])[0] || 'member') + ')';
+  isAdmin = (me.roles || []).includes('admin');
+  document.getElementById('admin-create').hidden = !isAdmin;
+  document.getElementById('res-title').textContent = isAdmin ? 'All reservations' : 'My reservations';
+  refresh();
+}
+
+function toUnix(el) {
+  const v = document.getElementById(el).value;
+  if (!v) return null;
+  const ms = new Date(v).getTime();
+  if (isNaN(ms)) return null;
+  return Math.floor(ms / 1000);
+}
+
+function fmt(sec) {
+  if (typeof sec !== 'number') return '';
+  return new Date(sec * 1000).toLocaleString();
+}
+
+async function createSpot() {
+  const label = document.getElementById('s-label').value;
+  if (!label) return;
+  await api('/api/spots', {method: 'POST', body: JSON.stringify({label})});
+  document.getElementById('s-label').value = '';
+  refresh();
+}
+
+async function reserve() {
+  const errEl = document.getElementById('r-err');
+  errEl.textContent = '';
+  const spotId = document.getElementById('r-spot').value;
+  const start = toUnix('r-start');
+  const end = toUnix('r-end');
+  if (!spotId) { errEl.textContent = 'no spot selected'; return; }
+  if (start === null || end === null) { errEl.textContent = 'pick a start and an end'; return; }
+  try {
+    await api('/api/spots/' + encodeURIComponent(spotId) + '/reservations', {
+      method: 'POST',
+      body: JSON.stringify({start, end}),
+    });
+    refresh();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+async function cancelReservation(id) {
+  try {
+    await api('/api/reservations/' + encodeURIComponent(id) + '/cancel', {method: 'POST'});
+  } catch (e) {
+    document.getElementById('r-err').textContent = String(e.message || e);
+  }
+  refresh();
+}
+
+async function refresh() {
+  const spots = await api('/api/spots');
+  spotLabels = {};
+  const sel = document.getElementById('r-spot');
+  sel.innerHTML = (spots.spots || []).map(s => {
+    spotLabels[s.id] = s.label;
+    return '<option value="' + s.id + '">' + s.label + '</option>';
+  }).join('');
+  document.querySelector('#spots-table tbody').innerHTML = (spots.spots || []).map(s =>
+    '<tr><td>' + s.label + '</td><td class="muted">' + s.id + '</td></tr>'
+  ).join('');
+
+  const reservations = await api('/api/reservations');
+  document.querySelector('#res-table tbody').innerHTML = (reservations.reservations || []).map(r => {
+    const label = spotLabels[r.spot_id] || r.spot_id;
+    const cancel = r.status === 'active'
+      ? '<button onclick="cancelReservation(\'' + r.id + '\')" style="width:auto">Cancel</button> '
+      : '';
+    return '<tr>'
+      + '<td>' + label + '</td>'
+      + '<td class="muted">' + (r.subject || '') + '</td>'
+      + '<td>' + fmt(r.start) + '</td>'
+      + '<td>' + fmt(r.end) + '</td>'
+      + '<td><span class="status status-' + r.status + '">' + r.status + '</span></td>'
+      + '<td>' + cancel + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>
