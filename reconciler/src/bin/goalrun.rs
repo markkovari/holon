@@ -1431,7 +1431,11 @@ fn main() -> Result<()> {
 
     // --- criticise the gate, before the money -------------------------------
     if !gate_can_judge(&goal, &checks, &gate, &base_commit, &tree, args.timeout) {
-        return Ok(());
+        // NOT `return Ok(())`. A refused gate exits 0, which is indistinguishable
+        // from "a branch won" to a caller that only asks `status.success()` —
+        // `comp-goald` marked it `awaiting-human`, a pull request waiting for
+        // review, when no branch ran and nothing was opened.
+        std::process::exit(comp_reconciler::goalexit::GATE_REFUSED);
     }
 
     if args.smoke {

@@ -240,10 +240,7 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
         // healthy and the answer was no. Said differently from a broken harness
         // because the fix is different: one wants a better goal, the other wants
         // someone to look at the machine.
-        let reason = match status.code() {
-            Some(3) => "no branch passed the gate — the goal needs work, not a retry".to_string(),
-            code => format!("comp-goalrun exited {}", code.unwrap_or(-1)),
-        };
+        let reason = comp_reconciler::goalexit::failure_reason(status.code());
         eprintln!("[goald] {id} FAILED: {reason}");
         call(
             s,

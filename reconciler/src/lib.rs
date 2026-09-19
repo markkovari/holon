@@ -22,6 +22,8 @@ pub mod daemon_auth;
 pub mod fleet;
 pub mod gate;
 pub mod generation;
+/// The exit codes a run ends with, and what each one means to the daemon.
+pub mod goalexit;
 /// Skipping work already done, and recording every verdict so the next run can.
 pub mod memory;
 pub mod money;
