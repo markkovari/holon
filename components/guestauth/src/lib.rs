@@ -443,6 +443,19 @@ macro_rules! guest_parse_body {
     };
 }
 
+/// Fetch a `records:store` entry by id, or refuse with 404 — the same
+/// three-line shape every handler here writes before acting on a specific
+/// row, differing only in the collection name.
+#[macro_export]
+macro_rules! guest_get_or_404 {
+    ($collection:expr, $id:expr) => {
+        match records::get($collection, $id) {
+            Ok(e) => e,
+            Err(_) => return Reply::err(404, "not_found"),
+        }
+    };
+}
+
 /// Define `entries_json`: a page of `records:store` entries as a JSON array,
 /// each entry's stored id merged into its own document — the same helper
 /// `billing-domain`, `crm-domain`, `ats-domain`, `timesheet-domain`,

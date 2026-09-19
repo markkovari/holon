@@ -82,10 +82,7 @@ fn list_reports(route: &Route) -> Reply {
 /// an admin.
 fn get_report(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("reports", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("reports", id);
     let mut report: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let employee = report.get("employee").and_then(Value::as_str).unwrap_or("").to_string();
     guestauth::guest_deny_unless!(owns_or_admin("view", &principal, &employee), principal, "report.view", id);
@@ -114,10 +111,7 @@ fn reject_report(route: &Route, id: &str) -> Reply {
 fn transition(route: &Route, id: &str, next: &str, action: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, action, id);
-    let entry = match records::get("reports", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("reports", id);
     let mut report: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     if report.get("status").and_then(Value::as_str) != Some("submitted") {
         return Reply::err(400, "only a submitted report can be approved or rejected");

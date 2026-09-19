@@ -130,10 +130,7 @@ fn list_candidates(route: &Route, posting_id: &str) -> Reply {
 
 fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("candidates", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("candidates", id);
     let mut candidate: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let posting_id = candidate.get("posting_id").and_then(Value::as_str).unwrap_or("").to_string();
     let Some(assigned_to) = posting_assigned_to(&posting_id) else {

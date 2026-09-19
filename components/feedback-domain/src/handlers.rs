@@ -80,10 +80,7 @@ fn list_posts(route: &Route) -> Reply {
 
 fn vote(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("posts", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("posts", id);
     let mut post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let already_voted = post["voters"]
         .as_array()
@@ -112,10 +109,7 @@ fn vote(route: &Route, id: &str) -> Reply {
 fn set_status(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "post.status", id);
-    let entry = match records::get("posts", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("posts", id);
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let status = req.get("status").and_then(Value::as_str).unwrap_or("");
     if !STATUSES.contains(&status) {
@@ -134,10 +128,7 @@ fn set_status(route: &Route, id: &str, body: &str) -> Reply {
 
 fn delete_post(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("posts", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("posts", id);
     let post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let author = post.get("author").and_then(Value::as_str).unwrap_or("").to_string();
     guestauth::guest_deny_unless!(owns_or_admin("delete", &principal, &author), principal, "post.delete", id);

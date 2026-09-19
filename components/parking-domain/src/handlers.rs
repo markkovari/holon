@@ -142,10 +142,7 @@ fn list_reservations(route: &Route) -> Reply {
 
 fn cancel(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("reservations", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("reservations", id);
     let mut res: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let subject = res.get("subject").and_then(Value::as_str).unwrap_or("").to_string();
     guestauth::guest_deny_unless!(owns_or_admin("cancel", &principal, &subject), principal, "reservation.cancel", id);

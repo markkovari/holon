@@ -119,10 +119,7 @@ fn list_deals(route: &Route) -> Reply {
 
 fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("deals", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("deals", id);
     let mut deal: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = deal.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
     guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "deal.stage", id);
@@ -143,10 +140,7 @@ fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
 
 fn add_note(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("deals", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("deals", id);
     let mut deal: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = deal.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
     guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "deal.note", id);

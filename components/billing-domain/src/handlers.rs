@@ -120,10 +120,7 @@ fn list_invoices(route: &Route) -> Reply {
 
 fn send_invoice(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("invoices", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("invoices", id);
     let mut inv: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = inv.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
     guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "invoice.send", id);
@@ -146,10 +143,7 @@ fn send_invoice(route: &Route, id: &str) -> Reply {
 fn pay_invoice(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "invoice.pay", id);
-    let entry = match records::get("invoices", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("invoices", id);
     let mut inv: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     inv["status"] = json!("paid");
     match records::update("invoices", id, &inv.to_string(), entry.revision) {

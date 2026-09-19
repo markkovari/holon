@@ -157,10 +157,7 @@ fn list_entries(route: &Route) -> Reply {
 
 fn decide_entry(route: &Route, id: &str, new_status: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let entry = match records::get("entries", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("entries", id);
     let mut data: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let manager = data.get("manager").and_then(Value::as_str).unwrap_or("").to_string();
     guestauth::guest_deny_unless!(enforce("decide", &principal, &manager), principal, "entry.decide", id);

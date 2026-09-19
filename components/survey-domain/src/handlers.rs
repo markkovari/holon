@@ -101,10 +101,7 @@ struct ResponseReq {
 fn create_response(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let req = guestauth::guest_parse_body!(body, ResponseReq);
-    let survey = match records::get("surveys", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let survey = guestauth::guest_get_or_404!("surveys", id);
     let survey_data = parse(&survey.data);
     if survey_data.get("status").and_then(Value::as_str) != Some("open") {
         return Reply::err(400, "survey is not open");
@@ -183,10 +180,7 @@ fn results(route: &Route, id: &str) -> Reply {
 fn close_survey(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.close", id);
-    let entry = match records::get("surveys", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let entry = guestauth::guest_get_or_404!("surveys", id);
     let mut survey = parse(&entry.data);
     if survey.get("status").and_then(Value::as_str) != Some("open") {
         return Reply::err(400, "survey is already closed");
