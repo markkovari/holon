@@ -1,0 +1,9 @@
+name = "survey"
+access = "tailnet"
+domain = "survey.example.com"
+artifact = "components/target/survey_domain.composed.wasm"
+port = 3937
+static_dir = "examples/survey/public"
+kv = "sqlite"
+components = ["survey-domain", "auth-guard", "record-store", "audit-log", "rate-limiter"]
+strategy = "fused"

@@ -3417,6 +3417,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "survey-domain"
+version = "0.1.0"
+dependencies = [
+ "guestauth",
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "svg-chart"
 version = "0.1.0"
 dependencies = [
