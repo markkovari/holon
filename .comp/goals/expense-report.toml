@@ -39,6 +39,7 @@ base_paths = [
   "components/rate-limiter/",
   "components/guestauth/",
   "components/guestio/",
+  "components/guestfmt/",
   "components/Cargo.toml",
   "wit/",
   "host/wit/deps/",
@@ -55,6 +56,7 @@ keep_members = [
   "rate-limiter",
   "guestauth",
   "guestio",
+  "guestfmt",
 ]
 context = [
   "components/expense-domain/src/lib.rs",
