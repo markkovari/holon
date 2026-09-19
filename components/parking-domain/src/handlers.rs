@@ -41,18 +41,9 @@ struct SpotReq {
 
 /// `admin`-only: a role, not a row, decides who may open a new spot.
 fn create_spot(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if !is_admin(&principal) {
-        audit("spot.create", "deny", &principal.subject, "");
-        return Reply::err(403, "forbidden");
-    }
-    let req: SpotReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "spot.create", "");
+    let req = guestauth::guest_parse_body!(body, SpotReq);
     let label = req.label.trim().to_string();
     if label.is_empty() {
         return Reply::err(400, "label is required");
@@ -86,14 +77,8 @@ struct ReservationReq {
 }
 
 fn reserve(route: &Route, spot_id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: ReservationReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, ReservationReq);
     // Half-open windows must have positive length; checked BEFORE conflicts.
     if req.end <= req.start {
         return Reply::err(400, "end must be after start");
@@ -142,10 +127,7 @@ fn reserve(route: &Route, spot_id: &str, body: &str) -> Reply {
 }
 
 fn list_reservations(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let result = if is_admin(&principal) {
         list_all("reservations")
     } else {
@@ -159,20 +141,11 @@ fn list_reservations(route: &Route) -> Reply {
 }
 
 fn cancel(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let entry = match records::get("reservations", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let entry = guestauth::guest_get_or_404!("reservations", id);
     let mut res: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let subject = res.get("subject").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("cancel", &principal, &subject) {
-        audit("reservation.cancel", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("cancel", &principal, &subject), principal, "reservation.cancel", id);
     if res.get("status").and_then(Value::as_str) == Some("cancelled") {
         return Reply::err(400, "already cancelled");
     }
@@ -217,14 +190,8 @@ fn is_lot_spot(data: &str) -> bool {
 /// `guest_owner_or_admin_policy!` uses for its rule registration — makes a
 /// second call create NOTHING more.
 fn seed_lot(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if !is_admin(&principal) {
-        audit("lot.seed", "deny", &principal.subject, "");
-        return Reply::err(403, "forbidden");
-    }
+    let principal = guestauth::guest_authenticated!(route);
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "lot.seed", "");
     let already = matches!(
         records::find_by("meta", "kind", "\"lot_seeded\""),
         Ok(entries) if !entries.is_empty()
@@ -316,14 +283,8 @@ fn get_lot(route: &Route) -> Reply {
 /// — oldest first, whether the spot is lot-seeded or ad-hoc. A spot with no
 /// reservations answers `[]`, not 404; only a spot that does not exist is 404.
 fn spot_history(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if !is_admin(&principal) {
-        audit("spot.history", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    let principal = guestauth::guest_authenticated!(route);
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "spot.history", id);
     if records::get("spots", id).is_err() {
         return Reply::err(404, "not_found");
     }

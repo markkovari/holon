@@ -38,18 +38,9 @@ struct SurveyReq {
 /// `admin` only: a non-admin is refused before any storage is touched. The
 /// survey is created `open` — `close` is the only transition out of that.
 fn create_survey(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if !is_admin(&principal) {
-        audit("survey.create", "deny", &principal.subject, "");
-        return Reply::err(403, "forbidden");
-    }
-    let req: SurveyReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.create", "");
+    let req = guestauth::guest_parse_body!(body, SurveyReq);
     if req.title.is_empty() || req.questions.is_empty() {
         return Reply::err(400, "title and questions are required");
     }
@@ -72,10 +63,7 @@ fn create_survey(route: &Route, body: &str) -> Reply {
 /// ones. Status is filtered in Rust rather than by index so both callers can
 /// share one list.
 fn list_surveys(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let admin = is_admin(&principal);
     match records::list_records("surveys", 100, "") {
         Ok(page) => {
@@ -111,18 +99,9 @@ struct ResponseReq {
 /// last one is a uniqueness check against the `responses` collection, not a
 /// policy call.
 fn create_response(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: ResponseReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
-    let survey = match records::get("surveys", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, ResponseReq);
+    let survey = guestauth::guest_get_or_404!("surveys", id);
     let survey_data = parse(&survey.data);
     if survey_data.get("status").and_then(Value::as_str) != Some("open") {
         return Reply::err(400, "survey is not open");
@@ -166,14 +145,8 @@ fn create_response(route: &Route, id: &str, body: &str) -> Reply {
 
 /// `admin` only: every response to a survey, with respondent and answers.
 fn results(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if !is_admin(&principal) {
-        audit("survey.results", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    let principal = guestauth::guest_authenticated!(route);
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.results", id);
     if records::get("surveys", id).is_err() {
         return Reply::err(404, "not_found");
     }
@@ -205,18 +178,9 @@ fn results(route: &Route, id: &str) -> Reply {
 
 /// `admin` only: `open -> closed`, and refused (400) if it is already closed.
 fn close_survey(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if !is_admin(&principal) {
-        audit("survey.close", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
-    let entry = match records::get("surveys", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.close", id);
+    let entry = guestauth::guest_get_or_404!("surveys", id);
     let mut survey = parse(&entry.data);
     if survey.get("status").and_then(Value::as_str) != Some("open") {
         return Reply::err(400, "survey is already closed");

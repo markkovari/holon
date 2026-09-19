@@ -37,14 +37,8 @@ struct PostReq {
 }
 
 fn create_post(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: PostReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, PostReq);
     if req.title.is_empty() {
         return Reply::err(400, "title is required");
     }
@@ -85,14 +79,8 @@ fn list_posts(route: &Route) -> Reply {
 }
 
 fn vote(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let entry = match records::get("posts", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let entry = guestauth::guest_get_or_404!("posts", id);
     let mut post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let already_voted = post["voters"]
         .as_array()
@@ -119,17 +107,9 @@ fn vote(route: &Route, id: &str) -> Reply {
 /// Admin-only, checked directly against the role — a status change speaks
 /// for the whole team, not for one row's owner.
 fn set_status(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if !is_admin(&principal) {
-        return Reply::err(403, "forbidden");
-    }
-    let entry = match records::get("posts", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "post.status", id);
+    let entry = guestauth::guest_get_or_404!("posts", id);
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let status = req.get("status").and_then(Value::as_str).unwrap_or("");
     if !STATUSES.contains(&status) {
@@ -147,20 +127,11 @@ fn set_status(route: &Route, id: &str, body: &str) -> Reply {
 }
 
 fn delete_post(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let entry = match records::get("posts", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let entry = guestauth::guest_get_or_404!("posts", id);
     let post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let author = post.get("author").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("delete", &principal, &author) {
-        audit("post.delete", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("delete", &principal, &author), principal, "post.delete", id);
     match records::delete("posts", id) {
         Ok(()) => {
             audit("post.delete", "allow", &principal.subject, id);

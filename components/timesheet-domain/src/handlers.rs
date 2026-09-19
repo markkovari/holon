@@ -73,14 +73,8 @@ struct ProjectReq {
 }
 
 fn create_project(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: ProjectReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, ProjectReq);
     if req.name.is_empty() {
         return Reply::err(400, "name is required");
     }
@@ -121,14 +115,8 @@ struct EntryReq {
 }
 
 fn create_entry(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: EntryReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, EntryReq);
     if req.project_id.is_empty() || req.hours <= 0.0 {
         return Reply::err(400, "project_id and a positive hours value are required");
     }
@@ -154,10 +142,7 @@ fn create_entry(route: &Route, body: &str) -> Reply {
 /// A member sees their own entries; a manager sees the ones routed to them —
 /// two different equals-filters on the same collection, never both at once.
 fn list_entries(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let subject_json = serde_json::to_string(&principal.subject).unwrap_or_default();
     let result = if is_manager(&principal) {
         records::find_by("entries", "manager", &subject_json)
@@ -171,20 +156,11 @@ fn list_entries(route: &Route) -> Reply {
 }
 
 fn decide_entry(route: &Route, id: &str, new_status: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let entry = match records::get("entries", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let entry = guestauth::guest_get_or_404!("entries", id);
     let mut data: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let manager = data.get("manager").and_then(Value::as_str).unwrap_or("").to_string();
-    if !enforce("decide", &principal, &manager) {
-        audit("entry.decide", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(enforce("decide", &principal, &manager), principal, "entry.decide", id);
     data["status"] = json!(new_status);
     match records::update("entries", id, &data.to_string(), entry.revision) {
         Ok(_) => {

@@ -393,6 +393,69 @@ macro_rules! guest_owner_or_admin_policy {
     };
 }
 
+/// Who is calling, or bail — the four lines every handler in every SaaS app
+/// here opens with, unchanged since the first of them was hand-written:
+/// `introspect($route)`'s `Err` is already a `Reply` (401 on no bearer, the
+/// mapped `AuthError` otherwise), so the caller's own early return is exactly
+/// right, and this expands to an expression: `let principal =
+/// guestauth::guest_authenticated!(route);` reads the same as what it
+/// replaces.
+#[macro_export]
+macro_rules! guest_authenticated {
+    ($route:expr) => {
+        match introspect($route) {
+            Ok(p) => p,
+            Err(r) => return r,
+        }
+    };
+}
+
+/// Refuse with an audited 403 unless `$cond` holds — the same three lines
+/// every RBAC/ABAC check in every SaaS app here writes before its real work:
+/// `is_admin(&principal)`, `owns_or_admin("edit", &principal, &owner)`, or a
+/// domain's own bespoke rule (`timesheet-domain`'s `enforce(...)` call) all
+/// fit, since `$cond` is any boolean expression. A few call sites across
+/// these apps skipped the audit call on denial before this existed — an
+/// inconsistency this closes rather than preserves, since a 403 with no
+/// audit trail is a gap in exactly the record `audit:log` exists for.
+#[macro_export]
+macro_rules! guest_deny_unless {
+    ($cond:expr, $principal:expr, $event:expr, $detail:expr) => {
+        if !($cond) {
+            audit($event, "deny", &$principal.subject, $detail);
+            return Reply::err(403, "forbidden");
+        }
+    };
+}
+
+/// Parse a request body into `$ty`, or refuse with 400 — the same
+/// three-line shape every `POST`/`PUT` handler here writes before its real
+/// work, differing only in the target type. `let req: ClientReq = match
+/// serde_json::from_str(body) { ... };` becomes `let req =
+/// guestauth::guest_parse_body!(body, ClientReq);`.
+#[macro_export]
+macro_rules! guest_parse_body {
+    ($body:expr, $ty:ty) => {
+        match serde_json::from_str::<$ty>($body) {
+            Ok(v) => v,
+            Err(_) => return Reply::err(400, "bad_json"),
+        }
+    };
+}
+
+/// Fetch a `records:store` entry by id, or refuse with 404 — the same
+/// three-line shape every handler here writes before acting on a specific
+/// row, differing only in the collection name.
+#[macro_export]
+macro_rules! guest_get_or_404 {
+    ($collection:expr, $id:expr) => {
+        match records::get($collection, $id) {
+            Ok(e) => e,
+            Err(_) => return Reply::err(404, "not_found"),
+        }
+    };
+}
+
 /// Define `entries_json`: a page of `records:store` entries as a JSON array,
 /// each entry's stored id merged into its own document — the same helper
 /// `billing-domain`, `crm-domain`, `ats-domain`, `timesheet-domain`,
