@@ -22,6 +22,8 @@ pub mod daemon_auth;
 pub mod fleet;
 pub mod gate;
 pub mod generation;
+/// What `comp-goalrun`'s exit code means, and how `comp-goald` reads it.
+pub mod goalexit;
 /// Skipping work already done, and recording every verdict so the next run can.
 pub mod memory;
 pub mod money;

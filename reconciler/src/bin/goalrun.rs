@@ -1431,7 +1431,15 @@ fn main() -> Result<()> {
 
     // --- criticise the gate, before the money -------------------------------
     if !gate_can_judge(&goal, &checks, &gate, &base_commit, &tree, args.timeout) {
-        return Ok(());
+        // EXIT 4, not 0. A gate that could not judge spent NOTHING, and returning
+        // success here made that indistinguishable from a candidate passing — the
+        // daemon read a refused goal as `awaiting-human`, a pull request waiting
+        // for review, when no branch ran and nothing was opened.
+        //
+        // Distinct from `goalexit::EXHAUSTED` (3): that one says every branch ran
+        // and none passed, which is a real result from a healthy search. This says
+        // there was no search to have a result from.
+        std::process::exit(comp_reconciler::goalexit::GATE_REFUSED);
     }
 
     if args.smoke {
