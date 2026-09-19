@@ -1,0 +1,144 @@
+title = "parking-domain — a 3-floor, 50-spot lot view with live occupancy and history"
+
+text = """
+Extend the EXISTING `components/parking-domain` (already shipped — read
+`src/handlers.rs` and `src/lib.rs` in full before changing anything) with
+three new routes. Nothing about the existing routes changes: `POST
+/api/spots`, `GET /api/spots`, `POST /api/spots/{id}/reservations`, `GET
+/api/reservations`, `POST /api/reservations/{id}/cancel` all keep behaving
+exactly as they do today — the held-out scenario in `context` below
+re-asserts every one of them BEFORE the new routes are ever touched, so a
+regression there fails just as hard as a wrong new route.
+
+## The three new routes
+
+  POST   /api/lot/seed                {}                    (admin)
+  GET    /api/lot                                            (any authenticated)
+  GET    /api/spots/{id}/history                             (admin)
+
+### `POST /api/lot/seed`
+
+Idempotent. Ensures exactly 150 spots exist in the SAME `spots` collection
+every other route already uses — 3 floors (1, 2, 3), 50 spots each
+(numbered 1-50) — by ADDING two new fields to the spot document, `floor:
+u32` and `number: u32` (a spot created through the existing `POST
+/api/spots` has neither field; a lot-seeded spot has both). Label each
+seeded spot e.g. `"F1-01"` .. `"F3-50"` (floor and zero-padded number).
+
+Idempotent means: call it once, it creates 150 spots. Call it again, it
+creates NOTHING more — same shape as `guest_owner_or_admin_policy!`'s own
+idempotent rule registration in `components/guestauth/src/lib.rs` (in
+`context` below): a marker record in a `meta` collection
+(`{"kind":"lot_seeded"}`, indexed on `kind`) that a second call checks for
+before creating anything. Response, both times, `200` with
+`{"total": 150}` — the actual current count of lot-seeded spots (floor and
+number both present), not a count of every ad-hoc spot in the collection.
+
+### `GET /api/lot`
+
+Any authenticated caller. Returns every lot-seeded spot (floor and number
+both present — NOT the ad-hoc spots `POST /api/spots` creates, which have
+neither field), grouped by floor:
+
+    {"floors": [
+      {"floor": 1, "spots": [{"id":"...", "number":1, "taken":false}, … 50 total, ordered by number …]},
+      {"floor": 2, "spots": [ … 50 … ]},
+      {"floor": 3, "spots": [ … 50 … ]}
+    ]}
+
+`taken` is computed FRESH on every call, never stored: a spot is taken if
+ANY reservation on it has `status == "active"` AND its window covers the
+current moment — `start <= now < end`, the exact same half-open comparison
+`create_report`'s (a nearby sibling goal, and this file's own overlap
+check) uses. `now` is `crate::now_secs()`, already available here via
+`guestauth::guest_audit!` in `lib.rs` — no new import needed. If the lot has
+never been seeded, `floors` is an empty list (never 404, never an error —
+seeding is a setup step, and reading the lot before it exists is not a
+crime).
+
+### `GET /api/spots/{id}/history`
+
+Admin only. Every reservation ever made on that spot — active AND
+cancelled, oldest first — regardless of whether the spot is a lot-seeded
+one or an ad-hoc one:
+
+    {"spot_id": "...", "reservations": [
+      {"id":"...", "subject":"...", "start":<u64>, "end":<u64>, "status":"active"|"cancelled"},
+      …
+    ]}
+
+A spot with no reservations yet returns `"reservations": []`, `200` — not
+a 404 (a 404 is for a spot that does not exist at all; check
+`records::get("spots", id)` first and 404 only if that fails).
+
+## Reuse what already exists in this file
+
+`introspect`, `is_admin`, `records::create`/`get`/`update`/`list_records`/
+`find_by`, `Reply::json`/`Reply::err`, and `entries_json` all already exist
+in this file — use them exactly as the existing routes do, do not
+reinvent any of them. `now_secs()` is a top-level function in this crate
+(from `guestauth::guest_audit!` in `lib.rs`), reachable as `crate::now_secs()`.
+
+## The static SPA
+
+`examples/parking/public/index.html` — add a "Lot" view: a button any
+logged-in user can click to see the lot (a grid or table per floor, 50
+cells, colored/marked to distinguish taken from free at a glance), and
+(admin only) a "seed the lot" button and, when a lot spot is selected, a
+history list for it. Read the file's current content first (it already has
+login/register, spot list, reservation form, my-reservations — match its
+existing style and `fetch` conventions, do not rewrite what already works).
+"""
+
+base_paths = [
+  "components/parking-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/audit-log/",
+  "components/rate-limiter/",
+  "components/guestauth/",
+  "components/guestio/",
+  "components/guestfmt/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+
+writable = [
+  "components/parking-domain/src/handlers.rs",
+  "examples/parking/public/index.html",
+]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "parking-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "audit-log",
+  "rate-limiter",
+  "guestauth",
+  "guestio",
+  "guestfmt",
+]
+
+context = [
+  "components/parking-domain/src/lib.rs",
+  "components/parking-domain/Cargo.toml",
+  "components/parking-domain/wit/parking-domain.wit",
+  "components/guestauth/src/lib.rs",
+  "components/record-store/wit/record.wit",
+  ".comp/context/auth-consumer.wit",
+  # The held-out judge: every existing assertion re-checked, then the new
+  # lot/history flow appended after it. Not writable — shown so a branch
+  # knows the exact route contracts instead of guessing wrong.
+  "components/parking-domain/gate.sh",
+  "components/parking-domain/scenario.hurl",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/parking-domain/gate.sh"]

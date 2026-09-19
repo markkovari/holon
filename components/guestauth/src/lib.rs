@@ -11,7 +11,11 @@
 //! differing only in a tenant string, a role list and a default role. Four
 //! of the five also hand-wrote an identical "owner or admin may act on this
 //! row" policy check, differing only in the resource's attribute name and
-//! which action it gates. This crate is that, once each.
+//! which action it gates. This crate is that, once each. Every SaaS app
+//! built since — `expense-domain`, `survey-domain`, `parking-domain` — has
+//! also hand-wrote an identical `entries_json` (a page of `records:store`
+//! entries with each one's id merged in); `guest_entries_json!()` is that,
+//! once.
 //!
 //! What is DELIBERATELY not here: `timesheet-domain`'s policy check has no
 //! admin bypass at all (a routed manager decides, nobody else, including the
@@ -385,6 +389,32 @@ macro_rules! guest_owner_or_admin_policy {
             let resource_attrs =
                 vec![Attr { key: $resource_attr.to_string(), value: resource_value.to_string() }];
             policy::enforce($policy_domain, action, &principal_attrs, &resource_attrs)
+        }
+    };
+}
+
+/// Define `entries_json`: a page of `records:store` entries as a JSON array,
+/// each entry's stored id merged into its own document — the same helper
+/// `billing-domain`, `crm-domain`, `ats-domain`, `timesheet-domain`,
+/// `feedback-domain`, `expense-domain` and `parking-domain` each hand-wrote,
+/// byte-identical every time.
+#[macro_export]
+macro_rules! guest_entries_json {
+    () => {
+        fn entries_json(
+            entries: &[crate::bindings::records::store::store::Entry],
+        ) -> Vec<serde_json::Value> {
+            entries
+                .iter()
+                .map(|e| {
+                    let mut v: serde_json::Value =
+                        serde_json::from_str(&e.data).unwrap_or(serde_json::json!({}));
+                    if let serde_json::Value::Object(ref mut m) = v {
+                        m.insert("id".to_string(), serde_json::json!(e.id));
+                    }
+                    v
+                })
+                .collect()
         }
     };
 }

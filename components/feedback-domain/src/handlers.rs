@@ -14,6 +14,7 @@ const STATUSES: &[&str] = &["open", "planned", "in-progress", "done"];
 const POLICY_DOMAIN: &str = "posts";
 
 guestauth::guest_owner_or_admin_policy!(POLICY_DOMAIN, "author");
+guestauth::guest_entries_json!();
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
@@ -167,17 +168,4 @@ fn delete_post(route: &Route, id: &str) -> Reply {
         }
         Err(_) => Reply::err(500, "store_error"),
     }
-}
-
-fn entries_json(entries: &[records::Entry]) -> Vec<Value> {
-    entries
-        .iter()
-        .map(|e| {
-            let mut v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
-            if let Value::Object(ref mut m) = v {
-                m.insert("id".to_string(), json!(e.id));
-            }
-            v
-        })
-        .collect()
 }
