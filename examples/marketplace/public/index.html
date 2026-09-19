@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holon Marketplace</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #1a1d29; }
+  header { background: #2b1a4a; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  main { max-width: 1080px; margin: 0 auto; padding: 24px 20px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input, select, button, textarea { font: inherit; padding: 8px 10px; border: 1px solid #d7d9e4; border-radius: 6px; }
+  input, select, textarea { width: 100%; margin-bottom: 8px; }
+  button { background: #6c3ce0; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { background: #5a2fc7; }
+  button.ghost { background: transparent; color: #6c3ce0; border: 1px solid #6c3ce0; }
+  button.small { width: auto; padding: 4px 10px; font-size: 12px; margin: 2px; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px; border-bottom: 1px solid #eee; vertical-align: top; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .status-placed, .status-open, .status-requested { background: #fff3cd; color: #8a6d00; }
+  .status-paid, .status-authorized { background: #cde7ff; color: #0a5ea8; }
+  .status-shipped, .status-in_transit { background: #e0d4fc; color: #5a2fc7; }
+  .status-delivered, .status-approved, .status-resolved, .status-refunded { background: #d4f4dd; color: #157347; }
+  .status-cancelled, .status-rejected { background: #f8d7da; color: #a02334; }
+  .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
+  .muted { color: #888; font-size: 12px; }
+  [hidden] { display: none !important; }
+  .tag { display: inline-block; background: #f0eaff; color: #5a2fc7; border-radius: 10px; padding: 1px 8px; font-size: 11px; margin-left: 4px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tabs button { background: #eee; color: #333; }
+  .tabs button.active { background: #6c3ce0; color: #fff; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <header><h1>Holon Marketplace</h1><span></span></header>
+  <main style="max-width:380px">
+    <section>
+      <h2 id="auth-title">Log in</h2>
+      <input id="email" type="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <select id="role" hidden>
+        <option value="buyer">buyer</option>
+        <option value="vendor">vendor</option>
+        <option value="admin">admin</option>
+      </select>
+      <button id="submit-btn" onclick="submitAuth()">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="toggle-text">No account?</span>
+        <a href="#" onclick="toggleMode();return false" id="toggle-link">Register</a>
+      </p>
+      <div id="auth-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<div id="app" hidden>
+  <header><h1>Holon Marketplace</h1><span id="who"></span> <button class="ghost" onclick="logout()" style="width:auto">Log out</button></header>
+  <main>
+    <div class="tabs" id="tabs"></div>
+
+    <!-- LISTINGS (everyone) -->
+    <section id="tab-listings">
+      <h2>Listings</h2>
+      <div id="vendor-new-listing" hidden>
+        <div class="row">
+          <input id="l-title" placeholder="Title">
+          <input id="l-desc" placeholder="Description">
+          <input id="l-price" type="number" placeholder="Price (cents)">
+          <input id="l-stock" type="number" placeholder="Stock">
+          <button onclick="createListing()" style="max-width:120px">List it</button>
+        </div>
+      </div>
+      <div class="row">
+        <select id="l-category-filter" onchange="refreshListings()">
+          <option value="">all categories</option>
+          <option>electronics</option><option>clothing</option><option>home</option>
+          <option>books</option><option>toys</option><option>other</option>
+        </select>
+      </div>
+      <table><thead><tr><th>Title</th><th>Price</th><th>Stock</th><th>Category</th><th></th></tr></thead>
+        <tbody id="listings-table"></tbody></table>
+    </section>
+
+    <!-- CART (buyer) -->
+    <section id="tab-cart" hidden>
+      <h2>Cart &amp; place order</h2>
+      <table><thead><tr><th>Item</th><th>Qty</th><th></th></tr></thead><tbody id="cart-table"></tbody></table>
+      <button onclick="placeOrder()" style="max-width:160px">Place order</button>
+      <div id="order-err" class="err"></div>
+    </section>
+
+    <!-- ORDERS -->
+    <section id="tab-orders" hidden>
+      <h2>Orders</h2>
+      <table><thead><tr><th>Id</th><th>Total</th><th>Status</th><th></th></tr></thead>
+        <tbody id="orders-table"></tbody></table>
+    </section>
+
+    <!-- INQUIRIES -->
+    <section id="tab-inquiries" hidden>
+      <h2>Inquiries</h2>
+      <div id="inquiries-list"></div>
+    </section>
+
+    <!-- DISPUTES (admin) -->
+    <section id="tab-disputes" hidden>
+      <h2>Disputes</h2>
+      <table><thead><tr><th>Order</th><th>Reason</th><th>Jev</th><th>Status</th><th></th></tr></thead>
+        <tbody id="disputes-table"></tbody></table>
+    </section>
+
+    <!-- RETURNS (admin, folded into orders actions) -->
+
+    <!-- LEDGER -->
+    <section id="tab-ledger" hidden>
+      <h2>Ledger</h2>
+      <div id="ledger-view"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('mkt_token') || '';
+let me = null;
+let mode = 'login';
+let cart = [];
+let listingsById = {};
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submit-btn').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('toggle-text').textContent = mode === 'login' ? 'No account?' : 'Already have one?';
+  document.getElementById('toggle-link').textContent = mode === 'login' ? 'Register' : 'Log in';
+  document.getElementById('role').hidden = mode === 'login';
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({'content-type': 'application/json'}, opts.headers || {});
+  if (token) opts.headers['authorization'] = 'Bearer ' + token;
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+async function submitAuth() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.textContent = '';
+  try {
+    if (mode === 'register') {
+      const role = document.getElementById('role').value;
+      await api('/register', {method: 'POST', body: JSON.stringify({email, password, role})});
+    }
+    const r = await api('/login', {method: 'POST', body: JSON.stringify({email, password})});
+    token = r.access_token;
+    localStorage.setItem('mkt_token', token);
+    showApp();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+function logout() {
+  api('/logout', {method: 'POST'}).catch(() => {});
+  token = ''; localStorage.removeItem('mkt_token');
+  location.reload();
+}
+
+const TABS = {
+  buyer: [['listings','Listings'],['cart','Cart'],['orders','My orders'],['inquiries','Inquiries']],
+  vendor: [['listings','My listings'],['orders','Orders to ship'],['inquiries','Inquiries'],['ledger','My balance']],
+  admin: [['orders','All orders'],['disputes','Disputes'],['ledger','Platform ledger']],
+};
+
+function role() { return (me.roles || [])[0] || 'buyer'; }
+
+function renderTabs() {
+  const tabs = TABS[role()] || TABS.buyer;
+  document.getElementById('tabs').innerHTML = tabs.map(([id, label], i) =>
+    `<button class="${i===0?'active':''}" onclick="showTab('${id}', this)">${label}</button>`).join('');
+  tabs.forEach(([id], i) => document.getElementById('tab-' + id).hidden = i !== 0);
+  document.getElementById('vendor-new-listing').hidden = role() !== 'vendor';
+  document.getElementById('tab-cart').hidden = true;
+  showTab(tabs[0][0]);
+}
+
+function showTab(id, btn) {
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  ['listings','cart','orders','inquiries','disputes','ledger'].forEach(t => {
+    const el = document.getElementById('tab-' + t);
+    if (el) el.hidden = (t !== id);
+  });
+  if (id === 'listings') refreshListings();
+  if (id === 'cart') refreshCart();
+  if (id === 'orders') refreshOrders();
+  if (id === 'inquiries') refreshInquiries();
+  if (id === 'disputes') refreshDisputes();
+  if (id === 'ledger') refreshLedger();
+}
+
+async function showApp() {
+  document.getElementById('auth').hidden = true;
+  document.getElementById('app').hidden = false;
+  try {
+    me = await api('/me');
+    document.getElementById('who').textContent = me.subject + ' (' + role() + ')';
+  } catch (e) { logout(); return; }
+  renderTabs();
+}
+
+// ---- listings ----
+async function createListing() {
+  const title = document.getElementById('l-title').value;
+  const description = document.getElementById('l-desc').value;
+  const price = parseInt(document.getElementById('l-price').value || '0', 10);
+  const stock = parseInt(document.getElementById('l-stock').value || '0', 10);
+  if (!title || !price) return;
+  const l = await api('/api/listings', {method: 'POST', body: JSON.stringify({title, description, price, stock})});
+  document.getElementById('l-title').value = '';
+  document.getElementById('l-desc').value = '';
+  document.getElementById('l-price').value = '';
+  document.getElementById('l-stock').value = '';
+  alert('Listed. Jev auto-labeled it as "' + l.category + '" (confidence ' + (l.category_confidence/10) + '%)');
+  refreshListings();
+}
+
+async function refreshListings() {
+  const cat = document.getElementById('l-category-filter').value;
+  const q = cat ? ('?category=' + encodeURIComponent(cat)) : '';
+  const r = await api('/api/listings' + q);
+  const rows = (r.listings || []);
+  rows.forEach(l => listingsById[l.id] = l);
+  const isBuyer = role() === 'buyer';
+  const isVendor = role() === 'vendor';
+  document.getElementById('listings-table').innerHTML = rows.map(l => {
+    let actions = '';
+    if (isBuyer) actions += `<button class="small" onclick="addToCart('${l.id}')">Add to cart</button>` +
+      `<button class="small ghost" onclick="askVendor('${l.id}')">Ask vendor</button>`;
+    if (isVendor && l.vendor === me.subject) actions += `<button class="small ghost" onclick="delist('${l.id}')">Delist</button>`;
+    return `<tr><td>${l.title}<div class="muted">${l.description||''}</div></td><td>$${(l.price/100).toFixed(2)}</td>` +
+      `<td>${l.stock}</td><td>${l.category}<span class="tag">${(l.category_confidence/10).toFixed(0)}%</span></td><td>${actions}</td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="muted">No listings yet.</td></tr>';
+}
+
+async function delist(id) { await api(`/api/listings/${id}/delist`, {method: 'POST'}); refreshListings(); }
+
+function addToCart(id) {
+  const existing = cart.find(c => c.listing_id === id);
+  if (existing) existing.quantity++; else cart.push({listing_id: id, quantity: 1});
+  alert('Added to cart (' + cart.length + ' line item(s))');
+}
+
+async function askVendor(id) {
+  const body = prompt('Ask the vendor something about "' + (listingsById[id]||{}).title + '":');
+  if (!body) return;
+  await api(`/api/listings/${id}/inquiries`, {method: 'POST', body: JSON.stringify({body})});
+  alert('Sent.');
+}
+
+// ---- cart / orders ----
+function refreshCart() {
+  document.getElementById('cart-table').innerHTML = cart.map((c, i) => {
+    const l = listingsById[c.listing_id] || {};
+    return `<tr><td>${l.title || c.listing_id}</td><td>${c.quantity}</td>` +
+      `<td><button class="small ghost" onclick="cart.splice(${i},1);refreshCart()">Remove</button></td></tr>`;
+  }).join('') || '<tr><td colspan="3" class="muted">Empty — add something from Listings.</td></tr>';
+}
+
+async function placeOrder() {
+  const errEl = document.getElementById('order-err');
+  errEl.textContent = '';
+  if (!cart.length) return;
+  try {
+    const o = await api('/api/orders', {method: 'POST', body: JSON.stringify({items: cart})});
+    cart = [];
+    refreshCart();
+    alert('Order placed: ' + o.id + ' — total $' + (o.total/100).toFixed(2));
+    showTab('orders');
+  } catch (e) { errEl.textContent = String(e.message || e); }
+}
+
+async function refreshOrders() {
+  const r = await api('/api/orders');
+  const isAdmin = role() === 'admin';
+  const isVendor = role() === 'vendor';
+  const isBuyer = role() === 'buyer';
+  document.getElementById('orders-table').innerHTML = (r.orders || []).map(o => {
+    let actions = '';
+    if (isBuyer && o.status === 'placed') actions += `<button class="small" onclick="payOrder('${o.id}')">Pay</button>`;
+    if (isBuyer && o.status === 'delivered') actions += `<button class="small ghost" onclick="requestReturn('${o.id}')">Return</button>`;
+    if (isBuyer && o.status !== 'delivered' && o.status !== 'cancelled') actions += `<button class="small ghost" onclick="openDispute('${o.id}')">Dispute</button>`;
+    if ((isAdmin || isVendor) && o.status === 'paid') actions += `<button class="small" onclick="shipOrder('${o.id}')">Ship</button>`;
+    if (isAdmin) actions += `<button class="small" onclick="markDelivered('${o.id}')">Mark delivered</button>`;
+    return `<tr><td>${o.id.slice(0,8)}…</td><td>$${(o.total/100).toFixed(2)}</td>` +
+      `<td><span class="status status-${o.status}">${o.status}</span></td><td>${actions}</td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="muted">No orders yet.</td></tr>';
+}
+
+async function payOrder(id) { await api(`/api/orders/${id}/pay`, {method: 'POST'}); refreshOrders(); }
+async function shipOrder(id) {
+  const carrier = prompt('Carrier?', 'UPS') || 'UPS';
+  const tracking = prompt('Tracking number?', '1Z' + Math.random().toString(36).slice(2,8).toUpperCase()) || '';
+  const s = await api(`/api/orders/${id}/ship`, {method: 'POST', body: JSON.stringify({carrier, tracking})});
+  window._lastShipment = window._lastShipment || {};
+  window._lastShipment[id] = s.id;
+  refreshOrders();
+}
+async function markDelivered(id) {
+  const shipmentId = window._lastShipment && window._lastShipment[id];
+  if (!shipmentId) { alert('Ship it first (need the shipment id).'); return; }
+  await api(`/api/shipments/${shipmentId}/deliver`, {method: 'POST'});
+  refreshOrders();
+}
+async function requestReturn(id) {
+  const reason = prompt('Why are you returning this?') || 'changed my mind';
+  await api(`/api/orders/${id}/returns`, {method: 'POST', body: JSON.stringify({reason})});
+  alert('Return requested.');
+  refreshOrders();
+}
+async function openDispute(id) {
+  const reason = prompt('What went wrong?') || 'item not as described';
+  await api(`/api/orders/${id}/disputes`, {method: 'POST', body: JSON.stringify({reason})});
+  alert('Dispute opened — an admin will review it (with a Jev-generated advisory).');
+  refreshOrders();
+}
+
+// ---- inquiries ----
+async function refreshInquiries() {
+  const r = await api('/api/inquiries');
+  const list = r.inquiries || [];
+  const html = await Promise.all(list.map(async inq => {
+    const msgs = await api(`/api/inquiries/${inq.id}/messages`);
+    const thread = (msgs.messages || []).map(m => `<div><b>${m.sender === me.subject ? 'me' : m.sender.slice(0,10)}:</b> ${m.body}</div>`).join('');
+    return `<div style="margin-bottom:14px;padding:10px;background:#faf9ff;border-radius:8px">
+      <div class="muted">inquiry ${inq.id.slice(0,8)}…</div>
+      ${thread}
+      <div class="row" style="margin-top:6px">
+        <input id="reply-${inq.id}" placeholder="Reply…">
+        <button class="small" onclick="reply('${inq.id}')">Send</button>
+      </div>
+    </div>`;
+  }));
+  document.getElementById('inquiries-list').innerHTML = html.join('') || '<p class="muted">No inquiries yet.</p>';
+}
+async function reply(id) {
+  const el = document.getElementById('reply-' + id);
+  const body = el.value;
+  if (!body) return;
+  await api(`/api/inquiries/${id}/messages`, {method: 'POST', body: JSON.stringify({body})});
+  el.value = '';
+  refreshInquiries();
+}
+
+// ---- disputes (admin) ----
+async function refreshDisputes() {
+  const r = await api('/api/disputes');
+  document.getElementById('disputes-table').innerHTML = (r.disputes || []).map(d => {
+    const jev = d.jev_recommendation ? `${d.jev_recommendation} (${(d.jev_confidence/10).toFixed(0)}%)` : '—';
+    let actions = '';
+    if (!d.resolution) actions = `<button class="small" onclick="resolveDispute('${d.id}','refund')">Refund</button>` +
+      `<button class="small ghost" onclick="resolveDispute('${d.id}','deny')">Deny</button>` +
+      `<button class="small ghost" onclick="resolveDispute('${d.id}','partial')">Partial</button>`;
+    return `<tr><td>${d.order_id.slice(0,8)}…</td><td>${d.reason}</td><td>${jev}</td>` +
+      `<td>${d.resolution || d.status}</td><td>${actions}</td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="muted">No disputes.</td></tr>';
+}
+async function resolveDispute(id, resolution) {
+  await api(`/api/disputes/${id}/resolve`, {method: 'POST', body: JSON.stringify({resolution})});
+  refreshDisputes();
+}
+
+// ---- ledger ----
+async function refreshLedger() {
+  const el = document.getElementById('ledger-view');
+  if (role() === 'admin') {
+    const p = await api('/api/ledger/platform');
+    el.innerHTML = `<p>Platform cash: <b>$${(p.cash/100).toFixed(2)}</b> — fees earned: <b>$${(p.fees/100).toFixed(2)}</b></p>
+      <div class="row"><input id="payout-subject" placeholder="vendor subject (usr_...)">
+      <button onclick="doPayout()" style="max-width:140px">Pay out</button></div>
+      <div id="vendor-balance-view"></div>`;
+  } else {
+    const b = await api(`/api/vendors/${me.subject}/balance`);
+    el.innerHTML = `<p>Your balance owed: <b>$${(b.balance/100).toFixed(2)}</b></p>`;
+  }
+}
+async function doPayout() {
+  const subject = document.getElementById('payout-subject').value;
+  if (!subject) return;
+  try {
+    await api(`/api/vendors/${subject}/payout`, {method: 'POST'});
+    const b = await api(`/api/vendors/${subject}/balance`);
+    document.getElementById('vendor-balance-view').innerHTML = `<p class="muted">New balance for ${subject}: $${(b.balance/100).toFixed(2)}</p>`;
+    refreshLedger();
+  } catch (e) { alert(e.message); }
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>
