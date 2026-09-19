@@ -2227,6 +2227,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "marketplace-domain"
+version = "0.1.0"
+dependencies = [
+ "guestauth",
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "mdns-discoverer-domain"
 version = "0.1.0"
 dependencies = [
@@ -2492,6 +2504,18 @@ dependencies = [
  "base64 0.22.1",
  "hmac",
  "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "parking-domain"
+version = "0.1.0"
+dependencies = [
+ "guestauth",
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
