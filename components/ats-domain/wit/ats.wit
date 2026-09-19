@@ -1,0 +1,25 @@
+// ats:hiring — job postings and candidates through a hiring pipeline.
+//
+// Same shape as `crm-domain`/`billing-domain`: auth:identity for real
+// accounts/login/roles, policy:guard for "an interviewer only acts on
+// postings assigned to them", records:store for storage, audit:log for a
+// compliance trail, rate-limiter for login/register brute-force protection.
+package ats:hiring@0.1.0;
+
+world ats-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    import policy:guard/guard@0.1.0;
+    import records:store/store@0.1.0;
+    import audit:log/recorder@0.1.0;
+    import ratelimit:guard/limiter@0.1.0;
+
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+}

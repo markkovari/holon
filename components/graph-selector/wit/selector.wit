@@ -8,4 +8,8 @@ package selector:graph@0.1.0;
 world graph-selector {
     export graph:select/selector@0.2.0;
     import git:forge/repo@0.1.0;
+    // An advisory-only signal on the winner `land` is about to propose — never
+    // consulted by `select`, never able to change which branch won. See
+    // `land`'s doc comment in `graph:select` and this crate's module doc.
+    import jev:decision/decision@0.1.0;
 }

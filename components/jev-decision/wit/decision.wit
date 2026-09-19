@@ -1,0 +1,200 @@
+// jev:decision — provider-agnostic discrete decision-making.
+//
+// A "System One" call: given a state and a closed set of candidates, get back a
+// typed choice, score or binary gate with a confidence — not text. Which
+// provider answers (TypeSafe's Jev, a mock, anything else that can classify)
+// is a DEPLOYMENT choice, exactly like `llm:inference` keeps its vendor out of
+// the contract. This interface is deliberately NOT shaped like a chat
+// completion: there is no free-form output — a provider that cannot answer
+// with one of the offered options, or a level in the given rubric, has
+// nothing to say here.
+//
+// The three functions mirror TypeSafe Jev's three question primitives
+// (docs.typesafe.ai/primitives: Choice, Score, Noul) one-to-one:
+//   choose -> Choice  — pick one of a closed set of options.
+//   score  -> Score   — rate along an ordered rubric of at least two levels.
+//   gate   -> Noul    — a single yes/no probability (a "binary gate").
+// A concrete provider that talks to a single-endpoint, multi-question API
+// (Jev's `POST /v1/systemone` takes a `questions` map and returns an
+// `answers` map keyed the same way) can answer `choose`/`score`/`gate` with
+// one question each, or `evaluate` with many at once over the same `state` —
+// the fan-out pattern System One's own docs recommend over serial calls.
+//
+// This is the swap point. A provider implementation reads its base-url /
+// api-key from wasi:config / comp:secrets and talks wasi:http; this WIT says
+// nothing about any of that — only the shape of a decision request and reply.
+package jev:decision@0.1.0;
+
+/// Discrete choice + scoring + binary gates, vendor-agnostic.
+interface decision {
+    /// Why a decision call failed.
+    variant decision-error {
+        /// The request was malformed (no options, too few levels, empty state).
+        invalid-request(string),
+        /// The provider authenticated/authorized the caller poorly (bad key,
+        /// quota, region).
+        provider-denied(string),
+        /// The provider was unreachable, timed out, or reported itself
+        /// overloaded.
+        provider-unavailable(string),
+        /// The provider answered but the body couldn't be understood.
+        bad-response(string),
+    }
+
+    /// One candidate's (or rubric level's) share of a probability distribution.
+    record option-score {
+        /// `option` is a WIT keyword (the builtin `option<T>` type), so this is
+        /// `label` — the candidate's own text (a `choice-request.options` entry,
+        /// or a `score-request.levels` entry).
+        label: string,
+        /// Milli-probability, 0..=1000 (same convention as `llm:inference`'s
+        /// `temperature`: 870 = 0.87).
+        score: u32,
+    }
+
+    /// A closed set of candidates to decide over.
+    record choice-request {
+        /// The content being evaluated (Jev's `state`).
+        state: string,
+        /// What is being decided, e.g. "Which team should handle this?"
+        /// (Jev's per-question `instructions`).
+        instructions: string,
+        /// The only labels a provider may return. Never empty.
+        options: list<string>,
+    }
+
+    /// A discrete choice among `choice-request.options`.
+    record choice-result {
+        /// Always one of the request's `options` — a provider that cannot
+        /// support that guarantee is not implementing this interface correctly.
+        selected: string,
+        /// Milli-probability of `selected`.
+        confidence: u32,
+        /// The full distribution over `options`, for callers that want more
+        /// than the top pick.
+        distribution: list<option-score>,
+        /// No clearly dominant option — computed by the provider from the
+        /// shape of the distribution (e.g. the top two candidates are close),
+        /// not a field the wire format itself carries. A caller should treat
+        /// this as "no confident answer" regardless of `confidence`.
+        flat: bool,
+    }
+
+    /// An ordered rubric to rate against, from lowest to highest. At least two
+    /// levels (Jev's `criteria` for a Score question).
+    record score-request {
+        state: string,
+        /// What is being rated, e.g. "How severe is the reported issue?"
+        instructions: string,
+        levels: list<string>,
+    }
+
+    /// A rating along `score-request.levels`.
+    record score-result {
+        /// A probability-weighted mean of the level's position (0-based) in
+        /// `levels` — e.g. 1.3 on a 3-level rubric means "mostly level 1,
+        /// leaning toward level 2". NOT a normalized 0..1 value: its range is
+        /// 0..=(levels.len() - 1).
+        value: f32,
+        confidence: u32,
+        /// One entry per `levels` entry, in the same order.
+        distribution: list<option-score>,
+    }
+
+    /// A single yes/no question (Jev's Noul).
+    record gate-request {
+        state: string,
+        /// The yes/no question itself, e.g. "Does this message express urgency?"
+        instructions: string,
+        /// What counts as "yes" / "no", for a subtle boundary. Empty means unset
+        /// (the instructions alone must be clear enough).
+        true-hint: string,
+        false-hint: string,
+    }
+
+    /// The probability the answer to a `gate-request` is yes.
+    record gate-result {
+        /// Milli-probability, 0..=1000. 500 is not "medium" — it is
+        /// "uncertain"; a caller wanting a boolean applies its own threshold.
+        probability: u32,
+    }
+
+    /// Pick one of `choice-request.options`.
+    choose: func(req: choice-request) -> result<choice-result, decision-error>;
+
+    /// Rate `state` along `score-request.levels`.
+    score: func(req: score-request) -> result<score-result, decision-error>;
+
+    /// Ask a single yes/no question about `state`.
+    gate: func(req: gate-request) -> result<gate-result, decision-error>;
+
+    /// What "yes"/"no" mean, for a `question`'s gate — the same fields as
+    /// `gate-request`'s, standalone because `evaluate` has no per-question
+    /// `state` of its own to attach a full `gate-request` to.
+    record gate-criteria {
+        true-hint: string,
+        false-hint: string,
+    }
+
+    /// One question inside a batch — exactly one of the three primitives,
+    /// tagged so its answer can be told apart from the others.
+    variant question-kind {
+        choice(list<string>),
+        score(list<string>),
+        gate(gate-criteria),
+    }
+
+    /// A single entry in an `evaluate` batch.
+    record question {
+        /// Caller-chosen, echoed back on the matching `answered` — never
+        /// interpreted, just carried.
+        id: string,
+        instructions: string,
+        kind: question-kind,
+    }
+
+    /// One answer, tagged the same way its `question` was.
+    variant answer-kind {
+        choice(choice-result),
+        score(score-result),
+        gate(gate-result),
+    }
+
+    /// One `question`'s outcome. A per-question failure — the provider never
+    /// named this id in its response, say — is carried HERE rather than
+    /// failing the whole batch: eight independent questions should not all
+    /// come back empty because one was malformed. `outcome`, not `result`:
+    /// `result` is a WIT keyword (the builtin `result<T, E>` type).
+    record answered {
+        id: string,
+        outcome: result<answer-kind, decision-error>,
+    }
+
+    /// Ask many independent questions about the SAME `state` in one round
+    /// trip — System One's own "fan-out" pattern (docs.typesafe.ai/concepts/
+    /// how-to-build-with-system-one): decompose a broad judgment into atomic
+    /// questions and ask them in parallel rather than serially. A provider
+    /// backed by a single-endpoint, multi-question API (Jev's own
+    /// `POST /v1/systemone`) sends ONE HTTP request for the whole list; one
+    /// that can't batch may loop internally, but the caller never pays for
+    /// N round trips in its own code either way.
+    ///
+    /// Only `decision-error` at the top level means the call itself never
+    /// reached the provider (network, auth) — a provider that answered but
+    /// left one question out reports that per-item, in `answered.result`.
+    evaluate: func(state: string, questions: list<question>) -> result<list<answered>, decision-error>;
+
+    /// What this deployment is, for capability negotiation: a provider name +
+    /// whether `score` is implemented (a minimal provider may support only
+    /// `choose` and `gate`).
+    describe: func() -> tuple<string, bool>;
+}
+
+/// `jev-decision` is the provider boundary, and the world is intentionally
+/// MINIMAL — just the export. Each concrete provider declares its OWN imports:
+/// a real vendor client (e.g. `typesafe-provider`) imports wasi:http +
+/// wasi:config + comp:secrets; a deterministic mock imports only wasi:config.
+/// A router imports `decision` and never sees which provider answered.
+world jev-decision {
+    export decision;
+}

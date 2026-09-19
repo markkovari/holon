@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holon Timesheet</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #1a1d29; }
+  header { background: #7a3d0f; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input, select, button { font: inherit; padding: 8px 10px; border: 1px solid #d7d9e4; border-radius: 6px; }
+  input, select { width: 100%; margin-bottom: 8px; }
+  button { background: #b5590f; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { background: #944a0c; }
+  button.ghost { background: transparent; color: #b5590f; border: 1px solid #b5590f; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .status-pending { background: #fff3cd; color: #916800; }
+  .status-approved { background: #d4f4dd; color: #157347; }
+  .status-rejected { background: #fbdcdc; color: #b02a2a; }
+  .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
+  [hidden] { display: none !important; }
+  .muted { color: #888; font-size: 13px; }
+  code { background: #f0f0f5; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <header><h1>Holon Timesheet</h1><span></span></header>
+  <main style="max-width:380px">
+    <section>
+      <h2 id="auth-title">Log in</h2>
+      <input id="email" type="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <select id="role" hidden><option value="member">member</option><option value="manager">manager</option></select>
+      <button id="submit-btn" onclick="submitAuth()">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="toggle-text">No account?</span>
+        <a href="#" onclick="toggleMode();return false" id="toggle-link">Register</a>
+      </p>
+      <div id="auth-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<div id="app" hidden>
+  <header><h1>Holon Timesheet</h1><span id="who"></span> <button class="ghost" onclick="logout()" style="width:auto">Log out</button></header>
+  <main>
+    <section>
+      <h2>My subject id <span class="muted">(share with your manager)</span></h2>
+      <p><code id="my-subject"></code></p>
+    </section>
+
+    <section id="new-project">
+      <h2>New project</h2>
+      <div class="row">
+        <input id="p-name" placeholder="Project name">
+        <button onclick="createProject()" style="max-width:120px">Add</button>
+      </div>
+    </section>
+
+    <section id="new-entry">
+      <h2>Log time</h2>
+      <div class="row">
+        <select id="e-project"></select>
+        <input id="e-date" type="date">
+        <input id="e-hours" type="number" step="0.5" placeholder="Hours">
+        <input id="e-manager" placeholder="Manager subject id">
+      </div>
+      <input id="e-note" placeholder="Note">
+      <button onclick="createEntry()">Log</button>
+    </section>
+
+    <section>
+      <h2 id="entries-title">Entries</h2>
+      <table id="entries-table"><thead><tr><th>Date</th><th>Hours</th><th>Note</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('timesheet_token') || '';
+let mode = 'login';
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submit-btn').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('toggle-text').textContent = mode === 'login' ? 'No account?' : 'Already have one?';
+  document.getElementById('toggle-link').textContent = mode === 'login' ? 'Register' : 'Log in';
+  document.getElementById('role').hidden = mode === 'login';
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({'content-type': 'application/json'}, opts.headers || {});
+  if (token) opts.headers['authorization'] = 'Bearer ' + token;
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+async function submitAuth() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.textContent = '';
+  try {
+    if (mode === 'register') {
+      const role = document.getElementById('role').value;
+      await api('/register', {method: 'POST', body: JSON.stringify({email, password, role})});
+    }
+    const r = await api('/login', {method: 'POST', body: JSON.stringify({email, password})});
+    token = r.access_token;
+    localStorage.setItem('timesheet_token', token);
+    showApp();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+function logout() {
+  api('/logout', {method: 'POST'}).catch(() => {});
+  token = '';
+  localStorage.removeItem('timesheet_token');
+  location.reload();
+}
+
+async function showApp() {
+  document.getElementById('auth').hidden = true;
+  document.getElementById('app').hidden = false;
+  let me;
+  try {
+    me = await api('/me');
+    document.getElementById('who').textContent = me.subject + ' (' + (me.roles[0] || 'member') + ')';
+    document.getElementById('my-subject').textContent = me.subject;
+  } catch (e) { logout(); return; }
+  window.isManager = (me.roles || []).includes('manager');
+  document.getElementById('new-project').hidden = window.isManager;
+  document.getElementById('new-entry').hidden = window.isManager;
+  document.getElementById('entries-title').textContent = window.isManager ? 'Entries routed to me' : 'My entries';
+  refresh();
+}
+
+async function createProject() {
+  const name = document.getElementById('p-name').value;
+  if (!name) return;
+  await api('/api/projects', {method: 'POST', body: JSON.stringify({name})});
+  document.getElementById('p-name').value = '';
+  refresh();
+}
+
+async function createEntry() {
+  const project_id = document.getElementById('e-project').value;
+  const date = document.getElementById('e-date').value;
+  const hours = parseFloat(document.getElementById('e-hours').value || '0');
+  const note = document.getElementById('e-note').value;
+  const manager = document.getElementById('e-manager').value;
+  if (!project_id || hours <= 0) return;
+  await api('/api/entries', {method: 'POST', body: JSON.stringify({project_id, date, hours, note, manager})});
+  document.getElementById('e-hours').value = '';
+  document.getElementById('e-note').value = '';
+  refresh();
+}
+
+async function decide(id, verdict) {
+  await api(`/api/entries/${id}/${verdict}`, {method: 'POST'});
+  refresh();
+}
+
+async function refresh() {
+  if (!window.isManager) {
+    const projects = await api('/api/projects');
+    const sel = document.getElementById('e-project');
+    sel.innerHTML = (projects.projects || []).map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+  }
+  const entries = await api('/api/entries');
+  const tbody = document.querySelector('#entries-table tbody');
+  tbody.innerHTML = (entries.entries || []).map(e => {
+    const actions = (window.isManager && e.status === 'pending')
+      ? `<button onclick="decide('${e.id}','approve')" style="width:auto">Approve</button> <button onclick="decide('${e.id}','reject')" style="width:auto">Reject</button>`
+      : '';
+    return `<tr><td>${e.date}</td><td>${e.hours}</td><td>${e.note || ''}</td>` +
+      `<td><span class="status status-${e.status}">${e.status}</span></td><td>${actions}</td></tr>`;
+  }).join('');
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>

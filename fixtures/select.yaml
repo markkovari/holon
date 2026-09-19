@@ -42,6 +42,17 @@ components:
   - id: select
     host_needs: []
 
+  # `land`'s Jev advisory (see `graph-selector`'s module doc) — scripted and
+  # offline, same reason `mock-provider` stands in for a real LLM in tests:
+  # the assertion here is about the deterministic RULE, not about a live
+  # classifier answering the same way twice.
+  - id: jev
+    config:
+      mock-model: mock-jev-1
+      mock-script: '{"rules": [{"when": "*", "probability": 0.05}]}'
+    host_needs:
+      - wasi:config/store
+
 links:
   - from: gate
     import: graph:select/selector@0.2.0
@@ -49,6 +60,9 @@ links:
   - from: select
     import: git:forge/repo@0.1.0
     to: forge
+  - from: select
+    import: jev:decision/decision@0.1.0
+    to: jev
 
 ingress:
   host: select.acme.test

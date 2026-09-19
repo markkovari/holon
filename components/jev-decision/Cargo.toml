@@ -1,0 +1,24 @@
+[package]
+name = "jev-decision"
+description = "Provider-agnostic discrete decision-making — reference/trivial provider (jev:decision)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+
+[package.metadata.component]
+package = "jev:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "jev-decision"
+
+# Minimal world (export only) — no WASI target deps. The reference provider
+# needs nothing; a real provider would add wasi:http + wasi:config + comp:secrets here.
+[package.metadata.component.target.dependencies]

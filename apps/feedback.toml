@@ -1,0 +1,9 @@
+name = "feedback"
+access = "tailnet"
+domain = "feedback.example.com"
+artifact = "components/target/feedback_domain.composed.wasm"
+port = 3934
+static_dir = "examples/feedback/public"
+kv = "sqlite"
+components = ["feedback-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter"]
+strategy = "fused"

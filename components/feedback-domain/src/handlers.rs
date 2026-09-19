@@ -1,0 +1,231 @@
+//! A public feedback board: posts move `open -> planned -> in-progress ->
+//! done`, status changes are `admin`-only (a role check, not a row check),
+//! and any member may vote once per post. Deleting a post is scoped to its
+//! author or an admin — the row-level rule `auth:identity/rbac` cannot
+//! express, enforced with `policy:guard` exactly as `crm-domain` enforces
+//! "a rep only acts on their own deals".
+
+use crate::bindings::auth::identity::types::Principal;
+use crate::bindings::policy::guard::guard as policy;
+use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
+use crate::bindings::records::store::store as records;
+use crate::bindings::wasi::http::types::Method;
+use crate::{audit, introspect, is_admin, Reply, Route};
+use serde_json::{json, Value};
+
+const STATUSES: &[&str] = &["open", "planned", "in-progress", "done"];
+const POLICY_DOMAIN: &str = "posts";
+
+pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
+    let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
+    match (method, seg.as_slice()) {
+        (Method::Post, ["api", "posts"]) => create_post(route, body),
+        (Method::Get, ["api", "posts"]) => list_posts(route),
+        (Method::Post, ["api", "posts", id, "vote"]) => vote(route, id),
+        (Method::Post, ["api", "posts", id, "status"]) => set_status(route, id, body),
+        (Method::Delete, ["api", "posts", id]) => delete_post(route, id),
+        _ => Reply::err(404, "not_found"),
+    }
+}
+
+/// Idempotent: a post's own author may delete it; an admin may delete any.
+fn ensure_policy_rules() {
+    match records::find_by("meta", "kind", "\"policy_rules\"") {
+        Ok(entries) if !entries.is_empty() => {}
+        _ => {
+            let rules = vec![
+                PolicyRule {
+                    id: "author-may-delete".to_string(),
+                    action: "delete".to_string(),
+                    effect: Effect::Allow,
+                    conditions: vec![Condition {
+                        left: "resource.author".to_string(),
+                        op: Op::Eq,
+                        right: "principal.subject".to_string(),
+                    }],
+                    priority: 10,
+                },
+                PolicyRule {
+                    id: "admin-may-delete".to_string(),
+                    action: "delete".to_string(),
+                    effect: Effect::Allow,
+                    conditions: vec![Condition {
+                        left: "principal.roles".to_string(),
+                        op: Op::Has,
+                        right: "admin".to_string(),
+                    }],
+                    priority: 5,
+                },
+            ];
+            if policy::set_rules(POLICY_DOMAIN, &rules).is_ok() {
+                let marker = json!({"kind": "policy_rules"}).to_string();
+                let _ = records::create("meta", &marker, &["kind".to_string()]);
+            }
+        }
+    }
+}
+
+fn author_or_admin(action: &str, p: &Principal, author: &str) -> bool {
+    ensure_policy_rules();
+    let principal_attrs = vec![
+        Attr { key: "subject".to_string(), value: p.subject.clone() },
+        Attr { key: "roles".to_string(), value: p.roles.join(",") },
+    ];
+    let resource_attrs = vec![Attr { key: "author".to_string(), value: author.to_string() }];
+    policy::enforce(POLICY_DOMAIN, action, &principal_attrs, &resource_attrs)
+}
+
+#[derive(serde::Deserialize)]
+struct PostReq {
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    description: String,
+}
+
+fn create_post(route: &Route, body: &str) -> Reply {
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let req: PostReq = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Reply::err(400, "bad_json"),
+    };
+    if req.title.is_empty() {
+        return Reply::err(400, "title is required");
+    }
+    let data = json!({
+        "title": req.title,
+        "description": req.description,
+        "status": "open",
+        "votes": 0,
+        "voters": [],
+        "author": principal.subject,
+    })
+    .to_string();
+    match records::create("posts", &data, &["author".to_string()]) {
+        Ok(entry) => {
+            audit("post.create", "allow", &principal.subject, &entry.id);
+            Reply::json(201, json!({"id": entry.id}))
+        }
+        Err(_) => Reply::err(500, "store_error"),
+    }
+}
+
+fn list_posts(route: &Route) -> Reply {
+    if introspect(route).is_err() {
+        return Reply::err(401, "unauthorized");
+    }
+    match records::list_records("posts", 100, "") {
+        Ok(page) => {
+            let mut posts = entries_json(&page.entries);
+            posts.sort_by(|a, b| {
+                let va = a.get("votes").and_then(Value::as_i64).unwrap_or(0);
+                let vb = b.get("votes").and_then(Value::as_i64).unwrap_or(0);
+                vb.cmp(&va)
+            });
+            Reply::json(200, json!({"posts": posts}))
+        }
+        Err(_) => Reply::err(500, "store_error"),
+    }
+}
+
+fn vote(route: &Route, id: &str) -> Reply {
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let entry = match records::get("posts", id) {
+        Ok(e) => e,
+        Err(_) => return Reply::err(404, "not_found"),
+    };
+    let mut post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    let already_voted = post["voters"]
+        .as_array()
+        .map(|a| a.iter().any(|v| v.as_str() == Some(principal.subject.as_str())))
+        .unwrap_or(false);
+    if already_voted {
+        return Reply::err(409, "already_voted");
+    }
+    let votes = post.get("votes").and_then(Value::as_i64).unwrap_or(0) + 1;
+    post["votes"] = json!(votes);
+    match post["voters"].as_array_mut() {
+        Some(a) => a.push(json!(principal.subject)),
+        None => post["voters"] = json!([principal.subject]),
+    }
+    match records::update("posts", id, &post.to_string(), entry.revision) {
+        Ok(_) => {
+            audit("post.vote", "allow", &principal.subject, id);
+            Reply::json(200, json!({"id": id, "votes": votes}))
+        }
+        Err(_) => Reply::err(409, "conflict"),
+    }
+}
+
+/// Admin-only, checked directly against the role — a status change speaks
+/// for the whole team, not for one row's owner.
+fn set_status(route: &Route, id: &str, body: &str) -> Reply {
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    if !is_admin(&principal) {
+        return Reply::err(403, "forbidden");
+    }
+    let entry = match records::get("posts", id) {
+        Ok(e) => e,
+        Err(_) => return Reply::err(404, "not_found"),
+    };
+    let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
+    let status = req.get("status").and_then(Value::as_str).unwrap_or("");
+    if !STATUSES.contains(&status) {
+        return Reply::err(400, "invalid status");
+    }
+    let mut post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    post["status"] = json!(status);
+    match records::update("posts", id, &post.to_string(), entry.revision) {
+        Ok(_) => {
+            audit("post.status", "allow", &principal.subject, &format!("{id} -> {status}"));
+            Reply::json(200, json!({"id": id, "status": status}))
+        }
+        Err(_) => Reply::err(409, "conflict"),
+    }
+}
+
+fn delete_post(route: &Route, id: &str) -> Reply {
+    let principal = match introspect(route) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let entry = match records::get("posts", id) {
+        Ok(e) => e,
+        Err(_) => return Reply::err(404, "not_found"),
+    };
+    let post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
+    let author = post.get("author").and_then(Value::as_str).unwrap_or("").to_string();
+    if !author_or_admin("delete", &principal, &author) {
+        audit("post.delete", "deny", &principal.subject, id);
+        return Reply::err(403, "forbidden");
+    }
+    match records::delete("posts", id) {
+        Ok(()) => {
+            audit("post.delete", "allow", &principal.subject, id);
+            Reply::json(204, Value::Null)
+        }
+        Err(_) => Reply::err(500, "store_error"),
+    }
+}
+
+fn entries_json(entries: &[records::Entry]) -> Vec<Value> {
+    entries
+        .iter()
+        .map(|e| {
+            let mut v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
+            if let Value::Object(ref mut m) = v {
+                m.insert("id".to_string(), json!(e.id));
+            }
+            v
+        })
+        .collect()
+}

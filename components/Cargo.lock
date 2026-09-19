@@ -212,6 +212,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ats-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "audit-log"
 version = "0.1.0"
 dependencies = [
@@ -300,6 +311,17 @@ dependencies = [
 name = "bigadd"
 version = "0.1.0"
 dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "billing-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
@@ -466,6 +488,16 @@ dependencies = [
 name = "calc"
 version = "0.1.0"
 dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "capability-advisor"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
@@ -729,6 +761,17 @@ dependencies = [
 name = "crdt"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "crm-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
  "serde",
  "serde_json",
  "wit-bindgen-rt",
@@ -1128,6 +1171,17 @@ dependencies = [
 name = "feature-flags"
 version = "0.1.0"
 dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "feedback-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
@@ -1866,6 +1920,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jev-decision"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "jev-router"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "jobs-domain"
 version = "0.1.0"
 dependencies = [
@@ -2207,6 +2278,14 @@ dependencies = [
 
 [[package]]
 name = "mock-fitness"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "mock-jev-provider"
 version = "0.1.0"
 dependencies = [
  "serde_json",
@@ -3445,6 +3524,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "timesheet-domain"
+version = "0.1.0"
+dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3531,6 +3621,15 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "typesafe-provider"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
 
 [[package]]
 name = "ui-notifier"

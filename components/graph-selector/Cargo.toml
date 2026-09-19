@@ -24,6 +24,7 @@ world = "graph-selector"
 "graph:agent" = { path = "../graph-agent/wit" }
 "git:forge" = { path = "../git-forge/wit" }
 "llm:inference" = { path = "../llm-inference/wit" }
+"jev:decision" = { path = "../jev-decision/wit" }
 "wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
 "wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
 "wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }

@@ -1,0 +1,9 @@
+name = "ats"
+access = "tailnet"
+domain = "ats.example.com"
+artifact = "components/target/ats_domain.composed.wasm"
+port = 3932
+static_dir = "examples/ats/public"
+kv = "sqlite"
+components = ["ats-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter"]
+strategy = "fused"
