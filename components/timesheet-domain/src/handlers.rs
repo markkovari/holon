@@ -73,10 +73,7 @@ struct ProjectReq {
 }
 
 fn create_project(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: ProjectReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -121,10 +118,7 @@ struct EntryReq {
 }
 
 fn create_entry(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: EntryReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -154,10 +148,7 @@ fn create_entry(route: &Route, body: &str) -> Reply {
 /// A member sees their own entries; a manager sees the ones routed to them —
 /// two different equals-filters on the same collection, never both at once.
 fn list_entries(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let subject_json = serde_json::to_string(&principal.subject).unwrap_or_default();
     let result = if is_manager(&principal) {
         records::find_by("entries", "manager", &subject_json)
@@ -171,10 +162,7 @@ fn list_entries(route: &Route) -> Reply {
 }
 
 fn decide_entry(route: &Route, id: &str, new_status: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("entries", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

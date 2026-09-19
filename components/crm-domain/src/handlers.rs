@@ -41,10 +41,7 @@ struct ContactReq {
 }
 
 fn create_contact(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: ContactReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -86,10 +83,7 @@ struct DealReq {
 }
 
 fn create_deal(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: DealReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -116,10 +110,7 @@ fn create_deal(route: &Route, body: &str) -> Reply {
 }
 
 fn list_deals(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let result = if is_admin(&principal) {
         records::list_records("deals", 100, "").map(|p| p.entries)
     } else {
@@ -133,10 +124,7 @@ fn list_deals(route: &Route) -> Reply {
 }
 
 fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("deals", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
@@ -160,10 +148,7 @@ fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
 }
 
 fn add_note(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("deals", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

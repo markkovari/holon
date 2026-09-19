@@ -40,10 +40,7 @@ struct PostingReq {
 }
 
 fn create_posting(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "posting.create", "");
     let req: PostingReq = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -68,10 +65,7 @@ fn create_posting(route: &Route, body: &str) -> Reply {
 }
 
 fn list_postings(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let result = if is_admin(&principal) {
         records::list_records("postings", 100, "").map(|p| p.entries)
     } else {
@@ -99,10 +93,7 @@ struct CandidateReq {
 }
 
 fn add_candidate(route: &Route, posting_id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let Some(assigned_to) = posting_assigned_to(posting_id) else {
         return Reply::err(404, "not_found");
     };
@@ -131,10 +122,7 @@ fn add_candidate(route: &Route, posting_id: &str, body: &str) -> Reply {
 }
 
 fn list_candidates(route: &Route, posting_id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let Some(assigned_to) = posting_assigned_to(posting_id) else {
         return Reply::err(404, "not_found");
     };
@@ -147,10 +135,7 @@ fn list_candidates(route: &Route, posting_id: &str) -> Reply {
 }
 
 fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("candidates", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

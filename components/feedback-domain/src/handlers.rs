@@ -37,10 +37,7 @@ struct PostReq {
 }
 
 fn create_post(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: PostReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -85,10 +82,7 @@ fn list_posts(route: &Route) -> Reply {
 }
 
 fn vote(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("posts", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
@@ -119,10 +113,7 @@ fn vote(route: &Route, id: &str) -> Reply {
 /// Admin-only, checked directly against the role — a status change speaks
 /// for the whole team, not for one row's owner.
 fn set_status(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "post.status", id);
     let entry = match records::get("posts", id) {
         Ok(e) => e,
@@ -145,10 +136,7 @@ fn set_status(route: &Route, id: &str, body: &str) -> Reply {
 }
 
 fn delete_post(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("posts", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

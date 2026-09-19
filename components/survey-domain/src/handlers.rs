@@ -38,10 +38,7 @@ struct SurveyReq {
 /// `admin` only: a non-admin is refused before any storage is touched. The
 /// survey is created `open` — `close` is the only transition out of that.
 fn create_survey(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.create", "");
     let req: SurveyReq = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -69,10 +66,7 @@ fn create_survey(route: &Route, body: &str) -> Reply {
 /// ones. Status is filtered in Rust rather than by index so both callers can
 /// share one list.
 fn list_surveys(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let admin = is_admin(&principal);
     match records::list_records("surveys", 100, "") {
         Ok(page) => {
@@ -108,10 +102,7 @@ struct ResponseReq {
 /// last one is a uniqueness check against the `responses` collection, not a
 /// policy call.
 fn create_response(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: ResponseReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -163,10 +154,7 @@ fn create_response(route: &Route, id: &str, body: &str) -> Reply {
 
 /// `admin` only: every response to a survey, with respondent and answers.
 fn results(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.results", id);
     if records::get("surveys", id).is_err() {
         return Reply::err(404, "not_found");
@@ -199,10 +187,7 @@ fn results(route: &Route, id: &str) -> Reply {
 
 /// `admin` only: `open -> closed`, and refused (400) if it is already closed.
 fn close_survey(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "survey.close", id);
     let entry = match records::get("surveys", id) {
         Ok(e) => e,

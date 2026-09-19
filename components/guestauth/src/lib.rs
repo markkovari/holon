@@ -393,6 +393,23 @@ macro_rules! guest_owner_or_admin_policy {
     };
 }
 
+/// Who is calling, or bail — the four lines every handler in every SaaS app
+/// here opens with, unchanged since the first of them was hand-written:
+/// `introspect($route)`'s `Err` is already a `Reply` (401 on no bearer, the
+/// mapped `AuthError` otherwise), so the caller's own early return is exactly
+/// right, and this expands to an expression: `let principal =
+/// guestauth::guest_authenticated!(route);` reads the same as what it
+/// replaces.
+#[macro_export]
+macro_rules! guest_authenticated {
+    ($route:expr) => {
+        match introspect($route) {
+            Ok(p) => p,
+            Err(r) => return r,
+        }
+    };
+}
+
 /// Refuse with an audited 403 unless `$cond` holds — the same three lines
 /// every RBAC/ABAC check in every SaaS app here writes before its real work:
 /// `is_admin(&principal)`, `owns_or_admin("edit", &principal, &owner)`, or a

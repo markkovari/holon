@@ -40,10 +40,7 @@ struct ReportReq {
 /// Stores it in the `reports` collection with `status: "submitted"` and
 /// `employee` set to the caller's subject.
 fn create_report(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: ReportReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -71,10 +68,7 @@ fn create_report(route: &Route, body: &str) -> Reply {
 /// (`records::find_by("reports", "employee", ...)`, the same shape as
 /// `billing-domain::list_invoices`).
 fn list_reports(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let result = if is_admin(&principal) {
         records::list_records("reports", 100, "").map(|p| p.entries)
     } else {
@@ -90,10 +84,7 @@ fn list_reports(route: &Route) -> Reply {
 /// `owns_or_admin("view", ...)` gates this — the report's own `employee`, or
 /// an admin.
 fn get_report(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("reports", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
@@ -124,10 +115,7 @@ fn reject_report(route: &Route, id: &str) -> Reply {
 /// report (even the employee who filed it cannot approve their own), it's
 /// about who is trusted to sign off on the money.
 fn transition(route: &Route, id: &str, next: &str, action: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, action, id);
     let entry = match records::get("reports", id) {
         Ok(e) => e,

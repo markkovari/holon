@@ -37,10 +37,7 @@ struct ClientReq {
 }
 
 fn create_client(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: ClientReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -85,10 +82,7 @@ struct InvoiceReq {
 }
 
 fn create_invoice(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let req: InvoiceReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -117,10 +111,7 @@ fn create_invoice(route: &Route, body: &str) -> Reply {
 }
 
 fn list_invoices(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let result = if is_admin(&principal) {
         records::list_records("invoices", 100, "").map(|p| p.entries)
     } else {
@@ -134,10 +125,7 @@ fn list_invoices(route: &Route) -> Reply {
 }
 
 fn send_invoice(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let entry = match records::get("invoices", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
@@ -162,10 +150,7 @@ fn send_invoice(route: &Route, id: &str) -> Reply {
 /// about who OWNS the invoice, it's about who is trusted to confirm money
 /// arrived.
 fn pay_invoice(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     guestauth::guest_deny_unless!(is_admin(&principal), principal, "invoice.pay", id);
     let entry = match records::get("invoices", id) {
         Ok(e) => e,
