@@ -28,7 +28,7 @@
 //! escapes it by default (`ensure_ascii=True`), which turned 256 em-dashes into
 //! `—`. Both are valid JSON and one of them is readable.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use comp_reconciler::fleet::repo_root;
