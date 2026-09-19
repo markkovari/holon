@@ -1741,7 +1741,7 @@ fn main() -> Result<()> {
         // daemon runs this), and `process::exit` does not run destructors.
         use std::io::Write;
         let _ = std::io::stdout().flush();
-        std::process::exit(3);
+        std::process::exit(comp_reconciler::goalexit::EXHAUSTED);
     }
 
     if args.dry_run {

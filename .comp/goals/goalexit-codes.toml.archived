@@ -1,0 +1,109 @@
+title = "comp-goalrun/comp-goald — a REFUSED gate must not read as success"
+
+text = """
+Fix a real bug found running the daemon live: `comp-goalrun`'s exit code
+cannot currently distinguish "a branch won" from "the gate refused to run,
+nothing was spent." Both are exit 0. `comp-goald` only checks
+`status.success()`, so a REFUSED goal (its own `[[check]].command` wasn't in
+the tree yet, or every check already passes on the untouched base) gets
+reported to the platform as `awaiting-human` — a pull request waiting for
+review — when no branch ever ran and nothing was opened. This is not
+theoretical: it happened while testing this exact pipeline tonight.
+
+This is a NATIVE Rust fix inside `reconciler/`, not a wasm component — there
+is no WIT world, no `cargo component`, no HTTP gate here. The judge is a
+plain `cargo test`.
+
+## What to build
+
+**A new file, `reconciler/src/goalexit.rs`**, a small self-contained module
+with exactly these public items (the held-out test in `context` below
+depends on these exact names — read it, it is the literal specification):
+
+  - `pub const SUCCESS: i32 = 0;` — the OS's own convention; `comp-goald`'s
+    `status.success()` check depends on this staying 0.
+  - `pub const EXHAUSTED: i32 = 3;` — comp-goalrun's EXISTING exit code for
+    "every branch ran, none passed the gate" (already used at
+    `std::process::exit(3)` in `reconciler/src/bin/goalrun.rs` — do not
+    change that call site's value, just its meaning becomes "this module's
+    EXHAUSTED constant" instead of a bare literal).
+  - `pub const GATE_REFUSED: i32 = 4;` — NEW: the gate could not judge
+    anything, nothing was spent. This is the code this fix introduces.
+  - `pub fn failure_reason(code: Option<i32>) -> String` — given the exit
+    code `comp-goalrun` returned (or `None`, meaning it was killed by a
+    signal — `std::process::ExitStatus::code()` returns `None` in that
+    case, and this must not panic), returns the human-readable reason
+    `comp-goald` reports to the platform's `/api/goals/{id}/fail` endpoint.
+    `Some(EXHAUSTED)` and `Some(GATE_REFUSED)` must produce DIFFERENT
+    strings (read the held-out test for the exact substrings each must
+    contain); anything else falls back to a generic message that names the
+    actual numeric code, because an operator debugging a crash needs the
+    number.
+
+**`reconciler/src/lib.rs`** — add `pub mod goalexit;` to the existing module
+list (alphabetical order, matching the file's own convention — it goes
+after `pub mod generation;` and before `pub mod memory;`). Change NOTHING
+else in this file; it is shown to you in full in `context` below.
+
+**`reconciler/src/bin/goalrun.rs`** — find the `ponytail:` comment near
+`gate_can_judge`'s call site (search for `gate_can_judge(&goal`). Currently:
+
+    if !gate_can_judge(&goal, &checks, &gate, &base_commit, &tree, args.timeout) {
+        return Ok(());
+    }
+
+Change the body of that `if` to exit with the new distinct code instead of
+returning success:
+
+    if !gate_can_judge(&goal, &checks, &gate, &base_commit, &tree, args.timeout) {
+        std::process::exit(comp_reconciler::goalexit::GATE_REFUSED);
+    }
+
+Leave the `ponytail:` comment above it in place — it documents WHY this
+line exists, and a future reader should still find it there. Do not touch
+any other `return Ok(())`, `std::process::exit(3)`, or anything else in this
+huge file — this is a one-line, surgical change.
+
+**`reconciler/src/bin/goald.rs`** — in the `work` function, find the
+`else` branch that computes `reason` from `status.code()`:
+
+    let reason = match status.code() {
+        Some(3) => "no branch passed the gate — the goal needs work, not a retry".to_string(),
+        code => format!("comp-goalrun exited {}", code.unwrap_or(-1)),
+    };
+
+Replace the whole `let reason = ...;` statement with a call to the new
+module:
+
+    let reason = comp_reconciler::goalexit::failure_reason(status.code());
+
+Do not change anything else in this file — the surrounding `eprintln!`,
+the `call(...)` invocation, all of it stays exactly as it is.
+"""
+
+base_paths = [
+  "reconciler/",
+  "lattice/",
+  "comp-metadata/",
+]
+
+writable = [
+  "reconciler/src/goalexit.rs",
+  "reconciler/src/lib.rs",
+  "reconciler/src/bin/goalrun.rs",
+  "reconciler/src/bin/goald.rs",
+]
+
+context = [
+  # The held-out judge itself: not writable, but shown up front — it is the
+  # literal specification of every name and every substring `goalexit.rs`
+  # must produce, and hiding it would just buy one wasted generation of
+  # guessing wrong before the gate's own error message said the same thing.
+  "reconciler/tests/goalexit.rs",
+]
+
+[[check]]
+id = "goalexit-behaves-correctly"
+required = true
+weight = 1
+command = ["cargo", "test", "--release", "--manifest-path", "reconciler/Cargo.toml", "--test", "goalexit"]

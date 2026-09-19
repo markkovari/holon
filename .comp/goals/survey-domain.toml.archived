@@ -1,0 +1,207 @@
+title = "survey:feedback — a whole new app, not just one file"
+
+text = """
+Build a brand new component from scratch: `components/survey-domain`, a
+survey/feedback tool. NOTHING exists yet under that path — you are creating
+the crate, not filling in a stub.
+
+## The domain
+
+Two collections in `records:store`:
+
+  surveys    {title: string, questions: list<string>, status: "open"|"closed"}
+  responses  {survey_id: string, respondent: string, answers: list<string>}
+
+Routes:
+
+  POST   /api/surveys                {"title":<string>,"questions":<list<string>>}   (admin)
+  GET    /api/surveys                                                                (any authenticated)
+  POST   /api/surveys/{id}/responses {"answers":<list<string>>}                      (any authenticated)
+  GET    /api/surveys/{id}/results                                                   (admin)
+  POST   /api/surveys/{id}/close                                                     (admin)
+
+Rules:
+  - Only `admin` may create a survey. It starts `status: "open"`.
+  - `GET /api/surveys` lists every OPEN survey for anyone authenticated
+    (id, title, questions) — admin also sees closed ones.
+  - Submitting a response: the survey must exist and be `open` (400 if not);
+    `answers` must have exactly as many entries as the survey has
+    `questions` (400 if not); a subject may respond to a given survey AT
+    MOST ONCE — a second attempt is refused with 409. There is no ownership
+    concept here and no `policy:guard` — this is a role check plus a
+    uniqueness check, not row-level ABAC. Do NOT bring in `policy:guard` or
+    `guest_owner_or_admin_policy!`; this domain does not need them.
+  - `GET /api/surveys/{id}/results` (admin only): `{"survey_id":...,
+    "response_count":<n>,"responses":[{"respondent":...,"answers":[...]}]}`.
+  - `POST /api/surveys/{id}/close` (admin only): `open -> closed`; refused
+    with 400 if already closed.
+
+Roles: `admin`, `respondent` (the default for anyone who registers without
+naming a role, or names one this app does not grant).
+
+## The record-store surface (exact — guessing this wrong is how past runs
+## of other goals died silently)
+
+    use crate::bindings::records::store::store as records;
+
+    records::create(collection: &str, data: &str, index_fields: &[String]) -> Result<Entry, StoreError>
+    records::get(collection: &str, id: &str)                               -> Result<Entry, StoreError>
+    records::update(collection: &str, id: &str, data: &str, expected_revision: u64) -> Result<Entry, StoreError>
+    records::list_records(collection: &str, limit: u32, after: &str)       -> Result<Page, StoreError>
+    records::find_by(collection: &str, field: &str, value: &str)           -> Result<Vec<Entry>, StoreError>
+    records::query(collection: &str, filters: &[Filter], limit: u32)       -> Result<Vec<Entry>, StoreError>
+
+    struct Entry  { id: String, data: String, revision: u64, created: u64, … }
+    struct Filter { field: String, value: String }
+    struct Page   { entries: Vec<Entry>, next: String }
+
+`find_by`/`query` want the JSON ENCODING of the value, not the bare value —
+a string field indexes under `"the-value"`, quotes included
+(`serde_json::to_string(&x)`, not `x` itself). A field is only queryable if
+it was named in `index_fields` when the record was created. The
+"has this subject already answered this survey" check needs BOTH
+`survey_id` and `respondent` — either `records::query` with two `Filter`s
+(both fields must be in `index_fields`), or `find_by` on one field with the
+result filtered in Rust for the other. Either is fine.
+
+## What already exists and how to use it
+
+This app is built with the exact same recipe as `components/billing-domain`
+(a full worked example is in `context` below — its `Cargo.toml`, WIT world,
+router, handlers, gate, hurl scenario and static SPA are all real, working
+files. Read them.) EXCEPT this domain drops `policy:guard` entirely — it is
+not in billing-domain's imports either... actually billing-domain DOES use
+policy:guard for invoice ownership, which this domain does not need. Use it
+as the STRUCTURAL template (router macros, error replies, gate shape,
+SPA shape) and drop only the `policy:guard`/`guest_owner_or_admin_policy!`
+parts.
+
+Router (`components/survey-domain/src/lib.rs`) — same `guestauth`/`guestio`
+macro sequence every app in this repo uses:
+
+    pub use guestauth::Route;
+    pub const TENANT: &str = "survey";
+    const ROLES: &[&str] = &["admin", "respondent"];
+    guestio::guest_write_all!();
+    guestio::guest_bearer!();
+    const MAX_BODY_BYTES: usize = 1024 * 1024;
+    guestio::guest_read_body_text!(MAX_BODY_BYTES);
+    guestauth::guest_auth_reply!();
+    guestauth::guest_introspect!();
+    guestauth::guest_role_check!(is_admin, "admin");
+    guestauth::guest_audit!(TENANT);
+    guestauth::guest_accounts_endpoints!(TENANT, ROLES, "respondent");
+    guestauth::guest_emit!();
+    guestauth::guest_saas_router!();
+
+`components/survey-domain/Cargo.toml` MUST depend on `guestfmt`, `guestio`
+AND `guestauth` (three sibling path dependencies, same three lines as
+billing-domain's `Cargo.toml` in context) — a past run of a similar goal
+failed every branch because `guestfmt` was left out of the workspace scope;
+do not repeat that. Do NOT depend on `policy-guard`.
+
+`components/survey-domain/wit/survey-domain.wit` — same shape as
+billing-domain's WIT world MINUS the `policy:guard/guard` import (this
+domain does not use it):
+
+    package survey:feedback@0.1.0;
+    world survey-domain {
+        export wasi:http/incoming-handler@0.2.0;
+        import auth:identity/accounts@0.1.0;
+        import auth:identity/authorizer@0.1.0;
+        import auth:identity/session@0.1.0;
+        import auth:identity/rbac@0.1.0;
+        import auth:identity/types@0.1.0;
+        import records:store/store@0.1.0;
+        import audit:log/recorder@0.1.0;
+        import ratelimit:guard/limiter@0.1.0;
+        import wasi:clocks/wall-clock@0.2.0;
+        import wasi:http/outgoing-handler@0.2.0;
+    }
+
+`components/survey-domain/gate.sh` and `components/survey-domain/scenario.hurl`
+ALREADY EXIST — they are this goal's held-out judge, shown to you in `context`
+below but NOT in `writable`: you may read them to know exactly what is
+asserted, but you may not edit them, and nothing you write may assume a
+different port, static dir, or component list than what `gate.sh` already
+names (port 3937, `examples/survey/public`, no `policy-guard` in the build).
+Read `scenario.hurl` closely — it is the literal specification of every
+route's status codes and response shapes; matching it exactly is the goal.
+
+`examples/survey/public/index.html` — one file, inline style/script, no
+build step: a login/register screen, a survey list, a "take this survey"
+form rendering one input per question, and (visible only when the logged-in
+user is admin) a create-survey form and a results view per survey. Model
+this on billing-domain's `examples/billing/public/index.html` in context for
+the shape (fetch calls, token storage, screen switching), not its content.
+
+`apps/survey.toml` — same shape as `apps/billing.toml` in context: name
+`survey`, port 3937, `static_dir = "examples/survey/public"`,
+`components = ["survey-domain", "auth-guard", "record-store", "audit-log",
+"rate-limiter"]` (no `policy-guard` — this domain does not import it),
+`kv = "sqlite"`, `strategy = "fused"`.
+"""
+
+component = "survey-domain"
+
+base_paths = [
+  "components/survey-domain/",
+  "components/auth-guard/",
+  "components/record-store/",
+  "components/audit-log/",
+  "components/rate-limiter/",
+  "components/guestauth/",
+  "components/guestio/",
+  "components/guestfmt/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+
+writable = [
+  "components/survey-domain/Cargo.toml",
+  "components/survey-domain/wit/survey-domain.wit",
+  "components/survey-domain/src/lib.rs",
+  "components/survey-domain/src/handlers.rs",
+  "examples/survey/public/index.html",
+  "apps/survey.toml",
+]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "survey-domain",
+  "auth-guard",
+  "record-store",
+  "audit-log",
+  "rate-limiter",
+  "guestauth",
+  "guestio",
+  "guestfmt",
+]
+
+context = [
+  "components/billing-domain/Cargo.toml",
+  "components/billing-domain/wit/billing.wit",
+  "components/billing-domain/src/lib.rs",
+  "components/billing-domain/src/handlers.rs",
+  "components/billing-domain/gate.sh",
+  "components/billing-domain/scenario.hurl",
+  "examples/billing/public/index.html",
+  "apps/billing.toml",
+  "components/guestauth/src/lib.rs",
+  "components/record-store/wit/record.wit",
+  ".comp/context/auth-consumer.wit",
+  # This goal's own held-out gate and e2e scenario, shown up front rather than
+  # hidden: a branch cannot WRITE these (they are not in `writable`), but
+  # seeing exactly what is asserted buys the same information in one prompt
+  # instead of a whole wasted generation writing blind (the lesson from
+  # `card-identify`'s recorded run history).
+  "components/survey-domain/gate.sh",
+  "components/survey-domain/scenario.hurl",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/survey-domain/gate.sh"]

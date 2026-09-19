@@ -15,6 +15,8 @@ use serde_json::{json, Value};
 
 const POLICY_DOMAIN: &str = "entries";
 
+guestauth::guest_entries_json!();
+
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
     match (method, seg.as_slice()) {
@@ -191,17 +193,4 @@ fn decide_entry(route: &Route, id: &str, new_status: &str) -> Reply {
         }
         Err(_) => Reply::err(409, "conflict"),
     }
-}
-
-fn entries_json(entries: &[records::Entry]) -> Vec<Value> {
-    entries
-        .iter()
-        .map(|e| {
-            let mut v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
-            if let Value::Object(ref mut m) = v {
-                m.insert("id".to_string(), json!(e.id));
-            }
-            v
-        })
-        .collect()
 }
