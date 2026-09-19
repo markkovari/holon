@@ -5,9 +5,6 @@
 //! express, enforced with `policy:guard` exactly as `crm-domain` enforces
 //! "a rep only acts on their own deals".
 
-use crate::bindings::auth::identity::types::Principal;
-use crate::bindings::policy::guard::guard as policy;
-use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
 use crate::{audit, introspect, is_admin, Reply, Route};
@@ -15,6 +12,8 @@ use serde_json::{json, Value};
 
 const STATUSES: &[&str] = &["open", "planned", "in-progress", "done"];
 const POLICY_DOMAIN: &str = "posts";
+
+guestauth::guest_owner_or_admin_policy!(POLICY_DOMAIN, "author");
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
@@ -26,53 +25,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         (Method::Delete, ["api", "posts", id]) => delete_post(route, id),
         _ => Reply::err(404, "not_found"),
     }
-}
-
-/// Idempotent: a post's own author may delete it; an admin may delete any.
-fn ensure_policy_rules() {
-    match records::find_by("meta", "kind", "\"policy_rules\"") {
-        Ok(entries) if !entries.is_empty() => {}
-        _ => {
-            let rules = vec![
-                PolicyRule {
-                    id: "author-may-delete".to_string(),
-                    action: "delete".to_string(),
-                    effect: Effect::Allow,
-                    conditions: vec![Condition {
-                        left: "resource.author".to_string(),
-                        op: Op::Eq,
-                        right: "principal.subject".to_string(),
-                    }],
-                    priority: 10,
-                },
-                PolicyRule {
-                    id: "admin-may-delete".to_string(),
-                    action: "delete".to_string(),
-                    effect: Effect::Allow,
-                    conditions: vec![Condition {
-                        left: "principal.roles".to_string(),
-                        op: Op::Has,
-                        right: "admin".to_string(),
-                    }],
-                    priority: 5,
-                },
-            ];
-            if policy::set_rules(POLICY_DOMAIN, &rules).is_ok() {
-                let marker = json!({"kind": "policy_rules"}).to_string();
-                let _ = records::create("meta", &marker, &["kind".to_string()]);
-            }
-        }
-    }
-}
-
-fn author_or_admin(action: &str, p: &Principal, author: &str) -> bool {
-    ensure_policy_rules();
-    let principal_attrs = vec![
-        Attr { key: "subject".to_string(), value: p.subject.clone() },
-        Attr { key: "roles".to_string(), value: p.roles.join(",") },
-    ];
-    let resource_attrs = vec![Attr { key: "author".to_string(), value: author.to_string() }];
-    policy::enforce(POLICY_DOMAIN, action, &principal_attrs, &resource_attrs)
 }
 
 #[derive(serde::Deserialize)]
@@ -204,7 +156,7 @@ fn delete_post(route: &Route, id: &str) -> Reply {
     };
     let post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let author = post.get("author").and_then(Value::as_str).unwrap_or("").to_string();
-    if !author_or_admin("delete", &principal, &author) {
+    if !owns_or_admin("delete", &principal, &author) {
         audit("post.delete", "deny", &principal.subject, id);
         return Reply::err(403, "forbidden");
     }
