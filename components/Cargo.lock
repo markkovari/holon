@@ -1148,6 +1148,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "expense-domain"
+version = "0.1.0"
+dependencies = [
+ "guestauth",
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "experiment-assign"
 version = "0.1.0"
 dependencies = [
@@ -3397,6 +3409,18 @@ dependencies = [
 name = "support-domain"
 version = "0.1.0"
 dependencies = [
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "survey-domain"
+version = "0.1.0"
+dependencies = [
+ "guestauth",
  "guestfmt",
  "guestio",
  "serde",

@@ -1,0 +1,17 @@
+name = "platform"
+access = "tailnet"
+domain = "platform.example.com"
+artifact = "components/target/platform-domain.composed.wasm"
+port = 3936
+kv = "sqlite"
+components = ["platform-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter", "blob-store", "quota", "wit-reflect", "secrets-vault"]
+strategy = "fused"
+
+# `master-key` is a fixed local-dev value, not a real secret — see
+# `secrets-vault`'s own docs for envelope-encryption key rotation in a real
+# deployment. Without it every `/api/secrets` write is refused with "master
+# key missing".
+[config]
+applier-secret = "platform-applier-secret"
+ingress-suffix = "apps.local"
+master-key = "Y29tcC10ZXN0LW9ubHktbWFzdGVyLWtleS0zMmJ5dGU="
