@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holon Surveys</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #1a1d29; }
+  header { background: #241a4d; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input, select, textarea, button { font: inherit; padding: 8px 10px; border: 1px solid #d7d9e4; border-radius: 6px; }
+  input, select, textarea { width: 100%; margin-bottom: 8px; }
+  textarea { min-height: 84px; resize: vertical; }
+  button { background: #4b34b4; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { background: #3a278d; }
+  button.ghost { background: transparent; color: #4b34b4; border: 1px solid #4b34b4; }
+  .survey { border: 1px solid #eee; border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+  .survey .actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .survey .actions button { width: auto; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .status-open { background: #d4f4dd; color: #157347; }
+  .status-closed { background: #eee; color: #666; }
+  .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
+  .muted { color: #888; font-size: 13px; }
+  .q { margin-bottom: 10px; }
+  .q label { display: block; font-size: 13px; color: #444; margin-bottom: 4px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <header><h1>Holon Surveys</h1><span></span></header>
+  <main style="max-width:380px">
+    <section>
+      <h2 id="auth-title">Log in</h2>
+      <input id="email" type="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <select id="role" hidden>
+        <option value="respondent">respondent</option>
+        <option value="admin">admin</option>
+      </select>
+      <button id="submit-btn" onclick="submitAuth()">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="toggle-text">No account?</span>
+        <a href="#" onclick="toggleMode();return false" id="toggle-link">Register</a>
+      </p>
+      <div id="auth-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <h1>Holon Surveys</h1>
+    <span><span id="who"></span> <button class="ghost" onclick="logout()" style="width:auto">Log out</button></span>
+  </header>
+  <main>
+    <section id="create-section" hidden>
+      <h2>New survey</h2>
+      <input id="s-title" placeholder="Survey title">
+      <textarea id="s-questions" placeholder="One question per line"></textarea>
+      <button onclick="createSurvey()" style="max-width:160px">Create survey</button>
+    </section>
+
+    <section>
+      <h2>Surveys</h2>
+      <div id="surveys"></div>
+      <div id="list-err" class="err"></div>
+    </section>
+
+    <section id="take-section" hidden>
+      <h2 id="take-title">Take this survey</h2>
+      <div id="take-questions"></div>
+      <div class="actions" style="display:flex;gap:8px">
+        <button onclick="submitResponse()" style="width:auto">Submit answers</button>
+        <button class="ghost" onclick="hideTake()" style="width:auto">Cancel</button>
+      </div>
+      <div id="take-err" class="err"></div>
+    </section>
+
+    <section id="results-section" hidden>
+      <h2 id="results-title">Results</h2>
+      <div id="results"></div>
+      <div id="results-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('survey_token') || '';
+let mode = 'login';
+let isAdmin = false;
+let surveysById = {};
+let taking = null;
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]
+  ));
+}
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submit-btn').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('toggle-text').textContent = mode === 'login' ? 'No account?' : 'Already have one?';
+  document.getElementById('toggle-link').textContent = mode === 'login' ? 'Register' : 'Log in';
+  document.getElementById('role').hidden = mode === 'login';
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({'content-type': 'application/json'}, opts.headers || {});
+  if (token) opts.headers['authorization'] = 'Bearer ' + token;
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+async function submitAuth() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.textContent = '';
+  try {
+    if (mode === 'register') {
+      const role = document.getElementById('role').value;
+      await api('/register', {method: 'POST', body: JSON.stringify({email, password, role})});
+    }
+    const r = await api('/login', {method: 'POST', body: JSON.stringify({email, password})});
+    token = r.access_token;
+    localStorage.setItem('survey_token', token);
+    showApp();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+function logout() {
+  api('/logout', {method: 'POST'}).catch(() => {});
+  token = '';
+  localStorage.removeItem('survey_token');
+  location.reload();
+}
+
+async function showApp() {
+  document.getElementById('auth').hidden = true;
+  document.getElementById('app').hidden = false;
+  let me;
+  try {
+    me = await api('/me');
+  } catch (e) {
+    logout();
+    return;
+  }
+  isAdmin = (me.roles || []).indexOf('admin') !== -1;
+  document.getElementById('who').textContent = me.subject + ' (' + (me.roles[0] || 'respondent') + ')';
+  document.getElementById('create-section').hidden = !isAdmin;
+  refresh();
+}
+
+async function createSurvey() {
+  const title = document.getElementById('s-title').value.trim();
+  const questions = document.getElementById('s-questions').value
+    .split('\n').map(s => s.trim()).filter(s => s.length > 0);
+  const errEl = document.getElementById('list-err');
+  errEl.textContent = '';
+  if (!title || questions.length === 0) { errEl.textContent = 'title and at least one question are required'; return; }
+  try {
+    await api('/api/surveys', {method: 'POST', body: JSON.stringify({title, questions})});
+    document.getElementById('s-title').value = '';
+    document.getElementById('s-questions').value = '';
+    refresh();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+async function refresh() {
+  const errEl = document.getElementById('list-err');
+  let body;
+  try {
+    body = await api('/api/surveys');
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+    return;
+  }
+  const surveys = body.surveys || [];
+  surveysById = {};
+  surveys.forEach(s => { surveysById[s.id] = s; });
+  const el = document.getElementById('surveys');
+  if (surveys.length === 0) {
+    el.innerHTML = '<p class="muted">No surveys yet.</p>';
+    return;
+  }
+  el.innerHTML = surveys.map(s => {
+    const questions = s.questions || [];
+    const status = s.status || 'open';
+    let actions = '';
+    if (status === 'open') {
+      actions += '<button onclick="startTake(\'' + s.id + '\')">Take</button>';
+    }
+    if (isAdmin) {
+      actions += '<button class="ghost" onclick="showResults(\'' + s.id + '\')">Results</button>';
+      if (status === 'open') {
+        actions += '<button class="ghost" onclick="closeSurvey(\'' + s.id + '\')">Close</button>';
+      }
+    }
+    return '<div class="survey">'
+      + '<strong>' + esc(s.title) + '</strong> '
+      + '<span class="status status-' + esc(status) + '">' + esc(status) + '</span> '
+      + '<span class="muted">' + questions.length + ' question' + (questions.length === 1 ? '' : 's') + '</span>'
+      + '<div class="actions">' + actions + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+function startTake(id) {
+  const survey = surveysById[id];
+  if (!survey) return;
+  taking = id;
+  const questions = survey.questions || [];
+  document.getElementById('take-title').textContent = survey.title;
+  document.getElementById('take-questions').innerHTML = questions.map((q, i) =>
+    '<div class="q"><label for="q-' + i + '">' + esc(q) + '</label>'
+    + '<input id="q-' + i + '" data-idx="' + i + '"></div>'
+  ).join('');
+  document.getElementById('take-err').textContent = '';
+  document.getElementById('take-section').hidden = false;
+  document.getElementById('take-section').scrollIntoView({behavior: 'smooth'});
+}
+
+function hideTake() {
+  taking = null;
+  document.getElementById('take-section').hidden = true;
+}
+
+async function submitResponse() {
+  if (!taking) return;
+  const inputs = Array.from(document.querySelectorAll('#take-questions input'));
+  const answers = inputs.map(i => i.value);
+  const errEl = document.getElementById('take-err');
+  errEl.textContent = '';
+  try {
+    await api('/api/surveys/' + taking + '/responses', {
+      method: 'POST',
+      body: JSON.stringify({answers})
+    });
+    hideTake();
+    refresh();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+async function closeSurvey(id) {
+  const errEl = document.getElementById('list-err');
+  errEl.textContent = '';
+  try {
+    await api('/api/surveys/' + id + '/close', {method: 'POST'});
+    refresh();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+async function showResults(id) {
+  const survey = surveysById[id] || {};
+  const errEl = document.getElementById('results-err');
+  errEl.textContent = '';
+  let body;
+  try {
+    body = await api('/api/surveys/' + id + '/results');
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+    return;
+  }
+  document.getElementById('results-title').textContent =
+    'Results — ' + (survey.title || id) + ' (' + (body.response_count || 0) + ' responses)';
+  const questions = survey.questions || [];
+  const responses = body.responses || [];
+  if (responses.length === 0) {
+    document.getElementById('results').innerHTML = '<p class="muted">No responses yet.</p>';
+  } else {
+    document.getElementById('results').innerHTML = responses.map(r => {
+      const answers = r.answers || [];
+      const rows = questions.map((q, i) =>
+        '<tr><td class="muted">' + esc(q) + '</td><td>' + esc(answers[i] == null ? '' : answers[i]) + '</td></tr>'
+      ).join('');
+      return '<div class="survey"><strong>' + esc(r.respondent) + '</strong>'
+        + '<table style="width:100%;border-collapse:collapse;margin-top:6px">' + rows + '</table></div>';
+    }).join('');
+  }
+  document.getElementById('results-section').hidden = false;
+  document.getElementById('results-section').scrollIntoView({behavior: 'smooth'});
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>
