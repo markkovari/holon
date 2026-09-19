@@ -5,9 +5,6 @@
 //! as `crm-domain` enforces "a rep only acts on their own deals". Creating a
 //! posting is `admin`-only, checked directly against `principal.roles`.
 
-use crate::bindings::auth::identity::types::Principal;
-use crate::bindings::policy::guard::guard as policy;
-use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
 use crate::{audit, introspect, is_admin, Reply, Route};
@@ -15,6 +12,8 @@ use serde_json::{json, Value};
 
 const STAGES: &[&str] = &["applied", "screening", "interview", "offer", "hired", "rejected"];
 const POLICY_DOMAIN: &str = "postings";
+
+guestauth::guest_owner_or_admin_policy!(POLICY_DOMAIN, "assigned_to");
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
@@ -26,55 +25,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         (Method::Post, ["api", "candidates", id, "stage"]) => move_stage(route, id, body),
         _ => Reply::err(404, "not_found"),
     }
-}
-
-/// Idempotent: the interviewer assigned to a posting may act on it; an admin
-/// on any.
-fn ensure_policy_rules() {
-    match records::find_by("meta", "kind", "\"policy_rules\"") {
-        Ok(entries) if !entries.is_empty() => {}
-        _ => {
-            let rules = vec![
-                PolicyRule {
-                    id: "assigned-may-act".to_string(),
-                    action: "*".to_string(),
-                    effect: Effect::Allow,
-                    conditions: vec![Condition {
-                        left: "resource.assigned_to".to_string(),
-                        op: Op::Eq,
-                        right: "principal.subject".to_string(),
-                    }],
-                    priority: 10,
-                },
-                PolicyRule {
-                    id: "admin-may-act".to_string(),
-                    action: "*".to_string(),
-                    effect: Effect::Allow,
-                    conditions: vec![Condition {
-                        left: "principal.roles".to_string(),
-                        op: Op::Has,
-                        right: "admin".to_string(),
-                    }],
-                    priority: 5,
-                },
-            ];
-            if policy::set_rules(POLICY_DOMAIN, &rules).is_ok() {
-                let marker = json!({"kind": "policy_rules"}).to_string();
-                let _ = records::create("meta", &marker, &["kind".to_string()]);
-            }
-        }
-    }
-}
-
-fn assigned_or_admin(action: &str, p: &Principal, assigned_to: &str) -> bool {
-    ensure_policy_rules();
-    let principal_attrs = vec![
-        Attr { key: "subject".to_string(), value: p.subject.clone() },
-        Attr { key: "roles".to_string(), value: p.roles.join(",") },
-    ];
-    let resource_attrs =
-        vec![Attr { key: "assigned_to".to_string(), value: assigned_to.to_string() }];
-    policy::enforce(POLICY_DOMAIN, action, &principal_attrs, &resource_attrs)
 }
 
 #[derive(serde::Deserialize)]
@@ -157,7 +107,7 @@ fn add_candidate(route: &Route, posting_id: &str, body: &str) -> Reply {
     let Some(assigned_to) = posting_assigned_to(posting_id) else {
         return Reply::err(404, "not_found");
     };
-    if !assigned_or_admin("edit", &principal, &assigned_to) {
+    if !owns_or_admin("edit", &principal, &assigned_to) {
         return Reply::err(403, "forbidden");
     }
     let req: CandidateReq = match serde_json::from_str(body) {
@@ -191,7 +141,7 @@ fn list_candidates(route: &Route, posting_id: &str) -> Reply {
     let Some(assigned_to) = posting_assigned_to(posting_id) else {
         return Reply::err(404, "not_found");
     };
-    if !assigned_or_admin("view", &principal, &assigned_to) {
+    if !owns_or_admin("view", &principal, &assigned_to) {
         return Reply::err(403, "forbidden");
     }
     let posting_json = serde_json::to_string(&posting_id).unwrap_or_default();
@@ -215,7 +165,7 @@ fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
     let Some(assigned_to) = posting_assigned_to(&posting_id) else {
         return Reply::err(404, "not_found");
     };
-    if !assigned_or_admin("edit", &principal, &assigned_to) {
+    if !owns_or_admin("edit", &principal, &assigned_to) {
         audit("candidate.stage", "deny", &principal.subject, id);
         return Reply::err(403, "forbidden");
     }

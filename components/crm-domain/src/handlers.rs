@@ -4,9 +4,6 @@
 //! `policy:guard` exactly as `ticket-triage-domain` enforces "resolve only
 //! your own queue's ticket".
 
-use crate::bindings::auth::identity::types::Principal;
-use crate::bindings::policy::guard::guard as policy;
-use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
 use crate::{audit, introspect, is_admin, Reply, Route};
@@ -14,6 +11,8 @@ use serde_json::{json, Value};
 
 const STAGES: &[&str] = &["lead", "qualified", "proposal", "won", "lost"];
 const POLICY_DOMAIN: &str = "deals";
+
+guestauth::guest_owner_or_admin_policy!(POLICY_DOMAIN, "owner");
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
@@ -26,54 +25,6 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         (Method::Post, ["api", "deals", id, "notes"]) => add_note(route, id, body),
         _ => Reply::err(404, "not_found"),
     }
-}
-
-/// Idempotent: define the one row-level rule this app needs. A rep may act
-/// on a deal they own; an admin may act on any.
-fn ensure_policy_rules() {
-    match records::find_by("meta", "kind", "\"policy_rules\"") {
-        Ok(entries) if !entries.is_empty() => {}
-        _ => {
-            let rules = vec![
-                PolicyRule {
-                    id: "owner-may-act".to_string(),
-                    action: "*".to_string(),
-                    effect: Effect::Allow,
-                    conditions: vec![Condition {
-                        left: "resource.owner".to_string(),
-                        op: Op::Eq,
-                        right: "principal.subject".to_string(),
-                    }],
-                    priority: 10,
-                },
-                PolicyRule {
-                    id: "admin-may-act".to_string(),
-                    action: "*".to_string(),
-                    effect: Effect::Allow,
-                    conditions: vec![Condition {
-                        left: "principal.roles".to_string(),
-                        op: Op::Has,
-                        right: "admin".to_string(),
-                    }],
-                    priority: 5,
-                },
-            ];
-            if policy::set_rules(POLICY_DOMAIN, &rules).is_ok() {
-                let marker = json!({"kind": "policy_rules"}).to_string();
-                let _ = records::create("meta", &marker, &["kind".to_string()]);
-            }
-        }
-    }
-}
-
-fn owns_or_admin(action: &str, p: &Principal, owner: &str) -> bool {
-    ensure_policy_rules();
-    let principal_attrs = vec![
-        Attr { key: "subject".to_string(), value: p.subject.clone() },
-        Attr { key: "roles".to_string(), value: p.roles.join(",") },
-    ];
-    let resource_attrs = vec![Attr { key: "owner".to_string(), value: owner.to_string() }];
-    policy::enforce(POLICY_DOMAIN, action, &principal_attrs, &resource_attrs)
 }
 
 #[derive(serde::Deserialize)]

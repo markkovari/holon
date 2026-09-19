@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 [dependencies]
 guestfmt = { path = "../guestfmt" }
 guestio = { path = "../guestio" }
+guestauth = { path = "../guestauth" }
 wit-bindgen-rt = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

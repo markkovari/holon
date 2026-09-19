@@ -1,0 +1,12 @@
+[package]
+name = "guestauth"
+description = "The auth:identity register/login/RBAC+ABAC boilerplate every real SaaS domain needs, as macros that expand into the caller (guestauth)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# A plain rlib, NOT a component — same reason as `guestio`: `cargo-component`
+# generates a `bindings.rs` per crate, so `auth:identity`'s `Principal` and
+# `AuthError` are a DIFFERENT type in every consumer. A shared function could
+# not take one; a macro that expands into the caller can. See the crate docs.
