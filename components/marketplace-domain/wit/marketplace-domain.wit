@@ -1,0 +1,23 @@
+// marketplace:domain — a 5-part decomposed goal. See CONTRACT.md.
+package marketplace:domain@0.1.0;
+
+world marketplace-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    import policy:guard/guard@0.1.0;
+    import records:store/store@0.1.0;
+    import audit:log/recorder@0.1.0;
+    import ratelimit:guard/limiter@0.1.0;
+    import fsm:workflow/engine@0.1.0;
+    import ledger:doubleentry/ledger@0.1.0;
+    import jev:decision/decision@0.1.0;
+
+    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:http/outgoing-handler@0.2.0;
+}
