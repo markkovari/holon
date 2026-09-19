@@ -41,14 +41,8 @@ struct ContactReq {
 }
 
 fn create_contact(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: ContactReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, ContactReq);
     if req.name.is_empty() {
         return Reply::err(400, "name is required");
     }
@@ -86,14 +80,8 @@ struct DealReq {
 }
 
 fn create_deal(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: DealReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, DealReq);
     if req.title.is_empty() {
         return Reply::err(400, "title is required");
     }
@@ -116,10 +104,7 @@ fn create_deal(route: &Route, body: &str) -> Reply {
 }
 
 fn list_deals(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let result = if is_admin(&principal) {
         records::list_records("deals", 100, "").map(|p| p.entries)
     } else {
@@ -133,20 +118,11 @@ fn list_deals(route: &Route) -> Reply {
 }
 
 fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let entry = match records::get("deals", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let entry = guestauth::guest_get_or_404!("deals", id);
     let mut deal: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = deal.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("edit", &principal, &owner) {
-        audit("deal.stage", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "deal.stage", id);
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let stage = req.get("stage").and_then(Value::as_str).unwrap_or("");
     if !STAGES.contains(&stage) {
@@ -163,19 +139,11 @@ fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
 }
 
 fn add_note(route: &Route, id: &str, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let entry = match records::get("deals", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let entry = guestauth::guest_get_or_404!("deals", id);
     let mut deal: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = deal.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("edit", &principal, &owner) {
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "deal.note", id);
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let text = req.get("text").and_then(Value::as_str).unwrap_or("").to_string();
     if text.is_empty() {

@@ -37,14 +37,8 @@ struct ClientReq {
 }
 
 fn create_client(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: ClientReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, ClientReq);
     if req.name.is_empty() {
         return Reply::err(400, "name is required");
     }
@@ -85,14 +79,8 @@ struct InvoiceReq {
 }
 
 fn create_invoice(route: &Route, body: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let req: InvoiceReq = match serde_json::from_str(body) {
-        Ok(v) => v,
-        Err(_) => return Reply::err(400, "bad_json"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let req = guestauth::guest_parse_body!(body, InvoiceReq);
     if req.client_id.is_empty() || req.line_items.is_empty() {
         return Reply::err(400, "client_id and at least one line item are required");
     }
@@ -117,10 +105,7 @@ fn create_invoice(route: &Route, body: &str) -> Reply {
 }
 
 fn list_invoices(route: &Route) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let principal = guestauth::guest_authenticated!(route);
     let result = if is_admin(&principal) {
         records::list_records("invoices", 100, "").map(|p| p.entries)
     } else {
@@ -134,20 +119,11 @@ fn list_invoices(route: &Route) -> Reply {
 }
 
 fn send_invoice(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let entry = match records::get("invoices", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    let entry = guestauth::guest_get_or_404!("invoices", id);
     let mut inv: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = inv.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("edit", &principal, &owner) {
-        audit("invoice.send", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "invoice.send", id);
     if inv.get("status").and_then(Value::as_str) != Some("draft") {
         return Reply::err(400, "only a draft invoice can be sent");
     }
@@ -165,18 +141,9 @@ fn send_invoice(route: &Route, id: &str) -> Reply {
 /// about who OWNS the invoice, it's about who is trusted to confirm money
 /// arrived.
 fn pay_invoice(route: &Route, id: &str) -> Reply {
-    let principal = match introspect(route) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if !is_admin(&principal) {
-        audit("invoice.pay", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
-    let entry = match records::get("invoices", id) {
-        Ok(e) => e,
-        Err(_) => return Reply::err(404, "not_found"),
-    };
+    let principal = guestauth::guest_authenticated!(route);
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "invoice.pay", id);
+    let entry = guestauth::guest_get_or_404!("invoices", id);
     let mut inv: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     inv["status"] = json!("paid");
     match records::update("invoices", id, &inv.to_string(), entry.revision) {
