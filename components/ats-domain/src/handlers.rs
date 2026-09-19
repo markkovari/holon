@@ -44,9 +44,7 @@ fn create_posting(route: &Route, body: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, "posting.create", "");
     let req: PostingReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -108,9 +106,7 @@ fn add_candidate(route: &Route, posting_id: &str, body: &str) -> Reply {
     let Some(assigned_to) = posting_assigned_to(posting_id) else {
         return Reply::err(404, "not_found");
     };
-    if !owns_or_admin("edit", &principal, &assigned_to) {
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &assigned_to), principal, "candidate.create", posting_id);
     let req: CandidateReq = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Reply::err(400, "bad_json"),
@@ -142,9 +138,7 @@ fn list_candidates(route: &Route, posting_id: &str) -> Reply {
     let Some(assigned_to) = posting_assigned_to(posting_id) else {
         return Reply::err(404, "not_found");
     };
-    if !owns_or_admin("view", &principal, &assigned_to) {
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("view", &principal, &assigned_to), principal, "candidate.list", posting_id);
     let posting_json = serde_json::to_string(&posting_id).unwrap_or_default();
     match records::find_by("candidates", "posting_id", &posting_json) {
         Ok(entries) => Reply::json(200, json!({"candidates": entries_json(&entries)})),
@@ -166,10 +160,7 @@ fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
     let Some(assigned_to) = posting_assigned_to(&posting_id) else {
         return Reply::err(404, "not_found");
     };
-    if !owns_or_admin("edit", &principal, &assigned_to) {
-        audit("candidate.stage", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &assigned_to), principal, "candidate.stage", id);
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let stage = req.get("stage").and_then(Value::as_str).unwrap_or("");
     if !STAGES.contains(&stage) {

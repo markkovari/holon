@@ -181,10 +181,7 @@ fn decide_entry(route: &Route, id: &str, new_status: &str) -> Reply {
     };
     let mut data: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let manager = data.get("manager").and_then(Value::as_str).unwrap_or("").to_string();
-    if !enforce("decide", &principal, &manager) {
-        audit("entry.decide", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(enforce("decide", &principal, &manager), principal, "entry.decide", id);
     data["status"] = json!(new_status);
     match records::update("entries", id, &data.to_string(), entry.revision) {
         Ok(_) => {

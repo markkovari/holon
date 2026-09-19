@@ -100,10 +100,7 @@ fn get_report(route: &Route, id: &str) -> Reply {
     };
     let mut report: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let employee = report.get("employee").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("view", &principal, &employee) {
-        audit("report.view", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("view", &principal, &employee), principal, "report.view", id);
     if let Value::Object(ref mut m) = report {
         m.insert("id".to_string(), json!(entry.id));
     }
@@ -131,10 +128,7 @@ fn transition(route: &Route, id: &str, next: &str, action: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    if !is_admin(&principal) {
-        audit(action, "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(is_admin(&principal), principal, action, id);
     let entry = match records::get("reports", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

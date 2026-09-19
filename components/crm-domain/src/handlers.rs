@@ -143,10 +143,7 @@ fn move_stage(route: &Route, id: &str, body: &str) -> Reply {
     };
     let mut deal: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = deal.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("edit", &principal, &owner) {
-        audit("deal.stage", "deny", &principal.subject, id);
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "deal.stage", id);
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let stage = req.get("stage").and_then(Value::as_str).unwrap_or("");
     if !STAGES.contains(&stage) {
@@ -173,9 +170,7 @@ fn add_note(route: &Route, id: &str, body: &str) -> Reply {
     };
     let mut deal: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = deal.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
-    if !owns_or_admin("edit", &principal, &owner) {
-        return Reply::err(403, "forbidden");
-    }
+    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "deal.note", id);
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let text = req.get("text").and_then(Value::as_str).unwrap_or("").to_string();
     if text.is_empty() {
