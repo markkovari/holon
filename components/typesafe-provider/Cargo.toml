@@ -1,0 +1,32 @@
+[package]
+name = "typesafe-provider"
+description = "Concrete decision provider implementing jev:decision over TypeSafe AI's Jev API (typesafe:provider)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[package.metadata.component]
+package = "typesafe:component"
+
+[package.metadata.component.target]
+path = "wit"
+world = "typesafe-provider"
+
+[package.metadata.component.target.dependencies]
+"jev:decision" = { path = "../jev-decision/wit" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }
+"wasi:config" = { path = "../../wit/deps/wasi-config-0.2.0-rc.1" }
+"comp:secrets" = { path = "../../host/wit/deps/comp-secrets" }

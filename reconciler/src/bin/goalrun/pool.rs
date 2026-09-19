@@ -11,11 +11,12 @@
 //! the two are not the same kind of mistake. Every function here fails in that
 //! direction, and keeping them together is what makes that checkable.
 
+use std::collections::BTreeSet;
+use std::time::Duration;
+
 use serde_json::{json, Value};
 
 use comp_reconciler::memory::{self, Memory};
-
-use std::time::Duration;
 
 use comp_reconciler::contract::Answerer;
 use comp_reconciler::fleet::repo_root;
@@ -71,11 +72,19 @@ pub fn worth_running(memory: Option<&Memory>, goal: &GoalSpec, skip_above: f64) 
 /// No model, and nothing is blocked on the result: one millisecond of term overlap
 /// over the catalogue, and a run whose search found nothing proceeds, with a row
 /// recorded saying so (ADR-0094).
+///
+/// `advisor_url`, given, adds ONE further step: `capsearch`'s own admission is
+/// that term overlap over-matches (many descriptions are tautological and match
+/// nothing a caller would type), so each hit gets one Jev question — does this
+/// specific capability plausibly fit THIS goal — batched into a single call to
+/// `capability-advisor`. `None`, or the advisor being unreachable, changes
+/// nothing: every hit is trusted exactly as it was before this existed.
 pub fn search_the_pool(
     goal_text: &str,
     run: &str,
     trace: Option<&Trace>,
-) -> Vec<comp_reconciler::capsearch::Capability> {
+    advisor_url: Option<&str>,
+) -> (Vec<comp_reconciler::capsearch::Capability>, Option<BTreeSet<String>>) {
     let catalog =
         comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&repo_root()));
     let mut apps_of: std::collections::BTreeMap<String, usize> = Default::default();
@@ -106,7 +115,69 @@ pub fn search_the_pool(
         }
         println!();
     }
-    hits.into_iter().take(5).map(|m| m.capability.clone()).collect()
+    let reuse: Vec<comp_reconciler::capsearch::Capability> =
+        hits.into_iter().take(5).map(|m| m.capability.clone()).collect();
+
+    let confirmed = advisor_url.filter(|_| !reuse.is_empty()).and_then(|url| {
+        match confirm_with_advisor(url, goal_text, &reuse) {
+            Some(c) => {
+                let rejected = reuse.len() - c.len();
+                println!(
+                    "capability advisor: {} confirmed, {} not — see POOL.md\n",
+                    c.len(),
+                    rejected
+                );
+                if let Some(t) = trace {
+                    t.capsearch_confirmed(run, c.len(), rejected);
+                }
+                Some(c)
+            }
+            None => {
+                println!(
+                    "capability advisor: unavailable — trusting the search above unfiltered\n"
+                );
+                None
+            }
+        }
+    });
+
+    (reuse, confirmed)
+}
+
+/// One HTTP call to `capability-advisor`, batching one Jev question per hit.
+/// `None` on ANY failure (unreachable, bad status, bad body) — the caller
+/// falls back to trusting every hit unfiltered, never blocks on this.
+fn confirm_with_advisor(
+    advisor_url: &str,
+    goal_text: &str,
+    hits: &[comp_reconciler::capsearch::Capability],
+) -> Option<BTreeSet<String>> {
+    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
+    let candidates: Vec<Value> = hits
+        .iter()
+        .enumerate()
+        .map(|(i, c)| json!({"id": i.to_string(), "name": c.name, "description": c.description}))
+        .collect();
+    let resp = http
+        .post(format!("{}/evaluate", advisor_url.trim_end_matches('/')))
+        .json(&json!({"goal": goal_text, "candidates": candidates}))
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: Value = resp.json().ok()?;
+    if body["unavailable"].as_bool().unwrap_or(true) {
+        return None;
+    }
+    Some(
+        body["confirmed"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c["name"].as_str().map(str::to_string))
+            .collect(),
+    )
 }
 
 /// Context content as a part should see it, trimmed for a small window.
@@ -132,31 +203,60 @@ pub fn lean_context(path: &str, content: String) -> String {
 ///
 /// Prose rather than an instruction: the gate decides whether reuse happened, and
 /// a branch TOLD to reuse something that does not fit would do it badly.
-pub fn pool_context(reuse: &[comp_reconciler::capsearch::Capability]) -> Option<Value> {
+///
+/// `confirmed`, given (i.e. `search_the_pool` had an advisor and it answered),
+/// splits the listing into what Jev thinks actually fits and what it doesn't —
+/// term overlap alone over-matches, and a hit `capsearch` only found because a
+/// description shares a word is worth telling apart from one that plausibly
+/// satisfies the goal. `None` (no advisor, or it was unreachable) lists
+/// everything exactly as before this existed.
+pub fn pool_context(
+    reuse: &[comp_reconciler::capsearch::Capability],
+    confirmed: Option<&BTreeSet<String>>,
+) -> Option<Value> {
     if reuse.is_empty() {
         return None;
     }
-    let listed = reuse
-        .iter()
-        .map(|c| {
-            format!(
-                "- `{}` (in {} app(s)) exports {} — {}",
-                c.name,
-                c.apps,
-                c.exports.iter().cloned().collect::<Vec<_>>().join(", "),
-                c.description
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    Some(json!({
-        "path": "POOL.md",
-        "content": format!(
+    let line = |c: &comp_reconciler::capsearch::Capability| {
+        format!(
+            "- `{}` (in {} app(s)) exports {} — {}",
+            c.name,
+            c.apps,
+            c.exports.iter().cloned().collect::<Vec<_>>().join(", "),
+            c.description
+        )
+    };
+    let content = match confirmed {
+        None => format!(
             "# Capabilities this repository already has\n\nSearched for this goal. Composing \
              one of these is cheaper than writing it, and the gate reads what a candidate \
-             actually called.\n\n{listed}\n"
+             actually called.\n\n{}\n",
+            reuse.iter().map(line).collect::<Vec<_>>().join("\n")
         ),
-    }))
+        Some(confirmed) => {
+            let (fits, maybe): (Vec<_>, Vec<_>) =
+                reuse.iter().partition(|c| confirmed.contains(&c.name));
+            let mut sections = String::from(
+                "# Capabilities this repository already has\n\nSearched for this goal, then \
+                 each one checked against it individually. Composing one of these is cheaper \
+                 than writing it, and the gate reads what a candidate actually called.\n\n",
+            );
+            if !fits.is_empty() {
+                sections.push_str("## Likely fits this goal\n\n");
+                sections.push_str(&fits.iter().map(|c| line(c)).collect::<Vec<_>>().join("\n"));
+                sections.push('\n');
+            }
+            if !maybe.is_empty() {
+                sections.push_str(
+                    "\n## Matched the search, but may not actually fit — check before using\n\n",
+                );
+                sections.push_str(&maybe.iter().map(|c| line(c)).collect::<Vec<_>>().join("\n"));
+                sections.push('\n');
+            }
+            sections
+        }
+    };
+    Some(json!({ "path": "POOL.md", "content": content }))
 }
 
 /// Distil what the winner taught, and keep the pool bounded.

@@ -118,6 +118,7 @@ fn artifacts() -> Vec<String> {
         ("gate", "select_probe.wasm"),
         ("select", "graph_selector.wasm"),
         ("forge", "github_forge.wasm"),
+        ("jev", "mock_jev_provider.wasm"),
     ] {
         let p = dir.join(file);
         assert!(p.exists(), "missing {} — run `cargo xtask build --force`", p.display());
@@ -312,6 +313,20 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
     assert!(
         body.contains("smaller"),
         "nor why that branch won, which makes the selection unarguable after the fact: {body}"
+    );
+
+    // --- THE JEV ADVISORY IS A NOTE, NOT A VETO ------------------------------
+    // The mock is scripted to a flat 5% concern regardless of content (see
+    // fixtures/select.yaml), so this proves the advisory call actually ran and
+    // landed in the body — the winner is still `tight`, decided before this
+    // call ever happens.
+    assert!(
+        body.contains("Jev advisory"),
+        "the advisory never reached the pull request it was supposed to annotate: {body}"
+    );
+    assert!(
+        !body.contains('⚠'),
+        "a 5% concern score must not read as a warning: {body}"
     );
 
     // --- HERDING, WHICH NOTHING ELSE CAN SEE --------------------------------

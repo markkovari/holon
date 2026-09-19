@@ -1,0 +1,29 @@
+# capability-advisor over jev:decision — native `goalrun` code calls this over
+# HTTP, since it cannot consume a WIT import directly. Mocked here for the same
+# reason `mock-jev-provider` exists anywhere else: deterministic, offline, free.
+
+version: comp/v1
+app: advisor
+tenant: acme
+strategy: linked
+
+components:
+  - id: advisor
+    host_needs:
+      - wasi:http/incoming-handler
+
+  - id: jev
+    config:
+      mock-model: mock-jev-1
+      mock-script: '{"rules": [{"when": "*", "probability": 0.8}]}'
+    host_needs:
+      - wasi:config/store
+
+links:
+  - from: advisor
+    import: jev:decision/decision@0.1.0
+    to: jev
+
+ingress:
+  host: advisor.acme.test
+  component: advisor

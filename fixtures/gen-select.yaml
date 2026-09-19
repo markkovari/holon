@@ -42,6 +42,15 @@ components:
   - id: gselect
     host_needs: []
 
+  # `land`'s Jev advisory (see `graph-selector`'s module doc) — scripted and
+  # offline, same reason `mock-provider` stands in for a real LLM here.
+  - id: gjev
+    config:
+      mock-model: mock-jev-1
+      mock-script: '{"rules": [{"when": "*", "probability": 0.05}]}'
+    host_needs:
+      - wasi:config/store
+
 links:
   - from: sprobe
     import: graph:select/selector@0.2.0
@@ -49,6 +58,9 @@ links:
   - from: gselect
     import: git:forge/repo@0.1.0
     to: gforge
+  - from: gselect
+    import: jev:decision/decision@0.1.0
+    to: gjev
 
 ingress:
   host: genselect.acme.test
