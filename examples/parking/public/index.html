@@ -28,6 +28,10 @@
   .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
   [hidden] { display: none !important; }
   .muted { color: #888; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; }
+  .cell { padding: 6px 0; text-align: center; border-radius: 4px; font-size: 12px; border: 1px solid #d7d9e4; background: #eafaf0; color: #157347; cursor: pointer; user-select: none; }
+  .cell.taken { background: #fbe4e4; color: #a33333; }
+  .cell.sel { outline: 2px solid #2f5fbf; }
 </style>
 </head>
 <body>
@@ -65,6 +69,17 @@
         <input id="s-label" placeholder="Label, e.g. A1">
         <button onclick="createSpot()" style="max-width:140px">Add spot</button>
       </div>
+    </section>
+
+    <section>
+      <h2>Lot</h2>
+      <div class="row" style="margin-bottom:10px">
+        <button onclick="loadLot()" style="max-width:160px">View lot</button>
+        <button id="seed-btn" hidden onclick="seedLot()" style="max-width:200px">Seed the lot (admin)</button>
+      </div>
+      <div id="lot"></div>
+      <div id="lot-history"></div>
+      <div id="lot-err" class="err"></div>
     </section>
 
     <section>
@@ -157,6 +172,7 @@ async function showApp() {
   document.getElementById('who').textContent = me.subject + ' (' + ((me.roles || [])[0] || 'member') + ')';
   isAdmin = (me.roles || []).includes('admin');
   document.getElementById('admin-create').hidden = !isAdmin;
+  document.getElementById('seed-btn').hidden = !isAdmin;
   document.getElementById('res-title').textContent = isAdmin ? 'All reservations' : 'My reservations';
   refresh();
 }
@@ -237,6 +253,63 @@ async function refresh() {
       + '<td>' + cancel + '</td>'
       + '</tr>';
   }).join('');
+}
+
+async function loadLot() {
+  const errEl = document.getElementById('lot-err');
+  errEl.textContent = '';
+  try {
+    const data = await api('/api/lot');
+    const floors = data.floors || [];
+    if (!floors.length) {
+      document.getElementById('lot').innerHTML = '<p class="muted">The lot has not been seeded yet.</p>';
+      return;
+    }
+    document.getElementById('lot').innerHTML = floors.map(f => {
+      const cells = (f.spots || []).map(s =>
+        '<div class="cell' + (s.taken ? ' taken' : '') + '" data-id="' + s.id + '" onclick="selectLotSpot(\'' + s.id + '\')">' + s.number + '</div>'
+      ).join('');
+      return '<div style="margin-bottom:12px"><div class="muted">Floor ' + f.floor + '</div><div class="grid">' + cells + '</div></div>';
+    }).join('');
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+async function seedLot() {
+  const errEl = document.getElementById('lot-err');
+  errEl.textContent = '';
+  try {
+    await api('/api/lot/seed', {method: 'POST'});
+    await loadLot();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+async function selectLotSpot(id) {
+  const errEl = document.getElementById('lot-err');
+  errEl.textContent = '';
+  document.querySelectorAll('.cell').forEach(c => c.classList.toggle('sel', c.dataset.id === id));
+  if (!isAdmin) return;
+  try {
+    const data = await api('/api/spots/' + encodeURIComponent(id) + '/history');
+    const rows = (data.reservations || []).map(r =>
+      '<tr>'
+        + '<td class="muted">' + (r.subject || '') + '</td>'
+        + '<td>' + fmt(r.start) + '</td>'
+        + '<td>' + fmt(r.end) + '</td>'
+        + '<td><span class="status status-' + r.status + '">' + r.status + '</span></td>'
+      + '</tr>'
+    ).join('');
+    document.getElementById('lot-history').innerHTML =
+      '<h2 style="margin-top:14px">History</h2>'
+      + '<table><thead><tr><th>Reserved by</th><th>Start</th><th>End</th><th>Status</th></tr></thead><tbody>'
+      + (rows || '<tr><td colspan="4" class="muted">No reservations yet.</td></tr>')
+      + '</tbody></table>';
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
 }
 
 if (token) { showApp(); }
