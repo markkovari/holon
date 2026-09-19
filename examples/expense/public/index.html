@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Holon Expense</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; background: #f6f7fb; color: #1a1d29; }
+  header { background: #2e1a0f; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  main { max-width: 960px; margin: 0 auto; padding: 24px 20px; }
+  section { background: #fff; border-radius: 10px; padding: 18px 20px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  h2 { font-size: 15px; margin: 0 0 12px; color: #444; }
+  input, select, button { font: inherit; padding: 8px 10px; border: 1px solid #d7d9e4; border-radius: 6px; }
+  input, select { width: 100%; margin-bottom: 8px; }
+  button { background: #a8571e; color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { background: #8a4718; }
+  button.ghost { background: transparent; color: #a8571e; border: 1px solid #a8571e; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
+  .status { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .status-submitted { background: #eee; color: #555; }
+  .status-approved { background: #d4f4dd; color: #157347; }
+  .status-rejected { background: #f8d7da; color: #a02a2a; }
+  .err { color: #b02a2a; font-size: 13px; margin-top: 6px; }
+  [hidden] { display: none !important; }
+  .muted { color: #888; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div id="auth">
+  <header><h1>Holon Expense</h1><span></span></header>
+  <main style="max-width:380px">
+    <section>
+      <h2 id="auth-title">Log in</h2>
+      <input id="email" type="email" placeholder="email">
+      <input id="password" type="password" placeholder="password">
+      <select id="role" hidden><option value="employee">employee</option><option value="admin">admin</option></select>
+      <button id="submit-btn" onclick="submitAuth()">Log in</button>
+      <p class="muted" style="margin-top:10px">
+        <span id="toggle-text">No account?</span>
+        <a href="#" onclick="toggleMode();return false" id="toggle-link">Register</a>
+      </p>
+      <div id="auth-err" class="err"></div>
+    </section>
+  </main>
+</div>
+
+<div id="app" hidden>
+  <header><h1>Holon Expense</h1><span id="who"></span> <button class="ghost" onclick="logout()" style="width:auto">Log out</button></header>
+  <main>
+    <section>
+      <h2>New expense report</h2>
+      <div class="row">
+        <input id="r-amount" type="number" placeholder="Amount (cents)">
+        <input id="r-note" placeholder="Note">
+        <button onclick="createReport()" style="max-width:120px">Submit</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Reports</h2>
+      <table id="reports-table"><thead><tr><th>Note</th><th>Amount</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+    </section>
+  </main>
+</div>
+
+<script>
+let token = localStorage.getItem('expense_token') || '';
+let mode = 'login';
+
+function toggleMode() {
+  mode = mode === 'login' ? 'register' : 'login';
+  document.getElementById('auth-title').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('submit-btn').textContent = mode === 'login' ? 'Log in' : 'Register';
+  document.getElementById('toggle-text').textContent = mode === 'login' ? 'No account?' : 'Already have one?';
+  document.getElementById('toggle-link').textContent = mode === 'login' ? 'Register' : 'Log in';
+  document.getElementById('role').hidden = mode === 'login';
+}
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({'content-type': 'application/json'}, opts.headers || {});
+  if (token) opts.headers['authorization'] = 'Bearer ' + token;
+  const r = await fetch(path, opts);
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : {};
+  if (!r.ok) throw new Error(body.error || r.status);
+  return body;
+}
+
+async function submitAuth() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const errEl = document.getElementById('auth-err');
+  errEl.textContent = '';
+  try {
+    if (mode === 'register') {
+      const role = document.getElementById('role').value;
+      await api('/register', {method: 'POST', body: JSON.stringify({email, password, role})});
+    }
+    const r = await api('/login', {method: 'POST', body: JSON.stringify({email, password})});
+    token = r.access_token;
+    localStorage.setItem('expense_token', token);
+    showApp();
+  } catch (e) {
+    errEl.textContent = String(e.message || e);
+  }
+}
+
+function logout() {
+  api('/logout', {method: 'POST'}).catch(() => {});
+  token = '';
+  localStorage.removeItem('expense_token');
+  location.reload();
+}
+
+async function showApp() {
+  document.getElementById('auth').hidden = true;
+  document.getElementById('app').hidden = false;
+  let me;
+  try {
+    me = await api('/me');
+    document.getElementById('who').textContent = me.subject + ' (' + (me.roles[0] || 'employee') + ')';
+  } catch (e) { logout(); return; }
+  window.isAdmin = (me.roles || []).includes('admin');
+  refresh();
+}
+
+async function createReport() {
+  const amount = parseInt(document.getElementById('r-amount').value || '0', 10);
+  const note = document.getElementById('r-note').value;
+  if (!amount || !note) return;
+  await api('/api/reports', {method: 'POST', body: JSON.stringify({amount, note})});
+  document.getElementById('r-amount').value = '';
+  document.getElementById('r-note').value = '';
+  refresh();
+}
+
+async function approveReport(id) {
+  await api(`/api/reports/${id}/approve`, {method: 'POST'});
+  refresh();
+}
+async function rejectReport(id) {
+  await api(`/api/reports/${id}/reject`, {method: 'POST'});
+  refresh();
+}
+
+async function refresh() {
+  const reports = await api('/api/reports');
+  const tbody = document.querySelector('#reports-table tbody');
+  tbody.innerHTML = (reports.reports || []).map(r => {
+    let actions = '';
+    if (window.isAdmin && r.status === 'submitted') {
+      actions += `<button onclick="approveReport('${r.id}')" style="width:auto">Approve</button> `;
+      actions += `<button onclick="rejectReport('${r.id}')" style="width:auto">Reject</button>`;
+    }
+    return `<tr><td>${r.note || ''}</td><td>${(r.amount || 0) / 100}</td><td><span class="status status-${r.status}">${r.status}</span></td><td>${actions}</td></tr>`;
+  }).join('');
+}
+
+if (token) { showApp(); }
+</script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+title = "expense:reports — employee expense reports, submitted and approved"
+
+text = """
+Implement components/expense-domain/src/handlers.rs.
+
+Routes:
+  POST   /api/reports               {"amount":<u32>,"note":<string>}   (employee, admin)
+  GET    /api/reports                                                  (employee, admin)
+  GET    /api/reports/{id}                                             (employee, admin)
+  POST   /api/reports/{id}/approve                                     (admin)
+  POST   /api/reports/{id}/reject                                      (admin)
+
+Store reports in the `reports` collection. A report has `employee` (the
+subject of whoever filed it), `amount`, `note`, and `status`
+(`submitted` -> `approved` or `rejected`). Filing a report always starts it
+at `submitted`.
+
+RBAC: any authenticated user may file a report. Listing and fetching a report
+is row-level — an `employee` sees and may fetch only reports where `employee`
+matches their own subject; `admin` sees and may fetch every report. Approving
+or rejecting a report requires the `admin` role — even the employee who filed
+it cannot approve their own. Approving or rejecting a report that is not
+currently `submitted` is refused with 400.
+
+`guest_owner_or_admin_policy!` is already invoked in handlers.rs and gives you
+`owns_or_admin(action, principal, resource_value)` for the row-level check —
+see `components/billing-domain/src/handlers.rs` in this repo for exactly this
+pattern applied to invoices, if you want a worked example of the same shape.
+"""
+
+component = "expense-domain"
+
+base_paths = [
+  "components/expense-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/audit-log/",
+  "components/rate-limiter/",
+  "components/guestauth/",
+  "components/guestio/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+writable = ["components/expense-domain/src/handlers.rs"]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "expense-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "audit-log",
+  "rate-limiter",
+  "guestauth",
+  "guestio",
+]
+context = [
+  "components/expense-domain/src/lib.rs",
+  "components/expense-domain/wit/expense-domain.wit",
+  "components/policy-guard/wit/policy.wit",
+  "components/record-store/wit/record.wit",
+  "components/guestauth/src/lib.rs",
+  ".comp/context/auth-consumer.wit",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/expense-domain/gate.sh"]
