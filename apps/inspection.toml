@@ -1,0 +1,9 @@
+name = "inspection"
+access = "tailnet"
+domain = "inspection.example.com"
+artifact = "components/target/inspection_domain.composed.wasm"
+port = 3939
+static_dir = "examples/inspection/public"
+kv = "sqlite"
+components = ["inspection-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter", "id-generate", "pdf"]
+strategy = "fused"
