@@ -35,6 +35,7 @@
 //! binary does not grow a second copy of it that can disagree.
 
 use std::collections::HashSet;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -369,8 +370,19 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
         // Echoed straight through below, so a human watching the daemon's own
         // log still sees everything `comp-goalrun` printed, unchanged.
         .stdout(std::process::Stdio::piped())
+        // Its own process group, not this daemon's: `comp-goalrun` spawns a
+        // whole internal fleet (comp-checks, lattice comp-host nodes,
+        // nats-server), and without this every one of them shares
+        // `comp-goald`'s own group by default. That would mean a signal aimed
+        // at the DAEMON's group — the exact shape a supervisor's stop sends —
+        // reaches in-flight work too, straight through the graceful-drain
+        // logic below this function that exists specifically to prevent that.
+        // A distinct group is also what makes the sweep after `wait()` below
+        // possible: `kill(-pid, …)` targets a process group, not a single pid.
+        .process_group(0)
         .spawn()
         .with_context(|| format!("could not run `{bin}` — build it with `just goal-run`"))?;
+    let child_pgid = child.id() as i32;
     let stdout = child.stdout.take().expect("stdout was piped");
     let pr: Arc<Mutex<Option<String>>> = Arc::default();
     let echo = {
@@ -388,6 +400,18 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
     let status = child.wait().with_context(|| format!("waiting on `{bin}`"))?;
     let _ = echo.join();
     let pr = pr.lock().unwrap().clone();
+
+    // The guaranteed sweep. `comp-goalrun` itself is confirmed dead by
+    // `wait()` above, so this only ever reaches ORPHANED descendants — the
+    // fleet's own `Drop`-based cleanup (`gate.rs`'s `Checks`, `fleet.rs`'s
+    // `Fleet`) already covers every normal exit path; this is what still
+    // catches it if that process was itself killed by a signal (which skips
+    // `Drop` exactly the way `std::process::exit` used to) or crashes in some
+    // way nobody has thought of yet. `ESRCH` — nothing left to kill — is the
+    // expected, common outcome, so the result is deliberately discarded.
+    unsafe {
+        libc::kill(-child_pgid, libc::SIGKILL);
+    }
 
     if status.success() {
         eprintln!("[goald] {id} DONE -> awaiting-human{}", pr.as_deref().map(|u| format!(" ({u})")).unwrap_or_default());

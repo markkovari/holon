@@ -1233,7 +1233,16 @@ fn reading_per_branch(
     (strategies, read_by_branch)
 }
 
-fn main() -> Result<()> {
+/// Does the real work and returns the exit code as a VALUE rather than
+/// calling `std::process::exit` — `main` below is the only place that calls
+/// it, and only after this has already returned, so `Checks`/`Fleet` (both
+/// already `Drop`-cleaned in `gate.rs`/`fleet.rs`) always tear down normally.
+/// `std::process::exit` skips destructors; it used to be called from here
+/// directly, twice, on the two failure paths — which is exactly why a
+/// EXHAUSTED or GATE_REFUSED run leaked its whole internal fleet
+/// (`comp-checks`, the lattice `comp-host` nodes, `nats-server`) while a
+/// successful run, which only ever returned normally, did not.
+fn run() -> Result<i32> {
     let args = Args::parse();
 
     let goal_path = args.checkout.join(&args.goal);
@@ -1439,16 +1448,17 @@ fn main() -> Result<()> {
         // Distinct from `goalexit::EXHAUSTED` (3): that one says every branch ran
         // and none passed, which is a real result from a healthy search. This says
         // there was no search to have a result from.
-        std::process::exit(comp_reconciler::goalexit::GATE_REFUSED);
+        return Ok(comp_reconciler::goalexit::GATE_REFUSED);
     }
 
     if args.smoke {
-        return smoke(&args, &goal, port, &context, &checks, &base_commit, &allow);
+        return smoke(&args, &goal, port, &context, &checks, &base_commit, &allow)
+            .map(|()| comp_reconciler::goalexit::SUCCESS);
     }
 
     // --- has this already been done? ----------------------------------------
     if !pool::worth_running(memory.as_ref(), &goal, args.skip_above) {
-        return Ok(());
+        return Ok(comp_reconciler::goalexit::SUCCESS);
     }
 
     // --- what this run leaves behind (ADR-0092) -----------------------------
@@ -1533,7 +1543,8 @@ fn main() -> Result<()> {
             trace.as_ref(),
             &reuse,
             capability_confirmed.as_ref(),
-        );
+        )
+        .map(|()| comp_reconciler::goalexit::SUCCESS);
     }
 
     println!("fleet serving; running the search …\n");
@@ -1736,12 +1747,7 @@ fn main() -> Result<()> {
         // 3 rather than 1 so it stays distinguishable from a run that BROKE: one
         // says the model could not do it, the other says the harness fell over,
         // and a caller that wants to retry cares which.
-        //
-        // Flushed explicitly: stdout is block-buffered when piped (which is how a
-        // daemon runs this), and `process::exit` does not run destructors.
-        use std::io::Write;
-        let _ = std::io::stdout().flush();
-        std::process::exit(comp_reconciler::goalexit::EXHAUSTED);
+        return Ok(comp_reconciler::goalexit::EXHAUSTED);
     }
 
     if args.dry_run {
@@ -1768,7 +1774,7 @@ fn main() -> Result<()> {
                 println!("trace: {why}");
             }
         }
-        return Ok(());
+        return Ok(comp_reconciler::goalexit::SUCCESS);
     }
 
     // Land the winner. A unique branch name per run, because a PR cannot reuse one.
@@ -1831,7 +1837,22 @@ fn main() -> Result<()> {
     if let Some(why) = trace.as_ref().and_then(|t| t.report()) {
         println!("trace: {why}");
     }
-    Ok(())
+    Ok(comp_reconciler::goalexit::SUCCESS)
+}
+
+/// The thin wrapper `run()` exists for: by the time this calls
+/// `std::process::exit`, `run()` has already returned and everything it
+/// owned — `Checks`, `Fleet`, every child process they wrap — has already
+/// dropped normally. Calling `std::process::exit` from inside `run()` itself
+/// is exactly the bug this fixes; nothing after this point may do that.
+fn main() {
+    match run() {
+        Ok(code) => std::process::exit(code),
+        Err(e) => {
+            eprintln!("Error: {e:?}");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// One goal, K parts, one pull request.
