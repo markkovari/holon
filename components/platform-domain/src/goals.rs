@@ -15,7 +15,40 @@ use serde_json::{json, Map, Value};
 
 use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::req;
-use crate::{bus, caller, now, orgs, personal_org, read_body, records, str_of, Outcome};
+use crate::{auth_types, bus, caller, now, orgs, personal_org, read_body, records, str_of, Outcome};
+
+/// Every route in this file needs a session and the org that caller is
+/// acting as, differing only in which `orgs::Role` the route requires — the
+/// exact same three-to-five lines repeated seven times before this existed.
+/// A plain function rather than inlining, because the *check* is one place's
+/// business even though the *early return* has to happen at each call site
+/// (see the `session!` macro right below, which is the part that does that).
+fn session(
+    request: &IncomingRequest,
+    query: &Map<String, Value>,
+    role: orgs::Role,
+) -> Result<(auth_types::Principal, String), Outcome> {
+    let Some(p) = caller(request) else {
+        return Err(Outcome::Err(401, "no session".into()));
+    };
+    match orgs::acting(&p.subject, &personal_org(&p), query, role) {
+        Ok((org, _)) => Ok((p, org)),
+        Err((code, msg)) => Err(Outcome::Err(code, msg)),
+    }
+}
+
+/// `let (p, org) = session!(request, query, orgs::Role::Member);` — a
+/// function alone cannot early-return from its CALLER, only a macro
+/// expanding in place can, which is the one line of boilerplate `session`
+/// itself could not remove.
+macro_rules! session {
+    ($request:expr, $query:expr, $role:expr) => {
+        match session($request, $query, $role) {
+            Ok(v) => v,
+            Err(e) => return e,
+        }
+    };
+}
 
 /// The topic every transition on `project`'s queue publishes to. One topic
 /// per project, not one global topic: a consumer watching "widgets" polls
@@ -60,13 +93,7 @@ fn valid_project_name(name: &str) -> bool {
 }
 
 pub fn project_create(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
+    let (_p, org) = session!(request, query, orgs::Role::Member);
     let b: req::NewProject = match read_body(request)
         .map_err(|_| Outcome::Err(400, "could not read body".into()))
         .and_then(|raw| req::parse(&raw))
@@ -119,13 +146,7 @@ fn projects_of(org: &str) -> Vec<Value> {
 }
 
 pub fn projects_list(request: &IncomingRequest, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
+    let (_p, org) = session!(request, query, orgs::Role::Viewer);
     let rows: Vec<Value> = projects_of(&org)
         .into_iter()
         .map(|d| {
@@ -156,13 +177,7 @@ fn goals_of(project: &str) -> Vec<Value> {
 }
 
 pub fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    let org = match orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member) {
-        Ok((org, _)) => org,
-        Err((code, msg)) => return Outcome::Err(code, msg),
-    };
+    let (_p, org) = session!(request, query, orgs::Role::Member);
     if !projects_of(&org).iter().any(|d| str_of(d, "name") == project) {
         return Outcome::Err(404, format!("no project `{project}`"));
     }
@@ -284,13 +299,7 @@ fn parent_is_usable(parent: &str, project: &str) -> Result<(), (u16, String)> {
 }
 
 pub fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer)
-    {
-        return Outcome::Err(code, msg);
-    }
+    let (_p, _org) = session!(request, query, orgs::Role::Viewer);
     let want = query.get("state").and_then(|v| v.as_str()).unwrap_or_default();
     // `?parent=<id>` lists one goal's parts; `?parent=` (empty, explicitly given)
     // lists only goals that are nobody's part, which is the top-level worklist.
@@ -326,13 +335,7 @@ pub fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, 
 /// one offset — same reasoning as `event:bus`'s own per-group design, applied
 /// so a forgotten `?group=` cannot look like it worked while dropping events.
 pub fn events_list(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer)
-    {
-        return Outcome::Err(code, msg);
-    }
+    let (p, _org) = session!(request, query, orgs::Role::Viewer);
     let group = query.get("group").and_then(|v| v.as_str()).unwrap_or(&p.subject);
     let max: u32 = query.get("max").and_then(|v| v.as_str()).and_then(|v| v.parse().ok()).unwrap_or(50);
     match bus::poll(&goal_topic(project), group, max) {
@@ -359,13 +362,7 @@ pub fn events_list(request: &IncomingRequest, project: &str, query: &Map<String,
 /// transitions back. Acking is the consumer's own bookkeeping — it is never
 /// required for correctness, only for not re-reading history forever.
 pub fn events_ack(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer)
-    {
-        return Outcome::Err(code, msg);
-    }
+    let (_p, _org) = session!(request, query, orgs::Role::Viewer);
     let b: req::AckEvents = match read_body(request)
         .map_err(|_| Outcome::Err(400, "could not read body".into()))
         .and_then(|raw| req::parse(&raw))
@@ -386,13 +383,7 @@ pub fn goal_transition(
     to: &str,
     query: &Map<String, Value>,
 ) -> Outcome {
-    let Some(p) = caller(request) else {
-        return Outcome::Err(401, "no session".into());
-    };
-    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Member)
-    {
-        return Outcome::Err(code, msg);
-    }
+    let (_p, _org) = session!(request, query, orgs::Role::Member);
     let Ok(entry) = records::get(GOALS, id) else {
         return Outcome::Err(404, format!("no goal `{id}`"));
     };

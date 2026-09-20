@@ -224,6 +224,12 @@ fn started(s: &Session, project: &str) -> Result<Vec<Value>> {
     Ok(v["goals"].as_array().cloned().unwrap_or_default())
 }
 
+/// `POST /api/goals/{id}/fail {reason}` — three call sites want exactly
+/// this, differing only in whether they can afford to wait for the answer.
+fn fail_goal(s: &Session, id: &str, reason: &str) -> Result<Value> {
+    call(s, "POST", &format!("/api/goals/{id}/fail"), Some(serde_json::json!({ "reason": reason })))
+}
+
 // ---- closing the loop on a merged (or abandoned) pull request ---------------
 
 /// What GitHub says about a pull request right now.
@@ -309,12 +315,7 @@ fn sweep_awaiting_human(
             }
             Ok(PrStatus::ClosedUnmerged) => {
                 eprintln!("[goald] {id} closed without merging ({pr}) -> failed");
-                let _ = call(
-                    s,
-                    "POST",
-                    &format!("/api/goals/{id}/fail"),
-                    Some(serde_json::json!({ "reason": format!("pull request closed without merging: {pr}") })),
-                );
+                let _ = fail_goal(s, &id, &format!("pull request closed without merging: {pr}"));
             }
             Ok(PrStatus::Open) => {}
             Err(e) => eprintln!("[goald] {id} checking {pr}: {e:#}"),
@@ -344,12 +345,7 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
     if spec.is_empty() {
         let why = "the goal names no spec file — a run needs a goal.toml in the repo";
         eprintln!("[goald] {id} SKIPPED: {why}");
-        let _ = call(
-            s,
-            "POST",
-            &format!("/api/goals/{id}/fail"),
-            Some(serde_json::json!({ "reason": why })),
-        );
+        let _ = fail_goal(s, &id, why);
         return Ok(());
     }
 
@@ -433,12 +429,7 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
         // someone to look at the machine.
         let reason = comp_reconciler::goalexit::failure_reason(status.code());
         eprintln!("[goald] {id} FAILED: {reason}");
-        call(
-            s,
-            "POST",
-            &format!("/api/goals/{id}/fail"),
-            Some(serde_json::json!({ "reason": reason })),
-        )?;
+        fail_goal(s, &id, &reason)?;
     }
     Ok(())
 }
