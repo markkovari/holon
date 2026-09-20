@@ -134,11 +134,6 @@ http-body-util = "0.1"
 bytes = "1"
 
 async-trait = "0.1"
-# comp-goald: killing a spawned `comp-goalrun`'s whole process group after it
-# exits, not just the one pid — belt-and-suspenders cleanup for its internal
-# fleet on top of the Drop-based cleanup `Checks`/`Fleet` already do. Already
-# in the dependency tree transitively; this makes it a direct one.
-libc = "0.2"
 
 # The daemons behind the twelve host capabilities (ADR-0095). Each dependency
 # below is used by exactly one comp-<x> binary; they are listed here rather

@@ -407,11 +407,21 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
     // `Fleet`) already covers every normal exit path; this is what still
     // catches it if that process was itself killed by a signal (which skips
     // `Drop` exactly the way `std::process::exit` used to) or crashes in some
-    // way nobody has thought of yet. `ESRCH` — nothing left to kill — is the
-    // expected, common outcome, so the result is deliberately discarded.
-    unsafe {
-        libc::kill(-child_pgid, libc::SIGKILL);
-    }
+    // way nobody has thought of yet. "no such process" — nothing left to
+    // kill — is the expected, common outcome, so the result is discarded.
+    //
+    // Shelled out to the `kill` utility rather than calling the syscall
+    // directly: the negative-pid form (a process GROUP, not one pid) is the
+    // same either way, and this way nothing here needs `unsafe`. `--` stops
+    // `-<pgid>` from being parsed as another flag. Output silenced: "no such
+    // process" is the expected result on every normal run — the fleet's own
+    // Drop-based cleanup already got there first — and printing that every
+    // single time would drown the log in routine noise.
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{child_pgid}")])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 
     if status.success() {
         eprintln!("[goald] {id} DONE -> awaiting-human{}", pr.as_deref().map(|u| format!(" ({u})")).unwrap_or_default());
