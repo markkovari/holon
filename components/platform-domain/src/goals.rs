@@ -15,7 +15,15 @@ use serde_json::{json, Map, Value};
 
 use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::req;
-use crate::{caller, now, orgs, personal_org, read_body, records, str_of, Outcome};
+use crate::{bus, caller, now, orgs, personal_org, read_body, records, str_of, Outcome};
+
+/// The topic every transition on `project`'s queue publishes to. One topic
+/// per project, not one global topic: a consumer watching "widgets" polls
+/// exactly that log rather than filtering every project's events out of one
+/// firehose, and `event:bus::topics()` lists them for inspection for free.
+fn goal_topic(project: &str) -> String {
+    format!("goal.{project}")
+}
 
 // ---- projects and goals (ADR-0082) -----------------------------------------
 
@@ -193,11 +201,16 @@ pub fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String,
         "created": now(),
     });
     match records::create(GOALS, &doc.to_string(), &["project".to_string(), "org".to_string()]) {
-        Ok(e) => Outcome::Json(
-            201,
-            json!({ "id": e.id, "project": project, "state": "queued", "title": doc["title"] })
-                .to_string(),
-        ),
+        Ok(e) => {
+            let event =
+                json!({ "id": e.id, "project": project, "from": Value::Null, "to": "queued", "at": now() });
+            let _ = bus::publish(&goal_topic(project), event.to_string().as_bytes());
+            Outcome::Json(
+                201,
+                json!({ "id": e.id, "project": project, "state": "queued", "title": doc["title"] })
+                    .to_string(),
+            )
+        }
         Err(e) => Outcome::Err(500, format!("recording the goal: {e:?}")),
     }
 }
@@ -299,6 +312,73 @@ pub fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, 
     Outcome::Json(200, json!({ "count": rows.len(), "goals": rows }).to_string())
 }
 
+/// `GET /api/projects/{project}/events?group=<name>&max=<n>`
+///
+/// The tier-3 observer from the queue's design: a consumer group polling this
+/// SEES transitions as they happen instead of diffing two full `goals_list`
+/// snapshots, without ever becoming a second place state lives. Every event
+/// this ever returns was also, and remains, a real write on the goal record
+/// itself — a caller that lost every event this ever published still gets the
+/// right answer from `goals_list`, just later.
+///
+/// `group` defaults to the caller's own subject, so two different scripts
+/// polling with no group named don't silently share (and steal events from)
+/// one offset — same reasoning as `event:bus`'s own per-group design, applied
+/// so a forgotten `?group=` cannot look like it worked while dropping events.
+pub fn events_list(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer)
+    {
+        return Outcome::Err(code, msg);
+    }
+    let group = query.get("group").and_then(|v| v.as_str()).unwrap_or(&p.subject);
+    let max: u32 = query.get("max").and_then(|v| v.as_str()).and_then(|v| v.parse().ok()).unwrap_or(50);
+    match bus::poll(&goal_topic(project), group, max) {
+        Ok(events) => {
+            let rows: Vec<Value> = events
+                .iter()
+                .map(|e| {
+                    let payload = serde_json::from_slice::<Value>(&e.payload).unwrap_or(Value::Null);
+                    json!({ "id": e.id, "at": e.at, "event": payload })
+                })
+                .collect();
+            Outcome::Json(200, json!({ "group": group, "count": rows.len(), "events": rows }).to_string())
+        }
+        // Never a hard failure: a caller that only wants the fast path falls
+        // straight back to `goals_list` on any bus trouble, exactly as it
+        // would on a dropped notification.
+        Err(e) => Outcome::Err(503, format!("the event log is unavailable: {e:?}")),
+    }
+}
+
+/// `POST /api/projects/{project}/events/ack {group, ids}`
+///
+/// Advances `group`'s offset so a later poll does not hand the same
+/// transitions back. Acking is the consumer's own bookkeeping — it is never
+/// required for correctness, only for not re-reading history forever.
+pub fn events_ack(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
+    let Some(p) = caller(request) else {
+        return Outcome::Err(401, "no session".into());
+    };
+    if let Err((code, msg)) = orgs::acting(&p.subject, &personal_org(&p), query, orgs::Role::Viewer)
+    {
+        return Outcome::Err(code, msg);
+    }
+    let b: req::AckEvents = match read_body(request)
+        .map_err(|_| Outcome::Err(400, "could not read body".into()))
+        .and_then(|raw| req::parse(&raw))
+    {
+        Ok(v) => v,
+        Err(o) => return o,
+    };
+    match bus::ack(&goal_topic(project), &b.group, &b.ids) {
+        Ok(()) => Outcome::Json(200, json!({ "acked": b.ids.len() }).to_string()),
+        Err(e) => Outcome::Err(503, format!("the event log is unavailable: {e:?}")),
+    }
+}
+
 /// Move a goal, refusing anything the lifecycle does not allow.
 pub fn goal_transition(
     request: &IncomingRequest,
@@ -371,6 +451,20 @@ pub fn goal_transition(
             doc["reason"] = json!(reason);
             doc["failed_at"] = json!(now());
         }
+        "awaiting-human" => {
+            // Optional: a caller with nothing to name still lands here with no
+            // link, same as before this field existed. Without it, nothing
+            // records which pull request a human is meant to look at, and
+            // nothing can later watch that PR's own status to close the loop
+            // automatically.
+            let pr = read_body(request)
+                .ok()
+                .and_then(|raw| req::parse::<req::ReviewGoal>(&raw).ok())
+                .and_then(|b| b.pr);
+            if let Some(pr) = pr {
+                doc["pr"] = json!(pr);
+            }
+        }
         "done" => doc["finished"] = json!(now()),
         _ => {}
     }
@@ -383,10 +477,21 @@ pub fn goal_transition(
         Err(records::StoreError::RevisionConflict(_)) => {
             Outcome::Err(409, format!("`{id}` moved while you were looking at it — read it again"))
         }
-        Ok(_) => Outcome::Json(
-            200,
-            json!({ "id": id, "from": from, "state": to, "title": doc["title"] }).to_string(),
-        ),
+        Ok(_) => {
+            // A lossy hint, never the answer — the same rule ADR-0081 already
+            // states for "how anyone finds out there is a question": a
+            // dropped event costs a watcher some latency, not correctness,
+            // because the goal record above is what anyone acts on. Errors
+            // are swallowed for exactly that reason: a full backlog or an
+            // unreachable bus must not turn into a goal that cannot move.
+            let project = str_of(&doc, "project");
+            let event = json!({ "id": id, "project": project, "from": from, "to": to, "at": now() });
+            let _ = bus::publish(&goal_topic(&project), event.to_string().as_bytes());
+            Outcome::Json(
+                200,
+                json!({ "id": id, "from": from, "state": to, "title": doc["title"] }).to_string(),
+            )
+        }
         Err(e) => Outcome::Err(500, format!("moving the goal: {e:?}")),
     }
 }

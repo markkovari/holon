@@ -36,6 +36,7 @@ world = "platform-domain"
 "audit:log" = { path = "../audit-log/wit" }
 "policy:guard" = { path = "../policy-guard/wit" }
 "records:store" = { path = "../record-store/wit" }
+"event:bus" = { path = "../event-bus/wit" }
 "comp:store" = { path = "../../host/wit/deps/comp-store" }
 "blob:store" = { path = "../blob-store/wit" }
 "quota:meter" = { path = "../quota/wit" }

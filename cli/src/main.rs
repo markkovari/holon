@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use selfhost::{
-    check, port_of, render_daemon_unit, render_env, render_ingress_route, render_relay_unit,
-    render_route, render_unit, write_secret_file, Layout, Router, Spec,
+    check, check_goald, port_of, render_daemon_unit, render_env, render_goald_launchd,
+    render_goald_unit, render_ingress_route, render_relay_unit, render_route, render_unit,
+    write_secret_file, GoaldFormat, GoaldSpec, Layout, Router, Spec,
 };
 
 // ---- cli --------------------------------------------------------------------
@@ -199,6 +200,19 @@ enum GoalCmd {
         #[arg(long)]
         state: Option<String>,
     },
+    /// Live view of a project's worklist: lists once, then follows the event
+    /// log as a fast path and re-lists in full on a timer regardless — a
+    /// dropped event only costs staleness, never a wrong answer.
+    Watch {
+        project: String,
+        /// Seconds between event-log polls.
+        #[arg(long, default_value_t = 3)]
+        interval: u64,
+        /// Full re-list at least this often, independent of the event log —
+        /// the safety net for a missed event or a bus outage.
+        #[arg(long, default_value_t = 30)]
+        full_refresh: u64,
+    },
     /// Start one. The only transition a person MUST make for work to happen.
     Start { id: String },
     /// Run a goal to a pull request, here and now.
@@ -312,6 +326,26 @@ enum NodeCmd {
     Validate { specs: Vec<PathBuf> },
     /// Print one app's resolved port — what the deploy recipe uses.
     Port { spec: PathBuf },
+    /// Write the unit for a `comp-goald` deployment — ADR-0096's own gap:
+    /// "`comp-goald` has `--once` 'for a cron', and no cron was ever
+    /// written." A continuous poll loop does not need a cron, but it does
+    /// need supervision (a restart, a start-at-boot) that "run it in a
+    /// terminal tab" never gave it.
+    RenderGoald {
+        spec: PathBuf,
+        #[arg(long, default_value = "target/selfhost")]
+        out: PathBuf,
+        /// systemd for tier 1's own box, or launchd for a developer's own
+        /// Mac — every `comp-goald` this project has run has actually been
+        /// the latter, in a foreground terminal, unsupervised. Defaults to
+        /// whichever this CLI itself is running on.
+        #[arg(long, value_enum, default_value_t = default_goald_format())]
+        format: GoaldFormat,
+    },
+}
+
+fn default_goald_format() -> GoaldFormat {
+    if cfg!(target_os = "macos") { GoaldFormat::Launchd } else { GoaldFormat::Systemd }
 }
 
 #[derive(Subcommand)]
@@ -401,6 +435,14 @@ fn load(path: &Path) -> Result<Spec> {
     check(&spec).with_context(|| format!("in {}", path.display()))?;
     Ok(spec)
 }
+fn load_goald(path: &Path) -> Result<GoaldSpec> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let spec: GoaldSpec =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    check_goald(&spec).with_context(|| format!("in {}", path.display()))?;
+    Ok(spec)
+}
 
 fn main() -> Result<()> {
     match Args::parse().cmd {
@@ -425,6 +467,9 @@ fn main() -> Result<()> {
             platform::goal_add(&project, &title, spec.as_deref(), priority)?
         }
         Cmd::Goal(GoalCmd::Ls { project, state }) => platform::goal_ls(&project, state.as_deref())?,
+        Cmd::Goal(GoalCmd::Watch { project, interval, full_refresh }) => {
+            platform::goal_watch(&project, interval, full_refresh)?
+        }
         Cmd::Goal(GoalCmd::Start { id }) => platform::goal_start(&id)?,
         Cmd::Goal(GoalCmd::Run {
             checkout,
@@ -562,6 +607,44 @@ fn main() -> Result<()> {
             println!("{} spec(s) ok, no port/domain/name collisions", specs.len());
         }
         Cmd::Node(NodeCmd::Port { spec }) => println!("{}", port_of(&load(&spec)?)),
+        Cmd::Node(NodeCmd::RenderGoald { spec, out, format }) => {
+            let spec = load_goald(&spec)?;
+            std::fs::create_dir_all(&out)?;
+            let (path, contents, install_hint) = match format {
+                GoaldFormat::Systemd => (
+                    out.join(format!("comp-goald-{}.service", spec.project)),
+                    render_goald_unit(&spec, &Layout::default()),
+                    format!(
+                        "sudo cp {p} /etc/systemd/system/ && sudo systemctl enable --now {n}",
+                        p = out.join(format!("comp-goald-{}.service", spec.project)).display(),
+                        n = format!("comp-goald-{}.service", spec.project)
+                    ),
+                ),
+                GoaldFormat::Launchd => {
+                    let label = format!("dev.holon.goald.{}", spec.project);
+                    let plist = out.join(format!("{label}.plist"));
+                    (
+                        plist.clone(),
+                        render_goald_launchd(&spec, Path::new("/usr/local/bin"), &out),
+                        format!(
+                            "cp {} ~/Library/LaunchAgents/{label}.plist && launchctl load ~/Library/LaunchAgents/{label}.plist",
+                            plist.display()
+                        ),
+                    )
+                }
+            };
+            std::fs::write(&path, contents)?;
+            println!("{}", path.display());
+            eprintln!(
+                "selfhost: comp-goald [{}] <- {} every {}s, {} at a time{}",
+                spec.project,
+                spec.repo,
+                spec.poll,
+                spec.max_runs,
+                if spec.enforce_deepseek_offpeak { ", DeepSeek off-peak enforced" } else { "" }
+            );
+            eprintln!("  install: {install_hint}");
+        }
         Cmd::Wadm(WadmCmd::Render {
             spec,
             topology,

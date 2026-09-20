@@ -188,6 +188,16 @@ pub enum Router {
     TailscaleServe,
 }
 
+/// Which background-job mechanism `comp-goald` gets rendered for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum GoaldFormat {
+    /// A hardened unit for tier 1's own box: `docs/SELFHOST.md`'s
+    /// `comp-host` + systemd + Caddy.
+    Systemd,
+    /// A `launchd` LaunchAgent for a developer's own Mac — no systemd there.
+    Launchd,
+}
+
 // ---- pure rendering ---------------------------------------------------------
 
 /// Where an app's files live on the box. One prefix, so removing an app is
@@ -593,6 +603,248 @@ pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
     }
     s.push_str("\n[Install]\nWantedBy=multi-user.target\n");
     s
+}
+
+// ---- comp-goald: a background job for the agentic loop's own daemon --------
+
+/// One `comp-goald` deployment: a process that continuously drains ONE
+/// project's goal queue (ADR-0082 + ADR-0096's "no cron was ever written").
+///
+/// Deliberately its own spec, not a field on [`Spec`]: `comp-goald` is not
+/// scoped to a deployed app at all — it watches a git repository's `.comp/`
+/// goals and opens PRs against it, which has no `domain`, no `artifact`, and
+/// no reason to share a lifecycle with anything `comp-host` serves.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoaldSpec {
+    /// The project whose queue this drains — `holon goal ls <project>`.
+    pub project: String,
+    /// A local checkout of that project's repository, on the box the unit runs on.
+    pub checkout: String,
+    /// `owner/name` of the repository the PRs open on.
+    pub repo: String,
+    #[serde(default)]
+    pub platform_url: Option<String>,
+    /// The account to sign back in as when the platform session expires
+    /// (~1h) — required together with `password_file`, or the daemon dies
+    /// silently on the first renewal (`comp-goald`'s own doc comment).
+    #[serde(default)]
+    pub email: Option<String>,
+    /// A path on the box holding that account's password — never the value
+    /// itself. Read into the unit through `LoadCredential`, the same
+    /// reasoning as `Daemon::token`: a value on `ExecStart` is `ps`-readable
+    /// by any local user, and this unit runs `DynamicUser=yes`.
+    #[serde(default)]
+    pub password_file: Option<String>,
+    #[serde(default = "default_max_runs")]
+    pub max_runs: u32,
+    #[serde(default = "default_poll")]
+    pub poll: u64,
+    /// Hold a DeepSeek-backed run until DeepSeek's off-peak window opens
+    /// (`comp_reconciler::offpeak`) instead of spending it at up to 2x the
+    /// price. Off by default — see `comp-goald --help`.
+    #[serde(default)]
+    pub enforce_deepseek_offpeak: bool,
+    /// A file of `YYYY-MM-DD` off-peak-all-day lines. Only meaningful with
+    /// `enforce_deepseek_offpeak = true`.
+    #[serde(default)]
+    pub holidays: Option<String>,
+    /// Flags for `comp-goalrun`, handed through verbatim — the model, the
+    /// budget, the pool, the branch count. `comp-goald` grows no opinion
+    /// about any of these, and neither does this renderer.
+    #[serde(default)]
+    pub goalrun_args: Vec<String>,
+}
+
+fn default_max_runs() -> u32 {
+    1
+}
+fn default_poll() -> u64 {
+    15
+}
+
+pub fn check_goald(spec: &GoaldSpec) -> Result<()> {
+    if spec.project.trim().is_empty() {
+        bail!("project must not be empty");
+    }
+    if spec.checkout.trim().is_empty() {
+        bail!("checkout must not be empty");
+    }
+    if !spec.repo.contains('/') {
+        bail!("repo {:?} must be owner/name", spec.repo);
+    }
+    // `comp-goald` itself: `(Some(email), Some(password_file))` is the only
+    // combination that renews a session; either alone silently becomes
+    // `login: None` and the daemon dies on the first renewal instead of
+    // refusing to start.
+    if spec.email.is_some() != spec.password_file.is_some() {
+        bail!("email and password_file must be set together, or not at all");
+    }
+    // These are interpolated straight into `ExecStart=`, same hazard
+    // `render_daemon_unit`'s own check guards against.
+    let clean = |v: &str| !v.contains('%') && !v.contains('\n');
+    let mut fields = vec![spec.project.as_str(), spec.checkout.as_str(), spec.repo.as_str()];
+    fields.extend(spec.platform_url.as_deref());
+    fields.extend(spec.email.as_deref());
+    fields.extend(spec.holidays.as_deref());
+    if !fields.iter().all(|v| clean(v)) || !spec.goalrun_args.iter().all(|a| clean(a)) {
+        bail!("no field may contain '%' or a newline");
+    }
+    Ok(())
+}
+
+/// The unit for one `comp-goald` deployment.
+///
+/// Not `BindsTo`/`After` any app unit — unlike the relay or the twelve
+/// ADR-0095 daemons, this is not a sidecar to something `comp-host` serves.
+/// It outlives any single app's lifecycle, so it gets the same
+/// `After=network-online.target` as `render_unit`'s own `comp-host` unit.
+pub fn render_goald_unit(spec: &GoaldSpec, l: &Layout) -> String {
+    let bin_dir =
+        l.bin.parent().map(|p| p.display().to_string()).unwrap_or_else(|| "/usr/local/bin".into());
+
+    let mut args = format!(
+        "--project {} --checkout {} --repo {}",
+        spec.project, spec.checkout, spec.repo
+    );
+    if let Some(url) = &spec.platform_url {
+        args.push_str(&format!(" --platform-url {url}"));
+    }
+    if let Some(email) = &spec.email {
+        args.push_str(&format!(" --email {email}"));
+    }
+    if spec.password_file.is_some() {
+        // Through the credential systemd drops in, not the real path — the
+        // same indirection `render_daemon_unit` uses for a daemon's token.
+        args.push_str(" --password-file %d/password");
+    }
+    args.push_str(&format!(" --max-runs {} --poll {}", spec.max_runs, spec.poll));
+    if spec.enforce_deepseek_offpeak {
+        args.push_str(" --enforce-deepseek-offpeak");
+    }
+    if let Some(h) = &spec.holidays {
+        args.push_str(&format!(" --holidays {h}"));
+    }
+    if !spec.goalrun_args.is_empty() {
+        args.push_str(" -- ");
+        args.push_str(&spec.goalrun_args.join(" "));
+    }
+
+    let mut s = String::from("# Generated by selfhost — do not edit; edit the goald spec and re-deploy.\n");
+    s.push_str(&format!(
+        "[Unit]\nDescription=comp-goald: drains {}'s goal queue (ADR-0082, ADR-0096)\n\
+         After=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\n",
+        spec.project
+    ));
+    if spec.password_file.is_some() {
+        s.push_str(&format!(
+            "LoadCredential=password:{}\n",
+            spec.password_file.as_deref().unwrap()
+        ));
+    }
+    s.push_str(&format!("ExecStart={bin_dir}/comp-goald {args}\n"));
+    // The daemon's own doc comment names the failure this survives: a run
+    // that outlives a one-hour platform session with no --email/--password-file
+    // to renew it dies, and a restart is the whole recovery story tier 1 has.
+    s.push_str(
+        "Restart=always\nRestartSec=5\nDynamicUser=yes\nNoNewPrivileges=yes\n\
+         PrivateTmp=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n\
+         ProtectKernelTunables=yes\nProtectControlGroups=yes\n\
+         RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\nRestrictNamespaces=yes\n\
+         LockPersonality=yes\n",
+    );
+    // A plain Rust binary that shells out to comp-goalrun and comp-checks —
+    // no wasmtime host inside it — so unlike comp-host's unit this one has no
+    // reason to leave W^X open.
+    s.push_str("MemoryDenyWriteExecute=yes\n");
+    // The checkout is a real working tree comp-goalrun commits branches into
+    // and comp-checks materialises candidates under — `ProtectSystem=strict`
+    // would make that read-only and every run would fail before a model was
+    // ever called.
+    s.push_str(&format!("ReadWritePaths={}\n", spec.checkout));
+    s.push_str("\n[Install]\nWantedBy=multi-user.target\n");
+    s
+}
+
+/// The `comp-goald` flags common to every deployment format, already split
+/// into argv-style tokens, in the order `comp-goald --help` lists them.
+/// `password_value` is what `--password-file` should point AT — the real
+/// path for launchd (a LaunchAgent already runs at its owner's own uid, so it
+/// can read a file that uid owns directly), or `%d/password` for systemd's
+/// `render_goald_unit`, which needs the credential indirection instead.
+fn goald_argv(spec: &GoaldSpec, password_value: Option<&str>) -> Vec<String> {
+    let mut a = vec![
+        "--project".to_string(),
+        spec.project.clone(),
+        "--checkout".to_string(),
+        spec.checkout.clone(),
+        "--repo".to_string(),
+        spec.repo.clone(),
+    ];
+    if let Some(url) = &spec.platform_url {
+        a.push("--platform-url".into());
+        a.push(url.clone());
+    }
+    if let Some(email) = &spec.email {
+        a.push("--email".into());
+        a.push(email.clone());
+    }
+    if let Some(pf) = password_value {
+        a.push("--password-file".into());
+        a.push(pf.to_string());
+    }
+    a.push("--max-runs".into());
+    a.push(spec.max_runs.to_string());
+    a.push("--poll".into());
+    a.push(spec.poll.to_string());
+    if spec.enforce_deepseek_offpeak {
+        a.push("--enforce-deepseek-offpeak".into());
+    }
+    if let Some(h) = &spec.holidays {
+        a.push("--holidays".into());
+        a.push(h.clone());
+    }
+    if !spec.goalrun_args.is_empty() {
+        a.push("--".into());
+        a.extend(spec.goalrun_args.iter().cloned());
+    }
+    a
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+/// A macOS `launchd` LaunchAgent for `comp-goald` — the background-job
+/// mechanism on a box with no systemd, which every `comp-goald` run this
+/// project has ever made has actually been: a person's own Mac, in a
+/// foreground terminal tab, because nothing supervised it.
+///
+/// Runs at the signed-in user's own uid — no `DynamicUser`, no
+/// `LoadCredential`: a personal LaunchAgent already has exactly the access
+/// that uid does, which is also all `comp-goald` itself ever assumed.
+/// `RunAtLoad` starts it at login; `KeepAlive` restarts it if it exits.
+pub fn render_goald_launchd(spec: &GoaldSpec, bin_dir: &Path, log_dir: &Path) -> String {
+    let mut argv = vec![format!("{}/comp-goald", bin_dir.display())];
+    argv.extend(goald_argv(spec, spec.password_file.as_deref()));
+    let args_xml: String =
+        argv.iter().map(|a| format!("\t\t<string>{}</string>\n", xml_escape(a))).collect();
+
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n<dict>\n\
+         \t<key>Label</key>\n\t<string>{label}</string>\n\
+         \t<key>ProgramArguments</key>\n\t<array>\n{args_xml}\t</array>\n\
+         \t<key>RunAtLoad</key>\n\t<true/>\n\
+         \t<key>KeepAlive</key>\n\t<true/>\n\
+         \t<key>StandardOutPath</key>\n\t<string>{out}</string>\n\
+         \t<key>StandardErrorPath</key>\n\t<string>{err}</string>\n\
+         </dict>\n</plist>\n",
+        label = xml_escape(&format!("dev.holon.goald.{}", spec.project)),
+        out = xml_escape(&log_dir.join(format!("comp-goald-{}.out.log", spec.project)).display().to_string()),
+        err = xml_escape(&log_dir.join(format!("comp-goald-{}.err.log", spec.project)).display().to_string()),
+    )
 }
 
 pub fn render_route(spec: &Spec, router: Router) -> String {
@@ -1199,6 +1451,189 @@ static_dir = "ui/dist"
         }
         if checked == 0 {
             eprintln!("skipping entirely: no comp-<daemon> binaries built under ../reconciler/target/release");
+        }
+    }
+
+    fn goald(toml_src: &str) -> GoaldSpec {
+        let s: GoaldSpec = toml::from_str(toml_src).expect("parses");
+        check_goald(&s).expect("valid");
+        s
+    }
+
+    const MINIMAL_GOALD: &str = r#"
+project = "holon"
+checkout = "/srv/goald/holon"
+repo = "me/holon"
+"#;
+
+    #[test]
+    fn a_minimal_goald_spec_needs_three_lines() {
+        let s = goald(MINIMAL_GOALD);
+        assert_eq!(s.max_runs, 1);
+        assert_eq!(s.poll, 15);
+        assert!(!s.enforce_deepseek_offpeak, "off by default, like the flag it renders");
+    }
+
+    #[test]
+    fn the_unit_runs_comp_goald_and_is_hardened() {
+        let out = render_goald_unit(&goald(MINIMAL_GOALD), &Layout::default());
+        assert!(out.contains("ExecStart=/usr/local/bin/comp-goald"), "{out}");
+        assert!(
+            out.contains("--project holon --checkout /srv/goald/holon --repo me/holon"),
+            "{out}"
+        );
+        assert!(out.contains("Restart=always"));
+        assert!(out.contains("DynamicUser=yes"));
+        assert!(out.contains("ProtectSystem=strict"));
+        // It shells out to plain binaries, not a wasmtime host.
+        assert!(out.contains("\nMemoryDenyWriteExecute=yes\n"), "{out}");
+        // A minimal spec asks for neither renewal nor enforcement.
+        assert!(!out.contains("--email"), "{out}");
+        assert!(!out.contains("--password-file"), "{out}");
+        assert!(!out.contains("--enforce-deepseek-offpeak"), "{out}");
+        // Unlike a daemon's or the relay's unit, this one is not bound to any
+        // app's lifecycle — it outlives all of them.
+        assert!(!out.contains("BindsTo"), "{out}");
+
+        for line in out.lines() {
+            if line.starts_with('#') || line.starts_with('[') || line.trim().is_empty() {
+                continue;
+            }
+            assert!(!line.contains(" #"), "inline comment would become part of the value: {line:?}");
+        }
+    }
+
+    #[test]
+    fn the_checkout_stays_writable_under_protectsystem_strict() {
+        let out = render_goald_unit(&goald(MINIMAL_GOALD), &Layout::default());
+        assert!(out.contains("ReadWritePaths=/srv/goald/holon"), "{out}");
+    }
+
+    #[test]
+    fn off_peak_enforcement_and_holidays_reach_the_command_line() {
+        let s = goald(&format!(
+            "{MINIMAL_GOALD}enforce_deepseek_offpeak = true\nholidays = \"/etc/comp/cn-holidays.txt\"\n"
+        ));
+        let out = render_goald_unit(&s, &Layout::default());
+        assert!(out.contains("--enforce-deepseek-offpeak"), "{out}");
+        assert!(out.contains("--holidays /etc/comp/cn-holidays.txt"), "{out}");
+    }
+
+    #[test]
+    fn goalrun_args_are_passed_through_after_a_bare_dash_dash() {
+        let s = goald(&format!(
+            "{MINIMAL_GOALD}goalrun_args = [\"--model\", \"deepseek-flash\", \"--branches\", \"4\"]\n"
+        ));
+        let out = render_goald_unit(&s, &Layout::default());
+        assert!(out.contains("-- --model deepseek-flash --branches 4"), "{out}");
+    }
+
+    #[test]
+    fn a_password_reaches_the_unit_through_a_credential_not_argv() {
+        let s = goald(&format!(
+            "{MINIMAL_GOALD}email = \"bot@holon.dev\"\npassword_file = \"/etc/comp/goald-holon.password\"\n"
+        ));
+        let out = render_goald_unit(&s, &Layout::default());
+        assert!(out.contains("--email bot@holon.dev"), "{out}");
+        assert!(out.contains("--password-file %d/password"), "{out}");
+        assert!(out.contains("LoadCredential=password:/etc/comp/goald-holon.password"), "{out}");
+    }
+
+    #[test]
+    fn email_without_a_password_file_is_refused() {
+        // comp-goald's own semantics: either alone silently becomes
+        // `login: None`, and the daemon dies on the first session renewal
+        // instead of refusing to start — catch it here instead.
+        let bad: GoaldSpec =
+            toml::from_str(&format!("{MINIMAL_GOALD}email = \"bot@holon.dev\"\n")).unwrap();
+        let err = check_goald(&bad).unwrap_err().to_string();
+        assert!(err.contains("must be set together"), "{err}");
+    }
+
+    #[test]
+    fn a_repo_that_is_not_owner_slash_name_is_refused() {
+        let bad: GoaldSpec =
+            toml::from_str("project = \"holon\"\ncheckout = \"/srv/holon\"\nrepo = \"holon\"\n")
+                .unwrap();
+        assert!(check_goald(&bad).is_err());
+    }
+
+    #[test]
+    fn a_goalrun_arg_with_a_percent_or_newline_is_refused() {
+        for bad in ["\"%h\"", "\"one\\ntwo\""] {
+            let src = format!("{MINIMAL_GOALD}goalrun_args = [{bad}]\n");
+            let s: GoaldSpec = toml::from_str(&src).unwrap();
+            assert!(check_goald(&s).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_launchd_agent_runs_at_login_and_restarts_on_exit() {
+        let out = render_goald_launchd(
+            &goald(MINIMAL_GOALD),
+            Path::new("/usr/local/bin"),
+            Path::new("/tmp/goald-logs"),
+        );
+        assert!(out.starts_with("<?xml"), "{out}");
+        assert!(out.contains("<string>dev.holon.goald.holon</string>"), "{out}");
+        assert!(out.contains("<string>/usr/local/bin/comp-goald</string>"), "{out}");
+        assert!(out.contains("<string>--project</string>"), "{out}");
+        assert!(out.contains("<string>holon</string>"), "{out}");
+        assert!(out.contains("<key>RunAtLoad</key>\n\t<true/>"), "{out}");
+        assert!(out.contains("<key>KeepAlive</key>\n\t<true/>"), "{out}");
+        assert!(out.contains("comp-goald-holon.out.log"), "{out}");
+        assert!(out.contains("comp-goald-holon.err.log"), "{out}");
+    }
+
+    #[test]
+    fn a_launchd_password_file_is_the_real_path_not_a_credential_indirection() {
+        // Unlike the systemd unit: a LaunchAgent already runs at its owner's
+        // own uid, so there is no privilege to drop and nothing for
+        // `LoadCredential` to mediate.
+        let s = goald(&format!(
+            "{MINIMAL_GOALD}email = \"bot@holon.dev\"\npassword_file = \"/Users/me/.holon/goald.password\"\n"
+        ));
+        let out = render_goald_launchd(&s, Path::new("/usr/local/bin"), Path::new("/tmp"));
+        assert!(out.contains("<string>--password-file</string>"), "{out}");
+        assert!(out.contains("<string>/Users/me/.holon/goald.password</string>"), "{out}");
+        assert!(!out.contains("%d/password"), "launchd has no credential dir: {out}");
+        assert!(!out.contains("LoadCredential"), "{out}");
+    }
+
+    #[test]
+    fn a_value_with_xml_metacharacters_cannot_break_out_of_its_string_element() {
+        let s = goald(&format!("{MINIMAL_GOALD}goalrun_args = [\"--note\", \"a<b&c\"]\n"));
+        let out = render_goald_launchd(&s, Path::new("/usr/local/bin"), Path::new("/tmp"));
+        assert!(out.contains("<string>a&lt;b&amp;c</string>"), "{out}");
+        assert!(!out.contains("<string>a<b&c</string>"), "{out}");
+    }
+
+    /// Same reasoning as `every_flag_we_emit_exists_on_comp_host`: a renamed
+    /// `comp-goald` flag should fail a test, not a unit systemd refuses to
+    /// start on a real box. Skipped when the binary has not been built.
+    #[test]
+    fn every_flag_we_emit_exists_on_comp_goald() {
+        let bin = std::path::Path::new("../reconciler/target/release/comp-goald");
+        if !bin.exists() {
+            eprintln!("skipping: no comp-goald built at {}", bin.display());
+            return;
+        }
+        let help = std::process::Command::new(bin).arg("--help").output().expect("run --help");
+        let help = String::from_utf8_lossy(&help.stdout).to_string();
+
+        let s = goald(&format!(
+            "{MINIMAL_GOALD}email = \"bot@holon.dev\"\npassword_file = \"/etc/comp/goald.password\"\n\
+             enforce_deepseek_offpeak = true\nholidays = \"/etc/comp/cn-holidays.txt\"\n\
+             goalrun_args = [\"--model\", \"deepseek-flash\"]\n"
+        ));
+        let unit = render_goald_unit(&s, &Layout::default());
+        let exec = unit.lines().find(|l| l.starts_with("ExecStart=")).expect("an ExecStart line");
+        // Everything before the bare `--` is comp-goald's own flags; what
+        // follows is comp-goalrun's, which comp-goald never inspects and
+        // this test has no business checking against comp-goald's --help.
+        let own = exec.split(" -- ").next().unwrap();
+        for flag in own.split_whitespace().filter(|w| w.starts_with("--")) {
+            assert!(help.contains(flag), "comp-goald has no {flag}\n--- help ---\n{help}");
         }
     }
 
