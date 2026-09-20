@@ -1591,11 +1591,11 @@ repo = "me/holon"
         // own uid, so there is no privilege to drop and nothing for
         // `LoadCredential` to mediate.
         let s = goald(&format!(
-            "{MINIMAL_GOALD}email = \"bot@holon.dev\"\npassword_file = \"/Users/me/.holon/goald.password\"\n"
+            "{MINIMAL_GOALD}email = \"bot@holon.dev\"\npassword_file = \"/etc/holon/goald.password\"\n"
         ));
         let out = render_goald_launchd(&s, Path::new("/usr/local/bin"), Path::new("/tmp"));
         assert!(out.contains("<string>--password-file</string>"), "{out}");
-        assert!(out.contains("<string>/Users/me/.holon/goald.password</string>"), "{out}");
+        assert!(out.contains("<string>/etc/holon/goald.password</string>"), "{out}");
         assert!(!out.contains("%d/password"), "launchd has no credential dir: {out}");
         assert!(!out.contains("LoadCredential"), "{out}");
     }
