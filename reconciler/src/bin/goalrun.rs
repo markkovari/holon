@@ -46,6 +46,7 @@ use comp_reconciler::contract::{Answerer, Registry};
 use comp_reconciler::fleet::{bin_path, repo_root, Fleet};
 use comp_reconciler::gate::Gate;
 use comp_reconciler::generation as generation_mod;
+use comp_reconciler::goalexit;
 use comp_reconciler::generation::{land, Bounds, Entry, Part};
 use comp_reconciler::memory::{self, run_id, Memory};
 use comp_reconciler::trace::Trace;
@@ -1448,17 +1449,17 @@ fn run() -> Result<i32> {
         // Distinct from `goalexit::EXHAUSTED` (3): that one says every branch ran
         // and none passed, which is a real result from a healthy search. This says
         // there was no search to have a result from.
-        return Ok(comp_reconciler::goalexit::GATE_REFUSED);
+        return Ok(goalexit::GATE_REFUSED);
     }
 
     if args.smoke {
         return smoke(&args, &goal, port, &context, &checks, &base_commit, &allow)
-            .map(|()| comp_reconciler::goalexit::SUCCESS);
+            .map(|()| goalexit::SUCCESS);
     }
 
     // --- has this already been done? ----------------------------------------
     if !pool::worth_running(memory.as_ref(), &goal, args.skip_above) {
-        return Ok(comp_reconciler::goalexit::SUCCESS);
+        return Ok(goalexit::SUCCESS);
     }
 
     // --- what this run leaves behind (ADR-0092) -----------------------------
@@ -1544,7 +1545,7 @@ fn run() -> Result<i32> {
             &reuse,
             capability_confirmed.as_ref(),
         )
-        .map(|()| comp_reconciler::goalexit::SUCCESS);
+        .map(|()| goalexit::SUCCESS);
     }
 
     println!("fleet serving; running the search …\n");
@@ -1747,7 +1748,7 @@ fn run() -> Result<i32> {
         // 3 rather than 1 so it stays distinguishable from a run that BROKE: one
         // says the model could not do it, the other says the harness fell over,
         // and a caller that wants to retry cares which.
-        return Ok(comp_reconciler::goalexit::EXHAUSTED);
+        return Ok(goalexit::EXHAUSTED);
     }
 
     if args.dry_run {
@@ -1774,7 +1775,7 @@ fn run() -> Result<i32> {
                 println!("trace: {why}");
             }
         }
-        return Ok(comp_reconciler::goalexit::SUCCESS);
+        return Ok(goalexit::SUCCESS);
     }
 
     // Land the winner. A unique branch name per run, because a PR cannot reuse one.
@@ -1837,7 +1838,7 @@ fn run() -> Result<i32> {
     if let Some(why) = trace.as_ref().and_then(|t| t.report()) {
         println!("trace: {why}");
     }
-    Ok(comp_reconciler::goalexit::SUCCESS)
+    Ok(goalexit::SUCCESS)
 }
 
 /// The thin wrapper `run()` exists for: by the time this calls
