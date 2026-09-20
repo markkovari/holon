@@ -53,20 +53,36 @@ pub struct Route {
 #[macro_export]
 macro_rules! guest_auth_reply {
     () => {
-        /// What a handler answers with: a status and a JSON body.
+        /// What a handler answers with: a status and a JSON body, OR a
+        /// non-JSON one — a generated PDF, a CSV export — set via `file`
+        /// instead. Every existing call site in this repo only ever
+        /// constructs one through `Reply::json`/`Reply::err`, which leave
+        /// `file` at `None`, so this is purely additive: nothing that built
+        /// a `Reply` before this field existed changes behavior.
         ///
         /// Expanded by `guestauth::guest_auth_reply!()`.
         pub struct Reply {
             pub status: u16,
             pub json: serde_json::Value,
+            pub file: Option<(String, Vec<u8>)>,
         }
 
         impl Reply {
             pub fn json(status: u16, body: serde_json::Value) -> Self {
-                Reply { status, json: body }
+                Reply { status, json: body, file: None }
             }
             pub fn err(status: u16, code: &str) -> Self {
                 Reply::json(status, serde_json::json!({ "error": code }))
+            }
+            /// A non-JSON body: `content_type` verbatim (e.g.
+            /// `"application/pdf"`), `bytes` written unchanged — no
+            /// `serde_json` anywhere near it, unlike every other reply here.
+            pub fn file(status: u16, content_type: &str, bytes: Vec<u8>) -> Self {
+                Reply {
+                    status,
+                    json: serde_json::Value::Null,
+                    file: Some((content_type.to_string(), bytes)),
+                }
             }
             pub fn auth_err(e: crate::bindings::auth::identity::types::AuthError) -> Self {
                 use crate::bindings::auth::identity::types::AuthError;
@@ -301,14 +317,28 @@ macro_rules! guest_emit {
         fn emit(response_out: crate::bindings::wasi::http::types::ResponseOutparam, reply: Reply) {
             use crate::bindings::wasi::http::types::{Fields, OutgoingBody, OutgoingResponse};
             let headers = Fields::new();
-            let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+            // `reply.file` set means a non-JSON body (a generated PDF, a CSV
+            // export): its own content-type, bytes written verbatim. Absent
+            // — every reply built before this existed — is the original
+            // behavior unchanged: `application/json`, and nothing written
+            // for a `Value::Null` body (a reply that means "no body").
+            let write_bytes = match &reply.file {
+                Some((content_type, bytes)) => {
+                    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
+                    Some(bytes.clone())
+                }
+                None => {
+                    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
+                    (!reply.json.is_null()).then(|| reply.json.to_string().into_bytes())
+                }
+            };
             let resp = OutgoingResponse::new(headers);
             let _ = resp.set_status_code(reply.status);
             let out = resp.body().expect("body");
             crate::bindings::wasi::http::types::ResponseOutparam::set(response_out, Ok(resp));
-            if !reply.json.is_null() {
+            if let Some(bytes) = write_bytes {
                 if let Ok(stream) = out.write() {
-                    let _ = write_all(&stream, reply.json.to_string().as_bytes());
+                    let _ = write_all(&stream, &bytes);
                 }
             }
             let _ = OutgoingBody::finish(out, None);
