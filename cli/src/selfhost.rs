@@ -494,6 +494,25 @@ pub fn render_ingress_route(domain: &str, upstream: &str, tailnet: bool) -> Stri
     }
 }
 
+/// The hardening every rendered unit shares except `comp-host`'s own, which
+/// JITs and so cannot take the one line this deliberately leaves out —
+/// `MemoryDenyWriteExecute=yes`, appended separately by each caller since
+/// that is the one thing that differs between them.
+///
+/// `restart_sec` is the other difference worth naming: 2s suits a sidecar
+/// that should come back fast, but `comp-goald` passes a longer one whose
+/// own doc names why (a platform session lasts ~1h; a tight restart loop
+/// would just spend CPU while that same clock keeps ticking).
+fn hardening(restart_sec: u64) -> String {
+    format!(
+        "Restart=always\nRestartSec={restart_sec}\nDynamicUser=yes\nNoNewPrivileges=yes\n\
+         PrivateTmp=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n\
+         ProtectKernelTunables=yes\nProtectControlGroups=yes\n\
+         RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\nRestrictNamespaces=yes\n\
+         LockPersonality=yes\n"
+    )
+}
+
 /// The relay unit for an app that declares `[triggers]`.
 ///
 /// A SECOND unit rather than a second process inside the app's: it restarts
@@ -526,13 +545,7 @@ pub fn render_relay_unit(spec: &Spec, t: &Triggers, l: &Layout) -> String {
     // No lease: tier 1 is one box running one copy of one app, so there is nothing to
     // elect between. The lattice lane is where two relays can exist and where the
     // lease stops them racing a consumer group's offset.
-    s.push_str(
-        "Restart=always\nRestartSec=2\nDynamicUser=yes\nNoNewPrivileges=yes\n\
-         PrivateTmp=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n\
-         ProtectKernelTunables=yes\nProtectControlGroups=yes\n\
-         RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\nRestrictNamespaces=yes\n\
-         LockPersonality=yes\n",
-    );
+    s.push_str(&hardening(2));
     // Unlike comp-host, this one JITs nothing — it is an HTTP client with a clock.
     s.push_str("MemoryDenyWriteExecute=yes\n");
     s.push_str("\n[Install]\nWantedBy=multi-user.target\n");
@@ -583,13 +596,7 @@ pub fn render_daemon_unit(spec: &Spec, d: &Daemon, l: &Layout) -> String {
         ));
     }
     s.push_str(&format!("ExecStart={bin_dir}/comp-{} {args}\n", d.name));
-    s.push_str(
-        "Restart=always\nRestartSec=2\nDynamicUser=yes\nNoNewPrivileges=yes\n\
-         PrivateTmp=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n\
-         ProtectKernelTunables=yes\nProtectControlGroups=yes\n\
-         RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\nRestrictNamespaces=yes\n\
-         LockPersonality=yes\n",
-    );
+    s.push_str(&hardening(2));
     // None of the twelve JIT — they are plain Rust binaries, not a wasmtime
     // host — so unlike comp-host's unit this one is not the exception.
     s.push_str("MemoryDenyWriteExecute=yes\n");
@@ -746,13 +753,7 @@ pub fn render_goald_unit(spec: &GoaldSpec, l: &Layout) -> String {
     // The daemon's own doc comment names the failure this survives: a run
     // that outlives a one-hour platform session with no --email/--password-file
     // to renew it dies, and a restart is the whole recovery story tier 1 has.
-    s.push_str(
-        "Restart=always\nRestartSec=5\nDynamicUser=yes\nNoNewPrivileges=yes\n\
-         PrivateTmp=yes\nPrivateDevices=yes\nProtectSystem=strict\nProtectHome=yes\n\
-         ProtectKernelTunables=yes\nProtectControlGroups=yes\n\
-         RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX\nRestrictNamespaces=yes\n\
-         LockPersonality=yes\n",
-    );
+    s.push_str(&hardening(5));
     // A plain Rust binary that shells out to comp-goalrun and comp-checks —
     // no wasmtime host inside it — so unlike comp-host's unit this one has no
     // reason to leave W^X open.
