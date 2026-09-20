@@ -8,7 +8,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
 DOMAIN="inspection-domain"
-PORT="${GATE_PORT:-3939}"
+PORT="${GATE_PORT:-3940}"
 HOST="${COMP_HOST:-host/target/release/comp-host}"
 PLUG="${COMP_PLUG:-reconciler/target/release/comp-plug}"
 
