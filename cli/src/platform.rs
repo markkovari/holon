@@ -613,6 +613,37 @@ pub fn goal_add(
     Ok(())
 }
 
+/// Shared by `goal ls` (once) and `goal watch` (every refresh) — the
+/// snapshot, tier 1 of ADR-0081's own client-tier design, and the one every
+/// richer view must agree with.
+fn print_goals(project: &str, rows: &[Value]) {
+    if rows.is_empty() {
+        println!("no goals — `comp goal add {project} \"what to do\"` queues one");
+        return;
+    }
+    println!("{:<28} {:<16} {:>4}  {}", "ID", "STATE", "PRI", "TITLE");
+    for r in rows {
+        let title = r["title"].as_str().unwrap_or("?");
+        let reason = r["reason"].as_str().unwrap_or_default();
+        // Which pull request an `awaiting-human` goal is actually waiting on —
+        // without this a person has to go find it by guessing a branch name.
+        let pr = r["pr"].as_str().unwrap_or_default();
+        let suffix = if !reason.is_empty() {
+            format!("  ({reason})")
+        } else if !pr.is_empty() {
+            format!("  ({pr})")
+        } else {
+            String::new()
+        };
+        println!(
+            "{:<28} {:<16} {:>4}  {title}{suffix}",
+            r["id"].as_str().unwrap_or("?"),
+            r["state"].as_str().unwrap_or("?"),
+            r["priority"].as_i64().unwrap_or(100),
+        );
+    }
+}
+
 pub fn goal_ls(project: &str, state: Option<&str>) -> Result<()> {
     let s = load()?;
     let path = match state {
@@ -620,24 +651,85 @@ pub fn goal_ls(project: &str, state: Option<&str>) -> Result<()> {
         None => format!("/api/projects/{project}/goals"),
     };
     let v = call(&s, "GET", &path, None, "application/json")?;
-    let rows = v["goals"].as_array().cloned().unwrap_or_default();
-    if rows.is_empty() {
-        println!("no goals — `comp goal add {project} \"what to do\"` queues one");
-        return Ok(());
-    }
-    println!("{:<28} {:<16} {:>4}  {}", "ID", "STATE", "PRI", "TITLE");
-    for r in rows {
-        let title = r["title"].as_str().unwrap_or("?");
-        let reason = r["reason"].as_str().unwrap_or_default();
-        println!(
-            "{:<28} {:<16} {:>4}  {title}{}",
-            r["id"].as_str().unwrap_or("?"),
-            r["state"].as_str().unwrap_or("?"),
-            r["priority"].as_i64().unwrap_or(100),
-            if reason.is_empty() { String::new() } else { format!("  ({reason})") }
-        );
-    }
+    print_goals(project, &v["goals"].as_array().cloned().unwrap_or_default());
     Ok(())
+}
+
+/// Tier 2 of ADR-0081's client design, applied to the goal queue: list, then
+/// poll the event log as a fast path, then re-list on a timer REGARDLESS —
+/// the event feed only ever decides how soon to refresh, never what to show.
+/// A dropped event costs a few extra seconds of staleness, not a wrong
+/// answer, because `full_refresh` alone would eventually show the same
+/// thing.
+///
+/// Each invocation gets its own consumer group (`watch-<pid>`) so two people
+/// — or two terminals — watching the same project do not steal events from
+/// each other; harmless either way, since acking only decides how soon THIS
+/// view notices, never what it shows.
+pub fn goal_watch(project: &str, interval: u64, full_refresh: u64) -> Result<()> {
+    let s = load()?;
+    let group = format!("watch-{}", std::process::id());
+    let mut last_full = std::time::Instant::now();
+
+    let refresh = |s: &Session| -> Result<()> {
+        let v = call(s, "GET", &format!("/api/projects/{project}/goals"), None, "application/json")?;
+        println!("\n[{}]", now_hms());
+        print_goals(project, &v["goals"].as_array().cloned().unwrap_or_default());
+        Ok(())
+    };
+    refresh(&s)?;
+
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(interval));
+        let events = call(
+            &s,
+            "GET",
+            &format!("/api/projects/{project}/events?group={group}&max=50"),
+            None,
+            "application/json",
+        )
+        .ok()
+        .and_then(|v| v["events"].as_array().cloned())
+        .unwrap_or_default();
+
+        if !events.is_empty() {
+            for e in &events {
+                let ev = &e["event"];
+                println!(
+                    "[{}] {} {} -> {}",
+                    now_hms(),
+                    ev["id"].as_str().unwrap_or("?"),
+                    ev["from"].as_str().unwrap_or("(new)"),
+                    ev["to"].as_str().unwrap_or("?"),
+                );
+            }
+            let ids: Vec<Value> =
+                events.iter().map(|e| json!(e["id"].as_str().unwrap_or_default())).collect();
+            let _ = call(
+                &s,
+                "POST",
+                &format!("/api/projects/{project}/events/ack"),
+                Some(json!({ "group": group, "ids": ids }).to_string().into_bytes()),
+                "application/json",
+            );
+            refresh(&s)?;
+            last_full = std::time::Instant::now();
+        } else if last_full.elapsed().as_secs() >= full_refresh {
+            // The safety net: a bus outage, a restart, or an event this
+            // client dropped must not mean the view silently goes stale.
+            refresh(&s)?;
+            last_full = std::time::Instant::now();
+        }
+    }
+}
+
+fn now_hms() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        % 86_400;
+    format!("{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
 /// The one transition a person must make for work to happen.

@@ -263,6 +263,119 @@ fn a_queue_that_only_a_person_can_start_and_that_refuses_illegal_moves() {
     println!("    a queue nothing drains, and six illegal transitions refused");
 }
 
+/// A review can name the pull request it is waiting on.
+///
+/// Without this, `awaiting-human` records only that SOMETHING is waiting for a
+/// person — not which pull request. A human reading the worklist has to go
+/// find it by guessing a branch name, and nothing can later watch that PR's
+/// own status to close the loop automatically.
+#[test]
+fn a_review_can_name_the_pull_request_it_is_waiting_on() {
+    let fleet = Fleet::start_with_platform("projects-pr", 1);
+    let api = Api::new(fleet.platform_url());
+    api.post("/api/projects", json!({ "name": "widgets", "repo": "acme/widgets" }));
+
+    let cache = api.goal("widgets", "add a cache");
+    api.post(&format!("/api/goals/{cache}/start"), json!({}));
+
+    let (code, v) = api.post(
+        &format!("/api/goals/{cache}/review"),
+        json!({ "pr": "https://github.com/acme/widgets/pull/42" }),
+    );
+    assert_eq!(code, 200, "running -> awaiting-human should still be legal with a pr: {v}");
+
+    let (_, v) = api.get("/api/projects/widgets/goals");
+    let goal = v["goals"].as_array().unwrap().iter().find(|g| g["id"].as_str() == Some(&cache));
+    assert_eq!(
+        goal.unwrap()["pr"],
+        json!("https://github.com/acme/widgets/pull/42"),
+        "the pull request should be recorded on the goal: {v}"
+    );
+
+    // An older caller, or one with nothing to name, still transitions cleanly
+    // — the field is additive, never required.
+    let plain = api.goal("widgets", "rename the thing");
+    api.post(&format!("/api/goals/{plain}/start"), json!({}));
+    let (code, v) = api.post(&format!("/api/goals/{plain}/review"), json!({}));
+    assert_eq!(code, 200, "a review with no pr should still be legal: {v}");
+    let (_, v) = api.get("/api/projects/widgets/goals");
+    let goal = v["goals"].as_array().unwrap().iter().find(|g| g["id"].as_str() == Some(&plain));
+    assert_eq!(goal.unwrap().get("pr"), None, "no pr named, none should be recorded: {v}");
+
+    println!("    a review names its pull request, and stays optional");
+}
+
+/// The event log is a fast, lossy-hint path over the same transitions —
+/// never a second place the truth lives.
+///
+/// Every transition already writes the goal record; this proves it ALSO
+/// shows up on the project's event topic, in order, and that acking moves a
+/// consumer group's offset so it does not see the same events twice — while
+/// a caller that never polls at all still gets the right state from
+/// `goals_list`, unaffected by whether anyone was watching the bus.
+#[test]
+fn goal_transitions_appear_on_the_event_log_and_acking_advances_the_offset() {
+    let fleet = Fleet::start_with_platform("projects-events", 1);
+    let api = Api::new(fleet.platform_url());
+    api.post("/api/projects", json!({ "name": "widgets", "repo": "acme/widgets" }));
+
+    let cache = api.goal("widgets", "add a cache");
+    api.post(&format!("/api/goals/{cache}/start"), json!({}));
+    api.post(
+        &format!("/api/goals/{cache}/review"),
+        json!({ "pr": "https://github.com/acme/widgets/pull/7" }),
+    );
+
+    let (code, v) = api.get("/api/projects/widgets/events?group=watcher");
+    assert_eq!(code, 200, "polling the event log failed: {v}");
+    let events = v["events"].as_array().cloned().unwrap_or_default();
+    assert_eq!(events.len(), 3, "queued, started and reviewed should all appear: {v}");
+    let transitions: Vec<(String, String)> = events
+        .iter()
+        .map(|e| {
+            (
+                e["event"]["from"].as_str().unwrap_or("null").to_string(),
+                e["event"]["to"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        transitions,
+        vec![
+            ("null".into(), "queued".into()),
+            ("queued".into(), "running".into()),
+            ("running".into(), "awaiting-human".into()),
+        ],
+        "events should appear in the order they happened: {v}"
+    );
+    assert_eq!(
+        events[2]["event"]["id"].as_str(),
+        Some(cache.as_str()),
+        "the event should name the goal it happened to: {v}"
+    );
+
+    // Ack everything, then poll again with the SAME group: nothing comes
+    // back, because acking is what stops a consumer re-reading history.
+    let ids: Vec<String> =
+        events.iter().map(|e| e["id"].as_str().unwrap_or_default().to_string()).collect();
+    let (code, v) = api.post(
+        "/api/projects/widgets/events/ack",
+        json!({ "group": "watcher", "ids": ids }),
+    );
+    assert_eq!(code, 200, "acking failed: {v}");
+    assert_eq!(v["acked"], json!(3));
+
+    let (_, v) = api.get("/api/projects/widgets/events?group=watcher");
+    assert_eq!(v["count"], json!(0), "an acked group should see nothing new: {v}");
+
+    // A DIFFERENT group starting fresh still sees the whole history — groups
+    // do not steal each other's events, same as `event:bus`'s own contract.
+    let (_, v) = api.get("/api/projects/widgets/events?group=late-watcher");
+    assert_eq!(v["count"], json!(3), "a new group should see the full backlog: {v}");
+
+    println!("    transitions appear on the event log, in order, and acking advances the offset");
+}
+
 /// The reconciler actually SENDS the numbers admission reads.
 ///
 /// Every other admission test posts to `/api/internal/status` itself, with a body
