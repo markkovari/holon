@@ -32,6 +32,7 @@ use bindings::auth::identity::authorizer;
 use bindings::auth::identity::types as auth_types;
 use bindings::blob::store::blobstore as blob;
 use bindings::comp::store::cas;
+use bindings::event::bus::bus;
 use bindings::policy::guard::guard as policy;
 use bindings::quota::meter::meter as quota;
 use bindings::records::store::store as records;
@@ -112,6 +113,16 @@ impl Guest for Component {
             }
             (Method::Get, ["api", "projects", project, "goals"]) => {
                 goals::goals_list(&request, project, &query)
+            }
+            // The event-bus half of the queue (tier 3 of ADR-0082's "many
+            // observers, one truth"): a lossy-hint fast path over the same
+            // durable log every transition already writes to. Never the only
+            // way to find out — `goals_list` above is always the fallback.
+            (Method::Get, ["api", "projects", project, "events"]) => {
+                goals::events_list(&request, project, &query)
+            }
+            (Method::Post, ["api", "projects", project, "events", "ack"]) => {
+                goals::events_ack(&request, project, &query)
             }
             // A human starts every goal; there is no loop that does (ADR-0082).
             (Method::Post, ["api", "goals", id, "start"]) => {

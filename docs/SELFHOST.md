@@ -117,6 +117,47 @@ what it emits. A cluster without that sharing needs its registry to actually
 be TLS-terminated (GHCR, ECR, …), same as any real deployment would use
 regardless.
 
+### `comp-goald`: the agentic loop's own daemon needs a process too
+
+Not app-scoped like the twelve above — it watches a project's goal queue and a git
+checkout, not a deployed app's loopback port. [ADR-0096](adr/0096-a-pull-contract-needs-a-relay.md)
+named the gap in passing: *"`comp-goald` has `--once` 'for a cron', and no cron was
+ever written."* `comp-goald` is already a continuous poll loop, not a one-shot — what
+it never had was supervision: something to restart it, start it at boot, and stop it
+running attached to a terminal tab.
+
+    holon node render-goald goald.toml --out target/selfhost
+
+renders one hardened `comp-goald-<project>.service`, same shape as `render_unit`'s own
+(`DynamicUser`, `Restart=always`, no wasmtime inside it so `MemoryDenyWriteExecute=yes`
+unlike `comp-host`'s unit). Not `BindsTo` any app — it outlives all of them.
+
+`--format` picks systemd (tier 1's own box) or `launchd` (a developer's own Mac, no
+systemd there — every `comp-goald` this project has run has actually been this: a
+person's own machine, in a foreground terminal, unsupervised). Defaults to whichever
+platform the CLI itself is running on. The launchd agent runs at the signed-in user's
+own uid — no `DynamicUser`, no `LoadCredential`; `--password-file` names the real path
+directly, since a personal LaunchAgent already has the access that uid does.
+
+It also enforces DeepSeek's off-peak pricing (`docs.deepseek.com/quick_start/pricing`),
+which `cost.rs` already knew how to price but nothing ever gated on:
+`enforce_deepseek_offpeak = true` holds a goal whose `--model` bills under DeepSeek's
+clock-dependent rate until the off-peak window opens, instead of spending it at up to
+2x the price. `comp-offpeak` already existed as a one-shot cron gate for
+`comp-goalrun`, but a continuous daemon never goes through cron, so it was never
+gated at all until now.
+
+```toml
+project = "holon"
+checkout = "/srv/goald/holon"
+repo = "me/holon"
+email = "bot@holon.dev"
+password_file = "/etc/comp/goald-holon.password"   # a path, never a value
+enforce_deepseek_offpeak = true
+holidays = "/etc/comp/cn-holidays.txt"
+goalrun_args = ["--model", "deepseek-flash", "--branches", "4"]
+```
+
 ### Fused or linked, and what the hop costs
 
 Both topologies render from the same spec (`--topology`), and the choice is forced
@@ -416,7 +457,7 @@ the pure-compute ones automatically and prints which.
 | `just selfhost-specs` | derive a spec for every app that has a `host-<app>` recipe and no spec yet |
 | `just selfhost-bootstrap <host>` | one-time box prep: static comp-host, dirs, Caddy import, TS_IP |
 | `just selfhost-deploy-all <host>` | every app in `apps/` to one box |
-| `cli/src/main.rs` | tier-1 renderer, pure and tested (25 tests, incl. ones that check the flags it emits actually exist on `comp-host` and on each of the twelve ADR-0095 daemons). Reached as `holon node render|validate|port|ingress` |
+| `cli/src/main.rs` | tier-1 renderer, pure and tested (25 tests, incl. ones that check the flags it emits actually exist on `comp-host` and on each of the twelve ADR-0095 daemons). Reached as `holon node render|validate|port|ingress|render-goald` |
 | `host/` | `comp-host` — the runtime for tiers 1 and 2 |
 | `components/platform-domain/src/render.rs` | the tier-3 renderer |
 | `reconciler/` | the tier-3 lane: reconcile, distribute, and `src/oci.rs` for registry push |

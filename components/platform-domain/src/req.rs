@@ -231,3 +231,25 @@ pub struct FailGoal {
     /// act on, which is the only thing a DLQ is for.
     pub reason: String,
 }
+
+/// `POST /api/goals/{id}/review`
+///
+/// Optional and additive: a caller with no PR to name (or an older client)
+/// still transitions the goal, it just carries no link. Without this, nothing
+/// records which pull request an `awaiting-human` goal is actually waiting
+/// on — a human reviewing the worklist has to go find it by guessing a branch
+/// name, and nothing can later watch that PR's own status.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewGoal {
+    #[serde(default)]
+    pub pr: Option<String>,
+}
+
+/// `POST /api/projects/{project}/events/ack`
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AckEvents {
+    pub group: String,
+    pub ids: Vec<String>,
+}

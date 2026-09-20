@@ -45,6 +45,41 @@ fn is_weekend(day: i64) -> bool {
     weekday == 5 || weekday == 6
 }
 
+/// Whether `model` is billed under DeepSeek's clock-dependent pricing — the
+/// same substring match `cost_cents` uses to pick a price tier. Every other
+/// model's price ignores the clock entirely, so this is the one question
+/// worth asking before bothering with [`deepseek_off_peak`] at all.
+pub fn is_deepseek_model(model: &str) -> bool {
+    model.contains("deepseek")
+}
+
+/// Pull a `--model <value>` argument out of a `comp-goalrun` argv slice — the
+/// same trailing args `comp-goald` hands `comp-goalrun` verbatim. `None` if
+/// the flag is absent, or present with nothing after it.
+pub fn model_arg(argv: &[String]) -> Option<&str> {
+    argv.iter().position(|a| a == "--model").and_then(|i| argv.get(i + 1)).map(String::as_str)
+}
+
+/// Whether a run using `model` should be held back right now rather than
+/// spent, given whether off-peak enforcement is even turned on.
+///
+/// `enforce=false` never defers — enforcement is opt-in, because a daemon
+/// nobody told to save money must not go silent for hours on its own
+/// initiative. A model that is not DeepSeek's, or unknown entirely (`None` —
+/// `comp-goald` found no `--model` flag to read), is never held back either:
+/// off-peak pricing is a DeepSeek-only fact, so enforcing it against every
+/// other model would just be an outage with a schedule.
+pub fn should_defer(now: u64, off_peak_days: &[i64], enforce: bool, model: Option<&str>) -> bool {
+    if !enforce {
+        return false;
+    }
+    let Some(model) = model else { return false };
+    if !is_deepseek_model(model) {
+        return false;
+    }
+    !deepseek_off_peak(now, off_peak_days)
+}
+
 /// Unix day number for a Gregorian civil date (UTC, proleptic Gregorian).
 ///
 /// Howard Hinnant's `days_from_civil` (public domain, widely used — e.g. in
@@ -158,5 +193,60 @@ mod tests {
     fn parse_holidays_rejects_a_malformed_line() {
         assert!(parse_holidays("2026-13-40").is_err(), "month 13 / day 40 must be refused");
         assert!(parse_holidays("not-a-date-at-all").is_err());
+    }
+
+    #[test]
+    fn is_deepseek_model_matches_both_tiers_and_nothing_else() {
+        assert!(is_deepseek_model("deepseek-flash"));
+        assert!(is_deepseek_model("deepseek-v4-pro"));
+        assert!(!is_deepseek_model("claude-haiku-4-5-20251001"));
+        assert!(!is_deepseek_model("some-other-vendor/model"));
+    }
+
+    #[test]
+    fn model_arg_finds_the_value_after_the_flag() {
+        let argv: Vec<String> =
+            ["--branches", "4", "--model", "deepseek-flash"].map(String::from).to_vec();
+        assert_eq!(model_arg(&argv), Some("deepseek-flash"));
+    }
+
+    #[test]
+    fn model_arg_is_none_when_the_flag_is_absent_or_trailing() {
+        assert_eq!(model_arg(&["--branches".to_string(), "4".to_string()]), None);
+        assert_eq!(model_arg(&["--model".to_string()]), None);
+        assert_eq!(model_arg(&[]), None);
+    }
+
+    #[test]
+    fn should_defer_is_false_when_enforcement_is_off_even_at_peak() {
+        let peak = at(2026, 9, 15, 14, 0);
+        assert!(!should_defer(peak, &[], false, Some("deepseek-flash")));
+    }
+
+    #[test]
+    fn should_defer_ignores_a_non_deepseek_model_even_at_peak() {
+        let peak = at(2026, 9, 15, 14, 0);
+        assert!(!should_defer(peak, &[], true, Some("claude-haiku-4-5-20251001")));
+    }
+
+    #[test]
+    fn should_defer_ignores_an_unknown_model() {
+        let peak = at(2026, 9, 15, 14, 0);
+        assert!(!should_defer(peak, &[], true, None));
+    }
+
+    #[test]
+    fn should_defer_holds_a_deepseek_run_during_peak_hours() {
+        let peak = at(2026, 9, 15, 14, 0);
+        assert!(should_defer(peak, &[], true, Some("deepseek-flash")));
+    }
+
+    #[test]
+    fn should_defer_releases_a_deepseek_run_once_off_peak() {
+        let off = at(2026, 9, 15, 2, 0);
+        assert!(!should_defer(off, &[], true, Some("deepseek-flash")));
+        // A weekend releases it too, same as `deepseek_off_peak` itself.
+        let weekend = at(2026, 9, 19, 14, 0);
+        assert!(!should_defer(weekend, &[], true, Some("deepseek-v4-pro")));
     }
 }

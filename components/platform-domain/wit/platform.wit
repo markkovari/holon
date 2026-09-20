@@ -69,4 +69,11 @@ world platform-domain {
     // one guarded write whose failure IS the answer.
     import comp:store/cas@0.1.0;
     import wasi:keyvalue/store@0.2.0-draft;
+
+    // A durable, pollable log of every goal transition (`goal.<project>`
+    // topics) — the "many observers, one truth" side of ADR-0082's queue.
+    // Never authoritative: a consumer's own group offset is a convenience,
+    // the goal record itself is always the real answer. See event-bus's own
+    // header for why pull-only keeps this pure WASI.
+    import event:bus/bus@0.1.0;
 }

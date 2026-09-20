@@ -4,7 +4,7 @@ domain = "platform.example.com"
 artifact = "components/target/platform-domain.composed.wasm"
 port = 3936
 kv = "sqlite"
-components = ["platform-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter", "blob-store", "quota", "wit-reflect", "secrets-vault"]
+components = ["platform-domain", "auth-guard", "policy-guard", "record-store", "audit-log", "rate-limiter", "blob-store", "quota", "wit-reflect", "secrets-vault", "event-bus"]
 strategy = "fused"
 
 # `master-key` is a fixed local-dev value, not a real secret — see
