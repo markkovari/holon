@@ -1,0 +1,85 @@
+title = "which queued goals a batch-start should start"
+
+text = """
+A real gap found this session, talking through "if I want to start 20 goals
+at once": ADR-0082 is right that a human should decide to start a goal, but
+today that decision costs one `holon goal start <id>` round trip PER goal —
+so starting a batch of related work is twenty repetitions of the same
+click, not one deliberate act covering all twenty.
+
+This goal is the missing PURE piece: given a project's goal list (as the
+platform's `GET /api/projects/{p}/goals` already returns it — an array of
+JSON objects, each carrying at least `id`, `state`, `priority`), decide
+WHICH ones a batch-start should start, and in what order. It does not call
+the platform, open a socket, or start anything itself — the CLI's own
+`goal start <id>` loop (not part of this goal) is what will call `/start`
+for each id this returns. Keeping the decision pure is what makes it
+trustworthy without a live server: the held-out test proves it with no
+fleet, no compose, no host, in milliseconds.
+
+## What to build
+
+**A new file, `reconciler/src/goalbatch.rs`**, with exactly this public
+item (the held-out test in `context` below depends on this exact name and
+signature — read it, it is the literal specification):
+
+    pub fn goals_to_start(rows: &[serde_json::Value], max_priority: Option<i64>) -> Vec<String>
+
+Behavior:
+  - Only goals whose `"state"` field is exactly the string `"queued"` are
+    ever included. Any other state (`"running"`, `"awaiting-human"`,
+    `"done"`, `"failed"`, `"abandoned"`, or a missing/malformed `state`) is
+    excluded.
+  - When `max_priority` is `Some(n)`, a queued goal is included only if its
+    `"priority"` field, read as an integer, is `<= n`. A goal with no
+    `"priority"` field (or one that is not a number) defaults to `100` —
+    the same default the platform itself uses when a goal is created
+    (`components/platform-domain/src/goals.rs`'s own
+    `b.priority.unwrap_or(100)` — match that number exactly, it is not
+    arbitrary).
+  - When `max_priority` is `None`, every queued goal is included regardless
+    of priority.
+  - The RESULT PRESERVES THE INPUT ORDER of `rows`. Do not sort, re-order,
+    or reverse anything — the platform's own listing already returns goals
+    priority-first-then-oldest (`goals_list` in
+    `components/platform-domain/src/goals.rs`), so a caller that fetches
+    the list and passes it straight through already gets the right order
+    for free. Re-sorting here would be a second place that could disagree
+    with the platform's own ordering.
+  - The result is each included goal's `"id"` field as a `String`. A queued
+    goal with no `"id"` field (or a non-string one) is silently skipped —
+    there is nothing useful to return for it, and this function has no way
+    to report an error for one malformed row without giving up on every
+    other row in the batch.
+  - An empty `rows` slice returns an empty `Vec`.
+
+**`reconciler/src/lib.rs`** — add `pub mod goalbatch;` to the existing
+module list, in alphabetical order — it goes after `pub mod generation;`
+and before `pub mod goalexit;`. Change NOTHING else in this file; it is
+shown to you in full in `context` below.
+"""
+
+base_paths = [
+  "reconciler/",
+  "lattice/",
+  "comp-metadata/",
+]
+
+writable = [
+  "reconciler/src/goalbatch.rs",
+  "reconciler/src/lib.rs",
+]
+
+context = [
+  # The held-out judge itself: not writable, but shown up front — it is the
+  # literal specification of the exact function signature and every
+  # behavior above, and hiding it would just buy one wasted generation of
+  # guessing wrong before the gate's own failure said the same thing.
+  "reconciler/tests/goalbatch.rs",
+]
+
+[[check]]
+id = "goalbatch-behaves-correctly"
+required = true
+weight = 1
+command = ["cargo", "test", "--release", "--manifest-path", "reconciler/Cargo.toml", "--test", "goalbatch"]
