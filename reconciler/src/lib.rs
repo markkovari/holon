@@ -22,6 +22,9 @@ pub mod daemon_auth;
 pub mod fleet;
 pub mod gate;
 pub mod generation;
+/// Which queued goals one batch-start starts, and in what order — the pure
+/// decision behind `holon goal start --queued <project>` (ADR-0082).
+pub mod goalbatch;
 /// What `comp-goalrun`'s exit code means, and how `comp-goald` reads it.
 pub mod goalexit;
 /// Skipping work already done, and recording every verdict so the next run can.
