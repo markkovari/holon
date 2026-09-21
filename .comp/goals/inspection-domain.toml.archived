@@ -1,0 +1,222 @@
+title = "inspect:report — site inspections with a real PDF report"
+
+text = """
+Build a brand new component from scratch: `components/inspection-domain`, a
+site-inspection tool. Its `Cargo.toml`, WIT world, `gate.sh`, `scenario.hurl`,
+static SPA and `apps/inspection.toml` ALREADY EXIST (shown in `context`
+below) — you are writing `src/lib.rs` and `src/handlers.rs` ONLY. Read
+`components/inspection-domain/scenario.hurl` closely: it is the literal
+specification of every route's status codes and response shapes. Matching it
+exactly is the goal.
+
+## The domain
+
+One collection in `records:store`:
+
+    inspections   {org: string, inspector: string, site_name: string,
+                   items: list<{label: string, pass: bool, note: string}>,
+                   overall_pass: bool, status: "submitted", created: u64}
+
+`inspector` is the creating principal's subject — the row-level ownership
+field. `overall_pass` is computed server-side (true only if every item's
+`pass` is true), never trusted from the request body.
+
+Routes:
+
+    POST   /api/inspections               {"site_name":<string>,"items":<list<item>>}
+    GET    /api/inspections
+    GET    /api/inspections/{id}
+    GET    /api/inspections/{id}/pdf
+
+Roles: `admin`, `inspector` (the default for anyone who registers without
+naming a role, or names one this app does not grant).
+
+## The row-level rule — reuse the existing macro, do not hand-roll it
+
+This is EXACTLY the shape `guestauth::guest_owner_or_admin_policy!` exists
+for — the same one `crm-domain` uses for deal ownership (a full worked
+example is in `context`: `components/crm-domain/src/handlers.rs`, read it).
+
+    const POLICY_DOMAIN: &str = "inspections";
+    guestauth::guest_owner_or_admin_policy!(POLICY_DOMAIN, "inspector");
+
+This generates `fn owns_or_admin(action: &str, principal: &Principal, owner: &str) -> bool`.
+Use it for `GET /api/inspections/{id}` and `GET /api/inspections/{id}/pdf`:
+403 (via `guestauth::guest_deny_unless!(owns_or_admin("read", &principal,
+&row_inspector), principal, "inspection.read", id)`) when the caller is
+neither the inspector who filed it nor an admin. 404 (checked BEFORE the
+403 — a caller must learn "not found" for a truly missing id, not be told
+"forbidden" about something that never existed) when no row with that id
+exists at all.
+
+`POST /api/inspections` needs no ownership check — anyone authenticated may
+file one, it is filed as themselves.
+
+`GET /api/inspections` (the list): an admin sees EVERY inspection in the
+org; an inspector sees only the ones where `inspector == principal.subject`.
+This is a LIST-time filter, not a per-row `owns_or_admin` call — mirror
+`crm-domain::list_deals`'s exact shape (`context`, same file): `if
+is_admin(&principal) { <every row> } else { records::find_by("inspections",
+"inspector", &json-encoded subject) }`.
+
+Validation: `POST /api/inspections` with an empty `items` list is refused
+with 400 — an inspection with nothing inspected is not an inspection.
+
+## The PDF — the ONE genuinely new piece
+
+`guestauth::Reply` was just extended with `Reply::file(status, content_type,
+bytes) -> Reply` — a non-JSON body, added specifically for this goal. It did
+not exist before; do not go looking for a prior example of it in this repo.
+Use it exactly like this for `GET /api/inspections/{id}/pdf`:
+
+    use crate::bindings::pdf::codec::codec as pdf;
+
+    let line = |text: String, size: u32, bold: bool, gap_before: u32| pdf::Block {
+        text, size, bold, gap_before,
+    };
+    let mut blocks = vec![
+        line(format!("Site: {}", row_site_name), 12, false, 0),
+        line(format!("Inspector: {}", row_inspector), 12, false, 0),
+        line(format!("Date: {}", row_created_as_date_string), 12, false, 8),
+    ];
+    for item in &row_items {
+        let verdict = if item.pass { "PASS" } else { "FAIL" };
+        blocks.push(line(format!("{verdict} — {}", item.label), 11, true, 6));
+        if !item.note.is_empty() {
+            blocks.push(line(format!("  {}", item.note), 10, false, 0));
+        }
+    }
+    let overall = if row_overall_pass { "PASS" } else { "FAIL" };
+    blocks.push(line(format!("Overall: {overall}"), 13, true, 12));
+    let doc = pdf::Document { title: "Site Inspection Report".to_string(), blocks };
+    Reply::file(200, "application/pdf", pdf::render(&doc))
+
+This is a real capability, not a stub — `pdf::render` returns real PDF
+bytes; `scenario.hurl` asserts the response literally starts with the bytes
+`%PDF-1` (the real PDF file signature) and is over 200 bytes long. A reply
+that returns JSON, or an empty body, or fabricated bytes that are not a real
+PDF, fails the held-out gate.
+
+The row's `created` field is a unix-seconds `u64` (from
+`wasi:clocks/wall-clock`, same as every other app in this repo) — render it
+as a plain decimal string in the PDF if a real calendar date is more effort
+than it is worth; the gate does not assert the date's exact text, only that
+the document exists and the other fields are present in it is not checked
+either — only the HTTP-level assertions in `scenario.hurl` are graded.
+
+## What already exists and how to use it
+
+This app is built with the exact same recipe as `components/timesheet-domain`
+for the router shape and `components/crm-domain` for the ownership macro (both
+full worked examples in `context` — their `Cargo.toml`, WIT world, router,
+handlers are all real, working files. Read them).
+
+Router (`components/inspection-domain/src/lib.rs`) — same `guestauth`/
+`guestio` macro sequence every app in this repo uses:
+
+    pub use guestauth::Route;
+    pub const TENANT: &str = "inspection";
+    const ROLES: &[&str] = &["admin", "inspector"];
+    guestio::guest_write_all!();
+    guestio::guest_bearer!();
+    const MAX_BODY_BYTES: usize = 1024 * 1024;
+    guestio::guest_read_body_text!(MAX_BODY_BYTES);
+    guestauth::guest_auth_reply!();
+    guestauth::guest_introspect!();
+    guestauth::guest_role_check!(is_admin, "admin");
+    guestauth::guest_audit!(TENANT);
+    guestauth::guest_accounts_endpoints!(TENANT, ROLES, "inspector");
+    guestauth::guest_emit!();
+    guestauth::guest_saas_router!();
+
+`components/inspection-domain/Cargo.toml`, `wit/inspection.wit`, `gate.sh`,
+`scenario.hurl`, `examples/inspection/public/index.html` and
+`apps/inspection.toml` ALREADY EXIST — do not create or edit any of them
+(they are not in `writable`; edit `writable` only, listed below). They
+already declare the `pdf:codec` and `id:generate` imports this domain needs.
+
+## The record-store surface (exact — guessing this wrong is how past runs
+## of other goals died silently)
+
+    use crate::bindings::records::store::store as records;
+
+    records::create(collection: &str, data: &str, index_fields: &[String]) -> Result<Entry, StoreError>
+    records::get(collection: &str, id: &str)                               -> Result<Entry, StoreError>
+    records::find_by(collection: &str, field: &str, value: &str)           -> Result<Vec<Entry>, StoreError>
+
+    struct Entry { id: String, data: String, revision: u64, created: u64, … }
+
+`find_by` wants the JSON ENCODING of the value, not the bare value — a
+string field indexes under `"the-value"`, quotes included
+(`serde_json::to_string(&x)`, not `x` itself). Index `inspector` and `org`
+in `index_fields` when creating an inspection — both are queried on.
+
+`id:generate` — `use crate::bindings::id::generate::generator as idgen;`
+then `idgen::ulid()` for the inspection's own id, following
+`records::create`'s own return (its `Entry.id` is already the record's real
+id — do not mint a second id and use two different values for "the same"
+record in different responses).
+"""
+
+component = "inspection-domain"
+
+base_paths = [
+  "components/inspection-domain/",
+  "components/auth-guard/",
+  "components/policy-guard/",
+  "components/record-store/",
+  "components/audit-log/",
+  "components/rate-limiter/",
+  "components/id-generate/",
+  "components/pdf/",
+  "components/guestauth/",
+  "components/guestio/",
+  "components/guestfmt/",
+  "components/Cargo.toml",
+  "wit/",
+  "host/wit/deps/",
+]
+
+writable = [
+  "components/inspection-domain/src/lib.rs",
+  "components/inspection-domain/src/handlers.rs",
+]
+
+workspace_manifest = "components/Cargo.toml"
+keep_members = [
+  "inspection-domain",
+  "auth-guard",
+  "policy-guard",
+  "record-store",
+  "audit-log",
+  "rate-limiter",
+  "id-generate",
+  "pdf",
+  "guestauth",
+  "guestio",
+  "guestfmt",
+]
+
+context = [
+  "components/inspection-domain/Cargo.toml",
+  "components/inspection-domain/wit/inspection.wit",
+  "components/timesheet-domain/src/lib.rs",
+  "components/crm-domain/src/handlers.rs",
+  "components/guestauth/src/lib.rs",
+  "components/record-store/wit/record.wit",
+  "components/pdf/wit/pdf.wit",
+  "components/id-generate/wit/id.wit",
+  ".comp/context/auth-consumer.wit",
+  # This goal's own held-out gate and e2e scenario, shown up front rather than
+  # hidden: a branch cannot WRITE these (they are not in `writable`), but
+  # seeing exactly what is asserted buys the same information in one prompt
+  # instead of a whole wasted generation writing blind.
+  "components/inspection-domain/gate.sh",
+  "components/inspection-domain/scenario.hurl",
+]
+
+[[check]]
+id = "behaves-under-real-http"
+required = true
+weight = 1
+command = ["bash", "components/inspection-domain/gate.sh"]
