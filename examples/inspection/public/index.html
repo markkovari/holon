@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Site Inspections</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  input, textarea, button, select { font: inherit; padding: 0.4rem; margin: 0.2rem 0; }
+  .row { display: flex; gap: 0.5rem; align-items: center; }
+  .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem 1rem; margin: 0.6rem 0; }
+  .pass { color: #146c2e; font-weight: 600; }
+  .fail { color: #a4222b; font-weight: 600; }
+  .item { display: flex; gap: 0.5rem; align-items: center; }
+  .muted { color: #666; font-size: 0.9rem; }
+  a.pdf { text-decoration: none; border: 1px solid #333; border-radius: 4px; padding: 0.2rem 0.6rem; }
+  #app { display: none; }
+</style>
+</head>
+<body>
+  <h1>Site Inspections</h1>
+
+  <div id="auth">
+    <div class="card">
+      <h3>Log in</h3>
+      <input id="login-email" placeholder="email"><br>
+      <input id="login-password" type="password" placeholder="password"><br>
+      <button onclick="login()">Log in</button>
+    </div>
+    <div class="card">
+      <h3>Register</h3>
+      <input id="reg-email" placeholder="email"><br>
+      <input id="reg-password" type="password" placeholder="password"><br>
+      <select id="reg-role">
+        <option value="inspector">inspector</option>
+        <option value="admin">admin</option>
+      </select><br>
+      <button onclick="register()">Register</button>
+    </div>
+    <p id="auth-error" style="color:#a4222b"></p>
+  </div>
+
+  <div id="app">
+    <div class="row">
+      <span id="whoami" class="muted"></span>
+      <button onclick="logout()">Log out</button>
+    </div>
+
+    <div class="card">
+      <h3>New inspection</h3>
+      <input id="site-name" placeholder="site name"><br>
+      <div id="items"></div>
+      <button onclick="addItem()">+ item</button>
+      <br><button onclick="submitInspection()">Submit inspection</button>
+    </div>
+
+    <h3>Inspections</h3>
+    <div id="list"></div>
+  </div>
+
+  <script>
+    let token = localStorage.getItem('token') || '';
+
+    function authHeaders() {
+      return token ? { 'Authorization': 'Bearer ' + token } : {};
+    }
+
+    async function register() {
+      const email = document.getElementById('reg-email').value;
+      const password = document.getElementById('reg-password').value;
+      const role = document.getElementById('reg-role').value;
+      const r = await fetch('/register', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, role }),
+      });
+      if (!r.ok) { document.getElementById('auth-error').textContent = 'registration failed'; return; }
+      document.getElementById('login-email').value = email;
+      document.getElementById('login-password').value = password;
+      await login();
+    }
+
+    async function login() {
+      const email = document.getElementById('login-email').value;
+      const password = document.getElementById('login-password').value;
+      const r = await fetch('/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!r.ok) { document.getElementById('auth-error').textContent = 'login failed'; return; }
+      const v = await r.json();
+      token = v.access_token;
+      localStorage.setItem('token', token);
+      showApp();
+    }
+
+    function logout() {
+      token = '';
+      localStorage.removeItem('token');
+      document.getElementById('app').style.display = 'none';
+      document.getElementById('auth').style.display = 'block';
+    }
+
+    function addItem() {
+      const div = document.createElement('div');
+      div.className = 'item';
+      div.innerHTML = '<input class="item-label" placeholder="checklist item">' +
+        '<label><input type="checkbox" class="item-pass" checked> pass</label>' +
+        '<input class="item-note" placeholder="note (optional)">';
+      document.getElementById('items').appendChild(div);
+    }
+
+    async function submitInspection() {
+      const site_name = document.getElementById('site-name').value;
+      const items = Array.from(document.querySelectorAll('#items .item')).map(row => ({
+        label: row.querySelector('.item-label').value,
+        pass: row.querySelector('.item-pass').checked,
+        note: row.querySelector('.item-note').value,
+      }));
+      const r = await fetch('/api/inspections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ site_name, items }),
+      });
+      if (r.ok) {
+        document.getElementById('site-name').value = '';
+        document.getElementById('items').innerHTML = '';
+        await loadList();
+      }
+    }
+
+    async function loadList() {
+      const r = await fetch('/api/inspections', { headers: authHeaders() });
+      if (!r.ok) return;
+      const v = await r.json();
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+      for (const insp of v.inspections) {
+        const div = document.createElement('div');
+        div.className = 'card';
+        const verdict = insp.overall_pass
+          ? '<span class="pass">PASS</span>' : '<span class="fail">FAIL</span>';
+        div.innerHTML = `<b>${insp.site_name}</b> — ${verdict}
+          <div class="muted">${insp.inspector}</div>
+          <a class="pdf" href="/api/inspections/${insp.id}/pdf" target="_blank">Download PDF</a>`;
+        list.appendChild(div);
+      }
+    }
+
+    async function showApp() {
+      document.getElementById('auth').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+      const r = await fetch('/me', { headers: authHeaders() });
+      if (r.ok) {
+        const me = await r.json();
+        document.getElementById('whoami').textContent = me.subject + ' (' + (me.roles || []).join(', ') + ')';
+      }
+      addItem();
+      await loadList();
+    }
+
+    if (token) showApp();
+  </script>
+</body>
+</html>

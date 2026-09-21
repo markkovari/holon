@@ -1881,6 +1881,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "inspection-domain"
+version = "0.1.0"
+dependencies = [
+ "guestauth",
+ "guestfmt",
+ "guestio",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
 name = "insta-domain"
 version = "0.1.0"
 dependencies = [
