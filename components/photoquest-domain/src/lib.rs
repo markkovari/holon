@@ -92,7 +92,8 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
             (_, ["health"]) => Reply::json(200, serde_json::json!({"ok": true})),
             // 404 unless config `allow-test-routes = true` (see clock.rs).
             (Method::Post, ["test", "clock"]) => clock::set(&body),
-            (Method::Post, ["register"]) => register(&body),
+            // Register plus the account book and `bootstrap-admin-email` (moderation.rs).
+            (Method::Post, ["register"]) => moderation::register(&body),
             (Method::Post, ["login"]) => login(&body),
             (Method::Post, ["logout"]) => logout(&route),
             (Method::Get, ["me"]) => me(&route),
@@ -104,7 +105,7 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
             // The game (CONTRACT.md "Game routes"). Most specific first: a photo's
             // reports are moderation's, the rest of /api/photos is photos.rs.
             (_, ["api", "photos", _, "reports"]) | (_, ["api", "admin", ..]) => {
-                moderation::handle(&method, &route, &body)
+                moderation::handle(&method, &route, &body, &path)
             }
             (_, ["api", "curator", "competitions", ..]) | (_, ["api", "competitions", ..]) => {
                 competitions::handle(&method, &route, &body)

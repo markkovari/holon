@@ -115,6 +115,9 @@ struct CreateReq {
 /// that fills with photos nobody could ever upload is a bug report per refusal.
 fn create(route: &Route, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
+    if let Err(r) = crate::moderation::require_active(&principal) {
+        return r;
+    }
     let req = guestauth::guest_parse_body!(body, CreateReq);
     let filename = req.filename.trim().to_string();
     if filename.is_empty() {
@@ -187,6 +190,9 @@ struct PartReq {
 /// `POST /api/photos/{id}/complete` — stitch the parts, then queue evaluation.
 fn complete(route: &Route, id: &str, body: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
+    if let Err(r) = crate::moderation::require_active(&principal) {
+        return r;
+    }
     if !valid_id(id) {
         return Reply::err(404, "not_found");
     }
@@ -297,6 +303,7 @@ fn list(route: &Route) -> Reply {
                 s.remove("tiles");
             }
             m.insert("thumb_url".into(), thumb);
+            owner_view_of_moderation(&mut m);
             Value::Object(m)
         })
         .collect();
@@ -319,13 +326,27 @@ fn get(route: &Route, id: &str) -> Reply {
         "photo.read",
         id
     );
-    let urls = if str_of(&m, "state") == "evaluated" {
+    // A hidden photo is signed for its owner only — an admin reviewing it sees
+    // the record, not a working link to pass around (CONTRACT.md "Hidden photo").
+    let hidden_from_caller =
+        crate::moderation::is_hidden(&m) && str_of(&m, "owner") != principal.subject;
+    if !is_admin(&principal) {
+        owner_view_of_moderation(&mut m);
+    }
+    let urls = if str_of(&m, "state") == "evaluated" && !hidden_from_caller {
         json!({"thumb": signed(&m, "thumb"), "share": signed(&m, "share"), "ai": signed(&m, "ai")})
     } else {
         json!({"thumb": null, "share": null, "ai": null})
     };
     m.insert("urls".into(), urls);
     Reply::json(200, Value::Object(m))
+}
+
+/// The owner sees `moderation: {hidden, reason, at}` — not which admin did it.
+fn owner_view_of_moderation(m: &mut Map<String, Value>) {
+    if let Some(Value::Object(mo)) = m.get_mut("moderation") {
+        mo.remove("by");
+    }
 }
 
 /// `POST /internal/photos/{id}/evaluated` — `comp-media`'s signed result.

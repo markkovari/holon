@@ -310,11 +310,79 @@ Time-dependent rules read `now_secs()`. With config `allow-test-routes = true`
 (never in production — events-domain's precedent) `POST /test/clock {offset_secs}`
 shifts this app's notion of now, so e2e can close a competition without waiting.
 
+## Decided while building (2026-09-24)
+
+The rules above were the design; these are the decisions the code made where the
+design was silent. They are as binding as the rest.
+
+**Curation**
+- Only the curator who created a journey edits it and its quests (another curator:
+  `403 forbidden`, unless also an admin). Every curator can read. Curator writes
+  require an active account. Extra reads: `GET /api/curator/journeys/{id}` (with
+  `quest_docs`) and `GET /api/curator/quests/{id}`.
+- Levels run 1, 2, 3… with strictly ascending XP, first `{1,0}`; default `[{1,0}]`.
+  `badge` is optional; null grants none.
+- A quest may be published inside a draft journey; photographers see it when the
+  journey goes live. Creating a quest appends it to `journey.quests`; `PUT journey
+  {quests}` reorders (same set of ids). Publishing an archived journey/quest restores it.
+- Requirements are fixed once a quest leaves `draft` (a PUT with identical
+  requirements is fine); title, description, xp and window stay editable; a quest
+  cannot move journeys. `409 journey_archived` for creating/publishing into an
+  archived journey.
+
+**Progress**
+- Submit refusal order: quest 404 → photo 404 → `403 forbidden` → `not_evaluated` →
+  `photo_hidden` → `quest_locked` → `quest_not_started` → `quest_ended` →
+  `quest_not_published` (archived quest in a live journey) → `403 suspended`.
+  Windows are `[starts_at, ends_at)`.
+- The unlock chain and the badge count only published quests, in `journey.quests` order.
+- **"Passed" means a passing verdict, not being paid**: a copied file earns 0 XP but
+  still unlocks the next quest. `xp_reason` is `already_rewarded` (these bytes were
+  paid before, by anyone) or `already_passed` (this quest was already paid to you).
+  The sha256 rule is global and applies to quest XP only; ledger rows exist only for xp > 0.
+- `GET /api/me/progress` → `{total_xp, journeys[], badges[], ledger[]}`; ledger rows
+  carry `source`, `source_id`, `xp`, `journey`, `photo`, `sha256`, `at`.
+- No unique constraints in `records:store`: concurrent duplicate ledger rows or
+  badges are settled first-writer-wins (each writer re-reads; the higher ULID deletes itself).
+
+**Competitions**
+- An ineligible entry is `422 ineligible` with the verdict. Windows must satisfy
+  `opens_at < closes_at ≤ voting_closes_at ≤ judging_closes_at` (`400 bad_windows`);
+  `400 bad_journey` for a missing prize journey.
+- A published competition changes only `title`/`brief` (`409 competition_published`);
+  archived: `409 competition_archived`. Results before judging closes:
+  `409 results_pending` with `available_at`.
+- Display name on shared surfaces = the local part of the account's email (or
+  `photographer-<last 6 of id>`); an account id is never shown.
+- Results freeze on first read after judging closes (revision-guarded); each prize
+  is claimed before its XP is credited and retried on the next read if crediting
+  failed. A photo hidden after results freeze leaves the output; places are not
+  renumbered and prizes stand. Hidden entries: votes 404, judging `409 photo_hidden`.
+- Known limit: two concurrent entries by one user can exceed `entry_limit` (no
+  transactions); duplicate votes/judgements from a race count once, latest wins.
+
+**Moderation**
+- Register records `accounts {subject, email}` (auth:identity cannot list accounts);
+  the bootstrap admin match is trimmed and case-insensitive.
+- A non-owner can see a photo only if it is not hidden and is entered in a
+  `published` competition; anything else is `404`, like a missing id, so reports
+  cannot probe which ids exist.
+- A role grant/revoke applies to the grantee's **existing session on its next
+  request** — `auth-guard` re-reads roles from RBAC on every introspect.
+- Hidden photo: `urls` are null for everyone but the owner (admins included);
+  `moderation.by` is shown to admins only.
+- Admin routes are not blocked by suspension; an admin can suspend themself.
+- Errors: `409 already_reported`, `409 report_closed`, `400 bad_reason`,
+  `400 bad_state`, `400 bad_role`, `400 reason is required` (hide, suspend).
+- Suspension storage failure is `503 store_unavailable` — fail closed.
+
 ## Game errors (in addition to the table above)
 
 | status | `error` | when |
 |---|---|---|
 | 403 | `forbidden_role` | route needs curator/admin |
 | 403 | `suspended` | account suspended |
-| 409 | `not_evaluated`, `photo_hidden`, `quest_locked`, `quest_not_started`, `quest_ended`, `quest_published`, `competition_closed`, `voting_closed`, `judging_closed`, `entry_limit`, `already_entered`, `own_entry`, `last_word` | state rules above |
-| 400 | `own_photo`, `bad_requirements` + `detail`, `bad_weights`, `bad_levels` | validation |
+| 409 | `not_evaluated`, `photo_hidden`, `quest_locked`, `quest_not_started`, `quest_ended`, `quest_not_published`, `quest_published`, `journey_archived`, `competition_closed`, `competition_published`, `competition_archived`, `results_pending`, `voting_closed`, `judging_closed`, `entry_limit`, `already_entered`, `own_entry`, `already_reported`, `report_closed`, `last_word` | state rules above |
+| 422 | `ineligible` + `verdict` | competition entry fails its requirements |
+| 503 | `store_unavailable` | suspension check could not read the store (fail closed) |
+| 400 | `own_photo`, `bad_requirements` + `detail`, `bad_weights`, `bad_windows`, `bad_levels`, `bad_journey`, `bad_reason`, `bad_state`, `bad_role` | validation |

@@ -235,7 +235,6 @@ pub fn result_for(id: &str) -> Value {
     })
 }
 
-
 /// Compose photoquest and start it against a fresh fake `comp-media`, with the
 /// four media config keys set plus `extra` (`key=value`, e.g. `allow-test-routes=true`).
 /// `None` when the gate skips (no host / no build), like every gate here.
