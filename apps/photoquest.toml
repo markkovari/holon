@@ -1,6 +1,7 @@
 # photoquest — upload a photo straight to object storage, have it evaluated on
-# the machine with the GPU, see it back. Step one: upload, renditions, gallery.
-# Quests and XP come next (components/photoquest-domain/src/quests.rs).
+# the machine with the GPU, see it back; and the game on top: journeys of quests
+# with XP and levels, timed competitions, curators and admins
+# (components/photoquest-domain/CONTRACT.md, docs/apps/PHOTOQUEST.md).
 # Why the bytes never pass through the component: docs/adr/0098.
 name = "photoquest"
 access = "tailnet"
@@ -25,10 +26,21 @@ strategy = "fused"
 # `--callback-secret` (passed in `extra_args` below); change BOTH in a real
 # deployment. Unset, every callback is refused with 503 and retried, which is
 # the safe failure: an unverifiable result is never written onto a photo.
+#
+# `bootstrap-admin-email`: the account registered with this email is `admin`
+# from register on — the only way the first admin exists. Unset, there is none.
+# A LOCAL-DEV example, commented out on purpose: set it to your own address when
+# you run this yourself, or give it for one run without editing this file:
+#   cargo xtask host photoquest --config bootstrap-admin-email=you@example.com
+#
+# `allow-test-routes` is deliberately NOT here, not even commented: it lets
+# anyone move the game's clock (POST /test/clock). e2e/photoquest.sh passes it
+# for its own run with `--config allow-test-routes=true`.
 [config]
 media-url = "http://127.0.0.1:8013"
 public-callback-base = "http://127.0.0.1:3941"
 media-callback-secret = "photoquest-local-dev-callback-secret"
+# bootstrap-admin-email = "you@example.com"
 
 # No `token` set here — permissive, same reasoning as apps/image-optimizer.toml:
 # this is meant to compose and run with nothing extra to provision. A real

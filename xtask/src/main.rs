@@ -55,6 +55,13 @@ enum Commands {
         /// Defaults to `kv` in apps/<app>.toml, else sqlite
         #[arg(long)]
         kv: Option<String>,
+
+        /// Extra `wasi:config` for this run only, repeatable: `--config key=value`.
+        /// Passed to comp-host after the app's `[config]`, so it adds a key or
+        /// overrides one without editing apps/<app>.toml — e.g. a test-only
+        /// switch that must never be in the committed spec.
+        #[arg(long = "config", value_name = "KEY=VALUE")]
+        config: Vec<String>,
     },
 
     /// Stage the jco examples' `.wasm` inputs from the build (builds first)
@@ -681,7 +688,12 @@ fn seed_studio(addr: &str) -> Result<()> {
     Ok(())
 }
 
-fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
+fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>, extra_config: &[String]) -> Result<()> {
+    for kv in extra_config {
+        if !kv.contains('=') {
+            anyhow::bail!("--config {kv}: expected KEY=VALUE");
+        }
+    }
     // The same path `compose` writes, so `compose X && host X` finds it.
     let artifact_path = resolve_app(app).artifact;
 
@@ -760,6 +772,10 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
     // answered 503.
     if let Some(spec) = app_spec {
         host_cmd.args(spec.host_args());
+    }
+    // After the spec's: comp-host applies `--config` in order, the last wins.
+    for kv in extra_config {
+        host_cmd.args(["--config", kv]);
     }
 
     if let Some(dir) = app_spec.and_then(|s| s.static_dir_as_string()) {
@@ -1136,8 +1152,8 @@ fn main() -> Result<()> {
             compose_app(app.as_deref(), true)?;
         }
 
-        Commands::Host { app, addr, kv } => {
-            host_app(&app, addr.as_deref(), kv.as_deref())?;
+        Commands::Host { app, addr, kv, config } => {
+            host_app(&app, addr.as_deref(), kv.as_deref(), &config)?;
         }
 
         Commands::StageExamples => {

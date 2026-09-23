@@ -1,4 +1,6 @@
-// Helpers for the photoquest suite (tests/photoquest.spec.js, photoquest.sh).
+// Helpers for the photoquest suite (tests/photoquest*.spec.js, photoquest.sh):
+// the app's API for setting a scenario up — accounts, uploads, and the game
+// (the bootstrap admin, curators, journeys, competitions, the test clock).
 //
 // Everything here talks to the app the way the browser does — register, log in,
 // ask for an upload plan, PUT each part straight to its presigned URL, complete —
@@ -127,9 +129,10 @@ async function json(res) {
 async function signUp(request, who) {
   const email = uniqueEmail(who), password = 'correct horse battery';
   const reg = await request.post(`${BASE}/register`, { data: { email, password } });
-  if (reg.status() !== 201) throw new Error(`register ${reg.status()}: ${JSON.stringify(await json(reg))}`);
+  const body = await json(reg);
+  if (reg.status() !== 201) throw new Error(`register ${reg.status()}: ${JSON.stringify(body)}`);
   const token = await logIn(request, email, password);
-  return { email, password, token };
+  return { email, password, token, subject: body.subject };
 }
 
 async function logIn(request, email, password) {
@@ -140,11 +143,36 @@ async function logIn(request, email, password) {
 
 const auth = (token) => ({ Authorization: `Bearer ${token}` });
 
+/// The same CC0 picture as different bytes, so it has its own sha256 — the game
+/// pays XP once per file, ever, and refuses a second entry of the same file, so
+/// a suite that needs many "different" photos gets them this way. A JPEG gets a
+/// COM segment after SOI; anything else (an ARW: TIFF, every offset from the
+/// start) gets the salt appended after its last byte. Pixels and metadata are
+/// untouched, so the evaluation is the same as the unsalted file's.
+function salted(buf, salt) {
+  if (!salt) return buf;
+  const tag = Buffer.from(`photoquest-e2e ${salt}`, 'latin1');
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    const seg = Buffer.alloc(4);
+    seg.writeUInt16BE(0xfffe, 0);
+    seg.writeUInt16BE(tag.length + 2, 2);
+    return Buffer.concat([buf.subarray(0, 2), seg, tag, buf.subarray(2)]);
+  }
+  return Buffer.concat([buf, tag]);
+}
+
+let saltSeq = 0;
+/// A salt no other upload in this run uses.
+function freshSalt() {
+  return `${Date.now().toString(36)}-${process.pid}-${saltSeq++}`;
+}
+
 /// Upload a file the way app.js does, and complete it. Returns the photo id.
 /// Does not wait for the evaluation. With `complete: false` it stops after the
-/// parts and returns `{ id, parts }` for `complete` later.
-async function upload(request, token, file, { filename, contentType = '', complete: finish = true } = {}) {
-  const buf = fs.readFileSync(file);
+/// parts and returns `{ id, parts }` for `complete` later. `salt: true` (or a
+/// string) makes it a file of its own — see `salted`.
+async function upload(request, token, file, { filename, contentType = '', complete: finish = true, salt } = {}) {
+  const buf = salted(fs.readFileSync(file), salt === true ? freshSalt() : salt);
   const created = await request.post(`${BASE}/api/photos`, {
     headers: auth(token),
     data: { filename: filename || path.basename(file), size: buf.length, content_type: contentType },
@@ -192,6 +220,111 @@ async function waitSettled(request, token, id, timeoutMs = 120000) {
   }
 }
 
+/// Upload, wait for `evaluated`, return the record.
+async function evaluatedPhoto(request, token, file, opts = {}) {
+  const id = await upload(request, token, file, opts);
+  return waitSettled(request, token, id);
+}
+
+// ---- the game's API (quests, competitions, moderation) --------------------------
+
+/// The account photoquest.sh names in config `bootstrap-admin-email`: admin
+/// from the moment it registers. Its password is the suite's own.
+const ADMIN_EMAIL = process.env.PHOTOQUEST_ADMIN_EMAIL || 'admin@photoquest.test';
+const ADMIN_PASSWORD = 'photoquest e2e admin';
+
+/// One JSON call: `{ status, body }`, never throws on a non-2xx.
+async function call(request, token, method, pathname, data) {
+  const res = await request.fetch(`${BASE}${pathname}`, {
+    method,
+    headers: token ? auth(token) : {},
+    data: data === undefined ? undefined : data,
+  });
+  return { status: res.status(), body: await json(res) };
+}
+
+/// Like `call`, but a status other than `expect` is an error with the body in it.
+async function must(request, token, method, pathname, data, expect = [200, 201]) {
+  const r = await call(request, token, method, pathname, data);
+  const ok = Array.isArray(expect) ? expect.includes(r.status) : r.status === expect;
+  if (!ok) throw new Error(`${method} ${pathname} → ${r.status}: ${JSON.stringify(r.body)}`);
+  return r.body;
+}
+
+/// The bootstrap admin's `{ email, password, token, subject }` — registered by
+/// whichever test asks first in this run, logged in after that.
+async function admin(request) {
+  const reg = await request.post(`${BASE}/register`, { data: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } });
+  const token = await logIn(request, ADMIN_EMAIL, ADMIN_PASSWORD);
+  const me = await must(request, token, 'GET', '/me');
+  if (!me.roles.includes('admin')) {
+    throw new Error(`${ADMIN_EMAIL} is not admin (register ${reg.status()}) — is config bootstrap-admin-email set? photoquest.sh sets it`);
+  }
+  return { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, token, subject: me.subject };
+}
+
+async function grant(request, adminToken, subject, role) {
+  return must(request, adminToken, 'POST', `/api/admin/users/${subject}/roles`, { grant: role });
+}
+
+/// A fresh account with the curator role, granted by the bootstrap admin.
+async function curator(request, who = 'curator') {
+  const u = await signUp(request, who);
+  await grant(request, (await admin(request)).token, u.subject, 'curator');
+  return u;
+}
+
+/// Shift the app's clock (config `allow-test-routes`). Returns the app's now.
+async function setClock(request, offset_secs) {
+  return (await must(request, null, 'POST', '/test/clock', { offset_secs })).now;
+}
+
+const nowSecs = () => Math.floor(Date.now() / 1000);
+
+/// A published journey with published quests, in order. `quests` are the
+/// POST /api/curator/quests bodies without `journey`. Returns
+/// `{ journey, quests: [quest records] }`.
+async function publishedJourney(request, curatorToken, { title, levels, badge = null, description = '' }, quests) {
+  const journey = await must(request, curatorToken, 'POST', '/api/curator/journeys', { title, description, levels, badge });
+  const made = [];
+  for (const q of quests) {
+    const quest = await must(request, curatorToken, 'POST', '/api/curator/quests', { journey: journey.id, ...q });
+    await must(request, curatorToken, 'POST', `/api/curator/quests/${quest.id}/publish`);
+    made.push(quest);
+  }
+  await must(request, curatorToken, 'POST', `/api/curator/journeys/${journey.id}/publish`);
+  return { journey, quests: made };
+}
+
+/// A published competition. Defaults: opens a minute ago, entries close in an
+/// hour, voting a day later, judging two; auto-only scoring, one entry each,
+/// no prizes. Returns the record.
+async function publishedCompetition(request, curatorToken, fields = {}) {
+  const t = nowSecs();
+  const c = await must(request, curatorToken, 'POST', '/api/curator/competitions', {
+    title: 'Competition', brief: '', requirements: {},
+    opens_at: t - 60, closes_at: t + 3600, voting_closes_at: t + 86400, judging_closes_at: t + 2 * 86400,
+    weights: { auto: 1, votes: 0, judges: 0 }, max_entries_per_user: 1, prizes_xp: [],
+    ...fields,
+  });
+  return must(request, curatorToken, 'POST', `/api/curator/competitions/${c.id}/publish`);
+}
+
+/// What the real pipeline reports for every CC0 sample (ARW and JPEG alike, on
+/// the Vision backend): a `grass` label at ~0.86–0.90, focus ratio 7.2–9.2, no
+/// face. The 2022 capture date would fail `captured_after_start`, so it is off
+/// — except where a scenario tests exactly that.
+const GRASS = { subject: { label: 'grass', min_confidence: 0.5 }, sharpness: { min_focus_ratio: 5 }, captured_after_start: false };
+
+/// Requirements every CC0 sample passes on this box: GRASS where Vision runs
+/// (comp-media's /health says `apple`), and without the label where it does
+/// not — on the CPU path a label check is "not looked at", which never passes.
+function passable(health) {
+  if (health && health.apple) return GRASS;
+  const { subject, ...rest } = GRASS; // eslint-disable-line no-unused-vars
+  return rest;
+}
+
 /// comp-media's /health: which backend this box evaluates on.
 async function mediaHealth(request) {
   const res = await request.get(`${MEDIA}/health`);
@@ -202,6 +335,8 @@ module.exports = {
   BASE, MEDIA, SAMPLES, SAMPLE,
   derivePreviewJpeg, jpegMetadata,
   uniqueEmail, signUp, logIn, auth, upload, complete, getPhoto, listPhotos, waitSettled, mediaHealth,
+  salted, freshSalt, evaluatedPhoto,
+  ADMIN_EMAIL, call, must, admin, grant, curator, setClock, nowSecs, publishedJourney, publishedCompetition, GRASS, passable,
 };
 
 // ---- CLI (photoquest.sh) --------------------------------------------------------

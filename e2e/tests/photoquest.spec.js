@@ -5,11 +5,20 @@
 // a stack you started yourself: `npx playwright test tests/photoquest.spec.js`
 // with PHOTOQUEST_SAMPLES pointing at the CC0 samples photoquest.sh downloads.
 //
-// Roles: every account here is a `photographer`. Later roles — `admin`
-// (moderation) and `curator` (creates quests, journeys, levels and timed
-// competitions) — are not built yet; the scenarios that need them are
-// `test.fixme` at the bottom, written down so the next step has its acceptance
-// tests before its code.
+// Roles: every account a scenario drives through the page is a `photographer`.
+// The game's preconditions — a curator's journeys, quests and competitions, an
+// admin's decisions — are set up through the API (lib/photoquest.js); the
+// curator's and admin's own pages have their own specs, photoquest-curator and
+// photoquest-admin. The admin is the account photoquest.sh names in config
+// `bootstrap-admin-email`; deadlines are passed with `POST /test/clock` (config
+// `allow-test-routes`), reset after every test.
+//
+// Which requirements the CC0 samples meet, as the real pipeline reports them:
+// a `grass` label at ~0.86–0.90, focus ratio 7.2–9.2, no face, f/1.2, 50 mm,
+// ISO 100 (the ARWs; the JPEG has no EXIF), captured 2022-12-17 — so every quest
+// here says `captured_after_start: false` except the one that tests that rule.
+// XP is paid once per file, ever, so each scenario uploads its own bytes
+// (`salt`, lib/photoquest.js) rather than a file another scenario was paid for.
 //
 // Media: only CC0 samples from raw.pixls.us (a Sony a7R V, ILCE-7RM5), and a
 // JPEG cut out of one of them. Never a personal photo — videos of these runs end
@@ -18,12 +27,14 @@
 const fs = require('fs');
 const { test, expect } = require('@playwright/test');
 const pq = require('../lib/photoquest');
+const ui = require('../lib/photoquest-page');
 
 const { BASE, SAMPLE } = pq;
 const EVALUATE_MS = 120_000;
 
-// One file, so one worker, in order: the evaluator is one queue on one GPU,
-// and the resilience scenario depends on knowing what is ahead of it there.
+// One worker, in order (photoquest.sh passes --workers=1): the evaluator is one
+// queue on one GPU, the resilience scenario depends on knowing what is ahead of
+// it there, and the game's clock is one for the whole app.
 // (Not `mode: 'serial'` — one failure must not skip every scenario after it.)
 test.describe.configure({ timeout: 180_000 });
 
@@ -38,21 +49,12 @@ test.beforeAll(async ({ request }) => {
 
 // ---- page helpers --------------------------------------------------------------
 
-async function registerInPage(page, who = 'photographer') {
-  const email = pq.uniqueEmail(who), password = 'correct horse battery';
-  await page.goto(BASE);
-  await page.fill('#reg-email', email);
-  await page.fill('#reg-password', password);
-  await page.click('#register-btn');
-  await expect(page.locator('#app')).toBeVisible();
-  return { email, password };
-}
+const { registerInPage, logInInPage, tid } = ui;
 
-async function logInInPage(page, { email, password }) {
-  await page.fill('#login-email', email);
-  await page.fill('#login-password', password);
-  await page.click('#login-btn');
-}
+// The app's clock is one for the whole app: whatever a scenario moved, put back.
+test.afterEach(async ({ request }) => {
+  await pq.setClock(request, 0);
+});
 
 /** The detail card's value for one row, by its label. */
 function field(page, label) {
@@ -340,101 +342,427 @@ test.describe('Privacy', () => {
   });
 });
 
-// ---- pending: quests, levels, journeys, competitions, moderation --------------------------
+
+// ---- the game: quests, levels, journeys, competitions, moderation ------------------
 //
-// Not built yet (docs/apps/PHOTOQUEST.md, "Where it stands"). Each body is the
-// scenario in plain language; the calls get written with the feature. A curator
-// is the role that will create quests, journeys and competitions; an admin
-// moderates.
+// A curator (granted by the bootstrap admin) sets each scenario up through the
+// API; the photographer plays it through the page.
+
+const DAY = 86400;
+const tag = () => pq.freshSalt();
+
+/** A photographer with an account, signed in on `page`. */
+async function photographerInPage(page, request, who = 'photographer') {
+  const me = await pq.signUp(request, who);
+  await ui.signIn(page, me);
+  return me;
+}
+
+/** An evaluated photo of `me`'s, its own bytes (salted) unless `salt` says which. */
+function photoOf(request, me, file = SAMPLE.jpeg, opts = {}) {
+  return pq.evaluatedPhoto(request, me.token, file, { salt: true, ...opts });
+}
+
+async function submitViaApi(request, me, quest, photo) {
+  return pq.must(request, me.token, 'POST', `/api/quests/${quest.id}/submissions`, { photo_id: photo.id });
+}
 
 test.describe('Quests', () => {
-  test.fixme('a photographer sees the active quests: title, what is asked, the XP and the deadline', async () => {
-    // Given a curator has created a quest "Something green, in focus", worth 50 XP, ending in a week
-    // When the photographer opens the quests view
-    // Then the quest is listed with its title, what it asks for, its XP and its deadline
-    // And a quest whose deadline has passed is not listed as active
+  test('a photographer sees the active quests: title, what is asked, the XP and the deadline', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const t = pq.nowSecs();
+    const title = `Into the park ${tag()}`;
+    const { quests: [green] } = await pq.publishedJourney(request, cur.token, { title }, [
+      { title: 'Something green, in focus', xp: 50, ends_at: t + 7 * DAY, requirements: pq.GRASS },
+    ]);
+    const pastTitle = `Last week ${tag()}`;
+    await pq.publishedJourney(request, cur.token, { title: pastTitle }, [
+      { title: 'Yesterday’s light', xp: 30, starts_at: t - 2 * DAY, ends_at: t - DAY, requirements: pq.GRASS },
+    ]);
+    await photographerInPage(page, request);
+
+    await ui.openJourney(page, title);
+    const row = ui.questRow(page, 'Something green, in focus');
+    await expect(row).toHaveAttribute('data-state', 'open');
+    await expect(row).toContainText('50 XP');
+    await expect(row.getByTestId('quest-window')).toHaveText(`open until ${await ui.fmtTime(page, green.ends_at)}`);
+    await row.click();
+    const reqs = tid(page, 'quest-requirements');
+    await expect(reqs).toContainText('Shows “grass” (Vision at least 50% sure)');
+    await expect(reqs).toContainText('In focus: focus ratio at least 5');
+    await expect(reqs).not.toContainText('Taken after');
+    await expect(tid(page, 'submit-photo-btn').or(page.getByText('no evaluated photos yet'))).toBeVisible();
+
+    // A quest whose deadline has passed is shown as ended, not as something to do.
+    await ui.openJourney(page, pastTitle);
+    const past = ui.questRow(page, 'Yesterday’s light');
+    await expect(past.getByTestId('quest-window')).toHaveText(/^ended /);
+    await past.click();
+    await expect(tid(page, 'quest-detail')).toContainText('This quest ended');
+    await expect(tid(page, 'submit-photo-btn')).toHaveCount(0);
   });
 
-  test.fixme('submitting an evaluated photo to a quest gives a verdict with a reason per requirement', async () => {
-    // Given an active quest asking for a "grass" subject with subject sharpness at or above a threshold
-    // And the photographer has an evaluated photo
-    // When they submit the photo to the quest
-    // Then they see a verdict, and one line per requirement:
-    //   subject found ✓ (with the label and its confidence)
-    //   subject sharpness ≥ threshold ✗ (with the measured value and the threshold)
+  test('submitting an evaluated photo to a quest gives a verdict with a reason per requirement', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `Sharp greens ${tag()}`;
+    await pq.publishedJourney(request, cur.token, { title }, [{
+      title: 'Very sharp grass', xp: 50,
+      requirements: { ...pq.passable(backend), sharpness: { min_focus_ratio: 50 }, exposure: { max_iso: 3200 } },
+    }]);
+    const me = await photographerInPage(page, request);
+    const photo = await photoOf(request, me, SAMPLE.jpeg);
+
+    await ui.openQuest(page, title, 'Very sharp grass');
+    const verdict = await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'verdict-result')).toHaveText('Not passed');
+    if (backend.apple) {
+      // subject found ✓, with the label and its confidence against the minimum
+      await expect(ui.check(verdict, 'subject')).toHaveAttribute('data-ok', 'true');
+      await expect(ui.check(verdict, 'subject')).toContainText(/✓Subject: grass 0\.\d\d ≥ 0\.50/);
+    }
+    // sharpness ✗, with the measured value and the threshold
+    await expect(ui.check(verdict, 'sharpness.min_focus_ratio')).toHaveAttribute('data-ok', 'false');
+    await expect(ui.check(verdict, 'sharpness.min_focus_ratio')).toContainText(/✗Focus: \d+\.\d+ < 50\.0/);
+    // and a check whose input this JPEG does not carry is "not looked at", not failed
+    await expect(ui.check(verdict, 'exposure.max_iso')).toHaveAttribute('data-ok', 'null');
+    await expect(ui.check(verdict, 'exposure.max_iso')).toContainText(/—ISO: the photo's metadata has no iso/);
+    await expect(tid(page, 'xp-line')).toHaveText('No XP — the photo did not pass every check.');
+    await expect(tid(page, 'header-total-xp')).toHaveText('0 XP');
   });
 
-  test.fixme('a passing photo awards its XP exactly once', async () => {
-    // Given a photo that passes an active quest, submitted once — the XP is awarded
-    // When the same photo is submitted to the same quest again, the XP does not change
-    // And when the same file is uploaded again (same sha256) and submitted, the XP does not change either
-    // And the photographer is told why no XP was awarded the second time
+  test('a passing photo awards its XP exactly once', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `Green twice ${tag()}`;
+    await pq.publishedJourney(request, cur.token, { title }, [
+      { title: 'Green, once', xp: 40, requirements: pq.passable(backend) },
+      { title: 'Green, again', xp: 25, requirements: pq.passable(backend) },
+    ]);
+    const me = await photographerInPage(page, request);
+    const salt = tag();
+    const photo = await photoOf(request, me, SAMPLE.jpeg, { salt, filename: 'green.jpg' });
+
+    await ui.openQuest(page, title, 'Green, once');
+    await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'verdict-result')).toHaveText('Passed');
+    await expect(tid(page, 'xp-line')).toHaveText('+40 XP');
+    await expect(tid(page, 'header-total-xp')).toHaveText('40 XP');
+
+    // The same photo, the same quest: judged again, not paid again.
+    await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'verdict-result')).toHaveText('Passed');
+    await expect(tid(page, 'xp-line')).toContainText('no XP this time: this file has already earned XP once');
+    await expect(tid(page, 'header-total-xp')).toHaveText('40 XP');
+
+    // The same bytes uploaded again (same sha256), to the next quest: it passes,
+    // and unlocks what comes after, but earns nothing — a file is paid once, ever.
+    const copy = await photoOf(request, me, SAMPLE.jpeg, { salt, filename: 'green-copy.jpg' });
+    expect(copy.sha256).toBe(photo.sha256);
+    await ui.openQuest(page, title, 'Green, again');
+    await ui.submitPhoto(page, copy.id);
+    await expect(tid(page, 'verdict-result')).toHaveText('Passed');
+    await expect(tid(page, 'xp-line')).toContainText('this file has already earned XP once (the same photo, or the same bytes uploaded again)');
+    await expect(tid(page, 'header-total-xp')).toHaveText('40 XP');
+    await expect(ui.questRow(page, 'Green, again')).toHaveAttribute('data-state', 'passed');
+    expect((await pq.must(request, me.token, 'GET', '/api/me/progress')).total_xp).toBe(40);
   });
 
-  test.fixme('a photo captured before the quest started is refused', async () => {
-    // Given a quest that started today
-    // And a photo whose captured_at (camera clock) is from before today
-    // When the photographer submits it
-    // Then it is refused, and the reason names the capture time and the quest's start
+  test('a photo captured before the quest started is refused', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `From today ${tag()}`;
+    const { captured_after_start, ...rest } = pq.passable(backend); // eslint-disable-line no-unused-vars
+    const { quests: [quest] } = await pq.publishedJourney(request, cur.token, { title }, [
+      { title: 'Taken today', xp: 50, requirements: rest }, // captured_after_start: the default, true
+    ]);
+    const me = await photographerInPage(page, request);
+    const photo = await photoOf(request, me, SAMPLE.uncompressed); // camera clock: 2022-12-17
+
+    await ui.openQuest(page, title, 'Taken today');
+    await expect(tid(page, 'quest-requirements')).toContainText(`Taken after the quest started (${await ui.fmtTime(page, quest.starts_at)})`);
+    const verdict = await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'verdict-result')).toHaveText('Not passed');
+    const when = ui.check(verdict, 'captured_after_start');
+    await expect(when).toHaveAttribute('data-ok', 'false');
+    // the reason names the capture time and the quest's start
+    await expect(when).toContainText(/captured 2022-12-17T16:03:31 < start \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/);
+    await expect(tid(page, 'xp-line')).toContainText('No XP');
   });
 });
 
 test.describe('Levels', () => {
-  test.fixme('crossing an XP threshold levels the photographer up, and the level shows in the header', async () => {
-    // Given a photographer just below the XP needed for level 2
-    // When a passing quest submission awards enough XP
-    // Then the header shows level 2
-    // And the level survives a reload and a fresh login
+  test('crossing an XP threshold levels the photographer up, and the level shows in the header', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `Two steps ${tag()}`;
+    const { journey, quests: [first] } = await pq.publishedJourney(request, cur.token,
+      { title, levels: [{ level: 1, xp: 0 }, { level: 2, xp: 100 }] }, [
+        { title: 'Step one', xp: 60, requirements: pq.passable(backend) },
+        { title: 'Step two', xp: 60, requirements: pq.passable(backend) },
+      ]);
+    const me = await pq.signUp(request);
+    await submitViaApi(request, me, first, await photoOf(request, me)); // 60 XP: just below 100
+    const photo = await photoOf(request, me);
+
+    await ui.signIn(page, me);
+    const level = page.locator(`[data-testid=header-level][data-journey="${journey.id}"]`);
+    await expect(level).toHaveText(`${title}: level 1`);
+    await ui.openQuest(page, title, 'Step two');
+    await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'level-up')).toHaveText(`Level up! ${title}: level 1 → level 2`);
+    await expect(level).toHaveText(`${title}: level 2`);
+    await expect(tid(page, 'header-total-xp')).toHaveText('120 XP');
+
+    await page.reload();
+    await expect(level).toHaveText(`${title}: level 2`);
+    await page.click('#logout-btn');
+    await logInInPage(page, me);
+    await expect(level).toHaveText(`${title}: level 2`);
   });
 
-  test.fixme('the profile shows the XP history', async () => {
-    // Given a photographer who has earned XP from two quests
-    // When they open their profile
-    // Then each award is listed with the quest, the photo, the XP and when, newest first, and the total matches
+  test('the profile shows the XP history', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `History ${tag()}`;
+    const { quests: [a, b] } = await pq.publishedJourney(request, cur.token, { title }, [
+      { title: `Morning grass ${tag()}`, xp: 30, requirements: pq.passable(backend) },
+      { title: `Evening grass ${tag()}`, xp: 20, requirements: pq.passable(backend) },
+    ]);
+    const me = await pq.signUp(request);
+    await submitViaApi(request, me, a, await photoOf(request, me, SAMPLE.jpeg, { filename: 'morning.jpg' }));
+    await submitViaApi(request, me, b, await photoOf(request, me, SAMPLE.jpeg, { filename: 'evening.jpg' }));
+
+    await ui.signIn(page, me);
+    await ui.nav(page, 'progress');
+    await expect(tid(page, 'total-xp')).toHaveText('50 XP');
+    const rows = tid(page, 'ledger-row');
+    await expect(rows).toHaveCount(2);
+    // newest first: the quest, the photo, the XP, and when
+    await expect(rows.nth(0)).toContainText(`Quest “${b.title}”`);
+    await expect(rows.nth(0)).toContainText('evening.jpg');
+    await expect(rows.nth(0).getByTestId('ledger-xp')).toHaveText('+20');
+    await expect(rows.nth(0)).toContainText(/\d{4}-\d\d-\d\d \d\d:\d\d/);
+    await expect(rows.nth(1)).toContainText(`Quest “${a.title}”`);
+    await expect(rows.nth(1)).toContainText('morning.jpg');
+    await expect(rows.nth(1).getByTestId('ledger-xp')).toHaveText('+30');
+    await expect(tid(page, 'progress-journey').filter({ hasText: title })).toContainText('50');
   });
 });
 
 test.describe('Journeys', () => {
-  test.fixme('the quests of a journey unlock in order', async () => {
-    // Given a curator has created a journey of three quests
-    // Then only the first is open; the second and third show as locked
-    // When the photographer passes the first, the second unlocks, and the third is still locked
+  test('the quests of a journey unlock in order', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `Three in a row ${tag()}`;
+    await pq.publishedJourney(request, cur.token, { title }, ['First', 'Second', 'Third'].map((t) => (
+      { title: t, xp: 10, requirements: pq.passable(backend) })));
+    const me = await photographerInPage(page, request);
+    const photo = await photoOf(request, me);
+
+    await ui.openJourney(page, title);
+    const states = () => tid(page, 'quest-row').evaluateAll((rows) => rows.map((r) => r.dataset.state));
+    await expect.poll(states).toEqual(['open', 'locked', 'locked']);
+    await expect(ui.questRow(page, 'Second')).toContainText('Locked — pass “First” first');
+    // A locked quest does not open.
+    await ui.questRow(page, 'Third').click();
+    await expect(tid(page, 'quest-detail')).toHaveCount(0);
+
+    await ui.questRow(page, 'First').click();
+    await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'verdict-result')).toHaveText('Passed');
+    await expect.poll(states).toEqual(['passed', 'open', 'locked']);
   });
 
-  test.fixme('finishing a journey grants a badge', async () => {
-    // Given a photographer has passed all but the last quest of a journey
-    // When they pass the last one
-    // Then the journey's badge appears on their profile, once
+  test('finishing a journey grants a badge', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `Ranger ${tag()}`;
+    const badge = `Park ranger ${tag()}`;
+    const { quests: [first, last] } = await pq.publishedJourney(request, cur.token, { title, badge: { name: badge } }, [
+      { title: 'Almost', xp: 10, requirements: pq.passable(backend) },
+      { title: 'The last one', xp: 10, requirements: pq.passable(backend) },
+    ]);
+    const me = await pq.signUp(request);
+    await submitViaApi(request, me, first, await photoOf(request, me));
+    const photo = await photoOf(request, me);
+
+    await ui.signIn(page, me);
+    await ui.openQuest(page, title, 'The last one');
+    await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'badge-notice')).toHaveText(`Badge earned: ${badge}`);
+    await expect(tid(page, 'journey-detail')).toContainText(`Badge earned: ${badge}`);
+
+    // Passing it again grants nothing more.
+    const again = await submitViaApi(request, me, last, await photoOf(request, me));
+    expect(again.pass).toBe(true);
+    expect(again.badge).toBeNull();
+    await ui.nav(page, 'progress');
+    await expect(tid(page, 'badge')).toHaveCount(1);
+    await expect(tid(page, 'badge')).toContainText(`${badge} — ${title}`);
   });
 });
 
 test.describe('Timed competitions', () => {
-  test.fixme('a photo can be entered before the deadline and is refused after it', async () => {
-    // Given a competition a curator created, with a deadline
-    // When the photographer enters an evaluated photo before the deadline, the entry is accepted
-    // When they try after the deadline, it is refused, and the message names the deadline
+  test('a photo can be entered before the deadline and is refused after it', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `Before noon ${tag()}`;
+    const comp = await pq.publishedCompetition(request, cur.token, {
+      title, requirements: pq.passable(backend), max_entries_per_user: 2,
+    });
+    const me = await photographerInPage(page, request);
+    const [a, b] = [await photoOf(request, me), await photoOf(request, me)];
+
+    await ui.openCompetition(page, title);
+    await expect(tid(page, 'competition-phase')).toHaveText('open for entries');
+    await tid(page, 'enter-photo-select').selectOption(a.id);
+    await tid(page, 'enter-btn').click();
+    await expect(tid(page, 'enter-ok')).toHaveText('Entered — good luck.');
+    await expect(tid(page, 'lb-row')).toHaveCount(1);
+
+    // The deadline passes while the page is still open.
+    await pq.setClock(request, comp.closes_at - pq.nowSecs() + 60);
+    await tid(page, 'enter-photo-select').selectOption(b.id);
+    await tid(page, 'enter-btn').click();
+    const deadline = await ui.fmtTime(page, comp.closes_at);
+    await expect(tid(page, 'enter-error')).toHaveText(`Not entered: Entries closed at ${deadline}.`);
+
+    await ui.openCompetition(page, title);
+    await expect(tid(page, 'competition-phase')).toHaveText('voting');
+    await expect(tid(page, 'enter-closed')).toHaveText(`Entries closed at ${deadline}.`);
+    await expect(tid(page, 'enter-btn')).toHaveCount(0);
   });
 
-  test.fixme('the leaderboard ranks entries by score', async () => {
-    // Given three photographers have each entered a photo
-    // When anyone opens the competition's leaderboard
-    // Then the entries are ordered by score, highest first, each with its photographer and score
+  test('the leaderboard ranks entries by score', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `Crowd favourite ${tag()}`;
+    const comp = await pq.publishedCompetition(request, cur.token, {
+      title, requirements: pq.passable(backend), weights: { auto: 0.2, votes: 0.8, judges: 0 },
+    });
+    const entrants = [];
+    for (const [who, file] of [['ana', SAMPLE.uncompressed], ['ben', SAMPLE.compressed], ['cleo', SAMPLE.jpeg]]) {
+      const u = await pq.signUp(request, who);
+      const photo = await photoOf(request, u, file);
+      await pq.must(request, u.token, 'POST', `/api/competitions/${comp.id}/entries`, { photo_id: photo.id });
+      entrants.push({ ...u, name: u.email.split('@')[0] });
+    }
+    const [ana, ben, cleo] = entrants;
+
+    // A fourth photographer votes through the page: 5 stars for cleo, 3 for ben, 1 for ana.
+    await photographerInPage(page, request, 'voter');
+    await ui.openCompetition(page, title);
+    for (const [who, stars] of [[cleo, 5], [ben, 3], [ana, 1]]) {
+      await tid(page, 'lb-row').filter({ hasText: who.name }).getByTestId(`star-${stars}`).click();
+      await expect(tid(page, 'vote-ok')).toHaveText(`Vote saved: ${stars} of 5.`);
+    }
+
+    const rows = tid(page, 'lb-row');
+    await expect(rows).toHaveCount(3);
+    await expect(rows.getByTestId('lb-entrant')).toHaveText([cleo.name, ben.name, ana.name]);
+    await expect(rows.getByTestId('lb-rank')).toHaveText(['1', '2', '3']);
+    const scores = (await rows.getByTestId('lb-score').allInnerTexts()).map(Number);
+    expect(scores).toEqual([...scores].sort((x, y) => y - x));
+    expect(scores[0]).toBeGreaterThan(scores[1]);
+    await expect(rows.first()).toContainText('votes 1.00 ×80% (1 vote, mean 5.0★)');
+    await expect(rows.first()).toContainText('judges ×0%: none yet');
+    // Everyone sees the same ranking, the entrant's own row marked.
+    await ui.signIn(page, cleo);
+    await ui.openCompetition(page, title);
+    await expect(tid(page, 'lb-entrant')).toHaveText([`${cleo.name} (you)`, ben.name, ana.name]);
+    await expect(tid(page, 'lb-row').first()).toContainText('your entry');
+    await expect(tid(page, 'lb-row').first().getByTestId('star-1')).toHaveCount(0);
   });
 
-  test.fixme('results and winners are visible after the competition ends', async () => {
-    // Given a competition whose deadline has passed
-    // When a photographer opens it
-    // Then it shows as ended, with the final ranking and the winners marked
-    // And no further entries are accepted
+  test('results and winners are visible after the competition ends', async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const title = `Short and sweet ${tag()}`;
+    const t = pq.nowSecs();
+    const comp = await pq.publishedCompetition(request, cur.token, {
+      title, requirements: pq.passable(backend), prizes_xp: [300, 200],
+      closes_at: t + 600, voting_closes_at: t + 1200, judging_closes_at: t + 1800,
+    });
+    const ana = await pq.signUp(request, 'ana');
+    const ben = await pq.signUp(request, 'ben');
+    // auto-v1 only: the ARW (focus 9.2, sharper) above the JPEG preview (7.2)
+    const anaPhoto = await photoOf(request, ana, SAMPLE.uncompressed);
+    await pq.must(request, ana.token, 'POST', `/api/competitions/${comp.id}/entries`, { photo_id: anaPhoto.id });
+    const benPhoto = await photoOf(request, ben, SAMPLE.jpeg);
+    await pq.must(request, ben.token, 'POST', `/api/competitions/${comp.id}/entries`, { photo_id: benPhoto.id });
+
+    await pq.setClock(request, comp.judging_closes_at - pq.nowSecs() + 60);
+    await ui.signIn(page, ana);
+    await ui.openCompetition(page, title);
+    await expect(tid(page, 'competition-phase')).toHaveText('ended');
+    const [anaName, benName] = [ana.email.split('@')[0], ben.email.split('@')[0]];
+    await expect(tid(page, 'winner')).toHaveText([
+      `1st place: ${anaName} (you) — 300 XP`,
+      `2nd place: ${benName} — 200 XP`,
+    ]);
+    await expect(tid(page, 'result-row')).toHaveCount(2);
+    await expect(tid(page, 'result-row').first()).toContainText(`${anaName} (you) — winner`);
+    await expect(tid(page, 'enter-closed')).toContainText('Entries closed at');
+
+    // No further entries, and the prize is on the winner's ledger (once).
+    const late = await pq.call(request, ben.token, 'POST', `/api/competitions/${comp.id}/entries`, {
+      photo_id: (await photoOf(request, ben)).id,
+    });
+    expect(late.status).toBe(409);
+    expect(late.body.error).toBe('competition_closed');
+    await ui.nav(page, 'progress');
+    await expect(tid(page, 'total-xp')).toHaveText('300 XP');
+    await expect(tid(page, 'ledger-row')).toHaveCount(1);
+    await expect(tid(page, 'ledger-row')).toContainText(`Competition “${title}”, 1st place`);
   });
 });
 
 test.describe('Moderation effect', () => {
-  test.fixme('a photo an admin hides disappears for others and stops counting, and its owner sees why', async () => {
-    // Given a photographer's photo is entered in a quest and on a competition leaderboard
-    // When an admin hides it, with a reason
-    // Then other photographers no longer see it on the leaderboard or anywhere else
-    // And it no longer counts toward the quest or the competition (its XP and rank are withdrawn)
-    // And its owner still sees it, marked hidden, with the admin's reason
+  // CONTRACT.md "Moderation": a hidden photo leaves every shared surface and the
+  // ranking and cannot be submitted or entered again; "its past XP stays (the
+  // ledger is history)". That last part is the contract's decision, and what is
+  // asserted here.
+  test('a photo an admin hides disappears for others and stops counting, and its owner sees why', async ({ page, browser, request }) => {
+    const cur = await pq.curator(request);
+    const adm = await pq.admin(request);
+    const jTitle = `Moderated ${tag()}`;
+    const { quests: [quest, next] } = await pq.publishedJourney(request, cur.token, { title: jTitle }, [
+      { title: 'Paid before', xp: 30, requirements: pq.passable(backend) },
+      { title: 'Not any more', xp: 30, requirements: pq.passable(backend) },
+    ]);
+    const cTitle = `Leaderboard ${tag()}`;
+    const comp = await pq.publishedCompetition(request, cur.token, { title: cTitle, requirements: pq.passable(backend) });
+    const owner = await pq.signUp(request, 'owner');
+    const photo = await photoOf(request, owner, SAMPLE.jpeg, { filename: 'mine.jpg' });
+    await submitViaApi(request, owner, quest, photo);
+    await pq.must(request, owner.token, 'POST', `/api/competitions/${comp.id}/entries`, { photo_id: photo.id });
+    const other = await pq.signUp(request, 'other');
+    const otherPhoto = await photoOf(request, other, SAMPLE.uncompressed);
+    await pq.must(request, other.token, 'POST', `/api/competitions/${comp.id}/entries`, { photo_id: otherPhoto.id });
+    const ownerName = owner.email.split('@')[0];
+
+    const viewer = await ui.secondBrowser(browser, other);
+    await ui.openCompetition(viewer, cTitle);
+    await expect(tid(viewer, 'lb-row')).toHaveCount(2);
+    await expect(tid(viewer, 'lb-row').filter({ hasText: ownerName })).toHaveCount(1);
+
+    const reason = 'Not the photographer’s own work';
+    await pq.must(request, adm.token, 'POST', `/api/admin/photos/${photo.id}/hide`, { reason });
+
+    // Others: gone from the leaderboard, and from everywhere else (a report is a 404).
+    await ui.openCompetition(viewer, cTitle);
+    await expect(tid(viewer, 'lb-row')).toHaveCount(1);
+    await expect(tid(viewer, 'lb-row').filter({ hasText: ownerName })).toHaveCount(0);
+    await expect(tid(viewer, 'lb-rank')).toHaveText(['1']);
+    expect((await pq.call(request, other.token, 'POST', `/api/photos/${photo.id}/reports`, { reason: 'spam' })).status).toBe(404);
+    expect((await pq.getPhoto(request, other.token, photo.id)).status).toBe(403);
+
+    // It stops counting: not submittable, not in the owner's pickers.
+    const refused = await pq.call(request, owner.token, 'POST', `/api/quests/${next.id}/submissions`, { photo_id: photo.id });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toBe('photo_hidden');
+
+    // The owner still sees it, marked hidden, with the admin's reason.
+    await ui.signIn(page, owner);
+    const tile = page.locator('#gallery .tile', { hasText: 'mine.jpg' });
+    await expect(tile).toContainText('hidden');
+    await tile.click();
+    await expect(tid(page, 'moderation-notice')).toContainText(`Hidden by a moderator: ${reason}`);
+    await ui.openQuest(page, jTitle, 'Not any more');
+    await expect(page.getByText('You have no evaluated photos yet')).toBeVisible();
+    // Its past XP stays: the ledger is history.
+    await expect(tid(page, 'header-total-xp')).toHaveText('30 XP');
+    await viewer.context().close();
   });
 });

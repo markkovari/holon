@@ -13,8 +13,14 @@
 #   - on macOS, the Swift helper (comp-media-apple) if it is missing or older
 #     than its source; on Linux there is none and evaluation runs on the CPU
 #   - `cargo xtask host photoquest` (comp-host on :3941 + comp-media on :8013),
-#     with the host's sqlite in a temp dir (STATE_DIRECTORY)
-# then warms the pipeline with one upload, runs tests/photoquest.spec.js, and on
+#     with the host's sqlite in a temp dir (STATE_DIRECTORY), and two config keys
+#     the committed apps/photoquest.toml must not carry, given for this run only
+#     with `--config` (after the toml's [config], so they add to it):
+#       allow-test-routes=true      POST /test/clock, to pass deadlines
+#       bootstrap-admin-email=...   the account that is admin from register on
+# then warms the pipeline with one upload, runs the three photoquest specs
+# (tests/photoquest*.spec.js: photographer, curator, admin) on one worker — the
+# evaluator is one queue and the test clock is one for the whole app — and on
 # exit — pass, fail or Ctrl-C — stops the host and the daemon, the NATS, and
 # removes the containers, the volume and the temp dirs.
 #
@@ -29,6 +35,10 @@ SAMPLES="${PHOTOQUEST_SAMPLES:-$E2E/.photoquest-samples}"
 PIXLS="https://raw.pixls.us/data/Sony/ILCE-7RM5"
 COMPOSE=(docker compose -p holon-photoquest-e2e -f "$ROOT/infra/compose.yaml" --profile media)
 APP_PORT=3941 MEDIA_PORT=8013   # fixed by apps/photoquest.toml
+# The suite's admin (lib/photoquest.js reads the same variable). Nobody can
+# register it before the suite does: the store is a fresh temp dir every run.
+export PHOTOQUEST_ADMIN_EMAIL="${PHOTOQUEST_ADMIN_EMAIL:-admin@photoquest.test}"
+SPECS=(tests/photoquest.spec.js tests/photoquest-curator.spec.js tests/photoquest-admin.spec.js)
 STORE_PORTS=(9000 9001)         # fixed by infra/compose.yaml
 
 say() { printf '\033[1;36m==> %s\033[0m\n' "$*"; }
@@ -134,7 +144,9 @@ say "starting cargo xtask host photoquest"
 mkdir -p "$TMP/state"
 set -m  # its own process group, so cleanup can stop comp-host and comp-media with it
 MEDIA_NATS_URL="nats://127.0.0.1:$NATS_PORT" STATE_DIRECTORY="$TMP/state" \
-  cargo xtask host photoquest --addr "127.0.0.1:$APP_PORT" >"$TMP/host.log" 2>&1 &
+  cargo xtask host photoquest --addr "127.0.0.1:$APP_PORT" \
+    --config allow-test-routes=true \
+    --config "bootstrap-admin-email=$PHOTOQUEST_ADMIN_EMAIL" >"$TMP/host.log" 2>&1 &
 HOST_PID=$!
 set +m
 
@@ -151,6 +163,9 @@ ready "http://127.0.0.1:$APP_PORT/health" || { tail -50 "$TMP/host.log"; die "ap
 HEALTH=$(curl -fsS "http://127.0.0.1:$MEDIA_PORT/health")
 say "comp-media: $HEALTH"
 [[ "$HEALTH" == *'"store":true'* && "$HEALTH" == *'"queue":true'* ]] || { tail -50 "$TMP/host.log"; die "comp-media is not healthy"; }
+# The test routes answer 404 unless the extra config reached the component.
+curl -fsS -X POST -H 'content-type: application/json' -d '{"offset_secs":0}' \
+  "http://127.0.0.1:$APP_PORT/test/clock" >/dev/null || die "POST /test/clock refused — did --config allow-test-routes=true reach the app?"
 
 # ---- warm, then test --------------------------------------------------------------
 
@@ -158,9 +173,9 @@ cd "$E2E"
 say "warming the pipeline (the first job pays Core Image's cold start)"
 node lib/photoquest.js warm "$SAMPLES/7RM5-LosslessCompressedLarge.ARW" || { tail -50 "$TMP/host.log"; die "warm-up upload failed"; }
 
-say "running tests/photoquest.spec.js"
+say "running ${SPECS[*]}"
 status=0
-PHOTOQUEST_SAMPLES="$SAMPLES" npx playwright test tests/photoquest.spec.js "$@" || status=$?
+PHOTOQUEST_SAMPLES="$SAMPLES" npx playwright test "${SPECS[@]}" --workers=1 "$@" || status=$?
 if [[ $status -ne 0 ]]; then
   say "last lines of the host log"
   tail -40 "$TMP/host.log"

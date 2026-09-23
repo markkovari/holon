@@ -2,13 +2,16 @@
 
 ![photoquest: register, upload a 128 MB Sony a7R V ARW straight to the store, and see it come back evaluated on-device — camera data, sharpness, Vision labels, aesthetics. Real time, warm pipeline; the photo is a CC0 sample from raw.pixls.us](../media/photoquest.gif)
 
-A **photo-evaluation app**, and step one of a game built on it: sign up, drop a
-129 MB Sony ARW onto the page, and a couple of seconds later see it developed,
-with its camera metadata, a web-share copy under 10 MB, a per-tile sharpness map,
-the sharpness under each face Vision found, labels and an aesthetics score.
-Quests, XP and levels come next. They plug into `quests::on_evaluated` in
-`components/photoquest-domain/src/quests.rs`, which runs exactly once per photo
-and does nothing yet.
+A **photo-evaluation app**, and a game built on it. Sign up, drop a 129 MB Sony
+ARW onto the page, and a couple of seconds later see it developed, with its
+camera metadata, a web-share copy under 10 MB, a per-tile sharpness map, the
+sharpness under each face Vision found, labels and an aesthetics score. Then
+play with it: submit photos to **quests** that ask for something specific ("grass,
+in focus, shot wide open"), earn **XP** and **levels** along **journeys**, finish
+a journey for its **badge**, and enter **timed competitions** scored by a mix of
+the automatic metrics, other photographers' votes and curators' judging. Curators
+build the journeys and competitions; admins moderate. The rules are in the
+[CONTRACT](../../components/photoquest-domain/CONTRACT.md) ("The game").
 
 It is here because it is the one showcase whose payload no part of the runtime
 can carry. A guest has 64 MiB, every body read stops at 16 MiB, a NATS value is
@@ -27,6 +30,37 @@ the measurements.
 | `comp-media` (`reconciler/src/bin/media.rs`) | signs upload and rendition URLs, owns the `MEDIA_JOBS` JetStream work queue, and evaluates one photo at a time (`rawler` decode, `green-stab-v1` sharpness). It POSTs the result to `public-callback-base`, signed with `media-callback-secret`, and only to a `--callback-allow` host:port |
 | `comp-media-apple` (`tools/media-apple/main.swift`) | macOS only: Core Image develop, Metal sharpness, Vision. Without it the daemon does the same on the CPU with no Vision stage, and the result says which backend ran |
 | RustFS (`infra/compose.yaml`, profile `media`) | the object store: `originals` and `renditions` buckets |
+
+## The game
+
+| role | who | does, in the page |
+|---|---|---|
+| **photographer** | everyone who registers | **Journeys**: each journey with my level, XP towards the next level and its badge; its quests in unlock order, each `open`, `locked` or `passed`, with its XP and deadline. A quest's page says what it asks for in plain words; **Submit a photo** (one of my evaluated photos) answers with a verdict — ✓ / ✗ / — (not looked at: the stage that measures it did not run) per requirement with the measured value, the XP awarded or why none, and a level-up or badge notice. **Competitions**: the phase, brief, windows, scoring weights, prizes and requirements; enter one of my photos (an ineligible one shows its verdict); the leaderboard with each entry's automatic / votes / judges parts; star votes (not on my own); **Report** an entry; after judging, the results and winners. **Progress**: total XP, level per journey, badges, and the XP history. The header shows total XP and my level in each journey I have XP in. A photo an admin hid is marked on my own page with the reason |
+| **curator** | granted by an admin | the **Curator** tab: journeys (title, description, the level ladder, badge, quest order ↑↓, publish / archive) and their quests (XP, window, and a requirements form covering the whole schema — subject label or face, focus and face-sharpness ratios, aesthetics, aperture, shutter, focal range, ISO, RAW only, "taken after the start"; fixed once published), and competitions (windows, weights, requirements, prize XP, entries per photographer, the journey prize XP counts toward, publish / archive), with a **Judge** panel: 0–10 and a note per entry |
+| **admin** | the bootstrap admin, or granted by an admin | the **Admin** tab: the reports queue by state (open / actioned / dismissed) with the photo's thumbnail — dismiss with a note, hide with a reason (the owner is shown it), unhide; every account with its roles and suspension — grant / revoke curator and admin, suspend with a reason / unsuspend |
+
+Roles add up (a curator is still a photographer; an admin is not implicitly a
+curator but can grant themself the role). The Curator and Admin tabs appear only
+for those roles, and appear or disappear within a few seconds of a grant or
+revoke, without logging in again. The tabs are a convenience: every route checks
+the role itself, and a refusal is shown as a message.
+
+**Becoming admin locally.** The first admin is whoever registers with the email in
+config `bootstrap-admin-email` (unset: nobody). Give it for a run without editing
+the toml, then register that address in the page:
+
+```sh
+cargo xtask host photoquest --config bootstrap-admin-email=you@example.com
+```
+
+(`apps/photoquest.toml` has the same key commented out as a local-dev example.)
+From there the Admin tab grants `curator` — to yourself too — and `admin` to
+others. `--config key=value` works for any key and any app: it is passed to
+comp-host after the app's `[config]`, so it adds a key or overrides one.
+
+`allow-test-routes=true` enables `POST /test/clock {offset_secs}`, which moves the
+game's notion of "now" so a test can pass a deadline without waiting. It is never
+in the toml; `e2e/photoquest.sh` passes it with `--config` for its own run.
 
 ## Run it locally
 
@@ -76,7 +110,14 @@ only CC0 photos. `bash e2e/photoquest.sh` brings all of it up, runs the spec
 and tears everything down again; [e2e/README.md](../../e2e/README.md#photoquest)
 has the prerequisites.
 
-What a photographer can do today, each one a passing scenario:
+It is three specs, all run by `photoquest.sh` on one worker (the evaluator is one
+queue, and the test clock is one for the whole app): `photoquest.spec.js` (the
+photographer), `photoquest-curator.spec.js` and `photoquest-admin.spec.js`.
+34 scenarios, about 1.5 minutes warm on an M2 Max. The game's preconditions (a
+curator's journeys, another photographer's entry) are set up through the API;
+what a scenario is about is done through the page.
+
+What a photographer can do, each one a passing scenario:
 
 - **Account** — register and be signed in; log out and in again; a wrong
   password and an email that already has an account are refused with a message.
@@ -96,18 +137,56 @@ What a photographer can do today, each one a passing scenario:
   never sees it listed; on a shared browser, logging out leaves nothing of mine
   on the page for the next person.
 
-The next steps are written down in the same file as `test.fixme` scenarios, so
-they have acceptance tests before they have code: quests (active list, a verdict
-with a reason per requirement, XP awarded once per photo and file, a photo taken
-before the quest refused), levels and XP history, journeys (quests unlock in
-order, a badge at the end), timed competitions (entry deadline, leaderboard,
-results) and the effect of moderation. They need two roles that do not exist
-yet: a **curator**, who creates quests, journeys, levels and competitions, and
-an **admin**, who moderates.
+- **Quests** — the active quests with title, what is asked, XP and deadline, an
+  ended one shown as ended; a verdict with one line per requirement (✓ grass with
+  its confidence, ✗ focus with the measured value and the threshold, — ISO on a
+  JPEG that has none); XP awarded once — the same photo again, or the same bytes
+  re-uploaded, pass but earn nothing, and the page says why; a photo whose camera
+  clock predates the quest is refused, the reason naming both times.
+- **Levels** — crossing a threshold shows a level-up and the new level in the
+  header, which survives a reload and a fresh login; the XP history lists each
+  award with its quest, photo, XP and time, newest first.
+- **Journeys** — quests unlock in order; finishing the last grants the badge,
+  once.
+- **Timed competitions** — an entry is accepted before the deadline and refused
+  after it, naming the deadline; the leaderboard ranks by the mixed score (star
+  votes cast in the page); after judging, the results with the winners, and the
+  prize on the winner's XP history.
+- **Moderation effect** — a photo an admin hides leaves the leaderboard for
+  everyone else, can no longer be reported, submitted or entered, and its owner
+  sees it marked hidden with the admin's reason. Its past XP stays (the
+  contract's decision: the ledger is history).
+
+And the curator's and admin's side:
+
+- **Curator** — builds a journey of two quests in the page (levels, badge,
+  requirements, reorder, publish), and a photographer sees it in that order and
+  plays it through to a level-up and the badge; archiving takes it away; a
+  photographer is refused the curator routes, and a bad level ladder is refused
+  with its reason. A competition made and published in the page, entered by two
+  photographers, judged in the page, ends with the judged favourite winning and
+  paid; a late score is refused.
+- **Admin** — a photographer reports an entry from the leaderboard; the admin
+  sees it in the queue with its thumbnail, hides it with a reason, and it leaves
+  the leaderboard while its owner sees the reason; unhiding brings it back. A
+  report can be dismissed with a note. Curator granted in the Admin tab shows up
+  in the grantee's open page without a re-login, and goes away on revoke. A
+  suspended account's upload is refused in the page, and works again once
+  unsuspended. An admin cannot revoke their own admin.
+
+**Media in the suite** is only the CC0 samples. The game pays XP once per file
+(by sha256) and refuses a second entry of the same bytes, so every upload in the
+game scenarios is *salted* — the same CC0 picture with a JPEG comment segment, or
+bytes appended after an ARW's end — which gives it its own sha256 and leaves the
+evaluation unchanged. The requirements the scenarios use are what the real
+pipeline reports for those samples: a `grass` label at ~0.86–0.90, focus ratio
+7.2–9.2, no faces, f/1.2, 50 mm, ISO 100, captured 2022-12-17 (so
+`captured_after_start: false`, except in the scenario that tests it). On a box
+without Vision the label check is dropped.
 
 ## Where it stands
 
-Step one works end to end on a real box. Two a7R V ARWs (129 MB each), uploaded
+Upload, evaluation and the game work end to end on a real box. Two a7R V ARWs (129 MB each), uploaded
 through the page on an M2 Max:
 
 - the upload takes about 0.2 s over loopback
@@ -115,5 +194,6 @@ through the page on an M2 Max:
 - the in-focus face scores about 60 and 107; the other face in each frame scores 0.2 and 1.6
 - the share copy is 2–2.6 MB
 
-Not built yet: quests, XP and levels, EXIF for JPEG originals, and the
-original's lifecycle once it has been evaluated (it stays in `originals`).
+Not built yet: EXIF for JPEG originals (so a JPEG cannot pass exposure or
+"taken after the start" requirements — those checks read "not looked at"), and
+the original's lifecycle once it has been evaluated (it stays in `originals`).

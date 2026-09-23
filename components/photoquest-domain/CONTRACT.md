@@ -1,9 +1,9 @@
 # `photoquest:domain` — the contract
 
 Upload a photo straight to object storage, have it evaluated on the machine with
-the GPU, and see it back. This is step one of photoquest: upload, renditions and
-a gallery. Quests, XP and levels come next and are not here — the seam they plug
-into is `src/quests.rs` (below).
+the GPU, and see it back — then play with it: quests in journeys with their own
+levels, timed competitions, and moderation. The first half of this file is the
+photo lifecycle; "The game" below is everything built on top of it.
 
 Why the bytes never pass through this component, and what `comp-media` is:
 [ADR-0098](../../docs/adr/0098-photos-live-in-object-storage.md). The daemon's

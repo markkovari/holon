@@ -5,14 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Photoquest</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
   h1 { font-size: 1.4rem; }
   h3 { margin: 0.2rem 0 0.6rem; }
-  input, button { font: inherit; padding: 0.4rem; margin: 0.2rem 0; }
+  h4 { margin: 0.8rem 0 0.4rem; }
+  input, button, select, textarea { font: inherit; padding: 0.4rem; margin: 0.2rem 0; }
+  input[type=number] { width: 6.5rem; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 3rem; }
+  button { cursor: pointer; }
   .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
   .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem 1rem; margin: 0.6rem 0; }
+  .card.click { cursor: pointer; }
+  .card.click:hover { border-color: #999; }
   .muted { color: #666; font-size: 0.9rem; }
   .err { color: #a4222b; }
+  .ok { color: #146c2e; }
+  .notice { background: #f3f7ee; border: 1px solid #b9d3a2; border-radius: 6px; padding: 0.5rem 0.75rem; margin: 0.4rem 0; }
+  .warn { background: #fdf1f1; border: 1px solid #e3b1b4; border-radius: 6px; padding: 0.5rem 0.75rem; margin: 0.4rem 0; }
   progress { width: 100%; height: 1rem; }
   #app, #detail { display: none; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.6rem; }
@@ -26,6 +35,28 @@
   dd { margin: 0; }
   .state-evaluated { color: #146c2e; }
   .state-failed { color: #a4222b; }
+  nav { display: flex; gap: 0.3rem; flex-wrap: wrap; border-bottom: 1px solid #ddd; margin: 0.8rem 0; }
+  nav button { border: 1px solid transparent; border-bottom: none; background: none; border-radius: 6px 6px 0 0; margin: 0; }
+  nav button.active { border-color: #ddd; background: #fff; font-weight: 600; margin-bottom: -1px; }
+  #xp-summary { font-size: 0.9rem; }
+  .pill { display: inline-block; border-radius: 999px; padding: 0 0.5rem; font-size: 0.8rem; border: 1px solid #ccc; }
+  .pill.passed, .pill.open-phase { border-color: #146c2e; color: #146c2e; }
+  .pill.open { border-color: #1b5fa8; color: #1b5fa8; }
+  .pill.locked { color: #888; }
+  .pill.hidden { border-color: #a4222b; color: #a4222b; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 0.3rem 0.4rem; border-bottom: 1px solid #eee; vertical-align: top; }
+  td img.thumb, .thumb { width: 90px; aspect-ratio: 3 / 2; object-fit: cover; border-radius: 4px; background: #eee; }
+  ul.checks { list-style: none; padding: 0; margin: 0.3rem 0; }
+  ul.checks li { margin: 0.15rem 0; }
+  .sym { display: inline-block; width: 1.2rem; font-weight: 700; }
+  .sym.yes { color: #146c2e; } .sym.no { color: #a4222b; } .sym.na { color: #888; }
+  fieldset { border: 1px solid #ddd; border-radius: 6px; margin: 0.5rem 0; }
+  label { margin-right: 0.6rem; }
+  .stars button { padding: 0.1rem 0.35rem; }
+  .stars button.on { background: #f5d76e; }
+  .view { display: none; }
+  .view.active { display: block; }
 </style>
 </head>
 <body>
@@ -52,22 +83,82 @@
       <span id="whoami" class="muted"></span>
       <button id="logout-btn">Log out</button>
     </div>
+    <div id="xp-summary" data-testid="xp-summary"></div>
 
-    <div class="card">
-      <h3>Upload a photo</h3>
-      <p class="muted">Sony ARW or JPEG. The file goes straight to storage in parts — it never passes through this app.</p>
-      <div class="row">
-        <input id="file" type="file" accept=".arw,.jpg,.jpeg,image/jpeg">
-        <button id="upload-btn">Upload</button>
+    <nav id="nav">
+      <button data-view="photos" data-testid="nav-photos" class="active">My photos</button>
+      <button data-view="journeys" data-testid="nav-journeys">Journeys</button>
+      <button data-view="competitions" data-testid="nav-competitions">Competitions</button>
+      <button data-view="progress" data-testid="nav-progress">Progress</button>
+      <button data-view="curator" data-testid="nav-curator" hidden>Curator</button>
+      <button data-view="admin" data-testid="nav-admin" hidden>Admin</button>
+    </nav>
+
+    <section id="view-photos" class="view active">
+      <div class="card">
+        <h3>Upload a photo</h3>
+        <p class="muted">Sony ARW or JPEG. The file goes straight to storage in parts — it never passes through this app.</p>
+        <div class="row">
+          <input id="file" type="file" accept=".arw,.jpg,.jpeg,image/jpeg">
+          <button id="upload-btn">Upload</button>
+        </div>
+        <progress id="progress" value="0" max="1" hidden></progress>
+        <p id="upload-status" class="muted"></p>
       </div>
-      <progress id="progress" value="0" max="1" hidden></progress>
-      <p id="upload-status" class="muted"></p>
-    </div>
 
-    <div id="detail" class="card"></div>
+      <div id="detail" class="card"></div>
 
-    <h3>My photos</h3>
-    <div id="gallery" class="grid"></div>
+      <h3>My photos</h3>
+      <div id="gallery" class="grid"></div>
+    </section>
+
+    <section id="view-journeys" class="view">
+      <div id="journeys"></div>
+      <div id="journey-detail"></div>
+      <div id="quest-detail"></div>
+    </section>
+
+    <section id="view-competitions" class="view">
+      <div id="competitions"></div>
+      <div id="competition-detail"></div>
+    </section>
+
+    <section id="view-progress" class="view">
+      <div id="progress-view"></div>
+    </section>
+
+    <section id="view-curator" class="view">
+      <p id="curator-msg" class="err"></p>
+      <div class="row">
+        <button id="cur-tab-journeys" data-testid="cur-tab-journeys">Journeys &amp; quests</button>
+        <button id="cur-tab-competitions" data-testid="cur-tab-competitions">Competitions</button>
+      </div>
+      <div id="curator-journeys"></div>
+      <div id="curator-competitions" hidden></div>
+    </section>
+
+    <section id="view-admin" class="view">
+      <p id="admin-msg" class="err"></p>
+      <div class="card">
+        <div class="row">
+          <h3 style="margin:0">Reports</h3>
+          <select id="report-state" data-testid="report-state">
+            <option value="open">open</option>
+            <option value="actioned">actioned</option>
+            <option value="dismissed">dismissed</option>
+          </select>
+          <button id="reports-refresh" data-testid="reports-refresh">Refresh</button>
+        </div>
+        <div id="reports"></div>
+      </div>
+      <div class="card">
+        <div class="row">
+          <h3 style="margin:0">Users</h3>
+          <button id="users-refresh" data-testid="users-refresh">Refresh</button>
+        </div>
+        <div id="users"></div>
+      </div>
+    </section>
   </div>
 
   <script src="app.js"></script>
