@@ -1,5 +1,7 @@
 # photoquest — raw photos evaluated on the machine with the GPU
 
+![photoquest: register, upload a 128 MB Sony a7R V ARW straight to the store, and see it come back evaluated on-device — camera data, sharpness, Vision labels, aesthetics. Real time, warm pipeline; the photo is a CC0 sample from raw.pixls.us](../media/photoquest.gif)
+
 A **photo-evaluation app**, and step one of a game built on it: sign up, drop a
 129 MB Sony ARW onto the page, and a couple of seconds later see it developed,
 with its camera metadata, a web-share copy under 10 MB, a per-tile sharpness map,
