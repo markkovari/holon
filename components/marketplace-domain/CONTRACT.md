@@ -39,9 +39,11 @@ field is whoever created it — there is no separate vendor-profile collection.
 - `price` is an integer, minor units (cents).
 - `category` is auto-set on creation by Jev (see below) from a FIXED taxonomy:
   `"electronics"`, `"clothing"`, `"home"`, `"books"`, `"toys"`, `"other"`. The
-  vendor who owns the listing may change it afterward with a plain field
-  update — Jev drafts, the vendor may override, exactly once either way is
-  final (no re-running Jev after a manual edit).
+  vendor who owns the listing (or an admin) may change it afterward through
+  `PATCH /api/listings/{id}/category` — Jev drafts, a human may override.
+  Jev runs only on creation, so it never re-runs after a manual edit. Nothing
+  limits how many times the override itself may be applied: each one replaces
+  the last.
 - `category_confidence` is Jev's own reported confidence, milli-units (0-1000),
   stored for anyone reading the listing to see how sure the auto-label was.
 - `status` is `"active"` or `"delisted"` (vendor or admin may delist; a
@@ -155,8 +157,9 @@ field is whoever created it — there is no separate vendor-profile collection.
   `vendor:<subject>` (the refunded amount), credit `platform:cash` (the same
   amount) — two lines. The vendor eats the refund; the fee is not reversed
   (already earned for processing the sale).
-- Indexed fields: none required (small enough to `list_records` in full for
-  aggregation — see routes below).
+- Indexed fields: none required. Aggregation reads the WHOLE collection,
+  following `list_records`' `next` cursor page by page until it comes back
+  empty (see routes below) — every entry is counted, however many there are.
 
 ### `inquiries` + `messages` (owned by part 5)
 
@@ -213,9 +216,10 @@ firing on an order not yet in `shipped`.
 **Listing auto-labeling** (part 1, on `POST /api/listings`): a `choose`
 request — `state` is the listing's title + description concatenated,
 `instructions` asks which category best fits, `options` is the six-item fixed
-taxonomy above. The `selected` option becomes `category`; `confidence`
-(0.0-1.0 float from Jev, multiplied by 1000 and rounded) becomes
-`category_confidence`. If the Jev call fails for any reason
+taxonomy above. The `selected` option becomes `category`; `confidence` (a
+`u32` milli-probability, 0-1000, in `choice-result`) becomes
+`category_confidence` as-is — it is already in milli-units, so a `1` is
+1/1000, not certainty — capped at 1000. If the Jev call fails for any reason
 (`decision-error`), the listing is still created — `category` falls back to
 `"other"`, `category_confidence` to `0`. A labeling failure must never refuse
 the listing itself.
@@ -231,6 +235,28 @@ labeling: a Jev failure must not refuse dispute CREATION — leave
 it with no advisory at all.
 
 ## Routes
+
+Every whole-collection read — `GET /api/listings`, an admin's
+`GET /api/orders` / `GET /api/inquiries`, and the reputation and ledger
+aggregates — is the WHOLE collection: `list_records` is cursor-paginated, so
+the read follows each page's `next` cursor until the store says it is
+exhausted (`lib.rs`'s `list_all`). "Newest first" / "oldest first" is a sort
+of every document, not of one page. None of these routes take paging
+parameters; each answers everything it is scoped to.
+
+### The router (`lib.rs`, scaffold — no part writes it)
+
+- `POST /register` `{"email","password","role"?}` → `201
+  {"subject","role"}`. A role outside `vendor`/`buyer`/`admin`, or none, is
+  `buyer`.
+- `POST /login` `{"email","password"}` → `200
+  {"access_token","refresh_token","expires_in"}`.
+- `POST /logout` (bearer) → `204`, the session revoked.
+- `GET /me` → `{"subject","tenant","roles"}`.
+- `GET /health` → `{"ok":true}`.
+- `POST /test/seed` and `GET /test/{listing,order,payment,shipment,fsm}/...` —
+  a fixture and raw-store reads, so one part can be judged before the other
+  four exist.
 
 ### Part 1 — `catalog.rs`: listings and order placement
 
@@ -277,10 +303,11 @@ it with no advisory at all.
   fsm instance in `label_created`, immediately fires `dispatch` (moves it to
   `in_transit`), fires the `order` machine's `ship` event. `409` if the order
   isn't `paid`.
-- `POST /api/shipments/{id}/deliver` (admin) → fires the `shipment` machine's
-  `deliver`, THEN the `order` machine's `deliver` (via the shipment's own
-  `order_id` field) — see the cross-machine rule above. `409` naming whichever
-  machine refused.
+- `POST /api/shipments/{id}/deliver` (admin) → fires the `order` machine's
+  `deliver` (via the shipment's own `order_id` field) FIRST, then the
+  `shipment` machine's `deliver` — see the cross-machine rule above. `409
+  {"error":"illegal_transition","machine":...}` naming whichever machine
+  refused.
 - `POST /api/orders/{id}/refund` `{"amount"}` (admin) → refuses (`400`) if
   `amount` plus the payment's existing `refunded_amount` would exceed the
   order's `total`. Updates `refunded_amount`, fires the `payment` machine's
@@ -327,8 +354,8 @@ it with no advisory at all.
 ### Part 4 — `ledger.rs`: the payout ledger
 
 - `GET /api/vendors/{subject}/balance` (the vendor themself, or admin) →
-  `{"vendor":"...","balance":<integer>}`. Loads every `ledger_entries`
-  document via `records::list_records`, converts each to a `ledger:
+  `{"vendor":"...","balance":<integer>}`. Loads every
+  `ledger_entries` document (all `records::list_records` pages), converts each to a `ledger:
   doubleentry/ledger` `entry`, calls `trial-balance`, and reports the `net`
   for account `vendor:<subject>` (0 if that account has no lines at all —
   `trial-balance` omits accounts with no postings, so a missing entry in the
@@ -354,6 +381,15 @@ it with no advisory at all.
   → `403` for anyone else, `{"messages":[...]}` oldest first.
 - `POST /api/inquiries/{id}/messages` `{"body"}` (either party to the
   inquiry) → `403` for anyone else, `201` with the new message.
+
+## Imports
+
+The world (`wit/marketplace-domain.wit`) imports `auth:identity` (accounts, authorizer,
+session, rbac, types), `policy:guard/guard`, `records:store/store`,
+`audit:log/recorder`, `ratelimit:guard/limiter`, `fsm:workflow/engine`,
+`ledger:doubleentry/ledger`, `jev:decision/decision`, `wasi:clocks/wall-clock`
+and `wasi:http/outgoing-handler`. `audit:log` records each allow/deny; no route
+calls `policy:guard`, `ratelimit:guard` or outgoing HTTP directly.
 
 ## What you must not write yourself
 

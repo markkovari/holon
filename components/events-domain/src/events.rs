@@ -162,10 +162,32 @@ fn patch(route: &Route, id: &str, body: &str) -> Reply {
             doc[key] = v.clone();
         }
     }
+    // The reminder was put on the clock for the OLD start. Moving the event without
+    // moving it would send "tomorrow" a day before a time that is no longer the time.
+    let before = serde_json::from_str::<serde_json::Value>(&entry.data)
+        .ok()
+        .and_then(|d| d["starts_at"].as_str().map(str::to_string));
+    let moved = doc["starts_at"].as_str().map(str::to_string);
+    let moved = moved.filter(|now| before.as_deref() != Some(now.as_str()));
     if let Err(r) = save("events", &entry, &doc) {
         return r;
     }
     doc["id"] = json!(entry.id);
+    if let Some(starts_at) = moved {
+        // Cancel first: `schedule` replaces a job only when it schedules one, and a new
+        // start it cannot schedule for must not leave the old reminder behind. A
+        // cancelled event keeps no reminder at all, as DELETE left it.
+        crate::remind::cancel(id);
+        let at = if doc["state"].as_str() == Some("open") {
+            crate::remind::schedule(id, &starts_at)
+        } else {
+            None
+        };
+        doc["reminder_at"] = match at {
+            Some(t) => json!(t),
+            None => serde_json::Value::Null,
+        };
+    }
     Reply::json(200, doc)
 }
 

@@ -77,9 +77,13 @@ pub struct Amount { pub units: i64, pub currency: String }
 {
   "from": "<account id>", "to": "<account id>", "units": 2500, "currency": "EUR",
   "state": "settled", "key": "<idempotency key>", "created_at": "…",
-  "journal": { "id": "<transfer id>", "lines": [ … ] }
+  "journal": { "id": "<journal record id>", "lines": { "transfer": "…", "from": "…", "to": "…", "units": 2500, "at": "…" } }
 }
 ```
+
+`journal` is written when the transfer settles. Its `id` is the id `records:store` minted for
+the `journal` document (see part 2, rule 4), and `lines` is a copy of that one document — an
+object, not an array of lines.
 
 `state` is one of `pending`, `settled`, `refused`, `compensated`. A record's id is the one
 `records:store` minted.
@@ -210,6 +214,13 @@ journal write that fails after the balances moved is `500 {"error":"journal_lost
 rather than hiding it; `reconcile` is what finds it otherwise, and that is far too late to be
 the first anyone hears of it. **Only a settled transfer is journalled**: a refusal moved nothing.
 
+The last write marks the transfer record `settled` and attaches the journal. It is retried a
+bounded number of times (a revision conflict retries at the current revision); if it still
+fails the balances and the journal already agree — the books are right — but the record would
+say `pending` forever, so the answer is `500 {"error":"settle_lost","transfer":"<id>","journal":"<id>"}`,
+never a `201` over a record that is wrong. It is completed against the idempotency key like
+any other answer.
+
 **Idempotency.**
 
 ```rust
@@ -241,7 +252,8 @@ that list:
 1. sum the journal: every line where it is `to` adds, every line where it is `from` subtracts,
    all through `money::add` / `money::subtract`;
 2. add the opening figure;
-3. compare with the stored balance via `money::compare`.
+3. compare with the stored balance — the code compares the two amounts' `units` directly
+   (both carry the account's own currency), not through `money::compare`.
 
 Answer `200`:
 
@@ -264,7 +276,10 @@ running it twice must not produce two different truths.
 
 ### `GET /api/journal?limit=` — `transfers:read`
 
-`200 {"lines":[…]}`, oldest first, `limit` default 50 capped 500.
+`200 {"lines":[…]}`, the oldest `limit` lines, oldest first; `limit` default 50 capped 500.
+Each line is a `journal` document plus its `id`. "Oldest" is by `at`, with the id breaking ties,
+across the WHOLE journal — the route reads every line before it cuts to `limit`, so it is not
+"the first `limit` the store lists, then sorted".
 
 ## The router, which no part may write
 
