@@ -167,7 +167,7 @@ fn post_in_chunks(db: &Store, sql: &str) -> Duration {
     total
 }
 
-/// The query under test, verbatim from `just lessons-for`.
+/// The query under test, verbatim from the old `just lessons-for` recipe.
 fn join_query(app: &str) -> String {
     format!(
         "LET $ifaces = (SELECT VALUE array::distinct(array::flatten(\

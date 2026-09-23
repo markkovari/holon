@@ -62,6 +62,11 @@ interface store {
     /// Create a record in `collection`. `data` must be a JSON object. Mints a
     /// sortable id, returns the stored entry (revision 1). If `index-fields` is
     /// non-empty, the named top-level fields are indexed for `find-by`.
+    ///
+    /// `ok` means the record is stored; `err` means it is not. Index upkeep
+    /// happens after the record commits and never turns a stored record into an
+    /// `err` — an index edit that keeps failing is logged as drift and left for
+    /// `repair`, and every read re-checks the record itself.
     create: func(collection: string, data: string, index-fields: list<string>)
         -> result<entry, store-error>;
 
@@ -70,11 +75,16 @@ interface store {
 
     /// Replace a record's data. If `expected-revision` is non-zero it must match
     /// the current revision (optimistic lock) else `err(revision-conflict)`.
-    /// Re-indexes the configured index fields. Returns the new entry.
+    /// Re-indexes the configured index fields whose value changed. Returns the
+    /// new entry. As with `create`, `ok`/`err` is about the record only: once it
+    /// has committed the call succeeds, and an index edit that keeps failing is
+    /// logged as drift for `repair` rather than reported as a failed update.
     update: func(collection: string, id: string, data: string, expected-revision: u64)
         -> result<entry, store-error>;
 
-    /// Delete a record (and its index entries). Idempotent.
+    /// Delete a record (and its index entries). Idempotent. The record is removed
+    /// first; index entries left behind by a failure after that are dangling ids
+    /// every read skips and `repair` prunes, not an `err`.
     delete: func(collection: string, id: string) -> result<_, store-error>;
 
     /// List a collection in id (time) order. `limit` 0 -> a default page size;

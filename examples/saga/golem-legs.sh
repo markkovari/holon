@@ -41,7 +41,7 @@ done
 # 3. saga app on the native host
 cargo xtask compose saga >/dev/null 2>&1
 ( cd host && cargo build --release --bin comp-host >/dev/null 2>&1 )
-VET_TENANT=saga "$HOSTBIN" --component "$SAGA_WASM" --addr 127.0.0.1:3016 --kv memory >/tmp/saga-golem-host.log 2>&1 &
+"$HOSTBIN" --config-file "$ROOT/examples/defaults.conf" --config default-tenant=saga --component "$SAGA_WASM" --addr 127.0.0.1:3016 --kv memory >/tmp/saga-golem-host.log 2>&1 &
 HPID=$!; trap 'kill "$HPID" 2>/dev/null || true' EXIT
 for _ in $(seq 1 60); do curl -sf -o /dev/null "http://127.0.0.1:3016/" && break; sleep 0.5; done
 

@@ -81,8 +81,10 @@ Regenerate the gif (`tools/screencast/`): `cd examples/jco-crdt && npm run
 transpile`, then `node tools/screencast/crdt.mjs` and `bash to-gif.sh
 videos/crdt/*.webm ../../docs/media/crdt.gif 900 12`.
 
-## Next
+## Used by
 
-`scribe` — a collaborative document editor: `lwwmap` per field for convergence +
-`pulse`'s SSE spine to push merged state to every open editor. This component is
-the piece it was waiting on.
+`scribe` — a collaborative document editor, built: the title is an `lwwmap`, the
+body an `rga` sequence, and `pulse`'s SSE spine pushes merged state to every open
+editor (`components/scribe-domain`, `apps/scribe.toml`,
+[`docs/apps/SCRIBE.md`](../apps/SCRIBE.md)). This component was the piece it was
+waiting on.

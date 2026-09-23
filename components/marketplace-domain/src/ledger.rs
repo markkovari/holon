@@ -25,9 +25,8 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
 /// `ledger:doubleentry/ledger` `entry`. `records:store` is the only surface
 /// shared between parts, so this is where a part 4 balance comes from.
 fn load_entries() -> Result<Vec<doubleentry::Entry>, ()> {
-    let page = records::list_records("ledger_entries", 1000, "").map_err(|_| ())?;
     let mut out = Vec::new();
-    for stored in page.entries {
+    for stored in crate::list_all("ledger_entries")? {
         let doc: Value = serde_json::from_str(&stored.data).unwrap_or_else(|_| json!({}));
         let memo = doc.get("memo").and_then(Value::as_str).unwrap_or("").to_string();
         let mut lines = Vec::new();

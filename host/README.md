@@ -1,11 +1,13 @@
-# comp-host — a native Rust host for the vet-clinic wasm
+# comp-host — a native Rust host for any composed wasm
 
-A **native binary** (not a wasm component, not Node, not wasmCloud) that runs the
-composed `vet_domain.composed.wasm` over [wasmtime](https://wasmtime.dev). This
-binary IS the host: it serves the component's `wasi:http/incoming-handler` over
-a hyper TCP listener and satisfies the component's imports host-side.
+A **native binary** (not a wasm component, not Node, not wasmCloud) that runs a
+composed component over [wasmtime](https://wasmtime.dev) — any app in `apps/`, not
+one in particular. This binary IS the host: it serves the component's
+`wasi:http/incoming-handler` over a hyper TCP listener and satisfies the
+component's imports host-side. The vet-clinic app below is the worked example,
+because it is the one with a host on every side of it.
 
-It's the **third host** for the exact same `.wasm`:
+For `vet_domain.composed.wasm` it's the **third host** for the exact same `.wasm`:
 
 | host | how | where |
 |---|---|---|
@@ -23,13 +25,20 @@ The composed app imports only generic WASI; this host satisfies all of it:
 - **wasi:http** (the incoming-handler the component exports + outgoing) —
   `wasmtime-wasi-http`
 - **wasi:keyvalue@0.2.0-draft** (store + atomics) — a **swappable `KvBackend`**
-  (`src/kv.rs`) chosen by `--kv memory|redis|nats`. The SAME component bytes run
-  on all three; only the host store changes:
-  - `memory` (default) — in-process `HashMap` per bucket; resets on restart.
+  (`src/kv.rs`) chosen by `--kv memory|sqlite|redis|nats|surreal|turso`. The SAME
+  component bytes run on all six; only the host store changes:
+  - `memory` (default for a single-app run) — in-process `HashMap` per bucket;
+    resets on restart.
+  - `sqlite` — one file (`--sqlite-path`, default `$STATE_DIRECTORY/kv.db`, else
+    `./comp-kv.db`). Durable, no server.
   - `redis` — any redis-compatible server (`--redis-url`, e.g. valkey :6379);
     flat keyspace `{bucket}\x1f{key}`, `INCRBY` for atomics, `SCAN` for list.
-  - `nats` — NATS JetStream KV (`--nats-url`); one KV bucket per store name,
-    keys hex-escaped to the NATS charset. Durable; survives restart.
+  - `nats` (default on a lattice node) — NATS JetStream KV (`--nats-url`); one KV
+    bucket per store name, keys hex-escaped to the NATS charset. Durable; survives
+    restart, and the only one where two replicas of an app share a store.
+  - `surreal` / `turso` — SurrealDB or libSQL over HTTP. The endpoint goes in
+    `--sqlite-path` (neither has a flag of its own) and the token, as a file, in
+    `--kv-token`.
 - **wasi:config@0.2.0-draft** — the deployment knobs (default-tenant, session-ttl,
   vault master-key, upload + cursor secrets, …) from sane defaults, overridable
   via `VET_*` env vars.
@@ -43,17 +52,20 @@ from `wit/host.wit` and implemented over the in-memory store + a config map.
 ## Run
 
 ```bash
-# build the component first (from comp/):
-cargo xtask compose vet         # core slice  -> components/target/vet_domain.composed.wasm
-just compose-vet-full    # FULL parity -> components/target/vet_domain.full.composed.wasm
+# compose the component first (from the repo root):
+cargo xtask compose vet         # -> components/target/vet_domain.composed.wasm
 
-# then run the host (from comp/host/) against either:
-cargo run --release -- --component ../components/target/vet_domain.full.composed.wasm --addr 127.0.0.1:3007
+# then run the host (from host/):
+cargo run --release -- --component ../components/target/vet_domain.composed.wasm --addr 127.0.0.1:3007
 ```
 
-The host runs the **core slice** or the **full-parity** app unchanged — the
-parity app composes in 19 capabilities but they all bottom out on the same WASI
-(keyvalue/clocks/random/config/http) + the cache backing this host provides.
+That one artifact is the **full-parity** app. `comp-plug` derives the plugs from
+`vet-domain`'s own imports — 21 capabilities, `cache` and `ai-inference` among
+them — so there is no longer a smaller "core slice" composed by hand beside it,
+and the separate full-parity recipe went with the Justfile. They all bottom out on
+the same WASI (keyvalue/clocks/random/config/http) + the cache backing this host
+provides. `cargo xtask host vet` composes it if it is missing and runs it — on
+:3055 with `--kv sqlite` unless `--addr`/`--kv` say otherwise.
 
 Smoke test:
 

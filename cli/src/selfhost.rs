@@ -30,7 +30,7 @@ pub struct Spec {
     /// app, TLS handled by the proxy.
     pub domain: String,
     /// The composed `.wasm` to serve, relative to the repo root
-    /// (`just compose-<app>` produces these).
+    /// (`cargo xtask compose <app>` produces these).
     pub artifact: String,
 
     /// Loopback port. Derived from the name when absent, so a spec need not carry

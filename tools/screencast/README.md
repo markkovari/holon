@@ -21,7 +21,11 @@ and `to-gif.sh` converts it to a palette-optimized, gifsicle-shrunk gif.
 
 ```bash
 docker compose -f ../../infra/compose.yaml up -d nats
-cargo xtask host eshop &                       # from repo root; gateway on :3100
+# compose every service (identity is accounts-app, under the name run-local.sh reads):
+(cd ../.. && for s in eshop eshop-catalog eshop-basket eshop-ordering eshop-payment accounts-app; do
+   cargo xtask compose $s; done \
+ && cp components/target/accounts_app.composed.wasm components/target/eshop_identity.composed.wasm)
+../../examples/eshop/run-local.sh &            # six native hosts over NATS; gateway on :3100
 node eshop.mjs
 bash to-gif.sh videos/eshop/*.webm ../../docs/media/eshop.gif 800 10
 ```
@@ -31,8 +35,8 @@ the native host doesn't, so `seed-vet.sh` bootstraps roles + demo users over the
 unguarded `/admin` routes):
 
 ```bash
-# from repo root: host/target/release/comp-host --component \
-#   components/target/vet_domain.full.composed.wasm --addr 127.0.0.1:3007 \
+# from repo root: cargo xtask compose vet && host/target/release/comp-host --component \
+#   components/target/vet_domain.composed.wasm --addr 127.0.0.1:3007 \
 #   --static-dir examples/jco-vet-clinic/public &
 bash seed-vet.sh
 node vet.mjs
@@ -40,7 +44,7 @@ bash to-gif.sh videos/vet/*.webm ../../docs/media/petclinic.gif 800 10
 ```
 
 **conduit** — API-only, so we film its real proof: `conformance-term.html`
-streams the captured `just conformance-conduit` output (13/13 green) as a
+streams the captured output of `examples/conduit/conformance/run.sh` (13/13 green) as a
 terminal animation.
 
 ```bash
@@ -198,10 +202,12 @@ bash to-gif.sh videos/passkey/*.webm ../../docs/media/passkey.gif 700 10
 109 components in the palette: place four, drag export handles onto matching import
 handles (the plan flips from "Unsatisfied (3)" to zero), flip through the three
 emitted forms — `wac plug` script, `.wac` file, wasmCloud workload — and hit Compose
-for a real composed component. Needs the palette seeded, which `host-studio` does.
+for a real composed component. Needs the palette seeded, which `cargo xtask host studio`
+does not do — the loop in [`examples/studio/README.md`](../../examples/studio/README.md) does.
 
 ```bash
-cargo xtask host studio &                      # from repo root; SPA :3054, seeds 109 components
+cargo xtask host studio &                      # from repo root; SPA :3054, palette empty
+# ...seed it with the loop from examples/studio/README.md (from repo root), then:
 node studio.mjs
 bash to-gif.sh videos/studio/*.webm ../../docs/media/studio.gif 780 6
 ```

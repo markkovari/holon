@@ -105,8 +105,7 @@ above. **Not used:** `auth-guard` (anonymous, event-driven). `fsm:workflow`
    **Pending → In-flight → Done** + a **Dead-letter** tray.
 4. **Bench** — the new dimension: **throughput + delivery guarantee under a
    flapping sink** — N events enqueued, sink toggled mid-run, assert
-   0 lost / 0 duplicate-acked / all eventually `acked` or `dead`. See
-   `bench/PIPELINE-BENCH.md`.
+   0 lost / 0 duplicate-acked / all eventually `acked` or `dead`.
 
 ## Non-goals (v1)
 

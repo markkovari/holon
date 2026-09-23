@@ -1,8 +1,11 @@
 [package]
-name = "device-radar-tests"
+name = "device-radar-e2e"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
-[dev-dependencies]
-reqwest = { version = "0.12", features = ["json", "blocking"] }
-serde_json = "1.0"
+[workspace]
+
+[dependencies]
+ureq = "2"
+serde_json = "1"

@@ -22,6 +22,7 @@ gen/                   # produced by `jco transpile` (gitignored)
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile      # composed webhook_ingest.wasm -> gen/
 npm test
@@ -33,5 +34,5 @@ asserts: valid first delivery → `{accepted, !replay}`; same `delivery-id` →
 `{!accepted, replay}` (the idempotency capability at work); bad signature →
 `bad-signature` (rejected before any dedup).
 
-> To refresh the composed wasm after rebuilding: `cargo xtask compose webhook` then copy
-> `components/target/webhook_ingest.composed.wasm` here as `webhook_ingest.wasm`.
+> To refresh the composed wasm after rebuilding: `cargo xtask stage-examples` (it composes
+> webhook-ingest and copies it here as `webhook_ingest.wasm`).

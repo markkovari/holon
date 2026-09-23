@@ -15,14 +15,15 @@ Numbers are from one dev machine (Apple Silicon, OrbStack k8s) — treat them as
 
 ```bash
 npm install
-# in-process: needs the example gens transpiled first
+# in-process: needs the example gens transpiled first, from staged .wasm inputs
+(cd .. && cargo xtask stage-examples)
 (cd ../examples/jco-embed        && npm install && npm run transpile)
 (cd ../examples/jco-cache        && npm install && npm run transpile)
 (cd ../examples/jco-idempotency  && npm install && npm run transpile)
 (cd ../examples/jco-featureflags && npm install && npm run transpile)
 (cd ../examples/jco-blob         && npm install && npm run transpile)
 (cd ../examples/jco-audit        && npm install && npm run transpile)
-(cd ../examples/jco-webhook      && npm install && npm run transpile)  # composed: run `cargo xtask compose webhook` first
+(cd ../examples/jco-webhook      && npm install && npm run transpile)  # composed (stage-examples composes it)
 (cd ../examples/jco-session      && npm install && npm run transpile)
 (cd ../examples/jco-outbox       && npm install && npm run transpile)
 (cd ../examples/jco-secrets      && npm install && npm run transpile)
@@ -47,7 +48,7 @@ npm install
 (cd ../examples/jco-id           && npm install && npm run transpile)
 (cd ../examples/jco-record       && npm install && npm run transpile)
 (cd ../examples/jco-policy       && npm install && npm run transpile)
-(cd ../examples/jco-ai           && npm install && npm run transpile)  # composed: run `cargo xtask compose ai` first
+(cd ../examples/jco-ai           && npm install && npm run transpile)  # composed (stage-examples composes it)
 (cd ../examples/jco-timer        && npm install && npm run transpile)
 (cd ../examples/jco-lock         && npm install && npm run transpile)
 (cd ../examples/jco-eventbus     && npm install && npm run transpile)

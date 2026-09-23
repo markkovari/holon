@@ -25,7 +25,7 @@ payees. Add a payee; the IBAN field validates live (a typo shows the reason), an
 Add stays disabled until it's valid.
 
 ```bash
-just e2e-payees          # IBAN validation + the payee book
+cargo xtask e2e payees   # IBAN validation + the payee book
 # work on the UI live:
 cd examples/payees/ui && npm install && npm run dev
 ```

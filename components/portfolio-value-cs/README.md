@@ -6,9 +6,9 @@ composition as the Rust build and is judged by the same unedited e2e.
 **See [`docs/POLYGLOT.md`](../../docs/POLYGLOT.md)** for the table, the finding, and
 this language's specific notes.
 
-```bash
-just e2e-binder-poly cs portfolio-value
-```
+There is no `cargo xtask e2e binder-poly cs portfolio-value`: `tools/build-polyglot.sh`
+builds `go`, `c`, `js` and `py`, and has no `cs` case, because there is no artifact to
+swap in.
 
 **This one does not build.** It is kept as a reproduction: the bindings generate,
 the implementation compiles with zero warnings, and the link fails because mono

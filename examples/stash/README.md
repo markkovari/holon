@@ -25,7 +25,7 @@ demo notes. Edit notes, then hit **Export .zip** to download them all; `unzip` i
 to see `notes/*.md`, `index.csv`, and `manifest.json`.
 
 ```bash
-just e2e-stash           # notes CRUD + a valid ZIP export
+cargo xtask e2e stash    # notes CRUD + a valid ZIP export
 # work on the UI live:
 cd examples/stash/ui && npm install && npm run dev
 ```

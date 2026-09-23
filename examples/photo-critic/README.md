@@ -37,7 +37,7 @@ component reached over egress with the key from the vault, answered over NATS.
 
 ## Serve it, and put it on your phone over Tailscale
 
-The single-`comp-host` serve the records-only examples use (`just host-<app>`)
+The single-`comp-host` serve the records-only examples use (`cargo xtask host <app>`)
 does not carry an external secret + egress grant, so this app serves through a
 deployment:
 

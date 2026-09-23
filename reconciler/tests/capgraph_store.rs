@@ -21,7 +21,7 @@
 //! `knowledge:memory` is a different path with its own tests.
 //!
 //! Driven through the real binary rather than by calling the generator directly —
-//! `--format surql` piped into `/sql` is exactly what `just capgraph-store` does,
+//! `--format surql` piped into `/sql` is exactly how the projection is stored,
 //! so a break in the wiring fails here too.
 //!
 //! Skipped, loudly, when Docker cannot start the database. A skipped test that
@@ -37,7 +37,7 @@ use harness::{Store, SURREAL_IMAGE};
 /// node alone.
 const APP: &str = "vet";
 
-/// Write one generation of the projection, exactly as `just capgraph-store`
+/// Write one generation of the projection, exactly as storing it by hand
 /// does: the tool's stdout, unedited, posted to `/sql`.
 ///
 /// Not on `harness::Store` because it is the one capgraph-specific thing here —

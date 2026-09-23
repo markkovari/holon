@@ -463,7 +463,7 @@ impl NatsKv {
                             eprintln!(
                                 "comp-host: WARNING this NATS cannot hold {want} copies of \
                                  {name} ({e}), falling back to ONE. That is a single disk \
-                                 holding this data: `just backup` is the floor, and a NATS \
+                                 holding this data: `nats stream backup KV_<bucket>` is the floor, and a NATS \
                                  cluster of 3 with --kv-replicas 3 is the fix."
                             );
                             self.js.create_key_value(cfg(1)).await.map_err(anyhow::Error::from)

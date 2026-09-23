@@ -9,11 +9,11 @@
 //! ## Why this exists
 //!
 //! Push has been in `reconciler/src/oci.rs` since ADR-0017 with nothing to pull it
-//! back, so the only ways to obtain a component's bytes were to build it or to run
-//! `just fetch-components`. Building now means five toolchains, one of them a 200 MB
-//! wasi-sdk and one a gigabyte of .NET (`docs/POLYGLOT.md`). `fetch-components`
-//! reads GitHub Actions artifacts, which expire after thirty days, need a green run
-//! for that exact commit, and arrive as all 205 components or none.
+//! back, so the only ways to obtain a component's bytes were to build it or to
+//! download CI's artifact (`gh run download`, `docs/REGISTRY.md`). Building now
+//! means five toolchains, one of them a 200 MB wasi-sdk and one a gigabyte of .NET
+//! (`docs/POLYGLOT.md`). GitHub Actions artifacts expire after thirty days, need a
+//! green run for that exact commit, and arrive as all 205 components or none.
 //!
 //! None of those is a way to get ONE component you did not build. This is.
 //!
@@ -26,8 +26,8 @@
 //! ## Digests, not tags
 //!
 //! Every push is tagged with the first twelve hex of the component's own sha256, so
-//! a tag can never change meaning under someone (ADR-0006), and it also writes a
-//! `latest` tag purely so a human can type a name. What it PRINTS is the digest, and
+//! a tag can never change meaning under someone (ADR-0006). There is no `latest`
+//! tag. What it PRINTS is the digest, and
 //! `--lock` writes the digest for every component pushed. Pull verifies the bytes
 //! against the digest the manifest named before it writes a file, because a registry
 //! is a cache and the digest is the trust boundary (ADR-0024).

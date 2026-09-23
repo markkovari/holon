@@ -33,6 +33,7 @@ gen/                     # transpile output (gitignored) -> gen/qr.js
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile        # qr.wasm -> gen/
 npm test

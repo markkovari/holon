@@ -28,6 +28,7 @@ No shim is required: the component only imports `wasi:clocks/wall-clock` and
 `wasi:random/random`, both of which jco auto-shims in its transpile output.
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test
 ```

@@ -28,7 +28,7 @@ Open the page:
 ## Test it
 
 ```bash
-just e2e-abtest             # sticky, different-arms, 50/25/25 split, monotone, attribution, live SSE
+cargo xtask e2e abtest      # sticky, different-arms, 50/25/25 split, monotone, attribution, live SSE
 ```
 
 The e2e defines a 50/25/25 experiment and proves assignment is sticky, two

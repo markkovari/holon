@@ -3,9 +3,9 @@
 [eShopOnDapr](https://github.com/dotnet-architecture/eShopOnDapr) (Microsoft's
 archived Dapr reference shop) rebuilt as holon components: every Dapr building
 block becomes an existing capability contract, every service a wasm component,
-and the whole thing runs three ways from the same bytes — jco-style native
-host, `cargo xtask host eshop` locally, and wasmCloud v2 WorkloadDeployments on
-Kubernetes.
+and the whole thing runs as six native `comp-host` processes over one shared
+NATS (`examples/eshop/run-local.sh`). The same bytes also ran as wasmCloud v2
+WorkloadDeployments on Kubernetes, until that lane was removed (see *Run it*).
 
 ![eShop: sign in, add to cart, checkout, and watch the order advance through the cross-service choreography (submitted → paid) — five wasm services over one NATS lattice](../media/eshop.gif)
 
@@ -64,8 +64,10 @@ pump (needed on the native lane, which has no messaging plugin).
 ## Run it
 
 ```bash
-# local — native hosts over one shared NATS (docker run -d -p 4222:4222 nats:2.10 -js)
-cargo xtask host eshop                  # storefront at http://127.0.0.1:3100
+# local — native hosts over one shared NATS (docker run -d -p 4222:4222 nats:2.10 -js).
+# eshop has no apps/eshop.toml: `cargo xtask host` serves one component, this is six.
+cargo xtask compose eshop               # every service + gateway (identity = accounts-app)
+GRACE=3 examples/eshop/run-local.sh     # 5 services + gateway; storefront at http://127.0.0.1:3100
 GATEWAY=http://127.0.0.1:3100 examples/eshop/smoke.sh
 
 # there was a kubernetes lane, on the wasmCloud v2 runtime-operator, driven by a

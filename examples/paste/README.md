@@ -18,7 +18,7 @@ safe HTML on view (a raw `<script>` is escaped, not executed).
 ## Test it
 
 ```bash
-just e2e-paste        # composes + builds host + runs tests/paste.rs
+cargo xtask e2e paste # composes + builds host + runs tests/paste.rs
 ```
 
 Proves: an empty body is rejected (`validate`); PII in the body is masked

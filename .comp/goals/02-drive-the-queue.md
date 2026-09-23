@@ -1,4 +1,18 @@
-# Drive the queue — 🔴 human-led
+# Drive the queue — ✅ built
+
+> **Built:** `comp-goald` (`reconciler/src/bin/goald.rs`, 7ac6f06) is the small
+> sibling binary this asked for. It polls a project's queue, picks up only goals a
+> person already moved to `running` — never `queued` — and hands each to
+> `comp-goalrun`, `--max-runs` at a time (default 1, which keeps ADR-0082's one
+> active run per project). Everything after `--` goes to `comp-goalrun` verbatim, so
+> the model, pool and budget are decided in one place.
+>
+> Extended since: #274 added DeepSeek off-peak enforcement, a supervised unit
+> (`holon node render-goald`), and `--auto-close-merged-prs`, which records the PR a
+> run opened and calls `/done` or `/fail` once a human merges or closes it; #276
+> fixed a failed run leaving its whole fleet running after exit.
+>
+> The rest of this file is the goal as it was written, before any of that existed.
 
 **Traces to:** `docs/CURRENT.md` — *"Nothing picks a started goal off the queue.
 `comp goal start` records that one started, and a person is still the wire

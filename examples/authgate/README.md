@@ -13,13 +13,13 @@ cargo xtask host authgate    # from repo root; authgate on http://127.0.0.1:3023
 
 **Enroll** an account (copy the secret / scan the QR into an authenticator app),
 **activate** with the first code it shows (revealing single-use recovery codes),
-then **log in** with a live code — or burn a recovery code. `CFG_MASTER_KEY`
-(32-byte base64) is the vault master key that seals the secret.
+then **log in** with a live code — or burn a recovery code. The `master-key`
+config (32-byte base64, `--config master-key=…`) is the vault master key that seals the secret.
 
 ## Test it
 
 ```bash
-just e2e-authgate     # composes + builds host + runs tests/authgate.rs
+cargo xtask e2e authgate # composes + builds host + runs tests/authgate.rs
 ```
 
 The test derives real RFC-6238 codes from the returned secret (via `totp-lite`),

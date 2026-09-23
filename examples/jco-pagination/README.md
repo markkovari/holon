@@ -31,6 +31,7 @@ page size to `max-page-size` (and rejects 0 with `bad-limit`).
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile        # pagination.wasm -> gen/
 npm test                 # behavioral checks

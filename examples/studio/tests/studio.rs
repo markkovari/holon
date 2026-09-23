@@ -96,11 +96,14 @@ fn upload(stem: &str) -> Value {
 fn start_studio() -> Kill {
     let bin = root().join("host/target/release/comp-host");
     let component = root().join("components/target/studio_domain.composed.wasm");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-studio`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e studio`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose studio)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "studio")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=studio"])
         .spawn()
         .expect("spawn comp-host");
     let guard = Kill(child);
@@ -172,10 +175,12 @@ fn studio_reflects_plans_emits_and_composes() {
     // WIT declares. That skew is why this migration waited for a host new enough
     // to define those versions.
     assert!(host.iter().any(|h| h.starts_with("wasi:http/types@0.2.")), "{host:?}");
-    // 16 on p2 — Rust's wasip2 std wires up the whole wasi:cli surface, including
-    // five `terminal-*` interfaces the app never touches. It was 13 under the
-    // preview1 adapter. Pinned so a std-surface change shows up here first.
-    assert_eq!(host.len(), 16, "mesh-domain's own host surface: {host:?}");
+    // 17 on p2 — Rust's wasip2 std wires up the whole wasi:cli surface, including
+    // five `terminal-*` interfaces the app never touches, plus
+    // `wasi:random/insecure-seed` (std's HashMap seeding). It was 16 before that
+    // last one arrived, and 13 under the preview1 adapter. Pinned so a
+    // std-surface change shows up here first.
+    assert_eq!(host.len(), 17, "mesh-domain's own host surface: {host:?}");
     assert_eq!(
         host.iter().filter(|h| h.contains("terminal-")).count(),
         5,
@@ -211,11 +216,11 @@ fn studio_reflects_plans_emits_and_composes() {
     assert_eq!(plan["steps"].as_array().unwrap().len(), 1);
     assert_eq!(plan["steps"][0]["plugs"].as_array().unwrap().len(), 3);
     // The union of host capabilities across the graph survives composition, and the
-    // plan says so. 22 on p2 (18 under the preview1 adapter) — the extra ones are
-    // the wasip2 std's `wasi:cli/terminal-*`.
+    // plan says so. 23 on p2 (18 under the preview1 adapter) — the extra ones are
+    // the wasip2 std's `wasi:cli/terminal-*` and `wasi:random/insecure-seed`.
     let needs: Vec<&str> = plan["host_needs"].as_array().unwrap().iter()
         .map(|h| h["raw"].as_str().unwrap()).collect();
-    assert_eq!(needs.len(), 22, "{needs:?}");
+    assert_eq!(needs.len(), 23, "{needs:?}");
     // The ones that actually matter: storage, egress and config all need a host.
     for want in ["wasi:keyvalue/store@0.2.0-draft", "wasi:config/store@0.2.0-rc.1"] {
         assert!(needs.contains(&want), "{want} missing from {needs:?}");
@@ -350,10 +355,16 @@ fn studio_reflects_plans_emits_and_composes() {
     let bin = root().join("host/target/release/comp-host");
     let child = Command::new(&bin)
         .args(["--component", studio_out.to_str().unwrap(), "--addr", RUN_ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "mesh")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=mesh"])
         // mesh reads its upstream route table from config; point it at nothing so
         // the guarded call fails honestly (connection refused) rather than hanging.
-        .env("CFG_ROUTES", "/upstream=http://127.0.0.1:3057/")
+        .args(["--config", "routes=/upstream=http://127.0.0.1:3057/"])
+        // outbound HTTP is default-deny; allow the (dead) loopback upstream so the
+        // failure is a refused connection, not an egress denial.
+        .args(["--egress", "127.0.0.1:3057", "--allow-private-egress"])
         .spawn()
         .expect("spawn composed");
     let _run = Kill(child);

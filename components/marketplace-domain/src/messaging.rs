@@ -111,8 +111,8 @@ fn open_inquiry(route: &Route, listing_id: &str, raw: &str) -> Reply {
 fn list_inquiries(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let entries = if is_admin(&principal) {
-        match records::list_records("inquiries", 100, "") {
-            Ok(page) => page.entries,
+        match crate::list_all("inquiries") {
+            Ok(entries) => entries,
             Err(_) => return Reply::err(500, "store_error"),
         }
     } else {

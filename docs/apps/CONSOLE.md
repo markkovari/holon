@@ -113,8 +113,12 @@ cargo xtask host console        # composes and serves on :3055
 npm --prefix examples/console test    # Playwright against the real stack, nothing stubbed below the browser
 ```
 
-`host-console` needs `platform-url` pointing at a running platform, and
-`surreal-url` at the store the loop writes its trace to. The e2e recipe brings up
+The console needs `platform-url` pointing at a running platform (default
+`http://127.0.0.1:8080`), and `surreal-url` at the store the loop writes its trace
+to. `cargo xtask host console` sets neither and opens no egress — comp-host denies
+outbound HTTP by default — so it serves a console that shows no runs. To see
+them, run `host/target/release/comp-host` yourself with those `--config` values
+plus `--egress <host:port> --allow-private-egress`. The e2e recipe brings up
 its own SurrealDB and a stand-in platform, and fails loudly rather than skipping
 if it cannot — a green suite that talked to nothing is worse than a red one.
 

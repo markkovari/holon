@@ -97,7 +97,7 @@ request/response one).
    `cargo xtask host drop`, drop a file and watch the three steps.
 4. **Bench** — the control/data split dimension: ticket-mint throughput (bytes
    never touched) vs upload throughput, and signature-verify overhead per
-   download. See `bench/DROP-BENCH.md`.
+   download.
 
 ## Non-goals (v1)
 

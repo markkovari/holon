@@ -6,7 +6,7 @@
 # ./hurl, pinned from gothinkster/realworld specs/api/hurl) against it.
 #
 # Prereqs: `hurl` (https://hurl.dev), plus a built host + composed wasm — the
-# `just conformance-conduit` recipe builds both first.
+# `cargo xtask e2e conformance-conduit` builds both first.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -20,7 +20,7 @@ BIN="$ROOT/host/target/release/comp-host"
 [ -f "$COMPONENT" ] || { echo "composed wasm missing: $COMPONENT (cargo xtask compose conduit)"; exit 1; }
 command -v hurl >/dev/null || { echo "hurl not installed — see https://hurl.dev"; exit 1; }
 
-VET_TENANT=conduit "$BIN" --component "$COMPONENT" --addr "$ADDR" --kv memory >/tmp/conduit-conformance-host.log 2>&1 &
+"$BIN" --config-file "$ROOT/examples/defaults.conf" --config default-tenant=conduit --component "$COMPONENT" --addr "$ADDR" --kv memory >/tmp/conduit-conformance-host.log 2>&1 &
 HOST_PID=$!
 trap 'kill "$HOST_PID" 2>/dev/null || true' EXIT
 

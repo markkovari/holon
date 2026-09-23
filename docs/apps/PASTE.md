@@ -88,8 +88,7 @@ showcase is the app that leans hardest on the pure-compute utilities.
    slugs; a two-pane SPA (paste ⇄ rendered) shows the "N PII masked" badge.
    `cargo xtask host paste`, paste something with an email in it.
 4. **Bench** — the pure-compute dimension: transforms-per-second through the full
-   validate→redact→render chain, showing near-zero host overhead. See
-   `bench/PASTE-BENCH.md`.
+   validate→redact→render chain, showing near-zero host overhead.
 
 ## Non-goals (v1)
 

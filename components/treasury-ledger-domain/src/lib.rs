@@ -144,7 +144,11 @@ fn seed_journal(body: &str) -> Reply {
     }
     let doc = json!({
         "transfer": req.get("transfer").and_then(Value::as_str).unwrap_or("fixture"),
-        "from": f("from"), "to": f("to"), "units": units, "at": rfc3339(now_secs()),
+        "from": f("from"), "to": f("to"), "units": units,
+        // An explicit `at` lets a gate write lines whose time disagrees with the order the
+        // store lists them in — the only way to tell "oldest first" from "first listed".
+        "at": req.get("at").and_then(Value::as_str).map(str::to_string)
+            .unwrap_or_else(|| rfc3339(now_secs())),
     });
     match records::create("journal", &doc.to_string(), &["from".to_string(), "to".to_string()]) {
         Ok(e) => Reply::json(201, json!({ "line": e.id })),

@@ -28,7 +28,7 @@ camera (localhost is a secure context, so `getUserMedia` works) with a manual
 paste fallback.
 
 ```bash
-just e2e-transit         # auth + fares + single-use + 8-way concurrency race + duration + QR
+cargo xtask e2e transit  # auth + fares + single-use + 8-way concurrency race + duration + QR
 # work on the UI live:
 cd examples/transit/ui && npm install && npm run dev
 ```

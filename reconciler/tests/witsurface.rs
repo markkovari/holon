@@ -166,7 +166,7 @@ fn render(all: &BTreeMap<String, String>) -> String {
     let mut s = String::from(
         "# Every WIT package this repository defines\n\
          \n\
-         Generated — `just wit-surfaces`. Do not edit.\n\
+         Generated — `WIT_SURFACES=write cargo test --test witsurface` in `reconciler/`. Do not edit.\n\
          \n\
          Rendered by `wasm-tools component wit` out of the BUILT components, so this\n\
          is the shape that actually shipped rather than the shape the source suggests.\n\
@@ -210,7 +210,7 @@ fn the_committed_surfaces_are_not_stale() {
     let fresh = render(&all);
     assert_eq!(
         committed, fresh,
-        "wit/SURFACES.md no longer describes what is built — run `just wit-surfaces`.\n\
+        "wit/SURFACES.md no longer describes what is built — run `WIT_SURFACES=write cargo test --test witsurface` in reconciler/.\n\
          If a package's SHAPE changed, its version has to change with it."
     );
 }
@@ -261,7 +261,7 @@ fn a_shape_may_not_change_without_its_version() {
     // to write it. So the workflow that satisfies one silenced the other:
     //
     //   1. add a case to a variant, leave the version alone   -> this test FAILS
-    //   2. `just wit-surfaces`, commit (what the other demands)
+    //   2. regenerate the snapshot (WIT_SURFACES=write), commit (what the other demands)
     //   3. this test PASSES, and a breaking change ships
     //
     // Measured, not reasoned about: done to `qr:encode` on a scratch branch, and

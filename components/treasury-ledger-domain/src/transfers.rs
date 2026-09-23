@@ -252,8 +252,31 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
         "lines": j_doc
     });
     
-    let _ = records::update("transfers", &t_entry.id, &updated_doc.to_string(), t_entry.revision);
-    
+    // The balances moved and the journal is written, so the books already agree; what is
+    // left is the transfer record itself. A write that is dropped here leaves it `pending`
+    // forever while the money is gone, so retry a bounded number of times and, if it still
+    // will not take, say so — the same rule as `journal_lost`. The answer names the transfer
+    // so whoever reads the 500 can find the record that is wrong.
+    let mut settled = false;
+    let mut revision = t_entry.revision;
+    for _ in 0..5 {
+        match records::update("transfers", &t_entry.id, &updated_doc.to_string(), revision) {
+            Ok(_) => {
+                settled = true;
+                break;
+            }
+            Err(records::StoreError::RevisionConflict(current)) => revision = current,
+            Err(_) => {}
+        }
+    }
+    if !settled {
+        return do_complete(500, json!({
+            "error": "settle_lost",
+            "transfer": t_entry.id,
+            "journal": j_entry.id
+        }));
+    }
+
     do_complete(201, json!({
         "transfer": t_entry.id,
         "from_units": final_from_units,

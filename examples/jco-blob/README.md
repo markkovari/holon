@@ -21,6 +21,7 @@ gen/                   # produced by `jco transpile` (gitignored)
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile      # blob_store.wasm -> gen/
 npm test

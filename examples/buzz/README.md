@@ -27,7 +27,7 @@ you get a demo quiz and a PIN). Open it on other devices, enter the **PIN** + a
 nickname, and play; the host clicks **Start / Reveal / Next**.
 
 ```bash
-just e2e-buzz            # the game loop + speed-weighted scoring
+cargo xtask e2e buzz     # the game loop + speed-weighted scoring
 # work on the UI live:
 cd examples/buzz/ui && npm install && npm run dev
 ```

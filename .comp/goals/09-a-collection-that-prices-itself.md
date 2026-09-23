@@ -37,8 +37,9 @@ free, and this one especially:
 
 ## What already exists, and is not to be rebuilt
 
-ADR-0089's rule applies to this goal harder than most. `just capsearch` before
-writing anything; the pool already holds:
+ADR-0089's rule applies to this goal harder than most. Search the catalogue before
+writing anything — `comp-catalog` in `reconciler/` prints it, and it is what
+`capsearch` ranks when a goal runs. The pool already holds:
 
 | for | use |
 |---|---|

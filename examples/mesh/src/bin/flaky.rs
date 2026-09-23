@@ -17,7 +17,7 @@
 //! nothing listens on) and the host's outgoing handler gives a real
 //! connect-refused.
 //!
-//! Run: `cargo run --release --bin flaky -- 127.0.0.1:3051` (or `just mesh-upstream`).
+//! Run: `cargo run --release --bin flaky -- 127.0.0.1:3051`.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};

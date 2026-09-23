@@ -24,6 +24,7 @@ redis / sqlite / NATS and the component is unchanged.
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test          # transpiles record_store.wasm -> gen/, then runs the tests
 ```

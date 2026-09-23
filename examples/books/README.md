@@ -27,7 +27,7 @@ debits equal credits; the **Reports** tab has the trial balance, P&L, and balanc
 sheet (+ a Statements PDF).
 
 ```bash
-just e2e-books           # the double-entry invariant + all three statements + PDF
+cargo xtask e2e books    # the double-entry invariant + all three statements + PDF
 # work on the UI live:
 cd examples/books/ui && npm install && npm run dev
 ```

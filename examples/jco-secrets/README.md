@@ -23,6 +23,7 @@ gen/                   # transpile output                  (gitignored)
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile      # secrets_vault.wasm -> gen/
 npm test               # behavioral checks

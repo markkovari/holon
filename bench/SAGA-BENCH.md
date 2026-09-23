@@ -44,7 +44,7 @@ id-generate + scheduler-timer) → `wasi:keyvalue`.
 - **Durability is the point, and it's not in these numbers.** The reason a saga
   costs 30 round-trips instead of living in memory is that every step is
   persisted — which is exactly what lets it survive a host kill and resume (see
-  `just durable-saga`). The latency *is* the durability.
+  `cargo xtask e2e durable-saga`). The latency *is* the durability.
 
 ## Repro
 
@@ -53,5 +53,5 @@ docker compose -f infra/compose.yaml up -d nats     # for the NATS column
 cargo xtask compose saga && (cd host && cargo build --release --bin comp-host)
 bench/saga-bench.sh memory
 bench/saga-bench.sh nats
-just durable-saga                                    # the restart-resume proof
+cargo xtask e2e durable-saga                         # the restart-resume proof
 ```

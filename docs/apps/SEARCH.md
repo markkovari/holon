@@ -90,7 +90,7 @@ facet, not auth), and anything stream/SSE (this is the request/response one).
    climb.
 4. **Bench** — the read-path dimension: query **latency percentiles** cold vs
    warm cache, and ranking correctness (a known query returns the known doc
-   first) across a larger seeded corpus. See `bench/SEARCH-BENCH.md`.
+   first) across a larger seeded corpus.
 
 ## Non-goals (v1)
 

@@ -4,7 +4,7 @@
 #
 # Prereqs (produce the two prebuilt artifacts, once):
 #   cargo xtask compose tempo        # -> components/target/tempo_domain.composed.wasm
-#   just build-tempo-ui       # -> examples/tempo/dist
+#   (cd examples/tempo/ui && npm ci && npm run build)   # -> examples/tempo/dist
 # Build (context = the comp/ repo root):
 #   docker build -f examples/tempo/Dockerfile -t tempo .
 # Run (Redis/Valkey URL at runtime — rediss:// for managed, TLS):

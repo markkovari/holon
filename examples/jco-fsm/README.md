@@ -24,6 +24,7 @@ auto-shimmed by jco.
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test
 ```

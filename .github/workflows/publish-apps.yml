@@ -70,10 +70,8 @@ jobs:
         working-directory: reconciler
         run: cargo build --release --bin comp-plug --bin comp-oci
 
-      # One artifact per app in `apps/`, composed the same way `just compose-<app>`
-      # composes it — derived from the root's imports, not from a written list.
-      # One artifact per app in `apps/`, composed the same way `just compose-<app>`
-      # composes it — derived from the root's imports, not from a written list.
+      # One artifact per app in `apps/`, composed the same way `cargo xtask compose
+      # <app>` composes it — derived from the root's imports, not from a written list.
       #
       # The ROOT component's name is the artifact's file name with underscores
       # turned back into dashes: `apps/<name>.toml` names the composed file and not

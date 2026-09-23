@@ -92,7 +92,7 @@ demo; the production gate is orthogonal).
 4. **Cross-host fan-out (`event:push`)** — a rule set on host A propagates to a
    console held open on host B via NATS-KV notifications. The multi-host
    upgrade, and a bench: **one rule flip → M consoles updated**, latency
-   distribution. See `bench/FLAGS-BENCH.md`.
+   distribution.
 
 ## Non-goals (v1)
 

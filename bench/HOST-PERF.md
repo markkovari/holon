@@ -325,7 +325,7 @@ static is not the hot path). For the fused single-process hosts (jco/native)
 end-to-end on the native host: `GET /` = 200 html from the component,
 register/login/pet/search green, SPA-fallback 200.
 
-### 2. Hybrid fuse+link topology (`just compose-vet-lattice`, `LATTICE=1`)
+### 2. Hybrid fuse+link topology (the since-retired `compose-vet-lattice` recipe, `LATTICE=1`)
 The 30-nested-instance cap doesn't force all-or-nothing: fuse the 6
 **pure-compute** caps (money, validate, md, pii, paginate, upload-policy) into
 vet-domain and keep everything stateful linked:
@@ -845,8 +845,9 @@ Takeaways:
   of the ladder on purpose — a create-flood benches the guard's 429 path, not
   the app.
 
-Reproduce: `cargo xtask host shortlink` (add `--pool` to the recipe's flags for the
-pooled row), seed one link, then
+Reproduce: `cargo xtask host shortlink` (pooling has since become comp-host's default, so this now gives the pooled row; the
+on-demand row needs `host/target/release/comp-host … --no-pool` run directly —
+`cargo xtask host` does not pass it through), seed one link, then
 `oha -z 10s -c 50 http://127.0.0.1:3008/{code}`.
 
 ## Round 10 — dev-portal: auth + ABAC + quota on every request, still ~free
@@ -892,7 +893,9 @@ Takeaways:
   left out: minting floods the KV with records and drain benches the
   receiver, not the portal.
 
-Reproduce: `cargo xtask host portal` (add `--pool` for the pooled row), register +
+Reproduce: `cargo xtask host portal` (pooling has since become comp-host's default, so this now gives the pooled row; the
+on-demand row needs `host/target/release/comp-host … --no-pool` run directly —
+`cargo xtask host` does not pass it through), register +
 login + create project + mint a high-limit key, then
 `oha -z 10s -c 50 -m POST -H "x-api-key: dk_…" http://127.0.0.1:3009/api/gateway/echo`.
 
@@ -973,17 +976,21 @@ Takeaways:
   app); status-page's `POST /api/tick` (probes external targets on a timer
   cadence — the bench would measure the probe target).
 
-Reproduce: `cargo xtask host relay` / `host-ledger` / `host-status` (add `--pool` to
-the recipe's flags for the pooled rows), seed via the routes in each app's
+Reproduce: `cargo xtask host relay` / `cargo xtask host ledger` / `cargo xtask host status`
+(pooling has since become comp-host's default, so this now gives the pooled rows; the
+on-demand rows need `host/target/release/comp-host … --no-pool` run directly —
+`cargo xtask host` does not pass it through), seed via the routes in each app's
 `GET /`, then e.g.
 `oha -z 10s -c 50 -m POST -d '{"order":42}' -H "x-relay-signature: <hex>" -H "x-relay-delivery: bench-1" http://127.0.0.1:3010/hook/{id}`.
 
 ## Reproduce
 
 ```bash
-# Rust host (add --pool for the pooling row):
-just host-full            # on-demand
-# edit the recipe / run directly with --pool for pooling
+# Rust host — pooling is now the default; add --no-pool for the on-demand row:
+cargo xtask compose vet && cargo build --release --manifest-path host/Cargo.toml --bin comp-host
+host/target/release/comp-host --component components/target/vet_domain.composed.wasm \
+  --addr 127.0.0.1:3007 --static-dir examples/jco-vet-clinic/public          # pooled
+#   ... --no-pool                                                            # on-demand
 
 # Node/jco:
 (cd examples/jco-vet-clinic && npm start)   # :3000

@@ -50,6 +50,42 @@ guestauth::guest_emit!();
 use bindings::fsm::workflow::engine as fsm;
 use bindings::records::store::store as records;
 
+/// `records:store`'s own ceiling on one `list_records` page (record-store's
+/// `MAX_LIMIT`); asking for more just gets this many back.
+const PAGE_SIZE: u32 = 500;
+
+/// Every entry in `collection`, not one page of it. `list_records` is
+/// cursor-paginated: a single call answers at most `PAGE_SIZE` entries, so an
+/// aggregate (a balance, a reputation, a fraud flag) or an admin listing that
+/// reads one page silently ignores every document past it.
+pub(crate) fn list_all(collection: &str) -> Result<Vec<records::Entry>, ()> {
+    drain_pages(|after| {
+        records::list_records(collection, PAGE_SIZE, after)
+            .map(|page| (page.entries, page.next))
+            .map_err(|_| ())
+    })
+}
+
+/// The paging loop behind [`list_all`], over any `fetch(after) -> (entries,
+/// next)`. Stops on the store's own "exhausted" signal — an empty `next` —
+/// not on a short page: record-store may hand back fewer entries than asked
+/// (index drift) while still having more. A `next` equal to the cursor just
+/// used would loop forever, so that stops too.
+fn drain_pages<T, E>(
+    mut fetch: impl FnMut(&str) -> Result<(Vec<T>, String), E>,
+) -> Result<Vec<T>, E> {
+    let mut all = Vec::new();
+    let mut after = String::new();
+    loop {
+        let (entries, next) = fetch(&after)?;
+        all.extend(entries);
+        if next.is_empty() || next == after {
+            return Ok(all);
+        }
+        after = next;
+    }
+}
+
 /// Idempotent — `define` on an already-defined name just replaces it with the
 /// same definition, which is harmless (same discipline
 /// `guest_owner_or_admin_policy!` uses for idempotent policy-rule setup
@@ -448,3 +484,61 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::drain_pages;
+
+    /// A fake `list_records` over `0..total`, `size` per page, cursor = the
+    /// last id handed out — record-store's own cursor shape.
+    fn fake_store(total: u32, size: u32) -> impl FnMut(&str) -> Result<(Vec<u32>, String), ()> {
+        move |after: &str| {
+            let start = if after.is_empty() { 0 } else { after.parse::<u32>().unwrap() + 1 };
+            let end = (start + size).min(total);
+            let entries: Vec<u32> = (start..end).collect();
+            let next = if end < total { (end - 1).to_string() } else { String::new() };
+            Ok((entries, next))
+        }
+    }
+
+    #[test]
+    fn reads_every_page_not_just_the_first() {
+        let all = drain_pages(fake_store(2_345, 500)).unwrap();
+        assert_eq!(all.len(), 2_345);
+        assert_eq!(all, (0..2_345).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn an_empty_collection_is_one_empty_page() {
+        assert!(drain_pages(fake_store(0, 500)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_short_page_with_a_cursor_keeps_going() {
+        // Index drift: page one comes back with fewer entries than asked but
+        // the store still says there is more.
+        let mut calls = 0;
+        let all = drain_pages(|after: &str| {
+            calls += 1;
+            Ok::<_, ()>(match after {
+                "" => (vec![1, 2], "c1".to_string()),
+                "c1" => (vec![3], String::new()),
+                _ => unreachable!(),
+            })
+        })
+        .unwrap();
+        assert_eq!(all, vec![1, 2, 3]);
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn a_cursor_that_does_not_advance_stops() {
+        let all = drain_pages(|_after: &str| Ok::<_, ()>((vec![7], "stuck".to_string()))).unwrap();
+        assert_eq!(all, vec![7, 7]);
+    }
+
+    #[test]
+    fn a_store_error_is_an_error() {
+        assert!(drain_pages(|_after: &str| Err::<(Vec<u32>, String), _>(())).is_err());
+    }
+}

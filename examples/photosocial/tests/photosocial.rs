@@ -55,7 +55,10 @@ fn start_host() -> HostGuard {
 
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "photosocial")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=photosocial"])
         .spawn()
         .expect("spawn comp-host");
     let guard = HostGuard(child);

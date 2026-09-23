@@ -8,6 +8,8 @@
 //! Note: monitors have a 10s minimum period, so this test sleeps across two
 //! periods to prove the degraded -> down transition. It is deliberately slow.
 
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::thread::sleep;
@@ -45,15 +47,41 @@ fn req(method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     (status, serde_json::from_str(&resp.into_string().unwrap_or_default()).unwrap_or(Value::Null))
 }
 
-fn start_host() -> HostGuard {
+/// A healthy upstream for the "self" monitor: answers every request 200.
+///
+/// It used to be the status page's own root, but comp-host now refuses a
+/// component's egress to its own listener (it would let a component call back in
+/// as a client), so the always-up target has to be something else.
+fn start_upstream() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream");
+    let addr = listener.local_addr().unwrap().to_string();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let mut stream = stream;
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok");
+        }
+    });
+    addr
+}
+
+fn start_host(upstream: &str) -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/status_page.composed.wasm");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-status`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e status`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose status)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "status")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=status"])
+        // Default-deny egress: the probes need the healthy upstream and the dead
+        // port on the allow-list (both loopback, hence private egress) — a DENIED
+        // probe would fail too, but for the wrong reason.
+        .args(["--egress", upstream, "--egress", "127.0.0.1:59999", "--allow-private-egress"])
         .spawn()
         .expect("spawn comp-host");
     let guard = HostGuard(child);
@@ -82,10 +110,11 @@ fn id_of(status: &Value, name: &str) -> String {
 
 #[test]
 fn probe_transitions_up_degraded_down() {
-    let host = start_host();
+    let upstream = start_upstream();
+    let host = start_host(&upstream);
 
-    // a monitor that probes the status page's OWN root (always 200 -> up) ...
-    let (s, _) = req("POST", "/api/monitors", Some(json!({"name": "self", "url": base() + "/", "period": 10})));
+    // a monitor that probes a healthy upstream (always 200 -> up) ...
+    let (s, _) = req("POST", "/api/monitors", Some(json!({"name": "self", "url": format!("http://{upstream}/"), "period": 10})));
     assert_eq!(s, 201, "create self monitor");
     // ... and one pointing at a dead port (connection refused -> failing).
     let (s, _) = req("POST", "/api/monitors", Some(json!({"name": "dead", "url": "http://127.0.0.1:59999/", "period": 10})));

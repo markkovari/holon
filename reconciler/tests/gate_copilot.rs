@@ -8,7 +8,7 @@
 //! slice of the prose.
 //!
 //! Verified against `mlx-community/Qwen3.8-27B-4bit` on csatapaci through
-//! `just openai-shim`.
+//! `tools/openai-shim.mjs`.
 
 mod gatelib;
 use gatelib::{field, Gate, Shim};

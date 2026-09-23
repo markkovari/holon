@@ -19,7 +19,7 @@ wasm-tools component new embedded.wasm -o bytes_codec_moonbit.wasm
 - It builds to a **17 KB component** against the Rust build's 63 KB, and
   `wasm-tools component wit` confirms it exports `bytes:codec/codec@0.1.0` — a real,
   interchangeable-by-shape artifact.
-- Dropping it in place of the Rust `.wasm` and running `just gate-codec` composes and
+- Dropping it in place of the Rust `.wasm` and running `cargo xtask e2e gate-codec` composes and
   serves it without touching `codec-probe` or the gate. That part of the premise
   holds: **the gate does not care what compiled the thing it judges.**
 
@@ -51,6 +51,6 @@ language's test framework, and it is worth more than the rewrite would have been
 
 ## Retrying
 
-Rebuild and re-run `just gate-codec` with this artifact swapped in. If the string
+Rebuild and re-run `cargo xtask e2e gate-codec` with this artifact swapped in. If the string
 lowering has been fixed upstream, the thirteen cases pass unchanged — nothing here or
 in the gate needs editing.

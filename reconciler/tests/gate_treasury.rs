@@ -431,6 +431,35 @@ fn reconcile_reads_the_journal_and_is_idempotent() {
     assert_eq!(ats, sorted, "oldest first, and these are not: {ats:?}");
 }
 
+/// `?limit=` is "the oldest `limit` lines", not "the first `limit` the store lists, sorted".
+///
+/// The two agree whenever a line's `at` matches the order it was written in, which is every
+/// line `transfers` writes — so the difference is only visible with lines whose `at` says
+/// otherwise. The fixture takes an explicit `at` for exactly that.
+#[test]
+fn journal_limit_answers_the_oldest_lines() {
+    let Some(gate) = start() else { return };
+    let t = token(&gate, "treasurer", None);
+    let (l, r) = pair(&gate, "100.00");
+    // Written in this order; listed in this order; NOT oldest-first.
+    for at in ["2030-01-01T00:00:00Z", "2020-01-01T00:00:00Z", "2025-01-01T00:00:00Z"] {
+        let (c, b) =
+            gate.post("/test/journal", None, json!({"from": l, "to": r, "units": 1, "at": at}));
+        assert_eq!(c, 201, "the journal fixture refused a line: {b}");
+    }
+    let j = parse(&gate.get("/api/journal?limit=2", Some(&t)).1);
+    let ats: Vec<&str> = j["lines"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|x| x["at"].as_str()).collect())
+        .unwrap_or_default();
+    assert_eq!(
+        ats,
+        vec!["2020-01-01T00:00:00Z", "2025-01-01T00:00:00Z"],
+        "?limit=2 must answer the two OLDEST lines, oldest first. Taking the first two the \
+         store lists and sorting those answers 2020 and 2030 — ordered, and the wrong page: {j}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // the composition — the gate no single part can pass
 // ---------------------------------------------------------------------------

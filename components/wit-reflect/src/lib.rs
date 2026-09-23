@@ -893,8 +893,7 @@ mod tests {
         // crate stopped failing to link, and found it red.
         let Ok(bytes) = std::fs::read(&path) else {
             eprintln!(
-                "SKIPPED: {} is not there — run `cargo xtask compose mesh` (or `just plug \
-                 mesh-domain`). Nothing about composed artifacts was verified by \
+                "SKIPPED: {} is not there — run `cargo xtask compose mesh`. Nothing about composed artifacts was verified by \
                  this run.",
                 path.display()
             );

@@ -46,11 +46,11 @@ async function waitForHttp(url: string, what: string, tries = 60): Promise<void>
 }
 
 export default async function globalSetup() {
-  const host = need("host/target/release/comp-host", "just build-reconciler");
+  const host = need("host/target/release/comp-host", "cargo build --release --manifest-path host/Cargo.toml --bin comp-host");
   // The COMPOSED artifact: poll-domain plus the four components that satisfy its
   // imports. `comp-plug` derives that chain from the imports themselves, so this is
   // one file rather than a list the suite has to keep in step.
-  const composed = need("components/target/poll_domain.composed.wasm", "just compose-poll");
+  const composed = need("components/target/poll_domain.composed.wasm", "cargo xtask compose poll");
 
   const proc = spawn(
     host,

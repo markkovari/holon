@@ -157,69 +157,6 @@ fn report_who_consumes_each_capability() {
     );
 }
 
-/// The committed graph still describes the components that exist.
-///
-/// `docs/CAPABILITY-GRAPH.md` is generated, and a generated file that nobody
-/// regenerates is a hand-maintained one with extra steps. This does not compare
-/// the whole document — the prose in it is written by a person and should be
-/// editable — only the numbers that come from the artifacts, because those are
-/// what go stale silently when a component gains an import.
-#[test]
-fn the_committed_capability_graph_is_not_stale() {
-    let Some(cat) = catalogue() else { return };
-    let path = repo_root().join("docs/CAPABILITY-GRAPH.md");
-    let Ok(doc) = std::fs::read_to_string(&path) else {
-        eprintln!("SKIPPED: {} is not there — run `just capgraph`", path.display());
-        return;
-    };
-
-    let edges = cat.edges();
-    let ifaces: std::collections::BTreeSet<&String> = edges.iter().map(|(_, i, _)| i).collect();
-    // The counts that come from the artifacts. The app count is deliberately not
-    // asserted here: it is read from the Justfile, and a test that fails because
-    // somebody added a showcase is a test that gets deleted.
-    let prefix = format!(
-        "**{} components, {} interfaces with a provider and at least one consumer, {} \
-         import edges, {} interfaces exported but unconsumed in-tree,",
-        cat.len(),
-        ifaces.len(),
-        edges.len(),
-        cat.orphan_exports().len()
-    );
-    assert!(
-        doc.contains(&prefix),
-        "docs/CAPABILITY-GRAPH.md is stale — run `just capgraph`.\n  expected it to start: {prefix}"
-    );
-
-    // The application layer has to be there at all. It is the half that answers
-    // "which apps carry this component", and it disappears silently if the
-    // Justfile stops being parseable — the `_derive` lines are its only source.
-    assert!(
-        doc.contains("## Which apps is this component inside?"),
-        "the graph has lost its application layer — comp-capgraph found no `_derive` \
-         lines in the Justfile, so no app could be resolved to a root component"
-    );
-    let apps_listed = doc.lines().filter(|l| l.starts_with("| **")).count();
-    assert!(
-        apps_listed > 30,
-        "only {apps_listed} applications in the graph; the Justfile has more \
-         `compose-*` recipes than that, so parsing them has broken"
-    );
-
-    // And the number that actually matters: the most-consumed interface's count,
-    // because that is the one somebody will read before deciding to change it.
-    let mut counts: Vec<(usize, &String)> =
-        ifaces.iter().map(|i| (cat.consumer_count(i), *i)).collect();
-    counts.sort_by(|a, b| b.0.cmp(&a.0));
-    if let Some((n, iface)) = counts.first() {
-        let short = iface.split('@').next().unwrap_or(iface);
-        assert!(
-            doc.contains(&format!("| {n} | `{short}` |")),
-            "the graph does not report {short} as having {n} consumers — run `just capgraph`"
-        );
-    }
-}
-
 /// A version of an interface that only one side moved to.
 ///
 /// The failure mode `every_import_has_a_provider` reports as "nothing exports it",

@@ -28,6 +28,7 @@ gen/                     # transpile output (gitignored) -> gen/jsonpatch.js
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile        # jsonpatch.wasm -> gen/
 npm test                 # behavioral checks

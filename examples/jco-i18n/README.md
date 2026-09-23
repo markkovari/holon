@@ -27,6 +27,7 @@ Both shims are trivial and swappable for real backends:
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test        # transpiles i18n_catalog.wasm -> gen/, then runs the test suite
 ```

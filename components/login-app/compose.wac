@@ -1,7 +1,10 @@
 // Declarative composition of the login-app consumer with its three
 // capabilities, the `wac compose` counterpart to the imperative `wac plug`
-// chain in `cargo xtask compose login`. Build with `just compose-login-wac`, which
-// passes each package's wasm via --dep.
+// chain in `cargo xtask compose login`. Build it with `wac compose`, passing each
+// package's wasm via --dep (R = components/target/wasm32-wasip2/release):
+//   wac compose components/login-app/compose.wac --dep login:component=$R/login_app.wasm \
+//     --dep session:store=$R/session_store.wasm --dep config:store=$R/config_store.wasm \
+//     --dep secrets:vault=$R/secrets_vault.wasm -o components/target/login_app.wac-composed.wasm
 //
 // `wac plug` infers the wiring from matching imports/exports; this file states
 // it explicitly: instantiate each capability, then feed their exports into the

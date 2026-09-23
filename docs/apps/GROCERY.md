@@ -90,7 +90,7 @@ bash tools/screencast/to-gif.sh tools/screencast/videos/grocery-tablet/*.webm do
 node tools/screencast/grocery-desktop.mjs
 bash tools/screencast/to-gif.sh tools/screencast/videos/grocery-desktop/*.webm docs/media/grocery-desktop.gif 960 12 1
 
-# Dual Showcase (Desktop + Mobile side-by-side):
-node tools/screencast/preview.mjs
-bash tools/screencast/to-gif.sh tools/screencast/videos/grocery-dual/*.webm docs/media/grocery.gif 1020 12 1
+# Full shopper + admin walkthrough (414x896):
+node tools/screencast/grocery.mjs
+bash tools/screencast/to-gif.sh tools/screencast/videos/grocery/*.webm docs/media/grocery.gif 400 12 1
 ```

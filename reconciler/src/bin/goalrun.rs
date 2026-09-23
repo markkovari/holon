@@ -636,8 +636,8 @@ pub fn artifacts(provider: &str) -> Result<Vec<String>> {
 /// implementation, and `capsearch` answers that from the components plus the
 /// artifacts. The GRAPH — who imports what from whom, and how many applications
 /// carry a capability — lived only in `docs/CAPABILITY-GRAPH.md` and in a
-/// projection that nothing outside a test ever ran. `just capgraph-store` could
-/// write it by hand; nothing did it on the path a real run takes.
+/// projection that nothing outside a test ever ran. `comp-capgraph --format surql`
+/// piped to the store's `/sql` could write it by hand; nothing did it on the path a real run takes.
 ///
 /// So a run with a pool seeds it, at startup, from the BUILT artifacts. That
 /// keeps `comp-capgraph`'s own rule — "derived from the built artifacts every

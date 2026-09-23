@@ -16,7 +16,7 @@ jget() { node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{co
 nc -z 127.0.0.1 4222 2>/dev/null || { echo "FAIL: NATS not on :4222 (docker compose -f infra/compose.yaml up -d nats)"; exit 1; }
 [ -f "$COMP" ] || { echo "FAIL: composed wasm missing (cargo xtask compose saga)"; exit 1; }
 
-start() { VET_TENANT=saga "$BIN" --component "$COMP" --addr "$ADDR" --kv nats --nats-url 127.0.0.1:4222 >/tmp/saga-durable.log 2>&1 & echo $!; }
+start() { "$BIN" --config-file examples/defaults.conf --config default-tenant=saga --component "$COMP" --addr "$ADDR" --kv nats --nats-url 127.0.0.1:4222 >/tmp/saga-durable.log 2>&1 & echo $!; }
 wait_up() { for _ in $(seq 1 60); do curl -sf "$B/" >/dev/null 2>&1 && return; sleep 0.2; done; echo "FAIL: host not up"; exit 1; }
 
 PID=$(start); wait_up

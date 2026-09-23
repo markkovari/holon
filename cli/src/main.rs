@@ -507,8 +507,9 @@ fn main() -> Result<()> {
             }
             let status = cmd.status().map_err(|e| {
                 anyhow::anyhow!(
-                    "could not run `{bin}` ({e}). Build it with `just goal-run` (which builds \
-                     and runs in one step), or set COMP_GOALRUN_BIN to its path."
+                    "could not run `{bin}` ({e}). Build it with `cargo build --release --bin \
+                     comp-goalrun` in reconciler/ and put it on PATH, or set \
+                     COMP_GOALRUN_BIN to its path."
                 )
             })?;
             if !status.success() {

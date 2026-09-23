@@ -18,7 +18,7 @@ golem/                   # all three patterns as real Golem agents (one durable 
 ## Run it on Golem (exact serialization)
 
 `golem/` is the full trio as durable **Golem agents** — one single-writer worker
-per key, no CAS. `just gate-golem` deploys to a local Golem and fires concurrent
+per key, no CAS. `cargo xtask e2e gate-golem` deploys to a local Golem and fires concurrent
 bursts: rate limit admits **exactly** the capacity, throttle exactly `burst+1`,
 the batch accounts for **every** submit (no loss/dup), and a `SubmitAgent`
 **durably blocks** on a Golem promise until its batch flushes (real
@@ -39,7 +39,7 @@ submit items to a batch and watch it coalesce and flush. No login — a gateway
 keys by a client-supplied API key (the field in the header).
 
 ```bash
-just e2e-gate            # token bucket + GCRA (deterministic) + batch flush + concurrency probe
+cargo xtask e2e gate     # token bucket + GCRA (deterministic) + batch flush + concurrency probe
 # work on the UI live:
 cd examples/gate/ui && npm install && npm run dev
 ```

@@ -45,7 +45,7 @@ fsm-workflow + id-generate + markdown) → `wasi:keyvalue` backend.
 
 ```bash
 docker compose -f infra/compose.yaml up -d nats
-cargo xtask host helpdesk            # NATS-backed on :3007 (+ SPA)
-# memory variant: same binary with --kv memory
+cargo xtask host helpdesk --kv nats   # NATS-backed (127.0.0.1:4222) on :3007 (+ SPA)
+# memory variant: cargo xtask host helpdesk --kv memory   (the app's own default is sqlite)
 oha -z 10s -c 20 -H "authorization: Bearer $TOKEN" http://127.0.0.1:3007/api/tickets
 ```

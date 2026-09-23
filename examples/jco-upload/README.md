@@ -25,6 +25,7 @@ gen/                      # transpile output (gitignored)
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile         # upload_policy.wasm -> gen/
 npm test                  # behavioral checks

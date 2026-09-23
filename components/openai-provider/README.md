@@ -17,10 +17,14 @@ OpenAI, Together, Groq, vLLM, or a local Ollama / llama.cpp `--api` server.
 
 ```bash
 # offline / tests — the deterministic mock provider:
-cargo xtask compose ai          # -> ai_inference.composed.wasm   (+ llm-inference mock)
+cargo xtask stage-examples      # -> ai_inference.composed.wasm   (+ llm-inference mock, pinned)
 
 # production — the real OpenAI-compatible client, SAME domain layer:
-just compose-ai-openai   # -> ai_inference.openai.composed.wasm (+ openai-provider)
+# comp-plug takes the first exporter it finds, so hand it a dir holding only this one
+mkdir -p components/target/openai-override
+cp components/target/wasm32-wasip2/release/openai_provider.wasm components/target/openai-override/
+cp "$(reconciler/target/release/comp-plug ai-inference --dir components/target/openai-override)" \
+   components/target/ai_inference.openai.composed.wasm   # (+ openai-provider)
 ```
 
 No `ai:inference` or app code changes between the two — only the `wac plug`

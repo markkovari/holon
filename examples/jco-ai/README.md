@@ -11,10 +11,10 @@ This example runs the **MOCK** provider: a deterministic, offline
 [`wac plug`](../../reconciler/src/plug.rs) via:
 
 ```sh
-cargo xtask compose ai   # ai_assist.wasm + llm_inference.wasm -> ai_assist.composed.wasm
+cargo xtask stage-examples   # ai-inference + llm-inference -> ai_inference.composed.wasm, copied here
 ```
 
-The result, `ai_assist.composed.wasm`, exports **only**
+The result, `ai_inference.composed.wasm`, exports **only**
 `ai:inference/assistant@0.1.0` — the `llm:inference` import is satisfied internally.
 Because the provider is the mock, every call is deterministic:
 
@@ -30,6 +30,7 @@ nothing in `ai-inference` or the calling app changes.
 ## Run
 
 ```sh
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test          # transpiles ai_assist.composed.wasm -> gen/, runs test/ai.test.ts
 ```

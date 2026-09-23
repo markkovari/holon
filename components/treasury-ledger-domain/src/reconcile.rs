@@ -143,36 +143,33 @@ fn list_journal(route: &Route) -> Reply {
     let limit_str = route.param("limit");
     let limit = limit_str.parse::<u32>().unwrap_or(50).min(500);
     
-    let mut lines = Vec::new();
+    // "Oldest first, up to `limit`" is a claim about the WHOLE journal, not about the first
+    // page the store hands back: the store lists in id order and a line's `at` is what the
+    // contract orders by. So read every line, order by `at` (id breaks ties, and ids are
+    // time-sortable), and only then cut to `limit`.
+    let mut lines: Vec<(String, String, Value)> = Vec::new();
     let mut after = String::new();
     loop {
-        let page = match records::list_records("journal", limit, &after) {
+        let page = match records::list_records("journal", 200, &after) {
             Ok(p) => p,
             Err(_) => return Reply::err(503, "store_unavailable"),
         };
         let empty = page.entries.is_empty();
         for e in page.entries {
             if let Ok(mut v) = serde_json::from_str::<Value>(&e.data) {
+                let at = v.get("at").and_then(Value::as_str).unwrap_or("").to_string();
                 if let Some(o) = v.as_object_mut() {
                     o.insert("id".into(), json!(e.id));
                 }
-                lines.push(v);
-                if lines.len() >= limit as usize {
-                    break;
-                }
+                lines.push((at, e.id, v));
             }
         }
-        if lines.len() >= limit as usize { break; }
         if empty || page.next.is_empty() { break; }
         after = page.next;
     }
-    
-    lines.sort_by(|a, b| {
-        a.get("at")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .cmp(b.get("at").and_then(Value::as_str).unwrap_or(""))
-    });
-    
+
+    lines.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    let lines: Vec<Value> = lines.into_iter().take(limit as usize).map(|(_, _, v)| v).collect();
+
     Reply::json(200, json!({"lines": lines}))
 }

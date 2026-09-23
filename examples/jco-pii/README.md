@@ -21,6 +21,7 @@ append-only audit trail.
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test
 ```

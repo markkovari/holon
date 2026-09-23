@@ -205,7 +205,7 @@ pub fn artifacts(app: &str, composed: &str) -> Option<(PathBuf, PathBuf)> {
         return None;
     }
     if !wasm.exists() {
-        eprintln!("SKIPPED [{app}]: no {composed} — run `just compose-{app}`");
+        eprintln!("SKIPPED [{app}]: no {composed} — run `cargo xtask compose {app}`");
         return None;
     }
     Some((host, wasm))
@@ -237,7 +237,7 @@ impl Gate {
     }
 
     /// Compose `crate_name` here and serve it as `app`. The shape every gate wants:
-    /// nothing has to have run `just compose-…` first.
+    /// nothing has to have run `cargo xtask compose …` first.
     pub fn compose_and_start(app: &str, crate_name: &str, config: &[&str]) -> Option<Self> {
         let wasm = compose(crate_name)?;
         let host = host_bin();
@@ -900,8 +900,8 @@ pub fn rfc3339(secs: u64) -> String {
 /// for real would spend a completion on liveness.
 ///
 /// `SHIM_URL` overrides, and `.comp/csatapaci.env` documents the two ways to have one:
-/// `just openai-shim` in front of a local mlx server, or `just claude-shim` in front of
-/// a subscription.
+/// `node tools/openai-shim.mjs` in front of a local mlx server, or
+/// `node tools/claude-shim.mjs` in front of a subscription.
 pub struct Shim {
     url: String,
 }
@@ -942,8 +942,8 @@ impl Shim {
             );
             eprintln!(
                 "SKIPPED [{gate_name}]: no model shim at {url} — start one with \
-                 `just openai-shim` (a local mlx server) or `just claude-shim` (a \
-                 subscription), or set SHIM_URL"
+                 `node tools/openai-shim.mjs` (a local mlx server) or \
+                 `node tools/claude-shim.mjs` (a subscription), or set SHIM_URL"
             );
             return None;
         }

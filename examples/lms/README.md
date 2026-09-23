@@ -26,7 +26,7 @@ course to manage + a gradebook) or as `student` (enroll in the course, take the
 auto-graded quiz, watch your progress, and download a certificate once you pass).
 
 ```bash
-just e2e-lms             # the multi-role flow + grade reconciliation
+cargo xtask e2e lms      # the multi-role flow + grade reconciliation
 # work on the UI live:
 cd examples/lms/ui && npm install && npm run dev
 ```

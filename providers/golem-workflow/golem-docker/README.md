@@ -29,7 +29,7 @@ older server. `registry-service:v1.5.5` does exist on Docker Hub — bumping the
 `.env` to a fully version-matched image set is the likely fix, but wasn't
 confirmed here.
 
-**So:** the *verified* live e2e (`just golem-e2e`, `../e2e.sh`) uses Golem's
+**So:** the *verified* live e2e (`cargo xtask e2e golem`, `../e2e.sh`) uses Golem's
 **single-binary dev server** (`golem server run`) — zero-auth, one process,
 confirmed working end to end. This compose is the reproducible, production-shaped
 alternative once the CLI↔server versions are matched and a token is seeded — the

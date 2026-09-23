@@ -69,7 +69,7 @@ fn root() -> PathBuf {
 
 fn start_upstream() -> Kill {
     let bin = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/release/flaky");
-    assert!(bin.exists(), "flaky upstream not built: {bin:?} (run `just e2e-mesh`)");
+    assert!(bin.exists(), "flaky upstream not built: {bin:?} (run `cargo xtask e2e mesh`)");
     let child = Command::new(&bin).arg(UPSTREAM).spawn().expect("spawn flaky");
     let guard = Kill(child);
     for _ in 0..100 {
@@ -84,13 +84,18 @@ fn start_upstream() -> Kill {
 fn start_host() -> Kill {
     let bin = root().join("host/target/release/comp-host");
     let component = root().join("components/target/mesh_domain.composed.wasm");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-mesh`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e mesh`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose mesh)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", HOST, "--kv", "memory"])
-        .env("VET_TENANT", "mesh")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=mesh"])
         // the proxy:route table — /upstream is the flaky server, /dead is nothing.
-        .env("CFG_ROUTES", format!("/upstream=http://{UPSTREAM}/,/dead=http://{DEAD}/"))
+        .arg("--config").arg(format!("routes=/upstream=http://{UPSTREAM}/,/dead=http://{DEAD}/"))
+        // outbound HTTP is default-deny, and both upstreams are on loopback.
+        .args(["--egress", UPSTREAM, "--egress", DEAD, "--allow-private-egress"])
         .spawn()
         .expect("spawn comp-host");
     let guard = Kill(child);

@@ -29,8 +29,8 @@ Open the page:
 ## Test it
 
 ```bash
-just e2e-pipeline           # enqueue→ack, live SSE, then down→retry→dead→replay
+cargo xtask e2e pipeline    # enqueue→ack, live SSE, then down→retry→dead→replay
 ```
 
-The e2e sets `CFG_MAX_ATTEMPTS=1` + `CFG_BASE_BACKOFF=1` so the dead-letter path
-is reachable in a couple of seconds (host defaults are 5 attempts / 5s backoff).
+The e2e passes `--config max-attempts=1 --config base-backoff=1` so the dead-letter path
+is reachable in a couple of seconds (component defaults are 5 attempts / 5s backoff).

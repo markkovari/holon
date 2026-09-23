@@ -24,5 +24,5 @@ id + **Join** in the other, and play. Open a third window on the same `?game=<id
 to spectate the live board.
 
 ```bash
-just e2e-arena           # the rules + win + live-SSE e2e (spawns the host)
+cargo xtask e2e arena    # the rules + win + live-SSE e2e (spawns the host)
 ```

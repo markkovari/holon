@@ -26,7 +26,7 @@ server renders the SVG chart. Charts are drawn in `currentColor`, so they follow
 the light/dark theme.
 
 ```bash
-just e2e-dashboards      # seed + a valid SVG per kind (bar/line/donut/sparkline) + ownership
+cargo xtask e2e dashboards # seed + a valid SVG per kind (bar/line/donut/sparkline) + ownership
 # work on the UI live:
 cd examples/dashboards/ui && npm install && npm run dev
 ```

@@ -12,7 +12,7 @@ bench/node_modules/.bin/jco componentize components/bytes-codec-js/codec.js \
 # then swap it in for the Rust build and run the contract against it
 cp components/bytes-codec-js/bytes_codec_js.wasm \
    components/target/wasm32-wasip2/release/bytes_codec.wasm
-just gate-codec
+cargo xtask e2e gate-codec
 ```
 
 ## What it proves

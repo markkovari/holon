@@ -61,12 +61,15 @@ fn start_host() -> HostGuard {
     let root = repo_root();
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/conduit_domain.composed.wasm");
-    assert!(bin.exists(), "host binary not built: {bin:?} (run `just e2e-conduit`)");
+    assert!(bin.exists(), "host binary not built: {bin:?} (run `cargo xtask e2e conduit`)");
     assert!(component.exists(), "composed wasm missing: {component:?} (run `cargo xtask compose conduit`)");
 
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "conduit")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=conduit"])
         .spawn()
         .expect("spawn comp-host");
     let guard = HostGuard(child);

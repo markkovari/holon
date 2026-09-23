@@ -7,7 +7,7 @@
 #
 # Direct mode (native hosts):   ./smoke.sh
 # Gateway mode (SPA/k8s edge):  GATEWAY=http://127.0.0.1:8080 ./smoke.sh
-# Knobs: expects ordering to run with CFG_GRACE_PERIOD_SECS small (e.g. 3).
+# Knobs: expects ordering to run with a small grace period — start run-local.sh with GRACE=3.
 set -euo pipefail
 
 IDENTITY=${IDENTITY:-http://127.0.0.1:3105}
