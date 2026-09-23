@@ -13,6 +13,8 @@
 # `comp-goalrun` writes a candidate's files here before the gate reads them
 # (reconciler/src/bin/goalrun.rs). Source-shaped, and a `git add -A` picks it up.
 /target/goalrun/
+# `cargo xtask host`'s local sqlite state, one directory per app.
+/target/state/
 **/*.wasm
 
 # Generated bindings. Only Rust's are ignored, and the asymmetry is deliberate:
