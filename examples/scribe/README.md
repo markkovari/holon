@@ -26,5 +26,5 @@ appear live in the other window. Add `?doc=notes&name=Alice` to pick a document
 and display name.
 
 ```bash
-just e2e-scribe           # the convergence + live-SSE e2e (spawns the host)
+cargo xtask e2e scribe    # the convergence + live-SSE e2e (spawns the host)
 ```

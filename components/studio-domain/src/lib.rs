@@ -191,7 +191,7 @@ fn component_add(request: &IncomingRequest, query: &Map<String, Value>) -> Outco
     let doc = json!({
         "id": id, "surface": surface_json(&surface), "uploaded": now(),
     });
-    // Re-uploading the same id replaces it, so `just seed-studio` is repeatable.
+    // Re-uploading the same id replaces it, so seeding the palette twice is harmless.
     let existing = find_one(COMPONENTS, "id", &id);
     let stored = match existing {
         Some((rec_id, revision, _)) => {

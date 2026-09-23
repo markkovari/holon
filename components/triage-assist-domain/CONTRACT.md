@@ -208,13 +208,14 @@ The events the other parts write, and they are named exactly this:
 | a model answered | `reports.assist` | `ok` |
 | the model was unavailable | `reports.assist` | `error` |
 
-The router additionally notes every dispatched request as `http.request` / `ok`, so
-the ledger has traffic to show before any other part exists.
+The router additionally notes every dispatched request as `http.request` — outcome
+`ok` when the status is below 400 and `error` otherwise — so the ledger has traffic
+to show before any other part exists.
 
 ### `GET /api/audit?limit=N` — requires `reports:read`
 
 `200 {"events":[…]}`, newest first, `limit` default 20 and capped at 100, over
-`audit:log/query.recent`. Each event is the record's ten fields, camel-free, exactly
+`audit:log/query.recent`. Each event is the record's nine fields, camel-free, exactly
 as the interface names them (`trace_id`, `span_id`, …).
 
 ### `GET /api/audit?trace=T` — requires `reports:read`

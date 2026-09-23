@@ -3,7 +3,7 @@
 //! then a 429), the cumulative quota decrementing, lockout after a burst, and a
 //! verdict reaching a SEPARATE held-open SSE connection live.
 //!
-//! `CFG_MAX_ATTEMPTS=6` + `CFG_LOCKOUT_WINDOW=3` make the ceiling small and the
+//! `--config max-attempts=6` + `--config lockout-window=3` make the ceiling small and the
 //! window short so the test is fast (defaults are 5 / 300s).
 
 use std::io::{BufRead, BufReader};
@@ -49,13 +49,16 @@ fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/throttle_domain.composed.wasm");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-ratelimit`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e ratelimit`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose ratelimit)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "throttle")
-        .env("CFG_MAX_ATTEMPTS", "6")
-        .env("CFG_LOCKOUT_WINDOW", "3")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=throttle"])
+        .args(["--config", "max-attempts=6"])
+        .args(["--config", "lockout-window=3"])
         .spawn()
         .expect("spawn comp-host");
     let guard = HostGuard(child);

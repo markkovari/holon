@@ -127,23 +127,31 @@ are `wasi:keyvalue / http / config / clocks / random`, bound at deploy time. So
 storage (Redis, NATS, in-memory, …) is a **link choice**, not code. If you'd
 rather run it on a wasmCloud lattice (scale, multi-tenant, live linking):
 
-Publish it to GHCR as a **public** OCI artifact (the wasmCloud-native pull path):
+Publish it to GHCR as a **public** OCI artifact (the wasmCloud-native pull path),
+pinned by digest (ADR-0006, [REGISTRY](../REGISTRY.md)) — `comp-oci` never writes a
+mutable version tag:
 
 ```bash
 gh auth refresh -s write:packages     # once
-gh auth token | docker login ghcr.io -u <you> --password-stdin   # wkg reads docker's credential store
-wkg oci push ghcr.io/<org>/tempo:0.1.0 components/target/tempo_domain.composed.wasm
-# make the package Public once (GitHub → Packages → tempo → visibility)
+(cd reconciler && cargo build --release --bin comp-oci)   # once
+mkdir -p target/apps && cp components/target/tempo_domain.composed.wasm target/apps/tempo.wasm
+OCI_USER=<you> OCI_PASSWORD="$(gh auth token)" ./reconciler/target/release/comp-oci push \
+  ghcr.io/<org>/holon-apps target/apps/tempo.wasm --lock apps.lock
+# prints `tempo sha256:…` and writes it to apps.lock; the only tag it adds is the
+# first twelve hex of the wasm's own sha256, which cannot change meaning
+# make the package Public once (GitHub → Packages → holon-apps/tempo → visibility)
 ```
 
-The CI half of this — a push on a `tempo-v*` tag — is described here but is NOT in
-the repository: there is no `.github/workflows/` at all. The recipe above is the
-whole story today.
-Then any wasmCloud host pulls it anonymously and links storage to, e.g., a
-Redis/Valkey provider:
+The CI half of this is `.github/workflows/publish-apps.yml`: on every push to
+`main` it composes each app in `apps/` (tempo included), pushes it the same way to
+`ghcr.io/<owner>/holon-apps`, and records the digests in `apps.lock` on the
+`deploy` branch.
+
+Then any wasmCloud host pulls it anonymously, by that digest, and links storage
+to, e.g., a Redis/Valkey provider:
 
 ```bash
-wash start component oci://ghcr.io/<owner>/tempo:0.1.0 tempo
+wash start component oci://ghcr.io/<owner>/holon-apps/tempo@sha256:<digest> tempo
 wash start provider ghcr.io/wasmcloud/keyvalue-redis:0.28.0 kv
 wash config put redis URL=rediss://default:<pw>@<valkey-host>:25061
 wash link put tempo kv wasi keyvalue --interface store --interface atomics --interface batch --target-config redis

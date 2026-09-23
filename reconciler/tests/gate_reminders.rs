@@ -141,6 +141,48 @@ fn a_reminder_is_scheduled_fired_once_and_reaches_a_real_mailbox() {
         "an acked reminder fired again — it would repeat on every tick"
     );
 
+    // --- moving the event moves its reminder ---------------------------------------------
+    // The reminder is scheduled at create; a PATCH that changes `starts_at` must
+    // re-schedule it, or it goes out a day before a start that is no longer the start.
+    let (_, mv) = gate.post(
+        "/api/events",
+        Some(&organizer),
+        json!({"title": format!("Moved {run}"), "starts_at": "2027-01-01T18:00:00Z", "capacity": 5}),
+    );
+    let mid = field(&mv, "id");
+    let first = parse(&mv)["reminder_at"].as_u64().unwrap_or(0);
+    let (c, patched) = gate.patch(
+        &format!("/api/events/{mid}"),
+        Some(&organizer),
+        json!({"starts_at": "2027-02-01T18:00:00Z"}),
+    );
+    assert_eq!(c, 200, "moving an event answered {c}: {patched}");
+    let (_, rem) = gate.get(&format!("/api/events/{mid}/reminder"), Some(&organizer));
+    let run_at = parse(&rem)["run_at"].as_u64().unwrap_or(0);
+    // 2027-02-01T18:00:00Z less 24 hours.
+    assert_eq!(
+        run_at, 1_801_418_400,
+        "the event moved to 2027-02-01T18:00:00Z and its reminder is still set for {run_at} \
+         (it was {first} before the move) — it must go out 24 hours before the NEW start: {rem}"
+    );
+    assert_eq!(
+        parse(&patched)["reminder_at"].as_u64(),
+        Some(run_at),
+        "the PATCH answer must say when the moved reminder goes out: {patched}"
+    );
+    // Amending anything else leaves the reminder alone.
+    let (_, _) = gate.patch(
+        &format!("/api/events/{mid}"),
+        Some(&organizer),
+        json!({"title": "Moved, renamed"}),
+    );
+    let (_, rem2) = gate.get(&format!("/api/events/{mid}/reminder"), Some(&organizer));
+    assert_eq!(
+        parse(&rem2)["run_at"].as_u64(),
+        Some(run_at),
+        "a PATCH that does not touch `starts_at` must leave the reminder where it is: {rem2}"
+    );
+
     // --- cancelling the event cancels the reminder --------------------------------------------------
     let (_, c) = gate.post(
         "/api/events",

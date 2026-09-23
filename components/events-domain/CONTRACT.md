@@ -9,7 +9,8 @@ only thing making their work fit together is that all four read this.
 
 ## Roles and authorisation
 
-Every `/api/**` route needs a bearer token. Get a principal with
+Every `/api/**` route except `register`, `login` and the notification stream
+(which takes a signed ticket instead, below) needs a bearer token. Get a principal with
 
     authorizer::authorize(token, permission)     // -> principal, or auth-error
 
@@ -32,6 +33,19 @@ Permissions are `{ target, action }`:
 | tickets, claim/read | `{ target: "ticket", action: "write" }` / `"read"` |
 | check-in | `{ target: "checkin", action: "write" }` |
 | swaps | `{ target: "swap", action: "write" }` |
+
+### Accounts — the router (`lib.rs`, scaffold)
+
+| | | |
+|---|---|---|
+| `POST /api/register` | open | body `{"email","password"}`. 201 `{token, subject}` — already logged in. 400 `invalid` unless the email has an `@` and the password is 8+ characters; 409 `already_registered` |
+| `POST /api/login` | open | 200 `{token, roles}`; 401 `bad_credentials` |
+| `GET /health` | open | 200 `{"ok":true}` |
+| `/test/**` | — | the fixture (`/test/seed`) and raw reads (`/test/{events,tickets,swaps}/{id}`); **404 unless `allow-test-routes` is `1` or `true`** in config |
+
+Every new account is an `attendee`. Nobody can ask for a role: `organizer` is
+granted — on registration AND on every login — to the addresses listed in the
+`organizer-emails` config key (comma-separated, case-insensitive).
 
 ## Stored documents
 
@@ -125,11 +139,11 @@ Both the fsm instance and the ticket document carry the state. Move both, or
 
 | | | |
 |---|---|---|
-| `POST /api/events` | organizer | 201 `{id, …}`; 400 on missing title/`starts_at`, or `capacity` < 1 |
+| `POST /api/events` | organizer | 201 `{id, …, reminder_at}` — `reminder_at` is when the reminder goes out (unix seconds), `null` if `starts_at` is unparseable (a start under 24 hours away is still scheduled, and is simply due at once); 400 on missing title/`starts_at`, or `capacity` < 1 |
 | `GET /api/events` | any | 200 `{events:[…]}`; `?state=open` filters. **Every entry carries its `id`** alongside the document's own fields — a list nothing can be selected from is not a list |
 | `GET /api/events/{id}` | any | 200 the document plus `"id"`, `"claimed"` and `"remaining"`; 404 |
-| `PATCH /api/events/{id}` | organizer, and only their own | 200; 403 if another organizer's; 404 |
-| `DELETE /api/events/{id}` | organizer, own | 204. A **soft** delete: `state` becomes `cancelled`. Tickets already issued stay readable |
+| `PATCH /api/events/{id}` | organizer, and only their own | 200 the document plus `id`, and `reminder_at` when `starts_at` changed (the reminder is re-scheduled); 403 if another organizer's; 404 |
+| `DELETE /api/events/{id}` | organizer, own | 204. A **soft** delete: `state` becomes `cancelled`. Tickets already issued stay readable. The reminder is cancelled and every holder is told (`event-cancelled`) |
 | `POST /api/events/{id}/image` | organizer, own | the raw bytes, `Content-Type` naming the type. 201; 415 `type_not_allowed` / `too_large`; 400 `empty_body` |
 | `GET /api/events/{id}/image` | any | the bytes under their stored content type; 404 `no_image` |
 | `DELETE /api/events/{id}/image` | organizer, own | 204 |
@@ -187,6 +201,43 @@ no part does it.
 A swap moves a ticket between holders. **Capacity does not change** — no reserve, no
 release. A part that re-reserves on accept will fail the composition gate, which
 checks `remaining` is the same before and after a swap.
+
+### Reminders and notifications — `remind.rs`, `notifications.rs`
+
+An event's reminder is a `sched:timer` job keyed by the event, due 24 hours before
+`starts_at` (`YYYY-MM-DDTHH:MM:SSZ`), scheduled when the event is created. Telling
+someone anything goes through `notify:prefs`, which picks the channels (`in-app`,
+`email`) from that person's own preferences; the app never picks one. Three things
+are told: `event-reminder` to every live holder, `event-cancelled` to every holder
+when the event is deleted, and `ticket-swapped` to a swap's `from` when it is
+accepted. A `PATCH` that changes `starts_at` moves the reminder: the old job is cancelled
+and, if the event is still `open`, a new one is scheduled 24 hours before the new start. The
+`PATCH` answer then carries `reminder_at` (as `POST` does; `null` if nothing was scheduled). A
+`PATCH` that leaves `starts_at` alone leaves the reminder alone and has no `reminder_at`.
+
+| | | |
+|---|---|---|
+| `POST /api/reminders/run` | `event` write (organizer, admin) | fires whatever is due (a 60-second lease on up to 20 jobs), acks each after telling its holders; a job whose event is gone or not `open` is acked and dropped. 200 `{fired, reminders:[…]}`. Called by a scheduler in a deployment, a button in a demo |
+| `GET /api/events/{id}/reminder` | `event` read | 200 `{scheduled:true, run_at, now, due_in_seconds}` or `{scheduled:false, now}`; 404 if no event |
+| `GET /api/notifications` | `ticket` read | 200 `{notifications:[{seq, kind, title, body, payload, at, read}]}`, the caller's own, up to 50 after `?after=` |
+| `GET /api/notifications/unread` | `ticket` read | 200 `{unread}` |
+| `POST /api/notifications/read` | `ticket` read | body `{"seqs":[…]}` marks those, or `{"through":n}` (0 = all) marks everything up to n. 200 `{marked}` |
+| `POST /api/notifications/stream-ticket` | `ticket` read | 200 `{ticket, ttl_seconds:60}` — a `webhook:sign`-signed, single-subject ticket, because `EventSource` cannot send a bearer |
+| `GET /api/notifications/stream?ticket=…` | the ticket | SSE of the caller's notes, from `?after=`; 401 `bad_ticket` if it is bad or expired |
+| `GET /api/prefs` | `ticket` read | 200 `{default_channels, email_address, overrides}` |
+| `PUT /api/prefs` | `ticket` read | the same shape; the subject is always the caller's, never the body's. 200 `{ok:true}`; 400 if `notify:prefs` refuses it |
+
+The stream ticket is signed with the `stream-ticket-secret` config key, and with a
+fixed placeholder when that is unset.
+
+## Imports
+
+`records:store`, `id:generate`, `quota:meter`, `qr:encode`, `fsm:workflow`,
+`auth:identity` (types, authorizer, accounts, rbac), `blob:store`,
+`upload:policy`, `notify:prefs`, `notify:inbox`, `sched:timer`, `webhook:sign`,
+`wasi:clocks` (wall and monotonic) and `wasi:config` — the last for
+`allow-test-routes`, `organizer-emails`, `stream-ticket-secret` and the two keys
+`upload:policy` reads. See `wit/events.wit`.
 
 ## Errors
 

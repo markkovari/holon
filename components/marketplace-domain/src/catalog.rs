@@ -148,14 +148,14 @@ fn ensure_machines() {
 // Jev — the advisory auto-label
 // ---------------------------------------------------------------------------
 
-/// `choice-result.confidence` is declared `u32` by the bound
-/// `jev:decision` interface; CONTRACT.md describes it as a 0.0-1.0 float to
-/// be scaled by 1000. Cover both readings of the same number: a 0-or-1 value
-/// is a fraction (scale it), anything larger is already milli-units. Never
-/// above 1000, CONTRACT.md's own ceiling for `category_confidence`.
+/// `choice-result.confidence` is a `u32` milli-probability (decision.wit),
+/// and that is what every provider emits — jev-decision's baseline answers
+/// 800 or 100. It is already in `category_confidence`'s units, so it is taken
+/// as-is: a `1` is 1/1000, not certainty. Clamped to 1000, the ceiling both
+/// the WIT and CONTRACT.md put on it, so a misbehaving provider cannot store
+/// more than certain.
 fn confidence_milli(raw: u32) -> u32 {
-    let milli = if raw <= 1 { raw * 1000 } else { raw };
-    milli.min(1000)
+    raw.min(1000)
 }
 
 /// Asks Jev which of the six categories fits, and never fails: on any
@@ -315,14 +315,12 @@ fn list_listings(route: &Route) -> Reply {
     if introspect(route).is_err() {
         return Reply::err(401, "unauthorized");
     }
-    let page = match records::list_records("listings", 100, "") {
-        Ok(page) => page,
+    let mut entries = match crate::list_all("listings") {
+        Ok(entries) => entries,
         Err(_) => return Reply::err(500, "store_error"),
     };
-
-    let mut entries = page.entries;
     // "Newest first" is a property of the store's own creation stamp, not of
-    // whatever order `list_records` happened to hand the page back in.
+    // whatever order `list_records` happened to hand the pages back in.
     entries.sort_by_key(|a| std::cmp::Reverse(a.created));
 
     let mut listings = Vec::new();
@@ -519,8 +517,8 @@ fn list_orders(route: &Route) -> Reply {
     ensure_machines();
 
     let entries = if is_admin(&principal) {
-        match records::list_records("orders", 100, "") {
-            Ok(page) => page.entries,
+        match crate::list_all("orders") {
+            Ok(entries) => entries,
             Err(_) => return Reply::err(500, "store_error"),
         }
     } else {
@@ -575,4 +573,25 @@ fn get_order(route: &Route, id: &str) -> Reply {
     }
 
     Reply::json(200, order_json(&entry.id, &entry.data))
+}
+#[cfg(test)]
+mod tests {
+    use super::confidence_milli;
+
+    #[test]
+    fn confidence_is_already_milli_units() {
+        // jev-decision's baseline: 800 on a substring match, 100 on none.
+        assert_eq!(confidence_milli(800), 800);
+        assert_eq!(confidence_milli(100), 100);
+        assert_eq!(confidence_milli(0), 0);
+        // A 1 is one thousandth, not certainty.
+        assert_eq!(confidence_milli(1), 1);
+        assert_eq!(confidence_milli(1000), 1000);
+    }
+
+    #[test]
+    fn confidence_never_exceeds_certain() {
+        assert_eq!(confidence_milli(1001), 1000);
+        assert_eq!(confidence_milli(u32::MAX), 1000);
+    }
 }

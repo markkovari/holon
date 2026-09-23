@@ -26,6 +26,7 @@ neither knows nor cares.
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test          # transpiles outbox.wasm -> gen/, then runs the node:test suite
 ```

@@ -13,8 +13,8 @@
 # and the differences between the four are the interesting part, not an accident of
 # how this script is organised. See components/portfolio-value-go/README.md.
 #
-# Output goes to components/target/<capability>_<lang>.wasm. `just e2e-binder-poly`
-# swaps one in for the Rust build and runs the app's own e2e against it.
+# Output goes to components/target/<capability>_<lang>.wasm. `cargo xtask e2e binder-poly
+# <lang> <capability>` swaps one in for the Rust build and runs the app's own e2e against it.
 set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
 root="$PWD"

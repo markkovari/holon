@@ -2,10 +2,15 @@
 #
 # Copy to `fleet.toml`, edit the addresses, then:
 #
-#   just lattice-bootstrap my-vps        # ONCE per box: install the three binaries
-#   just lattice-render                  # read the units before trusting them to a server
-#   just lattice-deploy                  # ship them
-#   just lattice-status
+#   holon fleet validate fleet.toml                    # names, addresses, a lease that outlives a pass
+#   holon fleet render fleet.toml --out target/fleet   # read the units before trusting them to a server
+#
+# then ship by hand (docs/SELFHOST.md, lane 2): once per box, install comp-host,
+# comp-reconciler and comp-ingress (musl builds) to /usr/local/bin; copy each
+# target/fleet/<box>/ to the box it is named for, install its units into
+# /etc/systemd/system and `systemctl enable --now` them; on a control box fill
+# PLATFORM_SECRET in /etc/comp/reconciler.env (0600). `systemctl status` per box
+# is the status check.
 #
 # This is the tier ABOVE self-hosting. Reach for it when deciding WHICH box an app
 # runs on has become a chore — with two or three machines that decision is one

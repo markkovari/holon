@@ -45,6 +45,7 @@ gen/                     # transpile output (gitignored) -> gen/crdt.js
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile        # crdt.wasm -> gen/
 npm test                 # behavioral + property (convergence) checks

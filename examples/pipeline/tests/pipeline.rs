@@ -7,7 +7,7 @@
 //! showcase shows): with the downstream sink taken DOWN, an event retries and
 //! then drops to the dead-letter tray — and a Replay requeues it.
 //!
-//! `CFG_MAX_ATTEMPTS=1` + `CFG_BASE_BACKOFF=1` make the retry ceiling reachable
+//! `--config max-attempts=1` + `--config base-backoff=1` make the retry ceiling reachable
 //! in a couple of seconds so the DLQ path is testable (defaults are 5 / 5s).
 
 use std::io::{BufRead, BufReader};
@@ -53,14 +53,17 @@ fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/pipeline_domain.composed.wasm");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-pipeline`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e pipeline`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose pipeline)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "pipeline")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=pipeline"])
         // a low retry ceiling + short backoff so the dead-letter path is fast.
-        .env("CFG_MAX_ATTEMPTS", "1")
-        .env("CFG_BASE_BACKOFF", "1")
+        .args(["--config", "max-attempts=1"])
+        .args(["--config", "base-backoff=1"])
         .spawn()
         .expect("spawn comp-host");
     let guard = HostGuard(child);

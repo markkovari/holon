@@ -29,7 +29,7 @@ button that downloads the current range as a PDF (rendered by the `pdf:codec`
 component — no PDF library, no headless browser).
 
 ```bash
-just e2e-tempo           # the auth + membership + aggregation + timer e2e (spawns the host)
+cargo xtask e2e tempo    # the auth + membership + aggregation + timer e2e (spawns the host)
 # work on the UI live:
 cd examples/tempo/ui && npm install && npm run dev   # (proxy /api to :3040)
 ```
@@ -42,7 +42,8 @@ Redis-backed storage in one process. `Dockerfile` builds that as one image;
 only, a POC that fits a $6 droplet:
 
 ```bash
-cargo xtask compose tempo && just build-tempo-ui            # produce the .wasm + dist
+cargo xtask compose tempo && (cd examples/tempo/ui && npm ci && npm run build)   # repo root: the .wasm + dist
+cd examples/tempo
 cp .env.example .env                                 # set REDIS_URL
 # hosted Redis (Upstash / DO — TLS): REDIS_URL=rediss://default:PW@host:6379
 docker compose --env-file .env up -d --build         # -> http://localhost:8080

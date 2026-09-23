@@ -7,5 +7,5 @@ composition as the Rust build and is judged by the same unedited e2e.
 this language's specific notes.
 
 ```bash
-just e2e-binder-poly js price-history
+cargo xtask e2e binder-poly js price-history
 ```

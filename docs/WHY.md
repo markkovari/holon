@@ -114,8 +114,8 @@ both were restored and the app answered with its data intact.
 
 For your own apps on your own machines, most of the platform is unnecessary — the
 multi-tenancy machinery defends strangers from each other. [`SELFHOST.md`](SELFHOST.md)
-is the progressive path: `comp-host` + systemd + a per-app URL to start (built, one
-`just selfhost-deploy` away), many-apps-per-host when RAM demands it, k3s + the operator
+is the progressive path: `comp-host` + systemd + a per-app URL to start (built: a
+`holon node render`, an `scp` and a `systemctl` away), many-apps-per-host when RAM demands it, k3s + the operator
 only when placement across machines becomes a chore.
 
 ## What it is honestly not for

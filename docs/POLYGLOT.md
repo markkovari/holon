@@ -6,13 +6,12 @@ Python** — dropped into the same composition, judged by the same unedited e2e.
 
 The alternate-language components are real and still in the tree
 (`components/portfolio-value-c`, `-cs`, `-go`; `components/price-history-go`,
-`-js`, `-py`) — what ran them in place of the Rust build, swapped by filename,
-was a `just e2e-binder-poly <lang> <capability>` recipe that no longer exists
-and was never ported to a script; there is nothing to run it with today. Each
-pass built the alternate component, derived the composition from
-`binder-domain`'s own imports (ADR-0087), ran `examples/binder/tests/binder.rs`
-— 122 assertions, none of them edited — and put the Rust build back on the way
-out.
+`-js`, `-py`) — what runs them in place of the Rust build, swapped by filename,
+is `cargo xtask e2e binder-poly <lang> <capability>` (it was a `just` recipe
+until the Justfile went, and had no replacement for a while). Each pass builds the alternate component, derives the composition from
+`binder-domain`'s own imports (ADR-0087), runs `examples/binder/tests/binder.rs`
+— 122 assertions, none of them edited — and puts the Rust build back on the way
+out, even when the test fails.
 
 The claim is not "these toolchains emit components". It is that **the artifact
 boundary is the real boundary** (ADR-0086, ADR-0095): a composition does not know

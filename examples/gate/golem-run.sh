@@ -11,7 +11,7 @@ cd "$(dirname "$0")/golem"
 G="../../../providers/golem-workflow/.bin/golem"
 
 if [ ! -x "$G" ]; then
-  echo "Golem binary not found — run \`just golem-e2e\` once to fetch it." >&2
+  echo "Golem binary not found — run \`cargo xtask e2e golem\` once to fetch it." >&2
   exit 1
 fi
 

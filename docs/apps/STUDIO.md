@@ -1,11 +1,13 @@
 # studio — components describe themselves, and compose themselves
 
-This repo assembles every component by hand: **55 `wac plug` lines** in a Justfile,
-and a `tools/gen-catalog.py` that scrapes WIT with **five regexes** to build a
-catalog nothing consumes programmatically. Both work. Both are blind the same way —
-nothing in the loop reads the *binary* contract, so nothing can answer the only
-question that matters when you wire two components together: **would this plug
-actually fit this socket?**
+This repo used to assemble every component by hand: **55 `wac plug` lines** in a
+Justfile, and a `tools/gen-catalog.py` that scraped WIT with **five regexes** to
+build a catalog nothing consumed programmatically. Both worked. Both were blind the
+same way — nothing in the loop read the *binary* contract, so nothing could answer
+the only question that matters when you wire two components together: **would this
+plug actually fit this socket?** (Both are gone now: `cargo xtask compose` calls
+`comp-plug`, which derives the wiring from the artifact's own imports, and the
+catalogue is `comp-catalog`, `reconciler/src/bin/catalog.rs`.)
 
 `studio` is that question with a canvas around it. Drop a `.wasm` in and it is
 **inspected**, not declared. Drag an export onto an import and the connection is
@@ -155,8 +157,8 @@ That last one is the point: a graph wired in a browser produced a working app.
 - **The instance count is an estimate**, `sum(1 + nested)` per node, and the limit
   (30) is a constant here rather than something read from the host.
 - **No registry push and no deploy.** The workload manifest names images it does
-  not build; `wkg oci push` and `kubectl apply` stay in the Justfile where they can
-  see a cluster.
+  not build; `wkg oci push` and `kubectl apply` are left to whoever holds a
+  cluster — nothing in this repository runs either for you.
 - **`wit-reflect` is 1 MB** — the largest non-asset component in the repo, because
   it carries `wasmparser` and the whole `wac` composition engine. That is the price
   of composing for real instead of printing instructions, and it only pays it in a
@@ -169,8 +171,10 @@ That last one is the point: a graph wired in a browser produced a working app.
 - **The v1 OAM emitter**, so the same canvas targets a 1.x lattice.
 - **`wkg oci push` from the studio**, turning a canvas into a deployed workload in
   one step (the manifest already names the images).
-- **Replace `gen-catalog.py`** — `wit:reflect` already knows everything
-  `comp-catalog` claims, and more, from the artifacts rather than the source.
+- **Replace `comp-catalog`** (the Rust port of `gen-catalog.py`) — `wit:reflect`
+  already knows everything it claims, and more, from the artifacts rather than
+  the source. The port reads the source on purpose, so a component that does
+  not build still has an entry; replacing it would have to keep that.
 - **Show interface detail on hover.** `inspect` stops at interface names; the full
   WIT (functions, records, resources) is in the binary's type section and
   `wit-component::decode` would read it, at the cost of another megabyte.

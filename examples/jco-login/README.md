@@ -2,7 +2,7 @@
 
 The **multi-capability composition** demo. `login-app` is a consumer component
 that imports three capability interfaces — `session:store`, `config:store`, and
-`secrets:vault`. `wac plug` (run via `cargo xtask compose login` from repo root `comp/`)
+`secrets:vault`. `wac plug` (run via `cargo xtask compose login` from the repo root)
 satisfies all three by plugging in the matching capability components, producing
 a single `login_app.composed.wasm` that **exports only** `login:app/auth@0.1.0`
 and **imports only generic WASI** (`wasi:keyvalue/store`, `wasi:config/runtime`,
@@ -25,6 +25,7 @@ gen/                      # transpile output  (gitignored)
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile         # login_app.composed.wasm -> gen/
 npm test                  # behavioral checks
@@ -63,6 +64,7 @@ test key**. Real deployments inject a real key via `wasi:config` (or
 
 ## Regenerating the wasm
 
-`login_app.composed.wasm` is checked in. Rebuild it with `cargo xtask compose login`
-from repo root `comp/`, which builds `login-app` and the three capability
-components and runs `wac plug` to compose them.
+`login_app.composed.wasm` is not checked in (`**/*.wasm` is gitignored).
+`cargo xtask stage-examples` from the repo root composes it and copies it here;
+`cargo xtask compose login` alone produces
+`components/target/login_app.composed.wasm` for you to copy.

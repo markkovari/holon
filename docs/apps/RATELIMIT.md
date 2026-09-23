@@ -96,8 +96,7 @@ attempts before they cost a password hash).
    trip.
 4. **Bench** — the backpressure dimension: decision latency under a sustained
    hammer, and correctness (exactly `ceiling` allowed before the first 429; the
-   quota never goes negative under concurrent hits). See
-   `bench/RATELIMIT-BENCH.md`.
+   quota never goes negative under concurrent hits).
 
 ## Non-goals (v1)
 

@@ -472,8 +472,8 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
     // iterations — is the one that does not bind.
     //
     // The cost is a loop over the pool rather than over the 80 interfaces. That is
-    // a REBUILD cost, paid by `just capgraph-store` and never on a read, which is
-    // the whole reason this is a projection.
+    // a REBUILD cost, paid when `--format surql` is posted to the store's `/sql` and
+    // never on a read, which is the whole reason this is a projection.
     // Defined, not written. `SELECT ... FROM memory` is an error on a database
     // where no lesson has ever been recorded, which is every fresh install — the
     // same class of failure as the namespace that did not exist. A table
@@ -529,7 +529,7 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
     // below rests on, pointed the other way.
     //
     // UPSERT and not CREATE so that re-projecting one generation is idempotent
-    // rather than an error — `just capgraph-store` twice in the same second is a
+    // rather than an error — projecting twice in the same second is a
     // re-run of one build, not two builds.
     //
     // One row per build, ~10 fields. Unbounded in principle; at a projection per CI

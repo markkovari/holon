@@ -137,8 +137,8 @@ jobs:
       #
       # These are the bytes `cargo xtask build --force` makes — the same entry point, with the
       # `wasm-tools metadata add` name stamp already applied — so a fetched tree is
-      # the one this workflow tested, not an approximation of it. `just
-      # fetch-components` pulls them by commit.
+      # the one this workflow tested, not an approximation of it. `gh run download`
+      # pulls them by commit (`docs/REGISTRY.md`).
       - name: Keep the artifacts
         uses: actions/upload-artifact@v4
         with:

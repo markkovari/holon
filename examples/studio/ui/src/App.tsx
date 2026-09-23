@@ -301,7 +301,7 @@ function Studio() {
           <div className="flex-1 overflow-y-auto p-2">
             {palette.length === 0 && (
               <p className="px-1 text-xs text-muted-foreground">
-                Empty. Run <code>just seed-studio</code>, or drop a <code>.wasm</code> anywhere here.
+                Empty. POST a built <code>.wasm</code> to <code>/api/components?id=…</code>, or drop a <code>.wasm</code> anywhere here.
               </p>
             )}
             {groups.map(([label, items]) =>

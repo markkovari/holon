@@ -21,14 +21,24 @@ Start at tier 1. Go up when a measurement tells you to, not before.
 ## The four lanes, and what each costs
 
 One `apps/<name>.toml` renders to all four. Moving between them is an edit and a
-different recipe, never a rewrite — which is the property the whole spec exists for.
+different renderer, never a rewrite — which is the property the whole spec exists for.
 
-| lane | what runs it | what it is for | recipe |
+| lane | what runs it | what it is for | rendered by, then shipped with |
 |---|---|---|---|
-| **1. one box** | `comp-host` + systemd + Caddy | your own machine, no control plane at all | `just selfhost-deploy <app> <host>` |
-| **2. a lattice** | `comp-host` per node + `comp-reconciler` + `comp-ingress` over NATS | several boxes, where *which* box is no longer your decision | `just lattice-deploy` |
-| **3. wasmCloud 1.x** | wadm, driven over NATS | somebody else's wasmCloud, or the k8s operator | `just wasmcloud-deploy <app>` |
-| **4. wasmCloud 2.x** | the runtime-operator, over the Kubernetes API | current wasmCloud — no wadm, no OAM | `just wasmcloud-v2-deploy <app>` |
+| **1. one box** | `comp-host` + systemd + Caddy | your own machine, no control plane at all | `holon node render`, then `scp` + `systemctl` ([Tier 1](#tier-1--comp-host--systemd-one-url-per-app)) |
+| **2. a lattice** | `comp-host` per node + `comp-reconciler` + `comp-ingress` over NATS | several boxes, where *which* box is no longer your decision | `holon fleet render`, then `scp` + `systemctl` per box |
+| **3. wasmCloud 1.x** | wadm, driven over NATS | somebody else's wasmCloud, or the k8s operator | `holon wadm render`, then `tools/wadm.sh` |
+| **4. wasmCloud 2.x** | the runtime-operator, over the Kubernetes API | current wasmCloud — no wadm, no OAM | `holon wadm render --api v2`, then `kubectl apply` |
+
+The deploy scripts that wrapped these went with the Justfile. What is left is the
+renderers, which are pure and tested, and a handful of `scp`/`systemctl`/`kubectl`
+steps — written out under [Tier 1](#tier-1--comp-host--systemd-one-url-per-app) and
+[the wasmCloud lanes](#the-wasmcloud-lanes-by-hand). Lane 2 is tier 1's steps per box:
+`holon fleet validate <spec>` then `holon fleet render <spec>` write one directory per
+box under `target/fleet/`, holding its units and, on a control box, `reconciler.env`.
+Copy each to the box its directory is named for, install the units into
+`/etc/systemd/system`, `systemctl enable --now` them, and fill `PLATFORM_SECRET` in
+`/etc/comp/reconciler.env` (0600) — a reconciler with it empty does not converge.
 
 Lanes 3 and 4 are **interop, not a recommendation.** [ADR-0021](adr/0021-there-is-no-kubernetes.md)
 took Kubernetes off this platform's runtime path deliberately and priced it: 70 Mi
@@ -193,8 +203,42 @@ document. It is not, and the correction is worth stating because the wrong versi
 The trap: wadm ignores a trait type it does not recognise rather than refusing it.
 A wrong-shaped manifest returns `"result":"acknowledged"`, creates **no scalers**,
 and serves nothing. Measured against wadm 0.21. So the renderer stamps
-`holon.dev/api`, and `just wasmcloud-status` says so when a deployment has no
+`holon.dev/api`, and `cargo xtask wadm-status` says so when a deployment has no
 scalers — because the cluster will not.
+
+### The wasmCloud lanes, by hand
+
+`holon` is `cargo build --release` in `cli/`. A linked render needs the capability
+graph, because a wadm link names the WIT package it satisfies:
+
+```bash
+(cd reconciler && cargo build --release --bin comp-capgraph)
+mkdir -p target && ./reconciler/target/release/comp-capgraph --format json > target/capgraph.json
+
+# lane 3 — wasmCloud 1.x, over wadm's NATS API
+./cli/target/release/holon wadm render apps/gate.toml --topology fused --api v1 \
+  --graph target/capgraph.json --out target/wadm/gate.yaml
+wkg oci push localhost:30500/gate:latest components/target/gate_domain.composed.wasm --insecure localhost:30500
+python3 -c "import json,yaml;print(json.dumps(yaml.safe_load(open('target/wadm/gate.yaml'))))" > target/wadm/gate.json
+tools/wadm.sh wadm.api.default.model.put target/wadm/gate.json
+tools/wadm.sh wadm.api.default.model.deploy.gate
+tools/wadm.sh wadm.api.default.model.status.gate | cargo xtask wadm-status
+
+# lane 4 — wasmCloud 2.x, a Workload applied to the Kubernetes API
+./cli/target/release/holon wadm render apps/gate.toml --api v2 --namespace wasmcloud-v2 \
+  --graph target/capgraph.json --out target/wadm/gate.v2.yaml
+kubectl apply -f target/wadm/gate.v2.yaml
+kubectl get workload gate -n wasmcloud-v2
+```
+
+`--registry` (default `registry.wasmcloud.svc.cluster.local:5000`) is where the
+*host* pulls from; the push goes to wherever *this machine* reaches the same registry
+— a NodePort from a laptop. Two names for one registry, and conflating them is why a
+push succeeds and a pull then fails. `tools/wadm.sh` finds the `nats-box` pod in
+`$WASMCLOUD_NAMESPACE` (default `wasmcloud`); `default` in the subjects is the
+lattice. The lattice must have a host in it: wadm answers "0/1 eligible hosts found"
+when the manifest lands where no host listens, which looks like a manifest error and
+is not one.
 
 ### What a 2.x host will and will not run
 
@@ -228,30 +272,70 @@ must declare a **hostname** (the host routes by `Host` header on one shared port
 One app, one process, one hostname.
 
 ```bash
-just selfhost-bootstrap my-vps       # ONCE per box: install comp-host, wire Caddy
-cargo xtask compose gate                    # components -> one .wasm
-just selfhost-render gate            # read the unit, env file and route first
-just selfhost-deploy gate my-vps     # ship it
-just selfhost-status gate my-vps
+cargo xtask compose gate                                   # components -> one .wasm
+(cd cli && cargo build --release)                          # the `holon` CLI
+./cli/target/release/holon node validate apps/*.toml
+./cli/target/release/holon node render apps/gate.toml      # -> target/selfhost/gate/: read it first
 ```
 
-`selfhost-bootstrap` cross-builds a **static** `comp-host` (musl, so no glibc version to
-match — one binary runs on Debian, Ubuntu or Alpine), installs it, creates the
-directories, appends `import /etc/caddy/comp/*.caddy` to the Caddyfile, and pins `TS_IP`.
-Skipping it would install a unit pointing at a binary that is not there and drop site
-files where Caddy never looks — it would appear to work and serve nothing, so
-`selfhost-deploy` refuses to run until the binary exists.
+That writes `comp-gate.service`, `gate.env` and a route (`gate.caddy`, or `gate.yml` /
+`gate.serve.sh` for `--router traefik|tailscale-serve`). Shipping them is plain `scp`
+and `systemctl`.
 
-For an ARM box: `just selfhost-bootstrap my-pi aarch64`.
+**Once per box**, a **static** `comp-host` (musl, so no glibc version to match — one
+binary runs on Debian, Ubuntu or Alpine; `cross` needs a running docker), the
+directories, and Caddy told to read what this lane writes:
+
+```bash
+(cd host && cross build --release --target x86_64-unknown-linux-musl)   # aarch64-… for ARM
+scp host/target/x86_64-unknown-linux-musl/release/comp-host my-vps:/tmp/
+ssh my-vps bash -s <<'EOF'
+set -e
+sudo install -m 0755 /tmp/comp-host /usr/local/bin/comp-host
+sudo mkdir -p /srv/comp /etc/comp /etc/caddy/comp && sudo chmod 0711 /etc/comp
+grep -qF 'import /etc/caddy/comp/*.caddy' /etc/caddy/Caddyfile \
+  || echo 'import /etc/caddy/comp/*.caddy' | sudo tee -a /etc/caddy/Caddyfile
+EOF
+```
+
+Skipping it installs a unit pointing at a binary that is not there and drops site files
+where Caddy never looks — it appears to work and serves nothing. `ssh host bash -s`
+with the script on stdin, rather than `ssh host "…"`, because the latter is parsed by
+the remote *login* shell, and a box whose login shell is fish rejects `if … fi` outright.
+
+**Per deploy:**
+
+```bash
+D=target/selfhost/gate
+scp components/target/gate_domain.composed.wasm my-vps:/tmp/gate.wasm
+scp $D/comp-gate.service $D/gate.env $D/gate.caddy my-vps:/tmp/
+ssh my-vps bash -s <<'EOF'
+set -e
+sudo mkdir -p /srv/comp/gate
+sudo install -m 0644 /tmp/gate.wasm /srv/comp/gate/app.wasm     # DynamicUser must read it
+sudo install -m 0600 /tmp/gate.env /etc/comp/gate.env           # may hold secrets
+sudo install -m 0644 /tmp/comp-gate.service /etc/systemd/system/
+sudo install -m 0644 /tmp/gate.caddy /etc/caddy/comp/
+sudo systemctl daemon-reload && sudo systemctl enable --now comp-gate
+sudo systemctl restart comp-gate && sudo systemctl reload caddy
+EOF
+ssh my-vps systemctl status comp-gate --no-pager -n 15
+```
+
+A spec with `[triggers]` also renders `comp-gate-relay.service`, which needs a static
+`comp-relay` on the box (`cross build … --bin comp-relay` in `reconciler/`) and is
+installed and enabled the same way. A spec with `static_dir` expects the built SPA in
+`/srv/comp/<app>/static` — the unit points there, and an empty one serves the API
+and 404s at `/`.
 
 ### What each box needs
 
 | | |
 |---|---|
-| ssh + sudo | the recipes are `scp` and `systemctl`, nothing more |
-| tailscale, joined | for `access = "tailnet"`; `selfhost-tsip` reads its address |
-| caddy | `selfhost-bootstrap` adds the import line; validates the config |
-| `comp-host` | installed by `selfhost-bootstrap`, 38 MB, static |
+| ssh + sudo | the steps are `scp` and `systemctl`, nothing more |
+| tailscale, joined | for `access = "tailnet"`; the `TS_IP` step below reads its address |
+| caddy | the one-time step adds the import line |
+| `comp-host` | installed by the one-time step, 38 MB, static |
 | a DNS record per app | pointing the hostname at the box's `100.x` address (tailnet custom record or split DNS) |
 | Caddy's root trusted | once per device you browse from, for `tls internal` |
 
@@ -276,7 +360,7 @@ file, and a route so the app gets its own URL over HTTPS — a Caddy site by def
 **Per-app URLs.** Every app binds `127.0.0.1:<port>` and nothing else — the unit is tested
 to never emit `0.0.0.0`. The proxy is the only listener that faces anything, it routes by
 hostname, and it handles certificates. Ports are derived from the app name, *stably*, so a
-re-render never moves a running app out from under its route; `just selfhost-check` refuses
+re-render never moves a running app out from under its route; `holon node validate apps/*.toml` refuses
 two apps landing on the same port, domain or name, which is the one collision a single spec
 cannot see.
 
@@ -292,10 +376,21 @@ gate.example.com {
 }
 ```
 
-`just selfhost-deploy` pins `TS_IP` into Caddy's unit from `tailscale ip -4` on the box.
-That step is load-bearing: Caddy expands `{$TS_IP}` from its own environment, so if nothing
-sets it the bind resolves to empty and Caddy listens on **every** interface — private by
-intention, public in fact. `just selfhost-tsip <host>` does it alone and is idempotent.
+So `TS_IP` has to be pinned into Caddy's unit from `tailscale ip -4` on the box. That step
+is load-bearing: Caddy expands `{$TS_IP}` from its own environment, so if nothing sets it
+the bind resolves to empty and Caddy listens on **every** interface — private by
+intention, public in fact. Once per box, and idempotent:
+
+```bash
+IP=$(ssh my-vps tailscale ip -4 | head -1)
+{ echo "TS_ADDR='$IP'"; cat; } <<'EOF' | ssh my-vps bash -s
+set -e
+sudo mkdir -p /etc/systemd/system/caddy.service.d
+printf '[Service]\nEnvironment=TS_IP=%s\n' "$TS_ADDR" \
+  | sudo tee /etc/systemd/system/caddy.service.d/ts-ip.conf >/dev/null
+sudo systemctl daemon-reload && sudo systemctl restart caddy
+EOF
+```
 
 You then need the hostname to resolve to that `100.x` address, which Tailscale can do
 without any external DNS: a custom DNS record in the tailnet, or a split-DNS entry.
@@ -434,8 +529,9 @@ grounds. One of them survives and one does not, so both are worth stating plainl
 and the manifests in `examples/vet-clinic-wasmcloud/` still instruct it. But that is a
 CLI problem, not a server one: wadm's actual API is a set of NATS subjects
 (`wadm.api.<lattice>.model.<verb>`) which are still served, and `tools/wadm.sh` uses
-them directly. `just wasmcloud-deploy` needs no `wash` at all, and was verified against
-a live wadm 0.21 + operator 0.4.0 + wasmCloud 1.6.0 — render, push, deploy, serve.
+them directly. [Lane 3](#the-wasmcloud-lanes-by-hand) needs no `wash` at all, and was
+verified against a live wadm 0.21 + operator 0.4.0 + wasmCloud 1.6.0 — render, push,
+deploy, serve.
 
 *The hop objection survives, and is the real one.* v1 links components over NATS, so
 **every component boundary becomes a network hop — measured at 1.2 ms**, against 57 µs
@@ -454,10 +550,9 @@ the pure-compute ones automatically and prints which.
 | | |
 |---|---|
 | `apps/<name>.toml` | the app spec — the only file you write |
-| `just selfhost-specs` | derive a spec for every app that has a `host-<app>` recipe and no spec yet |
-| `just selfhost-bootstrap <host>` | one-time box prep: static comp-host, dirs, Caddy import, TS_IP |
-| `just selfhost-deploy-all <host>` | every app in `apps/` to one box |
-| `cli/src/main.rs` | tier-1 renderer, pure and tested (25 tests, incl. ones that check the flags it emits actually exist on `comp-host` and on each of the twelve ADR-0095 daemons). Reached as `holon node render|validate|port|ingress|render-goald` |
+| `cargo xtask list` | every app spec in `apps/` — written by hand; the generator that derived them from Justfile recipes went with the Justfile |
+| `cli/src/selfhost.rs` | tier-1 renderer, pure and tested (46 tests, incl. ones that check the flags it emits actually exist on `comp-host` and on each of the twelve ADR-0095 daemons). Reached as `holon node render\|validate\|port\|ingress\|render-goald` |
+| `cli/src/fleet.rs` | the lattice-lane renderer. Reached as `holon fleet render\|validate` |
 | `host/` | `comp-host` — the runtime for tiers 1 and 2 |
-| `components/platform-domain/src/render.rs` | the tier-3 renderer |
+| `cli/src/wadm.rs` | the wasmCloud renderer (lanes 3 and 4): fused or linked, v1 OAM or a v2 `Workload`. Reached as `holon wadm render\|host` |
 | `reconciler/` | the tier-3 lane: reconcile, distribute, and `src/oci.rs` for registry push |

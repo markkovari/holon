@@ -34,7 +34,7 @@ Built with `cargo xtask compose vet`. The only remaining imports are generic WAS
 ## Run
 
 ```bash
-# from comp/: build + compose the app wasm
+# from the repo root: build + compose the app wasm
 cargo xtask compose vet            # -> components/target/vet_domain.composed.wasm
 cp components/target/vet_domain.composed.wasm examples/jco-vet-domain/
 

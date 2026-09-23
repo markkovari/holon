@@ -10,9 +10,9 @@ ui/                the React + shadcn SPA (Vite + Tailwind) -> dist/
 ```
 
 ```bash
-cargo xtask host mesh     # SPA + host on :3050, flaky upstream on :3051
-just e2e-mesh      # the full ladder against the real upstream
-just mesh-upstream # the upstream alone (survives host restarts)
+(cd examples/mesh && cargo run --release --bin flaky -- 127.0.0.1:3051)   # the flaky upstream on :3051 (survives host restarts)
+cargo xtask host mesh     # SPA + host on :3050 (does not start the upstream — run it above)
+cargo xtask e2e mesh      # the full ladder against the real upstream
 ```
 
 The upstream misbehaves on demand, per request — that is how the tests stay

@@ -216,7 +216,7 @@ fn which_oci() -> Result<PathBuf, String> {
             return Ok(PathBuf::from(p));
         }
     }
-    Err("no comp-oci — `just selfhost-bootstrap` installs it".into())
+    Err("no comp-oci — build it (`cargo build --release --bin comp-oci` in reconciler/) or install it to /usr/local/bin".into())
 }
 
 /// Pull by digest, install, restart, record.

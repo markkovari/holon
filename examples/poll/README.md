@@ -6,7 +6,7 @@ here.
 
 ```bash
 cargo xtask host poll        # → http://127.0.0.1:3057
-just e2e-poll         # the Playwright suite against the real stack
+cargo xtask e2e poll  # the Playwright suite against the real stack
 ```
 
 ## Everything hard is imported

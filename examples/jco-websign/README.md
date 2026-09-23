@@ -26,6 +26,7 @@ and scheme on both sides round-trip cleanly.
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test
 ```

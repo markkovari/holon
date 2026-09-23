@@ -1,13 +1,19 @@
 # Getting a component you did not build
 
 ```bash
-just pull portfolio-value-c                    # by name
-just pull portfolio-value-c@sha256:…           # by digest, which cannot drift
-just pull price-history-py /tmp/ph.wasm        # somewhere else
+(cd reconciler && cargo build --release --bin comp-oci)   # once
+
+oci=./reconciler/target/release/comp-oci
+rel=components/target/wasm32-wasip2/release
+$oci pull ghcr.io/markkovari/holon portfolio-value-c -o $rel/portfolio_value_c.wasm             # by name
+$oci pull ghcr.io/markkovari/holon portfolio-value-c@sha256:… -o $rel/portfolio_value_c.wasm    # by digest, which cannot drift
+$oci pull ghcr.io/markkovari/holon price-history-py -o /tmp/ph.wasm                            # somewhere else
 ```
 
-Anonymous by default. `OCI_USER` / `OCI_PASSWORD` for a private registry,
-`OCI_REGISTRY` to point somewhere other than `ghcr.io/<owner>/holon`.
+Anonymous by default. `OCI_USER` / `OCI_PASSWORD` for a private registry; the
+registry is the first argument, so pointing somewhere other than
+`ghcr.io/<owner>/holon` is just a different first argument. `-o` is required — the
+file goes where it is told, and the build tree names a component with underscores.
 
 ## Why this exists
 
@@ -19,7 +25,15 @@ mean a 200 MB wasi-sdk, a Go toolchain and a wasip1 adapter, a vendored
 SpiderMonkey, a CPython bundler — or, for the C# reproduction, a gigabyte of .NET.
 Nobody should install a compiler to consume a 60 KB artifact.
 
-**`just fetch-components`.** Reads the GitHub Actions artifact from a green run.
+**The CI artifact.** `ci.yml` keeps the built tree as `components-wasm32-wasip2`
+from a green run, and `gh` fetches it:
+
+```bash
+run=$(gh run list --workflow ci.yml --commit "$(git rev-parse HEAD)" \
+        --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+gh run download "$run" --name components-wasm32-wasip2 --dir components/target/wasm32-wasip2/release
+```
+
 That is genuinely useful and it has three limits written into it: the artifact
 expires after **thirty days**, it needs a successful run for **that exact commit**,
 and it arrives as **every component or none**.
@@ -49,8 +63,10 @@ is ADR-0006's rule. What a push *prints*, and what `--lock` records, is the dige
 
 ADR-0006 opens by naming the failure this avoids — a manifest referencing
 `jobs-domain-golem:0.1.2` while the recipe pushed `:0.1.0`, a live broken deploy
-caused by nothing but a mutable tag. `just push-tempo-ghcr` still pushes a mutable
-version tag and has not been converted.
+caused by nothing but a mutable tag. The one recipe here that pushed a mutable
+version tag — `push-tempo-ghcr`, a `wash oci push` of `tempo:<version>` — was never
+converted. The recipe went with the Justfile; `docs/apps/TEMPO.md` still shows the
+same tagged push by hand.
 
 ## Publishing
 
@@ -63,7 +79,9 @@ three lines, written down in that file.
 Locally, the same command:
 
 ```bash
-OCI_USER=me OCI_PASSWORD="$(gh auth token)" just push-components
+(cd reconciler && cargo build --release --bin comp-oci)
+OCI_USER=me OCI_PASSWORD="$(gh auth token)" ./reconciler/target/release/comp-oci push \
+  ghcr.io/me/holon components/target/wasm32-wasip2/release --lock components.lock
 ```
 
 It writes `components.lock` — `<name> <digest>` per line — which is the file to pin

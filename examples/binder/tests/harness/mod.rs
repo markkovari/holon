@@ -99,12 +99,12 @@ pub fn start_host_on(port: u16) -> HostGuard {
 
     let root = repo_root();
     let bin = root.join("host/target/release/comp-host");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-binder`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e binder`)");
 
     // The DERIVED composition (ADR-0087), asked for by name rather than by a path a
     // recipe had to keep in step with the digest.
     let plug = root.join("reconciler/target/release/comp-plug");
-    assert!(plug.exists(), "comp-plug not built (run `just e2e-binder`)");
+    assert!(plug.exists(), "comp-plug not built (run `cargo xtask e2e binder`)");
     // From the repo root: `comp-plug` resolves a component by name against
     // `components/`, and the test's own cwd is this crate.
     let composed =

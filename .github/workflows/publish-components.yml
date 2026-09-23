@@ -109,5 +109,5 @@ jobs:
             echo '```'
             head -20 components.lock
             echo '```'
-            echo "Pull one with \`just pull <name>\` — see docs/REGISTRY.md."
+            echo "Pull one with \`comp-oci pull <registry> <name>@<digest> -o <file>\` — see docs/REGISTRY.md."
           } >> "$GITHUB_STEP_SUMMARY"

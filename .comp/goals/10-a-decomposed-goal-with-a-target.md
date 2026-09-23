@@ -1,4 +1,12 @@
-# A decomposed goal with a target — 🟢 agent-ready
+# A decomposed goal with a target — ✅ done
+
+> **Delivered** in c443054 (#220): `components/dispatch-domain` implements all three
+> parts against the one shared capability, and the four gates below are green on
+> `main`. Like goal 06, that makes the spec spent — goal 07's base pre-check now
+> refuses it, which is the correct answer. It is archived as
+> `dispatch.toml.archived`; stub the parts first to run it again.
+>
+> The rest of this file is the goal as it was written, when nothing was implemented.
 
 **Traces to:** `docs/CURRENT.md` — *"A decomposed goal has still never been
 DELIVERED. Two paid runs of the clinic's phase two, 290k tokens, no pull request.
@@ -75,11 +83,11 @@ one of the two has a score being written down.
 ## To run it
 
 ```bash
-cp .comp/goals/dispatch.toml .comp/goal.toml
+cp .comp/goals/dispatch.toml.archived .comp/goal.toml
 CHECKOUT=$PWD REPO=<owner>/<name> bash goal-demo.sh real
 ```
 
 Through the Claude CLI shim, note the three timeouts in a row and that the shim's is
-the lowest — `CLAUDE_TIMEOUT_MS=1500000 just claude-shim &` and `TIMEOUT=3000`, or
+the lowest — `CLAUDE_TIMEOUT_MS=1500000 node tools/claude-shim.mjs &` and `TIMEOUT=3000`, or
 six branches come back `errored` at exactly 540006ms with the branch budget never
 reached.

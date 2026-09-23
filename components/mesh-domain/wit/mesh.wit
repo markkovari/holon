@@ -15,7 +15,7 @@
 // hop is a REAL outgoing HTTP request through `proxy:route`, so a tripped
 // breaker is observably a request that never leaves the host.
 //
-// The demo upstream (examples/mesh, `just mesh-upstream`) fails on demand:
+// The demo upstream (examples/mesh, `cargo run --release --bin flaky -- 127.0.0.1:3051`) fails on demand:
 // `/upstream/hit?fail=1` answers 500, `?delay=400` answers slowly, and killing
 // it entirely gives a real connect-refused. Nothing is simulated in here.
 //

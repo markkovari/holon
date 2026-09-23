@@ -84,7 +84,10 @@ suites proving the knowledge loop, the contract negotiation and every composed
 deployment all skip — and the umbrella still said everything passed.
 
 It cannot fail on a skip, because skipping is correct on a machine with no database.
-It now counts them and prints what a green run did **not** verify.
+That umbrella counted them and printed what a green run did **not** verify. It went
+with the Justfile: `cargo xtask test` runs nextest, which hides a passing test's
+output and counts nothing, and runs only the reconciler's `--lib` — where most of the
+skipping suites are not. The count is a grep now (below).
 
 ## Not fixed, and why
 
@@ -129,8 +132,9 @@ awk '/#\[cfg\(test\)\]/{exit} /unwrap\(\)|expect\(|panic!\(/{c++} END{print FILE
 # swallowed failures
 grep -rn 'let _ = ' host/src reconciler/src --include='*.rs'
 
-# what a green suite did not verify
-just test 2>&1 | grep SKIPPED
+# what a green suite did not verify — nextest hides a passing test's stderr unless asked
+cargo nextest run --manifest-path reconciler/Cargo.toml --config-file .config/nextest.toml \
+  --success-output immediate 2>&1 | grep SKIPPED
 ```
 
 The useful part was not the greps. It was picking one failure that had already cost

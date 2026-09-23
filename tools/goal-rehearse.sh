@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rehearse a goal's gates in a reconstruction of the sandbox the loop will run them in.
 #
-#   bash tools/goal-rehearse.sh .comp/goals/triage-assist.toml            # must FAIL
+#   bash tools/goal-rehearse.sh .comp/goals/social-feed.toml              # must FAIL
 #   REF=/path/to/reference bash tools/goal-rehearse.sh .comp/goals/…      # must PASS
 #
 # WHY THIS EXISTS. A gate that passes in the repository can still fail in the loop, and

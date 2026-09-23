@@ -27,5 +27,5 @@ watch the attempt count climb), **Boom** (dead-letters), **Delayed 3s**, or
 jobs get a **Replay** button.
 
 ```bash
-just e2e-jobs            # the lifecycle e2e (spawns the host)
+cargo xtask e2e jobs     # the lifecycle e2e (spawns the host)
 ```

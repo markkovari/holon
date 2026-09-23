@@ -1,7 +1,7 @@
 # jco-vet-clinic — a full-stack app built only from comp components
 
 A small **veterinary-clinic** app — browser frontend + HTTP backend — assembled
-entirely from the `comp/` capability components running **in-process via jco**.
+entirely from the repo's capability components running **in-process via jco**.
 There is no business-logic crate: every cross-cutting concern (auth, RBAC,
 sessions, audit, search, validation, notifications) is an unmodified comp
 component, and the domain (pets, appointments, visit notes) is thin JS glue over
@@ -9,7 +9,7 @@ the same in-memory key-value store the components share.
 
 ![Vet clinic: a pet-owner signs in, registers a pet, searches, and books an appointment — the role-scoped owner view of the ~20-component app](../../docs/media/petclinic.gif)
 
-*(The gif runs on the native Rust host — `just host-full` — serving the same SPA + wasm; jco is the in-process variant.)*
+*(The gif runs on the native Rust host — `cargo xtask compose vet`, then `host/target/release/comp-host --component components/target/vet_domain.composed.wasm --addr 127.0.0.1:3007 --static-dir examples/jco-vet-clinic/public` — serving the same SPA + wasm; jco is the in-process variant.)*
 
 Three roles:
 
@@ -23,7 +23,7 @@ Three roles:
 
 | Feature | Component | How it's included |
 |---|---|---|
-| accounts, login, 3-role **RBAC**, sessions, **audit** | **auth-guard** (composed with rate-limiter + audit-log) | `just compose` → `auth_guard.composed.wasm`, transpiled |
+| accounts, login, 3-role **RBAC**, sessions, **audit** | **auth-guard** (composed with rate-limiter + audit-log) | `cargo xtask compose` → `auth_guard.composed.wasm`, transpiled |
 | pet full-text **search** | **search-index** | transpiled |
 | request-body **validation** | **validate** | transpiled |
 | appointment **notifications** | **notify-dispatch** | transpiled (config points at a local sink) |
@@ -46,6 +46,7 @@ beside the sessions and audit events auth-guard writes — one process, one Map.
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm start          # transpiles all 6 wasms, boots Fastify on :3000
 # open http://localhost:3000  — log in with a demo account (printed on boot):
@@ -61,8 +62,8 @@ The SPA shows a different panel per role based on the principal returned by
 
 The UI is a **Vite + React + TypeScript + Tailwind v4 + shadcn/ui** app in
 `frontend/`, built to `public/` (which the Fastify backend serves). The built
-bundle is committed — same convention as the `.wasm` files — so `npm start`
-runs the whole stack with no extra build. To change the UI:
+bundle is committed — unlike the `.wasm` inputs, which `cargo xtask stage-examples`
+stages — so `npm start` needs no frontend build. To change the UI:
 
 ```bash
 npm run build:frontend   # cd frontend && npm install && npm run build  -> ../public

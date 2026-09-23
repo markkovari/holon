@@ -65,7 +65,7 @@ cargo test --release --test contrast_audit_live -- --ignored --nocapture
 ## Serve it, and put it on your phone over Tailscale
 
 Like `photo-critic`, this app carries an external secret + egress grant, so it
-serves through a deployment rather than through `just host-<app>`:
+serves through a deployment rather than through `cargo xtask host <app>`:
 
 ```bash
 # 1. keep a fleet up with the app deployed (prints the ingress port):

@@ -29,6 +29,7 @@ jco transpile money.wasm -o gen
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile         # money.wasm -> gen/
 npm test                  # behavioral checks

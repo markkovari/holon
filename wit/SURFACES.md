@@ -1,6 +1,6 @@
 # Every WIT package this repository defines
 
-Generated — `just wit-surfaces`. Do not edit.
+Generated — `WIT_SURFACES=write cargo test --test witsurface` in `reconciler/`. Do not edit.
 
 Rendered by `wasm-tools component wit` out of the BUILT components, so this
 is the shape that actually shipped rather than the shape the source suggests.

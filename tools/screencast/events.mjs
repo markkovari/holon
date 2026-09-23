@@ -14,7 +14,7 @@
 //     `fsm:workflow` reports — which is the whole reason the lifecycle is a
 //     definition rather than an `if` in the handler.
 //
-// Prereq: from repo root  `just host-events &`   (serves on :3230)
+// Prereq: from repo root  `cargo xtask host events &`   (serves on :3230)
 import { chromium } from "playwright";
 
 const BASE = process.env.EVENTS_URL || "http://127.0.0.1:3230";

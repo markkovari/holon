@@ -104,7 +104,7 @@ that invention is most of the line.
 
 ## Trying it over a tailnet
 
-`host-binder` binds `0.0.0.0` on purpose, so another machine on the tailnet reaches
+`cargo xtask host binder` binds `0.0.0.0` on purpose, so another machine on the tailnet reaches
 it with no tunnel:
 
 ```bash
@@ -147,7 +147,10 @@ NAMES, and counting the id the collection is keyed on reads that as four and fou
   `tools/claude-shim.mjs`: `components/anthropic-vision` reads `vision:base-url` from
   config and demands a secret only when it is pointed at `anthropic.com`, so the
   default deployment runs the vision call on a subscription with no key anywhere in
-  the app. Start the shim, then `cargo xtask host binder`. Pointing it back at the metered
+  the app. Start the shim, then run the host with `--config
+  vision:base-url=http://127.0.0.1:8787 --egress 127.0.0.1:8787
+  --allow-private-egress` — `cargo xtask host binder` passes neither, so under it
+  the camera has nowhere to send the photo. Pointing it back at the metered
   API is one config line plus a granted secret (`fixtures/photo-critic.yaml` is the
   shape) — and the interface a guest sees is identical either way, which is what
   makes it a deploy-time choice.

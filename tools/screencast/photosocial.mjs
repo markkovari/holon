@@ -7,7 +7,8 @@
 // 3. Community voter upvotes the photo and scores attributes via interactive sliders.
 // 4. Feed updates live with aggregate mean scores and AI narrative.
 //
-// Usage: from repo root `just screencast-photosocial`
+// Usage: from repo root `cargo xtask compose photosocial && node tools/screencast/photosocial.mjs`,
+// then `bash tools/screencast/to-gif.sh tools/screencast/videos/photosocial/*.webm docs/media/photosocial.gif 820 10`
 
 import { chromium } from "playwright";
 import { spawn } from "child_process";

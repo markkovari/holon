@@ -87,9 +87,8 @@ fn ensure_machines() {
 /// body. A read error is treated as "nothing there" — these are aggregation
 /// reads over ANOTHER part's collection, not a request anybody made.
 fn load_all(collection: &str) -> Vec<(String, Value)> {
-    match records::list_records(collection, 1000, "") {
-        Ok(page) => page
-            .entries
+    match crate::list_all(collection) {
+        Ok(entries) => entries
             .into_iter()
             .map(|entry| {
                 let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
@@ -162,7 +161,7 @@ fn open_dispute(route: &Route, order_id: &str, body: &str) -> Reply {
         false_hint: FALSE_HINT.to_string(),
     };
     if let Ok(result) = jev::gate(&gate) {
-        jev_confidence = result.probability;
+        jev_confidence = result.probability.min(1000);
         jev_recommendation = if result.probability >= REFUND_THRESHOLD {
             "refund".to_string()
         } else {
@@ -277,8 +276,8 @@ fn reputation(route: &Route, subject: &str) -> Reply {
     // Every order containing one of those listings, oldest first — the fraud
     // rule is about a vendor's FIRST-ever order, "by `created` order".
     let mut orders: Vec<_> = Vec::new();
-    if let Ok(page) = records::list_records("orders", 1000, "") {
-        for entry in page.entries {
+    if let Ok(entries) = crate::list_all("orders") {
+        for entry in entries {
             let data: Value = serde_json::from_str(&entry.data).unwrap_or(Value::Null);
             let touches_vendor = data
                 .get("items")
