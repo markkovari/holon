@@ -13,8 +13,14 @@
 
 #[allow(warnings)]
 mod bindings;
+mod clock;
+mod competitions;
+mod curation;
+mod moderation;
 mod photos;
+mod progress;
 mod quests;
+mod rules;
 
 pub use guestauth::Route;
 
@@ -84,6 +90,8 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
 
         let reply = match (&method, seg.as_slice()) {
             (_, ["health"]) => Reply::json(200, serde_json::json!({"ok": true})),
+            // 404 unless config `allow-test-routes = true` (see clock.rs).
+            (Method::Post, ["test", "clock"]) => clock::set(&body),
             (Method::Post, ["register"]) => register(&body),
             (Method::Post, ["login"]) => login(&body),
             (Method::Post, ["logout"]) => logout(&route),
@@ -92,6 +100,18 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
             // the authentication, checked first thing inside.
             (Method::Post, ["internal", "photos", id, "evaluated"]) => {
                 photos::evaluated(id, &bytes, &signature)
+            }
+            // The game (CONTRACT.md "Game routes"). Most specific first: a photo's
+            // reports are moderation's, the rest of /api/photos is photos.rs.
+            (_, ["api", "photos", _, "reports"]) | (_, ["api", "admin", ..]) => {
+                moderation::handle(&method, &route, &body)
+            }
+            (_, ["api", "curator", "competitions", ..]) | (_, ["api", "competitions", ..]) => {
+                competitions::handle(&method, &route, &body)
+            }
+            (_, ["api", "curator", ..]) => curation::handle(&method, &route, &body),
+            (_, ["api", "journeys", ..]) | (_, ["api", "quests", ..]) | (_, ["api", "me", "progress"]) => {
+                progress::handle(&method, &route, &body)
             }
             (_, ["api", ..]) => photos::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),
