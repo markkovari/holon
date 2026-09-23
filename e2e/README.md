@@ -2,7 +2,9 @@
 
 Two suites live here: the Rust **manifest** suite below (`fixtures/`, driven by
 `reconciler/tests/e2e.rs`), and a **Playwright** browser suite for ten showcase apps
-(`tests/`, [further down](#the-playwright-suite)).
+(`tests/`, [further down](#the-playwright-suite)), plus
+[photoquest](#photoquest), which brings up its own object store, queue and
+evaluator.
 
 ```
 cargo build --release --manifest-path host/Cargo.toml
@@ -77,3 +79,60 @@ relative to that directory. `playwright.config.js` records a video of every test
 
 To run one app's spec against a host you started yourself: `npx playwright test
 tests/<app>.spec.js`.
+
+## photoquest
+
+```
+bash e2e/photoquest.sh                 # from anywhere; extra args go to playwright
+bash e2e/photoquest.sh -g Privacy      # e.g. one group
+```
+
+[`tests/photoquest.spec.js`](tests/photoquest.spec.js) drives the photoquest
+page as a **photographer** against the whole stack, not a fake: RustFS, JetStream,
+`comp-media` and the composed app ([docs/apps/PHOTOQUEST.md](../docs/apps/PHOTOQUEST.md)).
+`photoquest.sh` owns all of it:
+
+1. downloads the two CC0 Sony a7R V samples from raw.pixls.us into
+   `e2e/.photoquest-samples/` (gitignored, ~210 MB, checked by sha256, once), and
+   cuts a JPEG sample out of one of them — its embedded preview — so every file the
+   suite uploads is CC0. Nothing personal, nothing committed.
+2. starts RustFS (`infra/compose.yaml`, profile `media`) as its own compose
+   project `holon-photoquest-e2e`, with its own volume;
+3. starts a private `nats-server -js` on a free port with a temp store, and points
+   comp-media at it with `MEDIA_NATS_URL` — a dev box's :4222 is often someone
+   else's NATS;
+4. on macOS, builds the Swift helper `comp-media-apple` if it is missing or stale;
+5. runs `cargo xtask compose photoquest`, then `cargo xtask host photoquest` (which
+   builds and starts comp-media per `[[daemon]]`) with the host's sqlite in a temp
+   dir, waits for `:3941/health` and comp-media's `/health` (store and queue up);
+6. warms the pipeline with one upload (Core Image's first job is ~4 s, later ~2 s);
+7. runs the spec, and on exit — pass, fail or Ctrl-C — kills the host and the
+   daemon (their whole process group), the NATS, and removes the containers, the
+   volume and the temp dirs.
+
+**Prerequisites:** Docker running; `nats-server`, `node`/`npx`, `cargo`, `curl` on
+PATH; on macOS the Xcode command-line tools (`swiftc`). `npm ci` and `npx playwright
+install chromium` are run for you. Ports 3941, 8013 (fixed by
+`apps/photoquest.toml`) and 9000–9001 (the store) must be free; the script says so
+if they are not. A warm run is about 30 s of tests; from a clean checkout the
+release builds of comp-host and comp-media dominate.
+
+**Linux / CI:** no Swift helper, so comp-media evaluates on the CPU (`rawler`
+develop, CPU sharpness, no Vision). The spec asks comp-media's `/health` which
+backend is present and, without it, expects `cpu sharpness, rawler develop, no
+Vision` and no labels or aesthetics rows instead; everything else is asserted the
+same. It needs the same Docker, `nats-server` and ports.
+
+**Against a stack you started yourself** (per docs/apps/PHOTOQUEST.md):
+`PHOTOQUEST_SAMPLES=<dir with the samples> npx playwright test tests/photoquest.spec.js`.
+`PHOTOQUEST_URL` and `PHOTOQUEST_MEDIA_URL` override `http://127.0.0.1:3941` and
+`:8013`. The API helpers the spec uses for setup (a second user, a queue of
+uploads) are in `lib/photoquest.js`.
+
+**Pending (`test.fixme`):** quests, levels, journeys, timed competitions and the
+effect of moderation. They are not built yet — the seam is
+`quests::on_evaluated` in `components/photoquest-domain/src/quests.rs` — and they
+need two roles that do not exist yet, a **curator** (creates quests, journeys,
+levels, competitions) and an **admin** (moderates). Each pending scenario's body
+says what it will check, in plain language, so it becomes a test when the feature
+lands; Playwright reports them as skipped.

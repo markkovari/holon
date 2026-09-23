@@ -120,8 +120,12 @@ orientation) before either backend sees it.
 
 A `failed` body carries `job_id`, `photo_id`, `status`, `error`, and every other
 field `null`. For a JPEG original the `metadata` fields other than `width`/`height`
-are `null` (EXIF of JPEGs is not read yet). Renditions carry no EXIF — the
-camera's serial number and GPS stay out of a picture meant to be shared.
+are `null` (EXIF of JPEGs is not read yet). Renditions carry no camera EXIF —
+the camera's serial number, make, model, lens, capture time and GPS stay out of
+a picture meant to be shared. Core Image still writes a small structural EXIF
+block into every JPEG it encodes (dimensions, resolution, colour space, EXIF
+version); `e2e/tests/photoquest.spec.js` ("Share copy") holds the share copy to
+an allow-list of exactly those tags.
 
 ## The Swift helper (`comp-media-apple`)
 

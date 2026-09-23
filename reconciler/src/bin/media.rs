@@ -123,7 +123,11 @@ struct Args {
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     path_style: bool,
 
-    #[arg(long, default_value = "nats://127.0.0.1:4222")]
+    /// The JetStream NATS that holds `MEDIA_JOBS`. `MEDIA_NATS_URL` sets it
+    /// without editing an app's `extra_args` — `e2e/photoquest.sh` points the
+    /// daemon at a private `nats-server -js` this way, since a dev box's
+    /// :4222 is often someone else's NATS. The flag wins over the env.
+    #[arg(long, env = "MEDIA_NATS_URL", default_value = "nats://127.0.0.1:4222")]
     nats_url: String,
 
     /// The HMAC key for the callback's `X-Media-Signature`. Required: a
@@ -1447,6 +1451,19 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `e2e/photoquest.sh` relies on `MEDIA_NATS_URL` reaching the daemon
+    /// through `cargo xtask host` (which inherits its environment); pin the
+    /// env name here rather than mutating the process env in a test.
+    #[test]
+    fn nats_url_reads_media_nats_url() {
+        use clap::CommandFactory;
+        let cmd = Args::command();
+        let arg = cmd.get_arguments().find(|a| a.get_id() == "nats_url").unwrap();
+        assert_eq!(arg.get_env().and_then(|e| e.to_str()), Some("MEDIA_NATS_URL"));
+        let args = Args::try_parse_from(["comp-media", "--s3-endpoint", "http://127.0.0.1:9000", "--nats-url", "nats://127.0.0.1:4999"]).unwrap();
+        assert_eq!(args.nats_url, "nats://127.0.0.1:4999");
+    }
 
     /// A tiny deterministic noise source — the test must not depend on a
     /// crate's RNG, and must give the same plane every run.

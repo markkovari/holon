@@ -51,9 +51,59 @@ fixed local-dev values. A real deployment changes the secret on **both** sides
 `media-token` together. When comp-media reaches the store by an internal name,
 set `--s3-public-endpoint` to the name browsers use.
 
+comp-media reads its NATS from `--nats-url`, or from **`MEDIA_NATS_URL`** when
+the flag is not given (default `nats://127.0.0.1:4222`). `cargo xtask host`
+passes its environment to the daemons it spawns, so a JetStream somewhere else
+needs no edit to `apps/photoquest.toml`:
+
+```sh
+MEDIA_NATS_URL=nats://127.0.0.1:14222 cargo xtask host photoquest
+```
+
+That matters on a dev box where :4222 already belongs to some other NATS —
+without JetStream, or with another project's streams in it.
+
 `reconciler/tests/gate_photoquest.rs` is the gate. It runs the composed
 component against a recording fake `comp-media`, so it needs no store, queue or
 GPU: `COMP_HOST=… cargo test --release --test gate_photoquest` in `reconciler/`.
+
+## Scenarios
+
+[`e2e/tests/photoquest.spec.js`](../../e2e/tests/photoquest.spec.js) is the
+end-user suite: a real browser against the whole stack (RustFS, a private
+JetStream, comp-media with the Swift helper on a Mac, the composed app), with
+only CC0 photos. `bash e2e/photoquest.sh` brings all of it up, runs the spec
+and tears everything down again; [e2e/README.md](../../e2e/README.md#photoquest)
+has the prerequisites.
+
+What a photographer can do today, each one a passing scenario:
+
+- **Account** — register and be signed in; log out and in again; a wrong
+  password and an email that already has an account are refused with a message.
+- **Upload and evaluate** — an uncompressed and a lossless-compressed a7R V ARW
+  and a JPEG are each evaluated; the ARW's detail shows camera, lens, exposure,
+  size, the sharpness focus ratio, Vision labels and aesthetics, and which
+  backend ran. A JPEG shows what it has without empty or "undefined" rows.
+- **Share copy** — the share link is a JPEG under 10 MB, with no EXIF tag
+  beyond the structural ones Core Image always writes: no serial, MakerNote,
+  make, model, lens, date or GPS.
+- **Refusals** — a text file or a PNG is refused, saying which file and what is
+  accepted, and leaves no photo behind.
+- **Gallery** — newest first, thumbnails load, a click opens the detail.
+- **Resilience** — reloading while a photo is still being evaluated picks it up
+  again, and it ends `evaluated` without a click.
+- **Privacy** — another photographer gets 403 reading or completing my photo and
+  never sees it listed; on a shared browser, logging out leaves nothing of mine
+  on the page for the next person.
+
+The next steps are written down in the same file as `test.fixme` scenarios, so
+they have acceptance tests before they have code: quests (active list, a verdict
+with a reason per requirement, XP awarded once per photo and file, a photo taken
+before the quest refused), levels and XP history, journeys (quests unlock in
+order, a badge at the end), timed competitions (entry deadline, leaderboard,
+results) and the effect of moderation. They need two roles that do not exist
+yet: a **curator**, who creates quests, journeys, levels and competitions, and
+an **admin**, who moderates.
 
 ## Where it stands
 

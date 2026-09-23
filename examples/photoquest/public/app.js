@@ -13,7 +13,8 @@ const PARALLEL = 4;
 const POLL_MS = 2000;
 const $ = (id) => document.getElementById(id);
 let token = localStorage.getItem('token') || '';
-let polling = null;
+let polling = null;      // the photo on the detail card, while it settles
+let galleryTimer = null; // the gallery, while any photo in it is processing
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -35,12 +36,20 @@ function why(res) {
   return [j.error, j.detail].filter(Boolean).join(': ') || ('HTTP ' + res.status);
 }
 
+// The refusals a person can act on, in words; anything else as the API said it.
+function authWhy(res) {
+  const e = (res.json || {}).error || '';
+  if (e === 'invalid_credentials') return 'wrong email or password';
+  if (res.status === 409 || /exist|taken|duplicate/i.test(e)) return 'that email already has an account — log in instead';
+  return why(res);
+}
+
 // ---- auth -----------------------------------------------------------------
 
 async function register() {
   const email = $('reg-email').value, password = $('reg-password').value;
   const r = await api('POST', '/register', { email, password });
-  if (!r.ok) { $('auth-error').textContent = 'registration failed: ' + why(r); return; }
+  if (!r.ok) { $('auth-error').textContent = 'registration failed: ' + authWhy(r); return; }
   $('login-email').value = email;
   $('login-password').value = password;
   await login();
@@ -48,7 +57,8 @@ async function register() {
 
 async function login() {
   const r = await api('POST', '/login', { email: $('login-email').value, password: $('login-password').value });
-  if (!r.ok) { $('auth-error').textContent = 'login failed: ' + why(r); return; }
+  if (!r.ok) { $('auth-error').textContent = 'login failed: ' + authWhy(r); return; }
+  $('auth-error').textContent = '';
   token = r.json.access_token;
   localStorage.setItem('token', token);
   await show();
@@ -59,6 +69,15 @@ function logout() {
   token = '';
   localStorage.removeItem('token');
   clearInterval(polling);
+  clearTimeout(galleryTimer);
+  // Nothing of this account may stay on the page for whoever logs in next on
+  // the same browser: the last photo's card (with its signed URLs) included.
+  $('detail').style.display = 'none';
+  $('detail').innerHTML = '';
+  $('gallery').innerHTML = '';
+  $('upload-status').textContent = '';
+  $('whoami').textContent = '';
+  $('file').value = '';
   $('app').style.display = 'none';
   $('auth').style.display = 'block';
 }
@@ -69,7 +88,14 @@ async function show() {
   $('whoami').textContent = 'signed in as ' + me.json.subject;
   $('auth').style.display = 'none';
   $('app').style.display = 'block';
-  await gallery();
+  const photos = await gallery();
+  // Back after a reload with a photo still being evaluated: watch it again,
+  // as if it had just been uploaded.
+  const newest = (photos || [])[0];
+  if (newest && newest.state === 'processing') {
+    $('upload-status').textContent = 'evaluating…';
+    watch(newest.id);
+  }
 }
 
 // ---- upload ---------------------------------------------------------------
@@ -116,6 +142,11 @@ async function upload() {
   try {
     status('asking for an upload plan…');
     const created = await api('POST', '/api/photos', { filename: file.name, size: file.size, content_type: contentType(file) });
+    if (created.status === 422) {
+      // The evaluator's own reason ("not an accepted file type: …") after
+      // the one sentence a person needs.
+      throw new Error(`"${file.name}" is not accepted — Photoquest takes Sony ARW or JPEG files (${(created.json || {}).detail || 'refused'})`);
+    }
     if (!created.ok) throw new Error(why(created));
     const { photo, upload: plan } = created.json;
 
@@ -209,14 +240,21 @@ function detail(p) {
 }
 
 async function gallery() {
+  clearTimeout(galleryTimer);
   const r = await api('GET', '/api/photos');
-  if (!r.ok) return;
+  if (!r.ok) return null;
+  // A photo still being evaluated: look again shortly, so its tile turns
+  // `evaluated` without a click — after a reload too.
+  if (r.json.photos.some((p) => p.state === 'processing')) {
+    galleryTimer = setTimeout(gallery, POLL_MS);
+  }
   $('gallery').innerHTML = r.json.photos.map((p) => `
     <div class="tile" data-id="${esc(p.id)}">
       ${p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : `<div class="ph">${esc(p.state)}</div>`}
       <div class="name">${esc(p.filename)}</div>
       <div class="muted state-${esc(p.state)}">${esc(p.state)}</div>
     </div>`).join('') || '<p class="muted">Nothing yet.</p>';
+  return r.json.photos;
 }
 
 $('login-btn').onclick = login;
