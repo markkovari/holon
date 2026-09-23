@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
@@ -21,6 +21,11 @@ pub struct AppSpec {
     /// The ADR-0095 native daemons this app's component dials over loopback.
     #[serde(default, rename = "daemon")]
     pub daemons: Vec<Daemon>,
+    /// The app's `wasi:config` — the same table `holon node render` writes to
+    /// the `--config-file` its unit loads. Includes each daemon's
+    /// `<name>-url`/`<name>-token` (`holon`'s `check()` enforces that).
+    #[serde(default)]
+    pub config: BTreeMap<String, String>,
 }
 
 /// One native daemon this app needs running alongside it — the subset of
@@ -40,6 +45,37 @@ pub struct Daemon {
 }
 
 impl AppSpec {
+    /// The `comp-host` flags that hand this app its `[config]` and let it reach
+    /// its daemons: `--config k=v` per key, then `--egress <addr>` per daemon
+    /// plus `--allow-private-egress` once — a daemon is on loopback, which the
+    /// host's address check refuses without it. The allow-list stays the daemon
+    /// addresses only, and they are IP literals, so nothing else resolves in.
+    ///
+    /// A daemon's `<name>-url` is derived from its `addr` when `[config]` lacks
+    /// it, so a spec that forgot the key still dials the daemon it starts.
+    pub fn host_args(&self) -> Vec<String> {
+        let mut cfg = self.config.clone();
+        for d in &self.daemons {
+            cfg.entry(format!("{}-url", d.name)).or_insert_with(|| format!("http://{}", d.addr));
+            if let Some(t) = &d.token {
+                cfg.entry(format!("{}-token", d.name)).or_insert_with(|| t.clone());
+            }
+        }
+        let mut args = Vec::new();
+        for (k, v) in &cfg {
+            args.push("--config".to_string());
+            args.push(format!("{k}={v}"));
+        }
+        for d in &self.daemons {
+            args.push("--egress".to_string());
+            args.push(d.addr.clone());
+        }
+        if !self.daemons.is_empty() {
+            args.push("--allow-private-egress".to_string());
+        }
+        args
+    }
+
     pub fn kv_as_string(&self) -> Option<String> {
         self.kv.as_ref().map(|v| match v {
             toml::Value::String(s) => s.clone(),
@@ -197,4 +233,33 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
     out.sort_by(|a, b| a.name.cmp(&b.name).then(a.root.cmp(&b.root)));
     out.dedup_by(|a, b| a.root == b.root && a.name == b.name);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every `[config]` key reaches the host — photoquest's
+    /// `public-callback-base` was dropped here once, and `complete` answered
+    /// 503 — and each daemon is on the egress allow-list.
+    #[test]
+    fn host_args_carry_all_config_and_daemon_egress() {
+        let spec: AppSpec = toml::from_str(
+            "name = \"a\"\n[config]\nmedia-url = \"http://127.0.0.1:8013\"\npublic-callback-base = \"http://127.0.0.1:3941\"\n\
+             [[daemon]]\nname = \"media\"\naddr = \"127.0.0.1:8013\"\n\
+             [[daemon]]\nname = \"imageopt\"\naddr = \"127.0.0.1:8009\"\ntoken = \"t\"\n",
+        )
+        .unwrap();
+        let a = spec.host_args().join(" ");
+        assert!(a.contains("--config public-callback-base=http://127.0.0.1:3941"), "{a}");
+        assert!(a.contains("--config media-url=http://127.0.0.1:8013"), "{a}");
+        assert_eq!(a.matches("media-url=").count(), 1, "{a}");
+        assert!(a.contains("--config imageopt-url=http://127.0.0.1:8009"), "{a}");
+        assert!(a.contains("--config imageopt-token=t"), "{a}");
+        assert!(a.contains("--egress 127.0.0.1:8013") && a.contains("--egress 127.0.0.1:8009"), "{a}");
+        assert_eq!(a.matches("--allow-private-egress").count(), 1, "{a}");
+
+        let bare: AppSpec = toml::from_str("name = \"b\"\n").unwrap();
+        assert!(bare.host_args().is_empty());
+    }
 }

@@ -52,6 +52,21 @@ node conduit-term.mjs
 bash to-gif.sh videos/conduit/*.webm ../../docs/media/conduit-conformance.gif 860 12
 ```
 
+**photoquest** — upload a 129 MB Sony ARW and watch it come back evaluated
+on-device. Needs the store, a JetStream NATS and the media daemon (see
+`docs/apps/PHOTOQUEST.md`); upload once first so the recording shows a warm
+pipeline (~2 s) rather than Core Image's cold start:
+
+```bash
+docker compose -f ../../infra/compose.yaml --profile media up -d rustfs
+(cd ../.. && cargo xtask host photoquest) &    # app on :3941, comp-media on :8013
+# CC0 a7R V sample from raw.pixls.us — record public GIFs from free samples, not personal photos
+curl -fL --create-dirs -o ~/Downloads/photoquest-samples/7RM5-LosslessUncompressed.ARW \
+  https://raw.pixls.us/data/Sony/ILCE-7RM5/7RM5-LosslessUncompressed.ARW
+node photoquest.mjs
+bash to-gif.sh videos/photoquest/*.webm ../../docs/media/photoquest.gif 800 10 1
+```
+
 **pulse** — realtime chat; two panes side by side, a message in one appears live
 in the other over SSE:
 

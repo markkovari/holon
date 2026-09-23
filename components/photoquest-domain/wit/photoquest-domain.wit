@@ -1,0 +1,39 @@
+// photoquest:domain — upload a photo, have it evaluated, see it back.
+//
+// Step one of photoquest (ADR-0098): the bytes never pass through here. A
+// browser asks this component for an upload plan, PUTs the parts straight to
+// object storage, and reports the ETags back; `media:pipeline` turns that into a
+// finished original and a queued evaluation, and the result arrives later as a
+// signed POST this component verifies and stores. Quests, XP and levels come
+// next, and they will be scored from that stored result — see `src/quests.rs`.
+package photoquest:domain@0.1.0;
+
+world photoquest-domain {
+    export wasi:http/incoming-handler@0.2.0;
+
+    /// Real accounts, login and roles — `auth-guard` satisfies all five.
+    import auth:identity/accounts@0.1.0;
+    import auth:identity/authorizer@0.1.0;
+    import auth:identity/session@0.1.0;
+    import auth:identity/rbac@0.1.0;
+    import auth:identity/types@0.1.0;
+
+    /// Photo records, indexed by owner.
+    import records:store/store@0.1.0;
+    /// Register/login, and every refusal to act on somebody else's photo.
+    import audit:log/recorder@0.1.0;
+
+    /// Upload plans, completion, the evaluation queue and signed rendition URLs.
+    /// Every call carries keys, never pixels — `media-pipeline` satisfies it by
+    /// asking `comp-media`.
+    import media:pipeline/jobs@0.1.0;
+
+    /// Verifying the evaluator's callback. It is the one route here that is not
+    /// behind a login, so the signature is the only thing standing between it and
+    /// anybody who can reach the app writing a result onto somebody's photo.
+    import webhook:sign/signer@0.1.0;
+
+    /// `public-callback-base` and `media-callback-secret`.
+    import wasi:config/store@0.2.0-rc.1;
+    import wasi:clocks/wall-clock@0.2.0;
+}

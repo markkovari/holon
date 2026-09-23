@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-126 interfaces.
+127 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -2124,6 +2124,46 @@ Adding a *function* to an interface is compatible; adding a case to a
     }
 
     optimize: func(img: string) -> result<string, image-error>;
+  }
+```
+
+## `media:pipeline/jobs@0.1.0`
+
+```wit
+  interface jobs {
+    variant media-error {
+      unavailable(string),
+      refused(string),
+      not-found(string),
+    }
+
+    record part-url {
+      number: u32,
+      url: string,
+    }
+
+    record upload-plan {
+      upload-id: string,
+      key: string,
+      part-size: u64,
+      parts: list<part-url>,
+      expires-at: u64,
+    }
+
+    record part-etag {
+      number: u32,
+      etag: string,
+    }
+
+    start-upload: func(photo-id: string, filename: string, size: u64, content-type: string) -> result<upload-plan, media-error>;
+
+    complete-upload: func(upload-id: string, key: string, parts: list<part-etag>) -> result<_, media-error>;
+
+    abort-upload: func(upload-id: string, key: string) -> result<_, media-error>;
+
+    submit: func(job-id: string, photo-id: string, key: string, callback-url: string) -> result<_, media-error>;
+
+    sign-get: func(key: string, ttl-secs: u32) -> result<string, media-error>;
   }
 ```
 

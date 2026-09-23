@@ -1,0 +1,81 @@
+# photoquest — upload a photo straight to object storage, have it evaluated on
+# the machine with the GPU, see it back; and the game on top: journeys of quests
+# with XP and levels, timed competitions, curators and admins
+# (components/photoquest-domain/CONTRACT.md, docs/apps/PHOTOQUEST.md).
+# Why the bytes never pass through the component: docs/adr/0098.
+name = "photoquest"
+access = "tailnet"
+domain = "photoquest.example.com"
+artifact = "components/target/photoquest_domain.composed.wasm"
+port = 3941
+static_dir = "examples/photoquest/public"
+kv = "sqlite"
+components = ["photoquest-domain", "auth-guard", "record-store", "audit-log", "rate-limiter", "media-pipeline", "webhook-sign"]
+strategy = "fused"
+
+# `media-url` must agree with the [[daemon]] addr below — `check()` enforces it.
+#
+# `public-callback-base` is where comp-media POSTs a finished evaluation
+# (`/internal/photos/{id}/evaluated` is appended). Loopback is right while the
+# daemon shares the box with the app; a comp-media on another machine needs an
+# address it can reach, and the component refuses to complete an upload while
+# this is unset rather than queue a result with nowhere to go.
+#
+# `media-callback-secret` is a fixed LOCAL-DEV value, not a real secret — the
+# same convention as `master-key` in platform.toml. It must equal the daemon's
+# `--callback-secret` (passed in `extra_args` below); change BOTH in a real
+# deployment. Unset, every callback is refused with 503 and retried, which is
+# the safe failure: an unverifiable result is never written onto a photo.
+#
+# `bootstrap-admin-email`: the account registered with this email is `admin`
+# from register on — the only way the first admin exists. Unset, there is none.
+# A LOCAL-DEV example, commented out on purpose: set it to your own address when
+# you run this yourself, or give it for one run without editing this file:
+#   cargo xtask host photoquest --config bootstrap-admin-email=you@example.com
+#
+# `allow-test-routes` is deliberately NOT here, not even commented: it lets
+# anyone move the game's clock (POST /test/clock). e2e/photoquest.sh passes it
+# for its own run with `--config allow-test-routes=true`.
+[config]
+media-url = "http://127.0.0.1:8013"
+public-callback-base = "http://127.0.0.1:3941"
+media-callback-secret = "photoquest-local-dev-callback-secret"
+# bootstrap-admin-email = "you@example.com"
+
+# No `token` set here — permissive, same reasoning as apps/image-optimizer.toml:
+# this is meant to compose and run with nothing extra to provision. A real
+# deployment sets `token` here AND the matching `media-token` in [config] above
+# (kept in sync by `check()`).
+#
+# No `allow_flag`/`allow` either, unlike comp-imageopt: comp-media never touches
+# the local filesystem on a caller's behalf. It reads and writes the object store
+# by key, and the keys are its own construction (`originals/<photo_id>.<ext>`,
+# `renditions/<photo_id>/…`, with `photo_id` checked against [A-Za-z0-9_-]), so
+# there is no path for a caller to steer and nothing for an allow-list to bound.
+#
+# `extra_args` point it at the compose RustFS (`docker compose --profile media up
+# -d rustfs`, infra/compose.yaml) with that file's well-known dev credentials —
+# loopback-bound there, and not secrets. RustFS answers CORS from its own
+# `RUSTFS_CORS_ALLOWED_ORIGINS` (`MEDIA_CORS_ORIGINS`), so this app's origin
+# must be in it for the browser to read each part's ETag:
+#   MEDIA_CORS_ORIGINS=http://127.0.0.1:3941,http://localhost:3941
+# `--cors-origin` asks the store the same thing for stores that honour
+# PutBucketCors.
+#
+# `--callback-allow` is the only `host:port` comp-media will POST a result to —
+# this app's own listener, matching `public-callback-base` above. Without it
+# every job is refused (the worker dials from inside the network; an open
+# callback would be an SSRF). `--apple-helper` is used when the file exists
+# (`swiftc -O -o reconciler/target/comp-media-apple tools/media-apple/main.swift`, see
+# docs/apps/PHOTOQUEST.md); absent, comp-media evaluates on the CPU.
+[[daemon]]
+name = "media"
+addr = "127.0.0.1:8013"
+extra_args = [
+    "--s3-endpoint http://127.0.0.1:9000",
+    "--s3-access-key rustfsadmin --s3-secret-key rustfsadmin",
+    "--callback-secret photoquest-local-dev-callback-secret",
+    "--cors-origin http://127.0.0.1:3941 --cors-origin http://localhost:3941",
+    "--callback-allow 127.0.0.1:3941",
+    "--apple-helper reconciler/target/comp-media-apple",
+]

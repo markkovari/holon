@@ -68,10 +68,10 @@ Measured rather than asserted — a `saga-domain` trip whose hotel leg fails:
 | no relay | `running` — `[pending, pending, pending]` |
 | relay, 1s interval | `compensated` — `[compensated, failed, pending]` |
 
-### Daemons: the twelve host capabilities need a process too
+### Daemons: the thirteen host capabilities need a process too
 
-ADR-0095's twelve `comp-<x>` daemons (`comp-fswatch`, `comp-docker`, `comp-ffmpeg`,
-...) are native for the same reason a relay is: a `wasm32-wasip2` component cannot
+The thirteen `comp-<x>` daemons — ADR-0095's twelve (`comp-fswatch`, `comp-docker`,
+`comp-ffmpeg`, ...) plus `comp-media` ([ADR-0098](adr/0098-photos-live-in-object-storage.md)) are native for the same reason a relay is: a `wasm32-wasip2` component cannot
 watch a filesystem, spawn `ffmpeg`, or open a Docker socket. An app whose component
 dials one over loopback HTTP declares it the same way it declares a trigger:
 
@@ -91,12 +91,14 @@ extra_args = ["--ollama-url http://127.0.0.1:11434"]   # any other flags, verbat
 are written for two different readers (a process bind address, a wasm guest's
 config) and nothing else stops them drifting apart by hand. Tier 1 renders one
 `comp-<name>.service` per daemon, `BindsTo`/`After` the app's own unit, same
-reasoning as the relay.
+reasoning as the relay. The app's own unit gains `--egress <addr>` per daemon and
+`--allow-private-egress` — comp-host is default-deny outbound and refuses loopback
+otherwise, so the component could not reach the daemon started beside it.
 
 **Tier 4 (wasmCloud 2.x / Kubernetes) has the same wiring now, a Deployment in
 place of a systemd unit.** `holon wadm render --api v2` emits one further
 `Deployment` + `Service` per `[[daemon]]`, built from
-`reconciler/Dockerfile.daemon` (one image, any of the twelve, picked by
+`reconciler/Dockerfile.daemon` (one image, any of the thirteen, picked by
 `--build-arg DAEMON=comp-<name>`), and rewrites the `<name>-url` `[config]`
 value — written for tier 1, where the daemon is a sibling process on
 127.0.0.1 — to the Service's cluster DNS name instead, since nothing on this
@@ -129,7 +131,7 @@ regardless.
 
 ### `comp-goald`: the agentic loop's own daemon needs a process too
 
-Not app-scoped like the twelve above — it watches a project's goal queue and a git
+Not app-scoped like the thirteen above — it watches a project's goal queue and a git
 checkout, not a deployed app's loopback port. [ADR-0096](adr/0096-a-pull-contract-needs-a-relay.md)
 named the gap in passing: *"`comp-goald` has `--once` 'for a cron', and no cron was
 ever written."* `comp-goald` is already a continuous poll loop, not a one-shot — what
@@ -551,7 +553,7 @@ the pure-compute ones automatically and prints which.
 |---|---|
 | `apps/<name>.toml` | the app spec — the only file you write |
 | `cargo xtask list` | every app spec in `apps/` — written by hand; the generator that derived them from Justfile recipes went with the Justfile |
-| `cli/src/selfhost.rs` | tier-1 renderer, pure and tested (46 tests, incl. ones that check the flags it emits actually exist on `comp-host` and on each of the twelve ADR-0095 daemons). Reached as `holon node render\|validate\|port\|ingress\|render-goald` |
+| `cli/src/selfhost.rs` | tier-1 renderer, pure and tested (46 tests, incl. ones that check the flags it emits actually exist on `comp-host` and on each of the thirteen native daemons). Reached as `holon node render\|validate\|port\|ingress\|render-goald` |
 | `cli/src/fleet.rs` | the lattice-lane renderer. Reached as `holon fleet render\|validate` |
 | `host/` | `comp-host` — the runtime for tiers 1 and 2 |
 | `cli/src/wadm.rs` | the wasmCloud renderer (lanes 3 and 4): fused or linked, v1 OAM or a v2 `Workload`. Reached as `holon wadm render\|host` |

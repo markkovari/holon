@@ -55,6 +55,13 @@ enum Commands {
         /// Defaults to `kv` in apps/<app>.toml, else sqlite
         #[arg(long)]
         kv: Option<String>,
+
+        /// Extra `wasi:config` for this run only, repeatable: `--config key=value`.
+        /// Passed to comp-host after the app's `[config]`, so it adds a key or
+        /// overrides one without editing apps/<app>.toml — e.g. a test-only
+        /// switch that must never be in the committed spec.
+        #[arg(long = "config", value_name = "KEY=VALUE")]
+        config: Vec<String>,
     },
 
     /// Stage the jco examples' `.wasm` inputs from the build (builds first)
@@ -681,7 +688,12 @@ fn seed_studio(addr: &str) -> Result<()> {
     Ok(())
 }
 
-fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
+fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>, extra_config: &[String]) -> Result<()> {
+    for kv in extra_config {
+        if !kv.contains('=') {
+            anyhow::bail!("--config {kv}: expected KEY=VALUE");
+        }
+    }
     // The same path `compose` writes, so `compose X && host X` finds it.
     let artifact_path = resolve_app(app).artifact;
 
@@ -753,16 +765,17 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
         &format!("default-tenant={app}"),
     ]);
 
-    // The `<name>-url`/`<name>-token` config a daemon-backed component reads,
-    // and the egress allow-list to actually reach it — comp-host denies all
-    // outbound HTTP by default, so a component and its daemon both running
-    // was still an `unavailable` without this.
-    for d in daemons {
-        host_cmd.args(["--config", &format!("{}-url=http://{}", d.name, d.addr)]);
-        if let Some(t) = &d.token {
-            host_cmd.args(["--config", &format!("{}-token={t}", d.name)]);
-        }
-        host_cmd.args(["--egress", &d.addr, "--allow-private-egress"]);
+    // The app's whole `[config]` (daemon `<name>-url`/`-token` included) and
+    // the egress allow-list to reach its daemons — comp-host denies all
+    // outbound HTTP by default. Passing only the daemon keys left every other
+    // key unset: photoquest's `public-callback-base` was, and `complete`
+    // answered 503.
+    if let Some(spec) = app_spec {
+        host_cmd.args(spec.host_args());
+    }
+    // After the spec's: comp-host applies `--config` in order, the last wins.
+    for kv in extra_config {
+        host_cmd.args(["--config", kv]);
     }
 
     if let Some(dir) = app_spec.and_then(|s| s.static_dir_as_string()) {
@@ -1139,8 +1152,8 @@ fn main() -> Result<()> {
             compose_app(app.as_deref(), true)?;
         }
 
-        Commands::Host { app, addr, kv } => {
-            host_app(&app, addr.as_deref(), kv.as_deref())?;
+        Commands::Host { app, addr, kv, config } => {
+            host_app(&app, addr.as_deref(), kv.as_deref(), &config)?;
         }
 
         Commands::StageExamples => {
