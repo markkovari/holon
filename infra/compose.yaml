@@ -60,6 +60,46 @@ services:
       timeout: 3s
       retries: 10
 
+  # ---- media profile ---------------------------------------------------
+  # The object store behind `comp-media` (ADR-0098): originals and renditions
+  # of photos far too big for NATS or a guest. A profile, not always-on — only
+  # the photo pipeline needs it, and nothing else should start carrying bytes
+  # through it by accident.
+  #
+  #   docker compose --profile media up -d rustfs
+  #   comp-media --s3-endpoint http://127.0.0.1:9000 \
+  #              --s3-access-key rustfsadmin --s3-secret-key rustfsadmin ...
+  #
+  # Pinned to the GA release. The browser needs the `ETag` header of every part
+  # it uploads, so the origin serving the app must pass CORS. Two ways, and
+  # 1.0.0 honours both (checked by preflight): `comp-media --cors-origin <o>`
+  # sets bucket CORS with `ETag` exposed, and once a bucket has a rule it
+  # REPLACES the listener list below for that bucket; the env list covers only
+  # buckets with no rule of their own. Use one, not both.
+  rustfs:
+    image: rustfs/rustfs:1.0.0
+    profiles: ["media"]
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+      RUSTFS_ACCESS_KEY: rustfsadmin     # dev-only; the store is loopback-bound
+      RUSTFS_SECRET_KEY: rustfsadmin
+      # Listener-wide fallback: origins that may PUT parts / GET renditions.
+      RUSTFS_CORS_ALLOWED_ORIGINS: ${MEDIA_CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+    volumes:
+      - rustfs-data:/data
+    ports:
+      # Loopback only. The credentials above are a well-known default.
+      - "127.0.0.1:9000:9000"  # S3 API
+      - "127.0.0.1:9001:9001"  # console
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # ---- zitadel profile -------------------------------------------------
   zitadel-db:
     image: postgres:16-alpine
@@ -140,3 +180,6 @@ services:
     ports:
       - "4444:4444"          # public (OIDC issuer)
       - "4445:4445"          # admin
+
+volumes:
+  rustfs-data:

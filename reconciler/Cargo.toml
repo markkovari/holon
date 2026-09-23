@@ -145,6 +145,15 @@ mdns-sd = "0.11"       # comp-mdns: browses mDNS/DNS-SD
 notify-rust = "4"      # comp-uinotify: raises a desktop notification
 image = "0.25"         # comp-imageopt: decodes/re-encodes images
 headless_chrome = "1"  # comp-browser: drives a real Chrome/Chromium process
+# comp-media (ADR-0098): decodes camera raw, signs S3 requests, holds the
+# MEDIA_JOBS work queue. rusty-s3 is sans-IO — it signs, the reqwest client we
+# already have sends — so there is no second HTTP stack and no SDK. async-nats
+# is pinned to lattice's version so the two never disagree about the protocol.
+rawler = "0.8"
+rusty-s3 = "0.10"
+async-nats = "0.49"
+md-5 = "0.10"          # comp-media: PutBucketCors requires a Content-MD5
+base64 = "0.22"
 
 [dev-dependencies]
 miniz_oxide = "0.8"
@@ -211,6 +220,13 @@ path = "src/bin/clipboard.rs"
 [[bin]]
 name = "comp-imageopt"
 path = "src/bin/imageopt.rs"
+
+# Uploads, evaluates and renders large photos by key (ADR-0098). The only
+# daemon with a queue of its own: the Mac's GPU is the bottleneck, one photo at
+# a time.
+[[bin]]
+name = "comp-media"
+path = "src/bin/media.rs"
 
 [[bin]]
 name = "comp-lanscan"
