@@ -13,24 +13,22 @@
 //! where every rebuild produces a diff, and the diff is noise that reviewers learn
 //! to skip.
 //!
-//! Two things are checked, and the second is the one with teeth:
+//! So the rule is: a derived artifact is derived on demand, not committed. The
+//! capability graph lives in the store (`comp-capgraph --format json|surql`) and
+//! `docs/CAPABILITY-GRAPH.md` and `components/CATALOG.md` were deleted in 1c6014f
+//! rather than guarded — a committed render can go stale silently from the moment
+//! a component changes, and a projection rewritten whole cannot. What is checked:
 //!
 //!   1. Every output format leaves the working tree exactly as it found it.
-//!   2. The one graph snapshot that IS committed cannot drift from the components
-//!      it claims to describe.
-//!
-//! The second is what makes deleting `docs/CAPABILITY-GRAPH.md` attractive rather
-//! than merely tidy: while the file exists, every component change must carry a
-//! regeneration of it, and that is a file change this repository would rather not
-//! have. A guard that makes the cost visible is the honest way to argue for the
-//! deletion.
+//!   2. No build output is tracked.
+//!   3. No WIT package name means two things.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
-/// The formats `comp-capgraph` emits. `md` is included deliberately: it is the one
-/// with a committed destination, so it is the one most likely to grow a write.
-const FORMATS: &[&str] = &["json", "surql", "mermaid", "md"];
+/// The formats `comp-capgraph` emits. `mermaid` and `md` were removed with the
+/// committed renders; the tool now refuses them.
+const FORMATS: &[&str] = &["json", "surql"];
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
@@ -79,34 +77,10 @@ fn deriving_the_graph_does_not_touch_the_working_tree() {
         assert_eq!(
             before, after,
             "`comp-capgraph --format {format}` changed the working tree.\n\
-             The tool emits to stdout; the Justfile owns any redirect. If a format \
-             now needs a destination, give it to the recipe, not to the binary."
+             The tool emits to stdout; the caller owns any redirect. If a format \
+             now needs a destination, give it to the caller, not to the binary."
         );
     }
-}
-
-/// The committed snapshot says what the built components say.
-///
-/// This is the whole cost of keeping the file: it can be wrong, silently, from the
-/// moment a component changes until somebody remembers `just capgraph`. The store
-/// has no such failure mode — a projection is rewritten whole and stamped, so it is
-/// either current or absent.
-#[test]
-fn the_committed_capability_graph_is_not_stale() {
-    let root = root();
-    let committed = root.join("docs/CAPABILITY-GRAPH.md");
-    if !committed.exists() {
-        // The intended end state: the graph lives in the store and nothing renders
-        // it into the tree. Nothing to be stale.
-        return;
-    }
-    let Some(fresh) = capgraph("md") else { return };
-    let on_disk = std::fs::read(&committed).expect("docs/CAPABILITY-GRAPH.md is unreadable");
-    assert!(
-        fresh == on_disk,
-        "docs/CAPABILITY-GRAPH.md disagrees with the built components — run `just capgraph`.\n\
-         It is derived from the artifacts, so a component changed and the render did not."
-    );
 }
 
 /// No build output is tracked.
@@ -119,7 +93,7 @@ fn the_committed_capability_graph_is_not_stale() {
 /// `.gitignore` has carried `**/*.wasm` throughout. Git keeps tracking what it
 /// already tracks, so the rule never reached the files that predated it, and
 /// nothing said so — the failure is not a broken build, it is a passing test about
-/// the wrong bytes. `just examples-stage` produces them from the build instead.
+/// the wrong bytes. `cargo xtask stage-examples` produces them from the build instead.
 ///
 /// The extension list is deliberately short. This guards the case that actually
 /// happened, and a guard that tries to name every possible build output is one
@@ -147,60 +121,9 @@ fn no_build_output_is_tracked() {
         tracked.is_empty(),
         "{} build artifact(s) are tracked, and a committed copy of something derived \
          goes stale without saying so:\n  {}\n\
-         Stage them instead — `just examples-stage` writes every jco input from the build.",
+         Stage them instead — `cargo xtask stage-examples` writes every jco input from the build.",
         tracked.len(),
         tracked.join("\n  ")
-    );
-}
-
-/// The committed catalogue says what the components say.
-///
-/// `components/CATALOG.md` is committed for a reason nothing else here has: it is
-/// READ BY PEOPLE, on GitHub, without running anything.
-///
-/// It is not the ONLY derived file still committed, which is what this said and what
-/// ADR-0097 says. `docs/CAPABILITY-GRAPH.md` is the other, guarded by
-/// `the_committed_capability_graph_is_not_stale` in this same file. Believing there
-/// was one is how #201 regenerated the graph, missed the catalogue, and had CI find
-/// it a commit later — so `just derived` now runs both. Its companion `catalog.json` was committed "for
-/// tooling" and is gone — once `capsearch` stopped reading it, the only things left
-/// reading it were the tests checking whether it had gone stale, which is a file
-/// existing to be verified rather than used.
-///
-/// Neither could be checked at all until the build output came out of them: they
-/// carried `wasm_size_bytes` and `wasm_sha256_12` from the last build, so they were
-/// stale the moment anybody ran `cargo xtask build --force`, for reasons having nothing to do with
-/// the catalogue. That is why there was never a guard.
-#[test]
-fn the_committed_catalogue_is_not_stale() {
-    let root = root();
-    let markdown = root.join("components/CATALOG.md");
-    if !markdown.exists() {
-        return;
-    }
-    let before = std::fs::read(&markdown).expect("CATALOG.md is unreadable");
-
-    // `CARGO_BIN_EXE_` rather than a path: cargo builds the binary as a prerequisite
-    // of this test, so the check cannot pass by running a stale one.
-    let run = Command::new(env!("CARGO_BIN_EXE_comp-catalog")).current_dir(&root).output();
-    let Ok(run) = run else {
-        eprintln!("SKIPPED: comp-catalog did not run");
-        return;
-    };
-    if !run.status.success() {
-        eprintln!("SKIPPED: the generator failed: {}", String::from_utf8_lossy(&run.stderr));
-        return;
-    }
-
-    let after = std::fs::read(&markdown).expect("CATALOG.md is unreadable");
-    // Put it back before asserting: a failing test must not leave the tree dirty, or
-    // the next thing to run sees a change nobody made.
-    let _ = std::fs::write(&markdown, &before);
-
-    assert!(
-        before == after,
-        "components/CATALOG.md disagrees with the components — run `just catalog`.\n\
-         It is derived from their sources, so a component changed and the render did not."
     );
 }
 

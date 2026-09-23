@@ -68,11 +68,14 @@ fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/transit_domain.composed.wasm");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-transit`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e transit`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose transit)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "transit")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=transit"])
         .spawn()
         .expect("spawn comp-host");
     let guard = HostGuard(child);

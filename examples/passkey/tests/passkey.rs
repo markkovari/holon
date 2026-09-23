@@ -79,15 +79,18 @@ fn start_host() -> Kill {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/passkey_domain.composed.wasm");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-passkey`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e passkey`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose passkey)");
     let child = Command::new(&bin)
         .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "passkey")
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=passkey"])
         // The RP identity is CONFIG, never request data — that is what makes the
         // origin check worth anything.
-        .env("CFG_RP_ID", RP)
-        .env("CFG_ORIGIN", ORIGIN)
+        .arg("--config").arg(format!("rp-id={RP}"))
+        .arg("--config").arg(format!("origin={ORIGIN}"))
         .spawn()
         .expect("spawn comp-host");
     let guard = Kill(child);

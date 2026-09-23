@@ -9,7 +9,14 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-const ADDR: &str = "127.0.0.1:3031";
+/// A free port, picked once: a fixed one collided with other suites on a shared box.
+fn addr() -> &'static str {
+    static ADDR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ADDR.get_or_init(|| {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        format!("127.0.0.1:{port}")
+    })
+}
 
 struct HostGuard(Child);
 impl Drop for HostGuard {
@@ -20,7 +27,7 @@ impl Drop for HostGuard {
 }
 
 fn base() -> String {
-    format!("http://{ADDR}")
+    format!("http://{}", addr())
 }
 
 fn json_req(method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
@@ -43,13 +50,16 @@ fn start_host() -> HostGuard {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
     let bin = root.join("host/target/release/comp-host");
     let component = root.join("components/target/upload_drop.composed.wasm");
-    assert!(bin.exists(), "host not built: {bin:?} (run `just e2e-drop`)");
+    assert!(bin.exists(), "host not built: {bin:?} (run `cargo xtask e2e drop`)");
     assert!(component.exists(), "composed wasm missing (cargo xtask compose drop)");
     let child = Command::new(&bin)
-        .args(["--component", component.to_str().unwrap(), "--addr", ADDR, "--kv", "memory"])
-        .env("VET_TENANT", "drop")
-        .env("CFG_ALLOWED_TYPES", "text/plain,image/png")
-        .env("CFG_MAX_SIZE", "1048576")
+        .args(["--component", component.to_str().unwrap(), "--addr", addr(), "--kv", "memory"])
+        // wasi:config comes from flags, not the environment (the host dropped
+        // the CFG_*/VET_* scrape): the shared example defaults, then overrides.
+        .args(["--config-file", concat!(env!("CARGO_MANIFEST_DIR"), "/../defaults.conf")])
+        .args(["--config", "default-tenant=drop"])
+        .args(["--config", "allowed-types=text/plain,image/png"])
+        .args(["--config", "max-size=1048576"])
         .spawn()
         .expect("spawn comp-host");
     let guard = HostGuard(child);
