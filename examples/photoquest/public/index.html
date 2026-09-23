@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photoquest</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  h3 { margin: 0.2rem 0 0.6rem; }
+  input, button { font: inherit; padding: 0.4rem; margin: 0.2rem 0; }
+  .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem 1rem; margin: 0.6rem 0; }
+  .muted { color: #666; font-size: 0.9rem; }
+  .err { color: #a4222b; }
+  progress { width: 100%; height: 1rem; }
+  #app, #detail { display: none; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 0.6rem; }
+  .tile { border: 1px solid #ddd; border-radius: 6px; padding: 0.4rem; cursor: pointer; font-size: 0.85rem; overflow: hidden; }
+  .tile img, .ph { width: 100%; aspect-ratio: 3 / 2; object-fit: cover; background: #eee; border-radius: 4px; display: block; }
+  .ph { display: flex; align-items: center; justify-content: center; color: #888; }
+  .tile .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #detail img { max-width: 100%; border-radius: 4px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; margin: 0.5rem 0; }
+  dt { color: #666; }
+  dd { margin: 0; }
+  .state-evaluated { color: #146c2e; }
+  .state-failed { color: #a4222b; }
+</style>
+</head>
+<body>
+  <h1>Photoquest</h1>
+
+  <div id="auth">
+    <div class="card">
+      <h3>Log in</h3>
+      <input id="login-email" placeholder="email" autocomplete="username"><br>
+      <input id="login-password" type="password" placeholder="password" autocomplete="current-password"><br>
+      <button id="login-btn">Log in</button>
+    </div>
+    <div class="card">
+      <h3>Register</h3>
+      <input id="reg-email" placeholder="email" autocomplete="username"><br>
+      <input id="reg-password" type="password" placeholder="password" autocomplete="new-password"><br>
+      <button id="register-btn">Register</button>
+    </div>
+    <p id="auth-error" class="err"></p>
+  </div>
+
+  <div id="app">
+    <div class="row">
+      <span id="whoami" class="muted"></span>
+      <button id="logout-btn">Log out</button>
+    </div>
+
+    <div class="card">
+      <h3>Upload a photo</h3>
+      <p class="muted">Sony ARW or JPEG. The file goes straight to storage in parts — it never passes through this app.</p>
+      <div class="row">
+        <input id="file" type="file" accept=".arw,.jpg,.jpeg,image/jpeg">
+        <button id="upload-btn">Upload</button>
+      </div>
+      <progress id="progress" value="0" max="1" hidden></progress>
+      <p id="upload-status" class="muted"></p>
+    </div>
+
+    <div id="detail" class="card"></div>
+
+    <h3>My photos</h3>
+    <div id="gallery" class="grid"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

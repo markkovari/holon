@@ -5,7 +5,8 @@ capability components, served by `comp-host`, and — for most of them — drive
 to end by a `cargo test` against `examples/<app>` rather than by a screenshot.
 The exceptions: `helpdesk` is tested by the Node suite in `examples/jco-helpdesk`,
 `console` by Playwright (`npm --prefix examples/console test`), `eshop` by
-`examples/eshop/smoke.sh`, `grocery` has no Cargo suite under `examples/grocery`,
+`examples/eshop/smoke.sh`, `photoquest` by `reconciler/tests/gate_photoquest.rs`,
+`grocery` has no Cargo suite under `examples/grocery`,
 and the twelve ADR-0095 fronting apps (the rows that say "fronting …") have no
 Cargo suite under `examples/<app>`.
 
@@ -57,6 +58,7 @@ see what a showcase is built out of, ask the component rather than this table �
 | [PASSKEY](PASSKEY.md) | `passkey` | passwordless sign-in (the phishing-resistant one) |
 | [PASTE](PASTE.md) | `paste` | a paste / gist bin over a pure-compute pipeline |
 | [PDF-GENERATOR](PDF-GENERATOR.md) | `pdf-generator` | a PDF generator, fronting `browser-automation` (ADR-0095) |
+| [PHOTOQUEST](PHOTOQUEST.md) | `photoquest` | upload a raw photo straight to object storage, evaluated on-device (Metal sharpness, Core Image, Vision) — step one of a photo-quest game (ADR-0098) |
 | [PHOTOSOCIAL](PHOTOSOCIAL.md) | `photosocial` | social photo sharing with AI critique & RBAC-gated attribute ratings |
 | [PAYEES](PAYEES.md) | `payees` | a payee book with IBAN-validated bank details |
 | [PIPELINE](PIPELINE.md) | `pipeline` | a reliable event pipeline (outbox → dispatch → DLQ → replay) |
