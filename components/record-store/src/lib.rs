@@ -480,7 +480,7 @@ fn chunk_index_for(m: &Manifest, id: &str) -> usize {
 /// redoes its insert on top of the winner's. The MANIFEST is still a plain write:
 /// it holds routing metadata derived from the chunks (`first`, `count`), and
 /// `ids_read_all` concatenates every chunk the manifest names, so drift there
-/// costs ordering, never membership — and `just repair` rebuilds it from the
+/// costs ordering, never membership — and `repair` (records:store) rebuilds it from the
 /// records, which are authoritative.
 fn ids_insert(bucket: &kv::Bucket, base: &str, id: &str) -> Result<(), StoreError> {
     for _ in 0..CAS_TRIES {
@@ -679,36 +679,81 @@ fn field_value(parsed: &Value, field: &str) -> Option<String> {
     parsed.as_object().and_then(|obj| obj.get(field)).map(|v| v.to_string())
 }
 
-/// Add `id` to every secondary index implied by `data` + `index_fields`.
-fn add_secondary_indexes(
-    bucket: &kv::Bucket,
-    collection: &str,
-    id: &str,
-    parsed: &Value,
-    index_fields: &[String],
-) -> Result<(), StoreError> {
-    for field in index_fields {
-        if let Some(v) = field_value(parsed, field) {
-            ix_add(bucket, &ix_key(collection, field, &v), id)?;
-        }
-    }
-    Ok(())
+/// The secondary-index keys `data` + `index_fields` imply, deduped.
+fn secondary_keys(collection: &str, parsed: &Value, index_fields: &[String]) -> Vec<String> {
+    let mut keys: Vec<String> = index_fields
+        .iter()
+        .filter_map(|field| field_value(parsed, field).map(|v| ix_key(collection, field, &v)))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
-/// Remove `id` from every secondary index implied by `data` + `index_fields`.
-fn remove_secondary_indexes(
+/// How many times index maintenance that runs AFTER a record write has committed
+/// is attempted before it is left to `repair`. Each attempt is itself a CAS loop
+/// of up to `CAS_TRIES`, so this only matters for a backend error or a key under
+/// pathological contention.
+const INDEX_TRIES: u32 = 3;
+
+/// Apply one index edit after the record it describes has already committed.
+///
+/// This must NOT fail the call. The record is authoritative and already stored;
+/// reporting `err` now tells the caller the write did not happen when it did, and
+/// a caller that believes that acts on it — `treasury:ledger` refunded or
+/// abandoned transfers whose debit had landed, and ten concurrent transfers
+/// destroyed the money they moved. An index that missed an edit is the recoverable
+/// failure (`find-by`/`query` re-verify every candidate, `list` skips and reports
+/// dangling ids, `repair` rebuilds from the records); a caller misled about its own
+/// write is not. So: retry, and if it still fails, say so in the `drift` shape and
+/// leave it for `repair`.
+fn index_after_commit(
+    collection: &str,
+    op: &str,
+    key: &str,
+    mut edit: impl FnMut() -> Result<(), StoreError>,
+) {
+    let mut last = None;
+    for _ in 0..INDEX_TRIES {
+        match edit() {
+            Ok(()) => return,
+            Err(e) => last = Some(e),
+        }
+    }
+    let error = last.map(|e| format!("{e:?}")).unwrap_or_default();
+    eprintln!(
+        "{{\"drift\":true,\"collection\":\"{}\",\"op\":\"{}\",\"index\":{},\"error\":{},\
+         \"fix\":\"records:store repair\"}}",
+        sanitize(collection),
+        op,
+        Value::from(key),
+        Value::from(error),
+    );
+}
+
+/// Move `id` between the secondary indexes `old` implied and those `new` implies,
+/// touching ONLY the keys whose value changed. Best-effort — see
+/// `index_after_commit`.
+///
+/// Skipping unchanged keys is not just a saving. The old code removed `id` from
+/// every index and re-added it on every update, so an update that changed
+/// nothing indexed (a balance, not a name) still rewrote the `name` index twice —
+/// concurrent updates to one record all contended on that one key, and between
+/// the remove and the add `find-by` could not see the record at all.
+fn reindex_after_commit(
     bucket: &kv::Bucket,
     collection: &str,
     id: &str,
-    parsed: &Value,
-    index_fields: &[String],
-) -> Result<(), StoreError> {
-    for field in index_fields {
-        if let Some(v) = field_value(parsed, field) {
-            ix_remove(bucket, &ix_key(collection, field, &v), id)?;
-        }
+    op: &str,
+    old: &[String],
+    new: &[String],
+) {
+    for key in old.iter().filter(|k| !new.contains(k)) {
+        index_after_commit(collection, op, key, || ix_remove(bucket, key, id));
     }
-    Ok(())
+    for key in new.iter().filter(|k| !old.contains(k)) {
+        index_after_commit(collection, op, key, || ix_add(bucket, key, id));
+    }
 }
 
 // ---- helpers ------------------------------------------------------------
@@ -775,8 +820,13 @@ impl Guest for Component {
             )));
         }
 
-        id_index_insert(&bucket, &collection, &id)?;
-        add_secondary_indexes(&bucket, &collection, &id, &parsed, &stored.index_fields)?;
+        // The record is committed; from here on nothing may turn this into an
+        // `err` (see `index_after_commit`). A caller told its create failed
+        // creates again, and the first one is a live, unlisted duplicate.
+        let ix = idx_key(&collection);
+        index_after_commit(&collection, "create", &ix, || id_index_insert(&bucket, &collection, &id));
+        let keys = secondary_keys(&collection, &parsed, &stored.index_fields);
+        reindex_after_commit(&bucket, &collection, &id, "create", &[], &keys);
 
         Ok(entry_from(&id, stored))
     }
@@ -841,23 +891,16 @@ impl Guest for Component {
                     // between them leaves an index entry pointing at an old value,
                     // which is the pre-existing weakness ADR-0065 did not touch and
                     // is a different problem from losing the record itself.
-                    let old_parsed = serde_json::from_str::<Value>(&current.data).map_err(|e| {
-                        StoreError::BackendUnavailable(format!("corrupt record {id} data: {e}"))
-                    })?;
-                    remove_secondary_indexes(
-                        &bucket,
-                        &collection,
-                        &id,
-                        &old_parsed,
-                        &current.index_fields,
-                    )?;
-                    add_secondary_indexes(
-                        &bucket,
-                        &collection,
-                        &id,
-                        &parsed_new,
-                        &stored.index_fields,
-                    )?;
+                    //
+                    // The write has landed, so nothing below may report `err`:
+                    // this used to `?` the index edits, and an index that lost its
+                    // races turned a committed update into a failed one in the
+                    // caller's eyes (see `index_after_commit`).
+                    let old_keys = serde_json::from_str::<Value>(&current.data)
+                        .map(|v| secondary_keys(&collection, &v, &current.index_fields))
+                        .unwrap_or_default();
+                    let new_keys = secondary_keys(&collection, &parsed_new, &stored.index_fields);
+                    reindex_after_commit(&bucket, &collection, &id, "update", &old_keys, &new_keys);
                     return Ok(entry_from(&id, stored));
                 }
                 // Someone else wrote between the read and the write. Re-read and
@@ -879,13 +922,21 @@ impl Guest for Component {
             return Ok(());
         };
 
-        id_index_remove(&bucket, &collection, &id)?;
-        if let Ok(parsed) = serde_json::from_str::<Value>(&stored.data) {
-            remove_secondary_indexes(&bucket, &collection, &id, &parsed, &stored.index_fields)?;
-        }
+        // The record goes FIRST, and it is the only step that can fail the call.
+        // It used to be last, after index removals that `?`-ed: a failed index
+        // edit reported the delete as failed with the record's index entries
+        // already half gone — a record that existed and could not be listed.
+        // This way round an interrupted delete leaves only dangling ids, which
+        // every read already skips (and `list` reports) and `repair` prunes.
         bucket
             .delete(&rec_key(&collection, &id))
             .map_err(|e| StoreError::BackendUnavailable(format!("delete: {e:?}")))?;
+        let ix = idx_key(&collection);
+        index_after_commit(&collection, "delete", &ix, || id_index_remove(&bucket, &collection, &id));
+        let keys = serde_json::from_str::<Value>(&stored.data)
+            .map(|v| secondary_keys(&collection, &v, &stored.index_fields))
+            .unwrap_or_default();
+        reindex_after_commit(&bucket, &collection, &id, "delete", &keys, &[]);
         Ok(())
     }
 
@@ -1226,6 +1277,21 @@ mod tests {
     /// Chunk keys must sort in sequence order as STRINGS, because that is how
     /// they come back from a prefix scan. Without the zero padding `_c10` sorts
     /// before `_c2` and the id list silently reorders after the tenth chunk.
+    #[test]
+    fn an_update_that_changes_no_indexed_field_touches_no_index() {
+        // The treasury bug: every balance update rewrote the `name` index, and
+        // ten concurrent transfers lost that key's races. Same keys in, same out.
+        let fields = vec!["name".to_string(), "name".to_string(), "absent".to_string()];
+        let before = serde_json::json!({"name": "a", "units": 10});
+        let after = serde_json::json!({"name": "a", "units": 0});
+        let (old, new) =
+            (secondary_keys("accounts", &before, &fields), secondary_keys("accounts", &after, &fields));
+        assert_eq!(old, new);
+        assert_eq!(old.len(), 1, "a repeated field is one key, an absent one is none");
+        let renamed = secondary_keys("accounts", &serde_json::json!({"name": "b"}), &fields);
+        assert_ne!(old, renamed);
+    }
+
     #[test]
     fn chunk_keys_sort_lexicographically_in_sequence_order() {
         let mut keys: Vec<String> =
