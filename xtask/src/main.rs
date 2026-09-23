@@ -753,16 +753,13 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>) -> Result<()> {
         &format!("default-tenant={app}"),
     ]);
 
-    // The `<name>-url`/`<name>-token` config a daemon-backed component reads,
-    // and the egress allow-list to actually reach it — comp-host denies all
-    // outbound HTTP by default, so a component and its daemon both running
-    // was still an `unavailable` without this.
-    for d in daemons {
-        host_cmd.args(["--config", &format!("{}-url=http://{}", d.name, d.addr)]);
-        if let Some(t) = &d.token {
-            host_cmd.args(["--config", &format!("{}-token={t}", d.name)]);
-        }
-        host_cmd.args(["--egress", &d.addr, "--allow-private-egress"]);
+    // The app's whole `[config]` (daemon `<name>-url`/`-token` included) and
+    // the egress allow-list to reach its daemons — comp-host denies all
+    // outbound HTTP by default. Passing only the daemon keys left every other
+    // key unset: photoquest's `public-callback-base` was, and `complete`
+    // answered 503.
+    if let Some(spec) = app_spec {
+        host_cmd.args(spec.host_args());
     }
 
     if let Some(dir) = app_spec.and_then(|s| s.static_dir_as_string()) {
