@@ -158,7 +158,7 @@ pub fn whoami() -> Result<()> {
 pub fn component_push(file: &PathBuf, id: Option<String>) -> Result<()> {
     let s = load()?;
     let bytes = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
-    // The default id is the filename, minus the `.composed` a `just compose-*` adds,
+    // The default id is the filename, minus the `.composed` `cargo xtask compose` adds,
     // so `comp component push target/gate_domain.composed.wasm` does the obvious.
     let id = id.unwrap_or_else(|| {
         file.file_stem()

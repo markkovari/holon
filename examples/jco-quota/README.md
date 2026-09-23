@@ -39,6 +39,7 @@ implementing the same WIT interface and the component is none the wiser.
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test        # transpiles quota.wasm -> gen/, then runs the node:test suite
 ```

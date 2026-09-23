@@ -19,7 +19,7 @@ opaque cursor, then **Export** it back to CSV.
 ## Test it
 
 ```bash
-just e2e-report       # composes + builds host + runs tests/report.rs
+cargo xtask e2e report # composes + builds host + runs tests/report.rs
 ```
 
 Proves: a mixed CSV splits into imported vs rejected with per-field errors;

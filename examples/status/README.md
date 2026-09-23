@@ -20,7 +20,7 @@ transition log.
 ## Test it
 
 ```bash
-just e2e-status       # composes + builds host + runs tests/status.rs
+cargo xtask e2e status # composes + builds host + runs tests/status.rs
 ```
 
 Proves: a self-probe (targeting the page's own root) stays **up**; a dead-port

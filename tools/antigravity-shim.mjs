@@ -7,7 +7,6 @@
 //
 //   node tools/antigravity-shim.mjs                         # 127.0.0.1:8789
 //   PORT=8789 ANTIGRAVITY_MODEL=gemini-2.5-flash node tools/antigravity-shim.mjs
-//   just antigravity-shim
 //
 // ## Execution Backends
 //

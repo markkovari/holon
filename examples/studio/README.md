@@ -10,9 +10,13 @@ ui/               React + @xyflow/react SPA (Vite + Tailwind) -> dist/
 ```
 
 ```bash
-cargo xtask host studio          # :3054, palette seeded with all 109 components
-just seed-studio          # (re)feed the palette into an already-running studio
-just e2e-studio           # the full ladder
+cargo xtask host studio   # :3054 — the palette starts empty; feed it with the loop below
+# (re)feed the palette every component in the repo, into an already-running studio:
+for f in components/target/wasm32-wasip2/release/*.wasm; do
+  curl -s -o /dev/null -X POST --data-binary "@$f" -H 'content-type: application/wasm' \
+    "localhost:3054/api/components?id=$(basename "$f" .wasm | tr _ -)"
+done
+cargo xtask e2e studio    # the full ladder
 cd ../../components && cargo test -p wit-reflect
 ```
 

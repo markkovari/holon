@@ -65,8 +65,10 @@ is **no** hand-rolled auth, TF-IDF, state machine, HMAC, pub/sub, or LLM client
 
 - `cargo xtask compose track` plugs the **mock** LLM (`llm-inference`) — deterministic,
   offline, what the e2e and demo use.
-- Swap the plug for `openai-provider` (`compose-ai-openai`) and the summary is
-  real — `track-domain` is unchanged. The domain never names a vendor.
+- Swap the plug for `openai-provider` and the summary is real — `track-domain`
+  is unchanged. The domain never names a vendor. No command wires that swap
+  today: the `compose-ai-openai` recipe went with the Justfile, and
+  `cargo xtask compose` takes no provider choice.
 
 ## Product surface (one component)
 
@@ -131,11 +133,10 @@ track-assets → one self-contained `track_domain.composed.wasm`.
    SSE feed streams it; `POST /api/tick` sweeps stale issues; a move fires a
    signed webhook. e2e asserts an `issue.created` frame reaches the SSE feed.
 4. **AI + baked SPA** — `ai:inference` summarizes the thread (mock LLM); the
-   Vite+TS SPA is baked into `track-assets` and served by the domain. `just
-   host-track`, then open the board.
+   Vite+TS SPA is baked into `track-assets` and served by the domain. `cargo
+   xtask host track`, then open the board.
 5. **Bench** — the composition-cost dimension: per-request instantiation of a
-   15-import component, and the auth+ABAC guard overhead per protected call. See
-   `bench/TRACK-BENCH.md`.
+   15-import component, and the auth+ABAC guard overhead per protected call.
 
 ## Non-goals (v1)
 

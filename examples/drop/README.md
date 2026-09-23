@@ -13,13 +13,13 @@ cargo xtask host drop        # from repo root; drop-box on http://127.0.0.1:3021
 Open the page, pick a file, and watch the three steps: **① ticket** (the policy
 answer, no bytes), **② PUT** the bytes straight to storage, **③ signed download
 link**. A blocked content-type (default gate allows `text/plain,image/png`) or
-an oversize file is refused at ticket time. `CFG_ALLOWED_TYPES` / `CFG_MAX_SIZE`
-tune the gate.
+an oversize file is refused at ticket time. The `allowed-types` / `max-size`
+config keys (`--config allowed-types=…`) tune the gate.
 
 ## Test it
 
 ```bash
-just e2e-drop         # composes + builds host + runs tests/drop.rs
+cargo xtask e2e drop  # composes + builds host + runs tests/drop.rs
 ```
 
 Proves: a disallowed type and an oversize request are both refused at ticket

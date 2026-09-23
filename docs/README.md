@@ -11,8 +11,8 @@ reasoning rather than their accuracy.
 |---|---|
 | know **what runs today**, and what is honestly missing | [`CURRENT.md`](CURRENT.md) |
 | know **why any of this exists**, with the numbers | [`WHY.md`](WHY.md) |
-| **find a component** — its package, deps, size, whether it is reusable | dynamically via `knowledge-graph` |
-| see **what a component really imports**, from the built wasm | dynamically via `knowledge-graph` |
+| **find a component** — its package, deps, size, whether it is reusable | `comp-catalog` (JSON, from the components' sources), or `comp-capgraph --find <text>` |
+| see **what a component really imports**, from the built wasm | `comp-capgraph` (`--format json`, or the default `surql` projection into the `knowledge-graph`) |
 | **run an app** on your own machines | [`SELFHOST.md`](SELFHOST.md) |
 | see **an app that works** — one file each | [`apps/`](apps/) |
 | **consume a capability** from your own component | [`capabilities/`](capabilities/) |
@@ -27,7 +27,8 @@ tests notice.
 
 | file | from | regenerate |
 |---|---|---|
-| `knowledge-graph` schema | `components/*/` and built wasm | dynamic capabilities (replaces `CATALOG.md` / `CAPABILITY-GRAPH.md`) |
+| `wit/SURFACES.md` | every interface this repo defines, as rendered out of the built wasm | `WIT_SURFACES=write cargo test --test witsurface` in `reconciler/` |
+| `knowledge-graph` schema | `components/*/` and built wasm | `comp-capgraph --format surql`, projected into SurrealDB (replaces the deleted `CATALOG.md` / `CAPABILITY-GRAPH.md`) |
 
 ## Historical, and kept on purpose
 

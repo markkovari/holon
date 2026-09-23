@@ -377,7 +377,12 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
         // possible: `kill(-pid, …)` targets a process group, not a single pid.
         .process_group(0)
         .spawn()
-        .with_context(|| format!("could not run `{bin}` — build it with `just goal-run`"))?;
+        .with_context(|| {
+            format!(
+                "could not run `{bin}` — build it with `cargo build --release --bin \
+                 comp-goalrun` in reconciler/, then put it on PATH or set COMP_GOALRUN_BIN"
+            )
+        })?;
     let child_pgid = child.id() as i32;
     let stdout = child.stdout.take().expect("stdout was piped");
     let pr: Arc<Mutex<Option<String>>> = Arc::default();

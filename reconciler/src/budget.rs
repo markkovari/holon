@@ -4,9 +4,6 @@
 //! possibly different models once a tier router exists, so the run's spend is the
 //! sum of its attempts' costs — the number a project budget is actually checked
 //! against (goal 01 — fuel is money).
-//!
-//! UNIMPLEMENTED — this is the goal Holon is asked to fill in. The tests are the
-//! specification.
 
 use crate::cost::cost_cents;
 

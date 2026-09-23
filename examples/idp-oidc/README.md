@@ -24,6 +24,7 @@ component genuinely fetches `{issuer}/.well-known/openid-configuration` +
 docker compose -f ../../infra/compose.yaml --profile ory up -d
 docker compose -f ../../infra/compose.yaml --profile zitadel up -d   # optional
 
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 EXPECTED_ISSUER=http://localhost:4444 npm run verify   # mint + verify a real Hydra JWT
 npm test                                               # 6 tests (skip if IdP down)

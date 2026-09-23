@@ -58,8 +58,9 @@ mkdir -p "$BIN_DIR"
 
 # --- the source build, for when there is no binary to download ---------------
 #
-# Five cargo workspaces, not one, so `cargo build --bin comp-host` from the root
-# finds nothing.
+# Five top-level cargo workspaces (cli, components, host, lattice, reconciler)
+# and no root manifest, so `cargo build --bin comp-host` from the root finds
+# nothing.
 workspace_of() {
   case "$1" in
     comp-host) echo host ;;

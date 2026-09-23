@@ -43,7 +43,8 @@ jco transpile auth_guard.wasm -o gen \
 ## Run
 
 ```bash
-cd comp/examples/jco-embed
+cargo xtask stage-examples   # from the repo root: build + stage the .wasm inputs
+cd examples/jco-embed
 npm install
 npm start            # runs `jco transpile` then the server (PORT=3001)
 ```

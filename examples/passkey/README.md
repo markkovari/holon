@@ -13,7 +13,7 @@ ui/                the React + shadcn SPA (Vite + Tailwind) -> dist/
 
 ```bash
 cargo xtask host passkey       # SPA + host on :3053
-just e2e-passkey        # both ceremonies + every check that must bite
+cargo xtask e2e passkey # both ceremonies + every check that must bite
 cargo test -p webauthn  # the verifier itself (from components/)
 ```
 

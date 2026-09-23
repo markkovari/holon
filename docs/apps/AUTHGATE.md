@@ -101,7 +101,7 @@ rather than importing it.
    e2e proves a wrong code is rejected, a recovery code is **single-use**, and
    logout revokes the session. `cargo xtask host authgate`, enroll and log in.
 4. **Bench** — the crypto dimension: TOTP verify throughput and vault
-   seal/unseal latency per login. See `bench/AUTHGATE-BENCH.md`.
+   seal/unseal latency per login.
 
 ## Non-goals (v1)
 

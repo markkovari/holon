@@ -9,6 +9,7 @@ Node against shims:
   `__seed` / `__backing`.
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm test     # 10/10: 6 primitives + 4 strategies
 ```

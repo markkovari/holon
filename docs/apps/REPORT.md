@@ -96,8 +96,7 @@ is the request/response one).
    tallies, the reject list with per-field errors, the paged table, and a
    download button. `cargo xtask host report`, paste a CSV and watch it split.
 4. **Bench** — the batch dimension: rows-per-second through parse+validate+store
-   for a large CSV, and validate-only vs full-pipeline overhead. See
-   `bench/REPORT-BENCH.md`.
+   for a large CSV, and validate-only vs full-pipeline overhead.
 
 ## Non-goals (v1)
 

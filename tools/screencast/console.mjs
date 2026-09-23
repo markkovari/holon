@@ -8,7 +8,7 @@
 //
 // ## Why this one starts its own stack
 //
-// Every other recorder here assumes `just host-<app>` is already running, because
+// Every other recorder here assumes `cargo xtask host <app>` is already running, because
 // every other app is one component and one port. The console needs three things
 // on the other side — the knowledge store it reads runs from, a platform to
 // authenticate against, and the composed component itself — so a recorder that

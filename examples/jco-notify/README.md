@@ -16,6 +16,7 @@ gen/                   # produced by `jco transpile` (gitignored)
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile      # notify_dispatch.wasm -> gen/
 npm test
@@ -30,8 +31,11 @@ needs that same loop to make progress deadlocks. So a live delivery can't be
 driven in in-process jco.
 
 The **HTTP delivery path is validated under wasmCloud** instead, where a real
-`http-client` capability provider satisfies `wasi:http/outgoing-handler` (see
-`infra/wadm.yaml`). What the in-process test covers is the synchronous,
+`http-client` capability provider satisfies `wasi:http/outgoing-handler` (that wiring was in
+`infra/wadm.yaml`, removed with the Kubernetes lane in
+[ADR-0021](../../docs/adr/0021-there-is-no-kubernetes.md);
+[`../vet-clinic-wasmcloud/wadm.yaml`](../vet-clinic-wasmcloud/wadm.yaml) wires the
+same `http-client` provider). What the in-process test covers is the synchronous,
 network-free branch: with no gateway URL configured, `email`/`sms` return
 `unsupported-channel` before any request — proving the component loads, reads
 config, and routes channels correctly.

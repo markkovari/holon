@@ -23,6 +23,7 @@ gen/                 # Map-backed transpile output     (gitignored)
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile         # search_index.wasm -> gen/
 npm test                  # behavioral checks

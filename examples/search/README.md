@@ -26,7 +26,7 @@ Open the page (it seeds a 10-doc corpus on load):
 ## Test it
 
 ```bash
-just e2e-search            # ranking, all-mode intersection, facet filter, cache hit
+cargo xtask e2e search     # ranking, all-mode intersection, facet filter, cache hit
 ```
 
 The e2e seeds the corpus and asserts a rare term ranks its doc first, all-mode

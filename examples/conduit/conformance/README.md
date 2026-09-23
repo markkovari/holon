@@ -9,7 +9,7 @@ Postman/newman collection in favour of Hurl + Bruno).
 Run it against the composed conduit app on the native Rust host:
 
 ```bash
-just conformance-conduit        # from repo root: build + compose + host + hurl
+cargo xtask e2e conformance-conduit   # from repo root: build + compose + host + hurl
 # or, against an already-running host:
 HOST=http://127.0.0.1:3008 bash run.sh
 ```

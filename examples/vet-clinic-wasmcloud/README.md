@@ -30,35 +30,18 @@ backend a vet-clinic frontend calls.
 - `wadm.yaml` — the equivalent wasmCloud **1.x** (`wash app deploy`) manifest, for
   a non-Kubernetes host. (The k8s path above is the one that was run live.)
 
-## Deploy (Kubernetes + operator)
+## Deploy — a record, not a supported path
 
-Prereqs: a cluster with the `wasmcloud-operator`, `wadm`, and JetStream NATS
-running (the repo's `infra/k8s` sets these up), plus the in-cluster registry
-reachable from the host at `registry.wasmcloud.svc.cluster.local:5000` (NodePort
-`:30500` from the host machine). Components built: `cargo xtask build --force && just compose`.
+The run above was on the Kubernetes operator lane, which this platform has since
+dropped ([ADR-0021](../../docs/adr/0021-there-is-no-kubernetes.md): there is no
+Kubernetes). `infra/k8s`, which stood that cluster up, is gone; the `k8s/` manifests
+here are kept as the record of what was deployed, not as something to apply.
 
-```bash
-# 1. push the two components to the in-cluster registry (host-side via :30500)
-wash oci push --insecure localhost:30500/vet-auth-guard:0.1.0   ../../components/target/auth_guard.composed.wasm
-wash oci push --insecure localhost:30500/vet-accounts-app:0.1.0 ../../components/target/wasm32-wasip2/release/accounts_app.wasm
-
-# 2. host + app
-kubectl create namespace vet-clinic
-kubectl apply -f k8s/host.yaml      # wait until the host pod is 2/2 Running
-kubectl apply -f k8s/app.yaml       # wadm schedules components + providers
-
-# 3. exercise it
-kubectl port-forward -n vet-clinic deploy/vet-clinic-host 8088:8081 &
-curl -X POST localhost:8088/register -H 'content-type: application/json' \
-  -d '{"email":"owner@acme-vet.test","password":"ownerpass1","tenant":"acme-vet"}'
-curl -X POST localhost:8088/login -H 'content-type: application/json' \
-  -d '{"email":"owner@acme-vet.test","password":"ownerpass1","tenant":"acme-vet"}'
-# the account persists in the `vetclinic` NATS KV bucket — log in again after a
-# host restart and it's still there.
-```
-
-Check status: `kubectl get application -n vet-clinic` (→ `Deployed`) and the host
-log `kubectl logs -n vet-clinic deploy/vet-clinic-host -c wasmcloud-host`.
+Running a Holon app on somebody else's wasmCloud is still possible, as interop:
+`holon wadm render apps/<name>.toml` renders the wadm manifest (`--api v2` for a
+2.x Workload), and `tools/wadm.sh` submits it over NATS with no `wash`. See lanes 3
+and 4 of [`docs/SELFHOST.md`](../../docs/SELFHOST.md). There is no `apps/vet*.toml`,
+so that path does not cover this example as-is.
 
 ## Full app — linked vs hybrid (lattice) topology
 
@@ -69,10 +52,14 @@ Two shapes:
   wrpc-over-NATS hop. `VET_REPLICAS=5 python3 gen-manifest.py > k8s/vet-domain-linked.yaml`
 - **Hybrid / lattice** (`LATTICE=1`): the 6 pure-compute caps (money, validate,
   md, pii, paginate, upload-policy) are wac-fused INTO vet-domain
-  (`just compose-vet-lattice`, 28 core modules — under wasmtime's 30 cap;
+  (28 core modules — under wasmtime's 30 cap;
   fusing all 19 gives 104 and does not deploy). No NATS hop for pure compute;
   stateful caps stay linked. Their `wasi:config` knobs move onto vet-domain
   automatically. `LATTICE=1 VET_REPLICAS=5 python3 gen-manifest.py > k8s/vet-domain-lattice.yaml`
+
+  The recipe that composed that fused vet-domain is gone with the Justfile; for an
+  app spec, `holon wadm render --topology linked` now fuses the pure-compute
+  capabilities automatically and prints which.
 
 The React SPA is no longer embedded in vet-domain — it is its own
 `static-assets` component (`ui:assets/files` link, `vet-static-assets` image),
@@ -109,11 +96,3 @@ resource shape differs from the wasmtime bundled in wasmCloud 1.4.1. Bumping the
 host to **`1.6.0`** (newer wasmtime) resolved it — both components then started and
 the HTTP + KV path worked. Pin the host version to one whose wasmtime matches the
 `wasi:http` your components target.
-
-## Teardown
-
-```bash
-kubectl delete -f k8s/app.yaml
-kubectl delete -f k8s/host.yaml
-kubectl delete namespace vet-clinic
-```

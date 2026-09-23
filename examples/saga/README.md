@@ -15,9 +15,9 @@ survives the host process dying mid-flight.
 ## Verify
 
 ```bash
-just e2e-saga        # commit + compensation + retry (recover & give-up), memory KV
-just durable-saga    # NATS: start a saga, KILL the host mid-flight, restart → it resumes
-cargo xtask host saga       # serve it yourself on :3012
+cargo xtask e2e saga           # commit + compensation + retry (recover & give-up), memory KV
+cargo xtask e2e durable-saga   # NATS: start a saga, KILL the host mid-flight, restart → it resumes
+cargo xtask host saga          # serve it yourself on :3012
 ```
 
 ```bash

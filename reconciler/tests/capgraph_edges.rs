@@ -244,7 +244,7 @@ fn every_composed_part_is_a_real_component() {
 ///
 /// Both readings are defensible and they are currently different. The visible
 /// consequence is that no `*-domain` component appears in `component_in_apps` at
-/// all, so `just capability` ranks every domain component as carried by zero apps.
+/// all, so `comp-capgraph --find` ranks every domain component as carried by zero apps.
 /// That is plausibly correct — a domain component is app-specific and should not
 /// rank high for reuse — which is exactly why it should be a decision rather than
 /// an accident.
@@ -273,7 +273,7 @@ fn json_omits_an_apps_own_root_while_surql_includes_it() {
     assert!(
         !in_apps.iter().any(|c| c.ends_with("-domain")),
         "a domain component now appears in component_in_apps — the app-count \
-         tie-breaker in `just capability` has changed behaviour"
+         tie-breaker in `comp-capgraph --find` has changed behaviour"
     );
 }
 

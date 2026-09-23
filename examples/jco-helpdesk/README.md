@@ -29,7 +29,7 @@ invisible to requesters and move the machine nowhere.
 ## Run
 
 ```bash
-# from comp/: build + compose the app wasm
+# from the repo root: build + compose the app wasm
 cargo xtask compose helpdesk       # -> components/target/helpdesk_domain.composed.wasm
 cp components/target/helpdesk_domain.composed.wasm examples/jco-helpdesk/
 

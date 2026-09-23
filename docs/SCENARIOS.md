@@ -118,7 +118,7 @@ human in the loop.
 | closing one first-level branch closes 85 descendants | ✅ measured |
 | generations of generations | ✅ `search.rs` — generation 2 reaches a goal no single generation can, because it is seeded with generation 1's best candidate AND the checks it still failed |
 | a search escaping a bad start | ✅ one branch per generation is shown NOTHING from the previous one, asserted by what it produced rather than by the flag set on it |
-| a human starts, the loop runs, a human lands | ✅ every component on the path exists and is tested end to end, and `gendeploy.rs` runs the deployed driver graph across one environment per branch. What is untested in ONE run is the queue → search → forge chain joined by a driver, because nothing picks a started goal off the queue yet |
+| a human starts, the loop runs, a human lands | ✅ every component on the path exists and is tested end to end, and `gendeploy.rs` runs the deployed driver graph across one environment per branch. The queue → search → forge chain is now joined by a driver: `comp-goald` picks started goals off the queue and runs each through `comp-goalrun` (7ac6f06) |
 
 ### Failure modes
 
@@ -138,8 +138,8 @@ human in the loop.
 
 **The honest summary of level 3:** the substrate survives things breaking, and the
 search now exists — it stops for a stated reason, selects, and remembers what it
-evaluated. What is still absent is fuel as money, suspension, and a pool any
-branch actually reads.
+evaluated. What is still absent is fuel as money and suspension; a pool every
+branch actually reads has since been built (gap 4 below).
 
 ---
 
@@ -158,8 +158,9 @@ DECIDES is designed and unbuilt.**
                 what the swarm remembers, and what two halves agree on
                 → built and demonstrated (ADR-0084, ADR-0086): a goal already
                   done is skipped, every verdict is recorded, two parts
-                  negotiate a contract and land one joined tree
-                fuel as money, suspension, retrieval into a prompt
+                  negotiate a contract and land one joined tree, and a
+                  branch's prompt carries retrieved lessons
+                fuel as money, suspension
                 → ADR-0081, still proposed
 
 That is a deliberate order rather than an accident: a wrong decision on a
@@ -183,15 +184,19 @@ The honest gap list, in the order it bites:
 2. **Tokens are not money.** Both budgets count tokens; a project's budget is a
    number in a different unit that nothing converts to. And an unusable answer's
    cost is invisible at both levels, because cost travels with a candidate.
-3. **Nothing drives it from the queue.** `holon goal start` records that a goal
-   started; no process picks a started goal up and runs a search for it. Both ends
-   exist and a person is still the wire between them.
-4. **The knowledge pool is written and unread.** It promotes by outcome, weights
-   retrieval by what happened to the runs that read a lesson, skips a goal already
-   done, and records every branch's verdict (ADR-0084). What is missing is the last
-   wire: no branch's prompt carries a retrieved lesson, nothing distils a verified
-   diff into `patterns`, and nothing decays (goal 08).
-5. **Nothing criticises a gate.** A goal's checks are hand-authored, and a check
-   that already passes on the base tree accepts anything — measured, on the first
-   real decomposed run, which scored 1000 on two candidates that had deleted their
-   own component exports (goal 07).
+3. ~~**Nothing drives it from the queue.**~~ → **built**: `holon goal start`
+   records that a goal started, and `comp-goald` picks started goals up and runs a
+   search for each (7ac6f06). A person still starts every goal, deliberately.
+4. ~~**The knowledge pool is written and unread.**~~ → **built**: it promotes by
+   outcome, weights retrieval by what happened to the runs that read a lesson, skips
+   a goal already done, and records every branch's verdict (ADR-0084). The last
+   wire is in too: each branch's prompt carries retrieved lessons (a different
+   slice per branch, the control arm reading none), a passing candidate is distilled
+   into `patterns`, and every run sweeps what nobody has read
+   ([`CURRENT.md`](CURRENT.md), goal 08).
+5. ~~**Nothing criticises a gate.**~~ → **built**: a goal's checks are
+   hand-authored, and a check that already passes on the base tree accepts
+   anything — measured, on the first real decomposed run, which scored 1000 on two
+   candidates that had deleted their own component exports. Every check is now run
+   against the untouched base first and a run is refused when one passes; whether a
+   gate measures the right thing is still unchecked (goal 07).

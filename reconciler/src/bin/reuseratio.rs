@@ -1,6 +1,6 @@
 //! What a goal's app is made of, and how much of it the run had to write.
 //!
-//!     comp-reuse-ratio .comp/goals/triage-assist.toml [...]
+//!     comp-reuse-ratio .comp/goals/triage-assist.toml.archived [...]
 //!
 //! Two numbers per app, from the capability graph (`comp-capgraph`, ADR-0091) —
 //! rows a query can join against, kept current by the build — rather than by
@@ -43,7 +43,7 @@ fn measured_root(repo: &Path) -> PathBuf {
 #[derive(Parser)]
 #[command(name = "comp-reuse-ratio", about = "What a goal's app is made of, and how much of it the run had to write")]
 struct Args {
-    /// Goal spec paths, e.g. `.comp/goals/triage-assist.toml`.
+    /// Goal spec paths, e.g. `.comp/goals/triage-assist.toml.archived`.
     goals: Vec<String>,
     /// The capability graph's SurrealDB endpoint (comp-capgraph, ADR-0091).
     #[arg(long, default_value = "http://malna.tail3a9c.ts.net:8000")]

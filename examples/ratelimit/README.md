@@ -27,10 +27,10 @@ Open the page (max 10 attempts / 15s window, quota 20 / 30s):
 ## Test it
 
 ```bash
-just e2e-ratelimit         # ceiling → 429, quota decrements, lockout + recovery, live SSE
+cargo xtask e2e ratelimit  # ceiling → 429, quota decrements, lockout + recovery, live SSE
 ```
 
-The e2e (`CFG_MAX_ATTEMPTS=6`, `CFG_LOCKOUT_WINDOW=3`) proves N allowed then a
+The e2e (`--config max-attempts=6 --config lockout-window=3`) proves N allowed then a
 429 at the ceiling, a quota `remaining` that decrements, that enough failures
 lock the key (observed via `state`) and it recovers after the window, and that a
 verdict reaches a separate held-open SSE connection.

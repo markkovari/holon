@@ -75,11 +75,15 @@ The provider uses: `wasmcloud-provider-sdk` (host handshake + linking),
 
 | piece | what | kind |
 |---|---|---|
-| `providers/golem-workflow` | the wRPC→Golem provider | **native Rust binary** (new) |
-| `wit/durable-workflow.wit` | the `durable:workflow/orchestrator` contract | WIT (new) |
-| `components/workflow-caller` | a tiny consumer: HTTP `POST /run {workflowId,payload}` → `orchestrator.trigger` | wasm component (new) |
-| `infra/golem-wadm.yaml` | OAM app: link the caller component to the provider | wadm manifest (new) |
+| `providers/golem-workflow` | the wRPC→Golem provider | **native Rust binary** |
+| `providers/golem-workflow/wit/durable-workflow.wit` | the `durable:workflow/orchestrator` contract | WIT |
+| `components/golem-bridge` | the same contract as a COMPONENT that calls Golem over `wasi:http` — the v2-operator counterpart, composed into the jobs queue (`docs/apps/JOBS.md`) | wasm component |
+| `providers/golem-workflow/golem-docker` | Golem's own docker-compose stack, vendored | infra |
 | a Golem workflow | e.g. `book-flight` — the durable worker the provider invokes | Golem app (Rust/wasm) |
+
+Planned and never written: a `workflow-caller` consumer component and a wadm
+manifest linking it to the provider. The provider is exercised by its own live
+test instead (step 3 below), and the wasm path by `golem-bridge`.
 
 ## What's repo-side vs what needs live infra (the honest ceiling)
 
@@ -87,10 +91,10 @@ Unlike saga/pulse — fully e2e'd on the lightweight `host/` wasmtime binary —
 **provider cannot run on `host/`**. It's a lattice participant. So:
 
 - **Repo-side (compiles, reviewable, unit-testable):** the provider crate, the
-  WIT, the consumer component, the wadm manifest, and the type-mapping logic
+  WIT, and the type-mapping logic
   (RunRequest ↔ `golem_wasm_rpc::Value`) — which *is* unit-testable in isolation
   and is where the real bugs live.
-- **Needs live infra (a documented `just` recipe, not a `cargo test`):** the true
+- **Needs live infra (a script, not the default `cargo test`):** the true
   end-to-end run needs **NATS + a wasmCloud v2 host (`wash`) + a Golem instance**
   (Golem OSS via docker) with a deployed `book-flight` worker. That's heavier
   than anything else here and lands in "explicit-ask cluster" territory.
@@ -113,9 +117,18 @@ Unlike saga/pulse — fully e2e'd on the lightweight `host/` wasmtime binary —
 4. ✅ **Saga integration** — the [trip-booking saga](../apps/SAGA.md) can book each leg by
    invoking a real durable Golem worker over `wasi:http/outgoing-handler`, so a
    saga leg *is* a crash-proof workflow while the saga still owns compensation.
-   Live proof: `just saga-golem` — the saga commits with golem-issued refs and the
-   leg's durable worker state advances. (This proves the same Golem hop the
-   provider makes, from inside a wasm component instead of a native provider.)
+   Live proof — the saga commits with golem-issued refs and the leg's durable
+   worker state advances:
+
+   ```bash
+   bash providers/golem-workflow/e2e.sh     # once: fetches the golem binary, runs the provider's live test
+   cargo xtask compose saga
+   (cd host && cargo build --release --bin comp-host)
+   bash examples/saga/golem-legs.sh
+   ```
+
+   This proves the same Golem hop the provider makes, from inside a wasm
+   component instead of a native provider.
 
 ## Status & the honest boundary
 

@@ -4,20 +4,21 @@
 > left. It was written when this repository was a library of WASI capability
 > components, and for a while that framing was stale — the front page had become an
 > agentic engineering loop. It is accurate again: the library and its **delivery**
-> are the current focus, and the loop is
-> [paused](README.md#the-agentic-loop--paused-and-kept).
+> are the current focus. The loop was
+> [paused](README.md#the-agentic-loop--paused-and-kept) on gate criticism and has
+> resumed since that landed.
 >
 > For the current state, in order of usefulness:
 > [`docs/CURRENT.md`](docs/CURRENT.md) (what runs, measured, and honestly missing),
 > [`docs/SELFHOST.md`](docs/SELFHOST.md) (the four ways to deliver an app),
-> `docs/CAPABILITY-GRAPH.md` (what is using what, derived
-> from the built artifacts), and [`docs/adr/`](docs/adr/) (why any of it is shaped
+> `comp-capgraph` (what is using what, derived
+> from the built artifacts on every run), and [`docs/adr/`](docs/adr/) (why any of it is shaped
 > this way).
 
 ## Where the work is now
 
-**1. The library.** Its size is in `docs/CAPABILITY-GRAPH.md`,
-derived rather than counted by hand. The per-showcase list below is the live
+**1. The library.** Its size is whatever `comp-capgraph` reports,
+derived from the built artifacts rather than counted by hand. The per-showcase list below is the live
 worklist for this.
 
 **2. Delivery.** Four lanes from one `apps/<name>.toml`, all verified against real
@@ -33,19 +34,23 @@ infrastructure. What is left is narrower than what is done:
       first to get a daemon under [ADR-0095](docs/adr/0095-what-is-allowed-to-be-native.md);
       `browser-automation`, `container-docker`, `desktop-clipboard`,
       `image-optimizer`, `lan-scanner`, `llm-local`, `mdns-discovery`, `system-cron`,
-      `ui-notifier`, `video-ffmpeg` and `vpn-wireguard` still return
-      `UNIMPLEMENTED:`. One daemon each, deliberately — `container-docker` and
-      `ui-notifier` do not deserve the same blast radius.
+      `ui-notifier`, `video-ffmpeg` and `vpn-wireguard` used to return
+      `UNIMPLEMENTED:`; each now has its own daemon in `reconciler/src/bin/` (#233),
+      and all twelve apps are wired to them (#235). One daemon each, deliberately —
+      `container-docker` and `ui-notifier` do not deserve the same blast radius.
 - [ ] **`comp:` interfaces on wasmCloud 2.x.** Currently impossible: a release host
       has no host component plugins. Either upstream ships them enabled, or these
       apps stay on the first two lanes. Not a bug to fix here; a constraint to track.
 
-**3. The agentic loop — paused.** Nothing deleted, nothing progressing. The blocker
-is that nothing criticises a gate
+**3. The agentic loop — resumed.** It was paused on nothing criticising a gate
 ([`.comp/goals/07-nothing-criticises-a-gate.md`](.comp/goals/07-nothing-criticises-a-gate.md)):
-a gate that already passes on the base tree accepts anything. Resume it when that
-goal lands; until then more search buys less than better contracts and a way to ship
-them.
+a gate that already passes on the base tree accepts anything. That goal landed —
+every check now runs against the untouched base first and a run is refused when one
+passes — and the loop has since delivered goals as pull requests (decomposed: #220,
+#273; single-part: #275, #279), with `comp-goald` draining the queue (#274). Open:
+a decomposed goal's PR carries only its parts' own files, so the shared scaffold
+(router, WIT, `Cargo.toml`, gates) is merged in by hand
+([`docs/CURRENT.md`](docs/CURRENT.md)).
 
 ## What this covers
 
@@ -74,10 +79,13 @@ priced it — but it is a supported delivery target, which is a different claim.
 
 ### Helpdesk (docs/apps/HELPDESK.md)
 
-- [ ] Rungs 2–7: multi-tenant + API keys + quotas, event-bus fan-out +
-      notifications + signed webhooks, `mail-parse`, SLA timers + search,
-      billing rollup, AI drafts. Rung 1 is done (`components/helpdesk-domain`,
-      `examples/jco-helpdesk`, `cargo xtask host helpdesk` on the native host + NATS).
+- [x] Rungs 1–5. Rung 1 (`components/helpdesk-domain`, `examples/jco-helpdesk`,
+      `cargo xtask host helpdesk` on the native host + NATS); rung 2, multi-tenant +
+      RBAC + API keys + quotas (1c6014f); rung 3, event-bus fan-out + notifications +
+      signed webhooks (0d46962); rung 4, email in via `mail-parse` (#228); rung 5,
+      SLA timers + search + assignment (#229).
+- [ ] Rungs 6–7: billing rollup (quota → `billing-ledger`, CSV export), and AI
+      drafts + polish (flags, LLM drafts, CSAT, status page).
 
 ### Conduit / RealWorld (docs/apps/CONDUIT.md) — done
 

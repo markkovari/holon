@@ -33,6 +33,7 @@ gen/                     # transpile output (gitignored) -> gen/textdiff.js
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile        # textdiff.wasm -> gen/
 npm test                 # behavioral + round-trip checks

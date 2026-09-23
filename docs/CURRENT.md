@@ -1,16 +1,21 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [96 ADRs](adr/); this page is the map.
+in [97 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0096.
+Last revised after ADR-0097.
 
 This page is about the **runtime and delivery** half of the repository — the thing
 that runs a composed component and gets it onto a machine. For the library it runs,
-see `CAPABILITY-GRAPH.md`; for the four ways to deliver an
-app, [`SELFHOST.md`](SELFHOST.md). The agentic loop that was this page's headline is
-**paused** ([README](../README.md#the-agentic-loop--paused-and-kept)) — its machinery
-below still runs and is still measured.
+ask `comp-capgraph` (`--format json` for the graph, `--find` for "do we already
+have this", or the default `surql` projection into the knowledge graph —
+`docs/CAPABILITY-GRAPH.md` is gone, ROADMAP's *Deprecate static Markdown
+catalogs*); for the four ways to deliver an
+app, [`SELFHOST.md`](SELFHOST.md). The agentic loop that was this page's headline was
+**paused** until something criticised a gate; that landed (below), and the loop has
+since delivered goals as pull requests — decomposed ones in #220 and #273, a
+single-part ones in #275 and #279 — with `comp-goald` draining the queue (#274). Its
+machinery below runs and is measured.
 
 ## Shape
 
@@ -240,26 +245,28 @@ claim about a distributed system without one is a hope.
   the gaps and the failure as values instead of as stderr to be parsed. It reads a
   component's imports out of the BINARY (the compiler drops what nothing calls),
   finds what exports those interfaces, composes each plug before plugging it, and
-  keys the output by content so it is built once and outlives the run. This closes
+  keys the output by content so it is built once and outlives the run. This closed
   the gap that made a goal-built component undeployable: 59 hand-written `wac plug`
-  chains live in the `Justfile`, and until now anything the loop produced needed a
-  human to add the sixtieth. The derived composition is strictly more complete than
-  the hand-written one — `cargo xtask compose vet` leaves 16 capabilities dangling
-  (`ai:inference`, `blob:store`, `money:amount`, `otp:totp`, …) that `just plug
-  vet-domain` binds. Two things it encodes because a shell version got them wrong
+  chains lived in the `Justfile`, and anything the loop produced needed a
+  human to add the sixtieth. Every chain has since been derived (#65, the last twelve in a4b3660) — `cargo
+  xtask compose <app>` calls `comp-plug` — and the `Justfile` itself is gone. The
+  derived composition was strictly more complete than the hand-written one — the
+  hand-written `vet` chain left 16 capabilities dangling (`ai:inference`,
+  `blob:store`, `money:amount`, `otp:totp`, …) that `comp-plug vet-domain` binds.
+  Two things it encodes because a shell version got them wrong
   first: a FLAT plug chain hoists each plug's own imports into the result and still
-  validates (which is why the `Justfile` pre-composes `auth-guard`; there is a test
-  pinning it), and resolution is per-INTERFACE — `cache-backing` exports
+  validates (which is why `cargo xtask compose` pre-composes `auth-guard`; there is
+  a test pinning it), and resolution is per-INTERFACE — `cache-backing` exports
   `cache:store/sink` and `/source` but not `/cache`, so a package-level match calls
   an import satisfied that then dangles. `components/wit-reflect` wraps the same
   crate for the component side; this is the native side, the same split as
   `checks-runner` and `comp-checks`. Recorded as [ADR-0087](adr/0087-a-composition-is-derived-not-written.md).
 - **Every contract is checked from both sides**, repo-wide, by
-  `reconciler/tests/contracts.rs`. The consumer side is asserted: all 150
-  components, every import has a provider, 0 orphans — and that catches version
+  `reconciler/tests/contracts.rs`. The consumer side is asserted: every
+  component (150 when it landed, #64), every import has a provider, 0 orphans — and that catches version
   drift, since an import of `foo:bar@0.1.0` is not satisfied by an export of
   `@0.2.0` and `wac` will not say so, it will just leave the import in place. The
-  provider side is reported and never asserted: 93 interfaces exported, 80
+  provider side is reported and never asserted: at #64, 93 interfaces exported, 80
   consumed in-tree, `records:store/store` carrying 37 consumers and therefore
   frozen in practice. A capability catalogue is allowed to be ahead of its
   callers, so the 13 unconsumed ones are a fact rather than a finding.
@@ -335,7 +342,8 @@ claim about a distributed system without one is a hope.
   second CLIENT of the platform API rather than a second control plane, and it
   polls while a run is unresolved plus a grace period, because the resolution and
   the last events are separate writes.
-- **`just test` compiles every test target first, then runs them** — a number
+- **`cargo xtask test` compiles every test target first, then runs them** (it was
+  `just test` before the `Justfile` went) — a number
   nobody could state before, because a workspace whose tests had never compiled hid
   34 of them and no suite complained.
 
@@ -451,7 +459,15 @@ the bare name precisely so this one case doesn't need special-casing.
   better — that needs a goal a real model fails, and the runs so far have not
   found one.
 
-- **A decomposed goal has still never been DELIVERED.** Two paid runs of the
+- ~~**A decomposed goal has still never been DELIVERED.**~~ → **delivered**, twice:
+  `.comp/goals/dispatch.toml.archived` (three parts, #220) and a five-part marketplace
+  (#273). The caveat both hit: a decomposed goal's PR carries only the union of its
+  parts' `writable` files, so the shared scaffold — router, WIT world,
+  `Cargo.toml` and its workspace member line, `CONTRACT.md`, the gates — never
+  lands with it and was merged in by hand from the goal's authoring branch. The
+  fix, not yet built, is for the landing step to diff the whole judged tree
+  against the base rather than apply the winner's own files. What this entry said
+  before: two paid runs of the
   clinic's phase two, 290k tokens, no pull request. `access-and-search` passed at
   1000 on its first generation both times — a real model reaching for `auth-guard`
   and `search-index` rather than reimplementing them, clearing the behavioural
@@ -466,9 +482,10 @@ the bare name precisely so this one case doesn't need special-casing.
   `doc-search-agent` and the archived clinic — so each is now *refused* by goal 07's
   base pre-check rather than run, every gate passing against the untouched tree.
   There was nothing left to spend a run on, which is why the next run had not
-  happened. `.comp/goals/dispatch.toml` is a target: three parts, four gates that
-  fail against the base, and `geo:resolve` imported by two of the parts so the
-  composition can catch a disagreement neither part's own gate can see. → goal 10
+  happened. `.comp/goals/dispatch.toml` was the target (delivered in #220, now
+  `dispatch.toml.archived`): three parts, four gates that failed against the
+  base, and `geo:resolve` imported by two of the parts so the composition can
+  catch a disagreement neither part's own gate can see. → goal 10
 - ~~**Half a branch's budget can vanish into a message that names nothing.**~~ →
   **built**: seven branches across those two runs died as `error sending request
   for url .../run`, which reads as a fleet fault and is not one — the gate costs
@@ -478,13 +495,17 @@ the bare name precisely so this one case doesn't need special-casing.
   on `csatapaci`), which is why `.comp/csatapaci.env` says `GOAL_TIMEOUT=1800` —
   and `just goal-run` read `TIMEOUT` while only `just goald` read `GOAL_TIMEOUT`,
   so sourcing that env file and running a single goal silently ran at 900 anyway.
-  Both names now reach the same flag. → ADR-0088
+  Both names now reach the same flag. (Both recipes went with the `Justfile`: a
+  single goal is `bash goal-demo.sh`, which still reads either name, and the daemon
+  is `reconciler/target/release/comp-goald`, which hands everything after `--`,
+  `--timeout` included, to `comp-goalrun`.) → ADR-0088
 - ~~**Nothing criticises a gate.**~~ → **built**: every check, the goal's and each
   part's, is run against the untouched base before anything is spent, and a run is
   refused when one of them passes. What it does NOT check is whether a gate
   measures the right thing — the empty-corpus candidate that passed everything
   would still pass everything. → goal 07
-- **The loop writes and reads; it does not yet promote or forget.** A failed branch
+- ~~**The loop writes and reads; it does not yet promote or forget.**~~ → **built**:
+  it writes, reads, promotes and sweeps. A failed branch
   writes what it failed on in the gate's own words — no model in that path, so
   negative knowledge cannot be a hallucination. Each branch of an ordinary run
   reads lessons — a different `k` and a different pool mix per branch, the

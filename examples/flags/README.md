@@ -28,7 +28,7 @@ Open the page:
 ## Test it
 
 ```bash
-just e2e-flags              # set+eval, stickiness + monotone cohorts, live SSE
+cargo xtask e2e flags       # set+eval, stickiness + monotone cohorts, live SSE
 ```
 
 The e2e asserts a subject doesn't flicker between evals, that raising the

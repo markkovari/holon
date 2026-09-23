@@ -21,6 +21,7 @@ gen-sqlite/               # SQLite-backed transpile output   (gitignored)
 ## Run
 
 ```bash
+(cd ../.. && cargo xtask stage-examples)   # build + stage the .wasm this transpiles
 npm install
 npm run transpile         # idempotency_guard.wasm -> gen/
 npm test                  # behavioral checks

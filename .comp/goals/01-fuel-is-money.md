@@ -1,4 +1,21 @@
-# Fuel is money — 🟡 needs a gate
+# Fuel is money — 🟡 half built: priced, not yet bounded
+
+> **Built:** the pure function, in `reconciler/src/cost.rs` rather than
+> `generation.rs` (205af9e), and it gained a fourth parameter when DeepSeek's
+> off-peak pricing arrived (#260):
+>
+> ```
+> cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str, off_peak: bool) -> u64
+> ```
+>
+> `off_peak` only moves DeepSeek's price; every other model ignores it.
+> `reconciler/src/budget.rs` sums a run's attempts through it (`spent_cents`) and
+> answers `over_budget(cap_cents, attempts)`, with a cap of 0 meaning no cap.
+>
+> **Still open:** nothing calls either. `generation::search` has no `max-cents`
+> bound beside `max-tokens`, and a run reports `spent-tokens` with no `spent-cents`
+> beside it — so a budget can be computed but is not yet enforced. That second
+> paragraph of "What is wanted" is the remaining goal.
 
 **Traces to:** `docs/CURRENT.md` — *"Tokens are not money."* A run reports
 `spent-tokens`; a project has a budget field nothing spends against; and the two

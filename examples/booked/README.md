@@ -27,7 +27,7 @@ slot to book it (toggle **weekly** to repeat for N weeks); the **My bookings** t
 has `.ics` download + cancel.
 
 ```bash
-just e2e-booked          # auth + availability + no-double-book + concurrency race + recurrence + .ics
+cargo xtask e2e booked   # auth + availability + no-double-book + concurrency race + recurrence + .ics
 # work on the UI live:
 cd examples/booked/ui && npm install && npm run dev
 ```

@@ -14,12 +14,12 @@ crate.
 ## Verify
 
 ```bash
-just conformance-conduit   # OFFICIAL RealWorld Hurl suite → 13/13 files green
-just e2e-conduit           # Rust e2e (ureq) spawns the host, drives the API
-cargo xtask host conduit          # serve it yourself on http://0.0.0.0:3008
+cargo xtask e2e conformance-conduit   # OFFICIAL RealWorld Hurl suite → 13/13 files green
+cargo xtask e2e conduit               # Rust e2e (ureq) spawns the host, drives the API
+cargo xtask host conduit              # serve it yourself on http://0.0.0.0:3008
 ```
 
-`just conformance-conduit` is the headline: it runs the upstream RealWorld Hurl
+`cargo xtask e2e conformance-conduit` is the headline: it runs the upstream RealWorld Hurl
 suite (vendored in [`conformance/`](conformance)) against the running app — an
 external, objective check anyone can reproduce. Needs [`hurl`](https://hurl.dev).
 

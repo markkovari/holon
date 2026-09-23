@@ -11,8 +11,9 @@
 //!
 //! Push had no counterpart, so the only ways to obtain a component's bytes were to
 //! build it — which now means five toolchains, one of them a 200 MB wasi-sdk
-//! (`docs/POLYGLOT.md`) — or `just fetch-components`, which reads GitHub Actions
-//! artifacts and therefore expires after thirty days and arrives all-or-nothing.
+//! (`docs/POLYGLOT.md`) — or `gh run download` of CI's `components-wasm32-wasip2`
+//! artifact (`docs/REGISTRY.md`), which is a GitHub Actions artifact and therefore
+//! expires after thirty days and arrives all-or-nothing.
 //! Neither is a way to get ONE component you did not build.
 //!
 //! `pull_artifact` verifies the bytes against the digest the manifest named before

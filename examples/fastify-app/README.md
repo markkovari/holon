@@ -30,14 +30,17 @@ app.get("/orders",
 
 ## Run
 
-1. Deploy the auth stack and port-forward the accounts-app HTTP port to 8001
-   (see `comp/README.md`):
+1. Serve the auth stack (accounts-app over the composed auth-guard) on :8001,
+   from the repo root:
    ```bash
-   kubectl port-forward -n comp-auth pod/<host-pod> 8001:8001
+   cargo xtask compose accounts-app    # -> components/target/accounts_app.composed.wasm
+   cargo build --release --manifest-path host/Cargo.toml --bin comp-host
+   host/target/release/comp-host --component components/target/accounts_app.composed.wasm \
+     --addr 127.0.0.1:8001
    ```
 2. Start the app:
    ```bash
-   cd comp/examples/fastify-app
+   cd examples/fastify-app
    npm install
    AUTH_BASE_URL=http://localhost:8001 npm run dev
    ```

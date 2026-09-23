@@ -4,7 +4,7 @@
 //!
 //! It started life running one app (hence its old name, `vet-host`) and is now the
 //! self-hosting lane for anything in this repo: point it at a composed artifact from
-//! `just compose-<app>`, and it serves that component's
+//! `cargo xtask compose <app>`, and it serves that component's
 //! `wasi:http/incoming-handler` export over a hyper TCP listener while satisfying
 //! the component's imports host-side:
 //!   - standard WASI (cli/clocks/random/io/filesystem) via wasmtime-wasi

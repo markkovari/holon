@@ -41,7 +41,7 @@ unchanged.
 ## Test it
 
 ```bash
-just e2e-track        # builds the SPA + composes + builds host + runs tests/track.rs
+cargo xtask e2e track # builds the SPA + composes + builds host + runs tests/track.rs
 ```
 
 One test drives **all five axes**: auth + RBAC (a non-admin can't create a
