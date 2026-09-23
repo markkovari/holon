@@ -1,9 +1,9 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [97 ADRs](adr/); this page is the map.
+in [98 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0097.
+Last revised after ADR-0098.
 
 This page is about the **runtime and delivery** half of the repository — the thing
 that runs a composed component and gets it onto a machine. For the library it runs,
@@ -403,7 +403,10 @@ same shape as `wasi:keyvalue` — a contract the host answers (ADR-0095).
 Each now has a native daemon behind it in `reconciler/src/bin/` (`comp-fswatch`,
 `comp-browser`, `comp-docker`, `comp-clipboard`, `comp-imageopt`, `comp-lanscan`,
 `comp-llmlocal`, `comp-mdns`, `comp-cron`, `comp-uinotify`, `comp-ffmpeg`,
-`comp-wireguard`), each with its own allow-list where the input can come from a
+`comp-wireguard`) — thirteen with `comp-media`, which is not one of these
+contracts but a new capability under the same rule (ADR-0098: presigned
+object-storage uploads, a JetStream work queue, and on-device evaluation
+with Metal/Core Image/Vision for `photoquest`) — each with its own allow-list where the input can come from a
 model (a directory, a host, an interface, a CIDR) — no shared daemon, no shared
 allow-list, per ADR-0095's "`container-docker` and `ui-notifier` do not deserve
 the same blast radius". The component side dials its daemon over

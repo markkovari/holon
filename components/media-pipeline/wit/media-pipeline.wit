@@ -1,0 +1,69 @@
+package media:pipeline@0.1.0;
+
+/// Upload and evaluate large photos without their bytes ever passing through a
+/// component (ADR-0098). The native side is `comp-media`; this interface is how a
+/// domain component asks it for things. Every call carries keys, never pixels.
+interface jobs {
+    /// Why a call failed. `refused` is a decision (too big, wrong type, bad key);
+    /// `unavailable` is the transport or the daemon; `not-found` is a missing
+    /// upload or object. A caller should retry only `unavailable`.
+    variant media-error {
+        unavailable(string),
+        refused(string),
+        not-found(string),
+    }
+
+    /// One presigned `PUT` for one part of a multipart upload.
+    record part-url {
+        /// 1-based, as S3 numbers them.
+        number: u32,
+        url: string,
+    }
+
+    /// Everything a browser needs to upload a file straight to the store.
+    record upload-plan {
+        /// The store's multipart upload id — hand it back to `complete-upload`.
+        upload-id: string,
+        /// Where the original will live, e.g. `originals/<photo-id>.arw`.
+        key: string,
+        /// Every part is this size except the last.
+        part-size: u64,
+        parts: list<part-url>,
+        /// Unix seconds after which the part URLs stop working.
+        expires-at: u64,
+    }
+
+    /// What the browser read back from each part's `ETag` response header.
+    record part-etag {
+        number: u32,
+        etag: string,
+    }
+
+    /// Plan a direct upload of `size` bytes. Refused over the daemon's size cap or
+    /// for a content type it does not accept.
+    start-upload: func(photo-id: string, filename: string, size: u64, content-type: string)
+        -> result<upload-plan, media-error>;
+
+    /// Stitch the parts together. After this the original exists at `key`.
+    complete-upload: func(upload-id: string, key: string, parts: list<part-etag>)
+        -> result<_, media-error>;
+
+    /// Throw away an upload that will never be completed.
+    abort-upload: func(upload-id: string, key: string) -> result<_, media-error>;
+
+    /// Enqueue evaluation of the original at `key`. Returns once it is queued, not
+    /// once it is done: the result arrives later as a signed POST to `callback-url`
+    /// (see CONTRACT.md for the body and the signature). `job-id` deduplicates — the
+    /// same id twice is queued once.
+    submit: func(job-id: string, photo-id: string, key: string, callback-url: string)
+        -> result<_, media-error>;
+
+    /// A time-limited GET URL for an object (a rendition, typically).
+    sign-get: func(key: string, ttl-secs: u32) -> result<string, media-error>;
+}
+
+world component {
+    export jobs;
+    import wasi:config/store@0.2.0-rc.1;
+    import wasi:http/outgoing-handler@0.2.0;
+}

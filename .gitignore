@@ -79,6 +79,9 @@ zig-out/
 # Test artifacts and SQLite databases
 **/e2e/test-results/
 **/e2e/host.log
+# The photoquest suite's CC0 samples (raw.pixls.us), downloaded by
+# e2e/photoquest.sh — ~210 MB of media that must never be committed.
+e2e/.photoquest-samples/
 comp-kv.db*
 **/comp-kv.db*
 test_all_apps.sh
