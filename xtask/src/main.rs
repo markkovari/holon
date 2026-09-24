@@ -778,6 +778,22 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>, extra_config: &[Str
         host_cmd.args(["--config", kv]);
     }
 
+    // The store the spec (or `--kv`) asked for. This used to be printed above and
+    // never passed, so comp-host fell back to `memory` and every account was gone
+    // on the next restart while the banner said "kv: sqlite".
+    host_cmd.args(["--kv", &kv_mode]);
+    // A local sqlite file belongs under target/, not in the repo root where
+    // comp-host's own fallback (./comp-kv.db) would put it. `STATE_DIRECTORY`,
+    // when the caller set one (systemd, or e2e/photoquest.sh's temp dir), wins —
+    // comp-host already reads it.
+    if kv_mode == "sqlite" && std::env::var_os("STATE_DIRECTORY").map_or(true, |v| v.is_empty()) {
+        let dir = Path::new("target/state").join(app);
+        std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+        let db = dir.join("kv.db");
+        println!("{}", format!("  state: {}", db.display()).dimmed());
+        host_cmd.arg("--sqlite-path").arg(&db);
+    }
+
     if let Some(dir) = app_spec.and_then(|s| s.static_dir_as_string()) {
         if Path::new(&dir).exists() {
             host_cmd.args(["--static-dir", &dir]);
