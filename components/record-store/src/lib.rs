@@ -28,14 +28,20 @@
 //! read, compare and write over three separate calls, which let a concurrent
 //! writer's record be overwritten by one that never saw it.
 //!
-//! Index maintenance is still read-modify-write, single-writer best-effort: a
-//! tight concurrent interleaving on the same index key can drop or duplicate an
-//! id. That is a weaker failure than losing a record — the record values are
-//! authoritative and `find-by`/`query` re-verify against them — and it is the
-//! next thing this primitive should be pointed at.
+//! Index maintenance (`idlist`) is guarded the same way: every write to an index
+//! manifest or chunk is a compare-and-set against the revision of the value it
+//! was computed from, and nothing deletes an index key. Concurrent inserts and
+//! removes of DIFFERENT ids on one index key cannot drop or resurrect each other.
+//! What is still not atomic is the record write and its index upkeep — they are
+//! separate keys, the upkeep runs after the record commits, and two requests'
+//! upkeep for the SAME record can land in either order — so the records stay
+//! authoritative: `find-by`/`query` re-verify every candidate, `list` reports
+//! dangling ids, and `repair` rebuilds the indexes from the records. The exact
+//! guarantee is in `idlist`'s module doc.
 
 #[allow(warnings)]
 mod bindings;
+mod idlist;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -181,9 +187,11 @@ fn drift(collection: &str, op: &str, missing: usize) {
     );
 }
 
-/// How many times a guarded update re-reads and retries before giving up. The
-/// same bound `gate-domain` uses for its own CAS loop; a caller that loses forty
-/// races in a row is contending with something pathological, not unlucky.
+/// How many times a guarded RECORD write (`create`'s id placement, `update`)
+/// re-reads and retries before giving up. The same bound `gate-domain` uses for
+/// its own CAS loop. The index lists have their own, larger bound
+/// (`idlist::CAS_TRIES`): every create in a collection contends on one id-index
+/// chunk, where a single record rarely sees that many writers at once.
 const CAS_TRIES: u32 = 40;
 
 /// Load + deserialize the record at `id`, `None` if absent. A corrupt stored
@@ -235,441 +243,74 @@ fn load_records_many(
     Ok(out)
 }
 
-// ---- chunked sorted id lists ---------------------------------------------
+// ---- id lists (the id index and every secondary index) --------------------
 //
-// An id list (the per-collection id index AND every secondary index) is a
-// small MANIFEST at `{base}` plus chunk values at `{base}_c{seq:08}`, each a
-// sorted JSON Vec<String> of at most CHUNK_MAX ids. The old layout (one JSON
-// array holding every id) made each insert an O(N) read-modify-write of an
-// unboundedly growing value — ~400 KB per create at 13k records, with a hard
-// wall at NATS's 1 MiB message cap. Chunks keep every write O(CHUNK_MAX)
-// regardless of collection size; new ULIDs sort last, so inserts touch only
-// the final chunk. A legacy whole-array value is still readable and is split
-// into chunks on the first write. Same single-writer best-effort RMW caveat
-// as before: no CAS in wasi:keyvalue@0.2.0-draft.
+// The chunked sorted lists live in `idlist`, written against a two-call `Kv`
+// trait so their interleavings can be tested without a host. This is the
+// component's implementation of that trait: the guarded half goes through
+// `comp:store/cas` (never cached), the reader half through plain
+// `wasi:keyvalue` (which a host may cache, ADR-0064).
 
-const CHUNK_MAX: usize = 1024; // ~30 KB of ULIDs per chunk value
+struct BucketKv<'a>(&'a kv::Bucket);
 
-#[derive(Serialize, Deserialize)]
-struct ChunkMeta {
-    /// chunk-key suffix (allocation order; position comes from the manifest's
-    /// order, which is kept sorted by `first`).
-    seq: u32,
-    /// smallest id in the chunk.
-    first: String,
-    /// number of ids in the chunk.
-    count: u64,
-}
-
-#[derive(Serialize, Deserialize, Default)]
-struct Manifest {
-    chunks: Vec<ChunkMeta>,
-}
-
-enum IdList {
-    Absent,
-    /// pre-chunking layout: the whole sorted array in one value.
-    Legacy(Vec<String>),
-    Chunked(Manifest),
-}
-
-fn chunk_key(base: &str, seq: u32) -> String {
-    format!("{base}_c{seq:08}")
+impl idlist::Kv for BucketKv<'_> {
+    fn get(&self, key: &str) -> Result<Option<(u64, Vec<u8>)>, String> {
+        cas::get(self.0, key)
+            .map(|o| o.map(|v| (v.revision, v.value)))
+            .map_err(|e| format!("cas get {key}: {e:?}"))
+    }
+    fn cas(&self, key: &str, value: &[u8], expected: u64) -> Result<Result<u64, u64>, String> {
+        match cas::set(self.0, key, value, expected) {
+            Ok(cas::Outcome::Committed(r)) => Ok(Ok(r)),
+            Ok(cas::Outcome::Conflict(r)) => Ok(Err(r)),
+            Err(e) => Err(format!("cas set {key}: {e:?}")),
+        }
+    }
+    fn read(&self, key: &str) -> Result<Option<Vec<u8>>, String> {
+        self.0.get(key).map_err(|e| format!("get {key}: {e:?}"))
+    }
+    fn read_many(&self, keys: &[String]) -> Result<Vec<Option<Vec<u8>>>, String> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let found = batch::get_many(self.0, keys).map_err(|e| format!("get-many: {e:?}"))?;
+        let mut by_key: std::collections::HashMap<String, Vec<u8>> =
+            found.into_iter().flatten().collect();
+        Ok(keys.iter().map(|k| by_key.remove(k)).collect())
+    }
 }
 
 fn enc<T: Serialize>(v: &T) -> Result<Vec<u8>, StoreError> {
     serde_json::to_vec(v).map_err(|e| StoreError::BackendUnavailable(format!("encode: {e}")))
 }
 
-fn ids_set_many(bucket: &kv::Bucket, writes: Vec<(String, Vec<u8>)>) -> Result<(), StoreError> {
-    batch::set_many(bucket, &writes)
-        .map_err(|e| StoreError::BackendUnavailable(format!("set-many: {e:?}")))
+fn be(e: String) -> StoreError {
+    StoreError::BackendUnavailable(e)
 }
-
-/// A chunk together with the revision it is at, for a guarded rewrite.
-///
-/// An absent chunk reads as `(0, [])`, which is what `cas::set` wants for "must
-/// not exist yet" — so creating the first chunk and rewriting the hundredth are
-/// the same code path.
-fn ids_read_chunk_rev(bucket: &kv::Bucket, key: &str) -> Result<(u64, Vec<String>), StoreError> {
-    match cas::get(bucket, key) {
-        Ok(Some(v)) => {
-            let ids = serde_json::from_slice(&v.value)
-                .map_err(|e| StoreError::BackendUnavailable(format!("corrupt chunk {key}: {e}")))?;
-            Ok((v.revision, ids))
-        }
-        Ok(None) => Ok((0, Vec::new())),
-        Err(e) => Err(StoreError::BackendUnavailable(format!("cas get chunk: {e:?}"))),
-    }
-}
-
-/// Rewrite a chunk only if nothing else has. `false` means someone else did, and
-/// the caller has to re-read and redo its edit on top of theirs.
-fn ids_write_chunk_guarded(
-    bucket: &kv::Bucket,
-    key: &str,
-    ids: &[String],
-    expected: u64,
-) -> Result<bool, StoreError> {
-    match cas::set(bucket, key, &enc(&ids.to_vec())?, expected) {
-        Ok(cas::Outcome::Committed(_)) => Ok(true),
-        Ok(cas::Outcome::Conflict(_)) => Ok(false),
-        Err(e) => Err(StoreError::BackendUnavailable(format!("cas set chunk: {e:?}"))),
-    }
-}
-
-fn ids_load(bucket: &kv::Bucket, base: &str) -> Result<IdList, StoreError> {
-    match bucket.get(base) {
-        Ok(Some(bytes)) => {
-            // a manifest is a JSON object, the legacy layout a JSON array.
-            if let Ok(m) = serde_json::from_slice::<Manifest>(&bytes) {
-                Ok(IdList::Chunked(m))
-            } else {
-                serde_json::from_slice::<Vec<String>>(&bytes).map(IdList::Legacy).map_err(|e| {
-                    StoreError::BackendUnavailable(format!("corrupt id list {base}: {e}"))
-                })
-            }
-        }
-        Ok(None) => Ok(IdList::Absent),
-        Err(e) => Err(StoreError::BackendUnavailable(format!("get id list: {e:?}"))),
-    }
-}
-
-/// Batched fetch of the given chunk keys, concatenated in input order
-/// (missing chunks skipped — index drift is best-effort, as before).
-fn ids_fetch_chunks(bucket: &kv::Bucket, keys: &[String]) -> Result<Vec<String>, StoreError> {
-    if keys.is_empty() {
-        return Ok(Vec::new());
-    }
-    let found = batch::get_many(bucket, keys)
-        .map_err(|e| StoreError::BackendUnavailable(format!("get-many chunks: {e:?}")))?;
-    let mut by_key: std::collections::HashMap<String, Vec<u8>> =
-        found.into_iter().flatten().collect();
-    let mut out = Vec::new();
-    for key in keys {
-        if let Some(bytes) = by_key.remove(key) {
-            let ids: Vec<String> = serde_json::from_slice(&bytes)
-                .map_err(|e| StoreError::BackendUnavailable(format!("corrupt chunk {key}: {e}")))?;
-            out.extend(ids);
-        }
-    }
-    Ok(out)
-}
-
-/// Every id in the list, in order — manifest read + ONE batched chunk fetch.
-fn ids_read_all(bucket: &kv::Bucket, base: &str) -> Result<Vec<String>, StoreError> {
-    match ids_load(bucket, base)? {
-        IdList::Absent => Ok(Vec::new()),
-        IdList::Legacy(v) => Ok(v),
-        IdList::Chunked(m) => {
-            let keys: Vec<String> = m.chunks.iter().map(|c| chunk_key(base, c.seq)).collect();
-            ids_fetch_chunks(bucket, &keys)
-        }
-    }
-}
-
-/// Position of the first id strictly after `after` in a sorted list.
-fn page_start(ids: &[String], after: &str) -> usize {
-    if after.is_empty() {
-        return 0;
-    }
-    match ids.binary_search_by(|x| x.as_str().cmp(after)) {
-        Ok(pos) => pos + 1,
-        Err(pos) => pos, // `after` not present: resume where it would be.
-    }
-}
-
-/// Up to `want` ids strictly after `after` plus whether more remain — fetches
-/// only the chunks the page touches, not the whole list.
-fn ids_page(
-    bucket: &kv::Bucket,
-    base: &str,
-    after: &str,
-    want: usize,
-) -> Result<(Vec<String>, bool), StoreError> {
-    let m = match ids_load(bucket, base)? {
-        IdList::Absent => return Ok((Vec::new(), false)),
-        IdList::Legacy(ids) => {
-            let start = page_start(&ids, after);
-            let window: Vec<String> = ids.iter().skip(start).take(want).cloned().collect();
-            let more = start + window.len() < ids.len();
-            return Ok((window, more));
-        }
-        IdList::Chunked(m) => m,
-    };
-    if m.chunks.is_empty() {
-        return Ok((Vec::new(), false));
-    }
-    // skip whole chunks that end at-or-before `after`: chunk i's ids are all
-    // < chunks[i+1].first, so if chunks[i+1].first <= after none can qualify.
-    let mut start_chunk = 0;
-    if !after.is_empty() {
-        while start_chunk + 1 < m.chunks.len() && m.chunks[start_chunk + 1].first.as_str() <= after
-        {
-            start_chunk += 1;
-        }
-    }
-    // fetch chunks until their counts cover the worst-case skip within the
-    // first chunk plus the page itself.
-    let skip_bound = m.chunks[start_chunk].count as usize;
-    let mut keys = Vec::new();
-    let mut covered = 0usize;
-    let mut fetched_chunks = 0usize;
-    for c in &m.chunks[start_chunk..] {
-        keys.push(chunk_key(base, c.seq));
-        covered += c.count as usize;
-        fetched_chunks += 1;
-        if covered >= skip_bound + want {
-            break;
-        }
-    }
-    let ids = ids_fetch_chunks(bucket, &keys)?;
-    let from = page_start(&ids, after);
-    let window: Vec<String> = ids.iter().skip(from).take(want).cloned().collect();
-    let more = ids.len() - from > window.len() || start_chunk + fetched_chunks < m.chunks.len();
-    Ok((window, more))
-}
-
-fn ids_count(bucket: &kv::Bucket, base: &str) -> Result<u64, StoreError> {
-    Ok(match ids_load(bucket, base)? {
-        IdList::Absent => 0,
-        IdList::Legacy(v) => v.len() as u64,
-        IdList::Chunked(m) => m.chunks.iter().map(|c| c.count).sum(),
-    })
-}
-
-/// Rewrite the whole list in chunked form (legacy conversion / first write).
-fn ids_write_chunked(bucket: &kv::Bucket, base: &str, ids: &[String]) -> Result<(), StoreError> {
-    let mut writes = Vec::new();
-    let mut chunks = Vec::new();
-    for (i, chunk) in ids.chunks(CHUNK_MAX).enumerate() {
-        let seq = i as u32;
-        chunks.push(ChunkMeta { seq, first: chunk[0].clone(), count: chunk.len() as u64 });
-        writes.push((chunk_key(base, seq), enc(&chunk)?));
-    }
-    writes.push((base.to_string(), enc(&Manifest { chunks })?));
-    ids_set_many(bucket, writes)
-}
-
-/// Which manifest chunk should hold `id`: the last chunk whose `first` <= id
-/// (ids below every chunk go into the first).
-fn chunk_index_for(m: &Manifest, id: &str) -> usize {
-    let mut ci = 0;
-    for (i, c) in m.chunks.iter().enumerate() {
-        if c.first.as_str() <= id {
-            ci = i;
-        } else {
-            break;
-        }
-    }
-    ci
-}
-
-/// Insert `id`, keeping the list sorted and deduped. Touches one chunk (two
-/// on a split) + the manifest, written in one set-many.
-/// Insert `id` into the sorted list, without losing anybody else's.
-///
-/// The chunk is where ids actually live, so it is the write that must not clobber
-/// — and it used to: two concurrent inserts landing in one chunk both read it,
-/// both rewrote it, and one id vanished. Nothing noticed, because `get` and
-/// `find-by` read records directly; only `list`, `count` and `query` page over
-/// this, so the record was still there and simply stopped being listed. That is
-/// indistinguishable from data loss for whoever is looking (ADR-0068).
-///
-/// Now the chunk rewrite is guarded by its revision and a loser re-reads and
-/// redoes its insert on top of the winner's. The MANIFEST is still a plain write:
-/// it holds routing metadata derived from the chunks (`first`, `count`), and
-/// `ids_read_all` concatenates every chunk the manifest names, so drift there
-/// costs ordering, never membership — and `repair` (records:store) rebuilds it from the
-/// records, which are authoritative.
-fn ids_insert(bucket: &kv::Bucket, base: &str, id: &str) -> Result<(), StoreError> {
-    for _ in 0..CAS_TRIES {
-        let mut m = match ids_load(bucket, base)? {
-            IdList::Absent => Manifest::default(),
-            IdList::Legacy(mut v) => {
-                // one-time conversion: fold the insert into the chunked rewrite.
-                match v.binary_search_by(|x| x.as_str().cmp(id)) {
-                    Ok(_) => return Ok(()),
-                    Err(pos) => v.insert(pos, id.to_string()),
-                }
-                return ids_write_chunked(bucket, base, &v);
-            }
-            IdList::Chunked(m) => m,
-        };
-        if m.chunks.is_empty() {
-            // Bootstrap: nothing exists yet, so both the first chunk and the
-            // manifest naming it must be CAS-guarded too — this used to be a
-            // plain `ids_write_chunked`, and two callers racing an empty index
-            // both saw `Absent`, each wrote a single-id chunk + manifest, and
-            // whichever landed last silently discarded the other's id (ten
-            // concurrent journal writes, six survived). `expected: 0` on both
-            // writes means "must not exist yet"; a loser sees `Conflict` and
-            // retries through the now-non-empty path below instead of
-            // overwriting.
-            let ckey = chunk_key(base, 0);
-            if !ids_write_chunk_guarded(bucket, &ckey, &[id.to_string()], 0)? {
-                continue;
-            }
-            let manifest =
-                Manifest { chunks: vec![ChunkMeta { seq: 0, first: id.to_string(), count: 1 }] };
-            if !manifest_write_guarded(bucket, base, &manifest)? {
-                // The chunk write above already committed our id durably —
-                // whoever won the manifest gets to name chunk 0, and the next
-                // pass finds our id already there and returns via the
-                // "already present" check below.
-                continue;
-            }
-            return Ok(());
-        }
-        let ci = chunk_index_for(&m, id);
-        let ckey = chunk_key(base, m.chunks[ci].seq);
-        let (crev, mut ids) = ids_read_chunk_rev(bucket, &ckey)?;
-        match ids.binary_search_by(|x| x.as_str().cmp(id)) {
-            Ok(_) => return Ok(()), // already present
-            Err(pos) => ids.insert(pos, id.to_string()),
-        }
-        let mut extra = Vec::new();
-        if ids.len() > CHUNK_MAX {
-            // split: right half moves to a fresh seq, manifest entry follows.
-            //
-            // ponytail: `new_seq` is derived from this iteration's (possibly
-            // stale) `m`, and the new chunk's own write below is plain, not
-            // CAS-guarded — two concurrent splits of the same chunk could pick
-            // the same `new_seq` and clobber each other's right half. Add a
-            // guard here if a collection this size (1024+ concurrent inserts
-            // landing in one chunk) turns out to matter in practice.
-            let right = ids.split_off(ids.len() / 2);
-            let new_seq = m.chunks.iter().map(|c| c.seq).max().unwrap_or(0) + 1;
-            m.chunks[ci].first = ids[0].clone();
-            m.chunks[ci].count = ids.len() as u64;
-            m.chunks.insert(
-                ci + 1,
-                ChunkMeta { seq: new_seq, first: right[0].clone(), count: right.len() as u64 },
-            );
-            extra.push((chunk_key(base, new_seq), enc(&right)?));
-        } else {
-            m.chunks[ci].first = ids[0].clone();
-            m.chunks[ci].count = ids.len() as u64;
-        }
-        // The guarded one. Everything after this point only runs if we won.
-        if !ids_write_chunk_guarded(bucket, &ckey, &ids, crev)? {
-            continue;
-        }
-        if !extra.is_empty() {
-            ids_set_many(bucket, extra)?;
-        }
-        // The manifest is ALSO guarded now, not a plain write — see
-        // `manifest_write_guarded`'s own doc for why a plain one lost ids.
-        if !manifest_write_guarded(bucket, base, &m)? {
-            continue;
-        }
-        return Ok(());
-    }
-    Err(StoreError::BackendUnavailable(format!(
-        "id index {base}: {CAS_TRIES} attempts all lost the race"
-    )))
-}
-
-/// Write the manifest only if nothing else has since our last read of it.
-///
-/// Used to be a plain `ids_set_many` write: routing metadata (`first`/`count`)
-/// derived from the chunks, so a caller working from a stale read losing a
-/// last-write-wins race to another caller only cost ordering, NOT membership
-/// — as long as the winner's write still named every chunk both callers knew
-/// about. That holds for the steady state, where the chunk SET does not
-/// change; it does not hold on a split, where the losing write can un-name a
-/// chunk the winner just added. CAS-guarding it the same way the chunk write
-/// already is closes that gap: a loser sees `Conflict` and retries rather
-/// than trusting a manifest it never confirmed landed.
-///
-/// NOT confirmed as the cause of any specific observed failure — found by
-/// reading the code alongside the bootstrap gap above, fixed on the same
-/// reasoning, not on a reproduction that isolated this write in particular.
-fn manifest_write_guarded(bucket: &kv::Bucket, base: &str, m: &Manifest) -> Result<bool, StoreError> {
-    let expected = match cas::get(bucket, base) {
-        Ok(Some(v)) => v.revision,
-        Ok(None) => 0,
-        Err(e) => return Err(StoreError::BackendUnavailable(format!("cas get manifest: {e:?}"))),
-    };
-    match cas::set(bucket, base, &enc(m)?, expected) {
-        Ok(cas::Outcome::Committed(_)) => Ok(true),
-        Ok(cas::Outcome::Conflict(_)) => Ok(false),
-        Err(e) => Err(StoreError::BackendUnavailable(format!("cas set manifest: {e:?}"))),
-    }
-}
-
-/// Remove `id`. Touches one chunk + the manifest; an emptied chunk is dropped.
-fn ids_remove(bucket: &kv::Bucket, base: &str, id: &str) -> Result<(), StoreError> {
-    for _ in 0..CAS_TRIES {
-        let mut m = match ids_load(bucket, base)? {
-            IdList::Absent => return Ok(()),
-            IdList::Legacy(mut v) => {
-                let before = v.len();
-                v.retain(|x| x != id);
-                if v.len() != before {
-                    return ids_write_chunked(bucket, base, &v);
-                }
-                return Ok(());
-            }
-            IdList::Chunked(m) => m,
-        };
-        if m.chunks.is_empty() {
-            return Ok(());
-        }
-        let ci = chunk_index_for(&m, id);
-        let ckey = chunk_key(base, m.chunks[ci].seq);
-        let (crev, mut ids) = ids_read_chunk_rev(bucket, &ckey)?;
-        let Ok(pos) = ids.binary_search_by(|x| x.as_str().cmp(id)) else {
-            return Ok(());
-        };
-        ids.remove(pos);
-        if ids.is_empty() {
-            // Deleting the chunk is not guarded — a delete cannot lose an id it is
-            // removing, and a concurrent insert into a chunk this call is emptying
-            // is a lost id either way. The manifest stops naming it, and `repair`
-            // is what reconciles the two if that race ever lands.
-            m.chunks.remove(ci);
-            let _ = bucket.delete(&ckey);
-            return ids_set_many(bucket, vec![(base.to_string(), enc(&m)?)]);
-        }
-        if !ids_write_chunk_guarded(bucket, &ckey, &ids, crev)? {
-            continue;
-        }
-        m.chunks[ci].first = ids[0].clone();
-        m.chunks[ci].count = ids.len() as u64;
-        return ids_set_many(bucket, vec![(base.to_string(), enc(&m)?)]);
-    }
-    Err(StoreError::BackendUnavailable(format!(
-        "id index {base}: {CAS_TRIES} attempts all lost the race"
-    )))
-}
-
-// ---- id index + secondary indexes over the chunked lists ------------------
 
 fn read_id_index(bucket: &kv::Bucket, collection: &str) -> Result<Vec<String>, StoreError> {
-    ids_read_all(bucket, &idx_key(collection))
+    idlist::read_all(&BucketKv(bucket), &idx_key(collection)).map_err(be)
 }
 
 fn id_index_insert(bucket: &kv::Bucket, collection: &str, id: &str) -> Result<(), StoreError> {
-    ids_insert(bucket, &idx_key(collection), id)
+    idlist::insert(&BucketKv(bucket), &idx_key(collection), id).map_err(be)
 }
 
 fn id_index_remove(bucket: &kv::Bucket, collection: &str, id: &str) -> Result<(), StoreError> {
-    ids_remove(bucket, &idx_key(collection), id)
+    idlist::remove(&BucketKv(bucket), &idx_key(collection), id).map_err(be)
 }
 
 fn read_ix(bucket: &kv::Bucket, key: &str) -> Result<Vec<String>, StoreError> {
-    ids_read_all(bucket, key)
+    idlist::read_all(&BucketKv(bucket), key).map_err(be)
 }
 
-// secondary indexes share the chunked list; entries are now ULID-sorted
-// (== creation order) rather than append-order.
+// Secondary index entries are ULID-sorted (== creation order).
 fn ix_add(bucket: &kv::Bucket, key: &str, id: &str) -> Result<(), StoreError> {
-    ids_insert(bucket, key, id)
+    idlist::insert(&BucketKv(bucket), key, id).map_err(be)
 }
 
 fn ix_remove(bucket: &kv::Bucket, key: &str, id: &str) -> Result<(), StoreError> {
-    ids_remove(bucket, key, id)
+    idlist::remove(&BucketKv(bucket), key, id).map_err(be)
 }
 
 /// The JSON-encoded value of a top-level field in `data`, or `None` if the
@@ -950,7 +591,8 @@ impl Guest for Component {
         // Page over the chunked id index (fetches only the chunks the page
         // touches), then ONE batched record fetch; ids whose record vanished
         // (best-effort index drift) are skipped by load_records_many.
-        let (window, more) = ids_page(&bucket, &idx_key(&collection), &after, limit)?;
+        let (window, more) =
+            idlist::page(&BucketKv(&bucket), &idx_key(&collection), &after, limit).map_err(be)?;
         let entries: Vec<Entry> = load_records_many(&bucket, &collection, &window)?
             .into_iter()
             .map(|(id, stored)| entry_from(&id, stored))
@@ -1055,7 +697,7 @@ impl Guest for Component {
     fn count(collection: String) -> Result<u64, StoreError> {
         let bucket = open()?;
         // manifest chunk counts sum — one kv read regardless of size.
-        ids_count(&bucket, &idx_key(&collection))
+        idlist::count(&BucketKv(&bucket), &idx_key(&collection)).map_err(be)
     }
 
     /// Rebuild the id index from the records (ADR-0068).
@@ -1127,11 +769,26 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             )));
         }
 
-        // Rewrite the whole list rather than patching it id by id: the answer is
-        // already computed, and one rewrite cannot half-succeed the way a hundred
-        // guarded inserts can.
-        if write && (readded > 0 || pruned > 0) {
-            ids_write_chunked(&bucket, &idx_key(&collection), &real)?;
+        // Patched id by id through the same guarded insert/remove every request
+        // uses, NOT rewritten wholesale. A wholesale rewrite is a plain write of a
+        // list computed from a scan, so anything a request inserted after the scan
+        // was erased by it. A half-finished patch is harmless: the next run
+        // finishes it. `heal` then re-derives every manifest entry, which is what
+        // migrates a manifest an older version left inconsistent.
+        let lists = BucketKv(&bucket);
+        if write {
+            let ix = idx_key(&collection);
+            for id in &missing {
+                idlist::insert(&lists, &ix, id).map_err(be)?;
+            }
+            for id in &dangling {
+                // Re-checked: a record created after the scan is in the index and
+                // not in `real`, and must not be pruned for being quick.
+                if load_record(&bucket, &collection, id)?.is_none() {
+                    idlist::remove(&lists, &ix, id).map_err(be)?;
+                }
+            }
+            idlist::heal(&lists, &ix).map_err(be)?;
         }
 
         // And the secondary indexes, which ADR-0068 left out. `find-by` and
@@ -1139,8 +796,8 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
         // is listed, and cannot be found by the field it is indexed on — the same
         // silent invisibility one layer down.
         //
-        // Recomputed from the records rather than diffed: they are derived data,
-        // so rebuilding is the check and the fix at once.
+        // What each index SHOULD hold is recomputed from the records; the fix is
+        // the difference, applied with the guarded writers.
         let mut wanted: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
         for (id, stored) in load_records_many(&bucket, &collection, &real)? {
@@ -1155,27 +812,57 @@ fn repair_inner(collection: &str, write: bool) -> Result<RepairReport, StoreErro
             ids.sort();
             ids.dedup();
         }
-        if write {
-            for (key, ids) in &wanted {
-                ids_write_chunked(&bucket, key, ids)?;
+        // Is `id` still, right now, a record whose fields put it under index `key`?
+        // Asked before removing anything, for the same reason as above.
+        let still_under = |key: &str, id: &str| -> Result<bool, StoreError> {
+            Ok(load_record(&bucket, &collection, id)?.is_some_and(|s| {
+                serde_json::from_str::<Value>(&s.data)
+                    .map(|v| {
+                        secondary_keys(&collection, &v, &s.index_fields).iter().any(|k| k == key)
+                    })
+                    .unwrap_or(false)
+            }))
+        };
+        // Bring one index in line with `want`; `true` if it disagreed.
+        let fix_index = |key: &str, want: &[String]| -> Result<bool, StoreError> {
+            let have = idlist::read_all(&lists, key).map_err(be)?;
+            let want_set: std::collections::BTreeSet<&String> = want.iter().collect();
+            let have_set: std::collections::BTreeSet<&String> = have.iter().collect();
+            if !write {
+                return Ok(have_set != want_set);
             }
+            for id in want_set.difference(&have_set) {
+                idlist::insert(&lists, key, id).map_err(be)?;
+            }
+            for id in have_set.difference(&want_set) {
+                if !still_under(key, id)? {
+                    idlist::remove(&lists, key, id).map_err(be)?;
+                }
+            }
+            idlist::heal(&lists, key).map_err(be)?;
+            Ok(have_set != want_set)
+        };
+        for (key, ids) in &wanted {
+            fix_index(key, ids)?;
         }
 
         // An index key nothing points at any more. Left behind by a delete that
         // was interrupted, or by a field whose value changed — it would keep
         // over-matching until `find-by` re-verified it away, which costs a read
-        // per stale id forever.
+        // per stale id forever. Counted only while it still names something, so
+        // a second run reports zero.
         let ix_prefix = format!("ix_{}_", sanitize(&collection));
         let mut dropped = 0u64;
         for k in keys.keys.iter() {
-            // Chunk keys hang off their base; rewriting the base rewrites them.
-            if !k.starts_with(&ix_prefix) || k.contains("_c0") || wanted.contains_key(k) {
+            // Chunk keys hang off their base and are handled through it. (This
+            // was `contains("_c0")`, which also skipped any base key with `_c0`
+            // in it — a field named `c0…`.)
+            if !k.starts_with(&ix_prefix) || idlist::is_chunk_key(k) || wanted.contains_key(k) {
                 continue;
             }
-            if write {
-                ids_write_chunked(&bucket, k, &[])?;
+            if fix_index(k, &[])? {
+                dropped += 1;
             }
-            dropped += 1;
         }
 
         Ok(RepairReport {
@@ -1266,12 +953,12 @@ mod tests {
     #[test]
     fn paging_is_exclusive_and_survives_a_deleted_cursor() {
         let ids: Vec<String> = ["a", "c", "e", "g"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(page_start(&ids, ""), 0, "no cursor starts at the beginning");
-        assert_eq!(page_start(&ids, "a"), 1);
-        assert_eq!(page_start(&ids, "g"), 4, "the last id yields an empty page");
-        assert_eq!(page_start(&ids, "b"), 1, "a deleted cursor resumes after where it was");
-        assert_eq!(page_start(&ids, "z"), 4, "a cursor past the end yields nothing");
-        assert_eq!(page_start(&[], "a"), 0);
+        assert_eq!(idlist::page_start(&ids, ""), 0, "no cursor starts at the beginning");
+        assert_eq!(idlist::page_start(&ids, "a"), 1);
+        assert_eq!(idlist::page_start(&ids, "g"), 4, "the last id yields an empty page");
+        assert_eq!(idlist::page_start(&ids, "b"), 1, "a deleted cursor resumes after where it was");
+        assert_eq!(idlist::page_start(&ids, "z"), 4, "a cursor past the end yields nothing");
+        assert_eq!(idlist::page_start(&[], "a"), 0);
     }
 
     /// Chunk keys must sort in sequence order as STRINGS, because that is how
@@ -1295,10 +982,10 @@ mod tests {
     #[test]
     fn chunk_keys_sort_lexicographically_in_sequence_order() {
         let mut keys: Vec<String> =
-            [0u32, 2, 9, 10, 11, 100, 12345].iter().map(|n| chunk_key("idx_c", *n)).collect();
+            [0u32, 2, 9, 10, 11, 100, 12345].iter().map(|n| idlist::chunk_key("idx_c", *n)).collect();
         let ordered = keys.clone();
         keys.sort();
         assert_eq!(keys, ordered, "string order must match numeric order");
-        assert_eq!(chunk_key("idx_c", 0), "idx_c_c00000000");
+        assert_eq!(idlist::chunk_key("idx_c", 0), "idx_c_c00000000");
     }
 }

@@ -15,6 +15,18 @@
 package records:store@0.1.0;
 
 /// Typed JSON records in named collections, with indexed lookups.
+///
+/// Consistency. A record write is a compare-and-set in the store (`update` never
+/// overwrites a revision it did not see). The indexes — the id index behind
+/// `list-records`/`count`/`query`, and the field indexes behind `find-by` — are
+/// kept after the record commits, each index edit a compare-and-set against the
+/// index state it was computed from, so concurrent writers on one index cannot
+/// drop or resurrect each other's entries. The record write and its index edits
+/// are still separate keys, not one transaction: a host that dies between them,
+/// or two requests' edits for the SAME record landing in the opposite order,
+/// can leave an index naming a record it should not or missing one it should.
+/// Every read re-checks the record itself, so the first only over-matches; the
+/// second is what `verify` reports and `repair` fixes.
 interface store {
     /// Why a store call failed.
     variant store-error {
@@ -136,6 +148,9 @@ interface store {
     ///
     /// Safe to run against a live collection and safe to run twice — it converges
     /// on what the records say, so a second run reports zero and changes nothing.
+    /// It edits the indexes through the same guarded insert/remove requests use
+    /// (never a wholesale rewrite, which would erase an entry a request added
+    /// after the scan), and re-checks a record before removing its entry.
     repair: func(collection: string) -> result<repair-report, store-error>;
 
     /// The same comparison, changing nothing.
