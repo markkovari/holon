@@ -119,8 +119,20 @@ frame: the green plane is cropped to the picture and turned upright (EXIF
 orientation) before either backend sees it.
 
 A `failed` body carries `job_id`, `photo_id`, `status`, `error`, and every other
-field `null`. For a JPEG original the `metadata` fields other than `width`/`height`
-are `null` (EXIF of JPEGs is not read yet). Renditions carry no camera EXIF —
+field `null`.
+
+`metadata` comes from the decode stage in `comp-media`, before and regardless of
+the Swift helper, so the CPU and Apple paths report the same thing. For an ARW
+rawler reads it. For a JPEG original the APP1 EXIF segment is read (kamadak-exif,
+bounds-checked against the segment): `camera` is `Make` + `Model` — rawler's
+clean names when its camera table knows the body, so a JPEG from the same Sony
+reads "Sony ILCE-7RM5" exactly like its ARW, otherwise the EXIF strings with a
+repeated make dropped — `lens` is `LensModel`, `captured_at` is
+`DateTimeOriginal` in the same zone-less form, then `ExposureTime`, `FNumber`,
+`FocalLength` and `PhotographicSensitivity` (`ISOSpeedRatings`), falling back to
+`ISOSpeed`. Each field is `null` on its own when its tag is missing or
+malformed; a JPEG with no EXIF (or none readable) has only `width`/`height`,
+which are always the upright decoded size. Renditions carry no camera EXIF —
 the camera's serial number, make, model, lens, capture time and GPS stay out of
 a picture meant to be shared. Core Image still writes a small structural EXIF
 block into every JPEG it encodes (dimensions, resolution, colour space, EXIF

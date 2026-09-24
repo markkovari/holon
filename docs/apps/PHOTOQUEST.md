@@ -122,12 +122,14 @@ What a photographer can do, each one a passing scenario:
 - **Account** — register and be signed in; log out and in again; a wrong
   password and an email that already has an account are refused with a message.
 - **Upload and evaluate** — an uncompressed and a lossless-compressed a7R V ARW
-  and a JPEG are each evaluated; the ARW's detail shows camera, lens, exposure,
+  and two JPEGs are each evaluated; the ARW's detail shows camera, lens, exposure,
   size, the sharpness focus ratio, Vision labels and aesthetics, and which
-  backend ran. A JPEG shows what it has without empty or "undefined" rows.
+  backend ran. A JPEG carrying EXIF shows the same camera, lens and exposure
+  rows; one without EXIF shows what it has without empty or "undefined" rows.
 - **Share copy** — the share link is a JPEG under 10 MB, with no EXIF tag
   beyond the structural ones Core Image always writes: no serial, MakerNote,
-  make, model, lens, date or GPS.
+  make, model, lens, date or GPS — also when the original is a JPEG whose own
+  EXIF has all of those (checked on every rendition).
 - **Refusals** — a text file or a PNG is refused, saying which file and what is
   accepted, and leaves no photo behind.
 - **Gallery** — newest first, thumbnails load, a click opens the detail.
@@ -140,8 +142,10 @@ What a photographer can do, each one a passing scenario:
 - **Quests** — the active quests with title, what is asked, XP and deadline, an
   ended one shown as ended; a verdict with one line per requirement (✓ grass with
   its confidence, ✗ focus with the measured value and the threshold, — ISO on a
-  JPEG that has none); XP awarded once — the same photo again, or the same bytes
-  re-uploaded, pass but earn nothing, and the page says why; a photo whose camera
+  JPEG that has none); a JPEG with EXIF passing an aperture limit and its
+  capture time judged against the quest's start; XP awarded once — the same
+  photo again, or the same bytes re-uploaded, pass but earn nothing, and the
+  page says why; a photo whose camera
   clock predates the quest is refused, the reason naming both times.
 - **Levels** — crossing a threshold shows a level-up and the new level in the
   header, which survives a reload and a fresh login; the XP history lists each
@@ -181,7 +185,7 @@ bytes appended after an ARW's end — which gives it its own sha256 and leaves t
 evaluation unchanged. The requirements the scenarios use are what the real
 pipeline reports for those samples: a `grass` label at ~0.86–0.90, focus ratio
 7.2–9.2, no faces, f/1.2, 50 mm, ISO 100, captured 2022-12-17 (so
-`captured_after_start: false`, except in the scenario that tests it). On a box
+`captured_after_start: false`, except in the scenarios that test it). On a box
 without Vision the label check is dropped.
 
 ## Where it stands
@@ -194,6 +198,7 @@ through the page on an M2 Max:
 - the in-focus face scores about 60 and 107; the other face in each frame scores 0.2 and 1.6
 - the share copy is 2–2.6 MB
 
-Not built yet: EXIF for JPEG originals (so a JPEG cannot pass exposure or
-"taken after the start" requirements — those checks read "not looked at"), and
-the original's lifecycle once it has been evaluated (it stays in `originals`).
+Not built yet: the original's lifecycle once it has been evaluated (it stays in
+`originals`). A JPEG original's EXIF is read like an ARW's, so a JPEG can pass
+exposure and "taken after the start" requirements; one without EXIF still
+reads "not looked at" for them.
