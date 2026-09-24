@@ -15,13 +15,14 @@
 //
 // Which requirements the CC0 samples meet, as the real pipeline reports them:
 // a `grass` label at ~0.86–0.90, focus ratio 7.2–9.2, no face, f/1.2, 50 mm,
-// ISO 100 (the ARWs; the JPEG has no EXIF), captured 2022-12-17 — so every quest
-// here says `captured_after_start: false` except the one that tests that rule.
+// ISO 100 (the ARWs, and SAMPLE.jpegExif, which carries the ARW's own EXIF;
+// SAMPLE.jpeg has none), captured 2022-12-17 — so every quest here says
+// `captured_after_start: false` except the ones that test that rule.
 // XP is paid once per file, ever, so each scenario uploads its own bytes
 // (`salt`, lib/photoquest.js) rather than a file another scenario was paid for.
 //
-// Media: only CC0 samples from raw.pixls.us (a Sony a7R V, ILCE-7RM5), and a
-// JPEG cut out of one of them. Never a personal photo — videos of these runs end
+// Media: only CC0 samples from raw.pixls.us (a Sony a7R V, ILCE-7RM5), and
+// JPEGs cut out of one of them (one with that ARW's EXIF copied in). Never a personal photo — videos of these runs end
 // up in test-results/.
 
 const fs = require('fs');
@@ -166,12 +167,25 @@ test.describe('Upload and evaluate', () => {
     await expectNoPlaceholders(page);
   });
 
-  test('a JPEG is evaluated, and its limited metadata is shown without gaps', async ({ page }) => {
+  test('a JPEG with EXIF is evaluated, with the camera data its EXIF carries', async ({ page }) => {
+    await registerInPage(page);
+    await uploadInPage(page, SAMPLE.jpegExif);
+    await expectEvaluatedInPage(page);
+    // The same camera, lens and exposure the ARW it came from shows.
+    await expect(field(page, 'camera')).toHaveText('Sony ILCE-7RM5');
+    await expect(field(page, 'lens')).toHaveText('FE 50mm F1.2 GM');
+    await expect(field(page, 'exposure')).toHaveText(/^1\/\d+s · f\/1\.2 · 50mm · ISO 100$/);
+    await expect(field(page, 'size')).toHaveText(/^\d+ × \d+$/);
+    await expect(field(page, 'sharpness')).toHaveText(/^focus ratio /);
+    await expectNoPlaceholders(page);
+  });
+
+  test('a JPEG without EXIF is evaluated, and its limited metadata is shown without gaps', async ({ page }) => {
     await registerInPage(page);
     await uploadInPage(page, SAMPLE.jpeg);
     await expectEvaluatedInPage(page);
-    // EXIF of a JPEG is not read yet (CONTRACT): no camera row rather than an
-    // empty or "undefined" one, but its size and sharpness are there.
+    // No EXIF to read: no camera row rather than an empty or "undefined" one,
+    // but its size and sharpness are there.
     await expect(field(page, 'camera')).toHaveCount(0);
     await expect(field(page, 'exposure')).toHaveCount(0);
     await expect(field(page, 'size')).toHaveText(/^\d+ × \d+$/);
@@ -214,6 +228,29 @@ test.describe('Share copy', () => {
     expect(meta.identifying).toEqual([]);
     expect(meta.unexpected.map((t) => '0x' + t.toString(16))).toEqual([]);
     expect(meta.app.filter((a) => /xmp|adobe\.com/i.test(a))).toEqual([]);
+  });
+
+  test("a JPEG original's EXIF is read but stays out of every rendition", async ({ request }) => {
+    // The original does carry make, model, lens and a capture time …
+    const original = pq.jpegMetadata(fs.readFileSync(SAMPLE.jpegExif));
+    expect(original.unexpected).toEqual(expect.arrayContaining([0x010f, 0x0110, 0x9003, 0xa434]));
+
+    const me = await pq.signUp(request, 'exif');
+    const photo = await pq.evaluatedPhoto(request, me.token, SAMPLE.jpegExif, { salt: true });
+    expect(photo.metadata.camera).toBe('Sony ILCE-7RM5');
+    // the camera clock of 7RM5-LosslessCompressedLarge.ARW, the file it was cut from
+    expect(photo.metadata.captured_at).toBe('2022-12-17T16:03:36');
+    // … and none of it reaches the share copy, the thumbnail or the AI copy.
+    const signed = await pq.must(request, me.token, 'GET', `/api/photos/${photo.id}`);
+    const urls = Object.entries(signed.urls || {}).filter(([k]) => ['share', 'thumb', 'ai'].includes(k));
+    expect(urls.length).toBeGreaterThan(0);
+    for (const [name, url] of urls) {
+      const res = await request.get(url);
+      expect(res.status(), name).toBe(200);
+      const meta = pq.jpegMetadata(await res.body());
+      expect(meta.identifying, name).toEqual([]);
+      expect(meta.unexpected.map((t) => '0x' + t.toString(16)), name).toEqual([]);
+    }
   });
 });
 
@@ -464,6 +501,49 @@ test.describe('Quests', () => {
     await expect(tid(page, 'header-total-xp')).toHaveText('40 XP');
     await expect(ui.questRow(page, 'Green, again')).toHaveAttribute('data-state', 'passed');
     expect((await pq.must(request, me.token, 'GET', '/api/me/progress')).total_xp).toBe(40);
+  });
+
+  test("a JPEG's EXIF counts: it passes an aperture limit, and its capture time is judged against the start", async ({ page, request }) => {
+    const cur = await pq.curator(request);
+    const { captured_after_start, ...rest } = pq.passable(backend); // eslint-disable-line no-unused-vars
+    const requirements = { ...rest, exposure: { max_fnumber: 1.4 } }; // captured_after_start: the default, true
+    // One quest that started before the CC0 frame was taken, one that starts now.
+    const since2022 = `Since 2022 ${tag()}`, today = `Today ${tag()}`;
+    const { quests: [old] } = await pq.publishedJourney(request, cur.token, { title: since2022 }, [
+      { title: 'Fast glass since 2022', xp: 30, starts_at: Date.UTC(2022, 0, 1) / 1000, requirements },
+    ]);
+    const { quests: [fresh] } = await pq.publishedJourney(request, cur.token, { title: today }, [
+      { title: 'Fast glass today', xp: 30, requirements },
+    ]);
+    const me = await photographerInPage(page, request);
+    const photo = await photoOf(request, me, SAMPLE.jpegExif); // f/1.2, camera clock 2022-12-17T16:03:36 (its ARW's)
+
+    await ui.openQuest(page, since2022, 'Fast glass since 2022');
+    let verdict = await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'verdict-result')).toHaveText('Passed');
+    await expect(ui.check(verdict, 'exposure.max_fnumber')).toHaveAttribute('data-ok', 'true');
+    await expect(ui.check(verdict, 'exposure.max_fnumber')).toContainText(/✓Aperture: 1\.2\d* ≤ 1\.4/);
+    await expect(ui.check(verdict, 'captured_after_start')).toHaveAttribute('data-ok', 'true');
+    await expect(ui.check(verdict, 'captured_after_start')).toContainText('captured 2022-12-17T16:03:36 ≥ start 2022-01-01T00:00:00');
+    await expect(tid(page, 'xp-line')).toHaveText('+30 XP');
+
+    await ui.openQuest(page, today, 'Fast glass today');
+    verdict = await ui.submitPhoto(page, photo.id);
+    await expect(tid(page, 'verdict-result')).toHaveText('Not passed');
+    await expect(ui.check(verdict, 'exposure.max_fnumber')).toHaveAttribute('data-ok', 'true');
+    await expect(ui.check(verdict, 'captured_after_start')).toHaveAttribute('data-ok', 'false');
+    await expect(ui.check(verdict, 'captured_after_start')).toContainText(/captured 2022-12-17T16:03:36 < start \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d/);
+    expect(old.starts_at).toBeLessThan(fresh.starts_at);
+
+    // The same picture without EXIF is not failed on either rule — neither was looked at.
+    const bare = await photoOf(request, me, SAMPLE.jpeg);
+    await page.reload();
+    await ui.openQuest(page, today, 'Fast glass today');
+    verdict = await ui.submitPhoto(page, bare.id);
+    await expect(ui.check(verdict, 'exposure.max_fnumber')).toHaveAttribute('data-ok', 'null');
+    await expect(ui.check(verdict, 'exposure.max_fnumber')).toContainText(/—Aperture: the photo's metadata has no fnumber/);
+    await expect(ui.check(verdict, 'captured_after_start')).toHaveAttribute('data-ok', 'null');
+    await expect(ui.check(verdict, 'captured_after_start')).toContainText(/the photo's metadata has no capture time/);
   });
 
   test('a photo captured before the quest started is refused', async ({ page, request }) => {

@@ -202,7 +202,7 @@ so a verdict always matches the rules it was judged by.
 ```
 
 `ok: null` means the stage that produces the value did not run (`backend.vision`
-false, or no `captured_at` on a JPEG); it counts as **not passed**, and the detail
+false, or no `captured_at` on a JPEG without EXIF); it counts as **not passed**, and the detail
 says why, so a photographer is never told "bad photo" when the truth is "not looked at".
 `captured_at` is the camera clock with no zone; it is compared as UTC.
 
