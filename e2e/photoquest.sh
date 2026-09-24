@@ -26,7 +26,8 @@
 #
 # Media: only the two CC0 a7R V samples from raw.pixls.us, downloaded once into
 # e2e/.photoquest-samples/ (gitignored; PHOTOQUEST_SAMPLES overrides the dir) and
-# checked against the sha256 below. The JPEG sample is cut out of one of them.
+# checked against the sha256 below. The JPEG samples are cut out of one of them:
+# one with no EXIF, one carrying that ARW's own EXIF.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -94,14 +95,14 @@ fetch() { # name sha256
 mkdir -p "$SAMPLES"
 fetch 7RM5-LosslessUncompressed.ARW 8918ba274f0919be4f9902f9eebcab4663445ebe441d22fb48f3f328198ac2ee
 fetch 7RM5-LosslessCompressedLarge.ARW c294c388ad9bccbee169f87b9ceb661001515fb039d63f587dcabba76df5636d
-printf 'Source: %s/\nLicense: CC0 1.0 (public domain), per raw.pixls.us\n7RM5-preview.jpg: the JPEG preview embedded in 7RM5-LosslessCompressedLarge.ARW\n' "$PIXLS" > "$SAMPLES/LICENSE.txt"
+printf 'Source: %s/\nLicense: CC0 1.0 (public domain), per raw.pixls.us\n7RM5-preview.jpg: the JPEG preview embedded in 7RM5-LosslessCompressedLarge.ARW\n7RM5-preview-exif.jpg: the same preview with that ARW'"'"'s own EXIF (make, model, lens, capture time, exposure) copied in\n' "$PIXLS" > "$SAMPLES/LICENSE.txt"
 
 # ---- node deps ----------------------------------------------------------------
 
 cd "$E2E"
 [[ -d node_modules/@playwright/test ]] || { say "npm ci (e2e)"; npm ci --no-audit --no-fund; }
 npx playwright install chromium >/dev/null
-node lib/photoquest.js derive-jpeg "$SAMPLES/7RM5-LosslessCompressedLarge.ARW" "$SAMPLES/7RM5-preview.jpg"
+node lib/photoquest.js derive-jpeg "$SAMPLES/7RM5-LosslessCompressedLarge.ARW" "$SAMPLES/7RM5-preview.jpg" "$SAMPLES/7RM5-preview-exif.jpg"
 
 # ---- build --------------------------------------------------------------------
 

@@ -8,11 +8,12 @@
 // or a queue of photos without clicking through the page for each one.
 //
 // Also: the CC0 samples. The suite never ships media; photoquest.sh downloads the
-// two raw.pixls.us a7R V ARWs into e2e/.photoquest-samples/ (gitignored) and
-// `derivePreviewJpeg` cuts a small JPEG out of one of them, so every byte the
-// suite uploads is CC0.
+// two raw.pixls.us a7R V ARWs into e2e/.photoquest-samples/ (gitignored),
+// `derivePreviewJpeg` cuts a small JPEG out of one of them, and `withArwExif`
+// gives a copy of that JPEG the ARW's own EXIF (camera, lens, capture time,
+// exposure) — so every byte the suite uploads, metadata included, is CC0.
 //
-//   node lib/photoquest.js derive-jpeg <in.ARW> <out.jpg>
+//   node lib/photoquest.js derive-jpeg <in.ARW> <out.jpg> [<out-with-exif.jpg>]
 //   node lib/photoquest.js warm <file> [base]      one upload, waits for `evaluated`
 
 const fs = require('fs');
@@ -25,7 +26,8 @@ const SAMPLES = process.env.PHOTOQUEST_SAMPLES || path.join(__dirname, '..', '.p
 const SAMPLE = {
   uncompressed: path.join(SAMPLES, '7RM5-LosslessUncompressed.ARW'),
   compressed: path.join(SAMPLES, '7RM5-LosslessCompressedLarge.ARW'),
-  jpeg: path.join(SAMPLES, '7RM5-preview.jpg'),
+  jpeg: path.join(SAMPLES, '7RM5-preview.jpg'),           // no EXIF at all
+  jpegExif: path.join(SAMPLES, '7RM5-preview-exif.jpg'),  // the ARW's own EXIF
 };
 
 // ---- the ARW / JPEG bytes ---------------------------------------------------
@@ -59,6 +61,98 @@ function derivePreviewJpeg(arw, out) {
   const jpg = buf.subarray(tags[0x201].value, tags[0x201].value + tags[0x202].value);
   if (jpg[0] !== 0xff || jpg[1] !== 0xd8) throw new Error(`${arw}: IFD0 preview is not a JPEG`);
   fs.writeFileSync(out, jpg);
+}
+
+/// The EXIF a camera JPEG would carry, read from the ARW itself: IFD0 Make and
+/// Model, and from the EXIF IFD exposure time, f-number, ISO, DateTimeOriginal,
+/// focal length and lens model. `{ tag: { type, count, bytes, ifd } }`, `bytes`
+/// the value as stored (little- or big-endian as the ARW is).
+const COPIED_EXIF = { 0: [0x010f, 0x0110], exif: [0x829a, 0x829d, 0x8827, 0x9003, 0x920a, 0xa434] };
+const TYPE_SIZE = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8 };
+
+function arwExif(arw) {
+  const buf = fs.readFileSync(arw);
+  const le = buf.toString('latin1', 0, 2) === 'II';
+  const t = tiffReader(buf, 0);
+  const out = {};
+  const take = (tags, wanted, ifd) => {
+    for (const tag of wanted) {
+      const e = tags[tag];
+      if (!e || !TYPE_SIZE[e.type]) continue;
+      const len = TYPE_SIZE[e.type] * e.count;
+      // A value that fits in four bytes sits in the entry itself; re-read it
+      // raw rather than as the u32 `tiffReader` decoded.
+      let bytes;
+      if (len <= 4) {
+        const raw = Buffer.alloc(4);
+        (le ? raw.writeUInt32LE.bind(raw) : raw.writeUInt32BE.bind(raw))(e.value >>> 0, 0);
+        bytes = raw.subarray(0, len);
+      } else {
+        bytes = Buffer.from(buf.subarray(e.value, e.value + len));
+      }
+      out[tag] = { type: e.type, count: e.count, bytes, ifd };
+    }
+  };
+  const ifd0 = t.ifd(t.first).tags;
+  take(ifd0, COPIED_EXIF[0], 0);
+  if (!ifd0[0x8769]) throw new Error(`${arw}: no EXIF IFD`);
+  take(t.ifd(ifd0[0x8769].value).tags, COPIED_EXIF.exif, 'exif');
+  return { le, tags: out };
+}
+
+/// A minimal APP1 Exif segment: a TIFF header, IFD0 (the copied tags plus the
+/// EXIF IFD pointer), the EXIF IFD, then the out-of-line values. Written in the
+/// ARW's byte order so the copied values need no conversion.
+function exifSegment({ le, tags }) {
+  const w16 = (b, v, o) => (le ? b.writeUInt16LE(v, o) : b.writeUInt16BE(v, o));
+  const w32 = (b, v, o) => (le ? b.writeUInt32LE(v, o) : b.writeUInt32BE(v, o));
+  const byIfd = (which) => Object.entries(tags).filter(([, v]) => v.ifd === which).map(([k, v]) => [Number(k), v]).sort((a, b) => a[0] - b[0]);
+  const ifd0 = byIfd(0), exif = byIfd('exif');
+  const ifdLen = (n) => 2 + 12 * n + 4;
+  const ifd0At = 8, exifAt = ifd0At + ifdLen(ifd0.length + 1), dataAt = exifAt + ifdLen(exif.length);
+  const head = Buffer.alloc(dataAt);
+  head.write(le ? 'II' : 'MM', 0, 'latin1');
+  w16(head, 42, 2);
+  w32(head, ifd0At, 4);
+  const data = [];
+  let dataLen = 0;
+  const writeIfd = (at, entries) => {
+    w16(head, entries.length, at);
+    entries.forEach(([tag, v], i) => {
+      const e = at + 2 + 12 * i;
+      w16(head, tag, e);
+      w16(head, v.type, e + 2);
+      w32(head, v.count, e + 4);
+      if (v.bytes.length <= 4) {
+        v.bytes.copy(head, e + 8);
+      } else {
+        w32(head, dataAt + dataLen, e + 8);
+        const padded = v.bytes.length % 2 ? Buffer.concat([v.bytes, Buffer.alloc(1)]) : v.bytes;
+        data.push(padded);
+        dataLen += padded.length;
+      }
+    });
+    w32(head, 0, at + 2 + 12 * entries.length); // no next IFD
+  };
+  const ptr = Buffer.alloc(4);
+  w32(ptr, exifAt, 0);
+  writeIfd(ifd0At, [...ifd0, [0x8769, { type: 4, count: 1, bytes: ptr }]]);
+  writeIfd(exifAt, exif);
+  const payload = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), head, ...data]);
+  if (payload.length + 2 > 0xffff) throw new Error('EXIF segment too large');
+  const marker = Buffer.alloc(4);
+  marker.writeUInt16BE(0xffe1, 0);
+  marker.writeUInt16BE(payload.length + 2, 2);
+  return Buffer.concat([marker, payload]);
+}
+
+/// `jpeg` (a JPEG with no EXIF, e.g. derivePreviewJpeg's) with the ARW's own
+/// EXIF inserted as APP1 right after SOI — what the camera would have written.
+function withArwExif(arw, jpeg, out) {
+  const jpg = fs.readFileSync(jpeg);
+  if (jpg[0] !== 0xff || jpg[1] !== 0xd8) throw new Error(`${jpeg}: not a JPEG`);
+  if (jpegMetadata(jpg).app.some((a) => a === 'APP1:Exif')) throw new Error(`${jpeg}: already has EXIF`);
+  fs.writeFileSync(out, Buffer.concat([jpg.subarray(0, 2), exifSegment(arwExif(arw)), jpg.subarray(2)]));
 }
 
 /// The EXIF tags that say how the pixels are laid out and nothing about who,
@@ -333,7 +427,7 @@ async function mediaHealth(request) {
 
 module.exports = {
   BASE, MEDIA, SAMPLES, SAMPLE,
-  derivePreviewJpeg, jpegMetadata,
+  derivePreviewJpeg, withArwExif, jpegMetadata,
   uniqueEmail, signUp, logIn, auth, upload, complete, getPhoto, listPhotos, waitSettled, mediaHealth,
   salted, freshSalt, evaluatedPhoto,
   ADMIN_EMAIL, call, must, admin, grant, curator, setClock, nowSecs, publishedJourney, publishedCompetition, GRASS, passable,
@@ -346,6 +440,7 @@ if (require.main === module) {
   (async () => {
     if (cmd === 'derive-jpeg') {
       derivePreviewJpeg(args[0], args[1]);
+      if (args[2]) withArwExif(args[0], args[1], args[2]);
     } else if (cmd === 'warm') {
       const { request } = require('@playwright/test');
       const ctx = await request.newContext();
@@ -356,7 +451,7 @@ if (require.main === module) {
       console.log(`warm: ${path.basename(args[0])} evaluated in ${Date.now() - t0} ms by ${JSON.stringify(p.backend)}`);
       await ctx.dispose();
     } else {
-      console.error('usage: photoquest.js derive-jpeg <in.ARW> <out.jpg> | warm <file>');
+      console.error('usage: photoquest.js derive-jpeg <in.ARW> <out.jpg> [<out-with-exif.jpg>] | warm <file>');
       process.exit(2);
     }
   })().catch((e) => { console.error(e.message || e); process.exit(1); });
