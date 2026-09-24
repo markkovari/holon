@@ -1860,7 +1860,9 @@ mod tests {
     }
 
     /// A 16x8 JPEG on disk, with `exif` as its APP1 segment when given.
-    fn jpeg_file(name: &str, exif: Option<Vec<u8>>) -> PathBuf {
+    /// A uniquely named temp file (created securely by `tempfile`, not a
+    /// predictable name in the shared temp dir), deleted when the path drops.
+    fn jpeg_file(name: &str, exif: Option<Vec<u8>>) -> tempfile::TempPath {
         let img = image::RgbImage::from_fn(16, 8, |x, y| {
             image::Rgb([(x * 16) as u8, (y * 32) as u8, 90])
         });
@@ -1870,10 +1872,13 @@ mod tests {
             enc.set_exif_metadata(exif).unwrap();
         }
         enc.write_image(img.as_raw(), 16, 8, image::ExtendedColorType::Rgb8).unwrap();
-        let path =
-            std::env::temp_dir().join(format!("comp-media-test-{}-{name}.jpg", std::process::id()));
-        std::fs::write(&path, bytes).unwrap();
-        path
+        let mut file = tempfile::Builder::new()
+            .prefix(&format!("comp-media-test-{name}-"))
+            .suffix(".jpg")
+            .tempfile()
+            .unwrap();
+        std::io::Write::write_all(&mut file, &bytes).unwrap();
+        file.into_temp_path()
     }
 
     #[test]
