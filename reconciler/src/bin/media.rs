@@ -55,8 +55,10 @@
 //!     --nats-url nats://127.0.0.1:4222 --callback-secret-file ... \
 //!     --callback-allow 127.0.0.1:3941 --apple-helper /usr/local/bin/comp-media-apple
 
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -72,7 +74,7 @@ use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageEncoder};
 use rusty_s3::{Bucket, Credentials, S3Action, UrlStyle};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
@@ -141,6 +143,24 @@ struct Args {
     /// file exists; otherwise everything runs on the CPU and `vision` is null.
     #[arg(long)]
     apple_helper: Option<PathBuf>,
+
+    /// The memory cap, in MB, on the child process that decodes an original
+    /// (see "isolation" below): its Rust heap may not pass this, and its
+    /// resident size may not pass this plus the file's size plus 256 MB. The
+    /// default is a 61 MP a7R V frame's measured peak (CPU develop, the larger
+    /// of the two) with about 2x headroom.
+    #[arg(long, default_value_t = DEFAULT_DECODE_MEM_MB)]
+    decode_mem_mb: u64,
+    /// Wall-clock limit, in seconds, on each child that touches an original —
+    /// the decode worker, the CPU develop worker and the Swift helper. Past
+    /// it the child is killed and the job fails.
+    #[arg(long, default_value_t = 120)]
+    decode_timeout_secs: u64,
+    /// Resident-size cap, in MB, on the Swift helper, enforced by sampling
+    /// (macOS enforces no rlimit on it). Core Image's GPU-side memory is not
+    /// all resident in the helper, so this bounds the CPU side only.
+    #[arg(long, default_value_t = DEFAULT_HELPER_MEM_MB)]
+    helper_mem_mb: u64,
 
     /// An upload larger than this is refused before any URL is signed.
     #[arg(long, default_value_t = 512)]
@@ -496,6 +516,7 @@ struct Daemon {
     max_upload: u64,
     sign_originals: bool,
     apple_helper: Option<PathBuf>,
+    iso: Isolation,
     callback_secret: String,
     callback_allow: Vec<String>,
     work_dir: PathBuf,
@@ -1107,6 +1128,457 @@ fn colour(ai_jpeg: &[u8]) -> Result<Value> {
     }))
 }
 
+// ---- isolation: every decode of an original runs in a child ------------------------
+//
+// rawler trusts the file. Its TIFF reader allocates whatever element count an
+// IFD entry claims before reading a byte of it, so a few KB of crafted header
+// can ask for 32 GB — and Rust aborts on a failed allocation; nothing can catch
+// it. A decoder panic or a decoder that never returns is no better. In this
+// process any of those takes the queue worker down for everyone. So nothing
+// here parses an original: this same binary is re-executed with
+// `--decode-worker`, reads its orders (a `WorkerSpec`) from `COMP_MEDIA_WORKER`,
+// writes its results into the job's directory and exits. The parent turns
+// whatever happens to it — an error, a crash, a signal, a timeout, running out
+// of memory — into a failed job, and takes the next one.
+//
+// The child is capped three ways, the same on macOS and Linux:
+//
+// - **Heap.** The global allocator below counts live bytes. In a worker, an
+//   allocation that would take the heap past `--decode-mem-mb` writes one line
+//   to stderr and `_exit`s with `WORKER_OOM` — before the allocation is tried,
+//   so the crafted 32 GB request fails at once, identically on both systems.
+//   No kernel is asked to enforce anything: macOS does not enforce
+//   RLIMIT_AS / RLIMIT_DATA for mmap-backed memory, which is where a large
+//   malloc goes, so an rlimit alone is not a cap there.
+// - **Resident size.** The parent samples the child's RSS every 50 ms
+//   (`proc_pidinfo` on macOS, `/proc/<pid>/statm` on Linux) and kills it past
+//   the heap cap plus the file's size (rawler maps the original) plus 256 MB —
+//   for memory that is not the Rust heap. On Linux RLIMIT_DATA is also set in
+//   `pre_exec` as a kernel backstop, above the heap cap.
+// - **Wall clock.** `--decode-timeout-secs`, then SIGKILL.
+//
+// The Swift helper is its own process already; it gets the same timeout and
+// the RSS sampling (`--helper-mem-mb`), but no heap cap — it is not Rust.
+
+/// Exit status of a worker that hit the heap cap.
+const WORKER_OOM: i32 = 86;
+const WORKER_FLAG: &str = "--decode-worker";
+const WORKER_ENV: &str = "COMP_MEDIA_WORKER";
+/// What a worker writes on success, in the job's directory.
+const WORKER_RESULT: &str = "worker.json";
+/// The green plane, `gw * gh` little-endian f32 — the Swift helper reads it too.
+const GREEN_FILE: &str = "green.f32";
+/// RSS a worker may hold above its heap cap and the mapped original.
+const RSS_SLACK: u64 = 256 * 1024 * 1024;
+/// MEASURED_PLACEHOLDER
+const DEFAULT_DECODE_MEM_MB: u64 = 3072;
+const DEFAULT_HELPER_MEM_MB: u64 = 2048;
+
+/// Live Rust heap bytes, and the cap an allocation may not pass (0 = none —
+/// the daemon itself runs uncapped; only a worker sets one).
+static HEAP_LIVE: AtomicUsize = AtomicUsize::new(0);
+static HEAP_CAP: AtomicUsize = AtomicUsize::new(0);
+/// The most `HEAP_LIVE` has been while a cap was set — a worker reports it.
+static HEAP_PEAK: AtomicUsize = AtomicUsize::new(0);
+
+struct CappedAlloc;
+
+#[global_allocator]
+static ALLOC: CappedAlloc = CappedAlloc;
+
+impl CappedAlloc {
+    #[inline]
+    fn reserve(size: usize) {
+        let live = HEAP_LIVE.fetch_add(size, Relaxed).wrapping_add(size);
+        let cap = HEAP_CAP.load(Relaxed);
+        if cap != 0 {
+            if live > cap {
+                over_cap(size);
+            }
+            HEAP_PEAK.fetch_max(live, Relaxed);
+        }
+    }
+    #[inline]
+    fn release(size: usize) {
+        HEAP_LIVE.fetch_sub(size, Relaxed);
+    }
+}
+
+/// Inside the allocator: nothing here may allocate. One line, then out.
+#[cold]
+fn over_cap(size: usize) -> ! {
+    let mb = digits(size / (1024 * 1024));
+    let mut buf = [0u8; 160];
+    let mut n = 0;
+    for part in [&b"out of memory: one allocation of "[..], &mb, b" MB would pass the worker's cap\n"] {
+        let part = part.split(|b| *b == 0).next().unwrap_or(&[]);
+        let take = part.len().min(buf.len() - n);
+        buf[n..n + take].copy_from_slice(&part[..take]);
+        n += take;
+    }
+    // SAFETY: write(2) on stderr from a valid buffer, then _exit(2): neither
+    // allocates, neither returns into Rust.
+    unsafe {
+        libc::write(2, buf.as_ptr().cast(), n);
+        libc::_exit(WORKER_OOM)
+    }
+}
+
+/// `v` in decimal, NUL-padded, without allocating.
+fn digits(mut v: usize) -> [u8; 20] {
+    let (mut tmp, mut i) = ([0u8; 20], 0);
+    loop {
+        tmp[i] = b'0' + (v % 10) as u8;
+        i += 1;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    let mut out = [0u8; 20];
+    for (j, d) in tmp[..i].iter().rev().enumerate() {
+        out[j] = *d;
+    }
+    out
+}
+
+// SAFETY: every method forwards to `System` with the caller's layout; the
+// counters only decide whether to call it (or exit instead).
+unsafe impl GlobalAlloc for CappedAlloc {
+    unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        Self::reserve(l.size());
+        let p = unsafe { System.alloc(l) };
+        if p.is_null() {
+            Self::release(l.size());
+        }
+        p
+    }
+    unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
+        Self::reserve(l.size());
+        let p = unsafe { System.alloc_zeroed(l) };
+        if p.is_null() {
+            Self::release(l.size());
+        }
+        p
+    }
+    unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        unsafe { System.dealloc(p, l) };
+        Self::release(l.size());
+    }
+    unsafe fn realloc(&self, p: *mut u8, l: Layout, new: usize) -> *mut u8 {
+        let old = l.size();
+        if new > old {
+            Self::reserve(new - old);
+        }
+        let q = unsafe { System.realloc(p, l, new) };
+        if q.is_null() {
+            if new > old {
+                Self::release(new - old);
+            }
+        } else if new < old {
+            Self::release(old - new);
+        }
+        q
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+enum Task {
+    /// Metadata + the green plane.
+    Decode,
+    /// The CPU develop and the three renditions.
+    Develop,
+}
+
+/// A worker's orders.
+#[derive(Serialize, Deserialize)]
+struct WorkerSpec {
+    task: Task,
+    input: PathBuf,
+    ext: String,
+    out: PathBuf,
+    heap_cap: usize,
+    /// Tests only: sleep this long first, standing in for a decoder that hangs.
+    #[serde(default)]
+    test_sleep_ms: u64,
+}
+
+/// The child's side. Returns the exit status.
+fn worker_main(spec: &str) -> i32 {
+    let run = || -> Result<()> {
+        let s: WorkerSpec = serde_json::from_str(spec).context("worker orders")?;
+        HEAP_CAP.store(s.heap_cap, Relaxed);
+        if s.test_sleep_ms > 0 {
+            std::thread::sleep(Duration::from_millis(s.test_sleep_ms));
+        }
+        let result = match s.task {
+            Task::Decode => {
+                let dec = if s.ext == "arw" { decode_raw(&s.input)? } else { decode_jpeg(&s.input)? };
+                let mut f = std::io::BufWriter::new(std::fs::File::create(s.out.join(GREEN_FILE))?);
+                for v in &dec.green {
+                    std::io::Write::write_all(&mut f, &v.to_le_bytes())?;
+                }
+                std::io::Write::flush(&mut f)?;
+                json!({ "metadata": dec.metadata, "gw": dec.gw, "gh": dec.gh })
+            }
+            Task::Develop => {
+                let (full, develop) = develop_cpu(&s.input, &s.ext)?;
+                let renditions = renditions_cpu(&full)?;
+                drop(full);
+                let mut sizes = serde_json::Map::new();
+                for (name, w, h, bytes) in renditions {
+                    std::fs::write(s.out.join(format!("{name}.jpg")), bytes)?;
+                    sizes.insert(name.into(), json!({ "width": w, "height": h }));
+                }
+                json!({ "develop": develop, "renditions": sizes })
+            }
+        };
+        let mut result = result;
+        result["peak_heap_mb"] = json!(HEAP_PEAK.load(Relaxed) / (1024 * 1024));
+        std::fs::write(s.out.join(WORKER_RESULT), serde_json::to_vec(&result)?)?;
+        Ok(())
+    };
+    match run() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("{e:#}");
+            1
+        }
+    }
+}
+
+/// How the parent starts a worker, and the limits it holds children to.
+#[derive(Clone)]
+struct Isolation {
+    exe: PathBuf,
+    /// `--decode-worker` in the daemon; the test harness's filter in tests.
+    args: Vec<String>,
+    heap_cap: usize,
+    timeout: Duration,
+    helper_rss_cap: u64,
+    test_sleep_ms: u64,
+}
+
+impl Isolation {
+    fn for_daemon(mem_mb: u64, timeout_secs: u64, helper_mem_mb: u64) -> Result<Isolation> {
+        Ok(Isolation {
+            exe: std::env::current_exe().context("finding comp-media's own binary for the decode worker")?,
+            args: vec![WORKER_FLAG.into()],
+            heap_cap: (mem_mb * 1024 * 1024) as usize,
+            timeout: Duration::from_secs(timeout_secs.max(1)),
+            helper_rss_cap: helper_mem_mb * 1024 * 1024,
+            test_sleep_ms: 0,
+        })
+    }
+}
+
+/// A child's resident set, in bytes.
+#[cfg(target_os = "macos")]
+fn rss_bytes(pid: u32) -> Option<u64> {
+    // SAFETY: proc_pidinfo fills at most `size` bytes of a zeroed, correctly
+    // sized proc_taskinfo, and returns how many it wrote.
+    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+    let n = unsafe {
+        libc::proc_pidinfo(pid as libc::c_int, libc::PROC_PIDTASKINFO, 0, (&mut info as *mut libc::proc_taskinfo).cast(), size)
+    };
+    (n == size).then_some(info.pti_resident_size)
+}
+
+#[cfg(target_os = "linux")]
+fn rss_bytes(pid: u32) -> Option<u64> {
+    let statm = std::fs::read_to_string(format!("/proc/{pid}/statm")).ok()?;
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    // SAFETY: sysconf has no preconditions.
+    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as u64;
+    Some(pages * page)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn rss_bytes(_pid: u32) -> Option<u64> {
+    None
+}
+
+/// How a supervised child ended.
+#[derive(Debug)]
+enum Ended {
+    Exited(std::process::ExitStatus),
+    TimedOut,
+    OverMemory(u64),
+}
+
+struct Supervised {
+    ended: Ended,
+    /// At most the first 1 MiB.
+    stdout: Vec<u8>,
+    /// The last 16 KiB.
+    stderr: String,
+    /// The largest RSS sampled (every 50 ms, so a lower bound).
+    peak_rss: u64,
+}
+
+/// Drain a pipe, keeping at most `keep` bytes — the head, or the tail.
+async fn drain(mut r: impl tokio::io::AsyncRead + Unpin, keep: usize, tail: bool) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let (mut out, mut buf) = (Vec::new(), [0u8; 8192]);
+    while let Ok(n) = r.read(&mut buf).await {
+        if n == 0 {
+            break;
+        }
+        if tail {
+            out.extend_from_slice(&buf[..n]);
+            if out.len() > keep {
+                out.drain(..out.len() - keep);
+            }
+        } else if out.len() < keep {
+            out.extend_from_slice(&buf[..n.min(keep - out.len())]);
+        }
+    }
+    out
+}
+
+/// Run `cmd` to its end, killing it past `timeout` or past `rss_cap` bytes
+/// resident. Fails only if the child could not be started — whatever the
+/// child itself does is in `ended`.
+async fn supervise(mut cmd: tokio::process::Command, timeout: Duration, rss_cap: u64) -> Result<Supervised> {
+    use std::process::Stdio;
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    let stdout = tokio::spawn(drain(child.stdout.take().expect("piped"), 1 << 20, false));
+    let stderr = tokio::spawn(drain(child.stderr.take().expect("piped"), 16 << 10, true));
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut peak_rss = 0;
+    let ended = loop {
+        tokio::select! {
+            status = child.wait() => break Ended::Exited(status?),
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                if tokio::time::Instant::now() >= deadline {
+                    let _ = child.kill().await;
+                    break Ended::TimedOut;
+                }
+                if let Some(rss) = pid.and_then(rss_bytes) {
+                    peak_rss = peak_rss.max(rss);
+                    if rss > rss_cap {
+                        let _ = child.kill().await;
+                        break Ended::OverMemory(rss);
+                    }
+                }
+            }
+        }
+    };
+    Ok(Supervised {
+        ended,
+        stdout: stdout.await.unwrap_or_default(),
+        stderr: String::from_utf8_lossy(&stderr.await.unwrap_or_default()).trim().to_string(),
+        peak_rss,
+    })
+}
+
+/// The job's error for a child that did not finish cleanly; `None` if it did.
+fn child_failure(what: &str, s: &Supervised, timeout: Duration, rss_cap: u64) -> Option<String> {
+    use std::os::unix::process::ExitStatusExt;
+    let last = s.stderr.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no message");
+    let mb = |b: u64| b / (1024 * 1024);
+    Some(match &s.ended {
+        Ended::Exited(st) if st.success() => return None,
+        Ended::TimedOut => format!("{what} failed: timed out after {} s", timeout.as_secs()),
+        Ended::OverMemory(rss) => {
+            format!("{what} failed: out of memory ({} MB resident, cap {} MB)", mb(*rss), mb(rss_cap))
+        }
+        Ended::Exited(st) => match (st.code(), st.signal()) {
+            (Some(code), _) if what == "helper" => format!("{what} failed: exited {code} ({last})"),
+            (Some(WORKER_OOM), _) => format!("{what} failed: {last}"),
+            (Some(101), _) => format!("{what} failed: the decoder crashed on a malformed file ({last})"),
+            (Some(1), _) => format!("{what} failed: malformed file ({last})"),
+            (Some(code), _) => format!("{what} failed: exited {code} ({last})"),
+            (None, Some(sig)) => {
+                format!("{what} failed: killed by signal {sig} (out of memory, or a crash on a malformed file)")
+            }
+            (None, None) => format!("{what} failed: ended without a status"),
+        },
+    })
+}
+
+/// Run one worker task on `input`, in `dir`; its `worker.json` on success.
+async fn isolated(iso: &Isolation, task: Task, input: &Path, ext: &str, dir: &Path) -> Result<Value> {
+    let result = dir.join(WORKER_RESULT);
+    let _ = tokio::fs::remove_file(&result).await;
+    let spec = WorkerSpec {
+        task,
+        input: input.to_path_buf(),
+        ext: ext.to_string(),
+        out: dir.to_path_buf(),
+        heap_cap: iso.heap_cap,
+        test_sleep_ms: iso.test_sleep_ms,
+    };
+    let file_len = tokio::fs::metadata(input).await.map(|m| m.len()).unwrap_or(0);
+    let rss_cap = iso.heap_cap as u64 + file_len + RSS_SLACK;
+    let mut cmd = tokio::process::Command::new(&iso.exe);
+    cmd.args(&iso.args).env(WORKER_ENV, serde_json::to_string(&spec)?);
+    #[cfg(target_os = "linux")]
+    {
+        // A kernel backstop above the heap cap. RLIMIT_DATA counts private
+        // writable memory (heap, anonymous maps, thread stacks), not the
+        // read-only map of the original.
+        let limit = (iso.heap_cap as u64 + 2 * RSS_SLACK) as libc::rlim_t;
+        // SAFETY: setrlimit is async-signal-safe and touches no Rust state.
+        unsafe {
+            cmd.pre_exec(move || {
+                let r = libc::rlimit { rlim_cur: limit, rlim_max: limit };
+                if libc::setrlimit(libc::RLIMIT_DATA, &r) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    let what = match task {
+        Task::Decode => "decode",
+        Task::Develop => "develop",
+    };
+    let s = supervise(cmd, iso.timeout, rss_cap).await.with_context(|| format!("starting the {what} worker"))?;
+    if let Some(err) = child_failure(what, &s, iso.timeout, rss_cap) {
+        bail!("{err}");
+    }
+    for line in s.stderr.lines().filter(|l| !l.trim().is_empty()) {
+        eprintln!("comp-media: ({what} worker) {line}");
+    }
+    let raw = tokio::fs::read(&result).await.with_context(|| format!("the {what} worker wrote no result"))?;
+    let mut v: Value = serde_json::from_slice(&raw).with_context(|| format!("the {what} worker's result"))?;
+    v["peak_rss_mb"] = json!(s.peak_rss / (1024 * 1024));
+    Ok(v)
+}
+
+/// Metadata and the green plane, decoded in a worker.
+async fn decode_isolated(iso: &Isolation, input: &Path, ext: &str, dir: &Path) -> Result<Decoded> {
+    let mut v = isolated(iso, Task::Decode, input, ext, dir).await?;
+    let dim = |k: &str| v[k].as_u64().filter(|d| (1..=1 << 16).contains(d)).map(|d| d as usize);
+    let (gw, gh) = dim("gw").zip(dim("gh")).ok_or_else(|| anyhow!("the decode worker gave no plane size"))?;
+    let bytes = tokio::fs::read(dir.join(GREEN_FILE)).await.context("the decode worker's green plane")?;
+    if bytes.len() != gw * gh * 4 {
+        bail!("the green plane is {} bytes, not {gw}x{gh} floats", bytes.len());
+    }
+    let green = bytes.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    Ok(Decoded { metadata: v["metadata"].take(), green, gw, gh })
+}
+
+/// The CPU develop and the three renditions, in a worker.
+async fn develop_isolated(iso: &Isolation, input: &Path, ext: &str, dir: &Path) -> Result<(Vec<Rendition>, String)> {
+    let v = isolated(iso, Task::Develop, input, ext, dir).await?;
+    let mut out = Vec::new();
+    for (name, _) in RENDITIONS {
+        let r = &v["renditions"][name];
+        let size = |k: &str| r[k].as_u64().map(|d| d as u32);
+        let (w, h) = size("width")
+            .zip(size("height"))
+            .ok_or_else(|| anyhow!("the develop worker wrote no {name} rendition"))?;
+        out.push((name, w, h, tokio::fs::read(dir.join(format!("{name}.jpg"))).await?));
+    }
+    Ok((out, v["develop"].as_str().unwrap_or("rawler").to_string()))
+}
+
 // ---- the Swift helper --------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -1128,27 +1600,25 @@ struct HelperOut {
     timings_ms: BTreeMap<String, u64>,
 }
 
-async fn run_helper(helper: &Path, original: &Path, dec: &Decoded, dir: &Path) -> Result<HelperOut> {
-    let green_path = dir.join("green.f32");
-    let bytes: Vec<u8> = dec.green.iter().flat_map(|v| v.to_le_bytes()).collect();
-    tokio::fs::write(&green_path, bytes).await?;
-    let out = tokio::process::Command::new(helper)
-        .arg("--original").arg(original)
-        .arg("--green").arg(&green_path)
+/// The helper reads the green plane the decode worker left in `dir`. It
+/// parses the original too (Core Image), so it gets the decode timeout and a
+/// sampled RSS cap.
+async fn run_helper(helper: &Path, original: &Path, dec: &Decoded, dir: &Path, iso: &Isolation) -> Result<HelperOut> {
+    let mut cmd = tokio::process::Command::new(helper);
+    cmd.arg("--original").arg(original)
+        .arg("--green").arg(dir.join(GREEN_FILE))
         .arg("--green-width").arg(dec.gw.to_string())
         .arg("--green-height").arg(dec.gh.to_string())
-        .arg("--out").arg(dir)
-        .kill_on_drop(true)
-        .output()
-        .await?;
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    if !stderr.trim().is_empty() {
-        eprintln!("comp-media-apple: {}", stderr.trim());
+        .arg("--out").arg(dir);
+    let s = supervise(cmd, iso.timeout, iso.helper_rss_cap).await.context("starting the helper")?;
+    if !s.stderr.is_empty() {
+        eprintln!("comp-media-apple: {}", s.stderr);
     }
-    if !out.status.success() {
-        bail!("helper exited {}", out.status);
+    eprintln!("comp-media: apple helper peak RSS ~{} MB", s.peak_rss / (1024 * 1024));
+    if let Some(err) = child_failure("helper", &s, iso.timeout, iso.helper_rss_cap) {
+        bail!("{err}");
     }
-    serde_json::from_slice(&out.stdout).context("helper printed something that is not its JSON")
+    serde_json::from_slice(&s.stdout).context("helper printed something that is not its JSON")
 }
 
 // ---- the worker ------------------------------------------------------------------
@@ -1179,9 +1649,9 @@ async fn evaluate(d: &Daemon, job: &Job, dir: &Path) -> Result<Value> {
     timings.insert("download".to_string(), ms(t));
     eprintln!("comp-media: [{}] downloaded {size} bytes in {} ms", job.job_id, ms(t));
 
+    // Everything that parses the original runs in a child ("isolation").
     let t = Instant::now();
-    let (path, e) = (original.clone(), ext.clone());
-    let mut dec = tokio::task::spawn_blocking(move || if e == "arw" { decode_raw(&path) } else { decode_jpeg(&path) }).await??;
+    let mut dec = decode_isolated(&d.iso, &original, &ext, dir).await?;
     timings.insert("decode".to_string(), ms(t));
     eprintln!("comp-media: [{}] decoded, green plane {}x{} in {} ms", job.job_id, dec.gw, dec.gh, ms(t));
 
@@ -1190,7 +1660,7 @@ async fn evaluate(d: &Daemon, job: &Job, dir: &Path) -> Result<Value> {
     let mut helper_out = None;
     if let Some(helper) = d.apple() {
         let t = Instant::now();
-        match run_helper(helper, &original, &dec, dir).await {
+        match run_helper(helper, &original, &dec, dir, &d.iso).await {
             Ok(h) => {
                 eprintln!("comp-media: [{}] apple helper done in {} ms", job.job_id, ms(t));
                 helper_out = Some(h);
@@ -1234,14 +1704,9 @@ async fn evaluate(d: &Daemon, job: &Job, dir: &Path) -> Result<Value> {
             eprintln!("comp-media: [{}] sharpness (cpu) in {} ms", job.job_id, ms(t));
 
             let t = Instant::now();
-            let (path, e) = (original.clone(), ext.clone());
-            let (out, dev) = tokio::task::spawn_blocking(move || -> Result<_> {
-                let (full, dev) = develop_cpu(&path, &e)?;
-                Ok((renditions_cpu(&full)?, dev))
-            })
-            .await??;
+            let (out, dev) = develop_isolated(&d.iso, &original, &ext, dir).await?;
             renditions = out;
-            develop = dev.to_string();
+            develop = dev;
             timings.insert("develop".into(), ms(t));
             eprintln!("comp-media: [{}] developed ({develop}) in {} ms", job.job_id, ms(t));
             vision = Value::Null;
@@ -1423,8 +1888,15 @@ fn secret(direct: Option<String>, file: Option<PathBuf>, name: &str) -> Result<S
     direct.ok_or_else(|| anyhow!("--{name} or --{name}-file is required"))
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // A decode worker is this binary re-executed; it never reaches the daemon.
+    if std::env::args_os().nth(1).is_some_and(|a| a == WORKER_FLAG) {
+        std::process::exit(worker_main(&std::env::var(WORKER_ENV).unwrap_or_default()));
+    }
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(daemon())
+}
+
+async fn daemon() -> Result<()> {
     let args = Args::parse();
     let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-media", &token);
@@ -1508,6 +1980,7 @@ async fn main() -> Result<()> {
         max_upload: args.max_upload_mb * 1024 * 1024,
         sign_originals: args.sign_originals,
         apple_helper: args.apple_helper,
+        iso: Isolation::for_daemon(args.decode_mem_mb, args.decode_timeout_secs, args.helper_mem_mb)?,
         callback_secret,
         callback_allow: args.callback_allow,
         work_dir,
