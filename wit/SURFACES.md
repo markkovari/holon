@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-127 interfaces.
+129 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -1469,6 +1469,83 @@ Adding a *function* to an interface is compatible; adding a case to a
     select: func(entries: list<entry>) -> result<outcome, select-error>;
 
     land: func(entries: list<entry>, p: landing) -> result<opened, land-error>;
+  }
+```
+
+## `holon:vcs/code-store@0.1.0`
+
+```wit
+  interface code-store {
+    use types.{commit-result, conflict, conflict-id, conflict-state, op-entry, op-id, patch-request, resolution-request, snapshot, symbol-query, symbol-view, vcs-error, workspace-id, agent, consistency-report, repair-report};
+
+    apply-patch: func(req: patch-request) -> result<commit-result, vcs-error>;
+
+    resolve-conflict: func(req: resolution-request) -> result<commit-result, vcs-error>;
+
+    revert-op: func(workspace: workspace-id, op: op-id, by: agent) -> result<op-entry, vcs-error>;
+
+    query-symbol: func(workspace: workspace-id, query: symbol-query) -> result<list<symbol-view>, vcs-error>;
+
+    snapshot-export: func(workspace: workspace-id, component: string) -> result<snapshot, vcs-error>;
+
+    list-conflicts: func(workspace: workspace-id, state: option<conflict-state>) -> result<list<conflict>, vcs-error>;
+
+    oplog: func(workspace: workspace-id, after: option<op-id>, limit: u32) -> result<list<op-entry>, vcs-error>;
+
+    oplog-head: func(workspace: workspace-id) -> result<op-id, vcs-error>;
+
+    verify: func(workspace: workspace-id) -> result<consistency-report, vcs-error>;
+
+    repair: func(workspace: workspace-id) -> result<repair-report, vcs-error>;
+  }
+```
+
+## `holon:vcs/files@0.1.0`
+
+```wit
+  interface files {
+    use types.{agent, commit-result, hash, op-id, snapshot, symbol-id, vcs-error, workspace-id};
+
+    enum edit-kind {
+      create,
+      replace,
+      delete,
+      rename,
+      move,
+    }
+
+    record ingest-patch {
+      symbol: symbol-id,
+      edit: edit-kind,
+      outcome: result<commit-result, vcs-error>,
+    }
+
+    record ingest-report {
+      path: string,
+      read-at: op-id,
+      unchanged: list<symbol-id>,
+      patches: list<ingest-patch>,
+    }
+
+    record source-file {
+      path: string,
+      content: list<u8>,
+    }
+
+    record materialized {
+      dir: string,
+      snapshot: snapshot,
+      files: u32,
+      bytes: u64,
+    }
+
+    ingest-file: func(workspace: workspace-id, component: string, file: source-file, by: agent, read-at: option<op-id>) -> result<ingest-report, vcs-error>;
+
+    ingest-tree: func(workspace: workspace-id, component: string, files: list<source-file>, by: agent, read-at: option<op-id>, prune: bool) -> result<list<ingest-report>, vcs-error>;
+
+    materialize: func(workspace: workspace-id, component: string, dest: string) -> result<materialized, vcs-error>;
+
+    read-blob: func(blob: hash) -> result<list<u8>, vcs-error>;
   }
 ```
 

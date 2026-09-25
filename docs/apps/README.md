@@ -5,7 +5,7 @@ capability components, served by `comp-host`, and — for most of them — drive
 to end by a `cargo test` against `examples/<app>` rather than by a screenshot.
 The exceptions: `helpdesk` is tested by the Node suite in `examples/jco-helpdesk`,
 `console` by Playwright (`npm --prefix examples/console test`), `eshop` by
-`examples/eshop/smoke.sh`, `photoquest` by `reconciler/tests/gate_photoquest.rs`,
+`examples/eshop/smoke.sh`, `photoquest` by `reconciler/tests/gate_photoquest.rs`, `vcs` by `e2e/vcs.sh`,
 `grocery` has no Cargo suite under `examples/grocery`,
 and the twelve ADR-0095 fronting apps (the rows that say "fronting …") have no
 Cargo suite under `examples/<app>`.
@@ -76,6 +76,7 @@ see what a showcase is built out of, ask the component rather than this table �
 | [TEMPO](TEMPO.md) | `tempo` | a multi-person worktime logger (with charts) |
 | [TRACK](TRACK.md) | `track` | a Linear-lite project tracker (the complex composition) |
 | [TRANSIT](TRANSIT.md) | `transit` | public-transport ticketing (buy a QR, validate with a camera) |
+| [VCS](VCS.md) | `vcs` | the agent-native code store on HTTP: symbol-level edits that commute, conflicts as data, crash-safe (ADR-0099) |
 | [VIDEO-TRANSCODER](VIDEO-TRANSCODER.md) | `video-transcoder` | a video transcoder, fronting `video-ffmpeg` (ADR-0095) |
 | [VPN-MANAGER](VPN-MANAGER.md) | `vpn-manager` | a VPN manager, fronting `vpn-wireguard` (ADR-0095) |
 

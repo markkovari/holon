@@ -14,13 +14,22 @@
 //!
 //! Every record is per workspace: the same patch hash in two workspaces is two
 //! records (its landing op and status differ).
+//!
+//! # Writes are monotone in op id
+//!
+//! Every mutable field an op sets — a patch's status, a symbol's mirror, a
+//! conflict's state — records the op that set it (`status_op`, `last_op`,
+//! `state_op`), and a write from an older op than the one recorded is ignored.
+//! Finishing an op is idempotent and may be done by its writer, by a reader
+//! that found it half-done, or by repair, in any order and more than once
+//! ([`crate::recovery`]); monotonicity is what makes a late finisher harmless.
 
 use std::future::Future;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::model::{Agent, ConflictId, ConflictState, Hash, OpId, SymbolId, SymbolKind};
+use crate::model::{Agent, ConflictId, ConflictState, Hash, OpId, Placement, SymbolId, SymbolKind};
 
 /// A patch's change, normalised: content is always a blob hash, never inline.
 /// This (with the symbol key and the parents) is what a patch hash covers.
@@ -31,6 +40,9 @@ pub enum Change {
     Replace(Hash),
     Delete,
     Rename(String),
+    /// Same content, new place: the placement as requested (what is hashed);
+    /// the order key it resolved to is [`PatchRecord::order`].
+    Move(Placement),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +79,17 @@ pub struct PatchRecord {
     pub depends_on: Vec<SymbolId>,
     pub implements: Vec<SymbolId>,
     pub wit_binding: Option<String>,
+    /// The op whose write set `status` (monotone; see the module notes).
+    #[serde(default)]
+    pub status_op: OpId,
+    /// The symbol's explicit order key within its file after this patch
+    /// ([`crate::order`]); `None`: ordered by creation op. Carried forward by
+    /// every patch that does not set it.
+    #[serde(default)]
+    pub order: Option<String>,
+    /// The placement a `create` asked for (hashed, with the change).
+    #[serde(default)]
+    pub placement: Option<Placement>,
 }
 
 impl PatchRecord {
@@ -89,10 +112,13 @@ pub struct SymbolRecord {
     pub aliases: Vec<String>,
     pub tip: Option<Hash>,
     pub deleted: bool,
-    /// Order within its file: the op that first created it. `None` until that op
-    /// is in the log.
+    /// The op that first created it: its order within the file when no patch
+    /// set an explicit order key. `None` until that op is finished.
     pub position: Option<OpId>,
     pub wit_binding: Option<String>,
+    /// The op whose update this mirror reflects (monotone).
+    #[serde(default)]
+    pub last_op: OpId,
 }
 
 /// The mirror fields an op updates.
@@ -104,6 +130,8 @@ pub struct SymbolUpdate {
     pub wit_binding: Option<String>,
     /// Set as the position only if the symbol has none yet.
     pub position_if_unset: Option<OpId>,
+    /// The op making this update; ignored if the mirror reflects a later one.
+    pub op: OpId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,10 +151,17 @@ pub struct ConflictRecord {
     pub left: SideRecord,
     pub right: SideRecord,
     pub state: ConflictState,
-    /// 0 until the op that opened it is in the log (see the engine's notes on
+    /// 0 until the op that opened it is committed (see the engine's notes on
     /// uncommitted conflicts).
     pub opened_at: OpId,
     pub resolved_by: Option<Hash>,
+    /// While uncommitted: the pending ops that wrote it ahead of their pointer
+    /// write. It is abandoned only when the last of them aborts.
+    #[serde(default)]
+    pub pending: Vec<OpId>,
+    /// The op whose effect set `state` (monotone).
+    #[serde(default)]
+    pub state_op: OpId,
 }
 
 /// One conflict state change an op made, so reverting the op can undo it.
@@ -163,6 +198,8 @@ pub trait Graph: Send + Sync {
         key: &str,
         id: &SymbolId,
     ) -> impl Future<Output = Result<()>> + Send;
+    /// Apply `update` if `update.op` is at least the mirror's `last_op`; set the
+    /// position if unset either way.
     fn update_symbol(
         &self,
         ws: &str,
@@ -198,13 +235,15 @@ pub trait Graph: Send + Sync {
         ws: &str,
         hash: &str,
     ) -> impl Future<Output = Result<Option<PatchRecord>>> + Send;
-    /// Set a patch's status, and its op when `op` is `Some`.
+    /// Set a patch's status (and, with `set_op`, its `op`) — if `op` is at
+    /// least its `status_op`.
     fn mark_patch(
         &self,
         ws: &str,
         hash: &str,
         status: PatchStatus,
-        op: Option<OpId>,
+        op: OpId,
+        set_op: bool,
     ) -> impl Future<Output = Result<()>> + Send;
     /// Hashes of patches with a `depends_on` edge to `target`.
     fn dependents(
@@ -215,25 +254,31 @@ pub trait Graph: Send + Sync {
 
     // ---- conflicts -----------------------------------------------------------
 
-    /// Insert or replace a conflict record (and its `conflicts_with` edge).
-    fn put_conflict(&self, ws: &str, c: &ConflictRecord)
-        -> impl Future<Output = Result<()>> + Send;
-    /// Atomically: `abandoned` if and only if `opened_at` is still 0.
-    fn abandon_if_uncommitted(&self, ws: &str, id: &str)
-        -> impl Future<Output = Result<()>> + Send;
-    /// `open`, opened at `op`.
-    fn commit_conflict(
+    /// Write a conflict ahead of `op`'s pointer write, uncommitted
+    /// (`opened_at: 0`, `open`). If it exists uncommitted and open, `op` joins
+    /// its `pending`; if it exists abandoned and `op` is newer than its
+    /// `state_op`, it is written afresh; otherwise it is left alone.
+    fn put_conflict(
+        &self,
+        ws: &str,
+        c: &ConflictRecord,
+        op: OpId,
+    ) -> impl Future<Output = Result<()>> + Send;
+    /// `op` aborted: drop it from `pending`; abandon the conflict if it is
+    /// still uncommitted, open, and no pending op is left.
+    fn abandon_if_uncommitted(
         &self,
         ws: &str,
         id: &str,
         op: OpId,
     ) -> impl Future<Output = Result<()>> + Send;
-    fn set_conflict_state(
+    /// Apply one effect of committed `op` — if `op` is at least `state_op`. An
+    /// effect to `open` on an uncommitted conflict commits it (`opened_at: op`).
+    fn apply_conflict_effect(
         &self,
         ws: &str,
-        id: &str,
-        state: ConflictState,
-        resolved_by: Option<Hash>,
+        effect: &ConflictEffect,
+        op: OpId,
     ) -> impl Future<Output = Result<()>> + Send;
     fn conflict(
         &self,
@@ -250,20 +295,6 @@ pub trait Graph: Send + Sync {
         ws: &str,
         key: &str,
     ) -> impl Future<Output = Result<Vec<ConflictRecord>>> + Send;
-
-    // ---- op side effects -----------------------------------------------------
-
-    fn put_effects(
-        &self,
-        ws: &str,
-        op: OpId,
-        effects: &[ConflictEffect],
-    ) -> impl Future<Output = Result<()>> + Send;
-    fn effects(
-        &self,
-        ws: &str,
-        op: OpId,
-    ) -> impl Future<Output = Result<Vec<ConflictEffect>>> + Send;
 }
 
 impl<T: Graph> Graph for std::sync::Arc<T> {
@@ -319,9 +350,10 @@ impl<T: Graph> Graph for std::sync::Arc<T> {
         ws: &str,
         hash: &str,
         status: PatchStatus,
-        op: Option<OpId>,
+        op: OpId,
+        set_op: bool,
     ) -> impl Future<Output = Result<()>> + Send {
-        (**self).mark_patch(ws, hash, status, op)
+        (**self).mark_patch(ws, hash, status, op, set_op)
     }
     fn dependents(
         &self,
@@ -334,32 +366,25 @@ impl<T: Graph> Graph for std::sync::Arc<T> {
         &self,
         ws: &str,
         c: &ConflictRecord,
+        op: OpId,
     ) -> impl Future<Output = Result<()>> + Send {
-        (**self).put_conflict(ws, c)
+        (**self).put_conflict(ws, c, op)
     }
     fn abandon_if_uncommitted(
         &self,
         ws: &str,
         id: &str,
-    ) -> impl Future<Output = Result<()>> + Send {
-        (**self).abandon_if_uncommitted(ws, id)
-    }
-    fn commit_conflict(
-        &self,
-        ws: &str,
-        id: &str,
         op: OpId,
     ) -> impl Future<Output = Result<()>> + Send {
-        (**self).commit_conflict(ws, id, op)
+        (**self).abandon_if_uncommitted(ws, id, op)
     }
-    fn set_conflict_state(
+    fn apply_conflict_effect(
         &self,
         ws: &str,
-        id: &str,
-        state: ConflictState,
-        resolved_by: Option<Hash>,
+        effect: &ConflictEffect,
+        op: OpId,
     ) -> impl Future<Output = Result<()>> + Send {
-        (**self).set_conflict_state(ws, id, state, resolved_by)
+        (**self).apply_conflict_effect(ws, effect, op)
     }
     fn conflict(
         &self,
@@ -381,20 +406,5 @@ impl<T: Graph> Graph for std::sync::Arc<T> {
         key: &str,
     ) -> impl Future<Output = Result<Vec<ConflictRecord>>> + Send {
         (**self).open_conflicts_for(ws, key)
-    }
-    fn put_effects(
-        &self,
-        ws: &str,
-        op: OpId,
-        effects: &[ConflictEffect],
-    ) -> impl Future<Output = Result<()>> + Send {
-        (**self).put_effects(ws, op, effects)
-    }
-    fn effects(
-        &self,
-        ws: &str,
-        op: OpId,
-    ) -> impl Future<Output = Result<Vec<ConflictEffect>>> + Send {
-        (**self).effects(ws, op)
     }
 }

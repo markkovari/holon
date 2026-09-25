@@ -1,0 +1,10 @@
+// holon:vcs-gateway — the code store as HTTP routes (ADR-0099). Imports the
+// contract; whatever provides it (vcs-store, in front of comp-vcs) is composed in.
+package holon:vcs-gateway;
+
+world gateway {
+    // holon:vcs's code-store-client world, spelled out.
+    import holon:vcs/code-store@0.1.0;
+    import holon:vcs/files@0.1.0;
+    export wasi:http/incoming-handler@0.2.0;
+}

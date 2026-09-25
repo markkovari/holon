@@ -1429,7 +1429,7 @@ static_dir = "ui/dist"
 
     #[test]
     fn every_flag_we_emit_for_a_daemon_exists_on_its_own_binary() {
-        // The thirteen (ADR-0095's twelve plus ADR-0098's comp-media), and the allow-list flag (if any) each one actually takes —
+        // The fourteen (ADR-0095's twelve, ADR-0098's comp-media, ADR-0099's comp-vcs), and the allow-list flag (if any) each one actually takes —
         // read from `reconciler/src/bin/<name>.rs`'s own `Args`, not invented
         // here. A daemon renamed or a flag renamed on its own binary would
         // otherwise only be caught by a unit that fails to start on a real box.
@@ -1447,6 +1447,7 @@ static_dir = "ui/dist"
             ("ffmpeg", Some("allow-path")),
             ("wireguard", Some("allow-interface")),
             ("media", None),
+            ("vcs", Some("allow-path")),
         ];
         let s = spec(MINIMAL);
         let mut checked = 0;

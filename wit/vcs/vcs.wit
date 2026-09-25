@@ -72,16 +72,37 @@ interface types {
         blob(hash),
     }
 
+    /// Where a symbol sits in its file, relative to the file's other live
+    /// symbols. A file is its live symbols sorted by an order key — a fraction,
+    /// so there is always room between two — with ties broken by symbol key, so
+    /// every node lays a file out identically. Two agents placing two symbols
+    /// at the same spot at once both land (they are different symbols); they
+    /// tie, and the tie is deterministic.
+    variant placement {
+        /// Before every other symbol of the file.
+        first,
+        /// After every other symbol of the file.
+        last,
+        /// Immediately after this symbol (same component and path, live).
+        after(symbol-id),
+        /// Immediately before this symbol (same component and path, live).
+        before(symbol-id),
+    }
+
     /// What an edit does to its symbol.
     variant transformation {
         /// The symbol must not exist at `parent` (which must be `none`).
         create(content),
         /// New content for an existing symbol.
         replace(content),
-        /// Remove the symbol.
+        /// Remove the symbol. Its name is free again.
         delete,
-        /// Same content, new `name`; identity moves with it.
+        /// Same content, new `name`; identity moves with it. Refused with
+        /// `name-taken` if another live symbol has that name.
         rename(string),
+        /// Same content, new place in its file. A patch like any other: two
+        /// concurrent moves of one symbol conflict.
+        move(placement),
     }
 
     /// One edit, as an agent submits it.
@@ -103,14 +124,27 @@ interface types {
         /// The WIT item this symbol implements or declares
         /// (`package:ns/interface.func`). `none` keeps the current binding.
         wit-binding: option<string>,
+        /// The oplog position the agent's view of the component reflects: the
+        /// `as-of` of the `symbol-view`s it read (or `oplog-head`). It decides
+        /// `commuted`. `none`: unknown — `commuted` is then measured from the op
+        /// that landed `parent`, which over-reports (it also lists edits the
+        /// agent may have read after fetching `parent`).
+        read-at: option<op-id>,
+        /// Where a `create` goes in its file; `none` appends (after every symbol
+        /// placed or created before it). Only `create` takes one — `invalid`
+        /// otherwise; to re-place a symbol, `move` it. Part of what the patch
+        /// hash covers AS REQUESTED, so a retried placed create is a
+        /// `duplicate` even if the file changed in between.
+        position: option<placement>,
     }
 
     enum patch-outcome {
         /// `parent` was the tip; the symbol moved forward.
         applied,
         /// `parent` was the symbol's tip, and at least one patch to ANOTHER symbol
-        /// of the same component landed after `parent` did — the edit commuted
-        /// past those (listed in `commuted-with`) and landed.
+        /// of the same component landed after `read-at` (the agent had not seen
+        /// it) — the edit commuted past those (listed in `commuted-with`) and
+        /// landed.
         commuted,
         /// The symbol's tip moved on since `parent` (another edit to the same
         /// symbol landed first); a conflict now holds both. The tip is unchanged.
@@ -216,6 +250,9 @@ interface types {
         dependents: list<symbol-id>,
         implements: list<symbol-id>,
         open-conflicts: list<conflict-id>,
+        /// The settled oplog head read BEFORE this view: every op at or below it
+        /// is reflected here. Pass it back as `patch-request.read-at`.
+        as-of: op-id,
     }
 
     record tree-entry {
@@ -256,11 +293,89 @@ interface types {
         /// component that still has open conflicts).
         unresolved-conflict(list<conflict-id>),
         symbol-not-found(symbol-id),
+        /// A `create` or `rename` wanted a name another live symbol holds, or
+        /// lost the race for it to one. Nothing was written. Not a conflict: the
+        /// two are different symbols, not two versions of one — whereas two
+        /// `create`s of the same symbol id ARE one symbol, and the second is a
+        /// conflict (or a duplicate).
+        name-taken(symbol-id),
         /// A patch, op or conflict id that does not exist.
         not-found(string),
         /// The request is malformed: `create` with a parent, `replace` without one,
         /// a hash that is not 64 hex characters.
         invalid(string),
+    }
+
+    // ---- consistency ------------------------------------------------------------
+    //
+    // Pointers, the oplog and the graph are three stores with no transaction.
+    // Every op is logged as an intent BEFORE its pointer writes, and the pointer
+    // value names the op that wrote it, so any reader can tell whether a
+    // half-done op landed and finish or abort it (ADR-0099, step three).
+    // `verify` reports what is out of line; `repair` settles it.
+
+    /// A pointer, what it holds, and the op its value names.
+    record pointer-state {
+        pointer: string,
+        value: option<hash>,
+        op: option<op-id>,
+    }
+
+    /// An op still pending after the lease.
+    record stale-op {
+        op: op-id,
+        age-ms: u64,
+        /// Whether its pointer write happened (repair finishes it) or not
+        /// (repair aborts it).
+        landed: bool,
+    }
+
+    /// A record the graph should have and does not.
+    record missing-record {
+        /// The pointer, or conflict id, that names it.
+        by: string,
+        hash: hash,
+    }
+
+    variant inconsistency {
+        /// A pointer whose value no committed op explains.
+        unexplained-pointer(pointer-state),
+        /// An op still pending past the lease.
+        stale-pending(stale-op),
+        /// A tip whose patch record the graph lacks.
+        missing-patch(missing-record),
+        /// A symbol (by key) whose graph index entry is missing or behind its
+        /// pointer.
+        stale-mirror(string),
+        /// A conflict naming a patch the graph lacks.
+        dangling-conflict(missing-record),
+        /// An open conflict nothing committed opened, or whose `left` is no
+        /// longer its symbol's tip.
+        orphan-conflict(conflict-id),
+        /// A name reservation (by pointer) held for a symbol no longer called
+        /// that, or a live symbol whose name is not reserved for it.
+        stale-name(string),
+    }
+
+    record consistency-report {
+        workspace: workspace-id,
+        /// Ops read: every id in the log, whatever its state.
+        ops: u64,
+        /// Ops pending inside the lease — in flight, not inconsistent.
+        in-flight: list<op-id>,
+        issues: list<inconsistency>,
+    }
+
+    record repair-report {
+        workspace: workspace-id,
+        /// Pending ops whose pointer write had happened: finished.
+        rolled-forward: list<op-id>,
+        /// Pending ops whose pointer write had not, and now cannot, happen.
+        aborted: list<op-id>,
+        /// Issues found before that are gone after.
+        fixed: list<inconsistency>,
+        /// Issues left — none, unless something outside the engine wrote a store.
+        remaining: list<inconsistency>,
     }
 }
 
@@ -268,7 +383,7 @@ interface code-store {
     use types.{
         commit-result, conflict, conflict-id, conflict-state, op-entry, op-id,
         patch-request, resolution-request, snapshot, symbol-query, symbol-view,
-        vcs-error, workspace-id, agent,
+        vcs-error, workspace-id, agent, consistency-report, repair-report,
     };
 
     /// Record one edit. Never blocks on another agent: it lands, commutes, or
@@ -293,17 +408,108 @@ interface code-store {
     /// Conflicts in a workspace, optionally only those in one state.
     list-conflicts: func(workspace: workspace-id, state: option<conflict-state>) -> result<list<conflict>, vcs-error>;
 
-    /// The operation log, oldest first, starting after `after`.
+    /// The committed operations, oldest first, starting after `after`. Stops
+    /// before the first op still in flight, so paging by the last id returned
+    /// never skips one that commits later.
     oplog: func(workspace: workspace-id, after: option<op-id>, limit: u32) -> result<list<op-entry>, vcs-error>;
+
+    /// The settled head: the highest op id at and below which every op is
+    /// committed or aborted (0 for an empty log). A view read after it reflects
+    /// all of them; it is what `patch-request.read-at` takes.
+    oplog-head: func(workspace: workspace-id) -> result<op-id, vcs-error>;
+
+    /// Check the workspace's pointers, oplog and graph against each other.
+    /// Changes nothing.
+    verify: func(workspace: workspace-id) -> result<consistency-report, vcs-error>;
+
+    /// Settle every pending op past the lease (finish it if its pointer write
+    /// happened, abort it if not), re-finish every committed op — which
+    /// rebuilds any graph record lost, from the log and the blobs — and verify
+    /// again.
+    repair: func(workspace: workspace-id) -> result<repair-report, vcs-error>;
+}
+
+/// Files in and out: what an agent with a working copy of real source files
+/// needs besides the symbol-level calls above. `ingest-*` split files into
+/// symbols (Rust and WIT; anything else is one `file` symbol) and turn the
+/// difference against a read point into patches; `materialize` writes a
+/// snapshot to a directory the SERVING side was allowed to write (a component
+/// has no filesystem, ADR-0023, so the path is the daemon's, and outside its
+/// allow-list the call is refused as `invalid`); `read-blob` fetches content
+/// too large to come back `inline`. ADR-0099, *The service*.
+interface files {
+    use types.{agent, commit-result, hash, op-id, snapshot, symbol-id, vcs-error, workspace-id};
+
+    /// What one patch of an ingest did.
+    enum edit-kind {
+        create,
+        replace,
+        delete,
+        rename,
+        /// Same content, new place in the file.
+        move,
+    }
+
+    /// One patch an ingest sent. A refusal of one symbol (`unresolved-conflict`,
+    /// `name-taken`, ...) is recorded here and the ingest goes on with the others
+    /// — they commute. Only a storage outage fails the whole call.
+    record ingest-patch {
+        symbol: symbol-id,
+        edit: edit-kind,
+        outcome: result<commit-result, vcs-error>,
+    }
+
+    record ingest-report {
+        path: string,
+        /// The read point the file was diffed against, and the `read-at` every
+        /// patch carried.
+        read-at: op-id,
+        /// Symbols whose bytes and place did not change: no patch.
+        unchanged: list<symbol-id>,
+        patches: list<ingest-patch>,
+    }
+
+    /// A file of a component, by its component-relative `/` path.
+    record source-file {
+        path: string,
+        content: list<u8>,
+    }
+
+    record materialized {
+        /// The directory written, canonical.
+        dir: string,
+        snapshot: snapshot,
+        files: u32,
+        bytes: u64,
+    }
+
+    /// Ingest an edited copy of one file, diffed against the component as of
+    /// `read-at` (`none`: `oplog-head` now).
+    ingest-file: func(workspace: workspace-id, component: string, file: source-file, by: agent, read-at: option<op-id>) -> result<ingest-report, vcs-error>;
+
+    /// Ingest a set of files against one read point. With `prune`, the set is
+    /// the whole component: a file the store has and the set does not is
+    /// deleted, symbol by symbol.
+    ingest-tree: func(workspace: workspace-id, component: string, files: list<source-file>, by: agent, read-at: option<op-id>, prune: bool) -> result<list<ingest-report>, vcs-error>;
+
+    /// `snapshot-export`, written out: every entry under `dest` (created if
+    /// missing, refused if it exists and is not empty), executables marked.
+    /// Refused with `unresolved-conflict` like the export itself.
+    materialize: func(workspace: workspace-id, component: string, dest: string) -> result<materialized, vcs-error>;
+
+    /// The bytes a blob hash names.
+    read-blob: func(blob: hash) -> result<list<u8>, vcs-error>;
 }
 
 /// What a store provides — the native daemon's component face, or an in-process
 /// implementation.
 world code-store-provider {
     export code-store;
+    export files;
 }
 
 /// What an agent's component imports to use one.
 world code-store-client {
     import code-store;
+    import files;
 }
