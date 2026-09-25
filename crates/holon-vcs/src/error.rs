@@ -18,6 +18,11 @@ pub enum VcsError {
     UnresolvedConflict(Vec<String>),
     #[error("symbol not found: {0}")]
     SymbolNotFound(SymbolId),
+    /// A `create` or `rename` wanted a name another live symbol holds (or won a
+    /// race for). Nothing was written. Distinct from a conflict: the two are
+    /// different symbols, not two versions of one.
+    #[error("name taken: {0}")]
+    NameTaken(SymbolId),
     /// A patch, op or conflict id that does not exist.
     #[error("not found: {0}")]
     NotFound(String),

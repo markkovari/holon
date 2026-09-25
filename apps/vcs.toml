@@ -1,0 +1,42 @@
+# vcs — the agent-native code store (ADR-0099) as HTTP, for agents on the
+# tailnet: `vcs-gateway` (routes) composed with `vcs-store` (the contract, each
+# call one request to comp-vcs), in front of `comp-vcs` (the engine, on NATS
+# JetStream + SurrealDB). docs/apps/VCS.md; the wire is
+# components/vcs-store/CONTRACT.md.
+#
+#   cargo xtask compose vcs && cargo xtask host vcs     # needs NATS + SurrealDB, below
+#   holon node render apps/vcs.toml --out target/selfhost
+name = "vcs"
+# Whoever reaches the gateway can edit every workspace: tailnet only, and left
+# that way on purpose.
+access = "tailnet"
+domain = "vcs.example.com"
+artifact = "components/target/vcs_gateway.composed.wasm"
+root = "vcs-gateway"
+port = 3942
+# The gateway keeps nothing; every byte of state is comp-vcs's.
+kv = "memory"
+
+# `vcs-url` must agree with the [[daemon]] addr below — `check()` enforces it.
+[config]
+vcs-url = "http://127.0.0.1:8014"
+
+# No `token` here — permissive, same reasoning as apps/image-optimizer.toml. A
+# real deployment sets `token` AND the matching `vcs-token` in [config] above.
+#
+# `extra_args`: the compose NATS (`docker compose -f infra/compose.yaml up -d
+# nats`, or any `nats-server -js`) and the compose SurrealDB (`--profile graph up
+# -d surreal`, root/root — loopback-bound, not a secret). A real deployment
+# passes `--surreal-pass-file` instead. SurrealDB's :8000 is also where
+# apps/fs-watcher.toml puts comp-fswatch; the two do not share a box as written.
+#
+# `allow`: the only directory `materialize` may write under.
+[[daemon]]
+name = "vcs"
+addr = "127.0.0.1:8014"
+allow_flag = "allow-path"
+allow = ["/var/lib/vcs/checkouts"]
+extra_args = [
+    "--nats-url nats://127.0.0.1:4222",
+    "--surreal-url 127.0.0.1:8000 --surreal-ns holon --surreal-db vcs",
+]

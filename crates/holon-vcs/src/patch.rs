@@ -17,6 +17,12 @@
 //!   agent, message and time are metadata, NOT hashed: the identical change by two
 //!   agents is one patch, and the second is a `duplicate`.
 //! * A **conflict id** is the SHA-256 of its two side hashes, sorted.
+//! * A **name key** ([`name_key`]) is the SHA-256 of a full symbol id under its
+//!   own domain tag: the pointer `ws/<w>/name/<name key>` reserves that id for
+//!   the one symbol key holding it (see the engine's notes on names).
+//! * A `create`'s placement, and a `move`'s, are part of the change the hash
+//!   covers — as REQUESTED (`after(x)`), not as resolved to an order key, so a
+//!   retry of a placed create is a duplicate even if the file changed since.
 //!
 //! # The decision
 //!
@@ -51,7 +57,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Result, VcsError};
 use crate::graph::{Change, ConflictRecord, PatchRecord, PatchStatus};
-use crate::model::{ConflictId, ConflictState, Hash, SymbolId};
+use crate::model::{ConflictId, ConflictState, Hash, Placement, SymbolId};
 
 /// The stable key a symbol created as `id` is filed under, at probe index `n`.
 pub fn symbol_key(id: &SymbolId, n: u32) -> String {
@@ -65,6 +71,41 @@ pub fn symbol_key(id: &SymbolId, n: u32) -> String {
     hex::encode(Sha256::digest(&buf))
 }
 
+/// The key of the name pointer that reserves `id`.
+pub fn name_key(id: &SymbolId) -> String {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(b"holon-vcs/name/v1\n");
+    symbol_fields(&mut buf, id);
+    hex::encode(Sha256::digest(&buf))
+}
+
+/// Whether `key` is where a symbol CREATED as `id` would be filed (any probe).
+pub fn is_probe_key(id: &SymbolId, key: &str, max_probe: u32) -> bool {
+    (0..max_probe).any(|n| symbol_key(id, n) == key)
+}
+
+fn symbol_fields(buf: &mut Vec<u8>, id: &SymbolId) {
+    field(buf, &id.component);
+    field(buf, &id.path);
+    field(buf, id.kind.as_str());
+    field(buf, &id.name);
+}
+
+fn placement_fields(buf: &mut Vec<u8>, p: &Placement) {
+    match p {
+        Placement::First => field(buf, "first"),
+        Placement::Last => field(buf, "last"),
+        Placement::After(id) => {
+            field(buf, "after");
+            symbol_fields(buf, id);
+        }
+        Placement::Before(id) => {
+            field(buf, "before");
+            symbol_fields(buf, id);
+        }
+    }
+}
+
 /// Length-prefixed, so no field's content can shift a boundary.
 fn field(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(s.len().to_string().as_bytes());
@@ -73,8 +114,10 @@ fn field(buf: &mut Vec<u8>, s: &str) {
     buf.push(b'\n');
 }
 
-/// The canonical encoding a patch hash is taken over.
-pub fn canonical(key: &str, parents: &[Hash], change: &Change) -> Vec<u8> {
+/// The canonical encoding a patch hash is taken over. `at` is a `create`'s
+/// placement; nothing is added when it is `None`, so unplaced patches hash as
+/// they did in step two.
+pub fn canonical(key: &str, parents: &[Hash], change: &Change, at: Option<&Placement>) -> Vec<u8> {
     let mut sorted = parents.to_vec();
     sorted.sort();
     sorted.dedup();
@@ -99,12 +142,20 @@ pub fn canonical(key: &str, parents: &[Hash], change: &Change) -> Vec<u8> {
             field(&mut buf, "rename");
             field(&mut buf, n);
         }
+        Change::Move(p) => {
+            field(&mut buf, "move");
+            placement_fields(&mut buf, p);
+        }
+    }
+    if let Some(p) = at {
+        field(&mut buf, "at");
+        placement_fields(&mut buf, p);
     }
     buf
 }
 
-pub fn patch_hash(key: &str, parents: &[Hash], change: &Change) -> Hash {
-    hex::encode(Sha256::digest(canonical(key, parents, change)))
+pub fn patch_hash(key: &str, parents: &[Hash], change: &Change, at: Option<&Placement>) -> Hash {
+    hex::encode(Sha256::digest(canonical(key, parents, change, at)))
 }
 
 /// SHA-256 of the two side hashes, sorted — the same collision found twice (or
@@ -120,6 +171,8 @@ pub struct Inputs<'a> {
     pub symbol: &'a SymbolId,
     pub parent: Option<&'a Hash>,
     pub change: &'a Change,
+    /// A `create`'s placement.
+    pub placement: Option<&'a Placement>,
     /// The symbol's tip patch, `None` if there is no tip.
     pub tip: Option<&'a PatchRecord>,
     /// The graph's record of the request's hash (computed from `parent`), if any.
@@ -147,9 +200,14 @@ pub enum Decision {
 
 /// The hash a request would have, given its parent (not the resurrection case:
 /// see [`decide`]).
-pub fn request_hash(key: &str, parent: Option<&Hash>, change: &Change) -> Hash {
+pub fn request_hash(
+    key: &str,
+    parent: Option<&Hash>,
+    change: &Change,
+    at: Option<&Placement>,
+) -> Hash {
     let parents: Vec<Hash> = parent.into_iter().cloned().collect();
-    patch_hash(key, &parents, change)
+    patch_hash(key, &parents, change, at)
 }
 
 pub fn decide(i: &Inputs<'_>) -> Result<Decision> {
@@ -177,11 +235,11 @@ pub fn decide(i: &Inputs<'_>) -> Result<Decision> {
             // A dead symbol's tip is its delete patch: build on it, so recreating
             // the same content is a new patch rather than the old create again.
             let parents: Vec<Hash> = i.tip.map(|t| vec![t.hash.clone()]).unwrap_or_default();
-            let patch = patch_hash(i.key, &parents, i.change);
+            let patch = patch_hash(i.key, &parents, i.change, i.placement);
             return Ok(Decision::Applied { patch, parents });
         }
         let tip = i.tip.expect("live implies a tip");
-        let h = request_hash(i.key, None, i.change);
+        let h = request_hash(i.key, None, i.change, i.placement);
         if h == tip.hash {
             return Ok(Decision::Duplicate { patch: h });
         }
@@ -192,7 +250,7 @@ pub fn decide(i: &Inputs<'_>) -> Result<Decision> {
     let Some(tip) = i.tip else {
         return Err(VcsError::SymbolNotFound(i.symbol.clone()));
     };
-    let h = request_hash(i.key, Some(parent), i.change);
+    let h = request_hash(i.key, Some(parent), i.change, None);
     if h == tip.hash {
         return Ok(Decision::Duplicate { patch: h });
     }
@@ -276,6 +334,9 @@ mod tests {
             depends_on: vec![],
             implements: vec![],
             wit_binding: None,
+            status_op: 1,
+            order: None,
+            placement: None,
         }
     }
 
@@ -291,6 +352,7 @@ mod tests {
             symbol: s,
             parent,
             change,
+            placement: None,
             tip,
             recorded: None,
             parent_record: None,
@@ -302,11 +364,19 @@ mod tests {
     #[test]
     fn hash_ignores_parent_order_and_metadata() {
         let c = Change::Replace("b".repeat(64));
-        let a = patch_hash("k", &["1".into(), "2".into()], &c);
-        let b = patch_hash("k", &["2".into(), "1".into()], &c);
+        let a = patch_hash("k", &["1".into(), "2".into()], &c, None);
+        let b = patch_hash("k", &["2".into(), "1".into()], &c, None);
         assert_eq!(a, b);
-        assert_ne!(a, patch_hash("k2", &["1".into(), "2".into()], &c));
-        assert_ne!(a, patch_hash("k", &["1".into()], &c));
+        assert_ne!(a, patch_hash("k2", &["1".into(), "2".into()], &c, None));
+        assert_ne!(a, patch_hash("k", &["1".into()], &c, None));
+        // A placement is part of what is hashed; `first` and `last` differ.
+        let first = patch_hash("k", &[], &c, Some(&Placement::First));
+        assert_ne!(first, patch_hash("k", &[], &c, None));
+        assert_ne!(first, patch_hash("k", &[], &c, Some(&Placement::Last)));
+        assert_ne!(
+            patch_hash("k", &[], &c, Some(&Placement::After(sym()))),
+            patch_hash("k", &[], &c, Some(&Placement::Before(sym())))
+        );
     }
 
     #[test]
@@ -314,6 +384,10 @@ mod tests {
         assert_eq!(symbol_key(&sym(), 0), symbol_key(&sym(), 0));
         assert_ne!(symbol_key(&sym(), 0), symbol_key(&sym(), 1));
         assert_ne!(symbol_key(&sym(), 0), symbol_key(&sym().renamed("x"), 0));
+        assert_ne!(name_key(&sym()), symbol_key(&sym(), 0));
+        assert_ne!(name_key(&sym()), name_key(&sym().renamed("x")));
+        assert!(is_probe_key(&sym(), &symbol_key(&sym(), 3), 64));
+        assert!(!is_probe_key(&sym(), &symbol_key(&sym().renamed("x"), 0), 64));
     }
 
     #[test]
@@ -381,6 +455,8 @@ mod tests {
             state: ConflictState::Open,
             opened_at: 2,
             resolved_by: None,
+            pending: vec![],
+            state_op: 2,
         }];
         let change = Change::Replace("1".repeat(64));
         let mut i = inputs("k", &s, Some(&tip.hash), &change, Some(&tip));
@@ -403,7 +479,7 @@ mod tests {
         let d = decide(&inputs("k", &s, None, &change, Some(&del))).unwrap();
         let Decision::Applied { parents, patch } = d else { panic!() };
         assert_eq!(parents, vec![del.hash.clone()]);
-        assert_ne!(patch, request_hash("k", None, &change));
+        assert_ne!(patch, request_hash("k", None, &change, None));
         // and editing the deleted symbol is not-found
         let r = Change::Replace("1".repeat(64));
         assert!(matches!(

@@ -2,6 +2,8 @@
 //! `live.rs` (against NATS + SurrealDB, when the env names them).
 #![allow(dead_code)]
 
+pub mod crash;
+
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -10,7 +12,7 @@ use holon_vcs::engine::symbol_pointer;
 use holon_vcs::graph::Graph;
 use holon_vcs::model::*;
 use holon_vcs::oplog::OpLog;
-use holon_vcs::store::{BlobStore, CasMismatch, PointerStore, Revision};
+use holon_vcs::store::{BlobStore, CasMismatch, PointerStore, PointerValue, Revision};
 use holon_vcs::{Engine, VcsError};
 use tokio::sync::{Barrier, Notify};
 
@@ -51,6 +53,10 @@ where
         ))
     }
 
+    pub fn engine_owned(&self) -> Eng<B, P, G, L> {
+        Engine::new(self.blobs.clone(), self.pointers.clone(), self.graph.clone(), self.log.clone())
+    }
+
     /// An engine whose pointer store is `p` (a racing wrapper) over the same rest.
     pub fn engine_with<Q: PointerStore>(&self, p: Q) -> Engine<Arc<B>, Q, Arc<G>, Arc<L>> {
         Engine::new(self.blobs.clone(), p, self.graph.clone(), self.log.clone())
@@ -81,6 +87,8 @@ pub fn req(
         depends_on: vec![],
         implements: vec![],
         wit_binding: None,
+        read_at: None,
+        position: None,
     }
 }
 
@@ -120,6 +128,33 @@ pub async fn replace<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
         agent,
     ))
     .await
+}
+
+/// `replace`, from a view read at `read_at`.
+#[allow(clippy::too_many_arguments)]
+pub async fn replace_at<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
+    e: &E<B, P, G, L>,
+    ws: &str,
+    sym: &SymbolId,
+    parent: &Hash,
+    body: &str,
+    agent: &str,
+    read_at: OpId,
+) -> Result<CommitResult, VcsError> {
+    let mut r =
+        req(ws, sym.clone(), Some(parent.clone()), Transformation::Replace(inline(body)), agent);
+    r.read_at = Some(read_at);
+    e.apply_patch(r).await
+}
+
+/// A symbol's tip and the `as-of` of the view it was read from.
+pub async fn view_of<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
+    e: &E<B, P, G, L>,
+    ws: &str,
+    sym: &SymbolId,
+) -> (Hash, OpId) {
+    let v = e.query_symbol(ws, SymbolQuery::Symbol(sym.clone())).await.unwrap();
+    (v[0].tip.clone(), v[0].as_of)
 }
 
 pub async fn tip_of<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
@@ -183,9 +218,9 @@ where
         let barrier = barrier.clone();
         let ws = ws.to_string();
         tasks.push(tokio::spawn(async move {
-            let parent = tip_of(&e, &ws, &sym).await.unwrap();
+            let (parent, read_at) = view_of(&e, &ws, &sym).await;
             barrier.wait().await; // both have read; now both write
-            replace(&e, &ws, &sym, &parent, body, agent).await.unwrap()
+            replace_at(&e, &ws, &sym, &parent, body, agent, read_at).await.unwrap()
         }));
     }
     let mut results = Vec::new();
@@ -198,9 +233,19 @@ where
     }
     results.sort_by_key(|r| r.op);
     let (early, late) = (&results[0], &results[1]);
-    assert_eq!(late.outcome, PatchOutcome::Commuted, "{late:?}");
-    assert!(late.commuted_with.contains(&early.patch), "{late:?} should list {}", early.patch);
-    assert!(!early.commuted_with.contains(&late.patch));
+    // Neither saw the other's edit, so whichever landed second lists the other
+    // (and the first may too, if the second had landed by its check) — and
+    // nothing else is listed.
+    assert!(
+        late.commuted_with.contains(&early.patch) || early.commuted_with.contains(&late.patch),
+        "one of {early:?} / {late:?} must list the other"
+    );
+    for (r, other) in [(early, late), (late, early)] {
+        assert!(r.commuted_with.iter().all(|h| *h == other.patch), "{r:?}");
+        let want =
+            if r.commuted_with.is_empty() { PatchOutcome::Applied } else { PatchOutcome::Commuted };
+        assert_eq!(r.outcome, want);
+    }
 
     assert!(setup.list_conflicts(ws, None).await.unwrap().is_empty());
     let snap = setup.snapshot_export(ws, COMPONENT).await.unwrap();
@@ -210,6 +255,7 @@ where
         "creation order, both edits"
     );
     assert_eq!(snap.at, late.op);
+    crash::assert_consistent(&setup, ws).await;
 }
 
 // ---- Scenario B --------------------------------------------------------------
@@ -424,6 +470,7 @@ where
     }
     assert!(loser_patches.is_subset(&parents));
     setup.snapshot_export(ws, COMPONENT).await.unwrap();
+    crash::assert_consistent(&setup, ws).await;
 }
 
 // ---- duplicate ---------------------------------------------------------------
@@ -506,6 +553,7 @@ where
     );
     assert_eq!(e.list_conflicts(ws, None).await.unwrap().len(), 1);
     assert_eq!(tip_of(&e, ws, &total).await, Some(tip));
+    crash::assert_consistent(&e, ws).await;
 }
 
 // ---- revert ------------------------------------------------------------------
@@ -623,6 +671,7 @@ where
     assert_eq!(content_of(&e, ws, &helper).await, "fn helper() {}");
 
     assert!(matches!(e.revert_op(ws, 9_999, who).await, Err(VcsError::NotFound(_))));
+    crash::assert_consistent(&e, ws).await;
 }
 
 // ---- oplog paging ------------------------------------------------------------
@@ -660,9 +709,11 @@ where
         vec![5, 6]
     );
     assert!(e.oplog(ws, None, 0).await.unwrap().is_empty());
-    // Every entry carries what it moved.
+    // Every entry carries what it moved (the create also claimed the name).
+    let tip_move = |o: &OpEntry| o.moves.iter().find(|m| m.pointer.contains("/sym/")).cloned();
+    assert!(all[0].moves.iter().any(|m| m.pointer.contains("/name/")));
     for w in all.windows(2) {
-        assert_eq!(w[1].moves[0].before, w[0].moves[0].after);
+        assert_eq!(tip_move(&w[1]).unwrap().before, tip_move(&w[0]).unwrap().after);
     }
     // Other workspaces are other logs.
     assert!(e.oplog(&format!("{ws}/other"), None, 10).await.unwrap().is_empty());
@@ -773,16 +824,18 @@ where
     let a2 = func("a2");
     assert_eq!(tip_of(&e, ws, &a2).await, Some(ren.patch.clone()));
     assert_eq!(content_of(&e, ws, &a2).await, "fn a() {}\n");
-    // Renaming onto a live name is refused.
-    assert!(bad(e
-        .apply_patch(req(
+    // Renaming onto a live name is refused: it is taken.
+    assert_eq!(
+        e.apply_patch(req(
             ws,
             a2.clone(),
             Some(ren.patch.clone()),
             Transformation::Rename("b".into()),
             "v"
         ))
-        .await));
+        .await,
+        Err(VcsError::NameTaken(b.clone()))
+    );
     // Editing through the new name works.
     let ed = replace(&e, ws, &a2, &ren.patch, "fn a2() {}\n", "v").await.unwrap();
     // The old name can be taken by a new symbol, which goes after.
@@ -853,6 +906,7 @@ where
     assert!(v.dependents.is_empty());
     let v = &e.query_symbol(ws, SymbolQuery::Symbol(caller)).await.unwrap()[0];
     assert_eq!(v.wit_binding.as_deref(), Some("holon:orders/api.total"));
+    crash::assert_consistent(&e, ws).await;
 }
 
 // ---- git tree ids --------------------------------------------------------------
@@ -956,7 +1010,7 @@ impl<P> Racing<P> {
 }
 
 impl<P: PointerStore> PointerStore for Racing<P> {
-    async fn get(&self, key: &str) -> holon_vcs::error::Result<Option<(Option<Hash>, Revision)>> {
+    async fn get(&self, key: &str) -> holon_vcs::error::Result<Option<(PointerValue, Revision)>> {
         self.inner.get(key).await
     }
 
@@ -964,8 +1018,12 @@ impl<P: PointerStore> PointerStore for Racing<P> {
         &self,
         key: &str,
         expected: Option<Revision>,
-        value: Option<&str>,
+        value: &PointerValue,
     ) -> holon_vcs::error::Result<Result<Revision, CasMismatch>> {
+        // Name reservations are not what these races are about.
+        if key.contains("/name/") {
+            return self.inner.cas(key, expected, value).await;
+        }
         self.cas_calls.fetch_add(1, Ordering::SeqCst);
         if self.armed.swap(false, Ordering::SeqCst) {
             self.reached.notify_one();
@@ -974,7 +1032,7 @@ impl<P: PointerStore> PointerStore for Racing<P> {
         if self.bump_next.load(Ordering::SeqCst) > 0 {
             self.bump_next.fetch_sub(1, Ordering::SeqCst);
             if let Some((v, rev)) = self.inner.get(key).await? {
-                self.inner.cas(key, Some(rev), v.as_deref()).await?.expect("bump");
+                self.inner.cas(key, Some(rev), &v).await?.expect("bump");
             }
         }
         self.inner.cas(key, expected, value).await
@@ -1046,7 +1104,8 @@ where
     let ops_before = other.oplog(ws, None, 1000).await.unwrap().len();
     racing.bump_next.store(1, Ordering::SeqCst);
     let before = racing.cas_calls.load(Ordering::SeqCst);
-    let r3 = replace(&*victim, ws, &total, &r.patch, "v3", "victim").await.unwrap();
+    let head = other.oplog_head(ws).await.unwrap();
+    let r3 = replace_at(&*victim, ws, &total, &r.patch, "v3", "victim", head).await.unwrap();
     assert_eq!(r3.outcome, PatchOutcome::Applied);
     assert_eq!(racing.cas_calls.load(Ordering::SeqCst) - before, 2, "one lost CAS, one landed");
     assert_eq!(other.oplog(ws, None, 1000).await.unwrap().len(), ops_before + 1);
@@ -1085,6 +1144,519 @@ where
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].left.patch, r3.patch);
     assert_eq!(open[0].opened_at, r5.op);
+    crash::assert_consistent(&other, ws).await;
+}
+
+// ---- commuted, exactly ----------------------------------------------------------
+
+/// `commuted-with` is exactly the other-symbol edits of the component that
+/// landed after `read-at`; without `read-at`, everything after the parent's op.
+pub async fn commuted_exact<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
+where
+    B: BlobStore + 'static,
+    P: PointerStore + 'static,
+    G: Graph + 'static,
+    L: OpLog + 'static,
+{
+    let e = s.engine();
+    let (f, g, h, k) = (func("f"), func("g"), func("h"), func("k"));
+    let z = SymbolId::new("billing", FILE, "z", SymbolKind::Function);
+    let pf = create(&e, ws, &f, "f0").await; // op 1
+    let pg = create(&e, ws, &g, "g0").await; // 2
+    let ph = create(&e, ws, &h, "h0").await; // 3
+    let pk = create(&e, ws, &k, "k0").await; // 4
+    let pz = create(&e, ws, &z, "z0").await; // 5
+    let (tip_f, read0) = view_of(&e, ws, &f).await;
+    assert_eq!((tip_f.clone(), read0), (pf.clone(), 5));
+    assert_eq!(e.oplog_head(ws).await.unwrap(), 5);
+
+    let rg = replace(&e, ws, &g, &pg, "g1", "b").await.unwrap(); // 6
+    let rh = replace(&e, ws, &h, &ph, "h1", "c").await.unwrap(); // 7
+    replace(&e, ws, &z, &pz, "z1", "d").await.unwrap(); // 8: another component
+    let c = replace(&e, ws, &g, &pg, "g-stale", "e").await.unwrap(); // 9: only a conflict
+    assert_eq!((rg.op, rh.op, c.op, c.outcome), (6, 7, 9, PatchOutcome::Conflicted));
+
+    // Read at 5: g's and h's edits landed since; z's (other component) and
+    // the conflict do not count.
+    let rf = replace_at(&e, ws, &f, &pf, "f1", "a", read0).await.unwrap(); // 10
+    assert_eq!(
+        (rf.outcome, rf.commuted_with.clone()),
+        (PatchOutcome::Commuted, vec![rg.patch.clone(), rh.patch.clone()])
+    );
+    // Read at 7: only f's edit (op 10) is new.
+    let rk = replace_at(&e, ws, &k, &pk, "k1", "a", rh.op).await.unwrap(); // 11
+    assert_eq!(rk.commuted_with, vec![rf.patch.clone()]);
+    // Read at the head: nothing new, `applied`.
+    let head = e.oplog_head(ws).await.unwrap();
+    assert_eq!(head, 11);
+    let rk2 = replace_at(&e, ws, &k, &rk.patch, "k2", "a", head).await.unwrap(); // 12
+    assert_eq!((rk2.outcome, rk2.commuted_with.clone()), (PatchOutcome::Applied, vec![]));
+    // Without read-at: measured from the parent's op (7) — everything since,
+    // including edits the agent may well have seen. The approximation, pinned.
+    let rh2 = replace(&e, ws, &h, &rh.patch, "h2", "c").await.unwrap(); // 13
+    assert_eq!(rh2.commuted_with, vec![rf.patch.clone(), rk.patch.clone(), rk2.patch.clone()]);
+    // A create with read-at commutes too; without, it never does.
+    let mut cm = req(ws, func("m"), None, Transformation::Create(inline("m0")), "a");
+    cm.read_at = Some(rk2.op);
+    let m = e.apply_patch(cm).await.unwrap(); // 14
+    assert_eq!(
+        (m.outcome, m.commuted_with.clone()),
+        (PatchOutcome::Commuted, vec![rh2.patch.clone()])
+    );
+    let n = create(&e, ws, &func("n"), "n0").await; // 15, `applied` (asserted by the helper)
+    let _ = n;
+    // A revert does not count.
+    let head = e.oplog_head(ws).await.unwrap();
+    e.revert_op(ws, rh2.op, Agent::named("undo")).await.unwrap(); // 16
+    let (tip_k, _) = view_of(&e, ws, &k).await;
+    let rk3 = replace_at(&e, ws, &k, &tip_k, "k3", "a", head).await.unwrap();
+    assert_eq!((rk3.outcome, rk3.commuted_with), (PatchOutcome::Applied, vec![]));
+    // Every view of one query carries the same as-of.
+    let views = e.query_symbol(ws, SymbolQuery::Component(COMPONENT.into())).await.unwrap();
+    assert!(views.iter().all(|v| v.as_of == rk3.op));
+    crash::assert_consistent(&e, ws).await;
+}
+
+// ---- names -------------------------------------------------------------------
+
+/// N symbols renamed to one name at once: exactly one wins; the rest are
+/// `name-taken` and keep their names.
+pub async fn rename_race<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str, n: usize)
+where
+    B: BlobStore + 'static,
+    P: PointerStore + 'static,
+    G: Graph + 'static,
+    L: OpLog + 'static,
+{
+    let setup = s.engine();
+    let target = func("target");
+    let mut parents = Vec::new();
+    for i in 0..n {
+        parents
+            .push(create(&setup, ws, &func(&format!("s{i}")), &format!("fn s{i}() {{}}\n")).await);
+    }
+    let barrier = Arc::new(Barrier::new(n));
+    let mut tasks = Vec::new();
+    for (i, parent) in parents.iter().cloned().enumerate() {
+        let (e, barrier, ws) = (s.engine(), barrier.clone(), ws.to_string());
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            let r = req(
+                &ws,
+                func(&format!("s{i}")),
+                Some(parent),
+                Transformation::Rename("target".into()),
+                "r",
+            );
+            (i, e.apply_patch(r).await)
+        }));
+    }
+    let mut won = Vec::new();
+    for t in tasks {
+        match t.await.unwrap() {
+            (i, Ok(r)) => {
+                assert!(
+                    matches!(r.outcome, PatchOutcome::Applied | PatchOutcome::Commuted),
+                    "{r:?}"
+                );
+                won.push(i);
+            }
+            (_, Err(VcsError::NameTaken(id))) => assert_eq!(id, target),
+            (_, Err(e)) => panic!("{e}"),
+        }
+    }
+    assert_eq!(won.len(), 1, "exactly one rename wins: {won:?}");
+    let w = won[0];
+    assert_eq!(content_of(&setup, ws, &target).await, format!("fn s{w}() {{}}\n"));
+    for i in (0..n).filter(|i| *i != w) {
+        assert!(tip_of(&setup, ws, &func(&format!("s{i}"))).await.is_some(), "s{i} kept its name");
+    }
+    assert_eq!(tip_of(&setup, ws, &func(&format!("s{w}"))).await, None);
+    crash::assert_consistent(&setup, ws).await;
+}
+
+/// A create and a rename to the same new name, at once, many times: exactly
+/// one lands each time, and the other is `name-taken`.
+pub async fn create_vs_rename<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str, rounds: usize)
+where
+    B: BlobStore + 'static,
+    P: PointerStore + 'static,
+    G: Graph + 'static,
+    L: OpLog + 'static,
+{
+    let setup = s.engine();
+    let mut wins = [0usize; 2];
+    for i in 0..rounds {
+        let (old, new) = (func(&format!("old{i}")), func(&format!("new{i}")));
+        let parent = create(&setup, ws, &old, "fn old() {}\n").await;
+        let barrier = Arc::new(Barrier::new(2));
+        let (e1, e2) = (s.engine(), s.engine());
+        let (b1, b2) = (barrier.clone(), barrier.clone());
+        let (ws1, ws2) = (ws.to_string(), ws.to_string());
+        let n1 = new.clone();
+        let creating = tokio::spawn(async move {
+            b1.wait().await;
+            e1.apply_patch(req(
+                &ws1,
+                n1,
+                None,
+                Transformation::Create(inline("fn new() {}\n")),
+                "c",
+            ))
+            .await
+        });
+        let renaming = tokio::spawn(async move {
+            b2.wait().await;
+            e2.apply_patch(req(
+                &ws2,
+                old,
+                Some(parent),
+                Transformation::Rename(format!("new{i}")),
+                "r",
+            ))
+            .await
+        });
+        let results = [creating.await.unwrap(), renaming.await.unwrap()];
+        let ok: Vec<usize> = (0..2).filter(|j| results[*j].is_ok()).collect();
+        assert_eq!(ok.len(), 1, "round {i}: {results:?}");
+        let loser = &results[1 - ok[0]];
+        assert_eq!(loser, &Err(VcsError::NameTaken(new.clone())), "round {i}");
+        wins[ok[0]] += 1;
+        let want = if ok[0] == 0 { "fn new() {}\n" } else { "fn old() {}\n" };
+        assert_eq!(content_of(&setup, ws, &new).await, want);
+    }
+    eprintln!(
+        "create-vs-rename over {rounds} rounds: create won {}, rename won {}",
+        wins[0], wins[1]
+    );
+    crash::assert_consistent(&setup, ws).await;
+}
+
+/// A released name is free for reuse; one taken by a rename is not a create's
+/// to take; two creates of one symbol are still a conflict, not a name fight.
+pub async fn names_release_and_reuse<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
+where
+    B: BlobStore + 'static,
+    P: PointerStore + 'static,
+    G: Graph + 'static,
+    L: OpLog + 'static,
+{
+    let e = s.engine();
+    let (a, b) = (func("a"), func("b"));
+    let pa = create(&e, ws, &a, "fn a() {}\n").await;
+    let ren = e
+        .apply_patch(req(ws, a.clone(), Some(pa), Transformation::Rename("b".into()), "v"))
+        .await
+        .unwrap();
+    // `a` was released by the rename: a new symbol may have it.
+    let fresh_a = create(&e, ws, &a, "fn a() { 2 }\n").await;
+    // `b` is held via a rename: creating `b` is not a second version of it.
+    assert_eq!(
+        e.apply_patch(req(ws, b.clone(), None, Transformation::Create(inline("x")), "v")).await,
+        Err(VcsError::NameTaken(b.clone()))
+    );
+    // Nor may `a` be renamed onto it.
+    assert_eq!(
+        e.apply_patch(req(
+            ws,
+            a.clone(),
+            Some(fresh_a.clone()),
+            Transformation::Rename("b".into()),
+            "v"
+        ))
+        .await,
+        Err(VcsError::NameTaken(b.clone()))
+    );
+    // Deleting `b` releases it; now the rename goes through.
+    e.apply_patch(req(ws, b.clone(), Some(ren.patch.clone()), Transformation::Delete, "v"))
+        .await
+        .unwrap();
+    let moved = e
+        .apply_patch(req(ws, a.clone(), Some(fresh_a), Transformation::Rename("b".into()), "v"))
+        .await
+        .unwrap();
+    assert_eq!(content_of(&e, ws, &b).await, "fn a() { 2 }\n");
+    // Deleted and free again: recreating builds on the symbol last called that.
+    e.apply_patch(req(ws, b.clone(), Some(moved.patch), Transformation::Delete, "v"))
+        .await
+        .unwrap();
+    let back = e
+        .apply_patch(req(ws, b.clone(), None, Transformation::Create(inline("fn b() {}\n")), "v"))
+        .await
+        .unwrap();
+    assert_eq!(back.outcome, PatchOutcome::Applied);
+    let rec = e.graph().patch(ws, &back.patch).await.unwrap().unwrap();
+    assert_eq!(rec.parents.len(), 1, "built on the delete: {rec:?}");
+    // Two creates of the SAME symbol racing: one applied, the other a conflict.
+    let barrier = Arc::new(Barrier::new(2));
+    let mut tasks = Vec::new();
+    for i in 0..2 {
+        let (e, barrier, ws) = (s.engine(), barrier.clone(), ws.to_string());
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            let body = format!("fn twin() {{ {i} }}\n");
+            e.apply_patch(req(&ws, func("twin"), None, Transformation::Create(inline(&body)), "t"))
+                .await
+                .unwrap()
+                .outcome
+        }));
+    }
+    let mut outs = Vec::new();
+    for t in tasks {
+        outs.push(t.await.unwrap());
+    }
+    outs.sort_by_key(|o| format!("{o:?}"));
+    assert_eq!(outs, vec![PatchOutcome::Applied, PatchOutcome::Conflicted]);
+    crash::assert_consistent(&e, ws).await;
+}
+
+// ---- positions -----------------------------------------------------------------
+
+pub async fn create_at<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
+    e: &E<B, P, G, L>,
+    ws: &str,
+    name: &str,
+    at: Option<Placement>,
+) -> Result<CommitResult, VcsError> {
+    let mut r =
+        req(ws, func(name), None, Transformation::Create(inline(&format!("{name}\n"))), "p");
+    r.position = at;
+    e.apply_patch(r).await
+}
+
+pub async fn layout<B: BlobStore, P: PointerStore, G: Graph, L: OpLog>(
+    e: &E<B, P, G, L>,
+    ws: &str,
+) -> String {
+    let snap = e.snapshot_export(ws, COMPONENT).await.unwrap();
+    file_text(e, &snap, FILE).await.lines().collect::<Vec<_>>().join(" ")
+}
+
+/// Placing on create, moving, appending, and the refusals.
+pub async fn positions<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str)
+where
+    B: BlobStore + 'static,
+    P: PointerStore + 'static,
+    G: Graph + 'static,
+    L: OpLog + 'static,
+{
+    let e = s.engine();
+    create_at(&e, ws, "a", None).await.unwrap();
+    create_at(&e, ws, "b", None).await.unwrap();
+    assert_eq!(layout(&e, ws).await, "a b");
+    let x = create_at(&e, ws, "x", Some(Placement::After(func("a")))).await.unwrap();
+    assert_eq!(layout(&e, ws).await, "a x b");
+    create_at(&e, ws, "y", Some(Placement::Before(func("a")))).await.unwrap();
+    create_at(&e, ws, "w", Some(Placement::First)).await.unwrap();
+    create_at(&e, ws, "l", Some(Placement::Last)).await.unwrap();
+    assert_eq!(layout(&e, ws).await, "w y a x b l");
+    // Unplaced creates still append — after everything placed.
+    create_at(&e, ws, "n", None).await.unwrap();
+    assert_eq!(layout(&e, ws).await, "w y a x b l n");
+    // Between two neighbours that were themselves inserted.
+    create_at(&e, ws, "xb", Some(Placement::Before(func("b")))).await.unwrap();
+    assert_eq!(layout(&e, ws).await, "w y a x xb b l n");
+    // Move: a patch like any other; the content is kept.
+    let (pa, _) = view_of(&e, ws, &func("a")).await;
+    let mv = e
+        .apply_patch(req(
+            ws,
+            func("a"),
+            Some(pa.clone()),
+            Transformation::Move(Placement::Last),
+            "m",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(layout(&e, ws).await, "w y x xb b l n a");
+    assert_eq!(content_of(&e, ws, &func("a")).await, "a\n");
+    // A replace keeps the place.
+    replace(&e, ws, &func("a"), &mv.patch, "a2\n", "m").await.unwrap();
+    assert_eq!(layout(&e, ws).await, "w y x xb b l n a2");
+    let (pa, _) = view_of(&e, ws, &func("a")).await;
+    e.apply_patch(req(
+        ws,
+        func("a"),
+        Some(pa),
+        Transformation::Move(Placement::After(func("w"))),
+        "m",
+    ))
+    .await
+    .unwrap();
+    assert_eq!(layout(&e, ws).await, "w a2 y x xb b l n");
+    // A rename keeps it too.
+    let (pa, _) = view_of(&e, ws, &func("a")).await;
+    e.apply_patch(req(ws, func("a"), Some(pa), Transformation::Rename("a3".into()), "m"))
+        .await
+        .unwrap();
+    assert_eq!(layout(&e, ws).await, "w a2 y x xb b l n");
+    // Two concurrent moves of one symbol conflict, like any two edits of it.
+    let (py, _) = view_of(&e, ws, &func("y")).await;
+    let m1 = e
+        .apply_patch(req(
+            ws,
+            func("y"),
+            Some(py.clone()),
+            Transformation::Move(Placement::First),
+            "m",
+        ))
+        .await
+        .unwrap();
+    let m2 = e
+        .apply_patch(req(ws, func("y"), Some(py), Transformation::Move(Placement::Last), "m"))
+        .await
+        .unwrap();
+    assert!(matches!(m1.outcome, PatchOutcome::Applied | PatchOutcome::Commuted), "{m1:?}");
+    assert_eq!(m2.outcome, PatchOutcome::Conflicted);
+    e.resolve_conflict(ResolutionRequest {
+        workspace: ws.to_string(),
+        conflict: m2.conflict.unwrap(),
+        resolution: Transformation::Replace(inline("y\n")),
+        agent: Agent::named("r"),
+        message: None,
+    })
+    .await
+    .unwrap();
+    // The resolution keeps the tip's (left's) place.
+    assert_eq!(layout(&e, ws).await, "y w a2 x xb b l n");
+    // A retried placed create is a duplicate, even after the file changed.
+    let again = create_at(&e, ws, "x", Some(Placement::After(func("a")))).await.unwrap();
+    assert_eq!((again.outcome, again.patch), (PatchOutcome::Duplicate, x.patch));
+    // Refusals.
+    let other_file = SymbolId::new(COMPONENT, "src/other.rs", "o", SymbolKind::Function);
+    assert!(matches!(
+        create_at(&e, ws, "q", Some(Placement::After(other_file))).await,
+        Err(VcsError::Invalid(_))
+    ));
+    assert!(matches!(
+        create_at(&e, ws, "q", Some(Placement::After(func("nope")))).await,
+        Err(VcsError::SymbolNotFound(_))
+    ));
+    let (pb, _) = view_of(&e, ws, &func("b")).await;
+    let mut r = req(ws, func("b"), Some(pb.clone()), Transformation::Replace(inline("b")), "m");
+    r.position = Some(Placement::First);
+    assert!(matches!(e.apply_patch(r).await, Err(VcsError::Invalid(_))));
+    assert!(matches!(
+        e.apply_patch(req(
+            ws,
+            func("b"),
+            Some(pb),
+            Transformation::Move(Placement::After(func("b"))),
+            "m"
+        ))
+        .await,
+        Err(VcsError::Invalid(_))
+    ));
+    crash::assert_consistent(&e, ws).await;
+}
+
+/// N agents inserting after the same symbol at the same moment: none conflicts,
+/// all land between their neighbours, tied, in symbol-key order.
+pub async fn concurrent_inserts<B, P, G, L>(s: Stores<B, P, G, L>, ws: &str, n: usize)
+where
+    B: BlobStore + 'static,
+    P: PointerStore + 'static,
+    G: Graph + 'static,
+    L: OpLog + 'static,
+{
+    let e = s.engine();
+    create_at(&e, ws, "a", None).await.unwrap();
+    create_at(&e, ws, "b", None).await.unwrap();
+    let barrier = Arc::new(Barrier::new(n));
+    let mut tasks = Vec::new();
+    for i in 0..n {
+        let (e, barrier, ws) = (s.engine(), barrier.clone(), ws.to_string());
+        tasks.push(tokio::spawn(async move {
+            barrier.wait().await;
+            create_at(&e, &ws, &format!("i{i}"), Some(Placement::After(func("a")))).await.unwrap()
+        }));
+    }
+    for t in tasks {
+        let r = t.await.unwrap();
+        assert!(matches!(r.outcome, PatchOutcome::Applied | PatchOutcome::Commuted), "{r:?}");
+    }
+    assert!(e.list_conflicts(ws, None).await.unwrap().is_empty());
+    let mut inserted: Vec<String> = (0..n).map(|i| format!("i{i}")).collect();
+    // Whichever read what, each landed between `a` and `b`.
+    let text = layout(&e, ws).await;
+    let got: Vec<&str> = text.split(' ').collect();
+    assert_eq!((got[0], got[n + 1]), ("a", "b"), "{text}");
+    let mut middle: Vec<String> = got[1..=n].iter().map(|s| s.to_string()).collect();
+    // The layout is exactly (order key, symbol key) order — so agents that read
+    // the same file computed the same key, tied, and the tie went by symbol key.
+    let views = e.query_symbol(ws, SymbolQuery::Component(COMPONENT.into())).await.unwrap();
+    let mut keyed = Vec::new();
+    for v in &views[1..=n] {
+        let rec = e.graph().patch(ws, &v.tip).await.unwrap().unwrap();
+        keyed.push((rec.order.clone().expect("placed"), rec.key.clone(), v.id.name.clone()));
+    }
+    let mut sorted = keyed.clone();
+    sorted.sort();
+    assert_eq!(sorted, keyed, "file order is (order key, symbol key)");
+    let ties = keyed.windows(2).filter(|w| w[0].0 == w[1].0).count();
+    eprintln!("{n} concurrent inserts at one spot: {ties} adjacent ties");
+    let names: Vec<String> = views.iter().map(|v| v.id.name.clone()).collect();
+    assert_eq!(names.join(" "), text, "query order is file order");
+    middle.sort();
+    inserted.sort();
+    assert_eq!(middle, inserted);
+    crash::assert_consistent(&e, ws).await;
+}
+
+// ---- losing the graph ---------------------------------------------------------
+
+/// Build some history, then point an engine at an EMPTY graph over the same
+/// pointers, log and blobs: repair rebuilds it, and every read is as before.
+pub async fn graph_rebuild<B, P, G, L>(s: Stores<B, P, G, L>, empty: Arc<G>, ws: &str)
+where
+    B: BlobStore + 'static,
+    P: PointerStore + 'static,
+    G: Graph + 'static,
+    L: OpLog + 'static,
+{
+    let e = s.engine();
+    let (a, b, c) = (func("a"), func("b"), func("c"));
+    let pa = create(&e, ws, &a, "fn a() {}\n").await;
+    let pb = create(&e, ws, &b, "fn b() {}\n").await;
+    create_at(&e, ws, "c", Some(Placement::First)).await.unwrap();
+    let ra = replace(&e, ws, &a, &pa, "fn a() { 1 }\n", "x").await.unwrap();
+    let c1 = replace(&e, ws, &a, &pa, "fn a() { 2 }\n", "y").await.unwrap();
+    replace(&e, ws, &a, &pa, "fn a() { 3 }\n", "z").await.unwrap();
+    e.resolve_conflict(ResolutionRequest {
+        workspace: ws.to_string(),
+        conflict: c1.conflict.unwrap(),
+        resolution: Transformation::Replace(inline("fn a() { 12 }\n")),
+        agent: Agent::named("r"),
+        message: None,
+    })
+    .await
+    .unwrap();
+    let ren = e
+        .apply_patch(req(ws, b.clone(), Some(pb), Transformation::Rename("b2".into()), "x"))
+        .await
+        .unwrap();
+    e.revert_op(ws, ren.op, Agent::named("u")).await.unwrap();
+    let mut caller =
+        req(ws, func("caller"), None, Transformation::Create(inline("fn caller() {}\n")), "x");
+    caller.depends_on = vec![b.clone()];
+    e.apply_patch(caller).await.unwrap();
+    let _ = (ra, c);
+
+    let views = |e: Arc<Eng<B, P, G, L>>| async move {
+        let mut v = e.query_symbol(ws, SymbolQuery::Component(COMPONENT.into())).await.unwrap();
+        v.iter_mut().for_each(|v| v.as_of = 0);
+        (v, e.list_conflicts(ws, None).await.unwrap(), e.oplog(ws, None, 1000).await.unwrap())
+    };
+    let before = views(e.clone()).await;
+
+    let fresh = Stores { graph: empty, ..s.clone() };
+    let e2 = fresh.engine();
+    let lost = e2.verify(ws).await.unwrap();
+    assert!(!lost.issues.is_empty(), "an empty graph must be noticed");
+    let report = e2.repair(ws).await.unwrap();
+    assert!(report.remaining.is_empty(), "{report:#?}");
+    assert_eq!(views(e2.clone()).await, before);
+    crash::assert_consistent(&e2, ws).await;
 }
 
 /// One `#[tokio::test]` per scenario, each given fresh `(Stores, workspace)` by
@@ -1136,6 +1708,68 @@ macro_rules! scenario_tests {
         async fn cas_retry() {
             let Some((s, ws)) = $make("cas-retry").await else { return };
             common::cas_retry(s, &ws).await;
+        }
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn commuted_with_is_exact() {
+            let Some((s, ws)) = $make("commuted").await else { return };
+            common::commuted_exact(s, &ws).await;
+        }
+        #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+        async fn rename_race_one_winner() {
+            let Some((s, ws)) = $make("rename-race").await else { return };
+            common::rename_race(s, &ws, 8).await;
+        }
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn create_vs_rename_race() {
+            let Some((s, ws)) = $make("create-vs-rename").await else { return };
+            common::create_vs_rename(s, &ws, 20).await;
+        }
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn names_release_and_reuse() {
+            let Some((s, ws)) = $make("names").await else { return };
+            common::names_release_and_reuse(s, &ws).await;
+        }
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn positions() {
+            let Some((s, ws)) = $make("positions").await else { return };
+            common::positions(s, &ws).await;
+        }
+        #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+        async fn concurrent_inserts_at_one_spot() {
+            let Some((s, ws)) = $make("inserts").await else { return };
+            common::concurrent_inserts(s, &ws, 8).await;
+        }
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn crash_at_every_step_then_repair() {
+            let Some((s, ws)) = $make("crash").await else { return };
+            let mut points = 0;
+            for case in common::crash::CASES {
+                let n = common::crash::crash_every_step(
+                    s.clone(),
+                    &format!("{ws}/{case:?}"),
+                    *case,
+                    false,
+                )
+                .await;
+                eprintln!("crash {case:?}: {n} crash points");
+                points += n;
+            }
+            eprintln!("crash points covered: {points}");
+        }
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn crash_at_every_step_retry_then_repair() {
+            let Some((s, ws)) = $make("crash-lazy").await else { return };
+            let mut points = 0;
+            for case in common::crash::CASES {
+                points += common::crash::crash_every_step(
+                    s.clone(),
+                    &format!("{ws}/{case:?}"),
+                    *case,
+                    true,
+                )
+                .await;
+            }
+            eprintln!("crash points covered (retry first): {points}");
         }
     };
 }

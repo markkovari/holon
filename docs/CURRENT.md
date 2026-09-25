@@ -406,7 +406,9 @@ Each now has a native daemon behind it in `reconciler/src/bin/` (`comp-fswatch`,
 `comp-wireguard`) — thirteen with `comp-media`, which is not one of these
 contracts but a new capability under the same rule (ADR-0098: presigned
 object-storage uploads, a JetStream work queue, and on-device evaluation
-with Metal/Core Image/Vision for `photoquest`) — each with its own allow-list where the input can come from a
+with Metal/Core Image/Vision for `photoquest`) — and fourteen with `comp-vcs`, the same again for
+ADR-0099's code store (the `holon-vcs` engine on NATS JetStream + SurrealDB, behind `vcs-store`;
+`docs/apps/VCS.md`) — each with its own allow-list where the input can come from a
 model (a directory, a host, an interface, a CIDR) — no shared daemon, no shared
 allow-list, per ADR-0095's "`container-docker` and `ui-notifier` do not deserve
 the same blast radius". The component side dials its daemon over

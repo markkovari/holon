@@ -4,7 +4,7 @@ Two suites live here: the Rust **manifest** suite below (`fixtures/`, driven by
 `reconciler/tests/e2e.rs`), and a **Playwright** browser suite for ten showcase apps
 (`tests/`, [further down](#the-playwright-suite)), plus
 [photoquest](#photoquest), which brings up its own object store, queue and
-evaluator.
+evaluator, and [vcs](#vcs), the code store against real NATS and SurrealDB.
 
 ```
 cargo build --release --manifest-path host/Cargo.toml
@@ -160,3 +160,23 @@ helpers the specs use for setup (users, a curator, the admin, journeys,
 competitions, the clock, uploads) are in `lib/photoquest.js`; the page helpers
 the three specs share (sign in, open a journey or a competition, submit a photo)
 in `lib/photoquest-page.js`.
+
+## vcs
+
+```
+bash e2e/vcs.sh                 # every scenario once
+RUNS=5 bash e2e/vcs.sh          # five times over one set of services
+bash e2e/vcs.sh c_crash         # a test-name filter
+```
+
+The code store (ADR-0099) end to end: `reconciler/tests/e2e_vcs.rs` drives
+`comp-host` (vcs-gateway ⊕ vcs-store) → `comp-vcs` → NATS JetStream + SurrealDB
+over HTTP only — two agents commuting and conflicting, a real `abort()` of
+`comp-vcs` at each step of the write order and a restart, the rename race,
+record-store's real sources ingested and materialized with git tree ids checked
+against `git`, a move, and the lease. The script starts the compose SurrealDB
+(`--profile graph`, its own compose project) unless `VCS_E2E_SURREAL_URL` is set,
+and a private `nats-server -js` on a free port; builds the two components and
+`comp-host`; and on exit removes all of it. Scenarios and timings:
+[docs/apps/VCS.md](../docs/apps/VCS.md#the-e2e-suite). Needs Docker (or a
+SurrealDB), `nats-server`, `git`, `cargo`; port 8000 free.

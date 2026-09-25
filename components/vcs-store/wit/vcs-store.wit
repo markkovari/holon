@@ -1,0 +1,15 @@
+// holon:vcs-store — the code store's component face: every call is one HTTP
+// request to `comp-vcs`, the native daemon that holds NATS and SurrealDB
+// (ADR-0099, ADR-0095).
+package holon:vcs-store;
+
+world component {
+    // holon:vcs's code-store-provider world, spelled out: comp-catalog reads
+    // exports from source.
+    export holon:vcs/code-store@0.1.0;
+    export holon:vcs/files@0.1.0;
+    /// The daemon lives outside the sandbox. This is how it is reached; the
+    /// manifest's egress list decides whether it can be.
+    import wasi:http/outgoing-handler@0.2.0;
+    import wasi:config/store@0.2.0-rc.1;
+}

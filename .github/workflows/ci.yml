@@ -460,6 +460,17 @@ jobs:
         # local and deliberate act.
         run: cargo test --release ${{ matrix.test-args }}
 
+      # `e2e_vcs` (ADR-0099) drives the code store through the real stack —
+      # comp-host, comp-vcs, NATS JetStream and SurrealDB — and `e2e/vcs.sh` is
+      # what brings that stack up, locally. Without it every test prints SKIPPED
+      # and returns `ok`, and a skip that returns `ok` is a green tick for a test
+      # that did not run, so it is COMPILED here and not run: the suite and the
+      # wire types it shares with comp-vcs cannot rot, and nothing claims it passed.
+      - name: Compile the code store's e2e suite (run locally by e2e/vcs.sh)
+        if: matrix.workspace == 'reconciler'
+        working-directory: reconciler
+        run: cargo test --release --test e2e_vcs --no-run
+
       # The engine is built for BOTH targets — inside a component it is
       # wasm32-wasip2 with no runtime and no sockets (ADR-0095) — so the core
       # must keep compiling there, and the NATS/SurrealDB adapters behind

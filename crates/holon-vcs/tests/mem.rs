@@ -37,3 +37,20 @@ async fn scenario_a_repeated() {
         common::scenario_a(s, &format!("rep-{i}")).await;
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn name_races_repeated() {
+    for i in 0..10 {
+        let (s, _) = make("x").await.unwrap();
+        common::rename_race(s.clone(), &format!("rep-{i}"), 8).await;
+        common::concurrent_inserts(s, &format!("ins-{i}"), 8).await;
+    }
+}
+
+/// The graph is lost (a fresh, empty one); repair rebuilds it from the oplog's
+/// intents and the blobs, and every read is as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_rebuilt_from_the_log() {
+    let (s, ws) = make("rebuild").await.unwrap();
+    common::graph_rebuild(s, Arc::new(MemGraph::new()), &ws).await;
+}

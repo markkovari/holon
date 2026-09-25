@@ -93,7 +93,6 @@ struct GraphState {
     symbols: BTreeMap<(String, String), SymbolRecord>,
     patches: HashMap<(String, Hash), PatchRecord>,
     conflicts: BTreeMap<(String, String), ConflictRecord>,
-    effects: HashMap<(String, OpId), Vec<ConflictEffect>>,
 }
 
 #[derive(Default)]
@@ -104,6 +103,12 @@ pub struct MemGraph {
 impl MemGraph {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Forget everything — what losing the graph database looks like, for the
+    /// tests that rebuild it from the oplog.
+    pub fn wipe(&self) {
+        *self.s.lock().unwrap() = GraphState::default();
     }
 }
 
@@ -125,6 +130,7 @@ impl Graph for MemGraph {
             deleted: true,
             position: None,
             wit_binding: None,
+            last_op: 0,
         });
         if !rec.aliases.contains(&id.name) {
             rec.aliases.push(id.name.clone());
@@ -138,12 +144,15 @@ impl Graph for MemGraph {
             if !rec.aliases.contains(&u.name) {
                 rec.aliases.push(u.name.clone());
             }
-            rec.name = u.name;
-            rec.tip = u.tip;
-            rec.deleted = u.deleted;
-            rec.wit_binding = u.wit_binding;
             if rec.position.is_none() {
                 rec.position = u.position_if_unset;
+            }
+            if u.op >= rec.last_op {
+                rec.name = u.name;
+                rec.tip = u.tip;
+                rec.deleted = u.deleted;
+                rec.wit_binding = u.wit_binding;
+                rec.last_op = u.op;
             }
         }
         Ok(())
@@ -202,13 +211,17 @@ impl Graph for MemGraph {
         ws: &str,
         hash: &str,
         status: PatchStatus,
-        op: Option<OpId>,
+        op: OpId,
+        set_op: bool,
     ) -> Result<()> {
         let mut s = self.s.lock().unwrap();
         if let Some(p) = s.patches.get_mut(&k(ws, hash)) {
-            p.status = status;
-            if op.is_some() {
-                p.op = op;
+            if op >= p.status_op {
+                p.status = status;
+                p.status_op = op;
+                if set_op {
+                    p.op = Some(op);
+                }
             }
         }
         Ok(())
@@ -226,41 +239,56 @@ impl Graph for MemGraph {
         Ok(out)
     }
 
-    async fn put_conflict(&self, ws: &str, c: &ConflictRecord) -> Result<()> {
-        self.s.lock().unwrap().conflicts.insert(k(ws, &c.id), c.clone());
+    async fn put_conflict(&self, ws: &str, c: &ConflictRecord, op: OpId) -> Result<()> {
+        let mut s = self.s.lock().unwrap();
+        let fresh = |state_op: OpId| ConflictRecord {
+            state: ConflictState::Open,
+            opened_at: 0,
+            resolved_by: None,
+            pending: vec![op],
+            state_op,
+            ..c.clone()
+        };
+        match s.conflicts.get_mut(&k(ws, &c.id)) {
+            None => {
+                s.conflicts.insert(k(ws, &c.id), fresh(0));
+            }
+            Some(cur) if cur.state == ConflictState::Open && cur.opened_at == 0 => {
+                if !cur.pending.contains(&op) {
+                    cur.pending.push(op);
+                }
+            }
+            Some(cur) if cur.state == ConflictState::Abandoned && op > cur.state_op => {
+                *cur = fresh(cur.state_op);
+            }
+            Some(_) => {}
+        }
         Ok(())
     }
 
-    async fn abandon_if_uncommitted(&self, ws: &str, id: &str) -> Result<()> {
+    async fn abandon_if_uncommitted(&self, ws: &str, id: &str, op: OpId) -> Result<()> {
         let mut s = self.s.lock().unwrap();
         if let Some(c) = s.conflicts.get_mut(&k(ws, id)) {
-            if c.opened_at == 0 {
+            c.pending.retain(|p| *p != op);
+            if c.opened_at == 0 && c.state == ConflictState::Open && c.pending.is_empty() {
                 c.state = ConflictState::Abandoned;
             }
         }
         Ok(())
     }
 
-    async fn commit_conflict(&self, ws: &str, id: &str, op: OpId) -> Result<()> {
+    async fn apply_conflict_effect(&self, ws: &str, e: &ConflictEffect, op: OpId) -> Result<()> {
         let mut s = self.s.lock().unwrap();
-        if let Some(c) = s.conflicts.get_mut(&k(ws, id)) {
-            c.state = ConflictState::Open;
-            c.opened_at = op;
-        }
-        Ok(())
-    }
-
-    async fn set_conflict_state(
-        &self,
-        ws: &str,
-        id: &str,
-        state: ConflictState,
-        resolved_by: Option<Hash>,
-    ) -> Result<()> {
-        let mut s = self.s.lock().unwrap();
-        if let Some(c) = s.conflicts.get_mut(&k(ws, id)) {
-            c.state = state;
-            c.resolved_by = resolved_by;
+        if let Some(c) = s.conflicts.get_mut(&k(ws, &e.conflict)) {
+            if op >= c.state_op {
+                if e.after == ConflictState::Open && c.opened_at == 0 {
+                    c.opened_at = op;
+                }
+                c.state = e.after;
+                c.resolved_by = e.resolved_by_after.clone();
+                c.state_op = op;
+                c.pending.retain(|p| *p != op);
+            }
         }
         Ok(())
     }
@@ -289,14 +317,5 @@ impl Graph for MemGraph {
             .filter(|((w, _), c)| w == ws && c.key == key && c.state == ConflictState::Open)
             .map(|(_, c)| c.clone())
             .collect())
-    }
-
-    async fn put_effects(&self, ws: &str, op: OpId, effects: &[ConflictEffect]) -> Result<()> {
-        self.s.lock().unwrap().effects.insert((ws.to_string(), op), effects.to_vec());
-        Ok(())
-    }
-
-    async fn effects(&self, ws: &str, op: OpId) -> Result<Vec<ConflictEffect>> {
-        Ok(self.s.lock().unwrap().effects.get(&(ws.to_string(), op)).cloned().unwrap_or_default())
     }
 }
