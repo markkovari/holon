@@ -530,8 +530,18 @@ fn a_journey_of_quests_is_built_submitted_to_and_levelled_through() {
     let (code, out) =
         gate.post(&format!("/api/curator/journeys/{jid}/archive"), Some(&cora), json!({}));
     assert_eq!(code, 200, "{out}");
-    let (code, _) = gate.get(&format!("/api/journeys/{jid}"), Some(&pat));
-    assert_eq!(code, 404, "an archived journey is not shown to photographers");
+    // Archived: read-only history for whoever played it, a 404 for everyone else
+    // (CONTRACT.md "Browsing and the archive").
+    let (code, out) = gate.get(&format!("/api/journeys/{jid}"), Some(&pat));
+    assert_eq!(code, 200, "pat played it, so pat still sees it: {out}");
+    assert_eq!(parse(&out)["archived"], true, "{out}");
+    let (code, _) = gate.get(&format!("/api/journeys/{jid}"), Some(&cora));
+    assert_eq!(code, 404, "an archived journey is not shown to a photographer who never played it");
+    let (_, out) = gate.get("/api/journeys", Some(&pat));
+    assert!(
+        !parse(&out)["journeys"].as_array().into_iter().flatten().any(|j| j["id"] == jid),
+        "an archived journey is not in the active list: {out}"
+    );
     let (_, out) = gate.get("/api/me/progress", Some(&pat));
     assert_eq!(parse(&out)["total_xp"], 270, "the ledger is history; archiving keeps it: {out}");
     let (code, out) = gate.post("/api/curator/quests", Some(&cora), q1_body);

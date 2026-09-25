@@ -30,10 +30,11 @@
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
 use crate::clock;
+use crate::listing::{self, Order};
 use crate::moderation::{is_hidden, require_active};
 use crate::{audit, introspect, Reply, Route};
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub(crate) const JOURNEYS: &str = "journeys";
 pub(crate) const QUESTS: &str = "quests";
@@ -289,10 +290,10 @@ fn journey_xp(ledger: &[Map<String, Value>], journey: &str) -> u64 {
 
 // ---- routes -------------------------------------------------------------------
 
-pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
+pub fn handle(method: &Method, route: &Route, body: &str, path: &str) -> Reply {
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
     match (method, seg.as_slice()) {
-        (Method::Get, ["api", "journeys"]) => journeys(route),
+        (Method::Get, ["api", "journeys"]) => journeys(route, path),
         (Method::Get, ["api", "journeys", id]) => journey(route, id),
         (Method::Get, ["api", "quests", id]) => quest(route, id),
         (Method::Post, ["api", "quests", id, "submissions"]) => submit(route, id, body),
@@ -302,20 +303,70 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 }
 
-/// What one photographer has: ledger rows, passed quest ids, badge rows.
+/// What one photographer has: ledger rows, passed quest ids, badge rows, and —
+/// all read through the `user` index — which journeys they have touched.
 struct Mine {
     ledger: Vec<Map<String, Value>>,
     passed: HashSet<String>,
     badges: Vec<Map<String, Value>>,
+    /// Every submission, passing or not.
+    subs: Vec<Map<String, Value>>,
+    /// Journeys with any submission, XP or badge of mine: what "history" and
+    /// "may still read an archived journey" are about.
+    touched: HashSet<String>,
+    /// Journey → the latest passing submission's `at`; a journey is only worth
+    /// checking for completion when it is in here (or has my badge).
+    passed_at: HashMap<String, u64>,
 }
 
 fn mine(user: &str) -> Result<Mine, Reply> {
-    let passed = find(SUBMISSIONS, "user", user)?
+    let subs = find(SUBMISSIONS, "user", user)?;
+    let ledger = find(LEDGER, "user", user)?;
+    let badges = find(BADGES, "user", user)?;
+    let mut passed = HashSet::new();
+    let mut passed_at: HashMap<String, u64> = HashMap::new();
+    for s in subs.iter().filter(|s| s.get("pass").and_then(Value::as_bool) == Some(true)) {
+        passed.insert(str_of(s, "quest").to_string());
+        let at = passed_at.entry(str_of(s, "journey").to_string()).or_default();
+        *at = (*at).max(u64_of(s, "at"));
+    }
+    let touched = subs
         .iter()
-        .filter(|s| s.get("pass").and_then(Value::as_bool) == Some(true))
-        .map(|s| str_of(s, "quest").to_string())
+        .chain(&ledger)
+        .chain(&badges)
+        .map(|r| str_of(r, "journey").to_string())
+        .filter(|j| !j.is_empty())
         .collect();
-    Ok(Mine { ledger: find(LEDGER, "user", user)?, passed, badges: find(BADGES, "user", user)? })
+    Ok(Mine { ledger, passed, badges, subs, touched, passed_at })
+}
+
+impl Mine {
+    fn badge(&self, journey: &str) -> Option<&Map<String, Value>> {
+        self.badges.iter().find(|b| str_of(b, "journey") == journey)
+    }
+
+    /// CONTRACT.md "Browsing and the archive": I hold the journey's badge, or I
+    /// have passed every published quest of it (and it has at least one). Only a
+    /// journey I have passed something in loads its chain.
+    fn completed(&self, j: &Map<String, Value>) -> Result<bool, Reply> {
+        let id = str_of(j, "id");
+        if self.badge(id).is_some() {
+            return Ok(true);
+        }
+        if !self.passed_at.contains_key(id) {
+            return Ok(false);
+        }
+        let c = chain(j)?;
+        Ok(!c.is_empty() && c.iter().all(|q| self.passed.contains(str_of(q, "id"))))
+    }
+
+    /// When I completed `j`: the badge's time, else my latest pass in it.
+    fn completed_at(&self, j: &str) -> u64 {
+        self.badge(j)
+            .map(|b| u64_of(b, "at"))
+            .or_else(|| self.passed_at.get(j).copied())
+            .unwrap_or(0)
+    }
 }
 
 /// A journey's published quests, in unlock order.
@@ -389,7 +440,7 @@ fn standing(j: &Map<String, Value>, m: &Mine) -> Value {
 
 fn journey_head(j: &Map<String, Value>) -> Map<String, Value> {
     let mut out = Map::new();
-    for k in ["id", "title", "description", "levels", "badge"] {
+    for k in ["id", "title", "description", "levels", "badge", "state"] {
         out.insert(k.into(), j.get(k).cloned().unwrap_or(Value::Null));
     }
     out
@@ -399,38 +450,143 @@ fn published_journey(id: &str) -> Result<Option<Map<String, Value>>, Reply> {
     Ok(load(JOURNEYS, id)?.map(|(_, j)| j).filter(|j| str_of(j, "state") == "published"))
 }
 
-/// `GET /api/journeys` — every published journey, with my standing and counts.
-fn journeys(route: &Route) -> Reply {
+const JOURNEY_VIEWS: &[&str] = &["active", "completed", "history"];
+
+/// `GET /api/journeys?view=active|completed|history&q=&limit=&after=`
+/// (CONTRACT.md "Browsing and the archive").
+///
+/// * `active` — published journeys I have not completed, newest published
+///   first. Answered by the `state` index; completion is only worked out for the
+///   journeys my own submissions and badges name.
+/// * `completed` — published journeys I have completed, most recently completed
+///   first. Candidates come from my badges and passing submissions (`user` index).
+/// * `history` — archived journeys I have any submission, XP or badge in, most
+///   recently archived first. Candidates come from my own records (`user` index).
+fn journeys(route: &Route, path: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
+    let view = tri!(listing::choice(path, "view", JOURNEY_VIEWS, "active"));
+    let page = tri!(listing::page_of(path, &format!("journeys:{view}")));
+    let q = listing::search(path);
     let m = tri!(mine(&principal.subject));
-    let all = tri!(list_all(JOURNEYS));
+
+    let mut picked: Vec<(Map<String, Value>, u64, bool)> = Vec::new();
+    match view.as_str() {
+        "active" => {
+            for j in tri!(listing::by_state(JOURNEYS, "published")) {
+                if listing::matches(str_of(&j, "title"), q.as_deref()) && !tri!(m.completed(&j)) {
+                    let at = listing::pos_of(&j, &["published_at", "created_at"]).0;
+                    picked.push((j, at, false));
+                }
+            }
+        }
+        "completed" => {
+            let ids: HashSet<String> = m
+                .badges
+                .iter()
+                .map(|b| str_of(b, "journey").to_string())
+                .chain(m.passed_at.keys().cloned())
+                .collect();
+            for j in tri!(listing::load_many(JOURNEYS, &ids)) {
+                if str_of(&j, "state") == "published"
+                    && listing::matches(str_of(&j, "title"), q.as_deref())
+                    && tri!(m.completed(&j))
+                {
+                    let at = m.completed_at(str_of(&j, "id"));
+                    picked.push((j, at, true));
+                }
+            }
+        }
+        _ => {
+            for j in tri!(listing::load_many(JOURNEYS, &m.touched)) {
+                if str_of(&j, "state") == "archived"
+                    && listing::matches(str_of(&j, "title"), q.as_deref())
+                {
+                    let done = tri!(m.completed(&j));
+                    let at = listing::pos_of(&j, &["archived_at", "updated_at", "created_at"]).0;
+                    picked.push((j, at, done));
+                }
+            }
+        }
+    }
+    let scope = format!("journeys:{view}");
+    let (rows, next) = listing::cut(
+        picked,
+        |(j, at, _)| (*at, str_of(j, "id").to_string()),
+        Order::Desc,
+        &page,
+        &scope,
+    );
     let mut out = Vec::new();
-    for j in all.iter().filter(|j| str_of(j, "state") == "published") {
-        let c = tri!(chain(j));
-        let mut v = journey_head(j);
-        v.insert("progress".into(), standing(j, &m));
+    for (j, _, done) in rows {
+        let c = tri!(chain(&j));
+        let mut v = journey_head(&j);
+        v.insert("progress".into(), standing(&j, &m));
         v.insert("quest_count".into(), json!(c.len()));
         v.insert(
             "passed_count".into(),
             json!(c.iter().filter(|q| m.passed.contains(str_of(q, "id"))).count()),
         );
+        v.insert("completed".into(), json!(done));
+        v.insert("archived".into(), json!(str_of(&j, "state") == "archived"));
         out.push(Value::Object(v));
     }
-    Reply::json(200, json!({ "journeys": out }))
+    Reply::json(200, json!({ "view": view, "journeys": out, "next": next }))
 }
 
-/// `GET /api/journeys/{id}` — one published journey, its quests with my
-/// lock/pass state, and my standing.
+/// `GET /api/journeys/{id}` — a published journey, its quests with my
+/// lock/pass state, and my standing. An **archived** journey answers too, read
+/// only (`archived: true`, with my submissions to it), to a photographer who has
+/// a submission, XP or badge in it; to anyone else it is a 404, like a draft.
 fn journey(route: &Route, id: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
-    let Some(j) = tri!(published_journey(id)) else { return Reply::err(404, "not_found") };
+    let Some((_, j)) = tri!(load(JOURNEYS, id)) else { return Reply::err(404, "not_found") };
     let m = tri!(mine(&principal.subject));
+    let archived = match str_of(&j, "state") {
+        "published" => false,
+        "archived" if m.touched.contains(id) => true,
+        _ => return Reply::err(404, "not_found"),
+    };
     let c = tri!(chain(&j));
     let now = clock::now();
-    let quests: Vec<Value> =
+    let mut quests: Vec<Value> =
         c.iter().zip(states(&c, &m.passed)).map(|(q, s)| quest_view(q, s, now)).collect();
     let mut v = journey_head(&j);
     v.insert("progress".into(), standing(&j, &m));
+    v.insert("completed".into(), json!(tri!(m.completed(&j))));
+    v.insert("archived".into(), json!(archived));
+    if archived {
+        // Quests I worked on that have left the chain since (archived quests)
+        // still belong to my history of this journey.
+        let mut titles: HashMap<String, Value> =
+            c.iter().map(|q| (str_of(q, "id").to_string(), q.get("title").cloned().unwrap_or(Value::Null))).collect();
+        let mut subs: Vec<Map<String, Value>> =
+            m.subs.iter().filter(|s| str_of(s, "journey") == id).cloned().collect();
+        newest_first(&mut subs);
+        let mut extra: Vec<String> = Vec::new();
+        for s in &subs {
+            let qid = str_of(s, "quest").to_string();
+            if !titles.contains_key(&qid) && !extra.contains(&qid) {
+                extra.push(qid);
+            }
+        }
+        extra.sort();
+        for qid in extra {
+            if let Some((_, q)) = tri!(load(QUESTS, &qid)) {
+                let st = if m.passed.contains(&qid) { "passed" } else { "archived" };
+                titles.insert(qid, q.get("title").cloned().unwrap_or(Value::Null));
+                quests.push(quest_view(&q, st, now));
+            }
+        }
+        let subs: Vec<Value> = subs
+            .into_iter()
+            .map(|mut s| {
+                let t = titles.get(str_of(&s, "quest")).cloned().unwrap_or(Value::Null);
+                s.insert("quest_title".into(), t);
+                Value::Object(s)
+            })
+            .collect();
+        v.insert("submissions".into(), json!(subs));
+    }
     v.insert("quests".into(), json!(quests));
     Reply::json(200, Value::Object(v))
 }
@@ -618,19 +774,25 @@ fn my_submissions(route: &Route, id: &str) -> Reply {
 }
 
 /// `GET /api/me/progress` — XP and level per journey (every published journey,
-/// plus any other I hold XP or a badge in), my badges, and my ledger.
+/// plus any other I hold XP or a badge in), my badges, and my ledger. The
+/// published ones come from the `state` index, the rest by id from my own records.
 fn me_progress(route: &Route) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     let m = tri!(mine(&principal.subject));
-    let all = tri!(list_all(JOURNEYS));
+    let mut all = tri!(listing::by_state(JOURNEYS, "published"));
+    let have: HashSet<String> = all.iter().map(|j| str_of(j, "id").to_string()).collect();
+    let involved: HashSet<String> = m
+        .ledger
+        .iter()
+        .chain(&m.badges)
+        .map(|r| str_of(r, "journey").to_string())
+        .filter(|j| !j.is_empty() && !have.contains(j))
+        .collect();
+    all.extend(tri!(listing::load_many(JOURNEYS, &involved)));
+    all.sort_by(|a, b| str_of(a, "id").cmp(str_of(b, "id")));
     let mut journeys = Vec::new();
     for j in &all {
         let id = str_of(j, "id");
-        let involved = m.ledger.iter().any(|r| str_of(r, "journey") == id)
-            || m.badges.iter().any(|b| str_of(b, "journey") == id);
-        if str_of(j, "state") != "published" && !involved {
-            continue;
-        }
         let mut v = standing(j, &m);
         v["journey"] = json!(id);
         v["title"] = j.get("title").cloned().unwrap_or(Value::Null);

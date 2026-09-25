@@ -16,6 +16,7 @@ mod bindings;
 mod clock;
 mod competitions;
 mod curation;
+mod listing;
 mod moderation;
 mod photos;
 mod progress;
@@ -108,11 +109,11 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
                 moderation::handle(&method, &route, &body, &path)
             }
             (_, ["api", "curator", "competitions", ..]) | (_, ["api", "competitions", ..]) => {
-                competitions::handle(&method, &route, &body)
+                competitions::handle(&method, &route, &body, &path)
             }
-            (_, ["api", "curator", ..]) => curation::handle(&method, &route, &body),
+            (_, ["api", "curator", ..]) => curation::handle(&method, &route, &body, &path),
             (_, ["api", "journeys", ..]) | (_, ["api", "quests", ..]) | (_, ["api", "me", "progress"]) => {
-                progress::handle(&method, &route, &body)
+                progress::handle(&method, &route, &body, &path)
             }
             (_, ["api", ..]) => photos::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),

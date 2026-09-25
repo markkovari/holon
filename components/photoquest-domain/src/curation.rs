@@ -4,12 +4,12 @@
 //!
 //! | route | answer |
 //! |---|---|
-//! | `GET  /api/curator/journeys` | 200 `{journeys: [...]}` — every journey, every state |
+//! | `GET  /api/curator/journeys` | `?state=draft\|published\|archived\|all&q=&limit=&after=` → 200 `{journeys, next}`, newest first |
 //! | `POST /api/curator/journeys` | `{title, description?, levels?, badge?}` → 201 the journey (`draft`, `quests: []`) |
 //! | `GET  /api/curator/journeys/{id}` | 200 the journey, plus `quest_docs` (its quests, in order, every state) |
 //! | `PUT  /api/curator/journeys/{id}` | any of `{title, description, levels, badge, quests}` → 200 |
 //! | `POST /api/curator/journeys/{id}/publish` / `archive` | 200 |
-//! | `GET  /api/curator/quests` | 200 `{quests: [...]}` — every quest, every state |
+//! | `GET  /api/curator/quests` | the same filters → 200 `{quests, next}`, newest first |
 //! | `POST /api/curator/quests` | `{journey, title, description?, xp?, starts_at?, ends_at?, requirements?}` → 201 (`draft`) |
 //! | `GET  /api/curator/quests/{id}` | 200 |
 //! | `PUT  /api/curator/quests/{id}` | any of `{title, description, xp, starts_at, ends_at, requirements}` → 200 |
@@ -41,14 +41,15 @@
 use crate::bindings::auth::identity::types::Principal;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
+use crate::listing::{self, Order};
 use crate::moderation::{require_active, require_role};
 use crate::progress::{
-    data_of, doc, find, list_all, load, store_err, str_of, tri, u64_of, JOURNEYS, QUESTS,
+    data_of, doc, find, load, store_err, str_of, tri, u64_of, JOURNEYS, QUESTS,
 };
 use crate::{audit, introspect, is_admin, now_secs, Reply, Route};
 use serde_json::{json, Map, Value};
 
-pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
+pub fn handle(method: &Method, route: &Route, body: &str, path: &str) -> Reply {
     let principal = guestauth::guest_authenticated!(route);
     if let Err(r) = require_role(&principal, "curator") {
         audit("curator.route", "deny", &principal.subject, "forbidden_role");
@@ -61,7 +62,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
     match (method, seg.as_slice()) {
-        (Method::Get, ["api", "curator", "journeys"]) => list(JOURNEYS, "journeys"),
+        (Method::Get, ["api", "curator", "journeys"]) => list(JOURNEYS, "journeys", path),
         (Method::Post, ["api", "curator", "journeys"]) => create_journey(&principal, body),
         (Method::Get, ["api", "curator", "journeys", id]) => get_journey(id),
         (Method::Put, ["api", "curator", "journeys", id]) => update_journey(&principal, id, body),
@@ -71,7 +72,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         (Method::Post, ["api", "curator", "journeys", id, "archive"]) => {
             set_journey_state(&principal, id, "archived")
         }
-        (Method::Get, ["api", "curator", "quests"]) => list(QUESTS, "quests"),
+        (Method::Get, ["api", "curator", "quests"]) => list(QUESTS, "quests", path),
         (Method::Post, ["api", "curator", "quests"]) => create_quest(&principal, body),
         (Method::Get, ["api", "curator", "quests", id]) => get_quest(id),
         (Method::Put, ["api", "curator", "quests", id]) => update_quest(&principal, id, body),
@@ -108,9 +109,28 @@ fn forbidden(principal: &Principal, event: &str, id: &str) -> Reply {
     Reply::err(403, "forbidden")
 }
 
-fn list(collection: &str, key: &str) -> Reply {
-    let all = tri!(list_all(collection));
-    Reply::json(200, json!({ key: all }))
+/// A curator list (CONTRACT.md "Browsing and the archive"): `state` (default
+/// `all`) through the `state` index, `q` over the title, newest created first,
+/// keyset-paged.
+pub(crate) fn list(collection: &str, key: &str, path: &str) -> Reply {
+    let mut states: Vec<&str> = listing::STATES.to_vec();
+    states.push("all");
+    let state = tri!(listing::choice(path, "state", &states, "all"));
+    let scope = format!("curator-{key}:{state}");
+    let page = tri!(listing::page_of(path, &scope));
+    let q = listing::search(path);
+    let rows: Vec<Map<String, Value>> = tri!(listing::in_state(collection, &state))
+        .into_iter()
+        .filter(|m| listing::matches(str_of(m, "title"), q.as_deref()))
+        .collect();
+    let (rows, next) = listing::cut(
+        rows,
+        |m| listing::pos_of(m, &["created_at"]),
+        Order::Desc,
+        &page,
+        &scope,
+    );
+    Reply::json(200, json!({ key: rows, "state": state, "next": next }))
 }
 
 fn save(
@@ -204,7 +224,7 @@ fn create_journey(principal: &Principal, body: &str) -> Reply {
         "created_by": principal.subject, "created_at": now_secs(),
         "levels": levels, "badge": badge, "quests": [],
     });
-    let entry = match records::create(JOURNEYS, &rec.to_string(), &["created_by".to_string()]) {
+    let entry = match records::create(JOURNEYS, &rec.to_string(), &listing::index_fields(&["created_by", "state"])) {
         Ok(e) => e,
         Err(_) => return store_err(),
     };
@@ -376,7 +396,7 @@ fn create_quest(principal: &Principal, body: &str) -> Reply {
         "starts_at": starts_at, "ends_at": ends_at, "requirements": requirements,
         "state": "draft", "created_by": principal.subject, "created_at": now_secs(),
     });
-    let entry = match records::create(QUESTS, &rec.to_string(), &["journey".to_string()]) {
+    let entry = match records::create(QUESTS, &rec.to_string(), &listing::index_fields(&["journey", "state"])) {
         Ok(e) => e,
         Err(_) => return store_err(),
     };

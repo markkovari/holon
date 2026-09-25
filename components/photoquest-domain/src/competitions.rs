@@ -29,6 +29,7 @@ use crate::bindings::media::pipeline::jobs as media;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
 use crate::clock;
+use crate::listing::{self, Order};
 use crate::moderation::{is_hidden, require_active, require_role};
 use crate::{audit, introspect, Reply, Route};
 use serde_json::{json, Map, Value};
@@ -45,7 +46,7 @@ const SIGN_TTL_SECS: u32 = 3600;
 const AUTO_VERSION: &str = "auto-v1";
 const MAX_NOTE: usize = 2000;
 
-pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
+pub fn handle(method: &Method, route: &Route, body: &str, path: &str) -> Reply {
     let principal = match introspect(route) {
         Ok(p) => p,
         Err(r) => return r,
@@ -53,7 +54,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
     match (method, seg.as_slice()) {
         // ---- curator ----
-        (Method::Get, ["api", "curator", "competitions"]) => curator_list(&principal),
+        (Method::Get, ["api", "curator", "competitions"]) => curator_list(&principal, path),
         (Method::Post, ["api", "curator", "competitions"]) => create(&principal, body),
         (Method::Get, ["api", "curator", "competitions", id]) => curator_get(&principal, id),
         (Method::Put, ["api", "curator", "competitions", id]) => edit(&principal, id, body),
@@ -67,7 +68,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
             judge(&principal, id, entry, body)
         }
         // ---- photographer ----
-        (Method::Get, ["api", "competitions"]) => list(&principal),
+        (Method::Get, ["api", "competitions"]) => list(&principal, path),
         (Method::Get, ["api", "competitions", id]) => detail(&principal, id),
         (Method::Get, ["api", "competitions", id, "leaderboard"]) => leaderboard(&principal, id),
         (Method::Get, ["api", "competitions", id, "results"]) => results(&principal, id),
@@ -317,24 +318,29 @@ fn curator(principal: &Principal) -> Result<(), Reply> {
     require_role(principal, "curator")
 }
 
-fn curator_list(principal: &Principal) -> Reply {
+/// `GET /api/curator/competitions?state=draft|published|archived|all&q=&limit=&after=`
+/// — newest created first. Every competition has been indexed by `state` since
+/// it was created, so a state is one index lookup; `all` is the three of them.
+fn curator_list(principal: &Principal, path: &str) -> Reply {
     tri!(curator(principal));
-    let mut out = Vec::new();
-    let mut after = String::new();
-    loop {
-        let page = match records::list_records(COMPETITIONS, 200, &after) {
-            Ok(p) => p,
-            Err(records::StoreError::NotFound) => break,
-            Err(_) => return Reply::err(500, "store_error"),
-        };
-        out.extend(page.entries.iter().map(|e| Value::Object(doc(e))));
-        if page.next.is_empty() {
-            break;
-        }
-        after = page.next;
+    let mut states: Vec<&str> = listing::STATES.to_vec();
+    states.push("all");
+    let state = tri!(listing::choice(path, "state", &states, "all"));
+    let scope = format!("curator-competitions:{state}");
+    let page = tri!(listing::page_of(path, &scope));
+    let q = listing::search(path);
+    let wanted: Vec<&str> = if state == "all" { listing::STATES.to_vec() } else { vec![state.as_str()] };
+    let mut rows = Vec::new();
+    for st in wanted {
+        rows.extend(
+            tri!(find(COMPETITIONS, "state", st))
+                .into_iter()
+                .filter(|c| listing::matches(str_of(c, "title"), q.as_deref())),
+        );
     }
-    out.reverse();
-    Reply::json(200, json!({"competitions": out}))
+    let (rows, next) =
+        listing::cut(rows, |c| listing::pos_of(c, &["created_at"]), Order::Desc, &page, &scope);
+    Reply::json(200, json!({"competitions": rows, "state": state, "next": next}))
 }
 
 fn curator_get(principal: &Principal, id: &str) -> Reply {
@@ -550,12 +556,56 @@ fn public_view(c: &Map<String, Value>, now: u64) -> Map<String, Value> {
     v
 }
 
-fn list(_principal: &Principal) -> Reply {
+/// Results are (or will be) readable: judging has closed.
+fn results_available(c: &Map<String, Value>, now: u64) -> bool {
+    now >= u64_of(c, "judging_closes_at")
+}
+
+/// Which list a competition a photographer can see belongs on: `active` while
+/// it is published and its results are not out yet, `past` once they are, or
+/// once it is archived (CONTRACT.md "Browsing and the archive").
+fn view_of(c: &Map<String, Value>, now: u64) -> &'static str {
+    if str_of(c, "state") == "published" && !results_available(c, now) {
+        "active"
+    } else {
+        "past"
+    }
+}
+
+/// `GET /api/competitions?view=active|past&q=&limit=&after=`.
+///
+/// `active`: soonest `closes_at` first — what to enter next. `past`: latest
+/// `judging_closes_at` first — the most recent results. Both come from the
+/// `state` index (published, plus archived for `past`); the page is cut in memory.
+fn list(_principal: &Principal, path: &str) -> Reply {
     let now = clock::now();
-    let mut out = tri!(find(COMPETITIONS, "state", "published"));
-    out.sort_by(|a, b| u64_of(b, "opens_at").cmp(&u64_of(a, "opens_at")).then_with(|| str_of(b, "id").cmp(str_of(a, "id"))));
-    let out: Vec<Value> = out.iter().map(|c| Value::Object(public_view(c, now))).collect();
-    Reply::json(200, json!({"competitions": out}))
+    let view = tri!(listing::choice(path, "view", &["active", "past"], "active"));
+    let scope = format!("competitions:{view}");
+    let page = tri!(listing::page_of(path, &scope));
+    let q = listing::search(path);
+    let mut rows = tri!(find(COMPETITIONS, "state", "published"));
+    if view == "past" {
+        rows.extend(tri!(find(COMPETITIONS, "state", "archived")));
+    }
+    let rows: Vec<Map<String, Value>> = rows
+        .into_iter()
+        .filter(|c| view_of(c, now) == view && listing::matches(str_of(c, "title"), q.as_deref()))
+        .collect();
+    let (key, order) = if view == "active" {
+        ("closes_at", Order::Asc)
+    } else {
+        ("judging_closes_at", Order::Desc)
+    };
+    let (rows, next) = listing::cut(rows, |c| listing::pos_of(c, &[key]), order, &page, &scope);
+    let out: Vec<Value> = rows
+        .iter()
+        .map(|c| {
+            let mut v = public_view(c, now);
+            v.insert("results_available".into(), json!(results_available(c, now)));
+            Value::Object(v)
+        })
+        .collect();
+    Reply::json(200, json!({"view": view, "competitions": out, "next": next}))
 }
 
 fn detail(principal: &Principal, id: &str) -> Reply {
@@ -569,7 +619,7 @@ fn detail(principal: &Principal, id: &str) -> Reply {
         .map(|e| json!({"entry": str_of(e, "id"), "photo": str_of(e, "photo"), "entered_at": u64_of(e, "entered_at")}))
         .collect();
     v.insert("my_entries".into(), json!(mine));
-    v.insert("results_available".into(), json!(now >= u64_of(&c, "judging_closes_at")));
+    v.insert("results_available".into(), json!(results_available(&c, now)));
     Reply::json(200, Value::Object(v))
 }
 
@@ -1092,6 +1142,22 @@ mod tests {
         let mut v = got["e"].clone();
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
         assert_eq!(v, vec![1.0, 4.0]);
+    }
+
+    #[test]
+    fn active_until_results_then_past_and_archived_is_always_past() {
+        let c = |state: &str| {
+            json!({"state": state, "opens_at": 10, "closes_at": 20, "voting_closes_at": 30, "judging_closes_at": 40})
+                .as_object()
+                .cloned()
+                .unwrap()
+        };
+        for now in [0, 15, 25, 39] {
+            assert_eq!(view_of(&c("published"), now), "active", "at {now}");
+            assert_eq!(view_of(&c("archived"), now), "past", "archived at {now}");
+        }
+        assert_eq!(view_of(&c("published"), 40), "past", "results are out at judging_closes_at");
+        assert!(!results_available(&c("published"), 39) && results_available(&c("published"), 40));
     }
 
     #[test]
