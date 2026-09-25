@@ -17,7 +17,9 @@ use sha1::{Digest, Sha1};
 use crate::error::{Result, VcsError};
 
 pub fn blob_id(bytes: &[u8]) -> [u8; 20] {
-    let mut h = Sha1::new();
+    // SHA-1 here IS the git object id, not a security hash — git's own blob id
+    // format, so a different digest would name a blob nothing else can look up.
+    let mut h = Sha1::new(); // nosemgrep: rust.lang.security.insecure-hashes.insecure-hashes
     h.update(format!("blob {}\0", bytes.len()).as_bytes());
     h.update(bytes);
     h.finalize().into()
@@ -97,7 +99,8 @@ fn write_tree(dir: &BTreeMap<String, Node>) -> [u8; 20] {
         body.push(0);
         body.extend_from_slice(&id);
     }
-    let mut h = Sha1::new();
+    // Same reasoning as blob_id: this SHA-1 IS git's tree object id.
+    let mut h = Sha1::new(); // nosemgrep: rust.lang.security.insecure-hashes.insecure-hashes
     h.update(format!("tree {}\0", body.len()).as_bytes());
     h.update(&body);
     h.finalize().into()
