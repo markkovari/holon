@@ -2,13 +2,7 @@
 
 use thiserror::Error;
 
-/// A pointer and the two values a compare-and-set disagreed on.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CasFailure {
-    pub pointer: String,
-    pub expected: Option<String>,
-    pub actual: Option<String>,
-}
+use crate::model::{CasFailure, SymbolId};
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum VcsError {
@@ -23,7 +17,7 @@ pub enum VcsError {
     #[error("unresolved conflicts: {0:?}")]
     UnresolvedConflict(Vec<String>),
     #[error("symbol not found: {0}")]
-    SymbolNotFound(String),
+    SymbolNotFound(SymbolId),
     /// A patch, op or conflict id that does not exist.
     #[error("not found: {0}")]
     NotFound(String),
@@ -31,3 +25,11 @@ pub enum VcsError {
     #[error("invalid: {0}")]
     Invalid(String),
 }
+
+impl VcsError {
+    pub fn storage(e: impl std::fmt::Display) -> Self {
+        VcsError::Storage(e.to_string())
+    }
+}
+
+pub type Result<T, E = VcsError> = std::result::Result<T, E>;

@@ -95,17 +95,25 @@ interface types {
         agent: agent,
         message: option<string>,
         /// Symbols the new content uses; becomes `depends-on` edges in the graph.
+        /// Replaced wholesale by each `create`/`replace`; kept by `rename`.
         depends-on: list<symbol-id>,
+        /// Symbols (usually WIT items) the new content implements; `implements`
+        /// edges, with the same lifetime as `depends-on`.
+        implements: list<symbol-id>,
+        /// The WIT item this symbol implements or declares
+        /// (`package:ns/interface.func`). `none` keeps the current binding.
+        wit-binding: option<string>,
     }
 
     enum patch-outcome {
         /// `parent` was the tip; the symbol moved forward.
         applied,
-        /// `parent` was not the tip, but everything since touched other symbols —
-        /// the edit commuted past them and landed.
+        /// `parent` was the symbol's tip, and at least one patch to ANOTHER symbol
+        /// of the same component landed after `parent` did — the edit commuted
+        /// past those (listed in `commuted-with`) and landed.
         commuted,
-        /// Another edit to the same symbol from the same parent landed first; a
-        /// conflict now holds both. The symbol's tip is unchanged.
+        /// The symbol's tip moved on since `parent` (another edit to the same
+        /// symbol landed first); a conflict now holds both. The tip is unchanged.
         conflicted,
         /// The identical change is already there; nothing was written.
         duplicate,
@@ -137,8 +145,11 @@ interface types {
         content: option<content>,
     }
 
-    /// Two edits to one symbol from one parent. Both are kept verbatim; the
-    /// symbol's tip stays at `base` until a resolution lands.
+    /// Two edits to one symbol from one parent. Both are kept verbatim. `left`
+    /// is the edit that landed (the symbol's tip), `right` the one that arrived
+    /// after it; the tip stays at `left`, and edits that would move it are
+    /// refused with `unresolved-conflict`, until a resolution lands. In an N-way
+    /// race each loser is its own conflict against the winner.
     record conflict {
         id: conflict-id,
         workspace: workspace-id,
@@ -153,8 +164,10 @@ interface types {
     }
 
     record resolution-request {
+        workspace: workspace-id,
         conflict: conflict-id,
-        /// Usually `replace` with merged content; `delete` is allowed.
+        /// `replace` with merged content, or `delete`; `create` and `rename` are
+        /// `invalid`.
         resolution: transformation,
         agent: agent,
         message: option<string>,

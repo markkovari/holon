@@ -22,6 +22,7 @@ native = ["dep:tokio", "dep:async-nats", "dep:surrealdb", "dep:futures"]
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+sha1.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 
@@ -29,3 +30,6 @@ tokio = { workspace = true, optional = true }
 async-nats = { workspace = true, optional = true }
 surrealdb = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
