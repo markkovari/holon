@@ -1,0 +1,296 @@
+// holon:vcs — an agent-native code store: an operation log over a commutative
+// patch graph, instead of snapshots and line diffs (ADR-0099).
+//
+// The unit of change is a SYMBOL, not a line. An edit names the symbol it touches
+// and the patch it was computed from; two edits to different symbols commute and
+// both land, whatever order they arrive in. Two edits to the SAME symbol from the
+// same parent do not — and that is not an error either: it becomes a `conflict`, a
+// first-class record with both sides kept, which a resolver agent reads and settles
+// with `resolve-conflict`. Nothing here ever blocks on a lock or asks an agent to
+// rebase.
+//
+// Every call carries hashes and records, never a path on somebody's disk:
+// components have no filesystem (ADR-0023). `snapshot-export` returns a tree
+// manifest (and a git tree id) that the host materialises.
+//
+// Hashes are lower-case hex SHA-256 of the bytes they name, so any node can verify
+// what it was handed.
+package holon:vcs@0.1.0;
+
+interface types {
+    /// Lower-case hex SHA-256 — of a blob's bytes, or of a patch's canonical form.
+    type hash = string;
+    /// A conflict is named by the hash of its two sides, so the same collision
+    /// found twice is one conflict.
+    type conflict-id = string;
+    /// Position in a workspace's operation log. Strictly increasing per workspace.
+    type op-id = u64;
+    /// A mutable line of work: a goal's branch, a swarm's shared head.
+    type workspace-id = string;
+
+    /// Who made a change. `id` is the agent; the rest is provenance.
+    record agent {
+        id: string,
+        goal: option<string>,
+        model: option<string>,
+    }
+
+    /// What kind of thing a symbol is. Language-neutral on purpose: a Rust `fn`
+    /// and a WIT `func` are both functions to the graph.
+    enum symbol-kind {
+        module,
+        function,
+        method,
+        struct-item,
+        enum-item,
+        trait-item,
+        impl-block,
+        constant,
+        static-item,
+        type-alias,
+        macro-item,
+        wit-interface,
+        wit-world,
+        wit-type,
+        /// A whole file, for content no parser splits into symbols.
+        file,
+    }
+
+    /// A symbol's identity, stable across edits to its body. `path` is the file
+    /// within the component; `name` is the item path inside it
+    /// (`orders::compute_total`, `Order::validate`).
+    record symbol-id {
+        component: string,
+        path: string,
+        name: string,
+        kind: symbol-kind,
+    }
+
+    /// Content, either small enough to send inline or already in the object store.
+    variant content {
+        inline(string),
+        blob(hash),
+    }
+
+    /// What an edit does to its symbol.
+    variant transformation {
+        /// The symbol must not exist at `parent` (which must be `none`).
+        create(content),
+        /// New content for an existing symbol.
+        replace(content),
+        /// Remove the symbol.
+        delete,
+        /// Same content, new `name`; identity moves with it.
+        rename(string),
+    }
+
+    /// One edit, as an agent submits it.
+    record patch-request {
+        workspace: workspace-id,
+        symbol: symbol-id,
+        /// The symbol's patch this edit was computed from — its tip when the agent
+        /// read it. `none` only for `create`.
+        parent: option<hash>,
+        change: transformation,
+        agent: agent,
+        message: option<string>,
+        /// Symbols the new content uses; becomes `depends-on` edges in the graph.
+        depends-on: list<symbol-id>,
+    }
+
+    enum patch-outcome {
+        /// `parent` was the tip; the symbol moved forward.
+        applied,
+        /// `parent` was not the tip, but everything since touched other symbols —
+        /// the edit commuted past them and landed.
+        commuted,
+        /// Another edit to the same symbol from the same parent landed first; a
+        /// conflict now holds both. The symbol's tip is unchanged.
+        conflicted,
+        /// The identical change is already there; nothing was written.
+        duplicate,
+    }
+
+    record commit-result {
+        patch: hash,
+        op: op-id,
+        outcome: patch-outcome,
+        /// The symbol's tip afterwards; `none` once deleted.
+        tip: option<hash>,
+        /// Concurrent patches this one commuted past.
+        commuted-with: list<hash>,
+        /// Set exactly when `outcome` is `conflicted`.
+        conflict: option<conflict-id>,
+    }
+
+    enum conflict-state {
+        open,
+        resolved,
+        /// Superseded without a resolution — e.g. the symbol was deleted.
+        abandoned,
+    }
+
+    record conflict-side {
+        patch: hash,
+        agent: agent,
+        /// `none` when this side deleted the symbol.
+        content: option<content>,
+    }
+
+    /// Two edits to one symbol from one parent. Both are kept verbatim; the
+    /// symbol's tip stays at `base` until a resolution lands.
+    record conflict {
+        id: conflict-id,
+        workspace: workspace-id,
+        symbol: symbol-id,
+        base: option<hash>,
+        left: conflict-side,
+        right: conflict-side,
+        state: conflict-state,
+        opened-at: op-id,
+        /// The resolution patch, once `state` is `resolved`.
+        resolved-by: option<hash>,
+    }
+
+    record resolution-request {
+        conflict: conflict-id,
+        /// Usually `replace` with merged content; `delete` is allowed.
+        resolution: transformation,
+        agent: agent,
+        message: option<string>,
+    }
+
+    /// One pointer a single operation moved, so it can be moved back.
+    record pointer-move {
+        /// e.g. `ws/<workspace>/sym/<symbol key>`
+        pointer: string,
+        before: option<hash>,
+        after: option<hash>,
+    }
+
+    variant op-kind {
+        apply(hash),
+        resolve(conflict-id),
+        /// Undoing an earlier operation is itself an operation.
+        revert(op-id),
+    }
+
+    record op-entry {
+        id: op-id,
+        workspace: workspace-id,
+        /// Unix milliseconds.
+        at: u64,
+        agent: agent,
+        kind: op-kind,
+        moves: list<pointer-move>,
+    }
+
+    variant symbol-query {
+        symbol(symbol-id),
+        /// Every live symbol of a component.
+        component(string),
+    }
+
+    record symbol-view {
+        id: symbol-id,
+        tip: hash,
+        content: content,
+        author: agent,
+        /// The WIT item this symbol implements or declares, when known
+        /// (`package:ns/interface.func`).
+        wit-binding: option<string>,
+        depends-on: list<symbol-id>,
+        dependents: list<symbol-id>,
+        implements: list<symbol-id>,
+        open-conflicts: list<conflict-id>,
+    }
+
+    record tree-entry {
+        /// Relative to the component root.
+        path: string,
+        blob: hash,
+        executable: bool,
+    }
+
+    /// A component's living graph, flattened back into files.
+    record snapshot {
+        workspace: workspace-id,
+        component: string,
+        /// The oplog position this snapshot is exactly the state after.
+        at: op-id,
+        entries: list<tree-entry>,
+        /// The same tree as a git tree object id (SHA-1, as `vgit:store` names
+        /// it), for a forge or a checkout.
+        git-tree: option<string>,
+    }
+
+    /// The pointer and the two values a compare-and-set disagreed on.
+    record cas-failure {
+        pointer: string,
+        expected: option<hash>,
+        actual: option<hash>,
+    }
+
+    variant vcs-error {
+        /// The object store, the pointer store or the graph was unreachable or
+        /// refused. Retrying may help.
+        storage-error(string),
+        /// A pointer moved between read and write. Nothing was changed; re-read
+        /// and retry. Distinct from a conflict: this is a race on OUR write, not a
+        /// disagreement between two agents' edits.
+        concurrent-modification(cas-failure),
+        /// The operation needs these conflicts settled first (e.g. exporting a
+        /// component that still has open conflicts).
+        unresolved-conflict(list<conflict-id>),
+        symbol-not-found(symbol-id),
+        /// A patch, op or conflict id that does not exist.
+        not-found(string),
+        /// The request is malformed: `create` with a parent, `replace` without one,
+        /// a hash that is not 64 hex characters.
+        invalid(string),
+    }
+}
+
+interface code-store {
+    use types.{
+        commit-result, conflict, conflict-id, conflict-state, op-entry, op-id,
+        patch-request, resolution-request, snapshot, symbol-query, symbol-view,
+        vcs-error, workspace-id, agent,
+    };
+
+    /// Record one edit. Never blocks on another agent: it lands, commutes, or
+    /// becomes a conflict.
+    apply-patch: func(req: patch-request) -> result<commit-result, vcs-error>;
+
+    /// Settle an open conflict with a canonical resolution patch whose parents are
+    /// both sides.
+    resolve-conflict: func(req: resolution-request) -> result<commit-result, vcs-error>;
+
+    /// Undo one earlier operation by appending its inverse. Refused with
+    /// `concurrent-modification` if a pointer it moved has moved again since.
+    revert-op: func(workspace: workspace-id, op: op-id, by: agent) -> result<op-entry, vcs-error>;
+
+    /// The living tree of one symbol or a whole component, with its graph edges.
+    query-symbol: func(workspace: workspace-id, query: symbol-query) -> result<list<symbol-view>, vcs-error>;
+
+    /// Flatten a component's living graph into files. Refused with
+    /// `unresolved-conflict` while any of its symbols has an open conflict.
+    snapshot-export: func(workspace: workspace-id, component: string) -> result<snapshot, vcs-error>;
+
+    /// Conflicts in a workspace, optionally only those in one state.
+    list-conflicts: func(workspace: workspace-id, state: option<conflict-state>) -> result<list<conflict>, vcs-error>;
+
+    /// The operation log, oldest first, starting after `after`.
+    oplog: func(workspace: workspace-id, after: option<op-id>, limit: u32) -> result<list<op-entry>, vcs-error>;
+}
+
+/// What a store provides — the native daemon's component face, or an in-process
+/// implementation.
+world code-store-provider {
+    export code-store;
+}
+
+/// What an agent's component imports to use one.
+world code-store-client {
+    import code-store;
+}
