@@ -155,6 +155,10 @@ async-nats = "0.49"
 md-5 = "0.10"          # comp-media: PutBucketCors requires a Content-MD5
 base64 = "0.22"
 kamadak-exif = "0.6"   # comp-media: EXIF of a JPEG original (bounds-checked; rawler's TIFF reader is not)
+# comp-vcs (ADR-0099): the code store's engine and its native adapters. Its own
+# async-nats (0.50) and surrealdb ride along; the engine never shares a client
+# with the rest of this crate.
+holon-vcs = { path = "../crates/holon-vcs", features = ["native"] }
 
 [dev-dependencies]
 miniz_oxide = "0.8"
@@ -228,6 +232,12 @@ path = "src/bin/imageopt.rs"
 [[bin]]
 name = "comp-media"
 path = "src/bin/media.rs"
+
+# The agent-native code store (ADR-0099): the engine's NATS + SurrealDB
+# adapters behind loopback HTTP, for `components/vcs-store`.
+[[bin]]
+name = "comp-vcs"
+path = "src/bin/vcs.rs"
 
 [[bin]]
 name = "comp-lanscan"

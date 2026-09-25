@@ -24,7 +24,11 @@ serde_json.workspace = true
 sha2.workspace = true
 sha1.workspace = true
 hex.workspace = true
+base64.workspace = true
 thiserror.workspace = true
+syn.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
 
 tokio = { workspace = true, optional = true }
 async-nats = { workspace = true, optional = true }

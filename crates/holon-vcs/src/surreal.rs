@@ -8,7 +8,8 @@
 //! | `patch` | `sha256(ws, hash)` | a [`PatchRecord`] + `ws` |
 //! | `symref` | `sha256(ws, symbol id)` | a symbol *name* an edge can point at |
 //! | `conflict` | `sha256(ws, id)` | a [`ConflictRecord`] + `ws`, its `id` stored as `cid` |
-//! | `op_effect` | `sha256(ws, op)` | the conflict state changes one op made |
+//!
+//! (Conflict effects live in the oplog's intents, not here.)
 //!
 //! Edges, all `RELATE`d: `patch ->depends_on-> symref`, `patch ->implements->
 //! symref` (a patch's content uses / implements those names — by name, because
@@ -23,13 +24,35 @@
 //! interpolated are the namespace and database at connect time, which are checked
 //! against `[A-Za-z0-9_]` first.
 //!
+//! # Indexes
+//!
+//! Every lookup the adapter makes is either by record id (a patch by hash, a
+//! symbol or conflict by key, a symref) or through an index, so its cost is
+//! bounded by what it returns, not by how much any workspace has written. Record
+//! ids are hashes of `(ws, natural id)`, so different workspaces never share a
+//! record; every other lookup leads with `ws`.
+//!
+//! | lookup | statement | index |
+//! |---|---|---|
+//! | symbols by name (`symbols_named`) | `symbol WHERE ws, component, path, kind` (+ alias filter) | `symbol_name` |
+//! | symbols of a component | `symbol WHERE ws, component` | `symbol_component` |
+//! | open conflicts of a symbol | `conflict WHERE ws, key, state` | `conflict_key` |
+//! | conflicts of a workspace (by state) | `conflict WHERE ws [, state]` | `conflict_ws` |
+//! | a patch's old edges, on rewrite | `DELETE depends_on / implements WHERE in` | `depends_on_in`, `implements_in` |
+//! | a conflict's edge, on rewrite | `DELETE conflicts_with WHERE ws, conflict` | `conflicts_with_cid` |
+//! | dependents | `symref<-depends_on<-patch` | graph edge scan (no index needed) |
+//!
+//! `tests/live.rs::surreal_queries_use_indexes` runs `EXPLAIN` on each and
+//! fails on a table scan; `tests/bench.rs` measures them on 20k patches.
+//!
 //! # Atomicity
 //!
 //! Each method is one request; the multi-statement ones run in a `BEGIN …
 //! COMMIT` transaction. The conditional writes the engine relies on —
-//! `put_patch` replacing only a pending record, `abandon_if_uncommitted` touching
-//! only `opened_at = 0` — are single `UPDATE … WHERE` / `IF` statements inside
-//! one transaction, so they are atomic on the server.
+//! `put_patch` replacing only a pending record, the op-monotone guards on
+//! `mark_patch`, `update_symbol` and conflict effects, `abandon_if_uncommitted`
+//! touching only an uncommitted conflict — are `UPDATE … WHERE` / `IF`
+//! statements inside one transaction, so they are atomic on the server.
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -129,20 +152,39 @@ fn from_value<T: DeserializeOwned>(v: Value) -> Result<T> {
 }
 
 /// SurrealDB 3 errors on a SELECT from a table that does not exist, so every
-/// table is defined up front.
-const SCHEMA: &str = "
+/// table is defined up front — with an index for every lookup (module docs).
+pub const SCHEMA: &str = "
 DEFINE TABLE IF NOT EXISTS symbol SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS patch SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS symref SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS conflict SCHEMALESS;
-DEFINE TABLE IF NOT EXISTS op_effect SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS depends_on TYPE RELATION SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS implements TYPE RELATION SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS conflicts_with TYPE RELATION SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS symbol_name ON symbol FIELDS ws, component, path, kind;
 DEFINE INDEX IF NOT EXISTS symbol_component ON symbol FIELDS ws, component;
 DEFINE INDEX IF NOT EXISTS conflict_key ON conflict FIELDS ws, key, state;
 DEFINE INDEX IF NOT EXISTS conflict_ws ON conflict FIELDS ws, state;
+DEFINE INDEX IF NOT EXISTS depends_on_in ON depends_on FIELDS in;
+DEFINE INDEX IF NOT EXISTS implements_in ON implements FIELDS in;
+DEFINE INDEX IF NOT EXISTS conflicts_with_cid ON conflicts_with FIELDS ws, conflict;
 ";
+
+/// Every read and delete-by-condition the adapter issues, with sample
+/// parameters, for the `EXPLAIN` check in the live suite: `(name, statement)`.
+pub const INDEXED_QUERIES: &[(&str, &str)] = &[
+    (
+        "symbols_named",
+        "SELECT VALUE key FROM symbol WHERE ws = 'w' AND component = 'c' AND path = 'p' AND kind = 'function' AND aliases CONTAINS 'n'",
+    ),
+    ("symbols_in_component", "SELECT * FROM symbol WHERE ws = 'w' AND component = 'c'"),
+    ("open_conflicts_for", "SELECT * FROM conflict WHERE ws = 'w' AND key = 'k' AND state = 'open'"),
+    ("conflicts(state)", "SELECT * FROM conflict WHERE ws = 'w' AND state = 'open'"),
+    ("conflicts", "SELECT * FROM conflict WHERE ws = 'w'"),
+    ("put_patch: depends_on", "DELETE depends_on WHERE in = patch:x"),
+    ("put_patch: implements", "DELETE implements WHERE in = patch:x"),
+    ("put_conflict: conflicts_with", "DELETE conflicts_with WHERE ws = 'w' AND conflict = 'c'"),
+];
 
 impl SurrealGraph {
     pub async fn connect(cfg: &SurrealConfig) -> Result<Self> {
@@ -174,8 +216,8 @@ impl SurrealGraph {
         let mut delay = std::time::Duration::from_millis(1);
         let mut last = String::new();
         for _ in 0..TXN_TRIES {
-            match self.db.query(sql).bind(vars.clone()).await.and_then(|r| r.check()) {
-                Ok(r) => return Ok(r),
+            let mut r = match self.db.query(sql).bind(vars.clone()).await {
+                Ok(r) => r,
                 Err(e) => {
                     let msg = e.to_string();
                     if !is_retryable(&msg) {
@@ -184,12 +226,49 @@ impl SurrealGraph {
                     last = msg;
                     tokio::time::sleep(delay).await;
                     delay = (delay * 2).min(std::time::Duration::from_millis(50));
+                    continue;
                 }
+            };
+            let mut errors: Vec<(usize, String)> =
+                r.take_errors().into_iter().map(|(i, e)| (i, e.to_string())).collect();
+            if errors.is_empty() {
+                return Ok(r);
             }
+            errors.sort();
+            // In a `BEGIN … COMMIT` block every statement reports the failed
+            // transaction; the cause is whichever says something else. None
+            // saying anything else still means nothing was applied.
+            let causes: Vec<&str> = errors
+                .iter()
+                .map(|(_, m)| m.as_str())
+                .filter(|m| !m.contains("failed transaction"))
+                .collect();
+            if !causes.is_empty() && !causes.iter().any(|m| is_retryable(m)) {
+                return Err(VcsError::Storage(format!("surreal: {}", causes.join("; "))));
+            }
+            last = errors.into_iter().map(|(_, m)| m).collect::<Vec<_>>().join("; ");
+            tokio::time::sleep(delay).await;
+            delay = (delay * 2).min(std::time::Duration::from_millis(50));
         }
         Err(VcsError::Storage(format!(
             "surreal: gave up after {TXN_TRIES} transaction conflicts: {last}"
         )))
+    }
+
+    /// The plan of `sql` (a SELECT or DELETE, without the trailing `;`), as
+    /// SurrealDB's `EXPLAIN` renders it.
+    pub async fn explain(&self, sql: &str) -> Result<Value> {
+        // A SELECT's plan is one object, a DELETE's a list of steps: wrap both.
+        let mut r = self.run(&format!("RETURN [({sql} EXPLAIN)];"), json!({})).await?;
+        let v: Vec<Value> = r.take(0).map_err(VcsError::storage)?;
+        Ok(Value::Array(v))
+    }
+
+    /// Drop this graph's database (tests: one database per run).
+    pub async fn remove_database(&self, database: &str) -> Result<()> {
+        let dbn = ident(database)?;
+        self.run(&format!("REMOVE DATABASE IF EXISTS {dbn};"), json!({})).await?;
+        Ok(())
     }
 
     /// Rows of statement `idx`.
@@ -241,6 +320,7 @@ impl Graph for SurrealGraph {
             deleted: true,
             position: None,
             wit_binding: None,
+            last_op: 0,
         };
         let mut row = with_ws(ws, &rec)?;
         row["id"] = Value::String(rid(ws, key));
@@ -257,13 +337,17 @@ impl Graph for SurrealGraph {
 
     async fn update_symbol(&self, ws: &str, key: &str, u: SymbolUpdate) -> Result<()> {
         self.run(
-            "UPDATE type::record('symbol', $rid) SET
+            "BEGIN;
+             LET $r = type::record('symbol', $rid);
+             UPDATE $r SET aliases = array::union(aliases, [$name]), position = position ?? $pos;
+             UPDATE $r SET
                 name = $name,
-                aliases = array::union(aliases, [$name]),
                 tip = $tip,
                 deleted = $deleted,
                 wit_binding = $wit,
-                position = position ?? $pos;",
+                last_op = $op
+             WHERE (last_op ?? 0) <= $op;
+             COMMIT;",
             json!({
                 "rid": rid(ws, key),
                 "name": u.name,
@@ -271,6 +355,7 @@ impl Graph for SurrealGraph {
                 "deleted": u.deleted,
                 "wit": u.wit_binding,
                 "pos": u.position_if_unset,
+                "op": u.op,
             }),
         )
         .await?;
@@ -358,11 +443,19 @@ impl Graph for SurrealGraph {
         ws: &str,
         hash: &str,
         status: PatchStatus,
-        op: Option<OpId>,
+        op: OpId,
+        set_op: bool,
     ) -> Result<()> {
         self.run(
-            "UPDATE type::record('patch', $rid) SET status = $status, op = $op ?? op;",
-            json!({ "rid": rid(ws, hash), "status": to_value(&status)?, "op": op }),
+            "UPDATE type::record('patch', $rid)
+                SET status = $status, status_op = $op, op = $setop ?? op
+                WHERE (status_op ?? 0) <= $op;",
+            json!({
+                "rid": rid(ws, hash),
+                "status": to_value(&status)?,
+                "op": op,
+                "setop": set_op.then_some(op),
+            }),
         )
         .await?;
         Ok(())
@@ -382,19 +475,33 @@ impl Graph for SurrealGraph {
         Ok(out)
     }
 
-    async fn put_conflict(&self, ws: &str, c: &ConflictRecord) -> Result<()> {
+    async fn put_conflict(&self, ws: &str, c: &ConflictRecord, op: OpId) -> Result<()> {
+        let mut fresh = c.clone();
+        fresh.state = ConflictState::Open;
+        fresh.opened_at = 0;
+        fresh.resolved_by = None;
+        fresh.pending = vec![op];
+        fresh.state_op = 0;
         self.run(
             "BEGIN;
-             UPSERT type::record('conflict', $rid) CONTENT $row;
-             DELETE conflicts_with WHERE ws = $ws AND conflict = $cid;
-             RELATE (type::record('patch', $left))->conflicts_with->(type::record('patch', $right))
-                 SET ws = $ws, conflict = $cid;
+             LET $r = type::record('conflict', $rid);
+             LET $cur = (SELECT state, opened_at, state_op FROM ONLY $r);
+             IF $cur = NONE OR ($cur.state = 'abandoned' AND $op > ($cur.state_op ?? 0)) {
+                 UPSERT $r CONTENT $row;
+                 UPDATE $r SET state_op = $cur.state_op ?? 0;
+                 DELETE conflicts_with WHERE ws = $ws AND conflict = $cid;
+                 RELATE (type::record('patch', $left))->conflicts_with->(type::record('patch', $right))
+                     SET ws = $ws, conflict = $cid;
+             } ELSE IF $cur.state = 'open' AND $cur.opened_at = 0 {
+                 UPDATE $r SET pending = array::union(pending ?? [], [$op]);
+             };
              COMMIT;",
             json!({
                 "rid": rid(ws, &c.id),
-                "row": conflict_row(ws, c)?,
+                "row": conflict_row(ws, &fresh)?,
                 "ws": ws,
                 "cid": c.id,
+                "op": op,
                 "left": rid(ws, &c.left.patch),
                 "right": rid(ws, &c.right.patch),
             }),
@@ -403,34 +510,39 @@ impl Graph for SurrealGraph {
         Ok(())
     }
 
-    async fn abandon_if_uncommitted(&self, ws: &str, id: &str) -> Result<()> {
+    async fn abandon_if_uncommitted(&self, ws: &str, id: &str, op: OpId) -> Result<()> {
         self.run(
-            "UPDATE type::record('conflict', $rid) SET state = 'abandoned' WHERE opened_at = 0;",
-            json!({ "rid": rid(ws, id) }),
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn commit_conflict(&self, ws: &str, id: &str, op: OpId) -> Result<()> {
-        self.run(
-            "UPDATE type::record('conflict', $rid) SET state = 'open', opened_at = $op;",
+            "BEGIN;
+             LET $r = type::record('conflict', $rid);
+             UPDATE $r SET pending = array::complement(pending ?? [], [$op]);
+             UPDATE $r SET state = 'abandoned'
+                 WHERE opened_at = 0 AND state = 'open' AND array::len(pending ?? []) = 0;
+             COMMIT;",
             json!({ "rid": rid(ws, id), "op": op }),
         )
         .await?;
         Ok(())
     }
 
-    async fn set_conflict_state(
-        &self,
-        ws: &str,
-        id: &str,
-        state: ConflictState,
-        resolved_by: Option<Hash>,
-    ) -> Result<()> {
+    async fn apply_conflict_effect(&self, ws: &str, e: &ConflictEffect, op: OpId) -> Result<()> {
         self.run(
-            "UPDATE type::record('conflict', $rid) SET state = $state, resolved_by = $rb;",
-            json!({ "rid": rid(ws, id), "state": state.as_str(), "rb": resolved_by }),
+            "BEGIN;
+             LET $r = type::record('conflict', $rid);
+             UPDATE $r SET opened_at = $op
+                 WHERE (state_op ?? 0) <= $op AND $after = 'open' AND opened_at = 0;
+             UPDATE $r SET
+                 state = $after,
+                 resolved_by = $rb,
+                 state_op = $op,
+                 pending = array::complement(pending ?? [], [$op])
+             WHERE (state_op ?? 0) <= $op;
+             COMMIT;",
+            json!({
+                "rid": rid(ws, &e.conflict),
+                "op": op,
+                "after": e.after.as_str(),
+                "rb": e.resolved_by_after,
+            }),
         )
         .await?;
         Ok(())
@@ -482,31 +594,5 @@ impl Graph for SurrealGraph {
             )
             .await?;
         rows.into_iter().map(conflict_from).collect()
-    }
-
-    async fn put_effects(&self, ws: &str, op: OpId, effects: &[ConflictEffect]) -> Result<()> {
-        self.run(
-            "UPSERT type::record('op_effect', $rid) CONTENT { ws: $ws, op: $op, effects: $effects };",
-            json!({ "rid": rid(ws, &op.to_string()), "ws": ws, "op": op, "effects": to_value(&effects)? }),
-        )
-        .await?;
-        Ok(())
-    }
-
-    async fn effects(&self, ws: &str, op: OpId) -> Result<Vec<ConflictEffect>> {
-        #[derive(serde::Deserialize)]
-        struct Row {
-            effects: Vec<ConflictEffect>,
-        }
-        // Not `SELECT VALUE effects`: taking an `Option` of an array result takes
-        // its first element.
-        let v: Option<Row> = self
-            .one(
-                "SELECT effects FROM ONLY type::record('op_effect', $rid);",
-                json!({ "rid": rid(ws, &op.to_string()) }),
-                0,
-            )
-            .await?;
-        Ok(v.map(|r| r.effects).unwrap_or_default())
     }
 }

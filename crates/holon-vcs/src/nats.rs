@@ -180,6 +180,33 @@ impl NatsKv {
     }
 }
 
+impl NatsKv {
+    /// Every key in the bucket with a live value — JetStream's own spelling,
+    /// which is the engine key unless it was longer than [`MAX_KEY`] (then it
+    /// is `h/<sha256>` and the original is not recoverable). An admin read: a
+    /// scan of the bucket, not for a hot path.
+    pub async fn keys(&self) -> Result<Vec<String>> {
+        use futures::TryStreamExt;
+        let keys = self.store.keys().await.map_err(VcsError::storage)?;
+        keys.try_collect().await.map_err(VcsError::storage)
+    }
+}
+
+/// Every workspace with an oplog in `log`'s bucket, sorted. A workspace whose
+/// head key was too long to store verbatim is not listed: its key is hashed.
+pub async fn workspaces(log: &KvOpLog<NatsKv>) -> Result<Vec<String>> {
+    let mut out: Vec<String> = log
+        .kv()
+        .keys()
+        .await?
+        .iter()
+        .filter_map(|k| crate::oplog::workspace_of_head_key(k))
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// The JetStream key for an engine key (see the module docs).
 pub fn kv_key(key: &str) -> Result<String> {
     let ok = !key.is_empty()

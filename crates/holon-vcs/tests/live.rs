@@ -7,13 +7,15 @@
 //!
 //! `nats-server -js -p 4333 -sd <tmpdir>` and
 //! `docker compose -f infra/compose.yaml --profile graph up -d surreal` are enough.
-//! Each test uses its own workspace id, so runs share buckets and a database
-//! without seeing each other.
+//! Each test uses its own workspace id, so runs share buckets without seeing
+//! each other; each RUN (process) uses its own SurrealDB database, so data does
+//! not pile up in the tables one run queries (it slowed the suite 4s → 8s over a
+//! few runs on one server before the indexes and this).
 #![cfg(feature = "native")]
 
 mod common;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use holon_vcs::nats::{self, NatsBlobs, NatsConfig, NatsKv};
 use holon_vcs::oplog::KvOpLog;
@@ -21,6 +23,24 @@ use holon_vcs::store::KvPointers;
 use holon_vcs::surreal::{SurrealConfig, SurrealGraph};
 
 type LiveStores = common::Stores<NatsBlobs, KvPointers<NatsKv>, SurrealGraph, KvOpLog<NatsKv>>;
+
+/// This process's database: one per run.
+fn run_database() -> String {
+    static DB: OnceLock<String> = OnceLock::new();
+    DB.get_or_init(|| {
+        let nanos =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        format!("live_{}_{nanos}", std::process::id())
+    })
+    .clone()
+}
+
+async fn graph(url: &str, database: &str) -> SurrealGraph {
+    let mut cfg = SurrealConfig::new(url);
+    cfg.namespace = "holon_vcs_test".into();
+    cfg.database = database.into();
+    SurrealGraph::connect(&cfg).await.expect("surreal")
+}
 
 async fn make(name: &str) -> Option<(LiveStores, String)> {
     let (Ok(nats_url), Ok(surreal_url)) =
@@ -35,10 +55,7 @@ async fn make(name: &str) -> Option<(LiveStores, String)> {
         std::env::var("HOLON_VCS_BUCKET_PREFIX").unwrap_or_else(|_| "holon-vcs-test".into());
     let (blobs, pointers, log) =
         nats::connect(&nats_url, &NatsConfig::prefixed(&prefix)).await.expect("nats");
-    let mut cfg = SurrealConfig::new(&surreal_url);
-    cfg.namespace = "holon_vcs_test".into();
-    cfg.database = "live".into();
-    let graph = SurrealGraph::connect(&cfg).await.expect("surreal");
+    let graph = graph(&surreal_url, &run_database()).await;
     let nanos =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let ws = format!("{name}/{}-{nanos}", std::process::id());
@@ -88,4 +105,28 @@ async fn blob_sizes() {
         assert_eq!(s.blobs.get(&h).await.unwrap().as_deref(), Some(bytes.as_slice()), "len {len}");
     }
     assert_eq!(s.blobs.get(&"0".repeat(64)).await.unwrap(), None);
+}
+
+/// The graph database is lost: an engine over the same NATS buckets and a
+/// fresh, empty database repairs it from the oplog's intents and the blobs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn graph_rebuilt_from_the_log() {
+    let Some((s, ws)) = make("rebuild").await else { return };
+    let url = std::env::var("HOLON_VCS_SURREAL_URL").unwrap();
+    let empty = graph(&url, &format!("{}_rebuilt", run_database())).await;
+    common::graph_rebuild(s, Arc::new(empty), &ws).await;
+}
+
+/// Every lookup the SurrealDB adapter makes runs off an index: `EXPLAIN` shows
+/// no table scan for any of them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn surreal_queries_use_indexes() {
+    let Some((s, _)) = make("explain").await else { return };
+    for (name, sql) in holon_vcs::surreal::INDEXED_QUERIES {
+        let plan = s.graph.explain(sql).await.unwrap().to_string();
+        let indexed = plan.contains("IndexScan") || plan.contains("Iterate Index");
+        let scans = plan.contains("TableScan") || plan.contains("Iterate Table");
+        assert!(indexed && !scans, "{name}: `{sql}` is not indexed: {plan}");
+        eprintln!("{name}: indexed");
+    }
 }

@@ -118,6 +118,20 @@ pub enum Content {
     Blob(Hash),
 }
 
+/// Where a symbol sits in its file, relative to the file's other live symbols.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Placement {
+    /// Before every other symbol of the file.
+    First,
+    /// After every other symbol of the file.
+    Last,
+    /// Immediately after this symbol (same component and path, live).
+    After(SymbolId),
+    /// Immediately before this symbol (same component and path, live).
+    Before(SymbolId),
+}
+
 /// What an edit does to its symbol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -126,6 +140,8 @@ pub enum Transformation {
     Replace(Content),
     Delete,
     Rename(String),
+    /// Same content, new place in the file.
+    Move(Placement),
 }
 
 /// One edit, as an agent submits it.
@@ -141,6 +157,15 @@ pub struct PatchRequest {
     pub depends_on: Vec<SymbolId>,
     pub implements: Vec<SymbolId>,
     pub wit_binding: Option<String>,
+    /// The oplog position the agent's view reflects (a `symbol-view`'s `as-of`,
+    /// or `oplog-head`). `None`: unknown, and `commuted` is measured from the
+    /// parent's op instead (an over-approximation).
+    #[serde(default)]
+    pub read_at: Option<OpId>,
+    /// Where a `create` goes in its file. `None` appends. Only `create` takes
+    /// one; a `move` carries its own.
+    #[serde(default)]
+    pub position: Option<Placement>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -255,6 +280,9 @@ pub struct SymbolView {
     pub dependents: Vec<SymbolId>,
     pub implements: Vec<SymbolId>,
     pub open_conflicts: Vec<ConflictId>,
+    /// The settled oplog head read before this view: every op at or below it
+    /// is reflected. Pass it back as `patch-request.read-at`.
+    pub as_of: OpId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,4 +308,81 @@ pub struct CasFailure {
     pub pointer: String,
     pub expected: Option<Hash>,
     pub actual: Option<Hash>,
+}
+
+// ---- verify / repair ----------------------------------------------------------
+
+/// A pointer, what it holds, and the op its value names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PointerState {
+    pub pointer: String,
+    pub value: Option<Hash>,
+    pub op: Option<OpId>,
+}
+
+/// An op still `pending` after the lease.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct StaleOp {
+    pub op: OpId,
+    pub age_ms: u64,
+    /// Whether its pointer write happened (repair rolls it forward) or not
+    /// (repair aborts it).
+    pub landed: bool,
+}
+
+/// A record the graph should have and does not.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingRecord {
+    /// The pointer (or conflict id) that names it.
+    pub by: String,
+    pub hash: Hash,
+}
+
+/// One way the three stores can disagree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Inconsistency {
+    /// A pointer whose value no committed op explains: it names no op, a pending
+    /// or aborted one, or one whose logged move wrote something else.
+    UnexplainedPointer(PointerState),
+    /// An op still pending past the lease.
+    StalePending(StaleOp),
+    /// A tip whose patch record the graph lacks.
+    MissingPatch(MissingRecord),
+    /// A symbol whose graph index entry is missing, or behind its pointer.
+    StaleMirror(String),
+    /// A conflict naming a patch the graph lacks.
+    DanglingConflict(MissingRecord),
+    /// An open conflict nothing committed opened, or whose `left` is no longer
+    /// its symbol's tip.
+    OrphanConflict(ConflictId),
+    /// A name reservation held for a symbol no longer called that, or a live
+    /// symbol whose name is not reserved for it.
+    StaleName(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ConsistencyReport {
+    pub workspace: WorkspaceId,
+    /// Ops read (every id in the log, whatever its state).
+    pub ops: u64,
+    /// Ops pending inside the lease — in flight, not inconsistent.
+    pub in_flight: Vec<OpId>,
+    pub issues: Vec<Inconsistency>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct RepairReport {
+    pub workspace: WorkspaceId,
+    /// Pending ops whose pointer write had happened: finished.
+    pub rolled_forward: Vec<OpId>,
+    /// Pending ops whose pointer write had not (and now cannot) happen.
+    pub aborted: Vec<OpId>,
+    /// Issues the first verify found that the second did not.
+    pub fixed: Vec<Inconsistency>,
+    /// Issues left: none, unless something outside the engine wrote a store.
+    pub remaining: Vec<Inconsistency>,
 }

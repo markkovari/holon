@@ -18,6 +18,8 @@ WORKDIR /src
 COPY reconciler ./reconciler
 COPY lattice ./lattice
 COPY comp-metadata ./comp-metadata
+# comp-vcs's engine (ADR-0099) — a path dependency of the reconciler crate.
+COPY crates ./crates
 RUN cd reconciler && cargo build --release --bin "${DAEMON}"
 
 FROM debian:bookworm-slim
