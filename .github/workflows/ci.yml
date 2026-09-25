@@ -364,7 +364,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
-      # One red workspace should not hide the state of the other two.
+      # One red workspace should not hide the state of the others.
       fail-fast: false
       matrix:
         include:
@@ -434,6 +434,17 @@ jobs:
           # installs nats-server.
           - workspace: lattice
             test-args: --lib
+          # `crates` (ADR-0099): `holon-vcs`, the agent-native code store. The
+          # default build is the pure engine over in-memory backends, and that is
+          # all `cargo test` here runs — every scenario (the two-agent commute, the
+          # conflict and its resolution, the eight-agent race, revert, the git tree
+          # id checked against `git write-tree`, CAS retries through a racing
+          # store) against `mem`. `tests/live.rs` is behind `--features native`
+          # and is not named here: it wants a real NATS and SurrealDB, and a skip
+          # that returns `ok` is a green tick for a test that did not run. The
+          # native adapters are still COMPILED and linted below, so they cannot rot.
+          - workspace: crates
+            test-args: ""
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -448,6 +459,18 @@ jobs:
         # `--lib --bins` keeps CI to what it can honestly run; the rest stay a
         # local and deliberate act.
         run: cargo test --release ${{ matrix.test-args }}
+
+      # The engine is built for BOTH targets — inside a component it is
+      # wasm32-wasip2 with no runtime and no sockets (ADR-0095) — so the core
+      # must keep compiling there, and the NATS/SurrealDB adapters behind
+      # `native` must keep compiling (and stay clippy-clean) on the host.
+      - name: Build the code store for wasm32-wasip2, and check its native adapters
+        if: matrix.workspace == 'crates'
+        working-directory: crates
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --release --target wasm32-wasip2
+          cargo clippy --all-targets --features holon-vcs/native -- -D warnings
 
       # Every app spec, checked against the renderer that will deploy it. This is
       # the one collision a single spec cannot see — two apps landing on one port,

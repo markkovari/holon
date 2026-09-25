@@ -128,6 +128,7 @@ tells you what is true now rather than what was once believed.
 | [0096](0096-a-pull-contract-needs-a-relay.md) | A pull contract needs a relay, and the relay is native | **accepted**, and built — `comp-relay`, the sixth native thing |
 | [0097](0097-a-derived-file-is-a-liability.md) | A derived file is a liability, and a name is not a fact | **accepted**, and done — `catalog.json` deleted, `reusable_as_is` read off the exports |
 | [0098](0098-photos-live-in-object-storage.md) | Photos live in object storage, and evaluation is a queue on the machine with the GPU | **accepted** — `comp-media`, `media:pipeline`, first user `photoquest` |
+| [0099](0099-an-agent-native-code-store.md) | An agent-native code store: an oplog over a commutative, symbol-level patch graph | **proposed** — contract `wit/vcs/vcs.wit`; engine + NATS/SurrealDB adapters in `crates/holon-vcs` (step two) |
 
 ## History: superseded, and kept
 

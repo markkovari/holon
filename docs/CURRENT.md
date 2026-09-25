@@ -1,9 +1,9 @@
 # The platform as it stands
 
 What runs today, what is measured, and what is honestly missing. The reasoning lives
-in [98 ADRs](adr/); this page is the map.
+in [99 ADRs](adr/); this page is the map.
 
-Last revised after ADR-0098.
+Last revised after ADR-0099.
 
 This page is about the **runtime and delivery** half of the repository — the thing
 that runs a composed component and gets it onto a machine. For the library it runs,
