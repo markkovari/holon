@@ -6,7 +6,7 @@
 #   cargo build --manifest-path crates/Cargo.toml --target wasm32-wasip2
 [workspace]
 resolver = "2"
-members = ["holon-vcs"]
+members = ["holon-vcs", "holon-park"]
 
 [workspace.package]
 version = "0.1.0"

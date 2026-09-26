@@ -14,7 +14,7 @@ plug with a message that names neither the interface nor the reason.
 Adding a *function* to an interface is compatible; adding a case to a
 *variant* or a field to a *record* is not. Both measured, not assumed.
 
-129 interfaces.
+130 interfaces.
 
 ## `actor:entity/handler@0.1.0`
 
@@ -1469,6 +1469,26 @@ Adding a *function* to an interface is compatible; adding a case to a
     select: func(entries: list<entry>) -> result<outcome, select-error>;
 
     land: func(entries: list<entry>, p: landing) -> result<opened, land-error>;
+  }
+```
+
+## `holon:park/lot@0.1.0`
+
+```wit
+  interface lot {
+    use types.{agent, call-result, outbound-call, park-error, park-result, session-id, ticket-entry, ticket-id};
+
+    park: func(session: session-id, call: outbound-call, by: agent) -> result<park-result, park-error>;
+
+    wake: func(correlation: string, answer: call-result) -> result<ticket-id, park-error>;
+
+    pending: func(session: session-id) -> result<list<ticket-entry>, park-error>;
+
+    take-ready: func(ticket: ticket-id) -> result<call-result, park-error>;
+
+    cancel: func(ticket: ticket-id, by: agent) -> result<_, park-error>;
+
+    oplog: func(session: session-id, after: option<u64>, limit: u32) -> result<list<ticket-entry>, park-error>;
   }
 ```
 

@@ -1,0 +1,33 @@
+[package]
+name = "park-gateway"
+description = "holon:park/lot as HTTP routes, for agents and tests: typed JSON in, one import call, typed JSON out (ADR-0100)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+guestio = { path = "../guestio" }
+wit-bindgen-rt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The contract's records as serde types — see park-store's Cargo.toml.
+holon-park = { path = "../../crates/holon-park" }
+
+[package.metadata.component]
+package = "holon:park-gateway"
+
+[package.metadata.component.target]
+path = "wit"
+world = "gateway"
+
+[package.metadata.component.target.dependencies]
+"holon:park" = { path = "../../wit/park" }
+"wasi:http" = { path = "../../wit/deps/wasi-http-0.2.0" }
+"wasi:io" = { path = "../../wit/deps/wasi-io-0.2.0" }
+"wasi:clocks" = { path = "../../wit/deps/wasi-clocks-0.2.0" }
+"wasi:random" = { path = "../../wit/deps/wasi-random-0.2.0" }
+"wasi:cli" = { path = "../../wit/deps/wasi-cli-0.2.0" }

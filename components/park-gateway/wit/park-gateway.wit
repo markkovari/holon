@@ -1,0 +1,10 @@
+// holon:park-gateway — the parking lot as HTTP routes (ADR-0100). Imports the
+// contract; whatever provides it (park-store, in front of comp-park) is
+// composed in.
+package holon:park-gateway;
+
+world gateway {
+    // holon:park's lot-client world, spelled out.
+    import holon:park/lot@0.1.0;
+    export wasi:http/incoming-handler@0.2.0;
+}
