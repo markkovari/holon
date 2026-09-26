@@ -338,6 +338,41 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Two of these 41 suites don't just READ the wasm artifact downloaded
+      # below — they compile a component fresh, at test-time, on whatever
+      # runner they land on:
+      #
+      #   newversion   `build()` runs a plain `cargo build -p version-probe`
+      #                and assumes `bindings.rs` already exists (it does not
+      #                generate it itself) — true in the old single job,
+      #                where `cargo xtask build --force` had already run
+      #                first on the SAME runner. False here: this job never
+      #                runs that build, so a `bindings.rs` gitignored and
+      #                never uploaded (only the compiled `.wasm` is) simply
+      #                does not exist — `error[E0583]: file not found for
+      #                module 'bindings'`, the actual failure this job's
+      #                first real (non-timeout) run hit.
+      #   slug_live    self-sufficient — it runs `cargo component check`
+      #                itself before its own `cargo build`. Needs the tool
+      #                and the target installed, same as the line above.
+      #
+      # So: the wasm target and `cargo-component` (not `wasm-tools` — neither
+      # test's own on-the-fly build invokes the metadata-stamping pass that
+      # tool is for), and one explicit bindings-generation step for
+      # `version-probe`, mirroring what `slug_live` already does for its own
+      # probe inline.
+      - name: Install the wasm target
+        run: rustup target add wasm32-wasip2
+
+      - name: Install cargo-component
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-component@0.21.1
+
+      - name: Generate bindings for version-probe (newversion's own on-the-fly build needs them already there)
+        working-directory: components
+        run: cargo component check --release -p version-probe
+
       # nats-server, and it buys more than any other line in this file.
       #
       # FORTY-ONE reconciler suites spawn a fleet, and a fleet is NATS. Without the
@@ -372,9 +407,14 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # `components -> target` too, here specifically: the bindings step
+      # above compiles inside that workspace, and without its own cache entry
+      # in THIS job it would cold-compile `version-probe` (and its deps) on
+      # every run rather than reusing the `components` job's own warm cache.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
+            components -> target
             host -> target
             reconciler -> target
             cli -> target
