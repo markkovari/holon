@@ -120,7 +120,14 @@ jobs:
     name: reconciler suites (built artifacts)
     needs: components
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30, not 20: splitting `rust-cache`'s scope out of the old single job's
+    # combined entry gave `host`/`reconciler`/`cli` a cache key that had never
+    # been saved before, so THIS job's first-ever run rebuilt all three from
+    # scratch — 6m02s and 8m23s for steps that measure 48s/45s warm — and hit a
+    # 20-minute ceiling mid-test. Not a hang: every step up to the timeout
+    # succeeded. 30 covers that one cold run; once it saves a cache under the
+    # new key, later runs should look like the warm numbers again.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -323,7 +330,11 @@ jobs:
     name: reconciler suites (fleet)
     needs: components
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30, not 20 — same reasoning as `reconciler-artifact-suites`'s own
+    # comment: a cold `host`/`reconciler`/`cli` cache under the new per-job
+    # scope, not a hang. This job hit the same ceiling mid-test for the same
+    # reason (6m02s/7m52s builds instead of 48s/45s).
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
