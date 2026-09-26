@@ -136,6 +136,10 @@ bindings::export!(Component with_types_in bindings);
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only a test builds a `Gate` question by hand; the real request path
+    // never constructs one, which is why this isn't in the file's own
+    // `use` list above.
+    use bindings::exports::jev::decision::decision::GateCriteria;
 
     #[test]
     fn a_substring_match_wins_with_high_confidence() {
