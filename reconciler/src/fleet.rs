@@ -286,6 +286,24 @@ pub fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0").expect("no free port").local_addr().unwrap().port()
 }
 
+/// Poll `addr` until something accepts a TCP connection, or panic after `within`.
+///
+/// Replaces a fixed sleep after spawning a process this fleet is about to dial: a
+/// fixed sleep either wastes time once the process is ready sooner, or is not
+/// long enough when a CI runner is slow — and on a loaded runner the latter looks
+/// identical to a process that never started at all, which is a worse failure to
+/// read than "nothing listening yet".
+fn wait_for_port(addr: &str, within: Duration) {
+    let deadline = Instant::now() + within;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect(addr).is_ok() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("nothing listening on {addr} after {within:?}");
+}
+
 impl Fleet {
     /// `specs` are authored YAML paths relative to `comp/`. `max_inflight` sets the
     /// ingress shedding bound; `None` leaves it at the default.
@@ -445,7 +463,7 @@ impl Fleet {
             &nats_port.to_string(),
         ]);
         children.push(spawn_logged("nats-server", &mut nats, &sp.join("nats.log")));
-        std::thread::sleep(Duration::from_secs(2));
+        wait_for_port(&format!("127.0.0.1:{nats_port}"), Duration::from_secs(20));
 
         // The REAL control plane instead of the stub, when asked. `comp-stub` serves
         // fixtures and nothing else, which is right for a placement test and
