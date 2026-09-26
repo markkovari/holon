@@ -116,19 +116,25 @@ async fn handle(State(cfg): State<Config>) -> Json<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-mdns", &token);
     let service_types = if args.service_type.is_empty() {
         vec!["_http._tcp.local.".to_string()]
     } else {
         args.service_type
     };
-    let cfg = Config { service_types: service_types.clone(), timeout: Duration::from_millis(args.timeout_ms) };
+    let cfg = Config {
+        service_types: service_types.clone(),
+        timeout: Duration::from_millis(args.timeout_ms),
+    };
     println!(
         "comp-mdns: listening on http://{} | browsing {:?} | timeout {}ms",
         args.addr, service_types, args.timeout_ms
     );
-    let app = Router::new().route("/discover", post(handle)).with_state(cfg)
+    let app = Router::new()
+        .route("/discover", post(handle))
+        .with_state(cfg)
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
@@ -151,7 +157,8 @@ mod tests {
     #[test]
     fn an_explicit_service_type_replaces_the_default() {
         let given = vec!["_ipp._tcp.local.".to_string()];
-        let service_types = if given.is_empty() { vec!["_http._tcp.local.".to_string()] } else { given.clone() };
+        let service_types =
+            if given.is_empty() { vec!["_http._tcp.local.".to_string()] } else { given.clone() };
         assert_eq!(service_types, given);
     }
 }

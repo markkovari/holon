@@ -2,19 +2,29 @@
 //! other backend yet (ADR-0100: NATS is the next step, not this one).
 
 use holon_park::error::ParkError;
-use holon_park::model::{Agent, CallResult, OutboundCall, ParkOutcome, TurnStatus};
 use holon_park::mem_engine;
+use holon_park::model::{Agent, CallResult, OutboundCall, ParkOutcome, TurnStatus};
 
 fn agent(id: &str) -> Agent {
     Agent::named(id)
 }
 
 fn call(correlation: &str) -> OutboundCall {
-    OutboundCall { correlation: correlation.into(), description: "test call".into(), deadline: None, poll: None }
+    OutboundCall {
+        correlation: correlation.into(),
+        description: "test call".into(),
+        deadline: None,
+        poll: None,
+    }
 }
 
 fn call_with_deadline(correlation: &str, deadline: u64) -> OutboundCall {
-    OutboundCall { correlation: correlation.into(), description: "test call".into(), deadline: Some(deadline), poll: None }
+    OutboundCall {
+        correlation: correlation.into(),
+        description: "test call".into(),
+        deadline: Some(deadline),
+        poll: None,
+    }
 }
 
 fn result(ok: bool, body: &str) -> CallResult {
@@ -128,7 +138,8 @@ async fn cancel_is_not_idempotent_past_a_terminal_state() {
 #[tokio::test]
 async fn a_ticket_past_its_deadline_reads_expired_and_stops_showing_as_pending() {
     let e = mem_engine();
-    let p = e.park(&"s1".into(), call_with_deadline("req-1", 2000), agent("a1"), 1000).await.unwrap();
+    let p =
+        e.park(&"s1".into(), call_with_deadline("req-1", 2000), agent("a1"), 1000).await.unwrap();
 
     // Before the deadline: still pending.
     let pending = e.pending(&"s1".into(), 1500).await.unwrap();
@@ -146,7 +157,10 @@ async fn a_ticket_past_its_deadline_reads_expired_and_stops_showing_as_pending()
     // A late wake still lands — expired is a read, not a terminal write.
     let woken = e.wake("req-1", result(true, "late but real"), 2600).await.unwrap();
     assert_eq!(woken.ticket, p.ticket);
-    assert!(woken.freshly_woken, "a late but real wake against a still-`parked` (only read as expired) ticket must land");
+    assert!(
+        woken.freshly_woken,
+        "a late but real wake against a still-`parked` (only read as expired) ticket must land"
+    );
     let r = e.take_ready(&p.ticket, 2700).await.unwrap();
     assert!(r.ok);
 }
@@ -169,7 +183,11 @@ async fn oplog_orders_by_park_time_and_respects_after_and_limit() {
 
     let all = e.oplog(&"s1".into(), None, 10, 4000).await.unwrap();
     let times: Vec<u64> = all.iter().map(|e| e.parked_at).collect();
-    assert_eq!(times, vec![1000, 2000, 3000], "must come back oldest first regardless of park order");
+    assert_eq!(
+        times,
+        vec![1000, 2000, 3000],
+        "must come back oldest first regardless of park order"
+    );
 
     let after = e.oplog(&"s1".into(), Some(1000), 10, 4000).await.unwrap();
     assert_eq!(after.iter().map(|e| e.parked_at).collect::<Vec<_>>(), vec![2000, 3000]);
@@ -192,7 +210,9 @@ async fn n_agents_racing_to_park_the_same_call_land_on_one_ticket() {
     for i in 0..16 {
         let e = e.clone();
         handles.push(tokio::spawn(async move {
-            e.park(&"s1".into(), call("shared"), agent(&format!("a{i}")), 1000 + i as u64).await.unwrap()
+            e.park(&"s1".into(), call("shared"), agent(&format!("a{i}")), 1000 + i as u64)
+                .await
+                .unwrap()
         }));
     }
     let mut tickets = std::collections::HashSet::new();

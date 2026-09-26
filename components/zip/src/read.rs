@@ -89,9 +89,8 @@ pub fn extract(bytes: &[u8]) -> Result<Vec<File>, ZipError> {
         let l_name = u16at(bytes, local + 26)? as usize;
         let l_extra = u16at(bytes, local + 28)? as usize;
         let start = local + 30 + l_name + l_extra;
-        let raw = bytes
-            .get(start..start + compressed)
-            .ok_or(ZipError::Truncated { at: start as u32 })?;
+        let raw =
+            bytes.get(start..start + compressed).ok_or(ZipError::Truncated { at: start as u32 })?;
 
         let data = match method {
             0 => raw.to_vec(),

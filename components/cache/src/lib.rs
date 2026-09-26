@@ -185,13 +185,10 @@ impl Guest for Component {
                 let Ok(orig) = String::from_utf8(raw) else { continue };
                 // current cached value for that key (skip if expired/gone).
                 if let Some(val) = fresh(&orig)? {
-                    match sink::store(&orig, &val) {
-                        Ok(()) => {
-                            let _ = bucket.delete(stored); // drained
-                            flushed += 1;
-                        }
-                        // retain the marker for the next flush on failure.
-                        Err(_) => {}
+                    // On failure, the marker is left for the next flush to retry.
+                    if sink::store(&orig, &val).is_ok() {
+                        let _ = bucket.delete(stored); // drained
+                        flushed += 1;
                     }
                 } else {
                     let _ = bucket.delete(stored); // value gone; drop the marker

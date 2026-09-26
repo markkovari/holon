@@ -97,10 +97,7 @@ fn advisory_state(files: &[File]) -> String {
     for (i, f) in files.iter().enumerate() {
         let header = format!("=== {} ===\n", f.path);
         if out.len() + header.len() + f.content.len() > STATE_BYTE_CAP {
-            out.push_str(&format!(
-                "=== truncated: {} more file(s) omitted ===\n",
-                files.len() - i
-            ));
+            out.push_str(&format!("=== truncated: {} more file(s) omitted ===\n", files.len() - i));
             break;
         }
         out.push_str(&header);
@@ -115,11 +112,8 @@ fn advisory_state(files: &[File]) -> String {
 /// caller is guaranteed to have filled with something short); `p.body` is the
 /// fallback, truncated, since it can be arbitrarily long free text.
 fn advisory_request(winner: &Entry, p: &Landing) -> GateRequest {
-    let goal = if !p.title.is_empty() {
-        p.title.clone()
-    } else {
-        p.body.chars().take(200).collect()
-    };
+    let goal =
+        if !p.title.is_empty() { p.title.clone() } else { p.body.chars().take(200).collect() };
     GateRequest {
         state: advisory_state(&winner.files),
         instructions: format!(
@@ -419,7 +413,10 @@ mod tests {
         let winner = entry("tight", true, 1000, 1, 10);
         let long_body = "x".repeat(500);
         let req = advisory_request(&winner, &landing("", &long_body));
-        assert!(req.instructions.len() < long_body.len(), "the body must be truncated, not echoed whole");
+        assert!(
+            req.instructions.len() < long_body.len(),
+            "the body must be truncated, not echoed whole"
+        );
     }
 
     #[test]
@@ -439,7 +436,10 @@ mod tests {
         ];
         let state = advisory_state(&files);
         assert!(!state.contains("this must not appear"));
-        assert!(state.contains("truncated"), "a truncation must say so, not look like a short file");
+        assert!(
+            state.contains("truncated"),
+            "a truncation must say so, not look like a short file"
+        );
     }
 
     #[test]

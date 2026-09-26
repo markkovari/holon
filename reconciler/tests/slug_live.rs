@@ -30,7 +30,7 @@ fn composed_slug_probe() -> Vec<u8> {
     // comes from what slug-probe actually imports, so this does not have to name
     // `slug` and cannot drift from the component (ADR-0087). It also drops a
     // requirement that the `wac` binary be on PATH to run the test suite.
-    let catalog = comp_reconciler::plug::Catalog::scan(&[rel.clone()]);
+    let catalog = comp_reconciler::plug::Catalog::scan(std::slice::from_ref(&rel));
     comp_reconciler::plug::compose("slug-probe", &catalog).expect("slug-probe composes")
 }
 

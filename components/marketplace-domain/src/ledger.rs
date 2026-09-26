@@ -32,8 +32,7 @@ fn load_entries() -> Result<Vec<doubleentry::Entry>, ()> {
         let mut lines = Vec::new();
         if let Some(raw_lines) = doc.get("lines").and_then(Value::as_array) {
             for line in raw_lines {
-                let account =
-                    line.get("account").and_then(Value::as_str).unwrap_or("").to_string();
+                let account = line.get("account").and_then(Value::as_str).unwrap_or("").to_string();
                 let amount = line.get("amount").and_then(Value::as_i64).unwrap_or(0);
                 let side = match line.get("side").and_then(Value::as_str) {
                     Some("debit") => doubleentry::Side::Debit,

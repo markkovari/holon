@@ -201,6 +201,9 @@ pub fn attribute(handles: &[String], run: &str, succeeded: bool) -> String {
 /// Only a passing verdict overwrites the winner fields. A goal five runs have
 /// failed is knowledge too — it is the count that says whether a sixth attempt is
 /// worth buying — but it is not finished work.
+// One over clippy's default threshold, each a distinct scalar this query
+// binds; a params struct would only exist to satisfy the lint.
+#[allow(clippy::too_many_arguments)]
 pub fn evaluated(
     key: &str,
     goal: &str,

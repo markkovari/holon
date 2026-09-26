@@ -1,4 +1,3 @@
-use crate::{now_secs, Reply, Route};
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::Permission;
 use crate::bindings::money::amount::arithmetic as money;
@@ -6,6 +5,7 @@ use crate::bindings::ratelimit::guard::limiter as rl;
 use crate::bindings::ratelimit::guard::limiter::LimitError;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
+use crate::{now_secs, Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -25,7 +25,9 @@ fn authorize_perm(route: &Route, action: &str) -> Result<String, Reply> {
             use crate::bindings::auth::identity::types::AuthError;
             let reply = match err {
                 AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
-                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => {
+                    Reply::err(503, "auth_unavailable")
+                }
                 _ => Reply::err(401, "unauthenticated"),
             };
             Err(reply)
@@ -38,14 +40,14 @@ fn create_invoice(route: &Route, body: &str) -> Reply {
         Ok(s) => s,
         Err(r) => return r,
     };
-    
+
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let customer = req.get("customer").and_then(Value::as_str).unwrap_or("");
     let currency = req.get("currency").and_then(Value::as_str).unwrap_or("");
     if customer.is_empty() || currency.is_empty() {
         return Reply::err(400, "invalid_invoice");
     }
-    
+
     let zero_amount = money::Amount { units: 0, currency: currency.to_string() };
     let formatted_zero = match money::format(&zero_amount) {
         Ok(s) => s,
@@ -54,7 +56,7 @@ fn create_invoice(route: &Route, body: &str) -> Reply {
     if money::parse(&formatted_zero, currency).is_err() {
         return Reply::err(400, "bad_money");
     }
-    
+
     match rl::check(&subject) {
         Ok(_) => {}
         Err(LimitError::Locked(secs)) => {
@@ -76,7 +78,11 @@ fn create_invoice(route: &Route, body: &str) -> Reply {
         "total_units": 0
     });
 
-    match records::create("invoices", &doc.to_string(), &["state".to_string(), "customer".to_string()]) {
+    match records::create(
+        "invoices",
+        &doc.to_string(),
+        &["state".to_string(), "customer".to_string()],
+    ) {
         Ok(e) => Reply::json(201, json!({"id": e.id})),
         Err(_) => Reply::err(500, "store_error"),
     }

@@ -88,9 +88,8 @@ fn mint_ticket(subject: &str) -> String {
 
 /// Whose stream is this, if the ticket is good?
 fn redeem_ticket(ticket: &str) -> Option<String> {
-    let mut parts = ticket.rsplitn(2, '.');
-    let header = parts.next()?;
-    let rest = parts.next()?;
+    let (rest, header) = ticket.rsplit_once('.')?;
+
     let (subject, expires) = rest.rsplit_once('.')?;
     if expires.parse::<u64>().ok()? < crate::remind::now() {
         return None;
@@ -310,10 +309,8 @@ pub fn stream(response_out: ResponseOutparam, route: &Route) {
             if !crate::write_all(&out, frame.as_bytes()) {
                 break;
             }
-            crate::bindings::wasi::clocks::monotonic_clock::subscribe_duration(
-                POLL_MS * 1_000_000,
-            )
-            .block();
+            crate::bindings::wasi::clocks::monotonic_clock::subscribe_duration(POLL_MS * 1_000_000)
+                .block();
         }
     }
     let _ = OutgoingBody::finish(body, None);

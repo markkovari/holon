@@ -3,9 +3,9 @@
 #[allow(warnings)]
 mod bindings;
 
-mod tickets;
-mod reply;
 mod api;
+mod reply;
+mod tickets;
 
 use bindings::exports::wasi::http::incoming_handler::{Guest, IncomingRequest, ResponseOutparam};
 

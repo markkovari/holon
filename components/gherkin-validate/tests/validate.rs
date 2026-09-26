@@ -92,7 +92,8 @@ fn a_file_with_content_but_no_feature() {
 
 #[test]
 fn two_features_in_one_file() {
-    let src = "Feature: One\n  Scenario: S\n    Given a\nFeature: Two\n  Scenario: T\n    Given b\n";
+    let src =
+        "Feature: One\n  Scenario: S\n    Given a\nFeature: Two\n  Scenario: T\n    Given b\n";
     assert_eq!(kinds(src), vec![Kind::MultipleFeatures]);
     assert_eq!(at(src)[0].0, 4, "the SECOND feature is the problem, not the first");
 }
@@ -120,7 +121,8 @@ fn a_continuation_with_nothing_to_continue() {
 
     // `*` is NOT a continuation. A file of bullets is idiomatic Gherkin, and
     // `testdata/good/star-keywords.feature` is exactly that.
-    let stars = "Feature: Stars\n  Scenario: Beautiful tonight\n    * Betelgeuse\n    * Alpha Centauri\n";
+    let stars =
+        "Feature: Stars\n  Scenario: Beautiful tonight\n    * Betelgeuse\n    * Alpha Centauri\n";
     assert!(validate(stars).is_empty(), "a bullet needs nothing above it: {:?}", validate(stars));
 }
 
@@ -421,7 +423,8 @@ fn a_real_dialect_is_declined_and_a_made_up_one_is_an_error() {
 /// argument; there is nowhere for a second to go.
 #[test]
 fn one_docstring_per_step() {
-    let src = "Feature: T\n  Scenario: S\n    Given a step\n\"\"\"\none\n\"\"\"\n\"\"\"\ntwo\n\"\"\"\n";
+    let src =
+        "Feature: T\n  Scenario: S\n    Given a step\n\"\"\"\none\n\"\"\"\n\"\"\"\ntwo\n\"\"\"\n";
     assert!(kinds(src).contains(&Kind::RepeatedDocstring), "{:?}", kinds(src));
 
     // Two steps may each have one.
@@ -432,7 +435,8 @@ fn one_docstring_per_step() {
 /// `testdata/bad/unexpected_eof.feature` is a feature, a blank line, and a tag.
 #[test]
 fn a_tag_with_nothing_to_tag() {
-    let src = "Feature: T\n\n  Scenario Outline: minimalistic\n    Given the minimalism\n\n    @tag\n";
+    let src =
+        "Feature: T\n\n  Scenario Outline: minimalistic\n    Given the minimalism\n\n    @tag\n";
     assert!(kinds(src).contains(&Kind::DanglingTag), "{:?}", kinds(src));
 
     // A tag that does tag something is fine.
@@ -445,7 +449,8 @@ fn a_tag_with_nothing_to_tag() {
 /// disagree with the reference about validity, and be useless as a gate.
 #[test]
 fn what_parses_is_a_warning_and_what_does_not_is_an_error() {
-    let parses_but_pointless = "Feature: T\n  Scenario: Empty\n  Scenario Outline: O\n    Given a\n";
+    let parses_but_pointless =
+        "Feature: T\n  Scenario: Empty\n  Scenario Outline: O\n    Given a\n";
     let p = validate(parses_but_pointless);
     assert!(!p.is_empty());
     assert!(

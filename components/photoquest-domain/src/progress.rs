@@ -84,11 +84,10 @@ pub(crate) fn store_err() -> Reply {
     Reply::err(500, "store_error")
 }
 
+type EntryDoc = (records::Entry, Map<String, Value>);
+
 /// `Some((entry, doc))`, `None` for a missing record, `Err` for a store failure.
-pub(crate) fn load(
-    collection: &str,
-    id: &str,
-) -> Result<Option<(records::Entry, Map<String, Value>)>, Reply> {
+pub(crate) fn load(collection: &str, id: &str) -> Result<Option<EntryDoc>, Reply> {
     if !valid_id(id) {
         return Ok(None);
     }
@@ -435,9 +434,12 @@ fn journey(route: &Route, id: &str) -> Reply {
     Reply::json(200, Value::Object(v))
 }
 
+/// A quest and its journey, both as decoded documents.
+type QuestJourney = (Map<String, Value>, Map<String, Value>);
+
 /// A quest a photographer may see: not a draft, in a published journey.
 /// `(quest, journey)`, or None (→ 404).
-fn visible_quest(id: &str) -> Result<Option<(Map<String, Value>, Map<String, Value>)>, Reply> {
+fn visible_quest(id: &str) -> Result<Option<QuestJourney>, Reply> {
     let Some((_, q)) = load(QUESTS, id)? else { return Ok(None) };
     if str_of(&q, "state") == "draft" {
         return Ok(None);

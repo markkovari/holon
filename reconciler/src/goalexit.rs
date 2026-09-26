@@ -55,7 +55,9 @@ pub fn failure_reason(code: Option<i32>) -> String {
     match code {
         // Same words this daemon printed before this module existed, kept
         // verbatim: the goal needs work, not a retry.
-        Some(EXHAUSTED) => "no branch passed the gate — the goal needs work, not a retry".to_string(),
+        Some(EXHAUSTED) => {
+            "no branch passed the gate — the goal needs work, not a retry".to_string()
+        }
         // "nothing was spent" is the load-bearing half. It is what tells the
         // reader not to treat this like a search result, and it is what the
         // held-out test asserts on.

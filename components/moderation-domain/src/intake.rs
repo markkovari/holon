@@ -1,10 +1,10 @@
-use crate::{now_secs, Reply, Route};
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::Permission;
 use crate::bindings::ratelimit::guard::limiter as rl;
 use crate::bindings::ratelimit::guard::limiter::LimitError;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
+use crate::{now_secs, Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -24,7 +24,9 @@ fn authorize_perm(route: &Route, action: &str) -> Result<String, Reply> {
             use crate::bindings::auth::identity::types::AuthError;
             let reply = match err {
                 AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
-                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => {
+                    Reply::err(503, "auth_unavailable")
+                }
                 _ => Reply::err(401, "unauthenticated"),
             };
             Err(reply)
@@ -60,7 +62,8 @@ fn create_item(route: &Route, body: &str) -> Reply {
         "author": subject,
         "state": "pending",
         "submitted_at": guestfmt::rfc3339(now_secs())
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("items", &doc, &["state".to_string(), "author".to_string()]) {
         Ok(e) => Reply::json(201, json!({"id": e.id})),

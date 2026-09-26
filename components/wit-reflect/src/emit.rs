@@ -67,7 +67,7 @@ pub(crate) fn plug_script(plan: &CompositionPlan, out_dir: &str) -> String {
     let built: BTreeSet<&str> = plan.steps.iter().map(|st| st.socket.as_str()).collect();
     let path_of = |id: &str| -> String {
         if built.contains(id) {
-            format!("\"$OUT/{}\"", format!("{}.composed.wasm", artifact_stem(id)))
+            format!("\"$OUT/{}.composed.wasm\"", artifact_stem(id))
         } else {
             format!("\"$REL/{}.wasm\"", artifact_stem(id))
         }
@@ -139,9 +139,9 @@ pub(crate) fn wac_file(
     s.push_str("//   wac compose composition.wac \\\n");
     for node in nodes {
         s.push_str(&format!(
-            "//     --dep {}={} \\\n",
+            "//     --dep {}=components/target/wasm32-wasip2/release/{}.wasm \\\n",
             wac_package(node),
-            format!("components/target/wasm32-wasip2/release/{}.wasm", artifact_stem(&node.id))
+            artifact_stem(&node.id)
         ));
     }
     s.push_str("//     -o composed.wasm\n\n");

@@ -88,7 +88,7 @@ fn without_version(iface: &str) -> &str {
 fn no_component_reaches_for_a_host_capability_nobody_granted() {
     let root = repo_root();
     let dir = root.join("components/target/wasm32-wasip2/release");
-    let catalog = Catalog::scan(&[dir.clone()]);
+    let catalog = Catalog::scan(std::slice::from_ref(&dir));
     assert!(
         catalog.names().count() > 100,
         "only {} components in {} — run `cargo xtask build --force` first",

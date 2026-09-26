@@ -162,7 +162,8 @@ fn post(body: &[u8]) -> Result<(u16, Vec<u8>), String> {
     let _ = opts.set_first_byte_timeout(Some(180_000_000_000));
     let _ = opts.set_between_bytes_timeout(Some(180_000_000_000));
 
-    let fut = outgoing_handler::handle(req, Some(opts)).map_err(|err| format!("handle: {err:?}"))?;
+    let fut =
+        outgoing_handler::handle(req, Some(opts)).map_err(|err| format!("handle: {err:?}"))?;
     fut.subscribe().block();
     let resp = fut
         .get()
@@ -238,17 +239,13 @@ impl Guest for Component {
             json_str(&prompt),
         );
 
-        let (status, bytes) = post(body.as_bytes())
-            .map_err(|e| DescribeError::ProviderUnavailable(e))?;
+        let (status, bytes) = post(body.as_bytes()).map_err(DescribeError::ProviderUnavailable)?;
 
         let parsed: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| DescribeError::BadResponse(format!("not json: {e}")))?;
 
         if status != 200 {
-            let detail = parsed["error"]["message"]
-                .as_str()
-                .unwrap_or("no message")
-                .to_string();
+            let detail = parsed["error"]["message"].as_str().unwrap_or("no message").to_string();
             // The status decides which error, because what a caller should DO differs:
             // 401/403 is a deployment problem, 429 and 5xx are worth retrying, and a
             // 400 is this request.

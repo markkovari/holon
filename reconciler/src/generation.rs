@@ -965,6 +965,10 @@ pub fn with_contract(plan: &Value, body: &str, version: u32) -> Value {
 /// **Nothing blocks inside a round.** Parts run concurrently, requests accumulate,
 /// and the only place a contract can move is between rounds (ADR-0086). Two parts
 /// waiting on each other is therefore not a state this can reach.
+// Three over clippy's default threshold; each is a distinct axis of the
+// search (the driver, the contract, its bounds, the two per-round callbacks)
+// documented above, not a struct's fields waiting to be extracted.
+#[allow(clippy::too_many_arguments)]
 pub fn compose_search<F, S>(
     driver_url: &str,
     host: &str,

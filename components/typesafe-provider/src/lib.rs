@@ -248,8 +248,13 @@ impl Guest for Component {
             return Err(DecisionError::InvalidRequest("no instructions given".into()));
         }
         let key = ready(&req.state)?;
-        let body =
-            codec::gate_body(&model(), &req.state, &req.instructions, &req.true_hint, &req.false_hint);
+        let body = codec::gate_body(
+            &model(),
+            &req.state,
+            &req.instructions,
+            &req.true_hint,
+            &req.false_hint,
+        );
         let (status, resp) = post_json("/v1/systemone", &key, body.as_bytes())?;
         if !(200..300).contains(&status) {
             return Err(status_error(status, &resp));
@@ -288,31 +293,32 @@ impl Guest for Component {
             .into_iter()
             .map(|(id, outcome)| Answered {
                 id,
-                outcome: outcome.map(|a| match a {
-                    codec::AnswerSpec::Choice(p) => AnswerKind::Choice(ChoiceResult {
-                        selected: p.selected,
-                        confidence: p.confidence,
-                        distribution: p
-                            .distribution
-                            .into_iter()
-                            .map(|(label, score)| OptionScore { label, score })
-                            .collect(),
-                        flat: p.flat,
-                    }),
-                    codec::AnswerSpec::Score(p) => AnswerKind::Score(ScoreResult {
-                        value: p.value,
-                        confidence: p.confidence,
-                        distribution: p
-                            .distribution
-                            .into_iter()
-                            .map(|(label, score)| OptionScore { label, score })
-                            .collect(),
-                    }),
-                    codec::AnswerSpec::Gate(probability) => {
-                        AnswerKind::Gate(GateResult { probability })
-                    }
-                })
-                .map_err(parse_err),
+                outcome: outcome
+                    .map(|a| match a {
+                        codec::AnswerSpec::Choice(p) => AnswerKind::Choice(ChoiceResult {
+                            selected: p.selected,
+                            confidence: p.confidence,
+                            distribution: p
+                                .distribution
+                                .into_iter()
+                                .map(|(label, score)| OptionScore { label, score })
+                                .collect(),
+                            flat: p.flat,
+                        }),
+                        codec::AnswerSpec::Score(p) => AnswerKind::Score(ScoreResult {
+                            value: p.value,
+                            confidence: p.confidence,
+                            distribution: p
+                                .distribution
+                                .into_iter()
+                                .map(|(label, score)| OptionScore { label, score })
+                                .collect(),
+                        }),
+                        codec::AnswerSpec::Gate(probability) => {
+                            AnswerKind::Gate(GateResult { probability })
+                        }
+                    })
+                    .map_err(parse_err),
             })
             .collect())
     }

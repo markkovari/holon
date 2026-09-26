@@ -358,10 +358,8 @@ fn goal_transitions_appear_on_the_event_log_and_acking_advances_the_offset() {
     // back, because acking is what stops a consumer re-reading history.
     let ids: Vec<String> =
         events.iter().map(|e| e["id"].as_str().unwrap_or_default().to_string()).collect();
-    let (code, v) = api.post(
-        "/api/projects/widgets/events/ack",
-        json!({ "group": "watcher", "ids": ids }),
-    );
+    let (code, v) =
+        api.post("/api/projects/widgets/events/ack", json!({ "group": "watcher", "ids": ids }));
     assert_eq!(code, 200, "acking failed: {v}");
     assert_eq!(v["acked"], json!(3));
 
@@ -715,7 +713,8 @@ fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_
     // Finish the parts and the parent may finish. `failed` counts as finished
     // here: it is terminal, and a parent held open forever by a part that can
     // never move is worse than one that closes over a failure.
-    for p in [&back] {
+    {
+        let p = &back;
         api.post(&format!("/api/goals/{p}/start"), json!({}));
         api.post(&format!("/api/goals/{p}/review"), json!({}));
         api.post(&format!("/api/goals/{p}/done"), json!({}));

@@ -177,7 +177,8 @@ fn open_dispute(route: &Route, order_id: &str, body: &str) -> Reply {
         "jev_recommendation": jev_recommendation,
         "jev_confidence": jev_confidence,
     });
-    let entry = match records::create("disputes", &document.to_string(), &["order_id".to_string()]) {
+    let entry = match records::create("disputes", &document.to_string(), &["order_id".to_string()])
+    {
         Ok(entry) => entry,
         Err(_) => return Reply::err(500, "store_error"),
     };

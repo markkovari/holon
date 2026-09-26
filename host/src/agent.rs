@@ -652,11 +652,10 @@ async fn start(
         }
     }
 
-    agent
-        .instances
-        .write()
-        .unwrap()
-        .insert(id.clone(), Arc::new(Instance { scope: scope.clone(), cache_backing, pre, remotes, count }));
+    agent.instances.write().unwrap().insert(
+        id.clone(),
+        Arc::new(Instance { scope: scope.clone(), cache_backing, pre, remotes, count }),
+    );
     if let Some(host) = ingress_host {
         crate::sync::writing(&agent.routes).insert(host.to_ascii_lowercase(), id.clone());
     }

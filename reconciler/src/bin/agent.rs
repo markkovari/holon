@@ -191,13 +191,11 @@ fn sweep(lock_url: &str, dry: bool) -> Result<usize, String> {
         }
         let tool = match &oci {
             Some(p) => p.clone(),
-            None => match which_oci() {
-                Ok(p) => {
-                    oci = Some(p.clone());
-                    p
-                }
-                Err(e) => return Err(e),
-            },
+            None => {
+                let p = which_oci()?;
+                oci = Some(p.clone());
+                p
+            }
         };
         if let Err(e) = update(&tool, &desired.registry, &desired.scheme, app, digest) {
             // One app failing must not stop the others: they are unrelated services

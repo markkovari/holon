@@ -85,7 +85,12 @@ fn get_report(route: &Route, id: &str) -> Reply {
     let entry = guestauth::guest_get_or_404!("reports", id);
     let mut report: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let employee = report.get("employee").and_then(Value::as_str).unwrap_or("").to_string();
-    guestauth::guest_deny_unless!(owns_or_admin("view", &principal, &employee), principal, "report.view", id);
+    guestauth::guest_deny_unless!(
+        owns_or_admin("view", &principal, &employee),
+        principal,
+        "report.view",
+        id
+    );
     if let Value::Object(ref mut m) = report {
         m.insert("id".to_string(), json!(entry.id));
     }

@@ -38,7 +38,10 @@ use serde_json::{json, Value};
 use tokio::process::Command;
 
 #[derive(Parser)]
-#[command(name = "comp-wireguard", about = "Report WireGuard tunnel status, for a component that cannot look.")]
+#[command(
+    name = "comp-wireguard",
+    about = "Report WireGuard tunnel status, for a component that cannot look."
+)]
 struct Args {
     /// Shared secret a caller must send as `Authorization: Bearer
     /// <token>`. Loopback binding alone is not a boundary — see
@@ -145,7 +148,8 @@ async fn status(State(d): State<std::sync::Arc<Daemon>>) -> Json<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-wireguard", &token);
     if args.allow_interface.is_empty() {
         eprintln!(
@@ -159,7 +163,9 @@ async fn main() -> Result<()> {
         args.allow_interface.len()
     );
     let state = std::sync::Arc::new(Daemon { allowed: args.allow_interface });
-    let app = Router::new().route("/status", post(status)).with_state(state)
+    let app = Router::new()
+        .route("/status", post(status))
+        .with_state(state)
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;

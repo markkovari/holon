@@ -259,10 +259,8 @@ impl Guest for Component {
                     //
                     // `id` is not a check id; no check ran. Named so the model reads
                     // it as being about the answer and not about the code.
-                    previous = vec![agent::Failure {
-                        id: "answer-format".into(),
-                        detail: m.clone(),
-                    }];
+                    previous =
+                        vec![agent::Failure { id: "answer-format".into(), detail: m.clone() }];
                     // Cost travels with a candidate, and there is none. What this
                     // burned is invisible to `spent`; `max-attempts` is what
                     // bounds it.

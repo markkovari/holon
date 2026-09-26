@@ -49,7 +49,9 @@ fn capgraph(format: &str) -> Option<Vec<u8>> {
         .output()
         .expect("comp-capgraph did not run");
     if !out.status.success() {
-        eprintln!("SKIPPED: comp-capgraph refused --format {format} — run `cargo xtask build --force`");
+        eprintln!(
+            "SKIPPED: comp-capgraph refused --format {format} — run `cargo xtask build --force`"
+        );
         return None;
     }
     Some(out.stdout)

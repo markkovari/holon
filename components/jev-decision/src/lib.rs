@@ -25,8 +25,8 @@
 mod bindings;
 
 use bindings::exports::jev::decision::decision::{
-    AnswerKind, Answered, ChoiceRequest, ChoiceResult, DecisionError, GateCriteria, GateRequest,
-    GateResult, Guest, OptionScore, Question, QuestionKind, ScoreRequest, ScoreResult,
+    AnswerKind, Answered, ChoiceRequest, ChoiceResult, DecisionError, GateRequest, GateResult,
+    Guest, OptionScore, Question, QuestionKind, ScoreRequest, ScoreResult,
 };
 
 struct Component;
@@ -136,6 +136,10 @@ bindings::export!(Component with_types_in bindings);
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Only a test builds a `Gate` question by hand; the real request path
+    // never constructs one, which is why this isn't in the file's own
+    // `use` list above.
+    use bindings::exports::jev::decision::decision::GateCriteria;
 
     #[test]
     fn a_substring_match_wins_with_high_confidence() {
@@ -166,8 +170,11 @@ mod tests {
 
     #[test]
     fn empty_options_are_rejected() {
-        let req =
-            ChoiceRequest { state: "anything".into(), instructions: "classify".into(), options: vec![] };
+        let req = ChoiceRequest {
+            state: "anything".into(),
+            instructions: "classify".into(),
+            options: vec![],
+        };
         assert!(matches!(choose_impl(&req), Err(DecisionError::InvalidRequest(_))));
     }
 
@@ -185,7 +192,11 @@ mod tests {
 
     #[test]
     fn fewer_than_two_levels_is_rejected() {
-        let req = ScoreRequest { state: "x".into(), instructions: "rate".into(), levels: vec!["only".into()] };
+        let req = ScoreRequest {
+            state: "x".into(),
+            instructions: "rate".into(),
+            levels: vec!["only".into()],
+        };
         assert!(matches!(score_impl(&req), Err(DecisionError::InvalidRequest(_))));
     }
 
@@ -212,7 +223,10 @@ mod tests {
             Question {
                 id: "b".into(),
                 instructions: "is this urgent?".into(),
-                kind: QuestionKind::Gate(GateCriteria { true_hint: "".into(), false_hint: "".into() }),
+                kind: QuestionKind::Gate(GateCriteria {
+                    true_hint: "".into(),
+                    false_hint: "".into(),
+                }),
             },
         ];
         let out = Component::evaluate("route to clinic-domain".into(), questions).unwrap();

@@ -106,7 +106,10 @@ fn check_currency(quotes: &[&Quote]) -> Result<(), PriceError> {
         match expected {
             None => expected = Some(&q.currency),
             Some(e) if e != &q.currency => {
-                return Err(PriceError::MixedCurrency { expected: e.clone(), found: q.currency.clone() })
+                return Err(PriceError::MixedCurrency {
+                    expected: e.clone(),
+                    found: q.currency.clone(),
+                })
             }
             _ => {}
         }
@@ -176,7 +179,9 @@ pub fn series(
     let mut points = Vec::with_capacity(times.len());
     for t in times {
         match at(quotes, kind, t) {
-            Ok(obs) => points.push(Point { at: t, unit_minor: obs.unit_minor, carried: obs.carried }),
+            Ok(obs) => {
+                points.push(Point { at: t, unit_minor: obs.unit_minor, carried: obs.carried })
+            }
             Err(PriceError::NotYetPriced) => {}
             Err(e) => return Err(e),
         }
@@ -231,14 +236,20 @@ fn quotes_in(qs: &[w::Quote]) -> Vec<Quote> {
 fn err_out(e: PriceError) -> w::PriceError {
     match e {
         PriceError::NotYetPriced => w::PriceError::NotYetPriced,
-        PriceError::MixedCurrency { expected, found } => w::PriceError::MixedCurrency((expected, found)),
+        PriceError::MixedCurrency { expected, found } => {
+            w::PriceError::MixedCurrency((expected, found))
+        }
         PriceError::ZeroStep => w::PriceError::ZeroStep,
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 impl w::Guest for Component {
-    fn at(quotes: Vec<w::Quote>, kind: w::QuoteKind, at: u64) -> Result<w::Observed, w::PriceError> {
+    fn at(
+        quotes: Vec<w::Quote>,
+        kind: w::QuoteKind,
+        at: u64,
+    ) -> Result<w::Observed, w::PriceError> {
         crate::at(&quotes_in(&quotes), kind_in(kind), at)
             .map(|o| w::Observed {
                 unit_minor: o.unit_minor,

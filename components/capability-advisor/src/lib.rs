@@ -146,7 +146,9 @@ guestio::guest_write_all!();
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
         Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
-        Outcome::Bad(msg) => respond(response_out, 400, json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::Bad(msg) => {
+            respond(response_out, 400, json!({ "error": msg }).to_string().as_bytes())
+        }
         Outcome::NotFound => respond(response_out, 404, b"{\"error\":\"not_found\"}"),
     }
 }

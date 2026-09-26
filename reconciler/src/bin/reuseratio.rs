@@ -41,7 +41,10 @@ fn measured_root(repo: &Path) -> PathBuf {
 }
 
 #[derive(Parser)]
-#[command(name = "comp-reuse-ratio", about = "What a goal's app is made of, and how much of it the run had to write")]
+#[command(
+    name = "comp-reuse-ratio",
+    about = "What a goal's app is made of, and how much of it the run had to write"
+)]
 struct Args {
     /// Goal spec paths, e.g. `.comp/goals/triage-assist.toml.archived`.
     goals: Vec<String>,
@@ -138,8 +141,10 @@ fn wired_peers(surreal: &Surreal, crate_name: &str) -> Vec<String> {
 /// The interfaces `crate_name`'s compiled artifact imports — `comp-capgraph`'s
 /// `imports` edges, read out of the binary the same way `wasm-tools` did.
 fn imported_interfaces(surreal: &Surreal, crate_name: &str) -> Vec<String> {
-    let rows =
-        surreal.query(&format!("SELECT ->imports->interface.name AS imported FROM {};", rid("artifact", crate_name)));
+    let rows = surreal.query(&format!(
+        "SELECT ->imports->interface.name AS imported FROM {};",
+        rid("artifact", crate_name)
+    ));
     first_array(&rows, "imported").into_iter().map(String::from).collect()
 }
 
@@ -174,7 +179,10 @@ fn report(root: &Path, surreal: &Surreal, goal_path: &str) -> Option<Row> {
     // which is true and meaningless. Say so rather than print it as a result.
     let stub_count = written_files
         .iter()
-        .filter(|w| std::fs::read_to_string(root.join(w)).is_ok_and(|c| c.contains(r#"501, "not_implemented""#)))
+        .filter(|w| {
+            std::fs::read_to_string(root.join(w))
+                .is_ok_and(|c| c.contains(r#"501, "not_implemented""#))
+        })
         .count();
     if stub_count > 0 {
         println!("\n=== {title}");
@@ -200,7 +208,11 @@ fn report(root: &Path, surreal: &Surreal, goal_path: &str) -> Option<Row> {
         ratio * 100.0,
         reused / written
     );
-    println!("  CAPABILITIES artifact imports {} interface(s): {}", called.len(), called.join(", "));
+    println!(
+        "  CAPABILITIES artifact imports {} interface(s): {}",
+        called.len(),
+        called.join(", ")
+    );
     Some(Row { reused, written })
 }
 
@@ -215,7 +227,8 @@ fn main() {
 
     let rows: Vec<Row> = args.goals.iter().filter_map(|g| report(&root, &surreal, g)).collect();
     if rows.len() > 1 {
-        let (tr, tw) = rows.iter().fold((0usize, 0usize), |(a, b), r| (a + r.reused, b + r.written));
+        let (tr, tw) =
+            rows.iter().fold((0usize, 0usize), |(a, b), r| (a + r.reused, b + r.written));
         println!(
             "\n=== all {} app(s): reused {tr} components, written {tw} components, ratio {:.1}%",
             rows.len(),

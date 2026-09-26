@@ -35,8 +35,6 @@ use comp_reconciler::fleet::repo_root;
 use regex::Regex;
 use serde::Serialize;
 
-
-
 #[derive(Serialize)]
 struct ConfigKey {
     name: String,
@@ -273,8 +271,6 @@ impl Regexes {
         }
     }
 }
-
-
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = repo_root();

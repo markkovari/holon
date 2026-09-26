@@ -131,7 +131,12 @@ fn delete_post(route: &Route, id: &str) -> Reply {
     let entry = guestauth::guest_get_or_404!("posts", id);
     let post: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let author = post.get("author").and_then(Value::as_str).unwrap_or("").to_string();
-    guestauth::guest_deny_unless!(owns_or_admin("delete", &principal, &author), principal, "post.delete", id);
+    guestauth::guest_deny_unless!(
+        owns_or_admin("delete", &principal, &author),
+        principal,
+        "post.delete",
+        id
+    );
     match records::delete("posts", id) {
         Ok(()) => {
             audit("post.delete", "allow", &principal.subject, id);

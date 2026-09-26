@@ -76,11 +76,26 @@ impl ParkStore for MemParkStore {
     }
 
     async fn index_session(&self, session: &str, ticket: &str) -> Result<()> {
-        self.s.lock().unwrap().by_session.entry(session.to_string()).or_default().insert(ticket.to_string());
+        self.s
+            .lock()
+            .unwrap()
+            .by_session
+            .entry(session.to_string())
+            .or_default()
+            .insert(ticket.to_string());
         Ok(())
     }
 
     async fn list_session(&self, session: &str) -> Result<Vec<TicketId>> {
-        Ok(self.s.lock().unwrap().by_session.get(session).cloned().unwrap_or_default().into_iter().collect())
+        Ok(self
+            .s
+            .lock()
+            .unwrap()
+            .by_session
+            .get(session)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .collect())
     }
 }

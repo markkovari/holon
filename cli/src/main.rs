@@ -345,7 +345,11 @@ enum NodeCmd {
 }
 
 fn default_goald_format() -> GoaldFormat {
-    if cfg!(target_os = "macos") { GoaldFormat::Launchd } else { GoaldFormat::Systemd }
+    if cfg!(target_os = "macos") {
+        GoaldFormat::Launchd
+    } else {
+        GoaldFormat::Systemd
+    }
 }
 
 #[derive(Subcommand)]
@@ -612,15 +616,18 @@ fn main() -> Result<()> {
             let spec = load_goald(&spec)?;
             std::fs::create_dir_all(&out)?;
             let (path, contents, install_hint) = match format {
-                GoaldFormat::Systemd => (
-                    out.join(format!("comp-goald-{}.service", spec.project)),
-                    render_goald_unit(&spec, &Layout::default()),
-                    format!(
-                        "sudo cp {p} /etc/systemd/system/ && sudo systemctl enable --now {n}",
-                        p = out.join(format!("comp-goald-{}.service", spec.project)).display(),
-                        n = format!("comp-goald-{}.service", spec.project)
-                    ),
-                ),
+                GoaldFormat::Systemd => {
+                    let unit_name = format!("comp-goald-{}.service", spec.project);
+                    let unit_path = out.join(&unit_name);
+                    (
+                        unit_path.clone(),
+                        render_goald_unit(&spec, &Layout::default()),
+                        format!(
+                            "sudo cp {} /etc/systemd/system/ && sudo systemctl enable --now {unit_name}",
+                            unit_path.display()
+                        ),
+                    )
+                }
                 GoaldFormat::Launchd => {
                     let label = format!("dev.holon.goald.{}", spec.project);
                     let plist = out.join(format!("{label}.plist"));
@@ -752,7 +759,10 @@ fn main() -> Result<()> {
             }
             let dir = out.join(&f.ingress.host);
             std::fs::create_dir_all(&dir)?;
-            std::fs::write(dir.join("comp-ingress.service"), fleet::render_ingress_unit(&f, &layout))?;
+            std::fs::write(
+                dir.join("comp-ingress.service"),
+                fleet::render_ingress_unit(&f, &layout),
+            )?;
             println!("{}", dir.display());
 
             eprintln!(
@@ -788,4 +798,3 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
-

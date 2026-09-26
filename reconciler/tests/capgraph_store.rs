@@ -498,7 +498,7 @@ fn a_rebuild_adds_a_generation_and_removes_none() {
     let row = first.as_array().and_then(|a| a.first().cloned()).unwrap_or_default();
     assert_eq!(
         row["artifacts"].as_u64(),
-        Some(derived_after_one as u64),
+        Some(derived_after_one),
         "generation 1's counts changed after later builds — the row is not immutable"
     );
 }

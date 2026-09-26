@@ -92,16 +92,38 @@ macro_rules! variant {
 
 record!(Agent { id, goal, model });
 variant!(SymbolKind {
-    Module, Function, Method, StructItem, EnumItem, TraitItem, ImplBlock, Constant,
-    StaticItem, TypeAlias, MacroItem, WitInterface, WitWorld, WitType, File,
+    Module,
+    Function,
+    Method,
+    StructItem,
+    EnumItem,
+    TraitItem,
+    ImplBlock,
+    Constant,
+    StaticItem,
+    TypeAlias,
+    MacroItem,
+    WitInterface,
+    WitWorld,
+    WitType,
+    File,
 });
 record!(SymbolId { component, path, name, kind });
 variant!(Content { Inline(x), Blob(x) });
 variant!(Placement { First, Last, After(x), Before(x) });
 variant!(Transformation { Create(x), Replace(x), Delete, Rename(x), Move(x) });
 record!(PatchRequest {
-    workspace, symbol, parent, change, agent, message, depends_on, implements, wit_binding,
-    read_at, position,
+    workspace,
+    symbol,
+    parent,
+    change,
+    agent,
+    message,
+    depends_on,
+    implements,
+    wit_binding,
+    read_at,
+    position,
 });
 variant!(PatchOutcome { Applied, Commuted, Conflicted, Duplicate });
 record!(CommitResult { patch, op, outcome, tip, commuted_with, conflict });
@@ -114,7 +136,15 @@ variant!(OpKind { Apply(x), Resolve(x), Revert(x) });
 record!(OpEntry { id, workspace, at, agent, kind, moves });
 variant!(SymbolQuery { Symbol(x), Component(x) });
 record!(SymbolView {
-    id, tip, content, author, wit_binding, depends_on, dependents, implements, open_conflicts,
+    id,
+    tip,
+    content,
+    author,
+    wit_binding,
+    depends_on,
+    dependents,
+    implements,
+    open_conflicts,
     as_of,
 });
 record!(TreeEntry { path, blob, executable });
@@ -150,7 +180,9 @@ impl ToModel for t::VcsError {
     fn to_model(self) -> VcsError {
         match self {
             t::VcsError::StorageError(s) => VcsError::Storage(s),
-            t::VcsError::ConcurrentModification(c) => VcsError::ConcurrentModification(c.to_model()),
+            t::VcsError::ConcurrentModification(c) => {
+                VcsError::ConcurrentModification(c.to_model())
+            }
             t::VcsError::UnresolvedConflict(ids) => VcsError::UnresolvedConflict(ids),
             t::VcsError::SymbolNotFound(id) => VcsError::SymbolNotFound(id.to_model()),
             t::VcsError::NameTaken(id) => VcsError::NameTaken(id.to_model()),

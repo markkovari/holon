@@ -11,9 +11,9 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::audit::log::types::{AuditError, Event};
 use bindings::exports::audit::log::query::Guest as Query;
 use bindings::exports::audit::log::recorder::Guest as Recorder;
+use bindings::exports::audit::log::types::{AuditError, Event};
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::keyvalue::store as kv;
 use bindings::wasi::random::random::get_random_bytes;

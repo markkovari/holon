@@ -111,7 +111,9 @@ fn route(func: &str, body: &[u8]) -> Result<Answer, Answer> {
             let r: wire::OplogRequest = parse(body)?;
             answer(store::oplog(&r.session, r.after, r.limit))
         }
-        other => (404, to_json(&wire::ErrorBody::new("not-found", format!("no route /v1/{other}")))),
+        other => {
+            (404, to_json(&wire::ErrorBody::new("not-found", format!("no route /v1/{other}"))))
+        }
     })
 }
 
@@ -134,10 +136,15 @@ impl Guest for Component {
                 Ok(bytes) => dispatch(func, &bytes),
                 Err(()) => (
                     413,
-                    to_json(&wire::ErrorBody::new("bad-request", format!("the body is over {MAX_BODY_BYTES} bytes, or its read failed"))),
+                    to_json(&wire::ErrorBody::new(
+                        "bad-request",
+                        format!("the body is over {MAX_BODY_BYTES} bytes, or its read failed"),
+                    )),
                 ),
             },
-            _ => (404, to_json(&wire::ErrorBody::new("not-found", format!("no route {route_path}")))),
+            _ => {
+                (404, to_json(&wire::ErrorBody::new("not-found", format!("no route {route_path}"))))
+            }
         };
         emit(response_out, status, &body);
     }
@@ -185,7 +192,10 @@ mod tests {
     #[test]
     fn import_refusals_are_written_as_the_daemon_writes_them() {
         let (s, v) = refusal(t::ParkError::NotFound("t1".into()));
-        assert_eq!((s, v["error"].as_str(), v["detail"].as_str()), (404, Some("not-found"), Some("t1")));
+        assert_eq!(
+            (s, v["error"].as_str(), v["detail"].as_str()),
+            (404, Some("not-found"), Some("t1"))
+        );
         let (s, v) = refusal(t::ParkError::AlreadyClosed("t1".into()));
         assert_eq!((s, v["error"].as_str()), (409, Some("already-closed")));
         let (s, v) = refusal(t::ParkError::StorageError("comp-park at …: http".into()));

@@ -61,10 +61,12 @@ async fn handle(Json(req): Json<NotifyReq>) -> Json<Value> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-uinotify", &token);
     println!("comp-uinotify: listening on http://{}", args.addr);
-    let app = Router::new().route("/notify", post(handle))
+    let app = Router::new()
+        .route("/notify", post(handle))
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;

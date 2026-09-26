@@ -1,4 +1,3 @@
-use crate::{ledger, Reply, Route};
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::{AuthError, Permission};
 use crate::bindings::pii::redact::redactor as pii;
@@ -7,6 +6,7 @@ use crate::bindings::ratelimit::guard::limiter as rl;
 use crate::bindings::ratelimit::guard::limiter::LimitError;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
+use crate::{ledger, Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -30,7 +30,9 @@ fn authorize_perm(route: &Route, action: &str, event: &str) -> Result<String, Re
             }
             let reply = match err {
                 AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
-                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => {
+                    Reply::err(503, "auth_unavailable")
+                }
                 _ => Reply::err(401, "unauthenticated"),
             };
             Err(reply)
@@ -75,7 +77,8 @@ fn create_report(route: &Route, body: &str) -> Reply {
         "state": "open",
         "reporter": subject,
         "reported_at": crate::rfc3339(crate::now_secs())
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("reports", &data, &["component".to_string(), "state".to_string()]) {
         Ok(entry) => {
@@ -113,20 +116,26 @@ fn list_reports(route: &Route) -> Reply {
     };
 
     // If both filters were provided, we must do in-memory filtering for the second
-    let entries: Vec<_> = entries.into_iter().filter(|e| {
-        let v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
-        let c = v.get("component").and_then(Value::as_str).unwrap_or("");
-        let s = v.get("state").and_then(Value::as_str).unwrap_or("");
-        (comp.is_empty() || c == comp) && (state.is_empty() || s == state)
-    }).collect();
+    let entries: Vec<_> = entries
+        .into_iter()
+        .filter(|e| {
+            let v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
+            let c = v.get("component").and_then(Value::as_str).unwrap_or("");
+            let s = v.get("state").and_then(Value::as_str).unwrap_or("");
+            (comp.is_empty() || c == comp) && (state.is_empty() || s == state)
+        })
+        .collect();
 
-    let items: Vec<Value> = entries.into_iter().map(|e| {
-        let mut v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
-        if let Value::Object(ref mut m) = v {
-            m.insert("id".to_string(), json!(e.id));
-        }
-        v
-    }).collect();
+    let items: Vec<Value> = entries
+        .into_iter()
+        .map(|e| {
+            let mut v: Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
+            if let Value::Object(ref mut m) = v {
+                m.insert("id".to_string(), json!(e.id));
+            }
+            v
+        })
+        .collect();
 
     Reply::json(200, json!({"reports": items}))
 }

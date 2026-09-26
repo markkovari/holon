@@ -23,7 +23,11 @@ fn folded_sum(digits: &str, double_rightmost: bool) -> Option<u32> {
         let doubles = (i % 2 == 0) == double_rightmost;
         sum += if doubles {
             let twice = d * 2;
-            if twice > 9 { twice - 9 } else { twice }
+            if twice > 9 {
+                twice - 9
+            } else {
+                twice
+            }
         } else {
             d
         };
@@ -43,7 +47,7 @@ pub fn checksum_digit(digits: &str) -> Option<u8> {
     // Once a digit is appended, every existing digit's doubling flips (the
     // rightmost existing digit is no longer the rightmost overall).
     let sum = folded_sum(digits, true)?;
-    Some(((10 - (sum % 10) as u8) % 10) as u8)
+    Some((10 - (sum % 10) as u8) % 10)
 }
 
 /// `digits` with its check digit appended, or `None` on the same bad input as

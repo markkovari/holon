@@ -111,9 +111,9 @@ impl bindings::exports::wasi::http::incoming_handler::Guest for Component {
                 competitions::handle(&method, &route, &body)
             }
             (_, ["api", "curator", ..]) => curation::handle(&method, &route, &body),
-            (_, ["api", "journeys", ..]) | (_, ["api", "quests", ..]) | (_, ["api", "me", "progress"]) => {
-                progress::handle(&method, &route, &body)
-            }
+            (_, ["api", "journeys", ..])
+            | (_, ["api", "quests", ..])
+            | (_, ["api", "me", "progress"]) => progress::handle(&method, &route, &body),
             (_, ["api", ..]) => photos::handle(&method, &route, &body),
             _ => Reply::err(404, "not_found"),
         };

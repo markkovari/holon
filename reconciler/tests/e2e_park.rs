@@ -73,7 +73,8 @@ impl Stack {
             .stdout(log.try_clone().unwrap())
             .stderr(log);
         let mut child = cmd.spawn().expect("spawn comp-park");
-        let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build().unwrap();
+        let http =
+            reqwest::blocking::Client::builder().timeout(Duration::from_secs(60)).build().unwrap();
 
         let t0 = Instant::now();
         loop {
@@ -89,20 +90,29 @@ impl Stack {
                     std::fs::read_to_string(logs.path().join("park.log")).unwrap_or_default()
                 );
             }
-            assert!(t0.elapsed() < Duration::from_secs(60), "[{test}] comp-park never became healthy");
+            assert!(
+                t0.elapsed() < Duration::from_secs(60),
+                "[{test}] comp-park never became healthy"
+            );
             std::thread::sleep(Duration::from_millis(50));
         }
 
         let url = format!("park-url=http://127.0.0.1:{port}");
         let egress = format!("127.0.0.1:{port}");
-        let gate = gatelib::Gate::compose_and_start_with_egress("park", "park-gateway", &[&url], &[&egress])?;
+        let gate = gatelib::Gate::compose_and_start_with_egress(
+            "park",
+            "park-gateway",
+            &[&url],
+            &[&egress],
+        )?;
         Some(Stack { name: test.to_string(), park: child, logs, gate })
     }
 
     fn call(&self, func: &str, body: Value) -> (u16, Value) {
         let (status, text) = self.gate.post(&format!("/v1/{func}"), None, body);
-        let v: Value = serde_json::from_str(&text)
-            .unwrap_or_else(|e| panic!("[{}] {func}: {status} with a body that is not JSON ({e}): {text}", self.name));
+        let v: Value = serde_json::from_str(&text).unwrap_or_else(|e| {
+            panic!("[{}] {func}: {status} with a body that is not JSON ({e}): {text}", self.name)
+        });
         (status, v)
     }
 
@@ -129,10 +139,13 @@ fn call_of(correlation: &str) -> Value {
 #[test]
 fn park_wake_take_ready_over_the_real_component_chain() {
     let Some(nats) = nats_url("park_wake_take_ready_over_the_real_component_chain") else { return };
-    let Some(s) = Stack::up("park_wake_take_ready_over_the_real_component_chain", &nats) else { return };
+    let Some(s) = Stack::up("park_wake_take_ready_over_the_real_component_chain", &nats) else {
+        return;
+    };
 
     let session = format!("s-{}", nanos());
-    let parked = s.ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }));
+    let parked =
+        s.ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }));
     assert_eq!(parked["outcome"], "parked", "{}", s.park_log());
     let ticket = parked["ticket"].as_str().unwrap().to_string();
 
@@ -140,7 +153,10 @@ fn park_wake_take_ready_over_the_real_component_chain() {
     let (status, _) = s.call("take-ready", json!({ "ticket": ticket }));
     assert_eq!(status, 404);
 
-    let (status, woken) = s.call("wake", json!({ "correlation": "req-1", "answer": { "ok": true, "body": [42], "detail": null } }));
+    let (status, woken) = s.call(
+        "wake",
+        json!({ "correlation": "req-1", "answer": { "ok": true, "body": [42], "detail": null } }),
+    );
     assert_eq!(status, 200, "{woken}");
     assert_eq!(woken.as_str(), Some(ticket.as_str()));
 
@@ -163,12 +179,18 @@ fn park_wake_take_ready_over_the_real_component_chain() {
 
 #[test]
 fn reparking_and_cancelling_over_the_real_component_chain() {
-    let Some(nats) = nats_url("reparking_and_cancelling_over_the_real_component_chain") else { return };
-    let Some(s) = Stack::up("reparking_and_cancelling_over_the_real_component_chain", &nats) else { return };
+    let Some(nats) = nats_url("reparking_and_cancelling_over_the_real_component_chain") else {
+        return;
+    };
+    let Some(s) = Stack::up("reparking_and_cancelling_over_the_real_component_chain", &nats) else {
+        return;
+    };
 
     let session = format!("s-{}", nanos());
-    let first = s.ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }));
-    let second = s.ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }));
+    let first =
+        s.ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }));
+    let second =
+        s.ok("park", json!({ "session": session, "call": call_of("req-1"), "by": agent("a1") }));
     assert_eq!(first["ticket"], second["ticket"]);
     assert_eq!(second["outcome"], "already-parked");
 
@@ -176,10 +198,16 @@ fn reparking_and_cancelling_over_the_real_component_chain() {
     s.ok("cancel", json!({ "ticket": ticket, "by": agent("a1") }));
 
     let pending = s.ok("pending", json!({ "session": session }));
-    assert!(pending.as_array().unwrap().is_empty(), "a cancelled ticket must not show up as pending: {pending}");
+    assert!(
+        pending.as_array().unwrap().is_empty(),
+        "a cancelled ticket must not show up as pending: {pending}"
+    );
 
     // A late wake against a cancelled ticket is accepted, not an error.
-    let (status, _) = s.call("wake", json!({ "correlation": "req-1", "answer": { "ok": true, "body": [], "detail": null } }));
+    let (status, _) = s.call(
+        "wake",
+        json!({ "correlation": "req-1", "answer": { "ok": true, "body": [], "detail": null } }),
+    );
     assert_eq!(status, 200);
 
     let (status, refused) = s.call("take-ready", json!({ "ticket": ticket }));

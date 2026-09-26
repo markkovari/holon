@@ -78,7 +78,6 @@ struct Args {
     /// `--find` consulted before writing, and this counts what got through.
     #[arg(long)]
     twins: bool,
-
 }
 
 use comp_metadata::app::App;
@@ -194,7 +193,10 @@ fn main() -> Result<(), String> {
     }
 
     match args.format.as_str() {
-        "json" => println!("{}", json(&catalog, &by_iface, &orphans, &comp_metadata::app::discover_apps(&root))),
+        "json" => println!(
+            "{}",
+            json(&catalog, &by_iface, &orphans, &comp_metadata::app::discover_apps(&root))
+        ),
         "surql" => {
             let generation = args.gen.unwrap_or_else(|| {
                 std::time::SystemTime::now()
@@ -566,7 +568,6 @@ fn surql(catalog: &Catalog, apps: &[App], generation: u64) -> String {
     }
     out
 }
-
 
 #[cfg(test)]
 mod tests {

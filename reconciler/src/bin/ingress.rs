@@ -1128,7 +1128,7 @@ mod tests {
         // The rule that matters most: one saturated replica must NOT cost the app a
         // 503 while its siblings are idle. Only an entirely saturated set sheds.
         let inflight = inflight_of(&[("hot", 64), ("cool", 0)]);
-        let backends = vec![
+        let backends = [
             Backend { node: "hot".into(), address: "127.0.0.1:1".into(), cpus: 1 },
             Backend { node: "cool".into(), address: "127.0.0.1:2".into(), cpus: 1 },
         ];
@@ -1146,7 +1146,7 @@ mod tests {
         // answered a p99 of 46 SECONDS. Every replica at the bound is the state that
         // produced it, and it must now be a refusal instead.
         let inflight = inflight_of(&[("n1", 64), ("n2", 70)]);
-        let backends = vec![
+        let backends = [
             Backend { node: "n1".into(), address: "127.0.0.1:1".into(), cpus: 1 },
             Backend { node: "n2".into(), address: "127.0.0.1:2".into(), cpus: 1 },
         ];
@@ -1266,11 +1266,9 @@ mod refresh_tests {
     /// And the sequence where the fleet really did stop.
     #[test]
     fn three_bad_reads_running_are_believed() {
-        let mut streak = 0;
         let mut verdicts = Vec::new();
-        for _ in 0..3 {
-            let v = verdict(true, true, streak);
-            streak += 1;
+        for (streak, _) in (0..3).enumerate() {
+            let v = verdict(true, true, streak as u32);
             verdicts.push(v);
         }
         assert_eq!(

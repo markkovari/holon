@@ -44,7 +44,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Parser)]
-#[command(name = "comp-browser", about = "Render a page for a component that cannot start a browser.")]
+#[command(
+    name = "comp-browser",
+    about = "Render a page for a component that cannot start a browser."
+)]
 struct Args {
     /// Shared secret a caller must send as `Authorization: Bearer
     /// <token>`. Loopback binding alone is not a boundary — see
@@ -124,9 +127,14 @@ fn host_of(url: &str) -> Option<String> {
     }
 }
 
-async fn snapshot(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<SnapshotReq>) -> Json<Value> {
+async fn snapshot(
+    State(d): State<std::sync::Arc<Daemon>>,
+    Json(req): Json<SnapshotReq>,
+) -> Json<Value> {
     let Some(host) = host_of(&req.url) else {
-        return Json(json!({ "error": "unavailable", "detail": format!("not a valid http(s) url: {}", req.url) }));
+        return Json(
+            json!({ "error": "unavailable", "detail": format!("not a valid http(s) url: {}", req.url) }),
+        );
     };
     if !d.permits(&host) {
         return Json(json!({ "error": "not-permitted", "detail": host }));
@@ -154,14 +162,17 @@ async fn snapshot(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<Snaps
         // says nothing about whether the host was allowed, only that this
         // attempt did not produce a page.
         Ok(Err(detail)) => Json(json!({ "error": "unavailable", "detail": detail })),
-        Err(join_err) => Json(json!({ "error": "unavailable", "detail": format!("task panicked: {join_err}") })),
+        Err(join_err) => {
+            Json(json!({ "error": "unavailable", "detail": format!("task panicked: {join_err}") }))
+        }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-browser", &token);
     if args.allow_host.is_empty() {
         eprintln!(
@@ -172,7 +183,9 @@ async fn main() -> Result<()> {
     let allowed = args.allow_host.clone();
     println!("comp-browser: listening on http://{} | {} allowed host(s)", args.addr, allowed.len());
     let state = std::sync::Arc::new(Daemon { allowed });
-    let app = Router::new().route("/snapshot", post(snapshot)).with_state(state)
+    let app = Router::new()
+        .route("/snapshot", post(snapshot))
+        .with_state(state)
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
@@ -204,7 +217,10 @@ mod tests {
         assert!(d.permits("example.com"), "the listed host itself");
         assert!(d.permits("www.example.com"), "a real subdomain");
         assert!(!d.permits("example.com.evil.com"), "a host that merely ends in the allowed bytes");
-        assert!(!d.permits("evil-example.com"), "a host with the allowed name as a suffix of a longer label");
+        assert!(
+            !d.permits("evil-example.com"),
+            "a host with the allowed name as a suffix of a longer label"
+        );
         assert!(!d.permits("evil.com"), "an unrelated host");
     }
 

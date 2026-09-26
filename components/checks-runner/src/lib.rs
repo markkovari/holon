@@ -26,10 +26,10 @@
 #[allow(warnings)]
 mod bindings;
 
+use bindings::comp::secrets::reader as secrets;
 use bindings::exports::graph::fitness::evaluator::{
     Candidate, Check, CheckState, EvalError, Guest, Outcome, Verdict,
 };
-use bindings::comp::secrets::reader as secrets;
 use bindings::wasi::config::store as config;
 use bindings::wasi::http::types::{
     Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
@@ -148,7 +148,6 @@ fn post(body: &str) -> Result<(u16, String), EvalError> {
     Ok((status, String::from_utf8_lossy(&buf).into_owned()))
 }
 
-
 /// The checks in the order they may run: one list per LEVEL, and everything in a
 /// level is independent of everything else in it.
 ///
@@ -213,7 +212,6 @@ fn plan(checks: &[Check]) -> Result<Vec<Vec<usize>>, String> {
     Ok(levels)
 }
 
-
 /// Walk the levels, asking `run` for each level's results.
 ///
 /// Pure apart from `run`, so the blocking rules can be tested without a runner:
@@ -223,17 +221,12 @@ fn plan(checks: &[Check]) -> Result<Vec<Vec<usize>>, String> {
 /// A check blocked by something that was ITSELF blocked reports the ROOT. "not
 /// attempted because `tests` was not attempted" is a chain the reader has to walk,
 /// and the answer is always at the end of it.
-fn walk_levels<F, E>(
-    checks: &[Check],
-    levels: &[Vec<usize>],
-    mut run: F,
-) -> Result<Vec<Outcome>, E>
+fn walk_levels<F, E>(checks: &[Check], levels: &[Vec<usize>], mut run: F) -> Result<Vec<Outcome>, E>
 where
     F: FnMut(&[&Check]) -> Result<Vec<Outcome>, E>,
 {
     let mut outcomes: Vec<Outcome> = Vec::new();
-    let mut stopped: std::collections::BTreeMap<String, String> =
-        std::collections::BTreeMap::new();
+    let mut stopped: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
 
     for level in levels {
         let mut runnable: Vec<&Check> = Vec::new();
@@ -305,15 +298,14 @@ fn outcomes_of(report: &serde_json::Value) -> Vec<Outcome> {
 fn verdict_of(outcomes: Vec<Outcome>) -> Verdict {
     // A required check that was never attempted has not passed. A blocked gate is
     // a closed gate.
-    let accepted =
-        outcomes.iter().filter(|o| o.required).all(|o| o.state == CheckState::Passed);
+    let accepted = outcomes.iter().filter(|o| o.required).all(|o| o.state == CheckState::Passed);
     // The denominator is everything ASKED FOR, `not-attempted` included. Dropping
     // skipped checks would let a branch that fails early compete against a smaller
     // denominator than one that runs the whole gate.
     let total: u32 = outcomes.iter().map(|o| o.weight).sum();
     let won: u32 =
         outcomes.iter().filter(|o| o.state == CheckState::Passed).map(|o| o.weight).sum();
-    let score = if total == 0 { 0 } else { (won * 1000) / total };
+    let score = (won * 1000).checked_div(total).unwrap_or(0);
     Verdict { accepted, score, outcomes }
 }
 
@@ -366,7 +358,10 @@ impl Guest for Component {
                     parsed["base_commit"].as_str().unwrap_or_default().to_string(),
                 )),
                 400 => Err(EvalError::Invalid(
-                    parsed["error"].as_str().unwrap_or("the runner refused the request").to_string(),
+                    parsed["error"]
+                        .as_str()
+                        .unwrap_or("the runner refused the request")
+                        .to_string(),
                 )),
                 // `invalid` rather than `unavailable`: the runner is there and
                 // answering, and no candidate can do anything about the gate not
@@ -379,9 +374,7 @@ impl Guest for Component {
                 )),
                 other => Err(EvalError::Unavailable(format!(
                     "the runner answered {other}: {}",
-                    parsed["error"]
-                        .as_str()
-                        .unwrap_or(&text.chars().take(200).collect::<String>())
+                    parsed["error"].as_str().unwrap_or(&text.chars().take(200).collect::<String>())
                 ))),
             }
         })?;
@@ -453,16 +446,10 @@ mod tests {
     /// anything is acceptable.
     #[test]
     fn the_score_orders_candidates_that_all_fail_the_gate() {
-        let poor = verdict_of(vec![
-            passed("a", true, 1),
-            failed("b", true, 1),
-            failed("c", true, 1),
-        ]);
-        let better = verdict_of(vec![
-            passed("a", true, 1),
-            passed("b", true, 1),
-            failed("c", true, 1),
-        ]);
+        let poor =
+            verdict_of(vec![passed("a", true, 1), failed("b", true, 1), failed("c", true, 1)]);
+        let better =
+            verdict_of(vec![passed("a", true, 1), passed("b", true, 1), failed("c", true, 1)]);
         assert!(!poor.accepted && !better.accepted, "neither may be accepted");
         assert!(
             better.score > poor.score,
@@ -542,7 +529,8 @@ mod tests {
 
     #[test]
     fn a_cycle_is_refused_and_named() {
-        let checks = vec![check("a", true, &["c"]), check("b", true, &["a"]), check("c", true, &["b"])];
+        let checks =
+            vec![check("a", true, &["c"]), check("b", true, &["a"]), check("c", true, &["b"])];
         let e = plan(&checks).expect_err("a cycle has no first check");
         assert!(e.contains("cycle"), "{e}");
         for id in ["a", "b", "c"] {

@@ -133,11 +133,7 @@ fn serve_static(route: &str) -> Outcome {
     if route.contains("..") {
         return Outcome::Err(400, "Invalid path: Directory traversal not permitted".into());
     }
-    let want = if route == "/" || route.is_empty() {
-        "/index.html"
-    } else {
-        route
-    };
+    let want = if route == "/" || route.is_empty() { "/index.html" } else { route };
     match statics::get(want).or_else(|| statics::get("/index.html")) {
         Some(asset) => Outcome::File(200, asset.content_type, asset.body),
         None => Outcome::Err(404, "Static asset not found".into()),
@@ -150,21 +146,11 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
             respond(response_out, code, &ctype, &bytes);
         }
         Outcome::Json(code, json_str) => {
-            respond(
-                response_out,
-                code,
-                "application/json; charset=utf-8",
-                json_str.as_bytes(),
-            );
+            respond(response_out, code, "application/json; charset=utf-8", json_str.as_bytes());
         }
         Outcome::Err(code, msg) => {
             let body = json!({ "error": msg }).to_string();
-            respond(
-                response_out,
-                code,
-                "application/json; charset=utf-8",
-                body.as_bytes(),
-            );
+            respond(response_out, code, "application/json; charset=utf-8", body.as_bytes());
         }
     }
 }
@@ -173,14 +159,9 @@ fn respond(response_out: ResponseOutparam, status: u16, ctype: &str, body: &[u8]
     let headers = Fields::new();
     let _ = headers.set("content-type", &[ctype.as_bytes().to_vec()]);
     let _ = headers.set("access-control-allow-origin", &[b"*".to_vec()]);
-    let _ = headers.set(
-        "access-control-allow-methods",
-        &[b"GET, POST, PATCH, DELETE, OPTIONS".to_vec()],
-    );
-    let _ = headers.set(
-        "access-control-allow-headers",
-        &[b"Content-Type, Authorization".to_vec()],
-    );
+    let _ = headers
+        .set("access-control-allow-methods", &[b"GET, POST, PATCH, DELETE, OPTIONS".to_vec()]);
+    let _ = headers.set("access-control-allow-headers", &[b"Content-Type, Authorization".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(status);
     let out = response.body().expect("outgoing body");

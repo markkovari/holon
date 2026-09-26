@@ -173,14 +173,86 @@ const FENCES: &[&str] = &["\"\"\"", "```"];
 /// names nothing, and is a broken header: an error, and one of the twelve files in
 /// `testdata/bad/`. Without the list both look identical.
 const DIALECTS: &[&str] = &[
-    "af", "am", "amh", "an", "ar", "ast", "az", "be", "bg", "bm", "bs", "ca",
-    "cs", "cy-GB", "da", "de", "el", "em", "en", "en-Scouse", "en-au",
-    "en-lol", "en-old", "en-pirate", "en-tx", "eo", "es", "et", "fa", "fi",
-    "fr", "ga", "gj", "gl", "he", "hi", "hr", "ht", "hu", "id", "is", "it",
-    "ja", "jv", "ka", "kn", "ko", "lt", "lu", "lv", "mk-Cyrl", "mk-Latn", "ml",
-    "mn", "mr", "ne", "nl", "no", "pa", "pl", "pt", "ro", "ru", "sk", "sl",
-    "sr-Cyrl", "sr-Latn", "sv", "ta", "te", "th", "tlh", "tr", "tt", "uk",
-    "ur", "uz", "vi", "zh-CN", "zh-TW",
+    "af",
+    "am",
+    "amh",
+    "an",
+    "ar",
+    "ast",
+    "az",
+    "be",
+    "bg",
+    "bm",
+    "bs",
+    "ca",
+    "cs",
+    "cy-GB",
+    "da",
+    "de",
+    "el",
+    "em",
+    "en",
+    "en-Scouse",
+    "en-au",
+    "en-lol",
+    "en-old",
+    "en-pirate",
+    "en-tx",
+    "eo",
+    "es",
+    "et",
+    "fa",
+    "fi",
+    "fr",
+    "ga",
+    "gj",
+    "gl",
+    "he",
+    "hi",
+    "hr",
+    "ht",
+    "hu",
+    "id",
+    "is",
+    "it",
+    "ja",
+    "jv",
+    "ka",
+    "kn",
+    "ko",
+    "lt",
+    "lu",
+    "lv",
+    "mk-Cyrl",
+    "mk-Latn",
+    "ml",
+    "mn",
+    "mr",
+    "ne",
+    "nl",
+    "no",
+    "pa",
+    "pl",
+    "pt",
+    "ro",
+    "ru",
+    "sk",
+    "sl",
+    "sr-Cyrl",
+    "sr-Latn",
+    "sv",
+    "ta",
+    "te",
+    "th",
+    "tlh",
+    "tr",
+    "tt",
+    "uk",
+    "ur",
+    "uz",
+    "vi",
+    "zh-CN",
+    "zh-TW",
 ];
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -233,9 +305,10 @@ fn indent_col(raw: &str) -> u32 {
 /// The keyword must be followed by whitespace, so `Andrew types` is a description
 /// line and not a step called `rew types`.
 fn step_keyword(t: &str) -> Option<&'static str> {
-    STEPS.iter().copied().find(|kw| {
-        t.strip_prefix(kw).is_some_and(|rest| rest.starts_with(char::is_whitespace))
-    })
+    STEPS
+        .iter()
+        .copied()
+        .find(|kw| t.strip_prefix(kw).is_some_and(|rest| rest.starts_with(char::is_whitespace)))
 }
 
 /// The structural keyword a line starts with, and whatever followed the colon.
@@ -613,11 +686,8 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
                 }
                 "scenario" | "outline" => {
                     scenarios += 1;
-                    let kind = if keyword == "outline" {
-                        BlockKind::Outline
-                    } else {
-                        BlockKind::Scenario
-                    };
+                    let kind =
+                        if keyword == "outline" { BlockKind::Outline } else { BlockKind::Scenario };
                     let mut b = new_block(kind, title, line, col);
                     b.parsed.tags = std::mem::take(&mut tag_names);
                     block = Some(b);
@@ -654,11 +724,9 @@ fn walk(source: &str) -> (Document, Vec<Problem>) {
         if let Some(keyword) = step_keyword(t) {
             table = Table::None;
             match block.as_mut() {
-                None => problems.push(Problem {
-                    line,
-                    column: col,
-                    kind: Kind::StepOutsideScenario,
-                }),
+                None => {
+                    problems.push(Problem { line, column: col, kind: Kind::StepOutsideScenario })
+                }
                 Some(b) => {
                     if b.steps == 0 && CONTINUATIONS.contains(&keyword) {
                         problems.push(Problem {

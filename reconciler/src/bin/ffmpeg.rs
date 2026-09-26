@@ -110,7 +110,10 @@ fn output_path(input: &Path) -> PathBuf {
     input.with_extension("mp4")
 }
 
-async fn transcode(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<TranscodeReq>) -> Json<Value> {
+async fn transcode(
+    State(d): State<std::sync::Arc<Daemon>>,
+    Json(req): Json<TranscodeReq>,
+) -> Json<Value> {
     let requested = PathBuf::from(&req.input);
 
     // Not-permitted and no-such-file are different answers on purpose: one is
@@ -136,18 +139,21 @@ async fn transcode(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<Tran
         .await;
 
     match status {
-        Ok(s) if s.success() && output.is_file() => {
-            Json(serde_json::to_value(TranscodeResp { output: output.display().to_string() }).unwrap())
-        }
+        Ok(s) if s.success() && output.is_file() => Json(
+            serde_json::to_value(TranscodeResp { output: output.display().to_string() }).unwrap(),
+        ),
         Ok(s) => Json(json!({ "error": "unavailable", "detail": format!("ffmpeg exited {s}") })),
-        Err(e) => Json(json!({ "error": "unavailable", "detail": format!("failed to run ffmpeg: {e}") })),
+        Err(e) => {
+            Json(json!({ "error": "unavailable", "detail": format!("failed to run ffmpeg: {e}") }))
+        }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-ffmpeg", &token);
     if args.allow_path.is_empty() {
         eprintln!(
@@ -158,7 +164,9 @@ async fn main() -> Result<()> {
     let allowed = args.allow_path.clone();
     println!("comp-ffmpeg: listening on http://{} | {} allowed path(s)", args.addr, allowed.len());
     let state = std::sync::Arc::new(Daemon { allowed });
-    let app = Router::new().route("/transcode", post(transcode)).with_state(state)
+    let app = Router::new()
+        .route("/transcode", post(transcode))
+        .with_state(state)
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
@@ -185,8 +193,14 @@ mod tests {
         std::fs::create_dir_all(&inside).expect("mkdir");
         let d = daemon(&[&inside]);
 
-        assert!(d.permits(&inside.join("input.avi")).is_some(), "a file inside the listed directory");
-        assert!(d.permits(&inside.join("../sibling.avi")).is_none(), "a file in the parent is not inside it");
+        assert!(
+            d.permits(&inside.join("input.avi")).is_some(),
+            "a file inside the listed directory"
+        );
+        assert!(
+            d.permits(&inside.join("../sibling.avi")).is_none(),
+            "a file in the parent is not inside it"
+        );
         assert!(d.permits(&tmp.join("input.avi")).is_none(), "nor is anything above it");
         assert!(d.permits(Path::new("/etc/input.avi")).is_none(), "nor is somewhere unrelated");
     }

@@ -29,10 +29,7 @@ fn a_real_xlsx_becomes_a_header_and_rows() {
     assert_eq!(sheet.header, ["name", "set", "number", "quantity", "paid_minor", "currency"]);
     assert_eq!(sheet.sheet_name, "sheet1");
     assert_eq!(sheet.rows.len(), 4);
-    assert_eq!(
-        sheet.rows[0].cells,
-        ["Charizard", "Base Set", "4/102", "1", "120000", "EUR"]
-    );
+    assert_eq!(sheet.rows[0].cells, ["Charizard", "Base Set", "4/102", "1", "120000", "EUR"]);
     assert_eq!(sheet.rows[3].cells, ["Mewtwo", "Base Set", "10/102", "3", "18000", "EUR"]);
 }
 

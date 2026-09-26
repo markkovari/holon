@@ -67,8 +67,16 @@ fn a_missing_priority_defaults_to_100_matching_the_platform() {
     // components/platform-domain/src/goals.rs: `b.priority.unwrap_or(100)`
     // — a goal created with none gets 100 there, so this must agree.
     let rows = vec![json!({ "id": "a", "state": "queued" })];
-    assert_eq!(goals_to_start(&rows, Some(100)), vec!["a".to_string()], "100 should just clear a ceiling of 100");
-    assert_eq!(goals_to_start(&rows, Some(99)), Vec::<String>::new(), "100 should not clear a ceiling of 99");
+    assert_eq!(
+        goals_to_start(&rows, Some(100)),
+        vec!["a".to_string()],
+        "100 should just clear a ceiling of 100"
+    );
+    assert_eq!(
+        goals_to_start(&rows, Some(99)),
+        Vec::<String>::new(),
+        "100 should not clear a ceiling of 99"
+    );
 }
 
 #[test]

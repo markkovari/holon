@@ -941,7 +941,13 @@ impl SurrealKv {
         if !self.token.is_empty() {
             req = req.set(
                 "authorization",
-                &format!("Basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("root:{}", self.token))),
+                &format!(
+                    "Basic {}",
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        format!("root:{}", self.token)
+                    )
+                ),
             );
         }
         let resp = req.send_string(surql);
@@ -954,8 +960,8 @@ impl SurrealKv {
             Err(e) => anyhow::bail!("reaching SurrealDB: {e}"),
         };
         let text = resp.into_string().context("reading SurrealDB's response")?;
-        let statements: Vec<serde_json::Value> =
-            serde_json::from_str(&text).context("SurrealDB's response was not the expected JSON")?;
+        let statements: Vec<serde_json::Value> = serde_json::from_str(&text)
+            .context("SurrealDB's response was not the expected JSON")?;
         if let Some(bad) = statements.iter().find(|s| s["status"] != "OK") {
             anyhow::bail!("SurrealDB: {}", bad["result"]);
         }
@@ -985,7 +991,8 @@ impl KvBackend for SurrealKv {
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
         self.ensure_defined();
         let records = self.send(&format!("SELECT val FROM {};", Self::rid(bucket, key)))?;
-        let Some(v) = records.first().and_then(|rows| rows.get(0)).and_then(|r| r["val"].as_str()) else {
+        let Some(v) = records.first().and_then(|rows| rows.get(0)).and_then(|r| r["val"].as_str())
+        else {
             return Ok(None);
         };
         Ok(Some(
@@ -1044,8 +1051,10 @@ impl KvBackend for SurrealKv {
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
         self.ensure_defined();
         let current = self.get(bucket, key)?;
-        let n: u64 =
-            current.as_deref().map(|v| String::from_utf8_lossy(v).trim().parse().unwrap_or(0)).unwrap_or(0);
+        let n: u64 = current
+            .as_deref()
+            .map(|v| String::from_utf8_lossy(v).trim().parse().unwrap_or(0))
+            .unwrap_or(0);
         let next = n.saturating_add(delta);
         self.set(bucket, key, next.to_string().as_bytes())?;
         Ok(next)
@@ -1070,7 +1079,13 @@ impl KvBackend for SurrealKv {
     /// to a server this process does not hold a lock on. A real CAS needs a
     /// single statement SurrealDB evaluates as one operation, which its `IF`
     /// inside a transaction gives — see the SurrealQL below.
-    fn set_if_revision(&self, bucket: &BucketId, key: &str, value: &[u8], expected: u64) -> Result<Cas> {
+    fn set_if_revision(
+        &self,
+        bucket: &BucketId,
+        key: &str,
+        value: &[u8],
+        expected: u64,
+    ) -> Result<Cas> {
         self.ensure_defined();
         let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, value);
         // Five statements — BEGIN, two LETs, the IF/RETURN, COMMIT — and the
@@ -1171,7 +1186,8 @@ impl TursoKv {
         let mut all: Vec<serde_json::Value> = requests.to_vec();
         all.push(serde_json::json!({"type": "close"}));
         let body = serde_json::json!({"requests": all});
-        let mut req = self.agent.post(&format!("{}/v2/pipeline", self.url)).set("accept", "application/json");
+        let mut req =
+            self.agent.post(&format!("{}/v2/pipeline", self.url)).set("accept", "application/json");
         if !self.token.is_empty() {
             req = req.set("authorization", &format!("Bearer {}", self.token));
         }
@@ -1240,8 +1256,7 @@ impl KvBackend for TursoKv {
     fn get(&self, bucket: &BucketId, key: &str) -> Result<Option<Vec<u8>>> {
         self.ensure_defined();
         let (b, k) = Self::rid(bucket, key);
-        let result =
-            self.execute("SELECT val FROM kv WHERE bucket = ? AND key = ?", &[b, k])?;
+        let result = self.execute("SELECT val FROM kv WHERE bucket = ? AND key = ?", &[b, k])?;
         let Some(row) = result["rows"].as_array().and_then(|r| r.first()) else { return Ok(None) };
         Ok(Self::cell_bytes(row, 0))
     }
@@ -1291,8 +1306,10 @@ impl KvBackend for TursoKv {
     fn increment(&self, bucket: &BucketId, key: &str, delta: u64) -> Result<u64> {
         self.ensure_defined();
         let current = self.get(bucket, key)?;
-        let n: u64 =
-            current.as_deref().map(|v| String::from_utf8_lossy(v).trim().parse().unwrap_or(0)).unwrap_or(0);
+        let n: u64 = current
+            .as_deref()
+            .map(|v| String::from_utf8_lossy(v).trim().parse().unwrap_or(0))
+            .unwrap_or(0);
         let next = n.saturating_add(delta);
         self.set(bucket, key, next.to_string().as_bytes())?;
         Ok(next)
@@ -1301,7 +1318,8 @@ impl KvBackend for TursoKv {
     fn get_revision(&self, bucket: &BucketId, key: &str) -> Result<Option<Versioned>> {
         self.ensure_defined();
         let (b, k) = Self::rid(bucket, key);
-        let result = self.execute("SELECT rev, val FROM kv WHERE bucket = ? AND key = ?", &[b, k])?;
+        let result =
+            self.execute("SELECT rev, val FROM kv WHERE bucket = ? AND key = ?", &[b, k])?;
         let Some(row) = result["rows"].as_array().and_then(|r| r.first()) else { return Ok(None) };
         let rev = Self::cell_int(row, 0).unwrap_or(0).max(0) as u64;
         let value = Self::cell_bytes(row, 1).unwrap_or_default();
@@ -1315,7 +1333,13 @@ impl KvBackend for TursoKv {
     /// second round trip in the common case. `affected_row_count` on the
     /// write is what makes this a real compare-and-set rather than a guess —
     /// no transaction needed, unlike `SurrealKv`'s equivalent.
-    fn set_if_revision(&self, bucket: &BucketId, key: &str, value: &[u8], expected: u64) -> Result<Cas> {
+    fn set_if_revision(
+        &self,
+        bucket: &BucketId,
+        key: &str,
+        value: &[u8],
+        expected: u64,
+    ) -> Result<Cas> {
         self.ensure_defined();
         let (b, k) = Self::rid(bucket, key);
         let write = if expected == 0 {
@@ -1378,7 +1402,9 @@ pub async fn build(
         // already takes its own "location" through whichever string param fits.
         "surreal" => Ok(Arc::new(SurrealKv::connect(sqlite_path, replicas, token)?)),
         "turso" => Ok(Arc::new(TursoKv::connect(sqlite_path, replicas, token)?)),
-        other => anyhow::bail!("unknown --kv backend: {other} (use memory|redis|nats|sqlite|surreal|turso)"),
+        other => anyhow::bail!(
+            "unknown --kv backend: {other} (use memory|redis|nats|sqlite|surreal|turso)"
+        ),
     }
 }
 

@@ -212,7 +212,7 @@ fn the_loop_repairs_from_a_real_verdict_and_stops_for_a_reason() {
          and the second attempt was a re-roll: {run}"
     );
     assert!(
-        run["failures"].as_array().map_or(true, |f| f.is_empty()),
+        run["failures"].as_array().is_none_or(|f| f.is_empty()),
         "an accepted run has nothing left failing: {run}"
     );
 

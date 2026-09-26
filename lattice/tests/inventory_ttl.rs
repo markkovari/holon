@@ -50,7 +50,7 @@ impl Nats {
         }
         let dir = tempfile::tempdir().expect("tempdir");
         let port = free_port();
-        let child = Command::new("nats-server")
+        let mut child = Command::new("nats-server")
             .args(["-js", "-sd"])
             .arg(dir.path().join("nats"))
             .args(["-a", "127.0.0.1", "-p", &port.to_string()])
@@ -68,6 +68,10 @@ impl Nats {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+        // The loop above never returned `Self`, so `Drop` never runs: reap it
+        // here or it is a zombie, not just a failed test.
+        let _ = child.kill();
+        let _ = child.wait();
         panic!("nats-server never accepted a connection on {port}");
     }
 }

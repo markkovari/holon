@@ -1,7 +1,5 @@
 use crate::bindings::exports::wasi::http::incoming_handler::{IncomingRequest, ResponseOutparam};
-use crate::bindings::wasi::http::types::{
-    Fields, OutgoingBody, OutgoingResponse, RequestOptions,
-};
+use crate::bindings::wasi::http::types::{Fields, OutgoingBody, OutgoingResponse};
 use crate::reply;
 use crate::tickets;
 
@@ -13,11 +11,7 @@ pub struct Reply {
 
 impl Reply {
     pub fn json(status: u16, body: &str) -> Self {
-        Self {
-            status,
-            content_type: "application/json",
-            body: body.as_bytes().to_vec(),
-        }
+        Self { status, content_type: "application/json", body: body.as_bytes().to_vec() }
     }
 
     pub fn err(status: u16, msg: &str) -> Self {
@@ -31,13 +25,12 @@ pub fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
     let path = path_with_query.split('?').next().unwrap_or("/");
 
     let reply = match (method, path) {
-        (crate::bindings::wasi::http::types::Method::Get, "/") | (crate::bindings::wasi::http::types::Method::Get, "/index.html") => {
-            Reply {
-                status: 200,
-                content_type: "text/html",
-                body: include_bytes!("../ui/index.html").to_vec(),
-            }
-        }
+        (crate::bindings::wasi::http::types::Method::Get, "/")
+        | (crate::bindings::wasi::http::types::Method::Get, "/index.html") => Reply {
+            status: 200,
+            content_type: "text/html",
+            body: include_bytes!("../ui/index.html").to_vec(),
+        },
         (crate::bindings::wasi::http::types::Method::Get, "/styles.css") => Reply {
             status: 200,
             content_type: "text/css",
@@ -53,16 +46,22 @@ pub fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
             let body = read_body(request);
             tickets::create(&body)
         }
-        (crate::bindings::wasi::http::types::Method::Post, p) if p.starts_with("/api/tickets/") && p.ends_with("/reply") => {
+        (crate::bindings::wasi::http::types::Method::Post, p)
+            if p.starts_with("/api/tickets/") && p.ends_with("/reply") =>
+        {
             let id = p.trim_start_matches("/api/tickets/").trim_end_matches("/reply");
             let body = read_body(request);
             reply::add_reply(id, &body)
         }
-        (crate::bindings::wasi::http::types::Method::Post, p) if p.starts_with("/api/tickets/") && p.ends_with("/suggest") => {
+        (crate::bindings::wasi::http::types::Method::Post, p)
+            if p.starts_with("/api/tickets/") && p.ends_with("/suggest") =>
+        {
             let id = p.trim_start_matches("/api/tickets/").trim_end_matches("/suggest");
             reply::suggest_reply(id)
         }
-        (crate::bindings::wasi::http::types::Method::Post, p) if p.starts_with("/api/tickets/") && p.ends_with("/close") => {
+        (crate::bindings::wasi::http::types::Method::Post, p)
+            if p.starts_with("/api/tickets/") && p.ends_with("/close") =>
+        {
             let id = p.trim_start_matches("/api/tickets/").trim_end_matches("/close");
             reply::close_ticket(id)
         }
@@ -94,7 +93,7 @@ fn read_body(req: IncomingRequest) -> String {
 
 fn send_reply(response_out: ResponseOutparam, reply: Reply) {
     let headers = Fields::new();
-    headers.set(&"content-type".to_string(), &[reply.content_type.as_bytes().to_vec()]).unwrap();
+    headers.set("content-type", &[reply.content_type.as_bytes().to_vec()]).unwrap();
 
     let response = OutgoingResponse::new(headers);
     response.set_status_code(reply.status).unwrap();

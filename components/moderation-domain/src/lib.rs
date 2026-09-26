@@ -274,8 +274,14 @@ impl Guest for Component {
         let (status, content_type, payload_bytes) = match reply {
             Reply::Html(s) => (200, b"text/html; charset=utf-8".to_vec(), s.into_bytes()),
             Reply::Css(s) => (200, b"text/css; charset=utf-8".to_vec(), s.into_bytes()),
-            Reply::Js(s) => (200, b"application/javascript; charset=utf-8".to_vec(), s.into_bytes()),
-            Reply::Json(s, p) => (s, b"application/json".to_vec(), if p.is_null() { vec![] } else { p.to_string().into_bytes() }),
+            Reply::Js(s) => {
+                (200, b"application/javascript; charset=utf-8".to_vec(), s.into_bytes())
+            }
+            Reply::Json(s, p) => (
+                s,
+                b"application/json".to_vec(),
+                if p.is_null() { vec![] } else { p.to_string().into_bytes() },
+            ),
         };
 
         let headers = Fields::new();

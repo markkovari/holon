@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule};
-use crate::bindings::records::store::store as records;
 use crate::bindings::quota::meter::meter;
+use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -126,7 +126,7 @@ fn book(route: &Route, id: &str, body: &str) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    
+
     let _room = match records::get("rooms", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
@@ -138,7 +138,10 @@ fn book(route: &Route, id: &str, body: &str) -> Reply {
     if let Ok(page) = records::list_records("bookings", 100, "") {
         for entry in page.entries {
             let booking: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
-            if booking["room_id"] == json!(id) && booking["date"] == json!(date) && booking["cancelled"] != json!(true) {
+            if booking["room_id"] == json!(id)
+                && booking["date"] == json!(date)
+                && booking["cancelled"] != json!(true)
+            {
                 audit_log("booking.create", "deny", &principal.subject, id);
                 return Reply::err(409, "already_booked");
             }
@@ -155,7 +158,8 @@ fn book(route: &Route, id: &str, body: &str) -> Reply {
         "date": date,
         "subject": principal.subject,
         "cancelled": false
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("bookings", &data, &["room_id".to_string()]) {
         Ok(entry) => {
@@ -167,7 +171,8 @@ fn book(route: &Route, id: &str, body: &str) -> Reply {
 }
 
 fn cancel(route: &Route, id: &str) -> Reply {
-    let principal = match authorize_perm(route, "bookings", "write") { // Wait, the scope is bookings:write
+    let principal = match authorize_perm(route, "bookings", "write") {
+        // Wait, the scope is bookings:write
         Ok(p) => p,
         Err(r) => return r,
     };

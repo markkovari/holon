@@ -1,9 +1,9 @@
-use crate::{cfg_u64, now_secs, Reply, Route};
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::Permission;
 use crate::bindings::otp::totp::authenticator as totp;
 use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
+use crate::{cfg_u64, now_secs, Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -24,7 +24,9 @@ fn authorize_perm(route: &Route, action: &str) -> Result<String, Reply> {
             use crate::bindings::auth::identity::types::AuthError;
             let reply = match err {
                 AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
-                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => {
+                    Reply::err(503, "auth_unavailable")
+                }
                 _ => Reply::err(401, "unauthenticated"),
             };
             Err(reply)
@@ -37,7 +39,7 @@ fn enroll(route: &Route) -> Reply {
         Ok(s) => s,
         Err(r) => return r,
     };
-    
+
     let prov = match totp::provision("docsearch", &subject) {
         Ok(p) => p,
         Err(_) => return Reply::err(500, "provision_failed"),
@@ -48,8 +50,9 @@ fn enroll(route: &Route) -> Reply {
         "verified_at": 0,
         "secret": prov.secret
     });
-    
-    let entries = records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
+
+    let entries =
+        records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
     if let Some(existing) = entries.first() {
         if records::update("stepups", &existing.id, &doc.to_string(), existing.revision).is_err() {
             return Reply::err(500, "store_error");
@@ -68,16 +71,17 @@ fn verify(route: &Route, body: &str) -> Reply {
         Ok(s) => s,
         Err(r) => return r,
     };
-    
+
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let code = req.get("code").and_then(Value::as_str).unwrap_or("");
 
-    let entries = records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
+    let entries =
+        records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
     let entry = match entries.first() {
         Some(e) => e,
         None => return Reply::err(409, "not_enrolled"),
     };
-    
+
     let doc: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let secret = doc.get("secret").and_then(Value::as_str).unwrap_or("");
 
@@ -85,7 +89,8 @@ fn verify(route: &Route, body: &str) -> Reply {
         Ok(true) => {
             let mut updated = doc.clone();
             updated["verified_at"] = json!(now_secs());
-            if records::update("stepups", &entry.id, &updated.to_string(), entry.revision).is_err() {
+            if records::update("stepups", &entry.id, &updated.to_string(), entry.revision).is_err()
+            {
                 return Reply::err(500, "store_error");
             }
             Reply::json(200, json!({ "verified": true }))
@@ -100,8 +105,9 @@ fn status(route: &Route) -> Reply {
         Ok(s) => s,
         Err(r) => return r,
     };
-    
-    let entries = records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
+
+    let entries =
+        records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
     if let Some(entry) = entries.first() {
         let doc: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
         let verified_at = doc.get("verified_at").and_then(Value::as_u64).unwrap_or(0);

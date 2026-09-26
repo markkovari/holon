@@ -107,7 +107,7 @@ fn build_composed_slug(feature: bool) -> Result<Vec<u8>> {
     // Composed by the library rather than by shelling out to `wac`: the plug list
     // is derived from what slug-probe imports, so a capability added to its world
     // is picked up without editing this file (ADR-0087).
-    let catalog = comp_reconciler::plug::Catalog::scan(&[rel.clone()]);
+    let catalog = comp_reconciler::plug::Catalog::scan(std::slice::from_ref(&rel));
     comp_reconciler::plug::compose("slug-probe", &catalog)
         .map_err(|e| anyhow::anyhow!("composing slug-probe: {e}"))
 }
@@ -229,6 +229,9 @@ fn behavior_gate(cases_path: &Path) -> Result<()> {
 /// Deploy `wasm` under `id` and wait until it is live: either it passes some case
 /// (`prev` is None — the baseline), or what it passes differs from `prev` (the
 /// candidate's swap has taken effect).
+// One over clippy's default threshold; each is a distinct deploy-and-wait
+// parameter documented above, not a struct's fields waiting to be extracted.
+#[allow(clippy::too_many_arguments)]
 fn deploy_capability(
     api: &Api,
     fleet: &Fleet,
@@ -380,6 +383,8 @@ fn report(fleet: &Fleet, host: &str) -> Option<Value> {
 /// wait until the version tagged `want` answers over the lattice. `caps` is the
 /// registry as a `name:semver` list; it rides in the node config on both create
 /// and save, so switching to a more capable version updates the registry too.
+// One over clippy's default threshold — see `deploy_capability`'s own note.
+#[allow(clippy::too_many_arguments)]
 fn deploy_and_read(
     api: &Api,
     fleet: &Fleet,

@@ -58,9 +58,15 @@ impl Guest for Component {
             }
             _ => {
                 let outcome = match (&method, seg.as_slice()) {
-                    (Method::Get, [""]) | (Method::Get, ["index.html"]) => Outcome::Html(include_str!("../ui/index.html").to_string()),
-                    (Method::Get, ["styles.css"]) => Outcome::Css(include_str!("../ui/styles.css").to_string()),
-                    (Method::Get, ["app.js"]) => Outcome::Js(include_str!("../ui/app.js").to_string()),
+                    (Method::Get, [""]) | (Method::Get, ["index.html"]) => {
+                        Outcome::Html(include_str!("../ui/index.html").to_string())
+                    }
+                    (Method::Get, ["styles.css"]) => {
+                        Outcome::Css(include_str!("../ui/styles.css").to_string())
+                    }
+                    (Method::Get, ["app.js"]) => {
+                        Outcome::Js(include_str!("../ui/app.js").to_string())
+                    }
                     (Method::Get, ["api", "info"]) => usage_json(),
                     (Method::Post, ["api", "events"]) => enqueue_event(&request),
                     (Method::Get, ["api", "events"]) => snapshot(&path),
@@ -365,13 +371,22 @@ fn query_i64(path: &str, key: &str) -> Option<i64> {
 
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
-        Outcome::Html(html) => respond(response_out, 200, "text/html; charset=utf-8", html.as_bytes()),
-        Outcome::Css(css) => respond(response_out, 200, "text/css; charset=utf-8", css.as_bytes()),
-        Outcome::Js(js) => respond(response_out, 200, "application/javascript; charset=utf-8", js.as_bytes()),
-        Outcome::Json(code, body) => respond(response_out, code, "application/json", body.as_bytes()),
-        Outcome::Err(code, msg) => {
-            respond(response_out, code, "application/json", json!({ "error": msg }).to_string().as_bytes())
+        Outcome::Html(html) => {
+            respond(response_out, 200, "text/html; charset=utf-8", html.as_bytes())
         }
+        Outcome::Css(css) => respond(response_out, 200, "text/css; charset=utf-8", css.as_bytes()),
+        Outcome::Js(js) => {
+            respond(response_out, 200, "application/javascript; charset=utf-8", js.as_bytes())
+        }
+        Outcome::Json(code, body) => {
+            respond(response_out, code, "application/json", body.as_bytes())
+        }
+        Outcome::Err(code, msg) => respond(
+            response_out,
+            code,
+            "application/json",
+            json!({ "error": msg }).to_string().as_bytes(),
+        ),
     }
 }
 

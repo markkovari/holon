@@ -2,10 +2,10 @@
 mod bindings;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
+use bindings::proxy::route::router;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
-use bindings::proxy::route::router;
 use juniper::{EmptySubscription, RootNode};
 #[derive(serde::Deserialize, serde::Serialize, Clone, juniper::GraphQLObject)]
 #[serde(rename_all = "camelCase")]
@@ -63,7 +63,7 @@ impl Mutation {
         let body_bytes = serde_json::to_vec(&payload).unwrap();
         let headers = [
             ("content-type".to_string(), "application/json".to_string()),
-            ("authorization".to_string(), "system".to_string())
+            ("authorization".to_string(), "system".to_string()),
         ];
 
         if let Ok(up) = router::forward("POST", "/api/tickets", &headers, &body_bytes) {
@@ -85,7 +85,7 @@ impl Guest for Component {
     fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
         let method = request.method();
         let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
-        
+
         let schema = Schema::new(Query, Mutation, EmptySubscription::new());
 
         match (&method, path.as_str()) {
@@ -97,7 +97,7 @@ impl Guest for Component {
                 ResponseOutparam::set(response_out, Ok(response));
 
                 let stream = out.write().unwrap();
-                
+
                 // Very basic JSON parse of GraphQL request
                 if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&body_bytes) {
                     if let Some(query) = json.get("query").and_then(|q| q.as_str()) {
@@ -112,7 +112,8 @@ impl Guest for Component {
                             let out_json = serde_json::json!({
                                 "data": value,
                                 "errors": _errors
-                            }).to_string();
+                            })
+                            .to_string();
                             write_all(&stream, out_json.as_bytes());
                         } else {
                             write_all(&stream, b"{\"error\": \"graphql execution failed\"}");
@@ -123,7 +124,7 @@ impl Guest for Component {
                 } else {
                     write_all(&stream, b"{\"error\": \"invalid json\"}");
                 }
-                
+
                 let _ = OutgoingBody::finish(out, None);
             }
             _ => {

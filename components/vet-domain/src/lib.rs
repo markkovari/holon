@@ -1333,16 +1333,11 @@ fn read_audit_events(max: usize) -> Vec<AuditEvent> {
     let mut cursor: Option<u64> = None;
     // page through all keys (the in-process shim returns them in one page, but
     // honour the cursor protocol so a paged backend works too).
-    loop {
-        match bucket.list_keys(cursor) {
-            Ok(resp) => {
-                keys.extend(resp.keys.into_iter().filter(|k| k.starts_with("al_")));
-                match resp.cursor {
-                    Some(c) => cursor = Some(c),
-                    None => break,
-                }
-            }
-            Err(_) => break,
+    while let Ok(resp) = bucket.list_keys(cursor) {
+        keys.extend(resp.keys.into_iter().filter(|k| k.starts_with("al_")));
+        match resp.cursor {
+            Some(c) => cursor = Some(c),
+            None => break,
         }
     }
     keys.sort();

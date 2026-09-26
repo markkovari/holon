@@ -42,8 +42,9 @@ impl Publisher {
 /// this got interesting. `slug` is the smallest one built here.
 fn component_with_digest(p: &Platform, token: &str, id: &str) -> (String, String) {
     let wasm = harness::repo_root().join("components/target/wasm32-wasip2/release/slug.wasm");
-    let bytes = std::fs::read(&wasm)
-        .unwrap_or_else(|e| panic!("missing {} ({e}) — run `cargo xtask build --force`", wasm.display()));
+    let bytes = std::fs::read(&wasm).unwrap_or_else(|e| {
+        panic!("missing {} ({e}) — run `cargo xtask build --force`", wasm.display())
+    });
     let r = p
         .http
         .post(p.url(&format!("/api/components?id={id}")))

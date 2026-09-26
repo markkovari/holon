@@ -67,21 +67,22 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
 /// "defined yet?" flag that would be wrong whenever a DIFFERENT part's code
 /// path runs first.
 fn ensure_machines() {
-    let def = |states: &[&str], initial: &str, transitions: &[(&str, &str, &str)], terminal: &[&str]| {
-        fsm::Definition {
-            states: states.iter().map(|s| s.to_string()).collect(),
-            initial: initial.to_string(),
-            transitions: transitions
-                .iter()
-                .map(|(event, source, target)| fsm::Transition {
-                    event: event.to_string(),
-                    source: source.to_string(),
-                    target: target.to_string(),
-                })
-                .collect(),
-            terminal: terminal.iter().map(|s| s.to_string()).collect(),
-        }
-    };
+    let def =
+        |states: &[&str], initial: &str, transitions: &[(&str, &str, &str)], terminal: &[&str]| {
+            fsm::Definition {
+                states: states.iter().map(|s| s.to_string()).collect(),
+                initial: initial.to_string(),
+                transitions: transitions
+                    .iter()
+                    .map(|(event, source, target)| fsm::Transition {
+                        event: event.to_string(),
+                        source: source.to_string(),
+                        target: target.to_string(),
+                    })
+                    .collect(),
+                terminal: terminal.iter().map(|s| s.to_string()).collect(),
+            }
+        };
     let _ = fsm::define(
         "order",
         &def(
@@ -102,10 +103,7 @@ fn ensure_machines() {
         &def(
             &["authorized", "captured", "refunded"],
             "authorized",
-            &[
-                ("capture", "authorized", "captured"),
-                ("refund", "captured", "refunded"),
-            ],
+            &[("capture", "authorized", "captured"), ("refund", "captured", "refunded")],
             &["refunded"],
         ),
     );
@@ -114,10 +112,7 @@ fn ensure_machines() {
         &def(
             &["label_created", "in_transit", "delivered"],
             "label_created",
-            &[
-                ("dispatch", "label_created", "in_transit"),
-                ("deliver", "in_transit", "delivered"),
-            ],
+            &[("dispatch", "label_created", "in_transit"), ("deliver", "in_transit", "delivered")],
             &["delivered"],
         ),
     );
@@ -126,21 +121,13 @@ fn ensure_machines() {
         &def(
             &["requested", "approved", "rejected"],
             "requested",
-            &[
-                ("approve", "requested", "approved"),
-                ("reject", "requested", "rejected"),
-            ],
+            &[("approve", "requested", "approved"), ("reject", "requested", "rejected")],
             &["approved", "rejected"],
         ),
     );
     let _ = fsm::define(
         "dispute",
-        &def(
-            &["open", "resolved"],
-            "open",
-            &[("resolve", "open", "resolved")],
-            &["resolved"],
-        ),
+        &def(&["open", "resolved"], "open", &[("resolve", "open", "resolved")], &["resolved"]),
     );
 }
 
@@ -231,8 +218,7 @@ fn create_listing(route: &Route, body: &str) -> Reply {
     if title.is_empty() {
         return Reply::err(400, "title is required");
     }
-    let description =
-        request.get("description").and_then(Value::as_str).unwrap_or("").to_string();
+    let description = request.get("description").and_then(Value::as_str).unwrap_or("").to_string();
     let price = match request.get("price").and_then(Value::as_i64) {
         Some(price) if price > 0 => price,
         _ => return Reply::err(400, "price must be a positive integer"),
@@ -405,8 +391,8 @@ fn place_order(route: &Route, body: &str) -> Reply {
     // One entry per REQUEST line (so the stored order keeps the caller's own
     // line structure)...
     let mut lines: Vec<(String, i64, i64)> = Vec::new(); // listing_id, quantity, unit_price
-    // ...plus one running total per LISTING, because a listing named twice in
-    // one order must be checked against its stock cumulatively.
+                                                         // ...plus one running total per LISTING, because a listing named twice in
+                                                         // one order must be checked against its stock cumulatively.
     let mut wanted: Vec<(String, i64)> = Vec::new();
 
     for item in requested.iter() {
@@ -469,8 +455,7 @@ fn place_order(route: &Route, body: &str) -> Reply {
         let mut listing: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
         let stock = listing.get("stock").and_then(Value::as_i64).unwrap_or(0);
         listing["stock"] = json!(stock - *total_quantity);
-        if records::update("listings", listing_id, &listing.to_string(), entry.revision).is_err()
-        {
+        if records::update("listings", listing_id, &listing.to_string(), entry.revision).is_err() {
             return Reply::err(500, "store_error");
         }
     }

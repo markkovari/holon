@@ -82,6 +82,7 @@ fn validate_query(query: &str) -> Result<(), String> {
 ///   - it's shaped right but names a domain nobody offered it — a
 ///     hallucinated label is worse than "unknown" because a caller matching
 ///     on it would find no route rather than an honest miss.
+///
 /// All three land on the same fallback, carrying the raw text so a caller
 /// debugging a bad classification can see what the model actually said.
 fn shape_completion(text: &str) -> Value {

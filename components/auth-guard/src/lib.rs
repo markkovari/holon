@@ -8,9 +8,9 @@
 //!
 //! # Module map
 //! - [`config`]       — policy knobs read from wasi:config (session-ttl,
-//!                       password-min-len, expected-issuer/audience, allowed-algs, …).
+//!   password-min-len, expected-issuer/audience, allowed-algs, …).
 //! - [`jwt_verify`]   — stateless JWS verification + claim validation (the
-//!                       pure `validate_claims` is unit-tested).
+//!   pure `validate_claims` is unit-tested).
 //! - [`oidc_client`]  — OIDC discovery + JWKS over wasi:http, TTL-cached.
 //! - [`accounts`]     — local accounts: argon2id register/login.
 //! - [`store`]        — sessions (with families + refresh-reuse detection) and RBAC.

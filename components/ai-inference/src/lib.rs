@@ -16,25 +16,15 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::ai::inference::inference::{
-    AssistError, Guest, LabelScore, Length,
-};
-use bindings::llm::inference::inference::{
-    self as inference, InferError, Options,
-};
+use bindings::exports::ai::inference::inference::{AssistError, Guest, LabelScore, Length};
+use bindings::llm::inference::inference::{self as inference, InferError, Options};
 
 struct Component;
 
 /// All-defaults `Options`: every field 0 / empty means "let the provider
 /// decide" per the `llm:inference` contract.
 fn default_options() -> Options {
-    Options {
-        model: String::new(),
-        temperature: 0,
-        max_tokens: 0,
-        stop: Vec::new(),
-        seed: 0,
-    }
+    Options { model: String::new(), temperature: 0, max_tokens: 0, stop: Vec::new(), seed: 0 }
 }
 
 /// Map an inference-layer error into an assist-layer `inference-failed`,
@@ -58,8 +48,8 @@ impl Guest for Component {
         };
         system.push_str(hint);
 
-        let completion = inference::complete(&text, &system, &default_options())
-            .map_err(infer_failed)?;
+        let completion =
+            inference::complete(&text, &system, &default_options()).map_err(infer_failed)?;
         Ok(completion.text.trim().to_string())
     }
 
@@ -74,39 +64,24 @@ impl Guest for Component {
             labels.join(", ")
         );
 
-        let completion = inference::complete(&text, &system, &default_options())
-            .map_err(infer_failed)?;
+        let completion =
+            inference::complete(&text, &system, &default_options()).map_err(infer_failed)?;
         let reply = completion.text.trim().to_string();
         let reply_lower = reply.to_lowercase();
 
         // Exact (case-insensitive) match first -> full confidence.
-        if let Some(label) = labels
-            .iter()
-            .find(|l| l.to_lowercase() == reply_lower)
-        {
-            return Ok(LabelScore {
-                label: label.clone(),
-                confidence: 1000,
-            });
+        if let Some(label) = labels.iter().find(|l| l.to_lowercase() == reply_lower) {
+            return Ok(LabelScore { label: label.clone(), confidence: 1000 });
         }
         // Otherwise a label contained in the reply -> reduced confidence.
-        if let Some(label) = labels
-            .iter()
-            .find(|l| reply_lower.contains(&l.to_lowercase()))
-        {
-            return Ok(LabelScore {
-                label: label.clone(),
-                confidence: 700,
-            });
+        if let Some(label) = labels.iter().find(|l| reply_lower.contains(&l.to_lowercase())) {
+            return Ok(LabelScore { label: label.clone(), confidence: 700 });
         }
         // The model picked something outside the label set.
         Err(AssistError::UnexpectedOutput(reply))
     }
 
-    fn extract(
-        text: String,
-        fields: Vec<String>,
-    ) -> Result<Vec<(String, String)>, AssistError> {
+    fn extract(text: String, fields: Vec<String>) -> Result<Vec<(String, String)>, AssistError> {
         if fields.is_empty() {
             return Err(AssistError::InvalidRequest("no fields".to_string()));
         }
@@ -122,8 +97,8 @@ impl Guest for Component {
             fields.join(", ")
         );
 
-        let completion = inference::complete(&text, &system, &default_options())
-            .map_err(infer_failed)?;
+        let completion =
+            inference::complete(&text, &system, &default_options()).map_err(infer_failed)?;
         let reply = completion.text.trim().to_string();
 
         // Parse the reply as a JSON object; non-JSON is an unexpected shape.
@@ -155,15 +130,15 @@ impl Guest for Component {
         } else {
             format!("Use this context:\n{context}")
         };
-        let completion = inference::complete(&prompt, &system, &default_options())
-            .map_err(infer_failed)?;
+        let completion =
+            inference::complete(&prompt, &system, &default_options()).map_err(infer_failed)?;
         Ok(completion.text.trim().to_string())
     }
 
     fn rewrite(text: String, style: String) -> Result<String, AssistError> {
         let system = format!("Rewrite the text in this style: {style}.");
-        let completion = inference::complete(&text, &system, &default_options())
-            .map_err(infer_failed)?;
+        let completion =
+            inference::complete(&text, &system, &default_options()).map_err(infer_failed)?;
         Ok(completion.text.trim().to_string())
     }
 

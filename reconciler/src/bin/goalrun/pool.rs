@@ -152,7 +152,8 @@ fn confirm_with_advisor(
     goal_text: &str,
     hits: &[comp_reconciler::capsearch::Capability],
 ) -> Option<BTreeSet<String>> {
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
     let candidates: Vec<Value> = hits
         .iter()
         .enumerate()
@@ -222,7 +223,7 @@ pub fn pool_context(
             "- `{}` (in {} app(s)) exports {} — {}",
             c.name,
             c.apps,
-            c.exports.iter().cloned().collect::<Vec<_>>().join(", "),
+            c.exports.to_vec().join(", "),
             c.description
         )
     };

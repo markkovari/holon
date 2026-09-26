@@ -437,16 +437,33 @@ impl cas::Host for Host {
 // Mock implementation to satisfy the compiler and capability graph.
 
 impl bindings::actor::entity::actor::Host for Host {
-    fn spawn(&mut self, _id: String, _state: Vec<u8>) -> wasmtime::Result<Result<(), bindings::actor::entity::actor::ActorError>> {
-        Ok(Err(bindings::actor::entity::actor::ActorError::InternalError("not implemented natively yet".into())))
+    fn spawn(
+        &mut self,
+        _id: String,
+        _state: Vec<u8>,
+    ) -> wasmtime::Result<Result<(), bindings::actor::entity::actor::ActorError>> {
+        Ok(Err(bindings::actor::entity::actor::ActorError::InternalError(
+            "not implemented natively yet".into(),
+        )))
     }
 
-    fn send(&mut self, _id: String, _message: Vec<u8>) -> wasmtime::Result<Result<(), bindings::actor::entity::actor::ActorError>> {
-        Ok(Err(bindings::actor::entity::actor::ActorError::InternalError("not implemented natively yet".into())))
+    fn send(
+        &mut self,
+        _id: String,
+        _message: Vec<u8>,
+    ) -> wasmtime::Result<Result<(), bindings::actor::entity::actor::ActorError>> {
+        Ok(Err(bindings::actor::entity::actor::ActorError::InternalError(
+            "not implemented natively yet".into(),
+        )))
     }
 
-    fn snapshot(&mut self, _id: String) -> wasmtime::Result<Result<Vec<u8>, bindings::actor::entity::actor::ActorError>> {
-        Ok(Err(bindings::actor::entity::actor::ActorError::InternalError("not implemented natively yet".into())))
+    fn snapshot(
+        &mut self,
+        _id: String,
+    ) -> wasmtime::Result<Result<Vec<u8>, bindings::actor::entity::actor::ActorError>> {
+        Ok(Err(bindings::actor::entity::actor::ActorError::InternalError(
+            "not implemented natively yet".into(),
+        )))
     }
 }
 
@@ -1029,7 +1046,8 @@ async fn main() -> Result<()> {
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
     let kv_backend: Kv =
-        kv::build(&kv_kind, &args.redis_url, &nats_url, &sqlite_path, args.kv_replicas, &kv_token).await?;
+        kv::build(&kv_kind, &args.redis_url, &nats_url, &sqlite_path, args.kv_replicas, &kv_token)
+            .await?;
     // An explicit 1 is a choice, and it is still worth saying out loud once. The
     // automatic path warns from inside `store_for`, where it knows whether the
     // fallback actually happened rather than guessing here.

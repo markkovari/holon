@@ -91,7 +91,10 @@ type VResult<T> = std::result::Result<T, VcsError>;
 const MAX_BODY: usize = 64 * 1024 * 1024;
 
 #[derive(Parser, Debug)]
-#[command(name = "comp-vcs", about = "The agent-native code store (ADR-0099), for components over loopback HTTP.")]
+#[command(
+    name = "comp-vcs",
+    about = "The agent-native code store (ADR-0099), for components over loopback HTTP."
+)]
 struct Args {
     /// Shared secret a caller must send as `Authorization: Bearer <token>`.
     /// See `comp_reconciler::daemon_auth`. No token means no check, said loudly.
@@ -210,7 +213,9 @@ struct Plan {
 impl Plan {
     fn parse(when: When, s: &str) -> Result<Self> {
         let (name, n) = match s.split_once(':') {
-            Some((a, b)) => (a, b.parse::<u32>().with_context(|| format!("{s:?}: n is not a number"))?),
+            Some((a, b)) => {
+                (a, b.parse::<u32>().with_context(|| format!("{s:?}: n is not a number"))?)
+            }
             None => (s, 1),
         };
         if n == 0 {
@@ -376,7 +381,11 @@ impl<T: Graph> Graph for Fault<T> {
     async fn conflict(&self, ws: &str, id: &str) -> VResult<Option<ConflictRecord>> {
         self.inner.conflict(ws, id).await
     }
-    async fn conflicts(&self, ws: &str, state: Option<ConflictState>) -> VResult<Vec<ConflictRecord>> {
+    async fn conflicts(
+        &self,
+        ws: &str,
+        state: Option<ConflictState>,
+    ) -> VResult<Vec<ConflictRecord>> {
         self.inner.conflicts(ws, state).await
     }
     async fn open_conflicts_for(&self, ws: &str, key: &str) -> VResult<Vec<ConflictRecord>> {
@@ -448,8 +457,9 @@ async fn live_backend(args: &Args, fuse: &Arc<Fuse>, lease_ms: u64) -> Result<Ba
     let graph = holon_vcs::surreal::SurrealGraph::connect(&sc)
         .await
         .with_context(|| format!("SurrealDB at {}", args.surreal_url))?;
-    let e = Engine::new(wrap(blobs, fuse), wrap(pointers, fuse), wrap(graph, fuse), wrap(log, fuse))
-        .with_lease_ms(lease_ms);
+    let e =
+        Engine::new(wrap(blobs, fuse), wrap(pointers, fuse), wrap(graph, fuse), wrap(log, fuse))
+            .with_lease_ms(lease_ms);
     Ok(Backend::Live(Box::new(e)))
 }
 
@@ -613,7 +623,10 @@ impl Daemon {
             "read-blob" => {
                 let r: wire::ReadBlob = parse(body)?;
                 if !holon_vcs::store::is_hash(&r.blob) {
-                    return Err(refusal(&VcsError::Invalid(format!("{:?} is not a sha-256 hash", r.blob))));
+                    return Err(refusal(&VcsError::Invalid(format!(
+                        "{:?} is not a sha-256 hash",
+                        r.blob
+                    ))));
                 }
                 match on!(self, |e| e.blobs().get(&r.blob).await) {
                     Ok(Some(b)) => (200, json(&wire::Bytes(b))),
@@ -649,7 +662,9 @@ impl Daemon {
         };
         let mut files = 0u32;
         let mut bytes = 0u64;
-        let io = |e: std::io::Error| refusal(&VcsError::Storage(format!("writing {}: {e}", dest.display())));
+        let io = |e: std::io::Error| {
+            refusal(&VcsError::Storage(format!("writing {}: {e}", dest.display())))
+        };
         if let Err(e) = std::fs::create_dir_all(&dest) {
             return io(e);
         }
@@ -677,14 +692,17 @@ impl Daemon {
             {
                 use std::os::unix::fs::PermissionsExt;
                 let mode = if entry.executable { 0o755 } else { 0o644 };
-                if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)) {
+                if let Err(e) =
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                {
                     return io(e);
                 }
             }
             files += 1;
             bytes += content.len() as u64;
         }
-        let out = wire::Materialized { dir: dest.display().to_string(), snapshot: snap, files, bytes };
+        let out =
+            wire::Materialized { dir: dest.display().to_string(), snapshot: snap, files, bytes };
         (200, json(&out))
     }
 
@@ -705,7 +723,10 @@ impl Daemon {
         for ws in workspaces {
             let rep: RepairReport = on!(self, |e| e.repair(&ws).await)
                 .with_context(|| format!("repairing workspace {ws:?}"))?;
-            if !rep.rolled_forward.is_empty() || !rep.aborted.is_empty() || !rep.remaining.is_empty() {
+            if !rep.rolled_forward.is_empty()
+                || !rep.aborted.is_empty()
+                || !rep.remaining.is_empty()
+            {
                 println!(
                     "comp-vcs: repaired {ws:?}: rolled forward {:?}, aborted {:?}, {} fixed, {} remaining",
                     rep.rolled_forward,
@@ -734,7 +755,11 @@ fn respond((status, body): Answer) -> Response {
     (code, Json(body)).into_response()
 }
 
-async fn call(State(d): State<Shared>, UrlPath(func): UrlPath<String>, body: axum::body::Bytes) -> Response {
+async fn call(
+    State(d): State<Shared>,
+    UrlPath(func): UrlPath<String>,
+    body: axum::body::Bytes,
+) -> Response {
     respond(d.dispatch(&func, &body).await)
 }
 
@@ -787,7 +812,8 @@ fn fault_plan(args: &Args) -> Result<Option<Plan>> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let plan = fault_plan(&args)?;
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-vcs", &token);
     if let Some(p) = plan {
         eprintln!(
@@ -823,7 +849,11 @@ async fn main() -> Result<()> {
     println!(
         "comp-vcs: listening on http://{} | {} | lease {} ms | {} allowed path(s)",
         args.addr,
-        if args.memory { "memory".to_string() } else { format!("{} + {}", args.nats_url, args.surreal_url) },
+        if args.memory {
+            "memory".to_string()
+        } else {
+            format!("{} + {}", args.nats_url, args.surreal_url)
+        },
         lease_ms,
         args.allow_path.len()
     );
@@ -837,7 +867,8 @@ mod tests {
     use holon_vcs::model::{Agent, Content, SymbolKind, Transformation};
 
     fn daemon(allowed: Vec<PathBuf>, trace: bool) -> Daemon {
-        let fuse = Arc::new(Fuse { trace: trace.then(|| Mutex::new(Vec::new())), ..Default::default() });
+        let fuse =
+            Arc::new(Fuse { trace: trace.then(|| Mutex::new(Vec::new())), ..Default::default() });
         Daemon {
             backend: mem_backend(&fuse, 30_000),
             allowed,
@@ -852,7 +883,12 @@ mod tests {
         SymbolId::new("c", "src/lib.rs", name, SymbolKind::Function)
     }
 
-    fn patch(name: &str, parent: Option<&str>, change: Transformation, read_at: Option<u64>) -> Value {
+    fn patch(
+        name: &str,
+        parent: Option<&str>,
+        change: Transformation,
+        read_at: Option<u64>,
+    ) -> Value {
         let mut r = PatchRequest {
             workspace: "w".into(),
             symbol: sym(name),
@@ -883,14 +919,29 @@ mod tests {
     #[tokio::test]
     async fn routes_map_one_to_one_onto_the_contract() {
         let d = daemon(vec![], false);
-        let (s, a) = post(&d, "apply-patch", patch("f", None, Transformation::Create(inline("fn f() {}\n")), None)).await;
+        let (s, a) = post(
+            &d,
+            "apply-patch",
+            patch("f", None, Transformation::Create(inline("fn f() {}\n")), None),
+        )
+        .await;
         assert_eq!(s, 200, "{a}");
         assert_eq!(a["outcome"], "applied");
         let base = a["patch"].as_str().unwrap().to_string();
 
-        let (s, x) = post(&d, "apply-patch", patch("f", Some(&base), Transformation::Replace(inline("fn f() { 1 }\n")), None)).await;
+        let (s, x) = post(
+            &d,
+            "apply-patch",
+            patch("f", Some(&base), Transformation::Replace(inline("fn f() { 1 }\n")), None),
+        )
+        .await;
         assert_eq!((s, x["outcome"].as_str()), (200, Some("applied")));
-        let (s, y) = post(&d, "apply-patch", patch("f", Some(&base), Transformation::Replace(inline("fn f() { 2 }\n")), None)).await;
+        let (s, y) = post(
+            &d,
+            "apply-patch",
+            patch("f", Some(&base), Transformation::Replace(inline("fn f() { 2 }\n")), None),
+        )
+        .await;
         assert_eq!((s, y["outcome"].as_str()), (200, Some("conflicted")));
         let cid = y["conflict"].as_str().unwrap().to_string();
 
@@ -899,7 +950,8 @@ mod tests {
         assert_eq!(e["error"], "unresolved-conflict");
         assert_eq!(e["detail"], json!([cid]));
 
-        let (s, list) = post(&d, "list-conflicts", json!({"workspace": "w", "state": "open"})).await;
+        let (s, list) =
+            post(&d, "list-conflicts", json!({"workspace": "w", "state": "open"})).await;
         assert_eq!(s, 200);
         assert_eq!(list.as_array().unwrap().len(), 1);
         assert_eq!(list[0]["left"]["content"], json!({"inline": "fn f() { 1 }\n"}));
@@ -911,7 +963,8 @@ mod tests {
         });
         let (s, r) = post(&d, "resolve-conflict", res).await;
         assert_eq!(s, 200, "{r}");
-        let (s, snap) = post(&d, "snapshot-export", json!({"workspace": "w", "component": "c"})).await;
+        let (s, snap) =
+            post(&d, "snapshot-export", json!({"workspace": "w", "component": "c"})).await;
         assert_eq!(s, 200);
         let blob = snap["entries"][0]["blob"].as_str().unwrap();
         let (s, b) = post(&d, "read-blob", json!({"blob": blob})).await;
@@ -925,7 +978,8 @@ mod tests {
         assert_eq!(s, 200);
         assert_eq!(log.as_array().unwrap().last().unwrap()["id"], head);
 
-        let (s, q) = post(&d, "query-symbol", json!({"workspace": "w", "query": {"component": "c"}})).await;
+        let (s, q) =
+            post(&d, "query-symbol", json!({"workspace": "w", "query": {"component": "c"}})).await;
         assert_eq!((s, q[0]["content"].clone()), (200, json!({"inline": "fn f() { 3 }\n"})));
 
         let (s, v) = post(&d, "verify", json!({"workspace": "w"})).await;
@@ -934,7 +988,8 @@ mod tests {
         assert_eq!((s, rep["remaining"].clone()), (200, json!([])));
 
         let op = r["op"].as_u64().unwrap();
-        let (s, rev) = post(&d, "revert-op", json!({"workspace": "w", "op": op, "by": {"id": "t"}})).await;
+        let (s, rev) =
+            post(&d, "revert-op", json!({"workspace": "w", "op": op, "by": {"id": "t"}})).await;
         assert_eq!(s, 200, "{rev}");
         assert_eq!(rev["kind"], json!({"revert": op}));
     }
@@ -947,25 +1002,48 @@ mod tests {
         let (s, e) = post(&d, "frobnicate", json!({})).await;
         assert_eq!((s, e["error"].as_str()), (404, Some("not-found")));
         // replace without a parent: invalid
-        let (s, e) = post(&d, "apply-patch", patch("f", None, Transformation::Replace(inline("x")), None)).await;
+        let (s, e) =
+            post(&d, "apply-patch", patch("f", None, Transformation::Replace(inline("x")), None))
+                .await;
         assert_eq!((s, e["error"].as_str()), (400, Some("invalid")), "{e}");
         // name-taken: rename g onto f
-        post(&d, "apply-patch", patch("f", None, Transformation::Create(inline("fn f() {}\n")), None)).await;
-        let (_, g) = post(&d, "apply-patch", patch("g", None, Transformation::Create(inline("fn g() {}\n")), None)).await;
-        let (s, e) = post(&d, "apply-patch", patch("g", g["patch"].as_str(), Transformation::Rename("f".into()), None)).await;
+        post(
+            &d,
+            "apply-patch",
+            patch("f", None, Transformation::Create(inline("fn f() {}\n")), None),
+        )
+        .await;
+        let (_, g) = post(
+            &d,
+            "apply-patch",
+            patch("g", None, Transformation::Create(inline("fn g() {}\n")), None),
+        )
+        .await;
+        let (s, e) = post(
+            &d,
+            "apply-patch",
+            patch("g", g["patch"].as_str(), Transformation::Rename("f".into()), None),
+        )
+        .await;
         assert_eq!((s, e["error"].as_str()), (409, Some("name-taken")), "{e}");
         let back: wire::ErrorBody = serde_json::from_value(e).unwrap();
         assert_eq!(back.into_error(), VcsError::NameTaken(sym("f")));
-        let (s, e) = post(&d, "revert-op", json!({"workspace": "w", "op": 999, "by": {"id": "t"}})).await;
+        let (s, e) =
+            post(&d, "revert-op", json!({"workspace": "w", "op": 999, "by": {"id": "t"}})).await;
         assert_eq!((s, e["error"].as_str()), (404, Some("not-found")), "{e}");
         let (s, e) = post(&d, "read-blob", json!({"blob": "zz"})).await;
         assert_eq!((s, e["error"].as_str()), (400, Some("invalid")));
         let (s, e) = post(&d, "read-blob", json!({"blob": "0".repeat(64)})).await;
         assert_eq!((s, e["error"].as_str()), (404, Some("not-found")));
-        let (s, e) = post(&d, "ingest-file", json!({
-            "workspace": "w", "component": "c", "by": {"id": "t"},
-            "file": {"path": "../escape.rs", "content": ""}
-        })).await;
+        let (s, e) = post(
+            &d,
+            "ingest-file",
+            json!({
+                "workspace": "w", "component": "c", "by": {"id": "t"},
+                "file": {"path": "../escape.rs", "content": ""}
+            }),
+        )
+        .await;
         assert_eq!((s, e["error"].as_str()), (400, Some("invalid")), "{e}");
     }
 
@@ -976,20 +1054,37 @@ mod tests {
         let d = daemon(vec![root.clone()], false);
         let text = "//! doc\nuse std::fmt;\n\nfn a() {}\n\n/// b\nfn b() -> u8 { 1 } // why\n";
         let file = json!({"path": "src/lib.rs", "content": base64_of(text.as_bytes())});
-        let (s, rep) = post(&d, "ingest-file", json!({"workspace": "w", "component": "c", "file": file, "by": {"id": "t"}})).await;
+        let (s, rep) = post(
+            &d,
+            "ingest-file",
+            json!({"workspace": "w", "component": "c", "file": file, "by": {"id": "t"}}),
+        )
+        .await;
         assert_eq!(s, 200, "{rep}");
-        assert!(rep["patches"].as_array().unwrap().iter().all(|p| p["outcome"]["ok"].is_object()), "{rep}");
+        assert!(
+            rep["patches"].as_array().unwrap().iter().all(|p| p["outcome"]["ok"].is_object()),
+            "{rep}"
+        );
 
-        let (s, e) = post(&d, "materialize", json!({"workspace": "w", "component": "c", "dest": "/etc/holon-vcs-test"})).await;
+        let (s, e) = post(
+            &d,
+            "materialize",
+            json!({"workspace": "w", "component": "c", "dest": "/etc/holon-vcs-test"}),
+        )
+        .await;
         assert_eq!((s, e["error"].as_str()), (403, Some("not-permitted")));
         let dest = root.join("out");
-        let (s, m) = post(&d, "materialize", json!({"workspace": "w", "component": "c", "dest": dest})).await;
+        let (s, m) =
+            post(&d, "materialize", json!({"workspace": "w", "component": "c", "dest": dest}))
+                .await;
         assert_eq!(s, 200, "{m}");
         assert_eq!(std::fs::read_to_string(dest.join("src/lib.rs")).unwrap(), text);
         assert_eq!(m["files"], 1);
         assert_eq!(m["bytes"], text.len());
         // Not into a directory that already has something in it.
-        let (s, e) = post(&d, "materialize", json!({"workspace": "w", "component": "c", "dest": dest})).await;
+        let (s, e) =
+            post(&d, "materialize", json!({"workspace": "w", "component": "c", "dest": dest}))
+                .await;
         assert_eq!((s, e["error"].as_str()), (400, Some("invalid")));
     }
 
@@ -1002,10 +1097,17 @@ mod tests {
     #[tokio::test]
     async fn the_fuse_sees_the_documented_write_order() {
         let d = daemon(vec![], true);
-        let (s, a) = post(&d, "apply-patch", patch("f", None, Transformation::Create(inline("fn f() {}\n")), None)).await;
+        let (s, a) = post(
+            &d,
+            "apply-patch",
+            patch("f", None, Transformation::Create(inline("fn f() {}\n")), None),
+        )
+        .await;
         assert_eq!(s, 200, "{a}");
         let trace = d.fuse.trace.as_ref().unwrap().lock().unwrap().clone();
-        let first = |st: Step| trace.iter().position(|s| *s == st).unwrap_or_else(|| panic!("no {st:?} in {trace:?}"));
+        let first = |st: Step| {
+            trace.iter().position(|s| *s == st).unwrap_or_else(|| panic!("no {st:?} in {trace:?}"))
+        };
         assert!(first(Step::Blob) < first(Step::Intent));
         assert!(first(Step::Intent) < first(Step::Graph));
         assert!(first(Step::Graph) < first(Step::Claim));
@@ -1018,7 +1120,10 @@ mod tests {
 
     #[test]
     fn crash_flags_parse_and_refuse_without_the_confirmation() {
-        assert_eq!(Plan::parse(When::After, "tip").unwrap(), Plan { when: When::After, step: Step::Tip, n: 1 });
+        assert_eq!(
+            Plan::parse(When::After, "tip").unwrap(),
+            Plan { when: When::After, step: Step::Tip, n: 1 }
+        );
         assert_eq!(Plan::parse(When::Before, "graph:3").unwrap().n, 3);
         assert!(Plan::parse(When::After, "tip:0").is_err());
         assert!(Plan::parse(When::After, "nope").is_err());
@@ -1028,8 +1133,17 @@ mod tests {
             Args::parse_from(v)
         };
         assert!(fault_plan(&args(&["--crash-after-step", "tip"])).is_err());
-        assert!(fault_plan(&args(&["--crash-after-step", "tip", "--i-know-this-is-a-test"])).unwrap().is_some());
-        assert!(fault_plan(&args(&["--crash-after-step", "tip", "--crash-before-step", "tip", "--i-know-this-is-a-test"])).is_err());
+        assert!(fault_plan(&args(&["--crash-after-step", "tip", "--i-know-this-is-a-test"]))
+            .unwrap()
+            .is_some());
+        assert!(fault_plan(&args(&[
+            "--crash-after-step",
+            "tip",
+            "--crash-before-step",
+            "tip",
+            "--i-know-this-is-a-test"
+        ]))
+        .is_err());
         assert!(fault_plan(&args(&[])).unwrap().is_none());
     }
 

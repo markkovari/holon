@@ -186,7 +186,14 @@ mod tests {
             "# China National Day 2026\n2026-10-01\n\n2026-10-02\n# note: golden week\n2026-10-07\n",
         )
         .unwrap();
-        assert_eq!(days, vec![days_from_civil(2026, 10, 1), days_from_civil(2026, 10, 2), days_from_civil(2026, 10, 7)]);
+        assert_eq!(
+            days,
+            vec![
+                days_from_civil(2026, 10, 1),
+                days_from_civil(2026, 10, 2),
+                days_from_civil(2026, 10, 7)
+            ]
+        );
     }
 
     #[test]

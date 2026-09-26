@@ -469,7 +469,9 @@ impl Fleet {
                     &catalog,
                     &root.join("components/target/composed"),
                 )
-                .unwrap_or_else(|e| panic!("composing platform-domain: {e} — `cargo xtask build --force` first"))
+                .unwrap_or_else(|e| {
+                    panic!("composing platform-domain: {e} — `cargo xtask build --force` first")
+                })
             };
             let mut cp = Command::new(&host_bin);
             cp.current_dir(&root)

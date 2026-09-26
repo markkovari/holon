@@ -73,7 +73,11 @@ fn session_key(session: &str) -> String {
 /// function expecting the other. Keeping every `async_nats` type inside this
 /// module (and `holon_vcs::nats`'s, independently) is what lets both engines
 /// live in one binary without their two `async-nats`es ever having to agree.
-pub async fn connect(url: &str, bucket: &str, wake_stream_name: &str) -> Result<(NatsParkStore, WakeStream)> {
+pub async fn connect(
+    url: &str,
+    bucket: &str,
+    wake_stream_name: &str,
+) -> Result<(NatsParkStore, WakeStream)> {
     let client = async_nats::connect(url).await.map_err(ParkError::storage)?;
     let js = jetstream::new(client);
     let store = NatsParkStore::open(&js, bucket).await?;
@@ -92,7 +96,8 @@ impl NatsParkStore {
         let kv = match js.get_key_value(bucket).await {
             Ok(store) => store,
             Err(_) => {
-                let cfg = kv::Config { bucket: bucket.to_string(), history: 1, ..Default::default() };
+                let cfg =
+                    kv::Config { bucket: bucket.to_string(), history: 1, ..Default::default() };
                 match js.create_key_value(cfg).await {
                     Ok(store) => store,
                     // Somebody else created it in between.
@@ -108,7 +113,8 @@ impl ParkStore for NatsParkStore {
     async fn get(&self, ticket: &str) -> Result<Option<(Record, Revision)>> {
         match self.kv.entry(ticket_key(ticket)).await.map_err(ParkError::storage)? {
             Some(e) if e.operation == kv::Operation::Put => {
-                let record: Record = serde_json::from_slice(&e.value).map_err(ParkError::storage)?;
+                let record: Record =
+                    serde_json::from_slice(&e.value).map_err(ParkError::storage)?;
                 Ok(Some((record, e.revision)))
             }
             _ => Ok(None),
@@ -134,9 +140,12 @@ impl ParkStore for NatsParkStore {
     }
 
     async fn claim_correlation(&self, correlation: &str, ticket: &str) -> Result<Option<TicketId>> {
-        match self.kv.create(correlation_key(correlation), ticket.as_bytes().to_vec().into()).await {
+        match self.kv.create(correlation_key(correlation), ticket.as_bytes().to_vec().into()).await
+        {
             Ok(_) => Ok(None),
-            Err(e) if e.kind() == kv::CreateErrorKind::AlreadyExists => self.find_correlation(correlation).await,
+            Err(e) if e.kind() == kv::CreateErrorKind::AlreadyExists => {
+                self.find_correlation(correlation).await
+            }
             Err(e) => Err(ParkError::storage(e)),
         }
     }
@@ -156,9 +165,10 @@ impl ParkStore for NatsParkStore {
         for _ in 0..MAX_INDEX_RETRIES {
             let entry = self.kv.entry(&key).await.map_err(ParkError::storage)?;
             let (mut list, expected): (Vec<TicketId>, Option<Revision>) = match &entry {
-                Some(e) if e.operation == kv::Operation::Put => {
-                    (serde_json::from_slice(&e.value).map_err(ParkError::storage)?, Some(e.revision))
-                }
+                Some(e) if e.operation == kv::Operation::Put => (
+                    serde_json::from_slice(&e.value).map_err(ParkError::storage)?,
+                    Some(e.revision),
+                ),
                 _ => (Vec::new(), None),
             };
             if list.iter().any(|t| t == ticket) {
@@ -182,7 +192,9 @@ impl ParkStore for NatsParkStore {
                 return Ok(());
             }
         }
-        Err(ParkError::storage(format!("session {session:?}'s ticket index: repeated compare-and-set contention")))
+        Err(ParkError::storage(format!(
+            "session {session:?}'s ticket index: repeated compare-and-set contention"
+        )))
     }
 
     async fn list_session(&self, session: &str) -> Result<Vec<TicketId>> {
@@ -230,7 +242,11 @@ impl WakeStream {
     /// sent.
     pub async fn publish(&self, msg: &WakeMessage) -> Result<()> {
         let payload = serde_json::to_vec(msg).map_err(ParkError::storage)?;
-        let ack = self.js.publish(self.subject.clone(), payload.into()).await.map_err(ParkError::storage)?;
+        let ack = self
+            .js
+            .publish(self.subject.clone(), payload.into())
+            .await
+            .map_err(ParkError::storage)?;
         ack.await.map_err(ParkError::storage)?;
         Ok(())
     }

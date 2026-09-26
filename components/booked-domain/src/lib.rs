@@ -392,6 +392,9 @@ fn overlaps(start: i64, end: i64, existing: &[(i64, i64)]) -> bool {
 /// Book ONE instance under a lock:mutex lease on `book:{resource}:{day}` — the
 /// no-double-book critical section: acquire, re-check overlap, write, release.
 /// Returns the stored booking, or None on conflict / lock contention.
+// One over clippy's default threshold, each a distinct scalar this booking
+// needs; a params struct would only exist to satisfy the lint.
+#[allow(clippy::too_many_arguments)]
 fn book_one(
     res_id: &str,
     res_name: &str,

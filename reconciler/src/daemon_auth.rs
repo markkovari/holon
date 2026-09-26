@@ -106,7 +106,8 @@ mod tests {
     fn a_token_file_wins_over_a_direct_token_and_is_trimmed() {
         // Test scaffolding, not a security-sensitive file: torn down at the
         // end of this test. Same pattern as fs-watcher's daemon test.
-        let path = std::env::temp_dir().join(format!("daemon-auth-test-{}.token", std::process::id())); // nosemgrep: rust.lang.security.temp-dir.temp-dir
+        let path =
+            std::env::temp_dir().join(format!("daemon-auth-test-{}.token", std::process::id())); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         std::fs::write(&path, "  from-file\n").expect("write");
         assert_eq!(
             resolve_token(Some("from-argv".into()), Some(path.clone())),

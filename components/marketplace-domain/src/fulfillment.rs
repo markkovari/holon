@@ -274,11 +274,7 @@ fn refund(route: &Route, order_id: &str, body: &str) -> Reply {
         id: String::new(),
         memo: memo.clone(),
         lines: vec![
-            ledger::Line {
-                account: vendor_account.clone(),
-                amount,
-                side: ledger::Side::Debit,
-            },
+            ledger::Line { account: vendor_account.clone(), amount, side: ledger::Side::Debit },
             ledger::Line {
                 account: "platform:cash".to_string(),
                 amount,

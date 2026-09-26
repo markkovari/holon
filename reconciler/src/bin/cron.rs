@@ -85,7 +85,9 @@ async fn list_jobs() -> Json<Value> {
         // The binary itself could not be found or spawned — that is the only
         // thing this reports as unavailable.
         Err(e) => {
-            return Json(json!({ "error": "unavailable", "detail": format!("failed to run crontab: {e}") }))
+            return Json(
+                json!({ "error": "unavailable", "detail": format!("failed to run crontab: {e}") }),
+            )
         }
     };
 
@@ -101,16 +103,20 @@ async fn list_jobs() -> Json<Value> {
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     let jobs = parse_crontab(&stdout);
-    Json(json!({ "jobs": jobs.iter().map(|j| json!({"schedule": j.schedule, "command": j.command})).collect::<Vec<_>>() }))
+    Json(
+        json!({ "jobs": jobs.iter().map(|j| json!({"schedule": j.schedule, "command": j.command})).collect::<Vec<_>>() }),
+    )
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-cron", &token);
     println!("comp-cron: listening on http://{}", args.addr);
-    let app = Router::new().route("/list-jobs", post(list_jobs))
+    let app = Router::new()
+        .route("/list-jobs", post(list_jobs))
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
