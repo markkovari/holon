@@ -351,3 +351,85 @@ pub fn promote_parts(
         }
     }
 }
+
+/// What each branch is allowed to read, and what it actually read.
+///
+/// Varied ACROSS branches on purpose: a generation whose branches all read the
+/// same top-k is an expensive way to run one branch (ADR-0081's herding), and the
+/// branch that reads nothing is the only way to tell whether the pool helps at
+/// all. `default_strategies` already keeps one branch from reading the previous
+/// winner; that same branch reads no lessons either.
+///
+/// Returns the strategies and, per branch, the keys it read — which is the other
+/// half of attribution when the run ends.
+pub(crate) fn reading_per_branch(
+    args: &Args,
+    goal: &GoalSpec,
+    memory: Option<&Memory>,
+) -> (Vec<generation_mod::Strategy>, Vec<Vec<String>>) {
+    let mut strategies = generation_mod::default_strategies(args.branches);
+    let mut read_by_branch: Vec<Vec<String>> = vec![Vec::new(); strategies.len()];
+    // What this goal's work touches, so what it learns is findable by the next
+    // goal that builds against the same interfaces rather than only by the next
+    // goal worded like this one (ADR-0090).
+    let tags = comp_reconciler::plug::tags_for(
+        &goal.writable,
+        &comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&repo_root())),
+    );
+    if let Some(m) = &memory {
+        for (i, s) in strategies.iter_mut().enumerate() {
+            if !s.reads_prior {
+                continue; // the control arm reads nothing, and that is the point
+            }
+            let reading = memory::Reading {
+                // Deliberately unequal: 3, 4, 5 … so two branches do not arrive at
+                // the same prompt by arriving at the same advice.
+                k: 3 + (i as u32 % 3),
+                budget: 1200,
+                tags: tags.clone(),
+                min_similarity: 0.0,
+                pools: match i % 3 {
+                    0 => vec![],                                      // everything
+                    1 => vec!["errors".into()],                       // only what failed
+                    _ => vec!["patterns".into(), "solutions".into()], // only what worked
+                },
+            };
+            match m.recall(&goal.text, &reading) {
+                Ok(lessons) if lessons.is_empty() => {}
+                Ok(lessons) => {
+                    println!(
+                        "  branch-{i} reads {} lesson(s) [{}]",
+                        lessons.len(),
+                        lessons.iter().map(|l| l.ns.as_str()).collect::<Vec<_>>().join(", ")
+                    );
+                    read_by_branch[i] = lessons.iter().map(|l| l.key.clone()).collect();
+                    s.knowledge = memory::render(&lessons);
+                }
+                // A pool that is down costs a branch its advice and nothing else.
+                Err(e) => println!("  branch-{i} runs cold: {e}"),
+            }
+        }
+        // Herding is branches reading the SAME thing, not branches reading
+        // nothing: an empty pool makes every reading identical and that is a cold
+        // start, not convergence. Saying otherwise would cry wolf on every first
+        // run, and a warning that fires when it should not is a warning people
+        // learn to skip.
+        let readers = read_by_branch.iter().filter(|r| !r.is_empty()).count();
+        if readers > 1 {
+            let distinct: std::collections::BTreeSet<&Vec<String>> =
+                read_by_branch.iter().filter(|r| !r.is_empty()).collect();
+            println!(
+                "  knowledge: {} distinct reading(s) across {readers} reading branches{}",
+                distinct.len(),
+                if distinct.len() == 1 {
+                    " — every one read the same thing, which is herding"
+                } else {
+                    ""
+                }
+            );
+        } else if readers == 0 {
+            println!("  knowledge: the pool had nothing for this goal; every branch runs cold");
+        }
+    }
+    (strategies, read_by_branch)
+}
