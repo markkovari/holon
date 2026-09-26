@@ -104,7 +104,7 @@ mod tests {
     /// two copies are stripped differently, which is worse than the cost.
     #[test]
     fn a_path_in_both_lists_is_shown_once_and_unstripped() {
-        let dir = std::env::temp_dir().join("holon-branch-context-test");
+        let dir = std::env::temp_dir().join("holon-branch-context-test"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         let wit = dir.join("a.wit");
         std::fs::create_dir_all(&dir).expect("tmpdir");
         std::fs::write(&wit, "// a comment\npackage a:b@0.1.0;\n").expect("write");
@@ -141,7 +141,7 @@ mod tests {
     /// answer, which is the shape of failure this repository keeps rediscovering.
     #[test]
     fn a_part_is_told_what_the_pool_already_has() {
-        let dir = std::env::temp_dir().join("holon-part-context-test");
+        let dir = std::env::temp_dir().join("holon-part-context-test"); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         std::fs::create_dir_all(&dir).expect("tmpdir");
         std::fs::write(dir.join("own.rs"), "fn stub() {}\n").expect("write");
         let own = vec!["own.rs".to_string()];

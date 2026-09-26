@@ -280,7 +280,7 @@ pub(crate) fn render(fixture: &str, subs: &[(&str, &str)]) -> Result<PathBuf> {
     for (k, v) in subs {
         yaml = yaml.replace(k, v);
     }
-    let out = std::env::temp_dir().join(format!("comp-goalrun-{}-{fixture}", std::process::id()));
+    let out = std::env::temp_dir().join(format!("comp-goalrun-{}-{fixture}", std::process::id())); // nosemgrep: rust.lang.security.temp-dir.temp-dir
     std::fs::write(&out, yaml)?;
     Ok(out)
 }
