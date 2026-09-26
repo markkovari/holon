@@ -42,7 +42,7 @@ impl Guest for Component {
     fn on_message(message_bytes: Vec<u8>) -> Result<(), String> {
         let msg: TicketMessage = serde_json::from_slice(&message_bytes)
             .map_err(|e| format!("failed to deserialize message: {}", e))?;
-        
+
         STATE.with(|s| {
             let mut state_opt = s.borrow_mut();
             let state = state_opt.as_mut().ok_or_else(|| "actor not initialized".to_string())?;

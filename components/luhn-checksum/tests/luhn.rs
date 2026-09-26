@@ -4,18 +4,13 @@
 // Real numbers whose Luhn-validity is publicly documented: the classic Wikipedia
 // example, and IIN test numbers from card networks' own published test-card lists.
 const VALID: &[&str] = &[
-    "79927398713",     // Wikipedia's own worked example
+    "79927398713",      // Wikipedia's own worked example
     "4111111111111111", // Visa test number
     "5500005555555559", // Mastercard test number
     "0",
 ];
 
-const INVALID: &[&str] = &[
-    "79927398710",
-    "79927398711",
-    "79927398712",
-    "4111111111111112",
-];
+const INVALID: &[&str] = &["79927398710", "79927398711", "79927398712", "4111111111111112"];
 
 #[test]
 fn known_valid_numbers_pass() {
@@ -51,13 +46,8 @@ fn a_non_digit_character_is_not_valid_and_not_a_panic() {
 fn checksum_digit_makes_the_number_valid_once_appended() {
     // 7992739871 + check digit 3 = the Wikipedia example above.
     assert_eq!(luhn_checksum::checksum_digit("7992739871"), Some(3));
-    assert_eq!(
-        luhn_checksum::append_checksum("7992739871"),
-        Some("79927398713".to_string())
-    );
-    assert!(luhn_checksum::is_valid(
-        &luhn_checksum::append_checksum("7992739871").unwrap()
-    ));
+    assert_eq!(luhn_checksum::append_checksum("7992739871"), Some("79927398713".to_string()));
+    assert!(luhn_checksum::is_valid(&luhn_checksum::append_checksum("7992739871").unwrap()));
 }
 
 #[test]

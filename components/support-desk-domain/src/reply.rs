@@ -1,4 +1,3 @@
-use crate::{cfg_u64, now_secs, Reply, Route};
 use crate::bindings::ai::inference::inference as ai;
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
@@ -7,6 +6,7 @@ use crate::bindings::quota::meter::meter;
 use crate::bindings::records::store::store as records;
 use crate::bindings::session::store::store as sessions;
 use crate::bindings::wasi::http::types::Method;
+use crate::{cfg_u64, now_secs, Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
@@ -24,7 +24,9 @@ fn authorize_perm(route: &Route, action: &str) -> Result<Principal, Reply> {
         Err(err) => {
             let reply = match err {
                 AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
-                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => {
+                    Reply::err(503, "auth_unavailable")
+                }
                 _ => Reply::err(401, "unauthenticated"),
             };
             Err(reply)
@@ -40,14 +42,16 @@ fn write_reply(route: &Route, id: &str) -> Reply {
         Ok(_) => {}
         Err(sessions::SessionError::CsrfMismatch) => return Reply::err(403, "csrf_invalid"),
         Err(sessions::SessionError::NotFound) => return Reply::err(403, "session_expired"),
-        Err(sessions::SessionError::BackendUnavailable(_)) => return Reply::err(503, "session_unavailable"),
+        Err(sessions::SessionError::BackendUnavailable(_)) => {
+            return Reply::err(503, "session_unavailable")
+        }
     }
 
     let principal = match authorize_perm(route, "reply") {
         Ok(p) => p,
         Err(r) => return r,
     };
-    
+
     let entry = match records::get("tickets", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
@@ -67,7 +71,10 @@ fn write_reply(route: &Route, id: &str) -> Reply {
                 Err(_) => now_secs(),
             };
             let retry_after = resets_at.saturating_sub(now_secs());
-            return Reply::json(429, json!({"error": "budget_exhausted", "retry_after": retry_after}));
+            return Reply::json(
+                429,
+                json!({"error": "budget_exhausted", "retry_after": retry_after}),
+            );
         }
         Err(_) => return Reply::err(503, "budget_unavailable"),
     };
@@ -103,8 +110,11 @@ fn write_reply(route: &Route, id: &str) -> Reply {
         return Reply::err(500, "store_error");
     }
 
-    Reply::json(202, json!({
-        "event": event_id,
-        "remaining": balance.remaining
-    }))
+    Reply::json(
+        202,
+        json!({
+            "event": event_id,
+            "remaining": balance.remaining
+        }),
+    )
 }

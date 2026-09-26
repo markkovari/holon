@@ -62,9 +62,7 @@ fn param(q: &str, k: &str) -> String {
 }
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len() / 2)
-        .filter_map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok())
-        .collect()
+    (0..s.len() / 2).filter_map(|i| u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()).collect()
 }
 
 fn hex(b: &[u8]) -> String {
@@ -85,7 +83,9 @@ fn err(e: codec::DecodeError) -> serde_json::Value {
             json!({ "error": "not-in-alphabet", "at": at, "found": found })
         }
         codec::DecodeError::TruncatedGroup(n) => json!({ "error": "truncated-group", "length": n }),
-        codec::DecodeError::MisplacedPadding(at) => json!({ "error": "misplaced-padding", "at": at }),
+        codec::DecodeError::MisplacedPadding(at) => {
+            json!({ "error": "misplaced-padding", "at": at })
+        }
     }
 }
 

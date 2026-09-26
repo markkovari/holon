@@ -1,8 +1,8 @@
-use crate::{Reply, Route};
-use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::query as audit_query;
+use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::json;
 
 pub fn note(trace: &str, event: &str, outcome: &str, subject: &str, detail: &str) {
@@ -25,12 +25,14 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
     }
 
     use crate::bindings::auth::identity::authorizer as authz;
-    use crate::bindings::auth::identity::types::{Permission, AuthError};
+    use crate::bindings::auth::identity::types::{AuthError, Permission};
     let perm = Permission { target: "reports".to_string(), action: "read".to_string() };
     match authz::authorize(&route.bearer, &perm) {
         Ok(_) => {}
         Err(AuthError::InsufficientScope(_)) => return Reply::err(403, "forbidden"),
-        Err(AuthError::BackendUnavailable(_) | AuthError::Internal(_)) => return Reply::err(503, "auth_unavailable"),
+        Err(AuthError::BackendUnavailable(_) | AuthError::Internal(_)) => {
+            return Reply::err(503, "auth_unavailable")
+        }
         Err(_) => return Reply::err(401, "unauthenticated"),
     }
 
@@ -42,19 +44,22 @@ pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {
         audit_query::recent(limit).unwrap_or_default()
     };
 
-    let items: Vec<serde_json::Value> = events.into_iter().map(|e| {
-        json!({
-            "id": e.id,
-            "trace_id": e.trace_id,
-            "span_id": e.span_id,
-            "timestamp": e.timestamp,
-            "event": e.event,
-            "outcome": e.outcome,
-            "tenant": e.tenant,
-            "subject": e.subject,
-            "detail": e.detail
+    let items: Vec<serde_json::Value> = events
+        .into_iter()
+        .map(|e| {
+            json!({
+                "id": e.id,
+                "trace_id": e.trace_id,
+                "span_id": e.span_id,
+                "timestamp": e.timestamp,
+                "event": e.event,
+                "outcome": e.outcome,
+                "tenant": e.tenant,
+                "subject": e.subject,
+                "detail": e.detail
+            })
         })
-    }).collect();
+        .collect();
 
     Reply::json(200, json!({ "events": items }))
 }

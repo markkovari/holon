@@ -672,7 +672,8 @@ pub fn goal_watch(project: &str, interval: u64, full_refresh: u64) -> Result<()>
     let mut last_full = std::time::Instant::now();
 
     let refresh = |s: &Session| -> Result<()> {
-        let v = call(s, "GET", &format!("/api/projects/{project}/goals"), None, "application/json")?;
+        let v =
+            call(s, "GET", &format!("/api/projects/{project}/goals"), None, "application/json")?;
         println!("\n[{}]", now_hms());
         print_goals(project, &v["goals"].as_array().cloned().unwrap_or_default());
         Ok(())

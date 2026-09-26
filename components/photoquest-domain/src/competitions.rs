@@ -173,7 +173,8 @@ fn name_from(subject: &str, email: &str) -> String {
     if !local.is_empty() {
         return local.to_string();
     }
-    let tail: String = subject.chars().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
+    let tail: String =
+        subject.chars().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect();
     format!("photographer-{tail}")
 }
 
@@ -227,9 +228,11 @@ fn parse_weights(v: &Value) -> Result<Weights, String> {
 }
 
 fn weights_of(c: &Map<String, Value>) -> Weights {
-    c.get("weights")
-        .and_then(|w| parse_weights(w).ok())
-        .unwrap_or(Weights { auto: 1.0, votes: 0.0, judges: 0.0 })
+    c.get("weights").and_then(|w| parse_weights(w).ok()).unwrap_or(Weights {
+        auto: 1.0,
+        votes: 0.0,
+        judges: 0.0,
+    })
 }
 
 /// `opens_at < closes_at ≤ voting_closes_at ≤ judging_closes_at`. Judging must
@@ -260,7 +263,9 @@ fn validate(c: &Map<String, Value>) -> Result<(), Reply> {
     let w = c.get("weights").ok_or_else(|| bad("bad_weights", "weights is required"))?;
     parse_weights(w).map_err(|d| bad("bad_weights", d))?;
     let mut t = [0u64; 4];
-    for (i, k) in ["opens_at", "closes_at", "voting_closes_at", "judging_closes_at"].iter().enumerate() {
+    for (i, k) in
+        ["opens_at", "closes_at", "voting_closes_at", "judging_closes_at"].iter().enumerate()
+    {
         t[i] = match c.get(*k).and_then(Value::as_u64) {
             Some(v) => v,
             None => return Err(bad("bad_windows", format!("{k} is required (unix seconds)"))),
@@ -488,7 +493,13 @@ fn judge(principal: &Principal, id: &str, entry_id: &str, body: &str) -> Reply {
 }
 
 /// One record per (`who_field` = `who`, entry): update it if it exists, else create it.
-fn upsert(collection: &str, entry_id: &str, who_field: &str, who: &str, rec: Value) -> Result<(), Reply> {
+fn upsert(
+    collection: &str,
+    entry_id: &str,
+    who_field: &str,
+    who: &str,
+    rec: Value,
+) -> Result<(), Reply> {
     let v = serde_json::to_string(entry_id).unwrap_or_default();
     for _ in 0..3 {
         let existing = match records::find_by(collection, "entry", &v) {
@@ -515,7 +526,10 @@ fn upsert(collection: &str, entry_id: &str, who_field: &str, who: &str, rec: Val
     Err(Reply::err(503, "busy"))
 }
 
-fn entry_of(competition: &str, entry_id: &str) -> Result<(records::Entry, Map<String, Value>), Reply> {
+fn entry_of(
+    competition: &str,
+    entry_id: &str,
+) -> Result<(records::Entry, Map<String, Value>), Reply> {
     match load(ENTRIES, entry_id)? {
         Some((e, m)) if str_of(&m, "competition") == competition => Ok((e, m)),
         _ => Err(Reply::err(404, "not_found")),
@@ -553,7 +567,11 @@ fn public_view(c: &Map<String, Value>, now: u64) -> Map<String, Value> {
 fn list(_principal: &Principal) -> Reply {
     let now = clock::now();
     let mut out = tri!(find(COMPETITIONS, "state", "published"));
-    out.sort_by(|a, b| u64_of(b, "opens_at").cmp(&u64_of(a, "opens_at")).then_with(|| str_of(b, "id").cmp(str_of(a, "id"))));
+    out.sort_by(|a, b| {
+        u64_of(b, "opens_at")
+            .cmp(&u64_of(a, "opens_at"))
+            .then_with(|| str_of(b, "id").cmp(str_of(a, "id")))
+    });
     let out: Vec<Value> = out.iter().map(|c| Value::Object(public_view(c, now))).collect();
     Reply::json(200, json!({"competitions": out}))
 }
@@ -612,7 +630,10 @@ fn enter(principal: &Principal, id: &str, body: &str) -> Reply {
         .find(|e| str_of(e, "photo") == photo_id || (!sha.is_empty() && str_of(e, "sha256") == sha))
     {
         let by = if str_of(e, "photo") == photo_id { "photo" } else { "sha256" };
-        return Reply::json(409, json!({"error": "already_entered", "detail": format!("same {by}")}));
+        return Reply::json(
+            409,
+            json!({"error": "already_entered", "detail": format!("same {by}")}),
+        );
     }
     let limit = c.get("max_entries_per_user").and_then(Value::as_u64).unwrap_or(1);
     let mine = entries.iter().filter(|e| str_of(e, "owner") == principal.subject).count() as u64;
@@ -631,7 +652,8 @@ fn enter(principal: &Principal, id: &str, body: &str) -> Reply {
         "entered_at": now, "display_name": display_name(&principal.subject),
         "auto": auto, "auto_version": AUTO_VERSION, "auto_flags": flags, "verdict": verdict,
     });
-    let idx: Vec<String> = ["competition", "photo", "owner", "sha256"].iter().map(|s| s.to_string()).collect();
+    let idx: Vec<String> =
+        ["competition", "photo", "owner", "sha256"].iter().map(|s| s.to_string()).collect();
     let entry = match records::create(ENTRIES, &rec.to_string(), &idx) {
         Ok(e) => e,
         Err(_) => return Reply::err(500, "store_error"),
@@ -706,7 +728,11 @@ fn round2(x: f64) -> f64 {
 
 /// The latest record per `who_field`, grouped by entry: one vote per (voter, entry)
 /// even if a race ever stored two.
-fn latest_by(records_: Vec<Map<String, Value>>, who_field: &str, value_field: &str) -> HashMap<String, Vec<f64>> {
+fn latest_by(
+    records_: Vec<Map<String, Value>>,
+    who_field: &str,
+    value_field: &str,
+) -> HashMap<String, Vec<f64>> {
     let mut best: HashMap<(String, String), (u64, String, f64)> = HashMap::new();
     for r in records_ {
         let key = (str_of(&r, "entry").to_string(), str_of(&r, who_field).to_string());
@@ -810,7 +836,9 @@ fn freeze_and_credit(id: &str, viewer: &str) -> Result<Map<String, Value>, Reply
     let pending: Vec<usize> = prizes_of(&results)
         .iter()
         .enumerate()
-        .filter(|(_, p)| matches!(p.get("status").and_then(Value::as_str), Some("pending" | "failed")))
+        .filter(|(_, p)| {
+            matches!(p.get("status").and_then(Value::as_str), Some("pending" | "failed"))
+        })
         .map(|(i, _)| i)
         .collect();
     if pending.is_empty() {
@@ -840,7 +868,12 @@ fn freeze_and_credit(id: &str, viewer: &str) -> Result<Map<String, Value>, Reply
         );
         match r {
             Ok(_) => {
-                audit("competition.prize", "allow", p.get("owner").and_then(Value::as_str).unwrap_or_default(), &source_id);
+                audit(
+                    "competition.prize",
+                    "allow",
+                    p.get("owner").and_then(Value::as_str).unwrap_or_default(),
+                    &source_id,
+                );
                 outcome.push((i, "credited", Value::Null));
             }
             Err(reply) => outcome.push((i, "failed", reply.json.clone())),
@@ -859,7 +892,9 @@ fn prizes_of(results: &Map<String, Value>) -> Vec<Map<String, Value>> {
 
 fn current_results(id: &str) -> Result<Map<String, Value>, Reply> {
     match load(COMPETITIONS, id)? {
-        Some((_, c)) => Ok(c.get("results").and_then(Value::as_object).cloned().unwrap_or_default()),
+        Some((_, c)) => {
+            Ok(c.get("results").and_then(Value::as_object).cloned().unwrap_or_default())
+        }
         None => Err(Reply::err(404, "not_found")),
     }
 }
@@ -926,7 +961,9 @@ fn claim(id: &str, wanted: &[usize]) -> Result<Option<Vec<usize>>, Reply> {
             return Err(Reply::err(404, "not_found"));
         };
         let mut got = Vec::new();
-        if let Some(prizes) = c.get_mut("results").and_then(|r| r.get_mut("prizes")).and_then(Value::as_array_mut) {
+        if let Some(prizes) =
+            c.get_mut("results").and_then(|r| r.get_mut("prizes")).and_then(Value::as_array_mut)
+        {
             for &i in wanted {
                 if let Some(p) = prizes.get_mut(i) {
                     if matches!(p["status"].as_str(), Some("pending" | "failed")) {
@@ -949,12 +986,17 @@ fn claim(id: &str, wanted: &[usize]) -> Result<Option<Vec<usize>>, Reply> {
     Err(Reply::err(503, "busy"))
 }
 
-fn record_outcome(id: &str, outcome: &[(usize, &'static str, Value)]) -> Result<Map<String, Value>, Reply> {
+fn record_outcome(
+    id: &str,
+    outcome: &[(usize, &'static str, Value)],
+) -> Result<Map<String, Value>, Reply> {
     for _ in 0..5 {
         let Some((entry, mut c)) = load(COMPETITIONS, id)? else {
             return Err(Reply::err(404, "not_found"));
         };
-        if let Some(prizes) = c.get_mut("results").and_then(|r| r.get_mut("prizes")).and_then(Value::as_array_mut) {
+        if let Some(prizes) =
+            c.get_mut("results").and_then(|r| r.get_mut("prizes")).and_then(Value::as_array_mut)
+        {
             for (i, status, err) in outcome {
                 if let Some(p) = prizes.get_mut(*i) {
                     p["status"] = json!(status);
@@ -971,7 +1013,11 @@ fn record_outcome(id: &str, outcome: &[(usize, &'static str, Value)]) -> Result<
         }
         match records::update(COMPETITIONS, id, &data_of(&c), entry.revision) {
             Ok(e) => {
-                return Ok(doc(&e).get("results").and_then(Value::as_object).cloned().unwrap_or_default());
+                return Ok(doc(&e)
+                    .get("results")
+                    .and_then(Value::as_object)
+                    .cloned()
+                    .unwrap_or_default());
             }
             Err(records::StoreError::RevisionConflict(_)) => continue,
             Err(_) => return Err(Reply::err(500, "store_error")),
@@ -1088,7 +1134,11 @@ mod tests {
             m.insert("id".into(), json!(format!("{entry}{voter}{at}")));
             m
         };
-        let got = latest_by(vec![r("e", "a", 1, 2), r("e", "a", 5, 4), r("e", "b", 1, 1)], "voter", "stars");
+        let got = latest_by(
+            vec![r("e", "a", 1, 2), r("e", "a", 5, 4), r("e", "b", 1, 1)],
+            "voter",
+            "stars",
+        );
         let mut v = got["e"].clone();
         v.sort_by(|a, b| a.partial_cmp(b).unwrap());
         assert_eq!(v, vec![1.0, 4.0]);

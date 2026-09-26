@@ -316,7 +316,8 @@ mod tests {
     fn choose_body_shapes_a_valid_request_with_null_criteria() {
         let options = vec!["billing".to_string(), "technical".to_string()];
         let v: serde_json::Value =
-            serde_json::from_str(&choose_body("jev-latest", "help me", "route this", &options)).unwrap();
+            serde_json::from_str(&choose_body("jev-latest", "help me", "route this", &options))
+                .unwrap();
         assert_eq!(v["state"], "help me");
         assert_eq!(v["model"], "jev-latest");
         assert_eq!(v["questions"]["q"]["type"], "choice");
@@ -329,7 +330,8 @@ mod tests {
     fn score_body_sends_levels_as_the_criteria_array() {
         let levels = vec!["low".to_string(), "medium".to_string(), "high".to_string()];
         let v: serde_json::Value =
-            serde_json::from_str(&score_body("jev-latest", "a report", "rate severity", &levels)).unwrap();
+            serde_json::from_str(&score_body("jev-latest", "a report", "rate severity", &levels))
+                .unwrap();
         assert_eq!(v["questions"]["q"]["type"], "score");
         assert_eq!(v["questions"]["q"]["criteria"], serde_json::json!(["low", "medium", "high"]));
     }
@@ -337,7 +339,8 @@ mod tests {
     #[test]
     fn gate_body_omits_criteria_when_no_hints_are_given() {
         let v: serde_json::Value =
-            serde_json::from_str(&gate_body("jev-latest", "hi", "is this urgent?", "", "")).unwrap();
+            serde_json::from_str(&gate_body("jev-latest", "hi", "is this urgent?", "", ""))
+                .unwrap();
         assert_eq!(v["questions"]["q"]["type"], "noul");
         assert!(v["questions"]["q"].get("criteria").is_none());
     }
@@ -387,7 +390,11 @@ mod tests {
         assert_eq!(p.confidence, 596);
         assert_eq!(
             p.distribution,
-            vec![("billing".to_string(), 840), ("technical".to_string(), 159), ("sales".to_string(), 1)]
+            vec![
+                ("billing".to_string(), 840),
+                ("technical".to_string(), 159),
+                ("sales".to_string(), 1)
+            ]
         );
         assert!(!p.flat, "billing (840) clearly leads technical (159)");
     }

@@ -324,10 +324,7 @@ fn the_gate_is_the_only_way_to_a_pull_request() {
         body.contains("Jev advisory"),
         "the advisory never reached the pull request it was supposed to annotate: {body}"
     );
-    assert!(
-        !body.contains('⚠'),
-        "a 5% concern score must not read as a warning: {body}"
-    );
+    assert!(!body.contains('⚠'), "a 5% concern score must not read as a warning: {body}");
 
     // --- HERDING, WHICH NOTHING ELSE CAN SEE --------------------------------
     // Three branches that agreed look exactly like three that explored: same

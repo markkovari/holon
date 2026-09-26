@@ -146,7 +146,9 @@ fn list(route: &Route) -> Result<Reply, Reply> {
         }
     }
 
-    let entries = if filters.is_empty() { every()? } else {
+    let entries = if filters.is_empty() {
+        every()?
+    } else {
         records::query(COLLECTION, &filters, 10_000).map_err(|_| store_error())?
     };
 

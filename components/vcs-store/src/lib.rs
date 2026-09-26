@@ -101,7 +101,9 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::VcsError> {
         let stream = out.write().map_err(|_| net("write"))?;
         // Chunked: `blocking-write-and-flush` traps above 4096 bytes.
         for chunk in body.chunks(4096) {
-            stream.blocking_write_and_flush(chunk).map_err(|e| net(&format!("body write: {e:?}")))?;
+            stream
+                .blocking_write_and_flush(chunk)
+                .map_err(|e| net(&format!("body write: {e:?}")))?;
         }
     }
     OutgoingBody::finish(out, None).map_err(|_| net("finish"))?;
@@ -111,7 +113,8 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::VcsError> {
     let _ = opts.set_first_byte_timeout(Some(TIMEOUT_NS));
     let _ = opts.set_between_bytes_timeout(Some(TIMEOUT_NS));
 
-    let fut = outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
+    let fut =
+        outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
     fut.subscribe().block();
     let resp = fut
         .get()
@@ -140,11 +143,14 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::VcsError> {
 /// else is its `{error, detail}` or, failing that, a storage error.
 fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::VcsError> {
     if status == 200 {
-        return serde_json::from_slice(body)
-            .map_err(|e| storage(format!("comp-vcs answered 200 with a body this cannot read: {e}")));
+        return serde_json::from_slice(body).map_err(|e| {
+            storage(format!("comp-vcs answered 200 with a body this cannot read: {e}"))
+        });
     }
     if status == 401 {
-        return Err(storage("comp-vcs refused the credentials (401): vcs-token must equal its --token"));
+        return Err(storage(
+            "comp-vcs refused the credentials (401): vcs-token must equal its --token",
+        ));
     }
     match serde_json::from_slice::<wire::ErrorBody>(body) {
         Ok(e) => Err(e.into_error().to_wit()),
@@ -156,7 +162,10 @@ fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::VcsErro
 }
 
 /// One call: the request as JSON, the answer as `R` (the model type), then WIT.
-fn call<Q: Serialize, R: DeserializeOwned + ToWit>(func: &str, req: &Q) -> Result<R::Out, t::VcsError> {
+fn call<Q: Serialize, R: DeserializeOwned + ToWit>(
+    func: &str,
+    req: &Q,
+) -> Result<R::Out, t::VcsError> {
     let body = serde_json::to_vec(req).map_err(|e| t::VcsError::Invalid(e.to_string()))?;
     let (status, raw) = post(func, &body)?;
     decode::<R>(status, &raw).map(ToWit::to_wit)
@@ -175,19 +184,35 @@ impl CodeStore for Component {
         call::<_, m::OpEntry>("revert-op", &wire::RevertOp { workspace, op, by: by.to_model() })
     }
 
-    fn query_symbol(workspace: String, query: t::SymbolQuery) -> Result<Vec<t::SymbolView>, t::VcsError> {
-        call::<_, Vec<m::SymbolView>>("query-symbol", &wire::QuerySymbol { workspace, query: query.to_model() })
+    fn query_symbol(
+        workspace: String,
+        query: t::SymbolQuery,
+    ) -> Result<Vec<t::SymbolView>, t::VcsError> {
+        call::<_, Vec<m::SymbolView>>(
+            "query-symbol",
+            &wire::QuerySymbol { workspace, query: query.to_model() },
+        )
     }
 
     fn snapshot_export(workspace: String, component: String) -> Result<t::Snapshot, t::VcsError> {
         call::<_, m::Snapshot>("snapshot-export", &wire::Export { workspace, component })
     }
 
-    fn list_conflicts(workspace: String, state: Option<t::ConflictState>) -> Result<Vec<t::Conflict>, t::VcsError> {
-        call::<_, Vec<m::Conflict>>("list-conflicts", &wire::ListConflicts { workspace, state: state.to_model() })
+    fn list_conflicts(
+        workspace: String,
+        state: Option<t::ConflictState>,
+    ) -> Result<Vec<t::Conflict>, t::VcsError> {
+        call::<_, Vec<m::Conflict>>(
+            "list-conflicts",
+            &wire::ListConflicts { workspace, state: state.to_model() },
+        )
     }
 
-    fn oplog(workspace: String, after: Option<u64>, limit: u32) -> Result<Vec<t::OpEntry>, t::VcsError> {
+    fn oplog(
+        workspace: String,
+        after: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<t::OpEntry>, t::VcsError> {
         call::<_, Vec<m::OpEntry>>("oplog", &wire::Oplog { workspace, after, limit })
     }
 
@@ -212,7 +237,13 @@ impl Files for Component {
         by: t::Agent,
         read_at: Option<u64>,
     ) -> Result<f::IngestReport, t::VcsError> {
-        let req = wire::IngestFile { workspace, component, file: file.to_model(), by: by.to_model(), read_at };
+        let req = wire::IngestFile {
+            workspace,
+            component,
+            file: file.to_model(),
+            by: by.to_model(),
+            read_at,
+        };
         call::<_, wire::IngestReport>("ingest-file", &req)
     }
 
@@ -235,12 +266,20 @@ impl Files for Component {
         call::<_, Vec<wire::IngestReport>>("ingest-tree", &req)
     }
 
-    fn materialize(workspace: String, component: String, dest: String) -> Result<f::Materialized, t::VcsError> {
-        call::<_, wire::Materialized>("materialize", &wire::Materialize { workspace, component, dest })
+    fn materialize(
+        workspace: String,
+        component: String,
+        dest: String,
+    ) -> Result<f::Materialized, t::VcsError> {
+        call::<_, wire::Materialized>(
+            "materialize",
+            &wire::Materialize { workspace, component, dest },
+        )
     }
 
     fn read_blob(blob: String) -> Result<Vec<u8>, t::VcsError> {
-        let body = serde_json::to_vec(&wire::ReadBlob { blob }).map_err(|e| t::VcsError::Invalid(e.to_string()))?;
+        let body = serde_json::to_vec(&wire::ReadBlob { blob })
+            .map_err(|e| t::VcsError::Invalid(e.to_string()))?;
         let (status, raw) = post("read-blob", &body)?;
         decode::<wire::Bytes>(status, &raw).map(|b| b.0)
     }
@@ -265,13 +304,29 @@ mod tests {
     /// "rename to something else".
     #[test]
     fn daemon_refusals_map_back_to_their_vcs_error_case() {
-        let cas = m::CasFailure { pointer: "ws/w/sym/k".into(), expected: None, actual: Some("b".repeat(64)) };
-        let got = decode::<m::CommitResult>(409, &body(&holon_vcs::VcsError::ConcurrentModification(cas.clone())));
-        assert!(matches!(got, Err(t::VcsError::ConcurrentModification(c)) if c.pointer == cas.pointer && c.actual == cas.actual));
+        let cas = m::CasFailure {
+            pointer: "ws/w/sym/k".into(),
+            expected: None,
+            actual: Some("b".repeat(64)),
+        };
+        let got = decode::<m::CommitResult>(
+            409,
+            &body(&holon_vcs::VcsError::ConcurrentModification(cas.clone())),
+        );
+        assert!(
+            matches!(got, Err(t::VcsError::ConcurrentModification(c)) if c.pointer == cas.pointer && c.actual == cas.actual)
+        );
         let got = decode::<m::CommitResult>(409, &body(&holon_vcs::VcsError::NameTaken(sym())));
-        assert!(matches!(got, Err(t::VcsError::NameTaken(id)) if id.name == "f" && matches!(id.kind, t::SymbolKind::Function)));
-        let got = decode::<m::Snapshot>(409, &body(&holon_vcs::VcsError::UnresolvedConflict(vec!["x".into()])));
-        assert!(matches!(got, Err(t::VcsError::UnresolvedConflict(ids)) if ids == vec!["x".to_string()]));
+        assert!(
+            matches!(got, Err(t::VcsError::NameTaken(id)) if id.name == "f" && matches!(id.kind, t::SymbolKind::Function))
+        );
+        let got = decode::<m::Snapshot>(
+            409,
+            &body(&holon_vcs::VcsError::UnresolvedConflict(vec!["x".into()])),
+        );
+        assert!(
+            matches!(got, Err(t::VcsError::UnresolvedConflict(ids)) if ids == vec!["x".to_string()])
+        );
         let got = decode::<m::Snapshot>(404, &body(&holon_vcs::VcsError::SymbolNotFound(sym())));
         assert!(matches!(got, Err(t::VcsError::SymbolNotFound(_))));
         let got = decode::<m::Snapshot>(404, &body(&holon_vcs::VcsError::NotFound("op 3".into())));
@@ -284,11 +339,18 @@ mod tests {
 
     #[test]
     fn what_is_not_the_daemons_json_is_a_storage_error() {
-        assert!(matches!(decode::<u64>(502, b"<html>bad gateway</html>"), Err(t::VcsError::StorageError(s)) if s.contains("502")));
-        assert!(matches!(decode::<u64>(401, b""), Err(t::VcsError::StorageError(s)) if s.contains("vcs-token")));
+        assert!(
+            matches!(decode::<u64>(502, b"<html>bad gateway</html>"), Err(t::VcsError::StorageError(s)) if s.contains("502"))
+        );
+        assert!(
+            matches!(decode::<u64>(401, b""), Err(t::VcsError::StorageError(s)) if s.contains("vcs-token"))
+        );
         assert!(matches!(decode::<u64>(200, b"not json"), Err(t::VcsError::StorageError(_))));
-        let not_permitted = serde_json::to_vec(&wire::ErrorBody::new("not-permitted", "/etc")).unwrap();
-        assert!(matches!(decode::<wire::Materialized>(403, &not_permitted), Err(t::VcsError::Invalid(s)) if s.contains("not-permitted")));
+        let not_permitted =
+            serde_json::to_vec(&wire::ErrorBody::new("not-permitted", "/etc")).unwrap();
+        assert!(
+            matches!(decode::<wire::Materialized>(403, &not_permitted), Err(t::VcsError::Invalid(s)) if s.contains("not-permitted"))
+        );
         assert_eq!(decode::<u64>(200, b"7").ok(), Some(7));
     }
 
@@ -317,7 +379,9 @@ mod tests {
             patches: vec![wire::IngestPatch {
                 symbol: sym(),
                 edit: wire::EditKind::Rename,
-                outcome: wire::Outcome::Err(wire::ErrorBody::from(&holon_vcs::VcsError::NameTaken(sym()))),
+                outcome: wire::Outcome::Err(wire::ErrorBody::from(
+                    &holon_vcs::VcsError::NameTaken(sym()),
+                )),
             }],
         };
         let back = rep.clone().to_wit().to_model();

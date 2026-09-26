@@ -43,9 +43,15 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-            (Method::Get, [""]) | (Method::Get, ["index.html"]) => Some(Outcome::Html(include_str!("../ui/index.html").to_string())),
-            (Method::Get, ["styles.css"]) => Some(Outcome::Css(include_str!("../ui/styles.css").to_string())),
-            (Method::Get, ["app.js"]) => Some(Outcome::Js(include_str!("../ui/app.js").to_string())),
+            (Method::Get, [""]) | (Method::Get, ["index.html"]) => {
+                Some(Outcome::Html(include_str!("../ui/index.html").to_string()))
+            }
+            (Method::Get, ["styles.css"]) => {
+                Some(Outcome::Css(include_str!("../ui/styles.css").to_string()))
+            }
+            (Method::Get, ["app.js"]) => {
+                Some(Outcome::Js(include_str!("../ui/app.js").to_string()))
+            }
             (Method::Get, ["api", "info"]) => Some(api_info()),
 
             // Auth
@@ -57,18 +63,26 @@ impl Guest for Component {
             // Attributes (Read: All, Manage: Admin RBAC)
             (Method::Get, ["api", "attributes"]) => Some(list_attributes()),
             (Method::Post, ["api", "admin", "attributes"]) => Some(create_attribute(&request)),
-            (Method::Delete, ["api", "admin", "attributes", id]) => Some(delete_attribute(&request, id)),
+            (Method::Delete, ["api", "admin", "attributes", id]) => {
+                Some(delete_attribute(&request, id))
+            }
 
             // Photos
             (Method::Get, ["api", "photos"]) => Some(list_photos(&path)),
             (Method::Post, ["api", "photos"]) => Some(create_photo(&request)),
             (Method::Get, ["api", "photos", id]) => Some(get_photo(id)),
-            (Method::Post, ["api", "photos", id, "ai-analyze"]) => Some(analyze_photo_ai(&request, id)),
+            (Method::Post, ["api", "photos", id, "ai-analyze"]) => {
+                Some(analyze_photo_ai(&request, id))
+            }
 
             // Voting & Attribute Scoring
             (Method::Post, ["api", "photos", id, "vote"]) => Some(vote_photo(&request, id)),
-            (Method::Post, ["api", "photos", id, "rate"]) => Some(rate_photo_attributes(&request, id)),
-            (Method::Get, ["api", "photos", id, "my-ratings"]) => Some(get_my_ratings(&request, id)),
+            (Method::Post, ["api", "photos", id, "rate"]) => {
+                Some(rate_photo_attributes(&request, id))
+            }
+            (Method::Get, ["api", "photos", id, "my-ratings"]) => {
+                Some(get_my_ratings(&request, id))
+            }
 
             _ => Some(Outcome::Err(404, "not_found".into())),
         };
@@ -850,6 +864,5 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
 // -----------------------------------------------------------------------------
 // Embedded SPA UI
 // -----------------------------------------------------------------------------
-
 
 bindings::export!(Component with_types_in bindings);

@@ -1,9 +1,9 @@
-use serde_json::{json, Value};
 use crate::bindings::wasi::clocks::wall_clock;
 use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::read_body;
 use crate::store::{load_sessions, load_users, save_sessions, save_users};
 use crate::types::{Outcome, Session, User, UserPublic};
+use serde_json::{json, Value};
 
 pub fn get_current_user(request: &IncomingRequest) -> Option<User> {
     let token = crate::bearer(request)?;
@@ -17,19 +17,13 @@ pub fn require_role(request: &IncomingRequest, required_role: &str) -> Result<Us
     let user = match get_current_user(request) {
         Some(u) => u,
         None => {
-            return Err(Outcome::Err(
-                401,
-                "Authentication required. Please sign in.".into(),
-            ));
+            return Err(Outcome::Err(401, "Authentication required. Please sign in.".into()));
         }
     };
     if user.role != required_role {
         return Err(Outcome::Err(
             403,
-            format!(
-                "Forbidden: Requires '{required_role}' role. Current role is '{}'.",
-                user.role
-            ),
+            format!("Forbidden: Requires '{required_role}' role. Current role is '{}'.", user.role),
         ));
     }
     Ok(user)
@@ -91,10 +85,14 @@ pub fn handle_register(request: &IncomingRequest) -> Outcome {
     save_sessions(&sessions);
 
     let pub_user = UserPublic::from(&new_user);
-    Outcome::Json(201, json!({
-        "token": token,
-        "user": pub_user
-    }).to_string())
+    Outcome::Json(
+        201,
+        json!({
+            "token": token,
+            "user": pub_user
+        })
+        .to_string(),
+    )
 }
 
 /// POST /api/auth/login
@@ -146,10 +144,14 @@ pub fn handle_login(request: &IncomingRequest) -> Outcome {
     }
 
     let pub_user = UserPublic::from(user);
-    Outcome::Json(200, json!({
-        "token": token,
-        "user": pub_user
-    }).to_string())
+    Outcome::Json(
+        200,
+        json!({
+            "token": token,
+            "user": pub_user
+        })
+        .to_string(),
+    )
 }
 
 /// GET /api/auth/me
@@ -159,9 +161,7 @@ pub fn handle_auth_me(request: &IncomingRequest) -> Outcome {
             let pub_user = UserPublic::from(&user);
             Outcome::Json(200, json!({ "user": pub_user }).to_string())
         }
-        None => {
-            Outcome::Err(401, "Not authenticated".into())
-        }
+        None => Outcome::Err(401, "Not authenticated".into()),
     }
 }
 

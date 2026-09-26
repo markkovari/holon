@@ -310,10 +310,8 @@ pub fn stream(response_out: ResponseOutparam, route: &Route) {
             if !crate::write_all(&out, frame.as_bytes()) {
                 break;
             }
-            crate::bindings::wasi::clocks::monotonic_clock::subscribe_duration(
-                POLL_MS * 1_000_000,
-            )
-            .block();
+            crate::bindings::wasi::clocks::monotonic_clock::subscribe_duration(POLL_MS * 1_000_000)
+                .block();
         }
     }
     let _ = OutgoingBody::finish(body, None);

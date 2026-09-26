@@ -158,7 +158,9 @@ pub fn decode(text: &str, alphabet: Alphabet) -> Result<Vec<u8>, DecodeError> {
             out.push((v >> 16) as u8);
         }
         3 => {
-            let v = (values[i] as u32) << 18 | (values[i + 1] as u32) << 12 | (values[i + 2] as u32) << 6;
+            let v = (values[i] as u32) << 18
+                | (values[i + 1] as u32) << 12
+                | (values[i + 2] as u32) << 6;
             out.push((v >> 16) as u8);
             out.push((v >> 8) as u8);
         }

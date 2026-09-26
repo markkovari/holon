@@ -131,14 +131,16 @@ fn fixed_tables() -> (Huffman, Huffman) {
         };
     }
     let dist = [5u8; 30];
-    (Huffman::new(&lit).expect("fixed literal table"), Huffman::new(&dist).expect("fixed distances"))
+    (
+        Huffman::new(&lit).expect("fixed literal table"),
+        Huffman::new(&dist).expect("fixed distances"),
+    )
 }
 
 /// The order RFC 1951 stores the code-length code lengths in. Not sorted, on
 /// purpose: the lengths most likely to be zero are last, so a truncated list is
 /// usually enough.
-const CLEN_ORDER: [usize; 19] =
-    [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+const CLEN_ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
 
 fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
     let hlit = bits.take(5)? as usize + 257;
@@ -177,7 +179,11 @@ fn dynamic_tables(bits: &mut Bits) -> Result<(Huffman, Huffman), String> {
             }
             // Repeat ZERO 3-10, then 11-138.
             17 | 18 => {
-                let n = if sym == 17 { 3 + bits.take(3)? as usize } else { 11 + bits.take(7)? as usize };
+                let n = if sym == 17 {
+                    3 + bits.take(3)? as usize
+                } else {
+                    11 + bits.take(7)? as usize
+                };
                 i = (i + n).min(lengths.len());
             }
             _ => return Err("a code-length symbol above 18".into()),
@@ -218,8 +224,8 @@ pub fn inflate(data: &[u8], expected: usize) -> Result<Vec<u8>, String> {
                         256 => break,
                         257..=285 => {
                             let i = sym - 257;
-                            let length =
-                                LENGTH_BASE[i] as usize + bits.take(LENGTH_EXTRA[i] as u32)? as usize;
+                            let length = LENGTH_BASE[i] as usize
+                                + bits.take(LENGTH_EXTRA[i] as u32)? as usize;
                             let d = dist.decode(&mut bits)? as usize;
                             if d >= 30 {
                                 return Err("a distance symbol above 29".into());
@@ -227,7 +233,9 @@ pub fn inflate(data: &[u8], expected: usize) -> Result<Vec<u8>, String> {
                             let distance =
                                 DIST_BASE[d] as usize + bits.take(DIST_EXTRA[d] as u32)? as usize;
                             if distance > out.len() {
-                                return Err("a back-reference before the start of the output".into());
+                                return Err(
+                                    "a back-reference before the start of the output".into()
+                                );
                             }
                             // Byte at a time: the ranges may overlap, which is how
                             // DEFLATE expresses a run.

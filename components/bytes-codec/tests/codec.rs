@@ -44,8 +44,14 @@ fn the_two_alphabets_are_not_interchangeable() {
     assert_eq!(decode(&url, URL).expect("url"), bytes);
 
     // And the wrong table REFUSES rather than quietly returning other bytes.
-    assert!(matches!(decode(&std, URL), Err(DecodeError::NotInAlphabet { .. })), "+ and / are not URL-safe");
-    assert!(matches!(decode(&url, STD), Err(DecodeError::NotInAlphabet { .. })), "- and _ are not standard");
+    assert!(
+        matches!(decode(&std, URL), Err(DecodeError::NotInAlphabet { .. })),
+        "+ and / are not URL-safe"
+    );
+    assert!(
+        matches!(decode(&url, STD), Err(DecodeError::NotInAlphabet { .. })),
+        "- and _ are not standard"
+    );
 }
 
 /// URL-safe does not pad, because the specifications that use it forbid it.
@@ -103,7 +109,10 @@ fn a_character_in_neither_alphabet_is_refused() {
         }
         other => panic!("expected NotInAlphabet, got {other:?}"),
     }
-    assert!(matches!(decode("Zm 9v", STD), Err(DecodeError::NotInAlphabet { .. })), "a space is not skipped");
+    assert!(
+        matches!(decode("Zm 9v", STD), Err(DecodeError::NotInAlphabet { .. })),
+        "a space is not skipped"
+    );
 }
 
 /// A length that cannot be a whole number of bytes.
@@ -120,7 +129,10 @@ fn an_orphan_character_is_refused() {
 #[test]
 fn padding_in_the_middle_is_refused() {
     assert!(matches!(decode("Zg==Zg==", STD), Err(DecodeError::MisplacedPadding { .. })));
-    assert!(matches!(decode("Z===", STD), Err(DecodeError::MisplacedPadding { .. })), "three is too many");
+    assert!(
+        matches!(decode("Z===", STD), Err(DecodeError::MisplacedPadding { .. })),
+        "three is too many"
+    );
 }
 
 /// Empty is empty, not an error — a zero-length payload is a real thing to encode.

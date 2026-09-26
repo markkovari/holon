@@ -19,7 +19,9 @@ mod bindings;
 use bindings::exports::net::mdns::discovery::{Guest, MdnsError, Service};
 use bindings::wasi::config::store as config;
 use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme};
+use bindings::wasi::http::types::{
+    Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
+};
 use bindings::wasi::io::streams::StreamError;
 
 struct Component;
@@ -71,7 +73,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
     // started with no --token, so there is nothing to send.
     if let Ok(Some(token)) = config::get("mdns-token") {
         if !token.is_empty() {
-            let _ = headers.set(&"authorization".to_string(), &[format!("Bearer {token}").into_bytes()]);
+            let _ = headers
+                .set(&"authorization".to_string(), &[format!("Bearer {token}").into_bytes()]);
         }
     }
     let req = OutgoingRequest::new(headers);
@@ -84,7 +87,9 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
     {
         let stream = out.write().map_err(|_| net("write"))?;
         for chunk in body.chunks(4096) {
-            stream.blocking_write_and_flush(chunk).map_err(|e| net(&format!("body write: {e:?}")))?;
+            stream
+                .blocking_write_and_flush(chunk)
+                .map_err(|e| net(&format!("body write: {e:?}")))?;
         }
     }
     OutgoingBody::finish(out, None).map_err(|_| net("finish"))?;
@@ -94,7 +99,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, MdnsError> {
     let _ = opts.set_first_byte_timeout(Some(TIMEOUT_NS));
     let _ = opts.set_between_bytes_timeout(Some(TIMEOUT_NS));
 
-    let fut = outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
+    let fut =
+        outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
     fut.subscribe().block();
     let resp = fut
         .get()

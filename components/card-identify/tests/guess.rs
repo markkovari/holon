@@ -48,7 +48,10 @@ fn a_photo_that_is_not_a_card_is_refused() {
         other => panic!("expected NoCard, got {other:?}"),
     }
     assert!(matches!(parse(""), Err(IdentifyError::Unparseable(_))));
-    assert!(matches!(parse("I'm sorry, I can't help with that."), Err(IdentifyError::Unparseable(_))));
+    assert!(matches!(
+        parse("I'm sorry, I can't help with that."),
+        Err(IdentifyError::Unparseable(_))
+    ));
 }
 
 /// Two cards in frame: the fields cannot describe both, so neither is stored.
@@ -64,15 +67,23 @@ fn two_cards_in_one_photo_are_refused() {
 /// have to identify the card themselves, which is the thing they were avoiding.
 #[test]
 fn an_answer_with_no_name_is_refused() {
-    assert_eq!(parse(r#"{"set_code":"sv3","number":"125/197","confidence":90}"#), Err(IdentifyError::NoName));
-    assert_eq!(parse(r#"{"name":"   ","confidence":90}"#), Err(IdentifyError::NoName), "whitespace is not a name");
+    assert_eq!(
+        parse(r#"{"set_code":"sv3","number":"125/197","confidence":90}"#),
+        Err(IdentifyError::NoName)
+    );
+    assert_eq!(
+        parse(r#"{"name":"   ","confidence":90}"#),
+        Err(IdentifyError::NoName),
+        "whitespace is not a name"
+    );
 }
 
 /// An absent field stays absent and is listed. Nothing is defaulted — a defaulted
 /// condition is money, silently.
 #[test]
 fn absent_fields_are_listed_and_never_defaulted() {
-    let g = parse(r#"{"name":"Pikachu","set_name":"Base","set_code":"base1","confidence":40}"#).expect("a guess");
+    let g = parse(r#"{"name":"Pikachu","set_name":"Base","set_code":"base1","confidence":40}"#)
+        .expect("a guess");
     assert_eq!(g.condition, None, "NOT Near Mint");
     assert_eq!(g.variant, None);
     assert_eq!(g.number, "");
@@ -115,7 +126,8 @@ fn needs_review_has_no_duplicates() {
 #[test]
 fn a_card_number_is_normalised_to_the_set_total() {
     for written in ["58/165", "058/165", "58 / 165", "#58/165"] {
-        let g = parse(&format!(r#"{{"name":"X","number":"{written}","confidence":80}}"#)).expect(written);
+        let g = parse(&format!(r#"{{"name":"X","number":"{written}","confidence":80}}"#))
+            .expect(written);
         assert_eq!(g.number, "058/165", "{written} is the same card");
         assert_eq!(g.confidence, 80, "normalising is not guessing");
     }
@@ -154,7 +166,8 @@ fn variants_are_read_from_free_text() {
         ("alt art", Variant::Special),
         ("secret rare", Variant::Special),
     ] {
-        let g = parse(&format!(r#"{{"name":"X","variant":"{written}","confidence":80}}"#)).expect(written);
+        let g = parse(&format!(r#"{{"name":"X","variant":"{written}","confidence":80}}"#))
+            .expect(written);
         assert_eq!(g.variant, Some(expected), "variant {written:?}");
     }
 }
@@ -163,7 +176,8 @@ fn variants_are_read_from_free_text() {
 /// difference — it is unknown and flagged.
 #[test]
 fn an_unrecognised_variant_is_unknown_rather_than_normal() {
-    let g = parse(r#"{"name":"X","variant":"gold crown tera something","confidence":80}"#).expect("a guess");
+    let g = parse(r#"{"name":"X","variant":"gold crown tera something","confidence":80}"#)
+        .expect("a guess");
     assert_eq!(g.variant, None);
     assert!(g.needs_review.contains(&"variant".to_string()));
 }
@@ -185,7 +199,8 @@ fn conditions_are_read_from_the_words_the_market_uses() {
         ("damaged", Condition::Damaged),
         ("DMG", Condition::Damaged),
     ] {
-        let g = parse(&format!(r#"{{"name":"X","condition":"{written}","confidence":80}}"#)).expect(written);
+        let g = parse(&format!(r#"{{"name":"X","condition":"{written}","confidence":80}}"#))
+            .expect(written);
         assert_eq!(g.condition, Some(expected), "condition {written:?}");
     }
 }
@@ -197,9 +212,14 @@ fn a_graded_card_carries_its_grader_and_grade_in_tenths() {
     assert_eq!(psa.graded, Some(Grade { grader: "PSA".into(), tenths: 100 }));
 
     let bgs = parse(r#"{"name":"X","graded":"bgs 9.5","confidence":95}"#).expect("bgs");
-    assert_eq!(bgs.graded, Some(Grade { grader: "BGS".into(), tenths: 95 }), "9.5 is 95 tenths, not 9");
+    assert_eq!(
+        bgs.graded,
+        Some(Grade { grader: "BGS".into(), tenths: 95 }),
+        "9.5 is 95 tenths, not 9"
+    );
 
-    let cgc = parse(r#"{"name":"X","graded":{"grader":"cgc","grade":8.5},"confidence":95}"#).expect("cgc");
+    let cgc = parse(r#"{"name":"X","graded":{"grader":"cgc","grade":8.5},"confidence":95}"#)
+        .expect("cgc");
     assert_eq!(cgc.graded, Some(Grade { grader: "CGC".into(), tenths: 85 }), "object form too");
 }
 
@@ -232,10 +252,21 @@ fn a_missing_confidence_is_zero() {
 #[test]
 fn the_prompt_asks_for_exactly_what_the_parser_reads() {
     let p = prompt();
-    for field in
-        ["name", "set_name", "set_code", "number", "rarity", "language", "variant", "condition", "confidence"]
-    {
-        assert!(p.contains(field), "the prompt never mentions {field:?}, so the model will not send it");
+    for field in [
+        "name",
+        "set_name",
+        "set_code",
+        "number",
+        "rarity",
+        "language",
+        "variant",
+        "condition",
+        "confidence",
+    ] {
+        assert!(
+            p.contains(field),
+            "the prompt never mentions {field:?}, so the model will not send it"
+        );
     }
     assert!(p.contains("no_card"), "the model needs a way to say there is no card");
     assert!(p.contains("cards_visible"), "and a way to say there are several");

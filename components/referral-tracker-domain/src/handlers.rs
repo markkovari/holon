@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
+use crate::bindings::notify::dispatch::dispatcher as notify;
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
-use crate::bindings::notify::dispatch::dispatcher as notify;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -48,19 +48,17 @@ fn ensure_policy_rules() {
     match records::find_by("meta", "kind", "policy_rules") {
         Ok(entries) if !entries.is_empty() => {}
         _ => {
-            let rules = vec![
-                PolicyRule {
-                    id: "owner-closes".to_string(),
-                    action: "close".to_string(),
-                    effect: Effect::Allow,
-                    conditions: vec![Condition {
-                        left: "resource.owner".to_string(),
-                        op: Op::Eq,
-                        right: "principal.subject".to_string(),
-                    }],
-                    priority: 10,
-                },
-            ];
+            let rules = vec![PolicyRule {
+                id: "owner-closes".to_string(),
+                action: "close".to_string(),
+                effect: Effect::Allow,
+                conditions: vec![Condition {
+                    left: "resource.owner".to_string(),
+                    op: Op::Eq,
+                    right: "principal.subject".to_string(),
+                }],
+                priority: 10,
+            }];
             if policy::set_rules(crate::TENANT, &rules).is_ok() {
                 let marker = json!({"kind": "policy_rules"}).to_string();
                 let _ = records::create("meta", &marker, &["kind".to_string()]);
@@ -81,7 +79,8 @@ fn create_posting(route: &Route, body: &str) -> Reply {
         "title": title,
         "owner": principal.subject.clone(),
         "status": "open"
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("postings", &data, &[]) {
         Ok(entry) => {
@@ -130,13 +129,15 @@ fn make_referral(route: &Route, id: &str, body: &str) -> Reply {
     let title = posting.get("title").and_then(Value::as_str).unwrap_or("").to_string();
 
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
-    let candidate_email = req.get("candidate_email").and_then(Value::as_str).unwrap_or("").to_string();
+    let candidate_email =
+        req.get("candidate_email").and_then(Value::as_str).unwrap_or("").to_string();
 
     let data = json!({
         "posting_id": id,
         "referred_by": principal.subject.clone(),
         "candidate_email": candidate_email
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("referrals", &data, &[]) {
         Ok(ref_entry) => {
@@ -169,9 +170,8 @@ fn close_posting(route: &Route, id: &str) -> Reply {
     let mut posting: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = posting.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
 
-    let principal_attrs = vec![
-        Attr { key: "subject".to_string(), value: principal.subject.clone() },
-    ];
+    let principal_attrs =
+        vec![Attr { key: "subject".to_string(), value: principal.subject.clone() }];
     let resource_attrs = vec![Attr { key: "owner".to_string(), value: owner }];
 
     let allowed = policy::enforce(crate::TENANT, "close", &principal_attrs, &resource_attrs);

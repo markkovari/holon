@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
 use crate::bindings::search::index::index as search;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -94,7 +94,8 @@ fn create_ticket(route: &Route, body: &str) -> Reply {
         "body": body_text,
         "queue": queue,
         "status": "open"
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("tickets", &data, &[]) {
         Ok(entry) => {
@@ -113,15 +114,11 @@ fn list_tickets(route: &Route) -> Reply {
         Ok(p) => p,
         Err(r) => return r,
     };
-    
+
     let q = route.param("q");
     let queue = route.param("queue");
-    
-    let tags = if queue.is_empty() {
-        vec![]
-    } else {
-        vec![format!("queue:{}", queue)]
-    };
+
+    let tags = if queue.is_empty() { vec![] } else { vec![format!("queue:{}", queue)] };
 
     match search::query(&q, search::Mode::Any, &tags, 20) {
         Ok(hits) => {
@@ -184,7 +181,7 @@ fn resolve(route: &Route, id: &str) -> Reply {
     if records::update("tickets", id, &ticket.to_string(), entry.revision).is_err() {
         return Reply::err(500, "store_error");
     }
-    
+
     let _ = search::remove(id);
 
     audit_log("ticket.resolve", "allow", &principal.subject, id);

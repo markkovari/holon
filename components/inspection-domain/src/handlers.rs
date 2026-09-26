@@ -96,11 +96,7 @@ fn create_inspection(route: &Route, body: &str) -> Reply {
         "created": now_secs(),
     })
     .to_string();
-    match records::create(
-        "inspections",
-        &data,
-        &["inspector".to_string(), "org".to_string()],
-    ) {
+    match records::create("inspections", &data, &["inspector".to_string(), "org".to_string()]) {
         Ok(entry) => {
             audit("inspection.create", "allow", &principal.subject, &entry.id);
             Reply::json(
@@ -174,9 +170,6 @@ fn get_pdf(route: &Route, id: &str) -> Reply {
     }
     let overall = if row.overall_pass { "PASS" } else { "FAIL" };
     blocks.push(line(format!("Overall: {overall}"), 13, true, 12));
-    let doc = pdf::Document {
-        title: "Site Inspection Report".to_string(),
-        blocks,
-    };
+    let doc = pdf::Document { title: "Site Inspection Report".to_string(), blocks };
     Reply::file(200, "application/pdf", pdf::render(&doc))
 }

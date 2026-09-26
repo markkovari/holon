@@ -105,10 +105,7 @@ impl Guest for Component {
         if pref.email_address.contains('@') || pref.email_address.is_empty() {
             // fine
         } else {
-            return Err(PrefsError::Invalid(format!(
-                "not an address: {}",
-                pref.email_address
-            )));
+            return Err(PrefsError::Invalid(format!("not an address: {}", pref.email_address)));
         }
         let mut overrides = serde_json::Map::new();
         for (kind, chans) in &pref.overrides {
@@ -156,14 +153,10 @@ impl Guest for Component {
         let mut out = Vec::new();
         for channel in wanted {
             let outcome = match channel {
-                Channel::InApp => {
-                    match inbox::deliver(&subject, &kind, &title, &body, &payload) {
-                        Ok(seq) => Outcome { channel, ok: true, detail: seq.to_string() },
-                        Err(e) => {
-                            Outcome { channel, ok: false, detail: format!("{e:?}") }
-                        }
-                    }
-                }
+                Channel::InApp => match inbox::deliver(&subject, &kind, &title, &body, &payload) {
+                    Ok(seq) => Outcome { channel, ok: true, detail: seq.to_string() },
+                    Err(e) => Outcome { channel, ok: false, detail: format!("{e:?}") },
+                },
                 Channel::Email => {
                     if pref.email_address.is_empty() {
                         // Reported, not silently skipped: somebody opted into email

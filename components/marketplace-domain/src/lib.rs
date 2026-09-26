@@ -95,21 +95,22 @@ fn drain_pages<T, E>(
 /// source of truth for what each machine's states/transitions are, and this
 /// function is just that table typed into Rust.
 fn define_machines() {
-    let def = |states: &[&str], initial: &str, transitions: &[(&str, &str, &str)], terminal: &[&str]| {
-        fsm::Definition {
-            states: states.iter().map(|s| s.to_string()).collect(),
-            initial: initial.to_string(),
-            transitions: transitions
-                .iter()
-                .map(|(event, source, target)| fsm::Transition {
-                    event: event.to_string(),
-                    source: source.to_string(),
-                    target: target.to_string(),
-                })
-                .collect(),
-            terminal: terminal.iter().map(|s| s.to_string()).collect(),
-        }
-    };
+    let def =
+        |states: &[&str], initial: &str, transitions: &[(&str, &str, &str)], terminal: &[&str]| {
+            fsm::Definition {
+                states: states.iter().map(|s| s.to_string()).collect(),
+                initial: initial.to_string(),
+                transitions: transitions
+                    .iter()
+                    .map(|(event, source, target)| fsm::Transition {
+                        event: event.to_string(),
+                        source: source.to_string(),
+                        target: target.to_string(),
+                    })
+                    .collect(),
+                terminal: terminal.iter().map(|s| s.to_string()).collect(),
+            }
+        };
     let _ = fsm::define(
         "order",
         &def(
@@ -192,8 +193,9 @@ fn define_machines() {
 fn seed(body: &str) -> Reply {
     define_machines();
     let params: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::json!({}));
-    let subject_or =
-        |key: &str, default: &str| params[key].as_str().filter(|s| !s.is_empty()).unwrap_or(default).to_string();
+    let subject_or = |key: &str, default: &str| {
+        params[key].as_str().filter(|s| !s.is_empty()).unwrap_or(default).to_string()
+    };
     let vendor_a = subject_or("vendor_a", "usr_vendor_a");
     let vendor_b = subject_or("vendor_b", "usr_vendor_b");
     let buyer = subject_or("buyer", "usr_seed_buyer");
@@ -249,7 +251,8 @@ fn seed(body: &str) -> Reply {
     let Some(order2) = new_order(&buyer, &listing_a, 1000) else {
         return Reply::err(500, "seed_failed");
     };
-    if fsm::create_instance("order", &order2).is_err() || fsm::fire("order", &order2, "pay").is_err()
+    if fsm::create_instance("order", &order2).is_err()
+        || fsm::fire("order", &order2, "pay").is_err()
     {
         return Reply::err(500, "seed_failed");
     }
@@ -352,7 +355,8 @@ fn test_doc(collection: &str, id: &str, machine: Option<&str>) -> Reply {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),
     };
-    let mut v: serde_json::Value = serde_json::from_str(&entry.data).unwrap_or(serde_json::json!({}));
+    let mut v: serde_json::Value =
+        serde_json::from_str(&entry.data).unwrap_or(serde_json::json!({}));
     if let serde_json::Value::Object(ref mut m) = v {
         m.insert("id".to_string(), serde_json::json!(entry.id));
         if let Some(machine) = machine {
@@ -376,7 +380,8 @@ fn test_doc_by(collection: &str, field: &str, value: &str, machine: Option<&str>
         Ok(entries) if !entries.is_empty() => entries.into_iter().next().unwrap(),
         _ => return Reply::err(404, "not_found"),
     };
-    let mut v: serde_json::Value = serde_json::from_str(&entry.data).unwrap_or(serde_json::json!({}));
+    let mut v: serde_json::Value =
+        serde_json::from_str(&entry.data).unwrap_or(serde_json::json!({}));
     if let serde_json::Value::Object(ref mut m) = v {
         m.insert("id".to_string(), serde_json::json!(entry.id));
         if let Some(machine) = machine {

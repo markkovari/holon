@@ -15,12 +15,12 @@ mod bindings;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use bindings::audit::log::recorder as audit;
+use bindings::audit::log::types::Event;
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::types::{AuthError, Permission, Principal};
-use bindings::audit::log::recorder as audit;
-use bindings::audit::log::types::Event;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::id::generate::generator as ids;
 use bindings::policy::guard::guard as policy;
@@ -234,7 +234,10 @@ fn create_asset(request: &IncomingRequest) -> Outcome {
         Err(e) => return store_err(e),
     };
     audit_log(&p, "asset:create", &entry.id, "allow");
-    Outcome::Json(201, json!({"id": entry.id, "name": req.name, "tag": tag, "status": "available"}).to_string())
+    Outcome::Json(
+        201,
+        json!({"id": entry.id, "name": req.name, "tag": tag, "status": "available"}).to_string(),
+    )
 }
 
 fn list_assets(request: &IncomingRequest) -> Outcome {
@@ -322,9 +325,10 @@ fn checkin(request: &IncomingRequest, asset_id: &str) -> Outcome {
         Err(o) => return o,
     };
     let open = match records::find_by(CHECKOUTS, "asset_id", &format!("\"{asset_id}\"")) {
-        Ok(entries) => entries
-            .into_iter()
-            .find(|e| serde_json::from_str::<Value>(&e.data).ok().and_then(|v| v.get("returned_at").cloned()) == Some(Value::Null)),
+        Ok(entries) => entries.into_iter().find(|e| {
+            serde_json::from_str::<Value>(&e.data).ok().and_then(|v| v.get("returned_at").cloned())
+                == Some(Value::Null)
+        }),
         Err(e) => return store_err(e),
     };
     let Some(entry) = open else {
@@ -333,8 +337,10 @@ fn checkin(request: &IncomingRequest, asset_id: &str) -> Outcome {
     let mut checkout_data: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let holder = checkout_data.get("holder").and_then(Value::as_str).unwrap_or("").to_string();
 
-    let principal_attrs =
-        vec![Attr { key: "subject".into(), value: p.subject.clone() }, Attr { key: "roles".into(), value: p.roles.join(",") }];
+    let principal_attrs = vec![
+        Attr { key: "subject".into(), value: p.subject.clone() },
+        Attr { key: "roles".into(), value: p.roles.join(",") },
+    ];
     let resource_attrs = vec![Attr { key: "holder".into(), value: holder.clone() }];
     if !policy::enforce(POLICY_DOMAIN, "checkin", &principal_attrs, &resource_attrs) {
         audit_log(&p, "asset:checkin", asset_id, "deny");
@@ -343,7 +349,9 @@ fn checkin(request: &IncomingRequest, asset_id: &str) -> Outcome {
 
     let now = wall_clock::now().seconds;
     checkout_data["returned_at"] = json!(now);
-    if let Err(e) = records::update(CHECKOUTS, &entry.id, &checkout_data.to_string(), entry.revision) {
+    if let Err(e) =
+        records::update(CHECKOUTS, &entry.id, &checkout_data.to_string(), entry.revision)
+    {
         return store_err(e);
     }
     let asset = match records::get(ASSETS, asset_id) {
@@ -427,9 +435,15 @@ fn emit(response_out: ResponseOutparam, result: Outcome) {
                 respond(response_out, code, &[], format!("{{\"error\":\"{msg}\"}}").as_bytes());
             }
         }
-        Outcome::Bad(msg) => respond(response_out, 400, &[], json!({ "error": msg }).to_string().as_bytes()),
-        Outcome::Err(code, msg) => respond(response_out, code, &[], json!({ "error": msg }).to_string().as_bytes()),
-        Outcome::Forbidden(msg) => respond(response_out, 403, &[], json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::Bad(msg) => {
+            respond(response_out, 400, &[], json!({ "error": msg }).to_string().as_bytes())
+        }
+        Outcome::Err(code, msg) => {
+            respond(response_out, code, &[], json!({ "error": msg }).to_string().as_bytes())
+        }
+        Outcome::Forbidden(msg) => {
+            respond(response_out, 403, &[], json!({ "error": msg }).to_string().as_bytes())
+        }
         Outcome::NotFound => respond(response_out, 404, &[], b"{\"error\":\"not_found\"}"),
     }
 }

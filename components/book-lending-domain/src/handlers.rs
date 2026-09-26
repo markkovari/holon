@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
+use crate::bindings::id::generate::generator as id;
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
-use crate::bindings::id::generate::generator as id;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -94,7 +94,8 @@ fn create_book(route: &Route, body: &str) -> Reply {
         "title": title,
         "call_number": call_number,
         "status": "available"
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("books", &data, &[]) {
         Ok(entry) => {
@@ -155,7 +156,8 @@ fn borrow_book(route: &Route, id: &str) -> Reply {
         "book_id": id,
         "borrower": principal.subject.clone(),
         "returned": false
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("loans", &data, &[]) {
         Ok(loan_entry) => {
@@ -184,7 +186,9 @@ fn return_loan(route: &Route, id: &str) -> Reply {
     if roles.is_empty() {
         if principal.subject == "lib@example.test" {
             roles.push("librarian".to_string());
-        } else if principal.subject == "alice@example.test" || principal.subject == "bob@example.test" {
+        } else if principal.subject == "alice@example.test"
+            || principal.subject == "bob@example.test"
+        {
             roles.push("patron".to_string());
         }
     }

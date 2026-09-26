@@ -293,7 +293,12 @@ fn sweep_awaiting_human(
     s: &Session,
     project: &str,
 ) {
-    let goals = match call(s, "GET", &format!("/api/projects/{project}/goals?state=awaiting-human"), None) {
+    let goals = match call(
+        s,
+        "GET",
+        &format!("/api/projects/{project}/goals?state=awaiting-human"),
+        None,
+    ) {
         Ok(v) => v["goals"].as_array().cloned().unwrap_or_default(),
         Err(e) => {
             eprintln!("[goald] sweep: polling awaiting-human: {e:#}");
@@ -425,7 +430,10 @@ fn work(args: &Args, s: &Session, goal: &Value) -> Result<()> {
         .status();
 
     if status.success() {
-        eprintln!("[goald] {id} DONE -> awaiting-human{}", pr.as_deref().map(|u| format!(" ({u})")).unwrap_or_default());
+        eprintln!(
+            "[goald] {id} DONE -> awaiting-human{}",
+            pr.as_deref().map(|u| format!(" ({u})")).unwrap_or_default()
+        );
         call(s, "POST", &format!("/api/goals/{id}/review"), Some(serde_json::json!({ "pr": pr })))?;
     } else {
         // 3 is `comp-goalrun`'s "every branch ran, none passed" — the search was

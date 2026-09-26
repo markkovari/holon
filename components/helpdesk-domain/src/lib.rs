@@ -16,40 +16,40 @@ mod bindings;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use bindings::actor::entity::actor as actor_system;
+use bindings::audit::log::recorder as audit;
+use bindings::audit::log::types::Event;
 use bindings::auth::identity::accounts;
 use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::session;
 use bindings::auth::identity::types::{AuthError, Principal};
 use bindings::crdt::merge::merger as crdt;
+use bindings::email::template::renderer as email;
+use bindings::event::bus::bus as eventbus;
+use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::fsm::workflow::engine as fsm;
+use bindings::i18n::catalog::catalog as i18n;
 use bindings::id::generate::generator as ids;
+use bindings::idempotency::guard::store as idempotency;
+use bindings::mail::parse::parser as mail_parse;
 use bindings::md::render::renderer as md;
-use bindings::records::store::store as records;
-use bindings::ratelimit::guard::limiter as ratelimit;
-use bindings::ratelimit::guard::limiter::LimitError;
-use bindings::quota::meter::meter as quota;
-use bindings::quota::meter::meter::QuotaError;
+use bindings::notify::dispatch::dispatcher as notify;
+use bindings::outbox::dispatch::queue as outbox;
 use bindings::policy::guard::guard as policy;
 use bindings::policy::guard::guard::Attr;
-use bindings::audit::log::recorder as audit;
-use bindings::audit::log::types::Event;
-use bindings::event::bus::bus as eventbus;
-use bindings::notify::dispatch::dispatcher as notify;
-use bindings::email::template::renderer as email;
-use bindings::i18n::catalog::catalog as i18n;
-use bindings::idempotency::guard::store as idempotency;
-use bindings::webhook::sign::signer as webhook_sign;
-use bindings::outbox::dispatch::queue as outbox;
-use bindings::webhook::ingest::verifier as webhook_ingest;
-use bindings::mail::parse::parser as mail_parse;
-use bindings::sched::timer::timer as timer;
+use bindings::quota::meter::meter as quota;
+use bindings::quota::meter::meter::QuotaError;
+use bindings::ratelimit::guard::limiter as ratelimit;
+use bindings::ratelimit::guard::limiter::LimitError;
+use bindings::records::store::store as records;
+use bindings::sched::timer::timer;
 use bindings::wasi::clocks::wall_clock;
-use bindings::actor::entity::actor as actor_system;
-use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
+use bindings::webhook::ingest::verifier as webhook_ingest;
+use bindings::webhook::sign::signer as webhook_sign;
 
 struct Component;
 
@@ -118,15 +118,27 @@ fn usage_json() -> Outcome {
 
 // ---- seeding ---------------------------------------------------------------
 
-fn store_crdt_new(collection: &str, data: &Value, indexes: &[String]) -> Result<records::Entry, Outcome> {
+fn store_crdt_new(
+    collection: &str,
+    data: &Value,
+    indexes: &[String],
+) -> Result<records::Entry, Outcome> {
     let now = wall_clock::now().seconds;
-    let state = crdt::lww_new(&data.to_string(), now, "system").map_err(|_| Outcome::Err(500, "crdt".into()))?;
+    let state = crdt::lww_new(&data.to_string(), now, "system")
+        .map_err(|_| Outcome::Err(500, "crdt".into()))?;
     records::create(collection, &state, indexes).map_err(store_err)
 }
 
-fn store_crdt_update(collection: &str, id: &str, state_str: &str, data: &Value, revision: u64) -> Result<records::Entry, Outcome> {
+fn store_crdt_update(
+    collection: &str,
+    id: &str,
+    state_str: &str,
+    data: &Value,
+    revision: u64,
+) -> Result<records::Entry, Outcome> {
     let now = wall_clock::now().seconds;
-    let state = crdt::lww_set(state_str, &data.to_string(), now, "system").map_err(|_| Outcome::Err(500, "crdt".into()))?;
+    let state = crdt::lww_set(state_str, &data.to_string(), now, "system")
+        .map_err(|_| Outcome::Err(500, "crdt".into()))?;
     records::update(collection, id, &state, revision).map_err(store_err)
 }
 
@@ -310,11 +322,12 @@ fn process_events(request: &IncomingRequest) -> Outcome {
             }
             Err(_) => continue,
         }
-        
+
         let payload: Value = serde_json::from_slice(&ev.payload).unwrap_or(Value::Null);
-        
+
         // Example: Render localized email and dispatch
-        let subject = i18n::translate("en-US", "ticket_update_subject", &[]).unwrap_or("Update".into());
+        let subject =
+            i18n::translate("en-US", "ticket_update_subject", &[]).unwrap_or("Update".into());
         let _ = email::render("ticket_update", &[]); // placeholder for template engine
         let _ = notify::send(&notify::Message {
             channel: notify::Channel::Email,
@@ -322,7 +335,7 @@ fn process_events(request: &IncomingRequest) -> Outcome {
             subject,
             body: payload.to_string(),
         });
-        
+
         // Example: Sign webhook payload and enqueue to outbox
         let _signed = webhook_sign::sign(&ev.payload, "dummy-secret", webhook_sign::Scheme::Github);
         let _ = outbox::enqueue("tenant_webhooks", &ev.payload, 0);
@@ -331,7 +344,7 @@ fn process_events(request: &IncomingRequest) -> Outcome {
         if payload["type"].as_str() == Some("ticket_assigned") {
             if let Some(ticket_id) = payload["ticket"].as_str() {
                 if let Some(assignee) = payload["assignee"].as_str() {
-                    // We don't need to update the ticket here if the assignment worker 
+                    // We don't need to update the ticket here if the assignment worker
                     // already updated it, but in strict choreography, the domain might own it.
                     // The assignment worker currently updates `records:store` directly.
                     // We will just log it here for now.
@@ -339,15 +352,15 @@ fn process_events(request: &IncomingRequest) -> Outcome {
                 }
             }
         }
-        
+
         let _ = idempotency::complete(&idempotency_key, 200, &[]);
         ack_ids.push(ev.id);
     }
-    
+
     if !ack_ids.is_empty() {
         let _ = eventbus::ack("helpdesk.events", "helpdesk_fanout", &ack_ids);
     }
-    
+
     Outcome::Json(200, json!({ "processed": ack_ids.len() }).to_string())
 }
 
@@ -359,7 +372,7 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
     let headers = request.headers();
     let sig = get_header(&headers, "x-signature").unwrap_or_default();
     let msg_id = get_header(&headers, "message-id").unwrap_or_else(|| ids::short_code(16));
-    
+
     let body = match read_body(request) {
         Ok(b) => b,
         Err(_) => return Outcome::Bad("could not read body".into()),
@@ -370,10 +383,15 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
         Ok(v) => {
             if !v.accepted {
                 // Duplicate delivery / replay
-                return Outcome::Json(200, json!({"status": "ignored", "reason": "replay"}).to_string());
+                return Outcome::Json(
+                    200,
+                    json!({"status": "ignored", "reason": "replay"}).to_string(),
+                );
             }
         }
-        Err(webhook_ingest::IngestError::BadSignature) => return Outcome::Err(401, "bad signature".into()),
+        Err(webhook_ingest::IngestError::BadSignature) => {
+            return Outcome::Err(401, "bad signature".into())
+        }
         Err(webhook_ingest::IngestError::BackendUnavailable(m)) => return Outcome::Err(503, m),
     }
 
@@ -388,10 +406,10 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
 
     // Check if in-reply-to matches an existing ticket (using a naive search for simplicity)
     let is_reply = email.in_reply_to.is_some();
-    
+
     // In a real app we'd map sender to an existing user/requester. We'll use the email string.
     let requester = email.sender.clone();
-    
+
     if is_reply {
         // Naive fallback: try to find ticket by `in_reply_to` or just create new if not found.
         // For the sake of the mock, we assume creating a new ticket if we don't have it.
@@ -408,17 +426,14 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
         "status": "new",
     });
 
-    let entry = match store_crdt_new(
-        TICKETS,
-        &data,
-        &["requester".to_string(), "status".to_string()],
-    ) {
-        Ok(e) => e,
-        Err(e) => return e,
-    };
-    
+    let entry =
+        match store_crdt_new(TICKETS, &data, &["requester".to_string(), "status".to_string()]) {
+            Ok(e) => e,
+            Err(e) => return e,
+        };
+
     let _ = fsm::create_instance(MACHINE, &entry.id);
-    
+
     let ev_payload = json!({
         "type": "ticket_created_via_email",
         "ticket": entry.id,
@@ -426,8 +441,9 @@ fn ingest_email(request: &IncomingRequest) -> Outcome {
         "requester": requester,
     });
     let _ = eventbus::publish("helpdesk.events", ev_payload.to_string().as_bytes());
-    
-    let msg = json!({"ticket": entry.id, "author": requester, "kind": "public", "body": email.text});
+
+    let msg =
+        json!({"ticket": entry.id, "author": requester, "kind": "public", "body": email.text});
     if let Err(e) = store_crdt_new(MESSAGES, &msg, &["ticket".to_string()]) {
         return e;
     }
@@ -462,12 +478,12 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
         Ok(p) => p,
         Err(o) => return o,
     };
-    
+
     let rl_key = format!("{}:ticket_create", p.tenant);
     if let Err(LimitError::Locked(secs)) = ratelimit::check(&rl_key) {
         return Outcome::Auth(AuthError::RateLimited(secs));
     }
-    
+
     #[derive(Deserialize)]
     struct Req {
         subject: String,
@@ -480,19 +496,19 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
             // successful parse, clear rate limit
             let _ = ratelimit::reset(&rl_key);
             v
-        },
+        }
         Err(m) => {
             let _ = ratelimit::record_failure(&rl_key);
             return Outcome::Bad(m);
         }
     };
-    
+
     // quota check: 1000 tickets per month limit
     let month_secs = 30 * 24 * 60 * 60;
     if let Err(QuotaError::Exceeded(_)) = quota::reserve(&p.tenant, 1, 1000, month_secs) {
         return Outcome::Err(402, "quota exceeded".into());
     }
-    
+
     if req.subject.is_empty() || req.subject.len() > 200 {
         return Outcome::Bad("subject must be 1..200 chars".into());
     }
@@ -503,7 +519,7 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
     if !PRIORITIES.contains(&priority.as_str()) {
         return Outcome::Bad(format!("priority must be one of {PRIORITIES:?}"));
     }
-    
+
     // Creating new ticket. Assignment happens asynchronously via TicketCreated event.
     let data = json!({
         "ref": format!("HD-{}", ids::short_code(6)),
@@ -513,22 +529,19 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
         "priority": priority,
         "status": "new",
     });
-    
+
     // Spawn the ticket actor
     let ticket_id = format!("ticket:{}", ids::short_code(16));
     if let Err(e) = actor_system::spawn(&ticket_id, data.to_string().as_bytes()) {
         return Outcome::Err(503, format!("actor spawn error: {:?}", e));
     }
-    
+
     // Save to the store for list/search operations
-    let entry = match store_crdt_new(
-        TICKETS,
-        &data,
-        &["requester".to_string(), "status".to_string()],
-    ) {
-        Ok(e) => e,
-        Err(e) => return e,
-    };
+    let entry =
+        match store_crdt_new(TICKETS, &data, &["requester".to_string(), "status".to_string()]) {
+            Ok(e) => e,
+            Err(e) => return e,
+        };
     let _ = fsm::create_instance(MACHINE, &entry.id);
     let ev_payload = json!({
         "type": "ticket_created",
@@ -541,17 +554,17 @@ fn create_ticket(request: &IncomingRequest) -> Outcome {
     if let Err(e) = store_crdt_new(MESSAGES, &msg, &["ticket".to_string()]) {
         return e;
     }
-    
+
     // record usage post-hoc just to be sure, though reserve already decremented
     let _ = quota::record_usage(&p.tenant, 1, 1000, month_secs);
-    
+
     // schedule SLA timers
     let now = wall_clock::now().seconds;
     let _ = timer::schedule_at(&format!("sla:first-response:{}", entry.id), now + 86400, &[]);
     let _ = timer::schedule_at(&format!("sla:resolution:{}", entry.id), now + 259200, &[]);
-    
+
     // Search indexing now happens asynchronously via TicketCreated event.
-    
+
     Outcome::Json(201, ticket_json(&entry).to_string())
 }
 
@@ -658,7 +671,7 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(e) => e,
         Err(e) => return e,
     };
-    
+
     // Send message to the ticket actor
     let actor_msg = json!({
         "type": "AddMessage",
@@ -667,7 +680,7 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
         "internal": req.internal,
     });
     let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
-    
+
     let ev_payload = json!({
         "type": "message_added",
         "ticket": id,
@@ -689,7 +702,7 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
     };
     let status = apply_events(&entry, &data, events)
         .unwrap_or_else(|| data["status"].as_str().unwrap_or("").into());
-        
+
     // check if we need to cancel SLA timers
     if agent && data["status"].as_str().unwrap_or("") == "new" {
         let _ = timer::cancel(&format!("sla:first-response:{}", id));
@@ -698,9 +711,9 @@ fn add_message(request: &IncomingRequest, id: &str) -> Outcome {
         let _ = timer::cancel(&format!("sla:resolution:{}", id));
         let _ = timer::cancel(&format!("sla:first-response:{}", id));
     }
-        
+
     // Search indexing now happens asynchronously via TicketUpdated event.
-    
+
     Outcome::Json(201, json!({"id": created.id, "kind": kind, "status": status}).to_string())
 }
 
@@ -713,7 +726,7 @@ fn change_state(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(t) => t,
         Err(o) => return o,
     };
-    
+
     let status = data["status"].as_str().unwrap_or("");
     if !is_allowed(&p, "change_state", id, status) {
         return Outcome::Forbidden("abac: forbidden to change state".into());
@@ -729,14 +742,14 @@ fn change_state(request: &IncomingRequest, id: &str) -> Outcome {
     if !AGENT_EVENTS.contains(&req.event.as_str()) {
         return Outcome::Bad(format!("event must be one of {AGENT_EVENTS:?}"));
     }
-    
+
     // Send message to the ticket actor
     let actor_msg = json!({
         "type": "ChangeState",
         "event": req.event,
     });
     let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
-    
+
     match fsm::fire(MACHINE, id, &req.event) {
         Ok(status) => {
             mirror_status(&entry, &data, &status.state);
@@ -771,7 +784,7 @@ fn assign(request: &IncomingRequest, id: &str) -> Outcome {
         Ok(t) => t,
         Err(o) => return o,
     };
-    
+
     let status = data["status"].as_str().unwrap_or("");
     if !is_allowed(&p, "assign", id, status) {
         return Outcome::Forbidden("abac: forbidden to assign".into());
@@ -785,14 +798,14 @@ fn assign(request: &IncomingRequest, id: &str) -> Outcome {
         Err(m) => return Outcome::Bad(m),
     };
     data["assignee"] = json!(req.subject);
-    
+
     // Send message to the ticket actor
     let actor_msg = json!({
         "type": "Assign",
         "assignee": req.subject,
     });
     let _ = actor_system::send(&format!("ticket:{}", id), actor_msg.to_string().as_bytes());
-    
+
     // taking a ticket triages it out of `new`.
     if data["status"] == "new" {
         if let Ok(status) = fsm::fire(MACHINE, id, "triage") {
@@ -869,24 +882,24 @@ fn timers_fire(request: &IncomingRequest) -> Outcome {
         Ok(v) => v,
         Err(m) => return Outcome::Bad(m),
     };
-    
+
     if req.key.starts_with("sla:first-response:") || req.key.starts_with("sla:resolution:") {
         let ticket_id = req.key.split(':').nth(2).unwrap_or("");
         if ticket_id.is_empty() {
             return Outcome::Bad("invalid key".into());
         }
-        
+
         let entry = match records::get(TICKETS, ticket_id) {
             Ok(e) => e,
             Err(_) => return Outcome::NotFound,
         };
         let mut data = parse_crdt_value(&entry.data);
         let status = data["status"].as_str().unwrap_or("");
-        
+
         if status != "solved" && status != "closed" {
             data["priority"] = json!("urgent");
             let _ = store_crdt_update(TICKETS, ticket_id, &entry.data, &data, entry.revision);
-            
+
             let ev_payload = json!({
                 "type": "sla_breached",
                 "ticket": ticket_id,
@@ -895,7 +908,7 @@ fn timers_fire(request: &IncomingRequest) -> Outcome {
             let _ = eventbus::publish("helpdesk.events", ev_payload.to_string().as_bytes());
         }
     }
-    
+
     Outcome::Json(200, json!({"status": "ok"}).to_string())
 }
 

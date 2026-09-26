@@ -75,14 +75,8 @@ mod tests {
 
     #[test]
     fn an_off_peak_deepseek_attempt_is_priced_cheaper_than_the_same_attempt_peak() {
-        assert_eq!(
-            spent_cents(&[(1_000_000, 0, "deepseek-flash", true)]),
-            15
-        );
-        assert_eq!(
-            spent_cents(&[(1_000_000, 0, "deepseek-flash", false)]),
-            30
-        );
+        assert_eq!(spent_cents(&[(1_000_000, 0, "deepseek-flash", true)]), 15);
+        assert_eq!(spent_cents(&[(1_000_000, 0, "deepseek-flash", false)]), 30);
     }
 
     #[test]
@@ -93,12 +87,18 @@ mod tests {
     #[test]
     fn spend_equal_to_the_cap_is_within_it() {
         // 1M haiku input = 100 cents; cap 100 is not exceeded.
-        assert_eq!(super::over_budget(100, &[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]), false);
+        assert_eq!(
+            super::over_budget(100, &[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]),
+            false
+        );
     }
 
     #[test]
     fn one_cent_over_the_cap_is_over() {
-        assert_eq!(super::over_budget(99, &[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]), true);
+        assert_eq!(
+            super::over_budget(99, &[(1_000_000, 0, "claude-haiku-4-5-20251001", false)]),
+            true
+        );
     }
 
     #[test]

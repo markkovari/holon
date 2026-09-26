@@ -169,9 +169,7 @@ macro_rules! guest_bearer {
         /// The bearer credential this request carries, if it carries one.
         ///
         /// Expanded by `guestio::guest_bearer!()`.
-        fn bearer(
-            request: &crate::bindings::wasi::http::types::IncomingRequest,
-        ) -> Option<String> {
+        fn bearer(request: &crate::bindings::wasi::http::types::IncomingRequest) -> Option<String> {
             request
                 .headers()
                 .get(&"authorization".to_string())
@@ -215,9 +213,7 @@ macro_rules! guest_read_body_text {
         ///
         /// Expanded by `guestio::guest_read_body_text!()`. Use `read_body_bytes` for a
         /// body that is not text.
-        fn read_body(
-            request: &crate::bindings::wasi::http::types::IncomingRequest,
-        ) -> String {
+        fn read_body(request: &crate::bindings::wasi::http::types::IncomingRequest) -> String {
             String::from_utf8_lossy(&read_body_bytes(request).unwrap_or_default()).into_owned()
         }
     };

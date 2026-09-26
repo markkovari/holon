@@ -152,7 +152,8 @@ fn confirm_with_advisor(
     goal_text: &str,
     hits: &[comp_reconciler::capsearch::Capability],
 ) -> Option<BTreeSet<String>> {
-    let http = reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
+    let http =
+        reqwest::blocking::Client::builder().timeout(Duration::from_secs(10)).build().ok()?;
     let candidates: Vec<Value> = hits
         .iter()
         .enumerate()

@@ -141,10 +141,7 @@ fn extract_json(answer: &str) -> Option<serde_json::Value> {
 }
 
 fn str_field(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
-    obj.get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    obj.get(key).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
 /// Returns (normalised number, needs review).
@@ -225,7 +222,8 @@ pub fn parse(answer: &str) -> Result<Guess, IdentifyError> {
     if trimmed.is_empty() {
         return Err(IdentifyError::Unparseable(answer.to_string()));
     }
-    let value = extract_json(trimmed).ok_or_else(|| IdentifyError::Unparseable(answer.to_string()))?;
+    let value =
+        extract_json(trimmed).ok_or_else(|| IdentifyError::Unparseable(answer.to_string()))?;
     let obj = value.as_object().ok_or_else(|| IdentifyError::Unparseable(answer.to_string()))?;
 
     if obj.get("no_card").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -244,7 +242,9 @@ pub fn parse(answer: &str) -> Result<Guess, IdentifyError> {
     let confidence = match obj.get("confidence").and_then(|v| v.as_i64()) {
         None => 0u8,
         Some(c) if (0..=100).contains(&c) => c as u8,
-        Some(c) => return Err(IdentifyError::Refused(format!("confidence {c} is out of range 0..=100"))),
+        Some(c) => {
+            return Err(IdentifyError::Refused(format!("confidence {c} is out of range 0..=100")))
+        }
     };
 
     let set_name = str_field(obj, "set_name").unwrap_or_default();

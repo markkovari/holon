@@ -492,7 +492,9 @@ host = "edge"
                 // Not silently skipped in CI: `cargo build --release` runs before
                 // `cargo test` there, so absence means a real build gap locally.
                 None => {
-                    eprintln!("skipping {bin}: not built — `cargo build --release` in its workspace");
+                    eprintln!(
+                        "skipping {bin}: not built — `cargo build --release` in its workspace"
+                    );
                     continue;
                 }
             };

@@ -36,9 +36,15 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-            (Method::Get, [""]) | (Method::Get, ["index.html"]) => Some(Outcome::Html(200, include_str!("../ui/index.html").to_string())),
-            (Method::Get, ["styles.css"]) => Some(Outcome::Css(200, include_str!("../ui/styles.css").to_string())),
-            (Method::Get, ["app.js"]) => Some(Outcome::Js(200, include_str!("../ui/app.js").to_string())),
+            (Method::Get, [""]) | (Method::Get, ["index.html"]) => {
+                Some(Outcome::Html(200, include_str!("../ui/index.html").to_string()))
+            }
+            (Method::Get, ["styles.css"]) => {
+                Some(Outcome::Css(200, include_str!("../ui/styles.css").to_string()))
+            }
+            (Method::Get, ["app.js"]) => {
+                Some(Outcome::Js(200, include_str!("../ui/app.js").to_string()))
+            }
             (Method::Post, ["api", "register"]) => Some(register(&request)),
             (Method::Post, ["api", "login"]) => Some(login(&request)),
             (Method::Post, ["api", "logout"]) => Some(logout(&request)),
@@ -67,8 +73,6 @@ enum Outcome {
 fn now() -> u64 {
     wall_clock::now().seconds
 }
-
-
 
 guestio::guest_bearer!();
 

@@ -358,10 +358,8 @@ fn goal_transitions_appear_on_the_event_log_and_acking_advances_the_offset() {
     // back, because acking is what stops a consumer re-reading history.
     let ids: Vec<String> =
         events.iter().map(|e| e["id"].as_str().unwrap_or_default().to_string()).collect();
-    let (code, v) = api.post(
-        "/api/projects/widgets/events/ack",
-        json!({ "group": "watcher", "ids": ids }),
-    );
+    let (code, v) =
+        api.post("/api/projects/widgets/events/ack", json!({ "group": "watcher", "ids": ids }));
     assert_eq!(code, 200, "acking failed: {v}");
     assert_eq!(v["acked"], json!(3));
 

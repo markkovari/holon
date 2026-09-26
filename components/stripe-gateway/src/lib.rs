@@ -69,7 +69,7 @@ impl Guest for Component {
         let _ = opts.set_first_byte_timeout(Some(10_000_000_000));
         let future = outgoing_handler::handle(req, Some(opts))
             .map_err(|e| Error::HttpError(format!("http handle: {:?}", e)))?;
-        
+
         future.subscribe().block();
         let resp = future
             .get()
@@ -93,7 +93,8 @@ impl Guest for Component {
         }
 
         if status >= 200 && status < 300 {
-            let parsed: Value = serde_json::from_slice(&buf).map_err(|e| Error::ApiError(e.to_string()))?;
+            let parsed: Value =
+                serde_json::from_slice(&buf).map_err(|e| Error::ApiError(e.to_string()))?;
             if let Some(id) = parsed.get("id").and_then(|v| v.as_str()) {
                 Ok(id.to_string())
             } else {
@@ -101,7 +102,9 @@ impl Guest for Component {
             }
         } else {
             let parsed: Value = serde_json::from_slice(&buf).unwrap_or(json!({}));
-            if let Some(err_msg) = parsed.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+            if let Some(err_msg) =
+                parsed.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str())
+            {
                 Err(Error::ApiError(err_msg.to_string()))
             } else {
                 Err(Error::ApiError(format!("HTTP {}", status)))

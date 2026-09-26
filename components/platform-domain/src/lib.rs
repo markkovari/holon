@@ -19,11 +19,11 @@
 
 #[allow(warnings)]
 mod bindings;
-mod manifest;
 mod goals;
-mod secrets;
+mod manifest;
 mod orgs;
 mod req;
+mod secrets;
 
 use serde_json::{json, Map, Value};
 
@@ -99,12 +99,16 @@ impl Guest for Component {
             (Method::Post, ["api", "components", "satisfies"]) => components_satisfies(&request),
             (Method::Get, ["api", "market"]) => market_search(&request, &query),
 
-            (Method::Post, ["api", "internal", "fetch-token"]) => secrets::fetch_token_mint(&request),
+            (Method::Post, ["api", "internal", "fetch-token"]) => {
+                secrets::fetch_token_mint(&request)
+            }
             (Method::Get, ["api", "internal", "secret"]) => secrets::secret_fetch(&request, &query),
 
             (Method::Post, ["api", "secrets"]) => secrets::secret_put(&request, &query),
             (Method::Get, ["api", "secrets"]) => secrets::secrets_list(&request, &query),
-            (Method::Delete, ["api", "secrets", name]) => secrets::secret_delete(&request, name, &query),
+            (Method::Delete, ["api", "secrets", name]) => {
+                secrets::secret_delete(&request, name, &query)
+            }
 
             (Method::Post, ["api", "projects"]) => goals::project_create(&request, &query),
             (Method::Get, ["api", "projects"]) => goals::projects_list(&request, &query),

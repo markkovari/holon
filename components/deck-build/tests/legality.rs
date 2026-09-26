@@ -128,7 +128,11 @@ fn every_reason_is_reported_not_just_the_first() {
 fn a_zero_quantity_slot_is_refused() {
     let mut deck = legal_deck();
     deck.push(slot("sv3-999", "Nothing", CardKind::Trainer, 0));
-    assert!(legality(&deck).contains(&Illegal::ZeroQuantity("sv3-999".into())), "{:?}", legality(&deck));
+    assert!(
+        legality(&deck).contains(&Illegal::ZeroQuantity("sv3-999".into())),
+        "{:?}",
+        legality(&deck)
+    );
 }
 
 // ---- what you still have to buy ----------------------------------------
@@ -151,8 +155,18 @@ fn the_shortfall_is_what_you_do_not_already_own() {
     assert_eq!(
         s.missing,
         vec![
-            Missing { card_id: "sv3-001".into(), name: "Charmander".into(), quantity: 1, cost_minor: Some(500) },
-            Missing { card_id: "sv3-125".into(), name: "Charizard ex".into(), quantity: 2, cost_minor: Some(8000) },
+            Missing {
+                card_id: "sv3-001".into(),
+                name: "Charmander".into(),
+                quantity: 1,
+                cost_minor: Some(500)
+            },
+            Missing {
+                card_id: "sv3-125".into(),
+                name: "Charizard ex".into(),
+                quantity: 2,
+                cost_minor: Some(8000)
+            },
         ],
         "sorted by card id, and only the difference"
     );

@@ -85,7 +85,7 @@ impl AppSpec {
                 } else {
                     v.to_string()
                 }
-            },
+            }
             _ => v.to_string(),
         })
     }
@@ -171,11 +171,7 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
             });
 
             roots_seen.insert(root_name.clone());
-            out.push(App {
-                name: spec.name,
-                root: root_name,
-                artifact: art_file,
-            });
+            out.push(App { name: spec.name, root: root_name, artifact: art_file });
         }
     }
 
@@ -222,11 +218,7 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
             let art_file = format!("{}.composed.wasm", comp.replace('-', "_"));
             roots_seen.insert(comp.clone());
             names_seen.insert(app_name.clone());
-            out.push(App {
-                name: app_name,
-                root: comp.clone(),
-                artifact: art_file,
-            });
+            out.push(App { name: app_name, root: comp.clone(), artifact: art_file });
         }
     }
 
@@ -256,7 +248,10 @@ mod tests {
         assert_eq!(a.matches("media-url=").count(), 1, "{a}");
         assert!(a.contains("--config imageopt-url=http://127.0.0.1:8009"), "{a}");
         assert!(a.contains("--config imageopt-token=t"), "{a}");
-        assert!(a.contains("--egress 127.0.0.1:8013") && a.contains("--egress 127.0.0.1:8009"), "{a}");
+        assert!(
+            a.contains("--egress 127.0.0.1:8013") && a.contains("--egress 127.0.0.1:8009"),
+            "{a}"
+        );
         assert_eq!(a.matches("--allow-private-egress").count(), 1, "{a}");
 
         let bare: AppSpec = toml::from_str("name = \"b\"\n").unwrap();

@@ -132,14 +132,16 @@ fn save(img: &image::DynamicImage, out: &Path, quality: u8) -> image::ImageResul
     if !is_jpeg {
         return img.save(out);
     }
-    let file = std::fs::File::create(out)
-        .map_err(|e| image::ImageError::IoError(e))?;
+    let file = std::fs::File::create(out).map_err(|e| image::ImageError::IoError(e))?;
     let mut writer = std::io::BufWriter::new(file);
     let encoder = JpegEncoder::new_with_quality(&mut writer, quality);
     encoder.write_image(img.as_bytes(), img.width(), img.height(), img.color().into())
 }
 
-async fn optimize(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<OptimizeReq>) -> Json<Value> {
+async fn optimize(
+    State(d): State<std::sync::Arc<Daemon>>,
+    Json(req): Json<OptimizeReq>,
+) -> Json<Value> {
     let requested = PathBuf::from(&req.img);
 
     // Not-permitted and no-such-file are different answers on purpose: one is
@@ -179,7 +181,8 @@ async fn optimize(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<Optim
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-imageopt", &token);
     if args.allow_path.is_empty() {
         eprintln!(
@@ -199,7 +202,9 @@ async fn main() -> Result<()> {
         max_width: args.max_width,
         quality: args.quality,
     });
-    let app = Router::new().route("/optimize", post(optimize)).with_state(state)
+    let app = Router::new()
+        .route("/optimize", post(optimize))
+        .with_state(state)
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;
@@ -230,8 +235,14 @@ mod tests {
         std::fs::create_dir_all(&inside).expect("mkdir");
         let d = daemon(&[&inside]);
 
-        assert!(d.permits(&inside.join("photo.jpg")).is_some(), "a file inside the listed directory");
-        assert!(d.permits(&inside.join("../sibling.jpg")).is_none(), "a file in the parent is not inside it");
+        assert!(
+            d.permits(&inside.join("photo.jpg")).is_some(),
+            "a file inside the listed directory"
+        );
+        assert!(
+            d.permits(&inside.join("../sibling.jpg")).is_none(),
+            "a file in the parent is not inside it"
+        );
         assert!(d.permits(&tmp.join("photo.jpg")).is_none(), "nor is anything above it");
         assert!(d.permits(Path::new("/etc/photo.jpg")).is_none(), "nor is somewhere unrelated");
     }
@@ -276,7 +287,8 @@ mod tests {
         // A scratch output file for this test only, named with the process id
         // and removed below; nothing security-sensitive is ever written to a
         // predictable path here.
-        let out = std::env::temp_dir().join(format!("imageopt-save-test-{}.jpg", std::process::id())); // nosemgrep: rust.lang.security.temp-dir.temp-dir
+        let out =
+            std::env::temp_dir().join(format!("imageopt-save-test-{}.jpg", std::process::id())); // nosemgrep: rust.lang.security.temp-dir.temp-dir
         save(&img, &out, 50).expect("save");
         let back = image::open(&out).expect("reopen");
         assert_eq!((back.width(), back.height()), (4, 4));

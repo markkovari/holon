@@ -613,7 +613,10 @@ mod tests {
             p.contains("NOT ATTEMPTED"),
             "and it says so — a blocked check listed among failures is one a model will try to fix"
         );
-        assert!(p.contains("Do not try to fix them"), "explicitly, because the model will otherwise");
+        assert!(
+            p.contains("Do not try to fix them"),
+            "explicitly, because the model will otherwise"
+        );
         // Context comes after the failure and before the goal: the thing to repair
         // is read first.
         assert!(p.find("E0308").unwrap() < p.find("NOT ATTEMPTED").unwrap());

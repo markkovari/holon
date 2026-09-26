@@ -1,8 +1,8 @@
-use serde_json::{json, Value};
 use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::read_body;
 use crate::store::{load_products, save_products};
 use crate::types::{Outcome, Product};
+use serde_json::{json, Value};
 
 /// GET /api/products
 pub fn list_products() -> Outcome {
@@ -28,10 +28,18 @@ pub fn register_product(request: &IncomingRequest) -> Outcome {
 
     let mut products = load_products();
     if let Some(existing) = products.iter_mut().find(|p| p.barcode == barcode_str) {
-        if let Some(n) = val["name"].as_str() { existing.name = n.to_string(); }
-        if let Some(c) = val["category"].as_str() { existing.category = c.to_string(); }
-        if let Some(p) = val["price_cents"].as_u64() { existing.price_cents = p as u32; }
-        if let Some(s) = val["stock"].as_i64() { existing.stock = s as i32; }
+        if let Some(n) = val["name"].as_str() {
+            existing.name = n.to_string();
+        }
+        if let Some(c) = val["category"].as_str() {
+            existing.category = c.to_string();
+        }
+        if let Some(p) = val["price_cents"].as_u64() {
+            existing.price_cents = p as u32;
+        }
+        if let Some(s) = val["stock"].as_i64() {
+            existing.stock = s as i32;
+        }
         let res = serde_json::to_string(existing).unwrap_or_default();
         save_products(&products);
         return Outcome::Json(200, res);
@@ -67,7 +75,9 @@ pub fn adjust_stock(request: &IncomingRequest, barcode: &str) -> Outcome {
     let mut products = load_products();
     if let Some(p) = products.iter_mut().find(|p| p.barcode == barcode) {
         p.stock += delta;
-        if p.stock < 0 { p.stock = 0; }
+        if p.stock < 0 {
+            p.stock = 0;
+        }
         let stock = p.stock;
         save_products(&products);
         Outcome::Json(200, json!({ "barcode": barcode, "stock": stock }).to_string())

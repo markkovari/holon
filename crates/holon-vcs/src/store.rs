@@ -299,7 +299,10 @@ mod tests {
             crate::oplog::workspace_of_head_key("oplog/goal=2F42/head").as_deref(),
             Some("goal/42")
         );
-        assert_eq!(crate::oplog::workspace_of_head_key("oplog/goal=2F42/op/00000000000000000001"), None);
+        assert_eq!(
+            crate::oplog::workspace_of_head_key("oplog/goal=2F42/op/00000000000000000001"),
+            None
+        );
         assert_eq!(crate::oplog::workspace_of_head_key("oplog/goal/settled"), None);
     }
 

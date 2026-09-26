@@ -240,7 +240,9 @@ impl w::Guest for Component {
             .into_iter()
             .map(|i| match i {
                 Illegal::WrongSize(n) => w::Illegal::WrongSize(n),
-                Illegal::TooManyOfAName { name, count } => w::Illegal::TooManyOfAName((name, count)),
+                Illegal::TooManyOfAName { name, count } => {
+                    w::Illegal::TooManyOfAName((name, count))
+                }
                 Illegal::NoBasicPokemon => w::Illegal::NoBasicPokemon,
                 Illegal::ZeroQuantity(id) => w::Illegal::ZeroQuantity(id),
             })
@@ -253,8 +255,10 @@ impl w::Guest for Component {
         prices: Vec<w::Price>,
         currency: String,
     ) -> w::ShortfallReport {
-        let owned: Vec<Owned> =
-            owned.iter().map(|o| Owned { card_id: o.card_id.clone(), quantity: o.quantity }).collect();
+        let owned: Vec<Owned> = owned
+            .iter()
+            .map(|o| Owned { card_id: o.card_id.clone(), quantity: o.quantity })
+            .collect();
         let prices: Vec<Price> = prices
             .iter()
             .map(|p| Price {

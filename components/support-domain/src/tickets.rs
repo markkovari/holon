@@ -1,14 +1,15 @@
 use crate::api::Reply;
-use crate::bindings::records::store::store;
 use crate::bindings::audit::log::recorder;
 use crate::bindings::audit::log::types;
+use crate::bindings::records::store::store;
 use crate::bindings::wasi::clocks::wall_clock;
 use serde_json::{json, Value};
 
 pub fn list() -> Reply {
     // 2. Fetch records
     let items = match store::list_records("ticket", 100, "") {
-        Ok(page) => page.entries
+        Ok(page) => page
+            .entries
             .iter()
             .map(|r| {
                 let data: Value = serde_json::from_str(&r.data).unwrap_or(json!({}));
@@ -25,7 +26,7 @@ pub fn list() -> Reply {
             .collect::<Vec<_>>(),
         Err(_) => vec![],
     };
-    
+
     // 3. Log read action
     let now = wall_clock::now();
     let _ = recorder::record_event(&types::Event {
@@ -39,12 +40,11 @@ pub fn list() -> Reply {
         subject: "agent".to_string(),
         detail: "list".to_string(),
     });
-    
+
     Reply::json(200, &json!(items).to_string())
 }
 
 pub fn create(body: &str) -> Reply {
-
     let parsed: Value = match serde_json::from_str(body) {
         Ok(p) => p,
         Err(_) => return Reply::err(400, "invalid_json"),

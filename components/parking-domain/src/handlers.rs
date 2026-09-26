@@ -113,11 +113,7 @@ fn reserve(route: &Route, spot_id: &str, body: &str) -> Reply {
         "status": "active",
     })
     .to_string();
-    match records::create(
-        "reservations",
-        &data,
-        &["spot_id".to_string(), "subject".to_string()],
-    ) {
+    match records::create("reservations", &data, &["spot_id".to_string(), "subject".to_string()]) {
         Ok(entry) => {
             audit("reservation.create", "allow", &principal.subject, &entry.id);
             Reply::json(201, json!({"id": entry.id, "status": "active"}))
@@ -145,7 +141,12 @@ fn cancel(route: &Route, id: &str) -> Reply {
     let entry = guestauth::guest_get_or_404!("reservations", id);
     let mut res: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let subject = res.get("subject").and_then(Value::as_str).unwrap_or("").to_string();
-    guestauth::guest_deny_unless!(owns_or_admin("cancel", &principal, &subject), principal, "reservation.cancel", id);
+    guestauth::guest_deny_unless!(
+        owns_or_admin("cancel", &principal, &subject),
+        principal,
+        "reservation.cancel",
+        id
+    );
     if res.get("status").and_then(Value::as_str) == Some("cancelled") {
         return Reply::err(400, "already cancelled");
     }

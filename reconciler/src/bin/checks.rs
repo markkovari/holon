@@ -954,7 +954,10 @@ mod tests {
 
         assert!(permitted(&allow, &cmd("cargo test")));
         assert!(permitted(&allow, &cmd("cargo test -p thing")), "arguments after are fine");
-        assert!(permitted(&allow, &cmd("just build")), "a one-word allow entry permits any subcommand");
+        assert!(
+            permitted(&allow, &cmd("just build")),
+            "a one-word allow entry permits any subcommand"
+        );
 
         assert!(!permitted(&allow, &cmd("cargo")), "a prefix of an allowed command is not it");
         assert!(!permitted(&allow, &cmd("cargo publish")), "a sibling subcommand is not allowed");

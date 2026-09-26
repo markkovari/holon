@@ -23,7 +23,11 @@ fn folded_sum(digits: &str, double_rightmost: bool) -> Option<u32> {
         let doubles = (i % 2 == 0) == double_rightmost;
         sum += if doubles {
             let twice = d * 2;
-            if twice > 9 { twice - 9 } else { twice }
+            if twice > 9 {
+                twice - 9
+            } else {
+                twice
+            }
         } else {
             d
         };

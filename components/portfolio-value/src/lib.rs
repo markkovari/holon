@@ -135,7 +135,10 @@ pub fn value_at(events: &[Event], quotes: &[Quote], at: u64) -> Result<Valuation
             return Err(ValueError::ZeroQuantity { card_id: e.card_id.clone(), at: e.at });
         }
         if e.currency != currency {
-            return Err(ValueError::MixedCurrency { expected: currency, found: e.currency.clone() });
+            return Err(ValueError::MixedCurrency {
+                expected: currency,
+                found: e.currency.clone(),
+            });
         }
     }
 
@@ -313,7 +316,9 @@ impl From<&w::Quote> for Quote {
 impl From<ValueError> for w::ValueError {
     fn from(e: ValueError) -> Self {
         match e {
-            ValueError::MixedCurrency { expected, found } => w::ValueError::MixedCurrency((expected, found)),
+            ValueError::MixedCurrency { expected, found } => {
+                w::ValueError::MixedCurrency((expected, found))
+            }
             ValueError::OversoldAt { card_id, at, held, disposed } => {
                 w::ValueError::OversoldAt((card_id, at, held, disposed))
             }

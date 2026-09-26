@@ -117,8 +117,9 @@ fn main() -> Result<()> {
         Err(_) => {
             let catalog =
                 comp_reconciler::plug::Catalog::scan(&comp_reconciler::plug::default_dirs(&root));
-            comp_reconciler::plug::compose("gate-domain", &catalog)
-                .map_err(|e| anyhow::anyhow!("composing gate-domain: {e} — `cargo xtask build --force` first"))?
+            comp_reconciler::plug::compose("gate-domain", &catalog).map_err(|e| {
+                anyhow::anyhow!("composing gate-domain: {e} — `cargo xtask build --force` first")
+            })?
         }
     };
 

@@ -452,7 +452,9 @@ impl Guest for Component {
                     break;
                 }
                 Ok(cas::Outcome::Conflict(_)) => id = mint_ulid(),
-                Err(e) => return Err(StoreError::BackendUnavailable(format!("cas set record: {e:?}"))),
+                Err(e) => {
+                    return Err(StoreError::BackendUnavailable(format!("cas set record: {e:?}")))
+                }
             }
         }
         if !placed {
@@ -465,7 +467,9 @@ impl Guest for Component {
         // `err` (see `index_after_commit`). A caller told its create failed
         // creates again, and the first one is a live, unlisted duplicate.
         let ix = idx_key(&collection);
-        index_after_commit(&collection, "create", &ix, || id_index_insert(&bucket, &collection, &id));
+        index_after_commit(&collection, "create", &ix, || {
+            id_index_insert(&bucket, &collection, &id)
+        });
         let keys = secondary_keys(&collection, &parsed, &stored.index_fields);
         reindex_after_commit(&bucket, &collection, &id, "create", &[], &keys);
 
@@ -573,7 +577,9 @@ impl Guest for Component {
             .delete(&rec_key(&collection, &id))
             .map_err(|e| StoreError::BackendUnavailable(format!("delete: {e:?}")))?;
         let ix = idx_key(&collection);
-        index_after_commit(&collection, "delete", &ix, || id_index_remove(&bucket, &collection, &id));
+        index_after_commit(&collection, "delete", &ix, || {
+            id_index_remove(&bucket, &collection, &id)
+        });
         let keys = serde_json::from_str::<Value>(&stored.data)
             .map(|v| secondary_keys(&collection, &v, &stored.index_fields))
             .unwrap_or_default();
@@ -971,8 +977,10 @@ mod tests {
         let fields = vec!["name".to_string(), "name".to_string(), "absent".to_string()];
         let before = serde_json::json!({"name": "a", "units": 10});
         let after = serde_json::json!({"name": "a", "units": 0});
-        let (old, new) =
-            (secondary_keys("accounts", &before, &fields), secondary_keys("accounts", &after, &fields));
+        let (old, new) = (
+            secondary_keys("accounts", &before, &fields),
+            secondary_keys("accounts", &after, &fields),
+        );
         assert_eq!(old, new);
         assert_eq!(old.len(), 1, "a repeated field is one key, an absent one is none");
         let renamed = secondary_keys("accounts", &serde_json::json!({"name": "b"}), &fields);
@@ -981,8 +989,10 @@ mod tests {
 
     #[test]
     fn chunk_keys_sort_lexicographically_in_sequence_order() {
-        let mut keys: Vec<String> =
-            [0u32, 2, 9, 10, 11, 100, 12345].iter().map(|n| idlist::chunk_key("idx_c", *n)).collect();
+        let mut keys: Vec<String> = [0u32, 2, 9, 10, 11, 100, 12345]
+            .iter()
+            .map(|n| idlist::chunk_key("idx_c", *n))
+            .collect();
         let ordered = keys.clone();
         keys.sort();
         assert_eq!(keys, ordered, "string order must match numeric order");

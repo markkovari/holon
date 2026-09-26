@@ -5,7 +5,7 @@
 //! (zero or dropped, both wrong in a direction), and events arriving out of
 //! order, which is the normal case when somebody backfills a purchase from 2019.
 
-use portfolio_value::{series, value_at, Event, EventKind, Point, Quote, ValueError, Valuation};
+use portfolio_value::{series, value_at, Event, EventKind, Point, Quote, Valuation, ValueError};
 
 const EUR: &str = "EUR";
 const DAY: u64 = 86_400;
@@ -46,7 +46,11 @@ fn quote(card: &str, unit: i64, at: u64) -> Quote {
 /// the wrong answer to "did I do well on that one?".
 #[test]
 fn a_sale_consumes_the_oldest_lot_first() {
-    let events = vec![buy("base-4", 2, 1000, 100), buy("base-4", 1, 4000, 200), sell("base-4", 1, 3000, 300)];
+    let events = vec![
+        buy("base-4", 2, 1000, 100),
+        buy("base-4", 1, 4000, 200),
+        sell("base-4", 1, 3000, 300),
+    ];
     let v = value_at(&events, &[], 400).expect("valuation");
     assert_eq!(v.realised_minor, 2000, "FIFO: sold the €10.00 copy for €30.00");
     assert_eq!(v.cost_basis_minor, 5000, "one €10.00 lot and one €40.00 lot are still held");
@@ -88,7 +92,11 @@ fn unpriced_holdings_are_carried_at_cost_and_counted() {
 /// purchase is normal, and it must not change the answer.
 #[test]
 fn events_out_of_order_give_the_same_answer_as_events_in_order() {
-    let ordered = vec![buy("base-4", 2, 1000, 100), buy("base-4", 1, 4000, 200), sell("base-4", 1, 3000, 300)];
+    let ordered = vec![
+        buy("base-4", 2, 1000, 100),
+        buy("base-4", 1, 4000, 200),
+        sell("base-4", 1, 3000, 300),
+    ];
     let shuffled = vec![ordered[2].clone(), ordered[0].clone(), ordered[1].clone()];
     assert_eq!(
         value_at(&ordered, &[], 400).expect("ordered"),
@@ -120,7 +128,8 @@ fn two_currencies_are_an_error_and_not_a_conversion() {
 #[test]
 fn a_quote_in_another_currency_does_not_price_a_holding() {
     let events = vec![buy("base-4", 1, 1000, 0)];
-    let quotes = vec![Quote { card_id: "base-4".into(), unit_minor: 9999, currency: "USD".into(), at: 0 }];
+    let quotes =
+        vec![Quote { card_id: "base-4".into(), unit_minor: 9999, currency: "USD".into(), at: 0 }];
     let v = value_at(&events, &quotes, DAY).expect("valuation");
     assert_eq!(v.market_value_minor, 1000, "not 9999, and not converted");
     assert_eq!(v.unquoted, 1);
@@ -155,7 +164,10 @@ fn a_fully_sold_position_leaves_realised_gain_and_no_basis() {
     let events = vec![buy("base-4", 2, 1000, 100), sell("base-4", 2, 2500, 200)];
     let v = value_at(&events, &quotes_for("base-4", 9999), 300).expect("valuation");
     assert_eq!(v.cost_basis_minor, 0);
-    assert_eq!(v.market_value_minor, 0, "nothing held, so no market value — the quote is irrelevant");
+    assert_eq!(
+        v.market_value_minor, 0,
+        "nothing held, so no market value — the quote is irrelevant"
+    );
     assert_eq!(v.unrealised_minor, 0);
     assert_eq!(v.realised_minor, 3000, "€50.00 proceeds against €20.00 cost");
 }

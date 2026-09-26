@@ -99,7 +99,9 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
         let stream = out.write().map_err(|_| net("write"))?;
         // Chunked: `blocking-write-and-flush` traps above 4096 bytes.
         for chunk in body.chunks(4096) {
-            stream.blocking_write_and_flush(chunk).map_err(|e| net(&format!("body write: {e:?}")))?;
+            stream
+                .blocking_write_and_flush(chunk)
+                .map_err(|e| net(&format!("body write: {e:?}")))?;
         }
     }
     OutgoingBody::finish(out, None).map_err(|_| net("finish"))?;
@@ -109,7 +111,8 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
     let _ = opts.set_first_byte_timeout(Some(TIMEOUT_NS));
     let _ = opts.set_between_bytes_timeout(Some(TIMEOUT_NS));
 
-    let fut = outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
+    let fut =
+        outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
     fut.subscribe().block();
     let resp = fut
         .get()
@@ -138,11 +141,14 @@ fn post(func: &str, body: &[u8]) -> Result<(u16, Vec<u8>), t::ParkError> {
 /// else is its `{error, detail}` or, failing that, a storage error.
 fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::ParkError> {
     if status == 200 {
-        return serde_json::from_slice(body)
-            .map_err(|e| storage(format!("comp-park answered 200 with a body this cannot read: {e}")));
+        return serde_json::from_slice(body).map_err(|e| {
+            storage(format!("comp-park answered 200 with a body this cannot read: {e}"))
+        });
     }
     if status == 401 {
-        return Err(storage("comp-park refused the credentials (401): park-token must equal its --token"));
+        return Err(storage(
+            "comp-park refused the credentials (401): park-token must equal its --token",
+        ));
     }
     match serde_json::from_slice::<wire::ErrorBody>(body) {
         Ok(e) => Err(e.into_error().to_wit()),
@@ -154,14 +160,21 @@ fn decode<T: DeserializeOwned>(status: u16, body: &[u8]) -> Result<T, t::ParkErr
 }
 
 /// One call: the request as JSON, the answer as `R` (the model type), then WIT.
-fn call<Q: Serialize, R: DeserializeOwned + ToWit>(func: &str, req: &Q) -> Result<R::Out, t::ParkError> {
+fn call<Q: Serialize, R: DeserializeOwned + ToWit>(
+    func: &str,
+    req: &Q,
+) -> Result<R::Out, t::ParkError> {
     let body = serde_json::to_vec(req).map_err(|e| t::ParkError::Invalid(e.to_string()))?;
     let (status, raw) = post(func, &body)?;
     decode::<R>(status, &raw).map(ToWit::to_wit)
 }
 
 impl Lot for Component {
-    fn park(session: String, call_: t::OutboundCall, by: t::Agent) -> Result<t::ParkResult, t::ParkError> {
+    fn park(
+        session: String,
+        call_: t::OutboundCall,
+        by: t::Agent,
+    ) -> Result<t::ParkResult, t::ParkError> {
         let req = wire::ParkRequest { session, call: call_.to_model(), by: by.to_model() };
         call::<_, m::ParkResult>("park", &req)
     }
@@ -183,7 +196,11 @@ impl Lot for Component {
         call::<_, ()>("cancel", &wire::CancelRequest { ticket, by: by.to_model() })
     }
 
-    fn oplog(session: String, after: Option<u64>, limit: u32) -> Result<Vec<t::TicketEntry>, t::ParkError> {
+    fn oplog(
+        session: String,
+        after: Option<u64>,
+        limit: u32,
+    ) -> Result<Vec<t::TicketEntry>, t::ParkError> {
         call::<_, Vec<m::TicketEntry>>("oplog", &wire::OplogRequest { session, after, limit })
     }
 }
@@ -216,8 +233,12 @@ mod tests {
 
     #[test]
     fn what_is_not_the_daemons_json_is_a_storage_error() {
-        assert!(matches!(decode::<String>(502, b"<html>bad gateway</html>"), Err(t::ParkError::StorageError(s)) if s.contains("502")));
-        assert!(matches!(decode::<String>(401, b""), Err(t::ParkError::StorageError(s)) if s.contains("park-token")));
+        assert!(
+            matches!(decode::<String>(502, b"<html>bad gateway</html>"), Err(t::ParkError::StorageError(s)) if s.contains("502"))
+        );
+        assert!(
+            matches!(decode::<String>(401, b""), Err(t::ParkError::StorageError(s)) if s.contains("park-token"))
+        );
         assert!(matches!(decode::<String>(200, b"not json"), Err(t::ParkError::StorageError(_))));
         assert_eq!(decode::<String>(200, b"\"tkt\"").ok().as_deref(), Some("tkt"));
     }

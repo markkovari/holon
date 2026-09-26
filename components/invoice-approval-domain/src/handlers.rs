@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
+use crate::bindings::money::amount::arithmetic as money;
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
-use crate::bindings::money::amount::arithmetic as money;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -47,19 +47,17 @@ fn ensure_policy_rules() {
     match records::find_by("meta", "kind", "policy_rules") {
         Ok(entries) if !entries.is_empty() => {}
         _ => {
-            let rules = vec![
-                PolicyRule {
-                    id: "approver-owns-dept".to_string(),
-                    action: "approve".to_string(),
-                    effect: Effect::Allow,
-                    conditions: vec![Condition {
-                        left: "principal.roles".to_string(),
-                        op: Op::Has,
-                        right: "resource.owner_role".to_string(),
-                    }],
-                    priority: 10,
-                },
-            ];
+            let rules = vec![PolicyRule {
+                id: "approver-owns-dept".to_string(),
+                action: "approve".to_string(),
+                effect: Effect::Allow,
+                conditions: vec![Condition {
+                    left: "principal.roles".to_string(),
+                    op: Op::Has,
+                    right: "resource.owner_role".to_string(),
+                }],
+                priority: 10,
+            }];
             if policy::set_rules(crate::TENANT, &rules).is_ok() {
                 let marker = json!({"kind": "policy_rules"}).to_string();
                 let _ = records::create("meta", &marker, &["kind".to_string()]);
@@ -90,7 +88,8 @@ fn create_invoice(route: &Route, body: &str) -> Reply {
         "amount_units": amount.units,
         "currency": amount.currency,
         "status": "pending"
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("invoices", &data, &[]) {
         Ok(entry) => {

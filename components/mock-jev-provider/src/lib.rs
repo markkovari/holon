@@ -121,7 +121,10 @@ fn rules_of(s: &serde_json::Value) -> Vec<serde_json::Value> {
 
 /// Build a `choice-result` from a matched rule against the request's own
 /// `options` — the mock can only ever answer with something offered.
-fn choice_from(rule: &serde_json::Value, options: &[String]) -> Result<ChoiceResult, DecisionError> {
+fn choice_from(
+    rule: &serde_json::Value,
+    options: &[String],
+) -> Result<ChoiceResult, DecisionError> {
     if let Some(name) = rule["error"].as_str() {
         return Err(error_for(name, rule["detail"].as_str().unwrap_or_default()));
     }
@@ -130,14 +133,19 @@ fn choice_from(rule: &serde_json::Value, options: &[String]) -> Result<ChoiceRes
     let requested = rule["selected"].as_str();
     let selected = match requested.filter(|s| options.iter().any(|o| o == s)) {
         Some(s) => s.to_string(),
-        None => options.first().cloned().ok_or_else(|| {
-            DecisionError::InvalidRequest("no options offered".into())
-        })?,
+        None => options
+            .first()
+            .cloned()
+            .ok_or_else(|| DecisionError::InvalidRequest("no options offered".into()))?,
     };
-    let remainder = if options.len() > 1 { (1000 - confidence) / (options.len() as u32 - 1) } else { 0 };
+    let remainder =
+        if options.len() > 1 { (1000 - confidence) / (options.len() as u32 - 1) } else { 0 };
     let distribution = options
         .iter()
-        .map(|o| OptionScore { label: o.clone(), score: if *o == selected { confidence } else { remainder } })
+        .map(|o| OptionScore {
+            label: o.clone(),
+            score: if *o == selected { confidence } else { remainder },
+        })
         .collect();
     Ok(ChoiceResult { selected, confidence, distribution, flat })
 }
@@ -166,7 +174,8 @@ fn gate_from(rule: &serde_json::Value) -> Result<GateResult, DecisionError> {
     if let Some(name) = rule["error"].as_str() {
         return Err(error_for(name, rule["detail"].as_str().unwrap_or_default()));
     }
-    let probability = ((rule["probability"].as_f64().unwrap_or(0.5)).clamp(0.0, 1.0) * 1000.0) as u32;
+    let probability =
+        ((rule["probability"].as_f64().unwrap_or(0.5)).clamp(0.0, 1.0) * 1000.0) as u32;
     Ok(GateResult { probability })
 }
 
@@ -219,11 +228,16 @@ impl Guest for Component {
         Ok(questions
             .iter()
             .map(|q| {
-                let outcome = select_for(&rules, &state, Some(&q.id)).and_then(|rule| match &q.kind {
-                    QuestionKind::Choice(options) => choice_from(rule, options).map(AnswerKind::Choice),
-                    QuestionKind::Score(levels) => score_from(rule, levels).map(AnswerKind::Score),
-                    QuestionKind::Gate(_) => gate_from(rule).map(AnswerKind::Gate),
-                });
+                let outcome =
+                    select_for(&rules, &state, Some(&q.id)).and_then(|rule| match &q.kind {
+                        QuestionKind::Choice(options) => {
+                            choice_from(rule, options).map(AnswerKind::Choice)
+                        }
+                        QuestionKind::Score(levels) => {
+                            score_from(rule, levels).map(AnswerKind::Score)
+                        }
+                        QuestionKind::Gate(_) => gate_from(rule).map(AnswerKind::Gate),
+                    });
                 Answered { id: q.id.clone(), outcome }
             })
             .collect())
@@ -241,7 +255,10 @@ mod tests {
     use super::*;
 
     fn script_of(json: &str) -> Vec<serde_json::Value> {
-        serde_json::from_str::<serde_json::Value>(json).unwrap()["rules"].as_array().unwrap().clone()
+        serde_json::from_str::<serde_json::Value>(json).unwrap()["rules"]
+            .as_array()
+            .unwrap()
+            .clone()
     }
 
     #[test]
@@ -276,8 +293,14 @@ mod tests {
             ]}"#,
         );
         let options = vec!["a".to_string(), "b".to_string()];
-        assert_eq!(choice_from(select(&rules, "a specific thing").unwrap(), &options).unwrap().selected, "a");
-        assert_eq!(choice_from(select(&rules, "something else").unwrap(), &options).unwrap().selected, "b");
+        assert_eq!(
+            choice_from(select(&rules, "a specific thing").unwrap(), &options).unwrap().selected,
+            "a"
+        );
+        assert_eq!(
+            choice_from(select(&rules, "something else").unwrap(), &options).unwrap().selected,
+            "b"
+        );
     }
 
     #[test]
@@ -299,7 +322,8 @@ mod tests {
 
     #[test]
     fn a_selected_value_outside_the_offered_options_falls_back_to_the_first_option() {
-        let rules = script_of(r#"{"rules":[{"when":"*","selected":"nonexistent","confidence":0.8}]}"#);
+        let rules =
+            script_of(r#"{"rules":[{"when":"*","selected":"nonexistent","confidence":0.8}]}"#);
         let options = vec!["a".to_string(), "b".to_string()];
         let out = choice_from(select(&rules, "anything").unwrap(), &options).unwrap();
         assert_eq!(out.selected, "a");

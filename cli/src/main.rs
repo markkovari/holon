@@ -345,7 +345,11 @@ enum NodeCmd {
 }
 
 fn default_goald_format() -> GoaldFormat {
-    if cfg!(target_os = "macos") { GoaldFormat::Launchd } else { GoaldFormat::Systemd }
+    if cfg!(target_os = "macos") {
+        GoaldFormat::Launchd
+    } else {
+        GoaldFormat::Systemd
+    }
 }
 
 #[derive(Subcommand)]
@@ -752,7 +756,10 @@ fn main() -> Result<()> {
             }
             let dir = out.join(&f.ingress.host);
             std::fs::create_dir_all(&dir)?;
-            std::fs::write(dir.join("comp-ingress.service"), fleet::render_ingress_unit(&f, &layout))?;
+            std::fs::write(
+                dir.join("comp-ingress.service"),
+                fleet::render_ingress_unit(&f, &layout),
+            )?;
             println!("{}", dir.display());
 
             eprintln!(
@@ -788,4 +795,3 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
-
