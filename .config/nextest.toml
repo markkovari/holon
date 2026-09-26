@@ -31,3 +31,16 @@ test-group = 'isolated-ports'
 [[profile.ci.overrides]]
 filter = 'test(inventory_ttl) or test(gate_) or test(coldstart)'
 test-group = 'isolated-ports'
+
+# This one spins up TWO full fleet replicas rather than one, and has genuinely
+# taken 94s on a loaded CI runner against the blanket 90s (default) / 90s (ci)
+# ceiling above — without this override the default slow-timeout would kill the
+# process before the test's own 150s `serves()` deadline ever got a chance to
+# fail on its own terms.
+[[profile.default.overrides]]
+filter = 'test(a_shared_store_lets_two_replicas_continue_one_count)'
+slow-timeout = { period = "30s", terminate-after = 6 }
+
+[[profile.ci.overrides]]
+filter = 'test(a_shared_store_lets_two_replicas_continue_one_count)'
+slow-timeout = { period = "30s", terminate-after = 6 }

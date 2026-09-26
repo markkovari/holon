@@ -41,7 +41,10 @@ fn a_shared_store_lets_two_replicas_continue_one_count() {
     // `--kv nats` is the default for a lattice node, so both replicas address the
     // same JetStream bucket and the counter is one counter.
     let fleet = Fleet::start("sharedstate", &["fixtures/spread-stateful.yaml"], 2, None);
-    assert!(fleet.serves("shop.eve.test", Duration::from_secs(90)), "never served");
+    // 150s, not 90: this spins up TWO full replicas rather than one, and a loaded
+    // CI runner has genuinely taken 94s here before — see commit d99ebb7c ("a
+    // slow host is not a dead one") for the same reasoning applied elsewhere.
+    assert!(fleet.serves("shop.eve.test", Duration::from_secs(150)), "never served");
 
     // Spend the budget through the ingress, which spreads across both replicas. The
     // property is that the count keeps FALLING: if each node kept its own store the
