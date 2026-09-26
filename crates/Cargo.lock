@@ -966,6 +966,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-park"
+version = "0.1.0"
+dependencies = [
+ "async-nats",
+ "futures",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "holon-vcs"
 version = "0.1.0"
 dependencies = [

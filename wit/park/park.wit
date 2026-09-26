@@ -1,0 +1,166 @@
+// holon:park — a durable record of an outstanding call, instead of a thread
+// blocked on its answer (ADR-0100).
+//
+// An agent turn dispatches an outbound call — to a model, a tool, another
+// agent's queue, a batch job that takes minutes — and then has nothing to do
+// until the answer shows up. `park` writes that down BEFORE the call is
+// dispatched; `wake` closes it when the answer lands, however it lands (a
+// webhook, a poller, another daemon noticing something finished); `pending`
+// and `take-ready` are how whatever resumes the turn finds out.
+//
+// A ticket is content-addressed, the same reasoning as a vcs patch hash
+// (`wit/vcs/vcs.wit`): parking the identical call twice is a no-op that
+// returns the same ticket rather than a second record, so a caller that
+// crashed right after `park` and retried on restart cannot double-park.
+//
+// This contract does not dispatch the call itself and does not know what an
+// agent does with the answer — the same boundary `holon:vcs/code-store` draws
+// around a patch. What made the call is either the caller (the common case)
+// or, for a call worth checking on its own, the daemon behind this contract,
+// per `outbound-call.poll` — that half is not fully specified here yet.
+package holon:park@0.1.0;
+
+interface types {
+    /// A conversation or task this ticket belongs to. Opaque to this contract;
+    /// whoever drives the turn defines what a session is.
+    type session-id = string;
+    /// Lower-case hex SHA-256 of `(session, outbound-call)` — a ticket names
+    /// itself, so re-parking the same call is detectable without a lookup.
+    type ticket-id = string;
+
+    /// Who parked a call, or who cancelled one. The same shape as
+    /// `holon:vcs/types.agent`, duplicated rather than imported — cross-package
+    /// WIT imports would tie this contract's versioning to vcs's for three
+    /// fields (ADR-0095's reasoning for why components duplicate small
+    /// helpers rather than share a library).
+    record agent {
+        id: string,
+        goal: option<string>,
+        model: option<string>,
+    }
+
+    /// How to find an answer on its own, for a call whose provider does not
+    /// push a webhook — a batch job checked by its status endpoint. Left
+    /// deliberately thin: the polling loop itself is the engine's to design,
+    /// not this sketch's.
+    record poll-spec {
+        url: string,
+        interval-secs: u32,
+    }
+
+    /// One outbound call, as the caller describes it before dispatching it.
+    record outbound-call {
+        /// What a webhook or poller presents to `wake` to find this ticket
+        /// again — a provider's request id, a job id, whatever the far side
+        /// hands back. Unique per call; `wake` refuses `not-found` without a
+        /// match.
+        correlation: string,
+        /// Free text for the oplog and a human reading it — never parsed.
+        description: string,
+        /// Unix milliseconds. A ticket still `parked` past this is `expired`:
+        /// read as "answer this or explain it", not "still fine".
+        deadline: option<u64>,
+        poll: option<poll-spec>,
+    }
+
+    /// What came back.
+    record call-result {
+        ok: bool,
+        body: list<u8>,
+        detail: option<string>,
+    }
+
+    enum park-outcome {
+        /// A new ticket, now outstanding.
+        parked,
+        /// The identical call was already parked for this session; the
+        /// existing ticket, not a new one.
+        already-parked,
+        /// A wake for this exact call landed before `park` returned — the
+        /// answer beat the registration. Nothing lost: the ticket is `ready`
+        /// immediately, so the caller can `take-ready` without waiting on
+        /// `PARK_WAKE`.
+        already-woken,
+    }
+
+    record park-result {
+        ticket: ticket-id,
+        outcome: park-outcome,
+    }
+
+    enum turn-status {
+        parked,
+        /// Woken; its result has not been taken yet.
+        ready,
+        /// `take-ready` has consumed its result. Terminal.
+        resumed,
+        /// Given up on via `cancel`. Terminal.
+        cancelled,
+        /// Past its `deadline` with no wake. Not terminal — a late wake still
+        /// lands and is logged, just no longer surfaced by `pending`.
+        expired,
+    }
+
+    record ticket-entry {
+        ticket: ticket-id,
+        session: session-id,
+        status: turn-status,
+        parked-at: u64,
+        woken-at: option<u64>,
+        resumed-at: option<u64>,
+    }
+
+    variant park-error {
+        /// No ticket matches — a bad id, or a `wake` whose `correlation`
+        /// nothing parked has.
+        not-found(ticket-id),
+        /// `take-ready` or `cancel` on a ticket already `resumed` or
+        /// `cancelled`.
+        already-closed(ticket-id),
+        storage-error(string),
+        invalid(string),
+    }
+}
+
+interface lot {
+    use types.{
+        agent, call-result, outbound-call, park-error, park-result, session-id,
+        ticket-entry, ticket-id,
+    };
+
+    /// Register an outstanding call before dispatching it. Idempotent per
+    /// `park-outcome`'s `already-parked` and `already-woken` cases.
+    park: func(session: session-id, call: outbound-call, by: agent) -> result<park-result, park-error>;
+
+    /// The answer arrived. Refused `not-found` if no parked ticket's
+    /// `correlation` matches.
+    wake: func(correlation: string, answer: call-result) -> result<ticket-id, park-error>;
+
+    /// Every ticket for a session still `parked` or `ready` — what a resumer,
+    /// or the turn itself on restart, reads to find outstanding work.
+    pending: func(session: session-id) -> result<list<ticket-entry>, park-error>;
+
+    /// Consume a `ready` ticket's result exactly once. `not-found` if it is
+    /// not `ready` — poll `pending`, or better, wait on the `PARK_WAKE`
+    /// stream, rather than spin on this.
+    take-ready: func(ticket: ticket-id) -> result<call-result, park-error>;
+
+    /// Give up on a `parked` or `ready` ticket. A late wake against a
+    /// cancelled ticket is logged and dropped, not an error to anyone.
+    cancel: func(ticket: ticket-id, by: agent) -> result<_, park-error>;
+
+    /// One session's history, oldest first, starting after the given
+    /// millisecond timestamp (`none`: from the start).
+    oplog: func(session: session-id, after: option<u64>, limit: u32) -> result<list<ticket-entry>, park-error>;
+}
+
+/// What a park daemon provides — the native daemon's component face, or an
+/// in-process implementation.
+world lot-provider {
+    export lot;
+}
+
+/// What an agent's component imports to use one.
+world lot-client {
+    import lot;
+}

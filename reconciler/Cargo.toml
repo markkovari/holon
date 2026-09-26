@@ -159,6 +159,10 @@ kamadak-exif = "0.6"   # comp-media: EXIF of a JPEG original (bounds-checked; ra
 # async-nats (0.50) and surrealdb ride along; the engine never shares a client
 # with the rest of this crate.
 holon-vcs = { path = "../crates/holon-vcs", features = ["native"] }
+# comp-park (ADR-0100): a durable record of an outstanding call, over JetStream
+# KV and the PARK_WAKE work-queue stream. No SurrealDB — unlike vcs, there is
+# no graph here, one ticket is one mutable record.
+holon-park = { path = "../crates/holon-park", features = ["native"] }
 
 [dev-dependencies]
 miniz_oxide = "0.8"
@@ -238,6 +242,12 @@ path = "src/bin/media.rs"
 [[bin]]
 name = "comp-vcs"
 path = "src/bin/vcs.rs"
+
+# A durable record of an outstanding call, instead of a thread blocked on its
+# answer (ADR-0100), for `components/park-store` (not built yet).
+[[bin]]
+name = "comp-park"
+path = "src/bin/park.rs"
 
 [[bin]]
 name = "comp-lanscan"
