@@ -90,6 +90,10 @@ finishes in 2 s. A real, pre-existing race this surfaced — two concurrent
 first-time requests for the same brand-new commit could corrupt its cached
 base tree — is fixed with a lock around just that (rare, cheap) step.
 
+Full measurements, the two wrong theories tried first, and the plan for
+distributing across a second machine (not built yet — no second machine to
+test it against): [`docs/measure/gate-concurrency.md`](docs/measure/gate-concurrency.md).
+
 For a **second, remote worker box** (the `--checks-url` case below, a separate
 machine with no local `warm_caches`), point it at its own persistent cache the
 same way, and optionally add [`sccache`](https://github.com/mozilla/sccache)
