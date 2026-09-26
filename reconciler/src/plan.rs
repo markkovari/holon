@@ -432,6 +432,11 @@ type Key = (String, String, String, String, String); // tenant, app, component, 
 /// difference between a 46 ms pass and a 300 ms one.
 type Owner<'a> = (&'a str, &'a str, &'a str, &'a str);
 
+/// A component's eligibility signature — its labels and interface needs —
+/// memoised against the node set that fits it.
+type EligibleFor<'a> =
+    BTreeMap<(&'a BTreeMap<String, String>, &'a Vec<String>), Vec<&'a NodeInventory>>;
+
 // ---- the diff --------------------------------------------------------------
 
 pub fn plan(
@@ -491,8 +496,7 @@ pub fn plan(
     // `fits` is a scan of labels and interfaces per node, and almost every app in
     // a fleet shares a signature — no constraints, the same `host_needs`. Without
     // this, ten thousand apps re-derive the same node set ten thousand times.
-    let mut eligible_for: BTreeMap<(&BTreeMap<String, String>, &Vec<String>), Vec<&NodeInventory>> =
-        BTreeMap::new();
+    let mut eligible_for: EligibleFor<'_> = BTreeMap::new();
     let fitting = |c: &Component, node: &str| by_node.get(node).is_some_and(|n| fits(c, n));
 
     // Fleet composition, not fleet LOAD: instance counts change constantly and
@@ -869,10 +873,7 @@ fn place<'a>(
     // apps that are actually changing, which is the churn, not the fleet.
     running_by_node: &BTreeMap<Owner<'_>, BTreeMap<&str, u32>>,
     node_load: &BTreeMap<&str, usize>,
-    eligible_for: &mut BTreeMap<
-        (&'a BTreeMap<String, String>, &'a Vec<String>),
-        Vec<&'a NodeInventory>,
-    >,
+    eligible_for: &mut EligibleFor<'a>,
     // What THIS pass has already decided to put on each node.
     //
     // Without it, every app in a pass ranks against the same unchanged inventory
@@ -1060,7 +1061,7 @@ mod tests {
 
     /// Run to convergence, so a test can assert on the settled world rather than on
     /// one pass. Applies commands to the inventory the way a host would.
-    fn converge(desired: &[Manifest], observed: &mut Vec<NodeInventory>, passes: u32) -> Outcome {
+    fn converge(desired: &[Manifest], observed: &mut [NodeInventory], passes: u32) -> Outcome {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
         let mut last = Outcome::default();
@@ -1143,7 +1144,7 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        let first = plan(&[m.clone()], &obs, None, &mut hyst, &cfg);
+        let first = plan(std::slice::from_ref(&m), &obs, None, &mut hyst, &cfg);
         assert!(first.commands.is_empty(), "must not stop on the first sighting");
         // Absolute: "hold 1", not "drop 2". Re-sending it is a no-op.
         let second = plan(&[m], &obs, None, &mut hyst, &cfg);
@@ -1166,8 +1167,12 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        assert!(plan(&[m.clone()], &[over.clone()], None, &mut hyst, &cfg).commands.is_empty());
-        assert!(plan(&[m.clone()], &[exact], None, &mut hyst, &cfg).commands.is_empty());
+        assert!(plan(std::slice::from_ref(&m), &[over.clone()], None, &mut hyst, &cfg)
+            .commands
+            .is_empty());
+        assert!(plan(std::slice::from_ref(&m), &[exact], None, &mut hyst, &cfg)
+            .commands
+            .is_empty());
         assert!(
             plan(&[m], &[over], None, &mut hyst, &cfg).commands.is_empty(),
             "the counter must have restarted, not carried over"
@@ -1180,7 +1185,7 @@ mod tests {
         // stops writing its inventory key simply stops appearing.
         let m = app(vec![comp("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let mut obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
-        converge(&[m.clone()], &mut obs, 2);
+        converge(std::slice::from_ref(&m), &mut obs, 2);
         assert_eq!(counts(&obs, "api"), vec![("box-a".into(), 1), ("box-b".into(), 1)]);
 
         obs.retain(|n| n.node != "box-b"); // box-b is gone
@@ -1197,7 +1202,7 @@ mod tests {
         // Spread has to be stable or every node join is a fleet-wide restart.
         let m = app(vec![comp("api", "sha256:a", 2)], vec![], Strategy::Linked);
         let mut obs = vec![node("box-a", &[], &[])];
-        converge(&[m.clone()], &mut obs, 2);
+        converge(std::slice::from_ref(&m), &mut obs, 2);
         assert_eq!(counts(&obs, "api"), vec![("box-a".into(), 2)]);
 
         obs.push(node("box-b", &[], &[]));
@@ -1363,7 +1368,7 @@ mod tests {
         let cfg = Cfg::default();
         let mut hyst = Hysteresis::default();
 
-        let first = plan(&[m.clone()], &[a.clone()], None, &mut hyst, &cfg);
+        let first = plan(std::slice::from_ref(&m), &[a.clone()], None, &mut hyst, &cfg);
         assert_eq!(first.commands.len(), 1, "the new one comes up alone first");
         assert!(
             matches!(&first.commands[0], Command::Start { digest, .. } if digest == "sha256:new")
@@ -1614,7 +1619,7 @@ mod tests {
             Strategy::Linked,
         );
         let mut obs = vec![node("box-a", &[], &[]), node("box-b", &[], &[])];
-        converge(&[m.clone()], &mut obs, 3);
+        converge(std::slice::from_ref(&m), &mut obs, 3);
         let out = plan(&[m], &obs, None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.commands.is_empty(), "not settled: {:?}", out.commands);
         assert!(out.unschedulable.is_empty());
@@ -1778,7 +1783,7 @@ mod tests {
         let mut c = comp("gate", "sha256:aa", 1);
         c.placement.mode = Mode::Spread;
         let m = app(vec![c], vec![], Strategy::Fused);
-        let out = plan(&[m], &vec![mac, pi], None, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[mac, pi], None, &mut Hysteresis::default(), &Cfg::default());
         let node = out.commands.iter().find_map(|c| match c {
             Command::Start { node, .. } => Some(node.clone()),
             _ => None,
@@ -1796,7 +1801,7 @@ mod tests {
         let mut c = comp("gate", "sha256:aa", 2);
         c.placement.mode = Mode::Spread;
         let m = app(vec![c], vec![], Strategy::Fused);
-        let out = plan(&[m], &vec![old], None, &mut Hysteresis::default(), &Cfg::default());
+        let out = plan(&[m], &[old], None, &mut Hysteresis::default(), &Cfg::default());
         assert!(out.unschedulable.is_empty(), "{:?}", out.unschedulable);
         assert!(!out.commands.is_empty(), "a node with no advertised capacity must still be used");
     }
@@ -1969,7 +1974,7 @@ mod tests {
                             // pass has converged and the fleet has stopped moving,
                             // so a single pass would never exercise it at all.
                             for _ in 0..6 {
-                                let out = plan(&[m.clone()], &o, None, &mut h, &cfg);
+                                let out = plan(std::slice::from_ref(&m), &o, None, &mut h, &cfg);
                                 for cmd in &out.commands {
                                     apply(&mut o, cmd);
                                 }
@@ -2004,7 +2009,7 @@ mod tests {
 
         let mut obs =
             vec![node("box-a", &[("region", "eu")], &[]), node("box-b", &[("region", "eu")], &[])];
-        converge(&[m.clone()], &mut obs, 3);
+        converge(std::slice::from_ref(&m), &mut obs, 3);
         let placed = counts(&obs, "api");
         assert_eq!(placed.len(), 1, "one replica on one node: {placed:?}");
         let held = placed[0].0.clone();

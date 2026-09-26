@@ -1,4 +1,3 @@
-use crate::{cfg_u64, now_secs, Reply, Route};
 use crate::bindings::ai::inference::inference as ai;
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::Permission;
@@ -7,13 +6,14 @@ use crate::bindings::quota::meter::meter;
 use crate::bindings::records::store::store as records;
 use crate::bindings::search::index::index as search;
 use crate::bindings::wasi::http::types::Method;
+use crate::{cfg_u64, now_secs, Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     if !matches!(method, Method::Post) {
         return Reply::err(404, "not_found");
     }
-    
+
     let subject = match authorize_perm(route, "read") {
         Ok(s) => s,
         Err(r) => return r,
@@ -26,8 +26,9 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     }
 
     // 1. Step-up
-    let entries = records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
-    let is_stepped_up = entries.first().map_or(false, |entry| {
+    let entries =
+        records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
+    let is_stepped_up = entries.first().is_some_and(|entry| {
         let doc: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
         let verified_at = doc.get("verified_at").and_then(Value::as_u64).unwrap_or(0);
         let ttl = cfg_u64("stepup-ttl-secs", 900);
@@ -44,7 +45,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         if let Ok(cached_json) = serde_json::from_slice::<Value>(&cached_bytes) {
             let mut result = cached_json;
             result["cached"] = json!(true);
-            
+
             // For cached hit, remaining is what meter::peek reports
             let budget = cfg_u64("answer-budget", 50);
             let period = cfg_u64("answer-period-secs", 86400);
@@ -53,7 +54,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
                 Err(_) => 0,
             };
             result["remaining"] = json!(remaining);
-            
+
             return Reply::json(200, result);
         }
     }
@@ -63,7 +64,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         Ok(h) => h,
         Err(_) => return Reply::err(500, "search_error"),
     };
-    
+
     if hits.is_empty() {
         return Reply::err(404, "no_sources");
     }
@@ -83,7 +84,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     // 4. Budget
     let budget = cfg_u64("answer-budget", 50);
     let period = cfg_u64("answer-period-secs", 86400);
-    
+
     match meter::reserve(&subject, 1, budget, period) {
         Ok(balance) => {
             // 5. The model
@@ -96,10 +97,10 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
                         "cached": false,
                         "remaining": balance.remaining
                     });
-                    
+
                     let ttl = cfg_u64("answer-cache-ttl-secs", 3600);
                     let _ = cache::set(&cache_key, &serde_json::to_vec(&result).unwrap(), ttl);
-                    
+
                     Reply::json(200, result)
                 }
                 Err(_) => Reply::err(503, "answer_unavailable"),
@@ -125,7 +126,9 @@ fn authorize_perm(route: &Route, action: &str) -> Result<String, Reply> {
             use crate::bindings::auth::identity::types::AuthError;
             let reply = match err {
                 AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
-                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => {
+                    Reply::err(503, "auth_unavailable")
+                }
                 _ => Reply::err(401, "unauthenticated"),
             };
             Err(reply)

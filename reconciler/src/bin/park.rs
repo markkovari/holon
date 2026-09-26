@@ -58,7 +58,10 @@ type PResult<T> = std::result::Result<T, ParkError>;
 type LiveEngine = Engine<NatsParkStore>;
 
 #[derive(Parser, Debug)]
-#[command(name = "comp-park", about = "A durable record of an outstanding call (ADR-0100), for components over loopback HTTP.")]
+#[command(
+    name = "comp-park",
+    about = "A durable record of an outstanding call (ADR-0100), for components over loopback HTTP."
+)]
 struct Args {
     /// Shared secret a caller must send as `Authorization: Bearer <token>`.
     #[arg(long)]
@@ -159,13 +162,19 @@ impl Daemon {
                     Ok(outcome) => {
                         if outcome.freshly_woken {
                             if let Backend::Live(_, wake) = &self.backend {
-                                let msg = WakeMessage { session: outcome.session.clone(), ticket: outcome.ticket.clone() };
+                                let msg = WakeMessage {
+                                    session: outcome.session.clone(),
+                                    ticket: outcome.ticket.clone(),
+                                };
                                 if let Err(e) = wake.publish(&msg).await {
                                     // The record is already durable; a failed
                                     // nudge is not a failed `wake`. A resumer
                                     // that never sees this message still finds
                                     // the ticket via `pending`, just later.
-                                    eprintln!("comp-park: PARK_WAKE publish for {}: {e:#}", outcome.ticket);
+                                    eprintln!(
+                                        "comp-park: PARK_WAKE publish for {}: {e:#}",
+                                        outcome.ticket
+                                    );
                                 }
                             }
                             (200, json_of(&outcome.ticket))
@@ -192,7 +201,10 @@ impl Daemon {
                 let req: wire::OplogRequest = parse(body)?;
                 answer(on!(self, |e| e.oplog(&req.session, req.after, req.limit, now_ms()).await))
             }
-            other => (404, json_of(&wire::ErrorBody::new("not-found", format!("no such route: {other}")))),
+            other => (
+                404,
+                json_of(&wire::ErrorBody::new("not-found", format!("no such route: {other}"))),
+            ),
         })
     }
 
@@ -210,7 +222,11 @@ fn respond((status, body): Answer) -> Response {
     (code, Json(body)).into_response()
 }
 
-async fn call(State(d): State<Shared>, UrlPath(func): UrlPath<String>, body: axum::body::Bytes) -> Response {
+async fn call(
+    State(d): State<Shared>,
+    UrlPath(func): UrlPath<String>,
+    body: axum::body::Bytes,
+) -> Response {
     respond(d.dispatch(&func, &body).await)
 }
 
@@ -240,7 +256,8 @@ fn app(d: Shared, token: Option<String>) -> Router {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-park", &token);
 
     let backend = if args.memory {
@@ -249,13 +266,24 @@ async fn main() -> Result<()> {
     } else {
         let (store, wake) = nats::connect(&args.nats_url, &args.bucket, &args.wake_stream)
             .await
-            .with_context(|| format!("NATS at {} (bucket {}, stream {})", args.nats_url, args.bucket, args.wake_stream))?;
+            .with_context(|| {
+                format!(
+                    "NATS at {} (bucket {}, stream {})",
+                    args.nats_url, args.bucket, args.wake_stream
+                )
+            })?;
         Backend::Live(Box::new(Engine::new(store)), Box::new(wake))
     };
 
-    let d = std::sync::Arc::new(Daemon { backend, bucket: args.bucket.clone(), wake_stream: args.wake_stream.clone() });
+    let d = std::sync::Arc::new(Daemon {
+        backend,
+        bucket: args.bucket.clone(),
+        wake_stream: args.wake_stream.clone(),
+    });
 
-    let listener = tokio::net::TcpListener::bind(&args.addr).await.with_context(|| format!("binding {}", args.addr))?;
+    let listener = tokio::net::TcpListener::bind(&args.addr)
+        .await
+        .with_context(|| format!("binding {}", args.addr))?;
     println!(
         "comp-park: listening on http://{} | {} | bucket {} | wake stream {}",
         args.addr,

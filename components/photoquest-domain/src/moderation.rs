@@ -161,7 +161,9 @@ fn save(collection: &str, entry: &records::Entry, m: &Map<String, Value>) -> Res
     }
 }
 
-fn flags_of(subject: &str) -> Result<Option<(records::Entry, Map<String, Value>)>, ()> {
+type EntryDoc = (records::Entry, Map<String, Value>);
+
+fn flags_of(subject: &str) -> Result<Option<EntryDoc>, ()> {
     let found = records::find_by(FLAGS, "subject", &enc(subject)).map_err(|_| ())?;
     Ok(found.into_iter().next().map(|e| {
         let m = doc(&e);

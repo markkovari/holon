@@ -25,7 +25,9 @@ mod bindings;
 use bindings::exports::os::system::cron::{CronError, Guest, Job};
 use bindings::wasi::config::store as config;
 use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme};
+use bindings::wasi::http::types::{
+    Fields, Method, OutgoingBody, OutgoingRequest, RequestOptions, Scheme,
+};
 use bindings::wasi::io::streams::StreamError;
 
 struct Component;
@@ -39,7 +41,9 @@ fn daemon_url() -> Result<String, CronError> {
         Ok(Some(u)) if !u.is_empty() => Ok(u),
         // Unavailable rather than any other variant: nobody refused anything,
         // the deployment simply never said where the daemon is.
-        _ => Err(CronError::Unavailable("cron-url is not set — this component has nowhere to ask".into())),
+        _ => Err(CronError::Unavailable(
+            "cron-url is not set — this component has nowhere to ask".into(),
+        )),
     }
 }
 
@@ -67,14 +71,14 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
     let net = |m: &str| CronError::Unavailable(m.to_string());
 
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     // A shared secret, if the deployment set one — see
     // `comp_reconciler::daemon_auth`'s own doc for why loopback
     // binding alone is not a boundary. Absent means the daemon was
     // started with no --token, so there is nothing to send.
     if let Ok(Some(token)) = config::get("cron-token") {
         if !token.is_empty() {
-            let _ = headers.set(&"authorization".to_string(), &[format!("Bearer {token}").into_bytes()]);
+            let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
         }
     }
     let req = OutgoingRequest::new(headers);
@@ -90,7 +94,9 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
         // body here is always small (`{}`), but the shape matches the rest of
         // this repo's HTTP clients.
         for chunk in body.chunks(4096) {
-            stream.blocking_write_and_flush(chunk).map_err(|e| net(&format!("body write: {e:?}")))?;
+            stream
+                .blocking_write_and_flush(chunk)
+                .map_err(|e| net(&format!("body write: {e:?}")))?;
         }
     }
     OutgoingBody::finish(out, None).map_err(|_| net("finish"))?;
@@ -100,7 +106,8 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, CronError> {
     let _ = opts.set_first_byte_timeout(Some(TIMEOUT_NS));
     let _ = opts.set_between_bytes_timeout(Some(TIMEOUT_NS));
 
-    let fut = outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
+    let fut =
+        outgoing_handler::handle(req, Some(opts)).map_err(|e| net(&format!("handle: {e:?}")))?;
     fut.subscribe().block();
     let resp = fut
         .get()

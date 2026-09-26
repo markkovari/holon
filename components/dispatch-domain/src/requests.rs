@@ -146,12 +146,14 @@ fn list(route: &Route) -> Result<Reply, Reply> {
         }
     }
 
-    let entries = if filters.is_empty() { every()? } else {
+    let entries = if filters.is_empty() {
+        every()?
+    } else {
         records::query(COLLECTION, &filters, 10_000).map_err(|_| store_error())?
     };
 
     let mut docs: Vec<Value> = entries.iter().map(merged).collect();
-    docs.sort_by(|a, b| key_of(a).cmp(&key_of(b)));
+    docs.sort_by_key(key_of);
     Ok(Reply::json(200, json!({ "requests": docs })))
 }
 

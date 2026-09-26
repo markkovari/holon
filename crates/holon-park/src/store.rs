@@ -91,7 +91,12 @@ pub trait ParkStore: Send + Sync {
 
     /// Overwrite an EXISTING record, only if it is still at `expected`.
     /// `Ok(true)`: written. `Ok(false)`: lost the race; the caller re-reads.
-    fn cas(&self, ticket: &str, expected: Revision, record: &Record) -> impl Future<Output = Result<bool>> + Send;
+    fn cas(
+        &self,
+        ticket: &str,
+        expected: Revision,
+        record: &Record,
+    ) -> impl Future<Output = Result<bool>> + Send;
 
     /// Claim `correlation` for `ticket`, if nothing already has it.
     /// `Ok(None)`: this call claimed it. `Ok(Some(other))`: `other` already
@@ -105,10 +110,14 @@ pub trait ParkStore: Send + Sync {
     ) -> impl Future<Output = Result<Option<TicketId>>> + Send;
 
     /// The ticket `correlation` was claimed for, if any.
-    fn find_correlation(&self, correlation: &str) -> impl Future<Output = Result<Option<TicketId>>> + Send;
+    fn find_correlation(
+        &self,
+        correlation: &str,
+    ) -> impl Future<Output = Result<Option<TicketId>>> + Send;
 
     /// Add `ticket` to `session`'s index. Idempotent.
-    fn index_session(&self, session: &str, ticket: &str) -> impl Future<Output = Result<()>> + Send;
+    fn index_session(&self, session: &str, ticket: &str)
+        -> impl Future<Output = Result<()>> + Send;
 
     /// Every ticket ever parked for `session`, in no particular order — the
     /// engine sorts by `parked_at` after reading each one.

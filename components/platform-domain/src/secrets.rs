@@ -17,9 +17,9 @@
 
 use serde_json::{json, Map, Value};
 
+use crate::bindings::secrets::vault::vault;
 use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::req;
-use crate::bindings::secrets::vault::vault;
 use crate::{
     body, caller, claim_fetch_nonce, internal_ok, now, orgs, personal_org, read_body, records,
     str_of, Outcome,

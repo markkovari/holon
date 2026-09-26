@@ -47,13 +47,13 @@ use bindings::auth::identity::authorizer;
 use bindings::auth::identity::types::Principal;
 use bindings::card::identify::identifier as ident;
 use bindings::deck::build::builder as deck;
-use bindings::vision::describe::describer as vision;
 use bindings::exports::wasi::http::incoming_handler::Guest;
-use bindings::sheet::ingest::reader as sheet;
 use bindings::id::generate::generator as ids;
-use bindings::qr::encode::encoder as qr;
 use bindings::portfolio::value::valuation as pv;
 use bindings::price::history::history as ph;
+use bindings::qr::encode::encoder as qr;
+use bindings::sheet::ingest::reader as sheet;
+use bindings::vision::describe::describer as vision;
 use bindings::wasi::clocks::wall_clock;
 use bindings::wasi::http::types::{
     Fields, IncomingRequest, Method, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -195,7 +195,11 @@ fn store_guess(b: &store::Bucket, ns: &str, g: ident::Guess) -> Result<Card, Str
     let id = format!(
         "{}-{}",
         if g.set_code.is_empty() { "unknown" } else { &g.set_code },
-        if g.number.is_empty() { g.name.replace(' ', "-").to_lowercase() } else { g.number.replace('/', "-") }
+        if g.number.is_empty() {
+            g.name.replace(' ', "-").to_lowercase()
+        } else {
+            g.number.replace('/', "-")
+        }
     );
     let card = Card {
         id: id.clone(),
@@ -207,7 +211,10 @@ fn store_guess(b: &store::Bucket, ns: &str, g: ident::Guess) -> Result<Card, Str
         language: g.language,
         printing: g.printing.map(printing_name).unwrap_or_default(),
         condition: g.condition.map(condition_name).unwrap_or_default(),
-        graded: g.graded.map(|gr| format!("{} {}", gr.grader, gr.tenths as f64 / 10.0)).unwrap_or_default(),
+        graded: g
+            .graded
+            .map(|gr| format!("{} {}", gr.grader, gr.tenths as f64 / 10.0))
+            .unwrap_or_default(),
         confidence: g.confidence,
         // The capability calls the field `variant`; `variant` is a WIT keyword, so
         // the contract calls it `printing` and so does this app.
@@ -308,8 +315,7 @@ fn scan<T: for<'de> Deserialize<'de>>(b: &store::Bucket, prefix: &str) -> Vec<T>
     // €60.00 — every number tripled, and every one of them still plausible.
     let mut keys = std::collections::BTreeSet::new();
     let mut cursor = None;
-    loop {
-        let Ok(page) = b.list_keys(cursor.clone()) else { break };
+    while let Ok(page) = b.list_keys(cursor) {
         let before = keys.len();
         keys.extend(page.keys.into_iter().filter(|k| k.starts_with(prefix)));
         match page.cursor {
@@ -333,18 +339,14 @@ fn scan<T: for<'de> Deserialize<'de>>(b: &store::Bucket, prefix: &str) -> Vec<T>
 /// the old scheme was reaching for; two DIFFERENT events at one instant no longer
 /// collide.
 fn event_key(ns: &str, e: &StoredEvent) -> String {
-    format!(
-        "{ns}event:{:020}:{}:{}:{}:{}",
-        e.at, e.card_id, e.kind, e.quantity, e.unit_minor
-    )
+    format!("{ns}event:{:020}:{}:{}:{}:{}", e.at, e.card_id, e.kind, e.quantity, e.unit_minor)
 }
 
 /// Every key under a prefix. `scan` reads values; deleting needs the keys.
 fn keys_under(b: &store::Bucket, prefix: &str) -> Vec<String> {
     let mut out = std::collections::BTreeSet::new();
     let mut cursor = None;
-    loop {
-        let Ok(page) = b.list_keys(cursor.clone()) else { break };
+    while let Ok(page) = b.list_keys(cursor) {
         let before = out.len();
         out.extend(page.keys.into_iter().filter(|k| k.starts_with(prefix)));
         match page.cursor {
@@ -360,7 +362,11 @@ fn events_for(b: &store::Bucket, ns: &str) -> Vec<pv::Event> {
         .into_iter()
         .map(|e| pv::Event {
             item_id: e.card_id,
-            kind: if e.kind == "disposed" { pv::EventKind::Disposed } else { pv::EventKind::Acquired },
+            kind: if e.kind == "disposed" {
+                pv::EventKind::Disposed
+            } else {
+                pv::EventKind::Acquired
+            },
             quantity: e.quantity,
             unit_minor: e.unit_minor,
             currency: e.currency,
@@ -439,8 +445,8 @@ fn stream_photo(
     media_type: String,
 ) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"text/event-stream".to_vec()]);
-    let _ = headers.set(&"cache-control".to_string(), &[b"no-cache".to_vec()]);
+    let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
+    let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(200);
     let body = response.body().expect("outgoing body");
@@ -469,7 +475,8 @@ fn stream_photo(
 
         match vision::describe(&bytes, &media_type, &ident::prompt()) {
             Ok(answer) => {
-                let _ = send(json!({ "stage": "reading", "detail": "reading the answer into fields" }));
+                let _ =
+                    send(json!({ "stage": "reading", "detail": "reading the answer into fields" }));
                 match ident::parse(&answer) {
                     Ok(g) => match store_guess(bucket, ns, g) {
                         Ok(card) => {
@@ -508,7 +515,7 @@ fn stream_photo(
 
 fn respond(out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let resp = OutgoingResponse::new(headers);
     let _ = resp.set_status_code(status);
     let out_body = resp.body().expect("a response has a body");
@@ -604,7 +611,9 @@ impl Guest for Component {
 
             // The prompt a vision provider should send, straight from the capability
             // that parses its output — so the two cannot drift.
-            (Method::Get, "/api/prompt") => json_out(out, 200, &json!({ "prompt": ident::prompt() })),
+            (Method::Get, "/api/prompt") => {
+                json_out(out, 200, &json!({ "prompt": ident::prompt() }))
+            }
 
             // --- accounts ------------------------------------------------
             //
@@ -678,7 +687,11 @@ impl Guest for Component {
                 if let Err(e) = put_json(&bucket, &format!("{ns}job:{id}"), &job) {
                     return fail(out, 500, &e);
                 }
-                json_out(out, 202, &json!({ "job": id, "events": format!("/api/photo/{id}/events") }))
+                json_out(
+                    out,
+                    202,
+                    &json!({ "job": id, "events": format!("/api/photo/{id}/events") }),
+                )
             }
 
             // The work, reported as it happens.
@@ -691,9 +704,8 @@ impl Guest for Component {
             (Method::Get, p) if p.starts_with("/api/photo/") && p.ends_with("/events") => {
                 let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
                 let ns = ns(&who);
-                let id = percent_decode(
-                    p.trim_start_matches("/api/photo/").trim_end_matches("/events"),
-                );
+                let id =
+                    percent_decode(p.trim_start_matches("/api/photo/").trim_end_matches("/events"));
                 let Some(job) = get_json::<Value>(&bucket, &format!("{ns}job:{id}")) else {
                     return fail(out, 404, "no such job");
                 };
@@ -701,8 +713,11 @@ impl Guest for Component {
                 // second vision call on the same picture.
                 let _ = bucket.delete(&format!("{ns}job:{id}"));
 
-                let media_type =
-                    job.get("media_type").and_then(Value::as_str).unwrap_or("image/jpeg").to_string();
+                let media_type = job
+                    .get("media_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("image/jpeg")
+                    .to_string();
                 let bytes = job
                     .get("data")
                     .and_then(Value::as_str)
@@ -719,7 +734,9 @@ impl Guest for Component {
                 let ns = ns(&who);
                 let body = read_body(&req);
                 let answer = match serde_json::from_slice::<Value>(&body) {
-                    Ok(v) => v.get("answer").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    Ok(v) => {
+                        v.get("answer").and_then(Value::as_str).unwrap_or_default().to_string()
+                    }
                     Err(_) => String::from_utf8_lossy(&body).to_string(),
                 };
                 match ident::parse(&answer) {
@@ -727,7 +744,11 @@ impl Guest for Component {
                         let id = format!(
                             "{}-{}",
                             if g.set_code.is_empty() { "unknown" } else { &g.set_code },
-                            if g.number.is_empty() { g.name.replace(' ', "-").to_lowercase() } else { g.number.replace('/', "-") }
+                            if g.number.is_empty() {
+                                g.name.replace(' ', "-").to_lowercase()
+                            } else {
+                                g.number.replace('/', "-")
+                            }
                         );
                         let card = Card {
                             id: id.clone(),
@@ -739,7 +760,10 @@ impl Guest for Component {
                             language: g.language,
                             printing: g.printing.map(printing_name).unwrap_or_default(),
                             condition: g.condition.map(condition_name).unwrap_or_default(),
-                            graded: g.graded.map(|gr| format!("{} {}", gr.grader, gr.tenths as f64 / 10.0)).unwrap_or_default(),
+                            graded: g
+                                .graded
+                                .map(|gr| format!("{} {}", gr.grader, gr.tenths as f64 / 10.0))
+                                .unwrap_or_default(),
                             confidence: g.confidence,
                             // The capability calls the field `variant`; `variant` is a
                             // WIT keyword, so the contract calls it `printing` and so
@@ -783,7 +807,11 @@ impl Guest for Component {
                 let id = format!(
                     "{}-{}",
                     if set_code.is_empty() { "unknown" } else { &set_code },
-                    if number.is_empty() { name.replace(' ', "-").to_lowercase() } else { number.replace('/', "-") }
+                    if number.is_empty() {
+                        name.replace(' ', "-").to_lowercase()
+                    } else {
+                        number.replace('/', "-")
+                    }
                 );
                 let card = Card {
                     id: id.clone(),
@@ -812,7 +840,11 @@ impl Guest for Component {
                         kind: "acquired".into(),
                         quantity: v.get("quantity").and_then(Value::as_u64).unwrap_or(1) as u32,
                         unit_minor: paid,
-                        currency: v.get("currency").and_then(Value::as_str).unwrap_or("EUR").to_string(),
+                        currency: v
+                            .get("currency")
+                            .and_then(Value::as_str)
+                            .unwrap_or("EUR")
+                            .to_string(),
                         at,
                     };
                     let _ = put_json(&bucket, &event_key(&ns, &ev), &ev);
@@ -923,9 +955,8 @@ impl Guest for Component {
             (Method::Post, p) if p.starts_with("/api/swaps/") && p.ends_with("/accept") => {
                 let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
                 let taker_ns = ns(&who);
-                let id = percent_decode(
-                    p.trim_start_matches("/api/swaps/").trim_end_matches("/accept"),
-                );
+                let id =
+                    percent_decode(p.trim_start_matches("/api/swaps/").trim_end_matches("/accept"));
                 let Some(mut swap) = get_json::<Swap>(&bucket, &format!("swap:{id}")) else {
                     return fail(out, 404, "no such swap");
                 };
@@ -943,11 +974,13 @@ impl Guest for Component {
                 // Both cards have to exist, on the side that is supposed to have
                 // them, BEFORE anything moves. A swap that half-completes leaves
                 // one collector holding two cards and the other holding none.
-                let Some(given) = get_json::<Card>(&bucket, &format!("{offerer_ns}card:{}", swap.give))
+                let Some(given) =
+                    get_json::<Card>(&bucket, &format!("{offerer_ns}card:{}", swap.give))
                 else {
                     return fail(out, 409, "the offered card is no longer in that collection");
                 };
-                let Some(wanted) = get_json::<Card>(&bucket, &format!("{taker_ns}card:{}", swap.want))
+                let Some(wanted) =
+                    get_json::<Card>(&bucket, &format!("{taker_ns}card:{}", swap.want))
                 else {
                     return fail(out, 422, &format!("you do not have `{}`", swap.want));
                 };
@@ -963,10 +996,9 @@ impl Guest for Component {
                 };
 
                 // Two events per collection, at the same agreed value.
-                for (namespace, card, arriving) in [
-                    (&offerer_ns, &given, &wanted),
-                    (&taker_ns, &wanted, &given),
-                ] {
+                for (namespace, card, arriving) in
+                    [(&offerer_ns, &given, &wanted), (&taker_ns, &wanted, &given)]
+                {
                     let _ = bucket.delete(&format!("{namespace}card:{}", card.id));
                     if let Err(e) =
                         put_json(&bucket, &format!("{namespace}card:{}", arriving.id), arriving)
@@ -1042,11 +1074,7 @@ impl Guest for Component {
                         .unwrap_or_default()
                 };
                 if !cols.iter().any(|c| c == "name") {
-                    return fail(
-                        out,
-                        422,
-                        &format!("no `name` column — found {:?}", sheet.header),
-                    );
+                    return fail(out, 422, &format!("no `name` column — found {:?}", sheet.header));
                 }
 
                 // Validate everything first. `row` is 1-based and counts the header,
@@ -1131,7 +1159,11 @@ impl Guest for Component {
                         unit_minor,
                         currency: {
                             let c = at_col(row, "currency");
-                            if c.is_empty() { "EUR".to_string() } else { c.to_uppercase() }
+                            if c.is_empty() {
+                                "EUR".to_string()
+                            } else {
+                                c.to_uppercase()
+                            }
                         },
                         at: {
                             let a = at_col(row, "at");
@@ -1223,10 +1255,17 @@ impl Guest for Component {
                     .collect();
                 let held: i64 = events
                     .iter()
-                    .map(|e| if e.kind == "disposed" { -(e.quantity as i64) } else { e.quantity as i64 })
+                    .map(|e| {
+                        if e.kind == "disposed" {
+                            -(e.quantity as i64)
+                        } else {
+                            e.quantity as i64
+                        }
+                    })
                     .sum();
 
-                let stored: Vec<StoredQuote> = scan::<StoredQuote>(&bucket, &format!("quote:{id}:"));
+                let stored: Vec<StoredQuote> =
+                    scan::<StoredQuote>(&bucket, &format!("quote:{id}:"));
                 let quotes: Vec<ph::Quote> = stored
                     .iter()
                     .map(|q| ph::Quote {
@@ -1250,7 +1289,11 @@ impl Guest for Component {
                     .iter()
                     .map(|e| pv::Event {
                         item_id: e.card_id.clone(),
-                        kind: if e.kind == "disposed" { pv::EventKind::Disposed } else { pv::EventKind::Acquired },
+                        kind: if e.kind == "disposed" {
+                            pv::EventKind::Disposed
+                        } else {
+                            pv::EventKind::Acquired
+                        },
                         quantity: e.quantity,
                         unit_minor: e.unit_minor,
                         currency: e.currency.clone(),
@@ -1280,10 +1323,10 @@ impl Guest for Component {
                     .filter(|c| c.card_id == id)
                     .collect();
                 // Newest first: a history is read from what just happened backwards.
-                changes.sort_by(|a, b| b.at.cmp(&a.at));
+                changes.sort_by_key(|a| std::cmp::Reverse(a.at));
 
                 let mut evs = events;
-                evs.sort_by(|a, b| b.at.cmp(&a.at));
+                evs.sort_by_key(|a| std::cmp::Reverse(a.at));
 
                 json_out(
                     out,
@@ -1448,11 +1491,7 @@ impl Guest for Component {
                     // then one more in the same second silently overwrote the first
                     // one's history. A field can only meaningfully change once in a
                     // second anyway.
-                    let _ = put_json(
-                        &bucket,
-                        &format!("{ns}change:{at:020}:{id}:{}", c.field),
-                        c,
-                    );
+                    let _ = put_json(&bucket, &format!("{ns}change:{at:020}:{id}:{}", c.field), c);
                 }
                 if let Err(e) = put_json(&bucket, &format!("{ns}card:{id}"), &card) {
                     return fail(out, 500, &e);
@@ -1470,11 +1509,19 @@ impl Guest for Component {
                 };
                 let at = e.get("at").and_then(Value::as_u64).unwrap_or_else(now);
                 let ev = StoredEvent {
-                    card_id: e.get("card_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    card_id: e
+                        .get("card_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
                     kind: e.get("kind").and_then(Value::as_str).unwrap_or("acquired").to_string(),
                     quantity: e.get("quantity").and_then(Value::as_u64).unwrap_or(1) as u32,
                     unit_minor: e.get("unit_minor").and_then(Value::as_i64).unwrap_or(0),
-                    currency: e.get("currency").and_then(Value::as_str).unwrap_or("EUR").to_string(),
+                    currency: e
+                        .get("currency")
+                        .and_then(Value::as_str)
+                        .unwrap_or("EUR")
+                        .to_string(),
                     at,
                 };
                 if ev.card_id.is_empty() {
@@ -1492,7 +1539,13 @@ impl Guest for Component {
                     let held: i64 = scan::<StoredEvent>(&bucket, &format!("{ns}event:"))
                         .into_iter()
                         .filter(|e| e.card_id == ev.card_id && e.at <= at)
-                        .map(|e| if e.kind == "disposed" { -(e.quantity as i64) } else { e.quantity as i64 })
+                        .map(|e| {
+                            if e.kind == "disposed" {
+                                -(e.quantity as i64)
+                            } else {
+                                e.quantity as i64
+                            }
+                        })
                         .sum();
                     if (ev.quantity as i64) > held {
                         return fail(
@@ -1520,10 +1573,9 @@ impl Guest for Component {
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
                     return fail(out, 400, "not json");
                 };
-                let (Some(card), Some(at)) = (
-                    v.get("card_id").and_then(Value::as_str),
-                    v.get("at").and_then(Value::as_u64),
-                ) else {
+                let (Some(card), Some(at)) =
+                    (v.get("card_id").and_then(Value::as_str), v.get("at").and_then(Value::as_u64))
+                else {
                     return fail(out, 400, "which event — card_id and at");
                 };
                 // The EXACT event when the caller names it fully, which the card page
@@ -1551,7 +1603,11 @@ impl Guest for Component {
                         );
                         // Only if it is really there, so the count does not claim a
                         // deletion that did not happen.
-                        if bucket.exists(&key).unwrap_or(false) { vec![key] } else { vec![] }
+                        if bucket.exists(&key).unwrap_or(false) {
+                            vec![key]
+                        } else {
+                            vec![]
+                        }
                     }
                     // Named only by instant and card: every event that matches goes,
                     // and the count says how many so a caller is not surprised.
@@ -1560,11 +1616,7 @@ impl Guest for Component {
                 for k in &found {
                     let _ = bucket.delete(k);
                 }
-                json_out(
-                    out,
-                    200,
-                    &json!({ "deleted": found.len(), "card_id": card, "at": at }),
-                )
+                json_out(out, 200, &json!({ "deleted": found.len(), "card_id": card, "at": at }))
             }
 
             // An observed price. Where it came from is not this app's business —
@@ -1576,9 +1628,17 @@ impl Guest for Component {
                 };
                 let at = q.get("at").and_then(Value::as_u64).unwrap_or_else(now);
                 let quote = StoredQuote {
-                    card_id: q.get("card_id").and_then(Value::as_str).unwrap_or_default().to_string(),
+                    card_id: q
+                        .get("card_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
                     unit_minor: q.get("unit_minor").and_then(Value::as_i64).unwrap_or(0),
-                    currency: q.get("currency").and_then(Value::as_str).unwrap_or("EUR").to_string(),
+                    currency: q
+                        .get("currency")
+                        .and_then(Value::as_str)
+                        .unwrap_or("EUR")
+                        .to_string(),
                     at,
                 };
                 if quote.card_id.is_empty() {
@@ -1594,16 +1654,17 @@ impl Guest for Component {
             // One card's price over the last 90 days, carried across the gaps.
             (Method::Get, p) if p.starts_with("/api/price/") => {
                 let card = percent_decode(p.trim_start_matches("/api/price/"));
-                let quotes: Vec<ph::Quote> = scan::<StoredQuote>(&bucket, &format!("quote:{card}:"))
-                    .into_iter()
-                    .map(|q| ph::Quote {
-                        unit_minor: q.unit_minor,
-                        currency: q.currency,
-                        kind: ph::QuoteKind::Market,
-                        source: "binder".into(),
-                        at: q.at,
-                    })
-                    .collect();
+                let quotes: Vec<ph::Quote> =
+                    scan::<StoredQuote>(&bucket, &format!("quote:{card}:"))
+                        .into_iter()
+                        .map(|q| ph::Quote {
+                            unit_minor: q.unit_minor,
+                            currency: q.currency,
+                            kind: ph::QuoteKind::Market,
+                            source: "binder".into(),
+                            at: q.at,
+                        })
+                        .collect();
                 let until = now();
                 let since = until.saturating_sub(90 * 86_400);
                 match ph::series(&quotes, ph::QuoteKind::Market, since, until, 86_400) {
@@ -1645,11 +1706,12 @@ impl Guest for Component {
                 let step = param(&query, "step")
                     .and_then(|s| s.parse::<u64>().ok())
                     .filter(|s| *s > 0)
-                    .unwrap_or_else(|| if window > 400 * 86_400 { 7 * 86_400 } else { 86_400 });
+                    .unwrap_or(if window > 400 * 86_400 { 7 * 86_400 } else { 86_400 });
                 match pv::value_at(&events, &quotes, until) {
                     Ok(v) => {
                         let since = until.saturating_sub(window.max(step));
-                        let points = pv::series(&events, &quotes, since, until, step).unwrap_or_default();
+                        let points =
+                            pv::series(&events, &quotes, since, until, step).unwrap_or_default();
                         json_out(
                             out,
                             200,
@@ -1772,7 +1834,8 @@ impl Guest for Component {
             (Method::Post, p) if p.starts_with("/api/decks/") && p.ends_with("/slots") => {
                 let Some(who) = who(&req) else { return fail(out, 401, "sign in") };
                 let ns = ns(&who);
-                let name = percent_decode(p.trim_start_matches("/api/decks/").trim_end_matches("/slots"));
+                let name =
+                    percent_decode(p.trim_start_matches("/api/decks/").trim_end_matches("/slots"));
                 let key = format!("{ns}deck:{name}");
                 let Some(mut d) = get_json::<Deck>(&bucket, &key) else {
                     return fail(out, 404, "no such deck");
@@ -1781,7 +1844,8 @@ impl Guest for Component {
                 let Ok(v) = serde_json::from_slice::<Value>(&body) else {
                     return fail(out, 400, "not json");
                 };
-                let card_id = v.get("card_id").and_then(Value::as_str).unwrap_or_default().to_string();
+                let card_id =
+                    v.get("card_id").and_then(Value::as_str).unwrap_or_default().to_string();
                 if card_id.is_empty() {
                     return fail(out, 400, "which card");
                 }
@@ -1796,7 +1860,8 @@ impl Guest for Component {
                     .or_else(|| held.as_ref().map(|c| c.name.clone()))
                     .unwrap_or_else(|| card_id.clone());
                 let quantity = v.get("quantity").and_then(Value::as_u64).unwrap_or(1) as u32;
-                let kind = v.get("kind").and_then(Value::as_str).unwrap_or("basic-pokemon").to_string();
+                let kind =
+                    v.get("kind").and_then(Value::as_str).unwrap_or("basic-pokemon").to_string();
 
                 d.slots.retain(|s| s.card_id != card_id);
                 // Zero removes it rather than storing an empty slot — which the
@@ -1871,7 +1936,8 @@ impl Guest for Component {
                 let mut held: std::collections::BTreeMap<String, i64> = Default::default();
                 for e in scan::<StoredEvent>(&bucket, &format!("{ns}event:")) {
                     let n = e.quantity as i64;
-                    *held.entry(e.card_id).or_insert(0) += if e.kind == "disposed" { -n } else { n };
+                    *held.entry(e.card_id).or_insert(0) +=
+                        if e.kind == "disposed" { -n } else { n };
                 }
                 let owned: Vec<deck::Owned> = held
                     .into_iter()
@@ -1881,7 +1947,8 @@ impl Guest for Component {
 
                 // The newest quote per card, which is what a shopping list is priced
                 // at — not an average, and not the first one found.
-                let mut newest: std::collections::BTreeMap<String, StoredQuote> = Default::default();
+                let mut newest: std::collections::BTreeMap<String, StoredQuote> =
+                    Default::default();
                 for q in scan::<StoredQuote>(&bucket, "quote:") {
                     newest
                         .entry(q.card_id.clone())

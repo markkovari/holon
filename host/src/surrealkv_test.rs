@@ -33,8 +33,11 @@ struct Surreal {
 
 impl Drop for Surreal {
     fn drop(&mut self) {
-        let _ =
-            Command::new("docker").args(["rm", "-f", &self.name]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        let _ = Command::new("docker")
+            .args(["rm", "-f", &self.name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
@@ -82,7 +85,9 @@ fn bucket(tag: &str) -> BucketId {
 }
 
 async fn backend(url: &str) -> std::sync::Arc<dyn kv::KvBackend> {
-    kv::build("surreal", "", "", url, 1, "").await.expect("`surreal` must be a backend `kv::build` knows")
+    kv::build("surreal", "", "", url, 1, "")
+        .await
+        .expect("`surreal` must be a backend `kv::build` knows")
 }
 
 macro_rules! surreal_test {
@@ -136,7 +141,11 @@ surreal_test!(increment_starts_at_zero_and_accumulates, |db| {
     let k = bucket("counter");
     assert_eq!(b.increment(&k, "hits", 1).unwrap(), 1, "an absent counter starts at zero");
     assert_eq!(b.increment(&k, "hits", 4).unwrap(), 5);
-    assert_eq!(b.get(&k, "hits").unwrap().as_deref(), Some(&b"5"[..]), "stored as a decimal string");
+    assert_eq!(
+        b.get(&k, "hits").unwrap().as_deref(),
+        Some(&b"5"[..]),
+        "stored as a decimal string"
+    );
 });
 
 surreal_test!(the_revision_moves_on_every_write_including_a_plain_set, |db| {
@@ -176,7 +185,11 @@ surreal_test!(compare_and_set_commits_once_and_then_conflicts, |db| {
         }
         Cas::Committed(_) => panic!("a stale guard must NOT commit — this is the lost update"),
     }
-    assert_eq!(b.get(&k, "row").unwrap().as_deref(), Some(&b"one"[..]), "the refused write left no trace");
+    assert_eq!(
+        b.get(&k, "row").unwrap().as_deref(),
+        Some(&b"one"[..]),
+        "the refused write left no trace"
+    );
 
     match b.set_if_revision(&k, "row", b"two", rev).unwrap() {
         Cas::Committed(next) => assert!(next > rev),
@@ -194,7 +207,11 @@ surreal_test!(two_buckets_do_not_see_each_other, |db| {
     assert_eq!(b.get(&z, "same-key").unwrap().as_deref(), Some(&b"from-z"[..]));
     // Tenancy is the point: `BucketId` is already namespaced, and a backend that
     // flattened it would leak one tenant's data into another's reads.
-    assert!(!b.list_keys(&a).unwrap().iter().any(|key| b.get(&z, key).unwrap().as_deref() == Some(&b"from-a"[..])));
+    assert!(!b
+        .list_keys(&a)
+        .unwrap()
+        .iter()
+        .any(|key| b.get(&z, key).unwrap().as_deref() == Some(&b"from-a"[..])));
 });
 
 surreal_test!(a_second_handle_sees_the_first_handles_writes, |db| {

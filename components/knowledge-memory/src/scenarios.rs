@@ -863,9 +863,5 @@ fn a_goal_remembers_what_it_broke_into_and_a_part_remembers_whose_it_is() {
 
     // And the node was not duplicated by the second parent.
     let nodes = db.must(name, &format!("SELECT id FROM {};", surql::TASKS));
-    assert_eq!(
-        nodes.len(),
-        4,
-        "two parents and two children, no duplicates: {nodes:?}"
-    );
+    assert_eq!(nodes.len(), 4, "two parents and two children, no duplicates: {nodes:?}");
 }

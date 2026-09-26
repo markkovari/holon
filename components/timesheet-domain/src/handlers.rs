@@ -160,7 +160,12 @@ fn decide_entry(route: &Route, id: &str, new_status: &str) -> Reply {
     let entry = guestauth::guest_get_or_404!("entries", id);
     let mut data: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let manager = data.get("manager").and_then(Value::as_str).unwrap_or("").to_string();
-    guestauth::guest_deny_unless!(enforce("decide", &principal, &manager), principal, "entry.decide", id);
+    guestauth::guest_deny_unless!(
+        enforce("decide", &principal, &manager),
+        principal,
+        "entry.decide",
+        id
+    );
     data["status"] = json!(new_status);
     match records::update("entries", id, &data.to_string(), entry.revision) {
         Ok(_) => {

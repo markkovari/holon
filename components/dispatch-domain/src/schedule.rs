@@ -121,7 +121,7 @@ fn assign(id: &str) -> Reply {
     let mut best: Option<(&str, f64)> = None;
     for (name, lat, lon) in ROSTER {
         match geo::distance_meters(here, geo::Point { lat, lon }) {
-            Ok(d) if best.map_or(true, |(_, b)| d < b) => best = Some((name, d)),
+            Ok(d) if best.is_none_or(|(_, b)| d < b) => best = Some((name, d)),
             Ok(_) => {}
             Err(_) => return Reply::err(400, "bad_coordinate"),
         }

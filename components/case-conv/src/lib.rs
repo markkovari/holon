@@ -84,20 +84,12 @@ fn capitalize(word: &str) -> String {
 
 /// `s` split into words and rejoined as `snake_case`.
 pub fn to_snake(s: &str) -> String {
-    words(s)
-        .iter()
-        .map(|w| w.to_lowercase())
-        .collect::<Vec<_>>()
-        .join("_")
+    words(s).iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join("_")
 }
 
 /// `s` split into words and rejoined as `kebab-case`.
 pub fn to_kebab(s: &str) -> String {
-    words(s)
-        .iter()
-        .map(|w| w.to_lowercase())
-        .collect::<Vec<_>>()
-        .join("-")
+    words(s).iter().map(|w| w.to_lowercase()).collect::<Vec<_>>().join("-")
 }
 
 /// `s` split into words and rejoined as `camelCase`.

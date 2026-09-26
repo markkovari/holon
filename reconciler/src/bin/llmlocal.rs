@@ -89,7 +89,9 @@ async fn infer(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<InferReq
     };
     if !resp.status().is_success() {
         let status = resp.status();
-        return Json(json!({ "error": "unavailable", "detail": format!("ollama returned {status}") }));
+        return Json(
+            json!({ "error": "unavailable", "detail": format!("ollama returned {status}") }),
+        );
     }
     let text = match resp.text().await {
         Ok(t) => t,
@@ -97,14 +99,17 @@ async fn infer(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<InferReq
     };
     match ollama_response_text(&text) {
         Some(response) => Json(json!({ "response": response })),
-        None => Json(json!({ "error": "unavailable", "detail": "ollama reply had no response field" })),
+        None => {
+            Json(json!({ "error": "unavailable", "detail": "ollama reply had no response field" }))
+        }
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-llmlocal", &token);
     println!(
         "comp-llmlocal: listening on http://{} | ollama at {} | model {}",
@@ -115,7 +120,9 @@ async fn main() -> Result<()> {
         generate_url: format!("{}/api/generate", args.ollama_url.trim_end_matches('/')),
         model: args.model,
     });
-    let app = Router::new().route("/infer", post(infer)).with_state(state)
+    let app = Router::new()
+        .route("/infer", post(infer))
+        .with_state(state)
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;

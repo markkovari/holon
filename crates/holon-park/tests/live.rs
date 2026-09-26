@@ -21,7 +21,12 @@ fn agent(id: &str) -> Agent {
 }
 
 fn call(correlation: &str) -> OutboundCall {
-    OutboundCall { correlation: correlation.into(), description: "live test call".into(), deadline: None, poll: None }
+    OutboundCall {
+        correlation: correlation.into(),
+        description: "live test call".into(),
+        deadline: None,
+        poll: None,
+    }
 }
 
 fn result(ok: bool, body: &str) -> CallResult {
@@ -40,7 +45,9 @@ fn tag() -> String {
 
 async fn make(name: &str) -> Option<Engine<NatsParkStore>> {
     let Ok(url) = std::env::var("HOLON_PARK_NATS_URL") else {
-        eprintln!("SKIPPED {name}: set HOLON_PARK_NATS_URL to run it against a real NATS JetStream");
+        eprintln!(
+            "SKIPPED {name}: set HOLON_PARK_NATS_URL to run it against a real NATS JetStream"
+        );
         return None;
     };
     let client = async_nats::connect(&url).await.expect("connect");
@@ -72,7 +79,9 @@ async fn park_then_wake_then_take_ready_over_real_nats() {
 
 #[tokio::test]
 async fn reparking_the_identical_call_is_idempotent_over_real_nats() {
-    let Some(e) = make("reparking_the_identical_call_is_idempotent_over_real_nats").await else { return };
+    let Some(e) = make("reparking_the_identical_call_is_idempotent_over_real_nats").await else {
+        return;
+    };
     let session = format!("s-{}", tag());
 
     let first = e.park(&session, call("req-1"), agent("a1"), now_ms()).await.unwrap();
@@ -86,7 +95,10 @@ async fn reparking_the_identical_call_is_idempotent_over_real_nats() {
 
 #[tokio::test]
 async fn oplog_lists_every_ticket_a_session_ever_parked_over_real_nats() {
-    let Some(e) = make("oplog_lists_every_ticket_a_session_ever_parked_over_real_nats").await else { return };
+    let Some(e) = make("oplog_lists_every_ticket_a_session_ever_parked_over_real_nats").await
+    else {
+        return;
+    };
     let session = format!("s-{}", tag());
 
     let a = e.park(&session, call("req-a"), agent("a1"), now_ms()).await.unwrap();
@@ -146,5 +158,8 @@ async fn wake_stream_round_trips_through_a_durable_pull_consumer() {
     // WorkQueue retention: an acked message is gone. A second fetch on a
     // fresh ephemeral consumer over the same subject sees nothing.
     let info = stream.get_info().await.expect("stream info");
-    assert_eq!(info.state.messages, 0, "the acked message must be removed under WorkQueue retention");
+    assert_eq!(
+        info.state.messages, 0,
+        "the acked message must be removed under WorkQueue retention"
+    );
 }

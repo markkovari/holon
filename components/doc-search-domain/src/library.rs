@@ -1,9 +1,9 @@
-use crate::{Reply, Route};
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::types::Permission;
 use crate::bindings::records::store::store as records;
 use crate::bindings::search::index::index as search;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -24,7 +24,9 @@ fn authorize_perm(route: &Route, action: &str) -> Result<String, Reply> {
             use crate::bindings::auth::identity::types::AuthError;
             let reply = match err {
                 AuthError::InsufficientScope(_) => Reply::err(403, "forbidden"),
-                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => Reply::err(503, "auth_unavailable"),
+                AuthError::BackendUnavailable(_) | AuthError::Internal(_) => {
+                    Reply::err(503, "auth_unavailable")
+                }
                 _ => Reply::err(401, "unauthenticated"),
             };
             Err(reply)
@@ -49,7 +51,8 @@ fn create_doc(route: &Route, body: &str) -> Reply {
         "title": title,
         "text": text,
         "tag": tag
-    }).to_string();
+    })
+    .to_string();
 
     let entry = match records::create("docs", &doc_str, &["tag".to_string()]) {
         Ok(e) => e,

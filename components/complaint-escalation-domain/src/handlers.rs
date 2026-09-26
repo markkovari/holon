@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
+use crate::bindings::event::bus::bus;
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule};
 use crate::bindings::records::store::store as records;
-use crate::bindings::event::bus::bus;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -129,7 +129,7 @@ fn assign(route: &Route, id: &str, body: &str) -> Reply {
     };
     let req: Value = serde_json::from_str(body).unwrap_or(json!({}));
     let agent = req.get("agent").and_then(Value::as_str).unwrap_or("").to_string();
-    
+
     let entry = match records::get("complaints", id) {
         Ok(e) => e,
         Err(_) => return Reply::err(404, "not_found"),

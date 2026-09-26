@@ -25,9 +25,17 @@
 pub fn cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str, off_peak: bool) -> u64 {
     // Price table: (input cents per million, output cents per million)
     let (input_price, output_price) = if model.contains("deepseek-flash") {
-        if off_peak { (15u64, 60u64) } else { (30u64, 120u64) }
+        if off_peak {
+            (15u64, 60u64)
+        } else {
+            (30u64, 120u64)
+        }
     } else if model.contains("deepseek") {
-        if off_peak { (66u64, 198u64) } else { (132u64, 396u64) }
+        if off_peak {
+            (66u64, 198u64)
+        } else {
+            (132u64, 396u64)
+        }
     } else if model.contains("haiku") {
         (100u64, 500u64)
     } else if model.contains("sonnet") {
@@ -39,8 +47,8 @@ pub fn cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str, off_p
         (1500u64, 7500u64)
     };
 
-    let prompt_cost = (prompt_tokens as u64 * input_price + 999_999) / 1_000_000;
-    let completion_cost = (completion_tokens as u64 * output_price + 999_999) / 1_000_000;
+    let prompt_cost = (prompt_tokens as u64 * input_price).div_ceil(1_000_000);
+    let completion_cost = (completion_tokens as u64 * output_price).div_ceil(1_000_000);
 
     prompt_cost + completion_cost
 }

@@ -84,8 +84,7 @@ impl Guest for Component {
         // The seq is claimed atomically FIRST. Two concurrent deliveries to one
         // subject get different numbers; writing the note then claiming a number
         // would let them collide on a key.
-        let seq =
-            atomics::increment(&bucket, &delivered_key(&subject), 1).map_err(back("seq"))?;
+        let seq = atomics::increment(&bucket, &delivered_key(&subject), 1).map_err(back("seq"))?;
         let doc = json!({
             "seq": seq, "kind": kind, "title": title, "body": body,
             "payload": payload, "at": now(), "read": false,

@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 use bindings::audit::log::query as audit_query;
 use bindings::audit::log::recorder;
+use bindings::idempotency::guard::store as idem;
 use bindings::json::patch::patcher;
 use bindings::notify::dispatch::dispatcher as notify;
 use bindings::outbox::dispatch::queue as outbox;
@@ -21,7 +22,6 @@ use bindings::ratelimit::guard::limiter;
 use bindings::ratelimit::guard::limiter::LimitError;
 use bindings::records::store::store as records;
 use bindings::wasi::keyvalue::store as kv;
-use bindings::idempotency::guard::store as idem;
 use bindings::webhook::sign::signer;
 
 use bindings::exports::wasi::http::incoming_handler::Guest;
@@ -241,7 +241,9 @@ fn inbound(request: &IncomingRequest, source_id: &str) -> Outcome {
         // both and rolls the record back if the secret write fails, so this is a
         // store that lost one of them — a 503 the sender should retry, never a 401,
         // which would blame the sender for our missing key.
-        Ok(None) => return Outcome::Err(503, "the inbound secret for this source is missing".into()),
+        Ok(None) => {
+            return Outcome::Err(503, "the inbound secret for this source is missing".into())
+        }
         Err(e) => return Outcome::Err(503, format!("reading the inbound secret: {e:?}")),
     };
     // The header as the sender sent it. `sig` has had any `sha256=` prefix stripped
@@ -288,12 +290,24 @@ fn inbound(request: &IncomingRequest, source_id: &str) -> Outcome {
             if let Err(e) = idem::complete(&scoped, *status, body.as_bytes()) {
                 // Queued but not marked: a retry will queue it a second time. Worth
                 // saying out loud, and still a success — the event IS delivered.
-                audit("hook.accepted", "dedup-not-recorded", source_id, &delivery, &format!("{e:?}"));
+                audit(
+                    "hook.accepted",
+                    "dedup-not-recorded",
+                    source_id,
+                    &delivery,
+                    &format!("{e:?}"),
+                );
             }
         }
         _ => {
             if let Err(e) = idem::forget(&scoped) {
-                audit("hook.rejected", "dedup-not-released", source_id, &delivery, &format!("{e:?}"));
+                audit(
+                    "hook.rejected",
+                    "dedup-not-released",
+                    source_id,
+                    &delivery,
+                    &format!("{e:?}"),
+                );
             }
         }
     }

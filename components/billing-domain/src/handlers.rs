@@ -85,8 +85,11 @@ fn create_invoice(route: &Route, body: &str) -> Reply {
         return Reply::err(400, "client_id and at least one line item are required");
     }
     let total: f64 = req.line_items.iter().map(|i| i.amount).sum();
-    let items: Vec<Value> =
-        req.line_items.iter().map(|i| json!({"description": i.description, "amount": i.amount})).collect();
+    let items: Vec<Value> = req
+        .line_items
+        .iter()
+        .map(|i| json!({"description": i.description, "amount": i.amount}))
+        .collect();
     let data = json!({
         "client_id": req.client_id,
         "line_items": items,
@@ -123,7 +126,12 @@ fn send_invoice(route: &Route, id: &str) -> Reply {
     let entry = guestauth::guest_get_or_404!("invoices", id);
     let mut inv: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
     let owner = inv.get("owner").and_then(Value::as_str).unwrap_or("").to_string();
-    guestauth::guest_deny_unless!(owns_or_admin("edit", &principal, &owner), principal, "invoice.send", id);
+    guestauth::guest_deny_unless!(
+        owns_or_admin("edit", &principal, &owner),
+        principal,
+        "invoice.send",
+        id
+    );
     if inv.get("status").and_then(Value::as_str) != Some("draft") {
         return Reply::err(400, "only a draft invoice can be sent");
     }

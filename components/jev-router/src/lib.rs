@@ -152,7 +152,9 @@ fn route_intent(request: &IncomingRequest) -> Outcome {
         options: ROUTABLE_DOMAINS.iter().map(|s| s.to_string()).collect(),
     };
     match jev::choose(&choice_req) {
-        Ok(result) => Outcome::Json(200, shape_decision(&result, confidence_threshold()).to_string()),
+        Ok(result) => {
+            Outcome::Json(200, shape_decision(&result, confidence_threshold()).to_string())
+        }
         Err(e) => Outcome::Err(503, format!("jev decision failed: {}", decision_error_message(e))),
     }
 }
@@ -172,8 +174,12 @@ guestio::guest_write_all!();
 fn emit(response_out: ResponseOutparam, result: Outcome) {
     match result {
         Outcome::Json(code, body) => respond(response_out, code, body.as_bytes()),
-        Outcome::Bad(msg) => respond(response_out, 400, json!({ "error": msg }).to_string().as_bytes()),
-        Outcome::Err(code, msg) => respond(response_out, code, json!({ "error": msg }).to_string().as_bytes()),
+        Outcome::Bad(msg) => {
+            respond(response_out, 400, json!({ "error": msg }).to_string().as_bytes())
+        }
+        Outcome::Err(code, msg) => {
+            respond(response_out, code, json!({ "error": msg }).to_string().as_bytes())
+        }
         Outcome::NotFound => respond(response_out, 404, b"{\"error\":\"not_found\"}"),
     }
 }

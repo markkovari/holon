@@ -774,7 +774,7 @@ impl MailSink {
                                     if l.trim_end_matches(['\r', '\n']) == "." {
                                         break;
                                     }
-                                    body.push_str(l.strip_prefix("..").map(|r| r).unwrap_or(&l));
+                                    body.push_str(l.strip_prefix("..").unwrap_or(&l));
                                 }
                                 m.lock().expect("the mailbox").push(body);
                                 let _ = write!(stream, "250 queued\r\n");

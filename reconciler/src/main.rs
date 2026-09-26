@@ -288,7 +288,7 @@ async fn main() -> Result<()> {
 
         *known.write().unwrap() = (desired.clone(), observed.to_vec());
 
-        let outcome = plan(&desired, &observed, load.as_ref(), &mut hyst, &cfg);
+        let outcome = plan(&desired, observed, load.as_ref(), &mut hyst, &cfg);
 
         // How far behind the fleet is: every replica the manifests ask for,
         // against every instance the nodes say they are running. This is the

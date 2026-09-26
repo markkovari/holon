@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
-use crate::bindings::records::store::store as records;
 use crate::bindings::quota::meter::meter as quota;
+use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -16,7 +16,9 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
         (Method::Post, ["api", "shifts"]) => create_shift(route, body),
         (Method::Get, ["api", "shifts"]) => list_shifts(route),
         (Method::Post, ["api", "shifts", id, "signup"]) => signup(route, id),
-        (Method::Post, ["api", "shifts", shift_id, "signups", signup_id, "cancel"]) => cancel_signup(route, shift_id, signup_id),
+        (Method::Post, ["api", "shifts", shift_id, "signups", signup_id, "cancel"]) => {
+            cancel_signup(route, shift_id, signup_id)
+        }
         _ => Reply::err(404, "not_found"),
     }
 }
@@ -93,7 +95,8 @@ fn create_shift(route: &Route, body: &str) -> Reply {
         "title": title,
         "slots": slots,
         "filled": 0
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("shifts", &data, &[]) {
         Ok(entry) => {
@@ -148,7 +151,9 @@ fn signup(route: &Route, id: &str) -> Reply {
 
     match quota::reserve(&principal.subject, 1, 3, 604800) {
         Ok(_) => {}
-        Err(quota::QuotaError::Exceeded(_)) => return Reply::json(429, json!({"error": "quota_exceeded"})),
+        Err(quota::QuotaError::Exceeded(_)) => {
+            return Reply::json(429, json!({"error": "quota_exceeded"}))
+        }
         Err(_) => return Reply::err(500, "quota_error"),
     }
 
@@ -161,7 +166,8 @@ fn signup(route: &Route, id: &str) -> Reply {
         "shift_id": id,
         "subject": principal.subject.clone(),
         "at": crate::now_secs()
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("signups", &data, &[]) {
         Ok(signup_entry) => {
@@ -190,7 +196,9 @@ fn cancel_signup(route: &Route, shift_id: &str, signup_id: &str) -> Reply {
     if roles.is_empty() {
         if principal.subject == "coord@example.test" {
             roles.push("coordinator".to_string());
-        } else if principal.subject == "vol-a@example.test" || principal.subject == "vol-b@example.test" {
+        } else if principal.subject == "vol-a@example.test"
+            || principal.subject == "vol-b@example.test"
+        {
             roles.push("volunteer".to_string());
         }
     }

@@ -63,7 +63,8 @@ fn kinds_do_not_mix() {
 /// same inputs always give the same answer whatever order they arrive in.
 #[test]
 fn the_newest_observation_wins_and_ties_are_broken_deterministically() {
-    let forward = vec![q(4000, 10, QuoteKind::Market, "alpha"), q(5000, 11, QuoteKind::Market, "beta")];
+    let forward =
+        vec![q(4000, 10, QuoteKind::Market, "alpha"), q(5000, 11, QuoteKind::Market, "beta")];
     let reversed: Vec<Quote> = forward.iter().rev().cloned().collect();
     assert_eq!(
         at(&forward, QuoteKind::Market, 20 * DAY).expect("a"),
@@ -72,7 +73,8 @@ fn the_newest_observation_wins_and_ties_are_broken_deterministically() {
     );
     assert_eq!(at(&forward, QuoteKind::Market, 20 * DAY).expect("priced").unit_minor, 5000);
 
-    let tied = vec![q(7000, 10, QuoteKind::Market, "zulu"), q(4000, 10, QuoteKind::Market, "alpha")];
+    let tied =
+        vec![q(7000, 10, QuoteKind::Market, "zulu"), q(4000, 10, QuoteKind::Market, "alpha")];
     let obs = at(&tied, QuoteKind::Market, 10 * DAY).expect("priced");
     assert_eq!(obs.source, "alpha", "same instant: the first source by name, so it is stable");
     assert_eq!(obs.unit_minor, 4000);
@@ -139,7 +141,8 @@ fn never_priced_in_the_window_is_an_empty_series() {
 /// the last point on the chart agrees with the headline number beside it.
 #[test]
 fn the_series_always_ends_at_until() {
-    let points = series(&[market(4000, 0)], QuoteKind::Market, 0, 10 * DAY, 3 * DAY).expect("series");
+    let points =
+        series(&[market(4000, 0)], QuoteKind::Market, 0, 10 * DAY, 3 * DAY).expect("series");
     let ats: Vec<u64> = points.iter().map(|p| p.at).collect();
     assert_eq!(ats, vec![0, 3 * DAY, 6 * DAY, 9 * DAY, 10 * DAY]);
 }

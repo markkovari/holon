@@ -70,7 +70,7 @@ impl Guest for Component {
         };
 
         let seg: Vec<&str> = route.segments.iter().map(String::as_str).collect();
-        
+
         // Static UI Serving
         if seg.is_empty() || seg.as_slice() == ["index.html"] {
             return serve_static(response_out, include_str!("../ui/index.html"), "text/html");
@@ -79,7 +79,11 @@ impl Guest for Component {
             return serve_static(response_out, include_str!("../ui/style.css"), "text/css");
         }
         if seg.as_slice() == ["app.js"] {
-            return serve_static(response_out, include_str!("../ui/app.js"), "application/javascript");
+            return serve_static(
+                response_out,
+                include_str!("../ui/app.js"),
+                "application/javascript",
+            );
         }
 
         let Reply { status, json: payload } = match seg.as_slice() {

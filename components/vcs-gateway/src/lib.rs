@@ -129,12 +129,25 @@ fn route(func: &str, body: &[u8]) -> Result<Answer, Answer> {
         }
         "ingest-file" => {
             let r: wire::IngestFile = parse(body)?;
-            answer(fl::ingest_file(&r.workspace, &r.component, &r.file.to_wit(), &r.by.to_wit(), r.read_at))
+            answer(fl::ingest_file(
+                &r.workspace,
+                &r.component,
+                &r.file.to_wit(),
+                &r.by.to_wit(),
+                r.read_at,
+            ))
         }
         "ingest-tree" => {
             let r: wire::IngestTree = parse(body)?;
             let files = r.files.to_wit();
-            answer(fl::ingest_tree(&r.workspace, &r.component, &files, &r.by.to_wit(), r.read_at, r.prune))
+            answer(fl::ingest_tree(
+                &r.workspace,
+                &r.component,
+                &files,
+                &r.by.to_wit(),
+                r.read_at,
+                r.prune,
+            ))
         }
         "materialize" => {
             let r: wire::Materialize = parse(body)?;
@@ -147,7 +160,9 @@ fn route(func: &str, body: &[u8]) -> Result<Answer, Answer> {
                 Err(e) => refusal(e),
             }
         }
-        other => (404, to_json(&wire::ErrorBody::new("not-found", format!("no route /v1/{other}")))),
+        other => {
+            (404, to_json(&wire::ErrorBody::new("not-found", format!("no route /v1/{other}"))))
+        }
     })
 }
 
@@ -170,10 +185,15 @@ impl Guest for Component {
                 Ok(bytes) => dispatch(func, &bytes),
                 Err(()) => (
                     413,
-                    to_json(&wire::ErrorBody::new("bad-request", format!("the body is over {MAX_BODY_BYTES} bytes, or its read failed"))),
+                    to_json(&wire::ErrorBody::new(
+                        "bad-request",
+                        format!("the body is over {MAX_BODY_BYTES} bytes, or its read failed"),
+                    )),
                 ),
             },
-            _ => (404, to_json(&wire::ErrorBody::new("not-found", format!("no route {route_path}")))),
+            _ => {
+                (404, to_json(&wire::ErrorBody::new("not-found", format!("no route {route_path}"))))
+            }
         };
         emit(response_out, status, &body);
     }
@@ -220,7 +240,12 @@ mod tests {
     /// the daemon uses — an agent reads one format whichever it talks to.
     #[test]
     fn import_refusals_are_written_as_the_daemon_writes_them() {
-        let id = t::SymbolId { component: "c".into(), path: "a.rs".into(), name: "f".into(), kind: t::SymbolKind::Function };
+        let id = t::SymbolId {
+            component: "c".into(),
+            path: "a.rs".into(),
+            name: "f".into(),
+            kind: t::SymbolKind::Function,
+        };
         let (s, v) = refusal(t::VcsError::NameTaken(id));
         assert_eq!(s, 409);
         assert_eq!(v["error"], "name-taken");

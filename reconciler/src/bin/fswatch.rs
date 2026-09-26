@@ -213,7 +213,8 @@ async fn poll(State(d): State<std::sync::Arc<Daemon>>, Json(req): Json<PollReq>)
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-fswatch", &token);
     if args.allow_path.is_empty() {
         eprintln!(
@@ -229,7 +230,9 @@ async fn main() -> Result<()> {
         args.page
     );
     let state = std::sync::Arc::new(Daemon { allowed, page: args.page, seen: Mutex::default() });
-    let app = Router::new().route("/poll", post(poll)).with_state(state)
+    let app = Router::new()
+        .route("/poll", post(poll))
+        .with_state(state)
         .layer(axum::middleware::from_fn(comp_reconciler::daemon_auth::require_token))
         .layer(axum::Extension(std::sync::Arc::new(token)));
     let listener = tokio::net::TcpListener::bind(&args.addr).await?;

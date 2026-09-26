@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
+use crate::bindings::notify::dispatch::dispatcher as notify;
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
-use crate::bindings::notify::dispatch::dispatcher as notify;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -91,7 +91,8 @@ fn create_shift(route: &Route, body: &str) -> Reply {
     let data = json!({
         "engineer": engineer,
         "starts_at": starts_at
-    }).to_string();
+    })
+    .to_string();
 
     match records::create("shifts", &data, &[]) {
         Ok(entry) => {
@@ -147,7 +148,9 @@ fn reassign(route: &Route, id: &str, body: &str) -> Reply {
     if roles.is_empty() {
         if principal.subject == "lead@example.test" {
             roles.push("lead".to_string());
-        } else if principal.subject == "alice@example.test" || principal.subject == "bob@example.test" {
+        } else if principal.subject == "alice@example.test"
+            || principal.subject == "bob@example.test"
+        {
             roles.push("engineer".to_string());
         }
     }

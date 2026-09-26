@@ -175,7 +175,6 @@ mod tests {
         assert_eq!(percent_decode("%-a"), "%-a");
     }
 
-
     /// RFC 7235 §2.1 makes the scheme name case-insensitive, and 22 of 24 components
     /// matched a literal `"Bearer "` — so a legal request got an unexplained 401.
     #[test]

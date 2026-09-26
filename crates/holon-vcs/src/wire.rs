@@ -288,8 +288,12 @@ impl ErrorBody {
             "storage-error" => Some(VcsError::Storage(text(&self.detail))),
             "not-found" => Some(VcsError::NotFound(text(&self.detail))),
             "invalid" => Some(VcsError::Invalid(text(&self.detail))),
-            "not-permitted" => Some(VcsError::Invalid(format!("not-permitted: {}", text(&self.detail)))),
-            "bad-request" => Some(VcsError::Invalid(format!("bad-request: {}", text(&self.detail)))),
+            "not-permitted" => {
+                Some(VcsError::Invalid(format!("not-permitted: {}", text(&self.detail))))
+            }
+            "bad-request" => {
+                Some(VcsError::Invalid(format!("bad-request: {}", text(&self.detail))))
+            }
             "concurrent-modification" => serde_json::from_value::<CasFailure>(self.detail.clone())
                 .ok()
                 .map(VcsError::ConcurrentModification),
@@ -299,9 +303,9 @@ impl ErrorBody {
             "symbol-not-found" => serde_json::from_value::<SymbolId>(self.detail.clone())
                 .ok()
                 .map(VcsError::SymbolNotFound),
-            "name-taken" => {
-                serde_json::from_value::<SymbolId>(self.detail.clone()).ok().map(VcsError::NameTaken)
-            }
+            "name-taken" => serde_json::from_value::<SymbolId>(self.detail.clone())
+                .ok()
+                .map(VcsError::NameTaken),
             _ => None,
         };
         typed.unwrap_or_else(|| {
@@ -385,13 +389,19 @@ mod tests {
 
     #[test]
     fn unknown_and_malformed_errors_are_storage_errors() {
-        let e = ErrorBody { error: "teapot".into(), detail: serde_json::Value::Null, message: "m".into() }
-            .into_error();
+        let e = ErrorBody {
+            error: "teapot".into(),
+            detail: serde_json::Value::Null,
+            message: "m".into(),
+        }
+        .into_error();
         assert!(matches!(e, VcsError::Storage(s) if s.contains("teapot")));
         // A name-taken whose detail is not a symbol-id cannot be typed.
         let e = ErrorBody::new("name-taken", "not a symbol").into_error();
         assert!(matches!(e, VcsError::Storage(_)));
-        assert!(matches!(ErrorBody::new("not-permitted", "/etc").into_error(), VcsError::Invalid(s) if s.contains("/etc")));
+        assert!(
+            matches!(ErrorBody::new("not-permitted", "/etc").into_error(), VcsError::Invalid(s) if s.contains("/etc"))
+        );
     }
 
     #[test]

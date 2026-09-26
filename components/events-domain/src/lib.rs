@@ -24,17 +24,17 @@
 #[allow(warnings)]
 mod bindings;
 mod checkin;
-mod notifications;
-mod store;
 mod events;
+mod notifications;
 mod remind;
+mod store;
 mod swaps;
 mod tickets;
 
 use bindings::auth::identity::accounts;
+use bindings::auth::identity::authorizer;
 use bindings::auth::identity::rbac;
 use bindings::auth::identity::types::{AuthError, Permission, Principal};
-use bindings::auth::identity::authorizer;
 use bindings::exports::wasi::http::incoming_handler::Guest;
 use bindings::records::store::store as records;
 use bindings::wasi::http::types::{
@@ -337,8 +337,7 @@ fn seed() -> Reply {
     // against.
     let existing = records::find_by("events", "state", "\"open\"").unwrap_or_default();
     let mut made = Vec::new();
-    for (title, capacity) in
-        [("Rust, Wasm and a Free Drink", 3), ("The Last Seat In The House", 1)]
+    for (title, capacity) in [("Rust, Wasm and a Free Drink", 3), ("The Last Seat In The House", 1)]
     {
         if let Some(found) = existing.iter().find(|e| {
             serde_json::from_str::<serde_json::Value>(&e.data)
@@ -455,12 +454,10 @@ impl Guest for Component {
             // WROTE without depending on the part that owns the read route. The
             // check-in gate needs to see a ticket document while `tickets` is still
             // a stub answering `not_implemented`.
-            ["test", coll @ ("events" | "tickets" | "swaps"), id] => {
-                match records::get(coll, id) {
-                    Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
-                    Err(_) => Reply::err(404, "not_found"),
-                }
-            }
+            ["test", coll @ ("events" | "tickets" | "swaps"), id] => match records::get(coll, id) {
+                Ok(e) => Reply::json(200, serde_json::from_str(&e.data).unwrap_or(json!({}))),
+                Err(_) => Reply::err(404, "not_found"),
+            },
             // Before the events arm: a ticket claim is nested under an event, and a
             // match on ["api","events",..] would hand it to `events` instead.
             ["api", "reminders", "run"] => remind::run(&method, &route),

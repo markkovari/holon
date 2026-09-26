@@ -36,8 +36,12 @@ impl Guest for Component {
         let seg: Vec<&str> = route.trim_matches('/').split('/').collect();
 
         let outcome = match (&method, seg.as_slice()) {
-            (Method::Get, [""]) | (Method::Get, ["index.html"]) => Outcome::Html(include_str!("../ui/index.html").to_string()),
-            (Method::Get, ["styles.css"]) => Outcome::Css(include_str!("../ui/styles.css").to_string()),
+            (Method::Get, [""]) | (Method::Get, ["index.html"]) => {
+                Outcome::Html(include_str!("../ui/index.html").to_string())
+            }
+            (Method::Get, ["styles.css"]) => {
+                Outcome::Css(include_str!("../ui/styles.css").to_string())
+            }
             (Method::Get, ["app.js"]) => Outcome::Js(include_str!("../ui/app.js").to_string()),
             (Method::Post, ["api", "register"]) => register(&request),
             (Method::Post, ["api", "login"]) => login(&request),

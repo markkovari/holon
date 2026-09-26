@@ -59,10 +59,7 @@ pub fn goals_to_start(rows: &[Value], max_priority: Option<i64>) -> Vec<String> 
 /// goal is created, so "no priority" means one thing, not two.
 fn priority_of(row: &Value) -> i64 {
     match row.get("priority") {
-        Some(p) => p
-            .as_i64()
-            .or_else(|| p.as_f64().map(|f| f as i64))
-            .unwrap_or(DEFAULT_PRIORITY),
+        Some(p) => p.as_i64().or_else(|| p.as_f64().map(|f| f as i64)).unwrap_or(DEFAULT_PRIORITY),
         None => DEFAULT_PRIORITY,
     }
 }

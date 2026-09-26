@@ -71,9 +71,7 @@ fn message_id(body: &[u8], status: u16) -> String {
     serde_json::from_slice::<serde_json::Value>(body)
         .ok()
         .and_then(|v| {
-            v.get("id")
-                .or_else(|| v.get("message_id"))
-                .and_then(|i| i.as_str().map(str::to_string))
+            v.get("id").or_else(|| v.get("message_id")).and_then(|i| i.as_str().map(str::to_string))
         })
         .unwrap_or_else(|| format!("accepted-{status}"))
 }
@@ -84,7 +82,9 @@ impl Guest for Component {
             SendError::NotConfigured("no mail:gateway-url — nothing to send through".into())
         })?;
         let from = cfg("mail:from").ok_or_else(|| {
-            SendError::NotConfigured("no mail:from — a gateway will refuse a message with no sender".into())
+            SendError::NotConfigured(
+                "no mail:from — a gateway will refuse a message with no sender".into(),
+            )
         })?;
         if !msg.to.contains('@') {
             return Err(SendError::Rejected(format!("not an address: {}", msg.to)));

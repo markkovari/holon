@@ -123,7 +123,6 @@ enum Commands {
     WadmStatus,
 }
 
-
 fn run_cmd(cmd: &mut Command, desc: &str) -> Result<()> {
     println!("{} {}", "→".cyan().bold(), desc.bold());
     let status = cmd.status().with_context(|| format!("Failed to execute {desc}"))?;
@@ -145,13 +144,13 @@ fn has_newer_wit(dir: &Path, stamp_time: SystemTime) -> bool {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if path.file_name().map_or(false, |n| n == "target") {
+                if path.file_name().is_some_and(|n| n == "target") {
                     continue;
                 }
                 if has_newer_wit(&path, stamp_time) {
                     return true;
                 }
-            } else if path.extension().map_or(false, |e| e == "wit") {
+            } else if path.extension().is_some_and(|e| e == "wit") {
                 if let Ok(meta) = path.metadata() {
                     if let Ok(mtime) = meta.modified() {
                         if mtime > stamp_time {
@@ -192,15 +191,13 @@ fn build_components(force: bool) -> Result<()> {
 
     if need_wit_check {
         let mut cmd = Command::new("cargo");
-        cmd.args(["component", "check", "--release"])
-            .current_dir("components");
+        cmd.args(["component", "check", "--release"]).current_dir("components");
         run_cmd(&mut cmd, "cargo component check --release (WIT bindings)")?;
         fs::write(&wit_checked, b"")?;
     }
 
     let mut cmd = Command::new("cargo");
-    cmd.args(["build", "--release", "--target", "wasm32-wasip2"])
-        .current_dir("components");
+    cmd.args(["build", "--release", "--target", "wasm32-wasip2"]).current_dir("components");
     run_cmd(&mut cmd, "cargo build --release --target wasm32-wasip2")?;
 
     let rustv = get_rustc_version().unwrap_or_else(|_| "1.85.0".to_string());
@@ -221,7 +218,7 @@ fn build_components(force: bool) -> Result<()> {
             if let Ok(entries) = fs::read_dir(p) {
                 for entry in entries.flatten() {
                     let file_path = entry.path();
-                    if file_path.extension().map_or(false, |e| e == "wasm") {
+                    if file_path.extension().is_some_and(|e| e == "wasm") {
                         let stem = file_path.file_stem().unwrap().to_string_lossy();
                         let name = stem.replace('_', "-");
                         if !registered.contains(&name) {
@@ -238,7 +235,7 @@ fn build_components(force: bool) -> Result<()> {
     if wasip2_dir.is_dir() {
         for entry in fs::read_dir(wasip2_dir)?.flatten() {
             let file_path = entry.path();
-            if file_path.extension().map_or(false, |e| e == "wasm") {
+            if file_path.extension().is_some_and(|e| e == "wasm") {
                 let stem = file_path.file_stem().unwrap().to_string_lossy();
                 let name = stem.replace('_', "-");
                 let stamp = marker_dir.join(&name);
@@ -257,8 +254,11 @@ fn build_components(force: bool) -> Result<()> {
                 // deps file's old mtime, older than the stamp. An mtime check then
                 // skipped it, and the studio saw a component named "". The stamp
                 // holds a hash of the file as stamped; anything else is re-stamped.
-                let bytes = fs::read(&file_path).with_context(|| format!("reading {}", file_path.display()))?;
-                if !force && fs::read_to_string(&stamp).is_ok_and(|h| h.trim() == content_hash(&bytes)) {
+                let bytes = fs::read(&file_path)
+                    .with_context(|| format!("reading {}", file_path.display()))?;
+                if !force
+                    && fs::read_to_string(&stamp).is_ok_and(|h| h.trim() == content_hash(&bytes))
+                {
                     skipped += 1;
                     continue;
                 }
@@ -326,9 +326,8 @@ fn resolve_app(name: &str) -> ResolvedApp {
     // apps/<name>.toml first: its `artifact` (and `root`, if it sets one) are the
     // app's own statement of what it is. `discover_apps` resolves the root from
     // them the same way `holon` does, including the `-domain`-first rule below.
-    if let Some(a) = comp_metadata::app::discover_apps(Path::new("."))
-        .into_iter()
-        .find(|a| a.name == name)
+    if let Some(a) =
+        comp_metadata::app::discover_apps(Path::new(".")).into_iter().find(|a| a.name == name)
     {
         return ResolvedApp { root: a.root, artifact: format!("components/target/{}", a.artifact) };
     }
@@ -464,7 +463,14 @@ fn comp_plug() -> Result<PathBuf> {
 /// Builds comp-host — what every e2e suite spawns, from `host/target/release`.
 fn comp_host() -> Result<()> {
     let mut build_host = Command::new("cargo");
-    build_host.args(["build", "--manifest-path", "host/Cargo.toml", "--release", "--bin", "comp-host"]);
+    build_host.args([
+        "build",
+        "--manifest-path",
+        "host/Cargo.toml",
+        "--release",
+        "--bin",
+        "comp-host",
+    ]);
     run_cmd(&mut build_host, "build comp-host")
 }
 
@@ -543,7 +549,9 @@ fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
             if let Ok(entries) = fs::read_dir("components/target/composed") {
                 for e in entries.flatten() {
                     let p = e.path();
-                    if p.file_name().map_or(false, |n| n.to_string_lossy().starts_with("grocery-domain.")) {
+                    if p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with("grocery-domain."))
+                    {
                         fs::copy(&p, canonical)?;
                         break;
                     }
@@ -591,7 +599,10 @@ fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
                 .args(["intent-router", "--dir", override_dir])
                 .output()?;
             if !output.status.success() {
-                anyhow::bail!("comp-plug intent-router failed: {}", String::from_utf8_lossy(&output.stderr));
+                anyhow::bail!(
+                    "comp-plug intent-router failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
             let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let dest = "components/target/intent_router.composed.wasm";
@@ -688,7 +699,12 @@ fn seed_studio(addr: &str) -> Result<()> {
     Ok(())
 }
 
-fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>, extra_config: &[String]) -> Result<()> {
+fn host_app(
+    app: &str,
+    addr: Option<&str>,
+    kv: Option<&str>,
+    extra_config: &[String],
+) -> Result<()> {
     for kv in extra_config {
         if !kv.contains('=') {
             anyhow::bail!("--config {kv}: expected KEY=VALUE");
@@ -701,10 +717,14 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>, extra_config: &[Str
     let specs = comp_metadata::app::registered_apps(Path::new("."));
     let app_spec = specs.iter().find(|s| s.name == app);
     let default_port = app_spec.and_then(|s| s.port).unwrap_or(3055);
-    let default_kv = app_spec.and_then(|s| s.kv_as_string()).unwrap_or_else(|| "sqlite".to_string());
+    let default_kv =
+        app_spec.and_then(|s| s.kv_as_string()).unwrap_or_else(|| "sqlite".to_string());
 
     if !Path::new(&artifact_path).exists() {
-        println!("{}", format!("Artifact {artifact_path} not found. Composing {app} first...").yellow());
+        println!(
+            "{}",
+            format!("Artifact {artifact_path} not found. Composing {app} first...").yellow()
+        );
         compose_app(Some(app), true)?;
     }
 
@@ -748,10 +768,14 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>, extra_config: &[Str
     }
     let _guard = DaemonGuard(running);
 
-    let bind_addr = addr.map(|a| a.to_string()).unwrap_or_else(|| format!("0.0.0.0:{default_port}"));
+    let bind_addr =
+        addr.map(|a| a.to_string()).unwrap_or_else(|| format!("0.0.0.0:{default_port}"));
     let kv_mode = kv.map(|k| k.to_string()).unwrap_or(default_kv);
 
-    println!("{}", format!("Starting {app} on http://{bind_addr} (kv: {kv_mode})...").green().bold());
+    println!(
+        "{}",
+        format!("Starting {app} on http://{bind_addr} (kv: {kv_mode})...").green().bold()
+    );
 
     let mut host_cmd = Command::new("host/target/release/comp-host");
     host_cmd.args([
@@ -786,7 +810,7 @@ fn host_app(app: &str, addr: Option<&str>, kv: Option<&str>, extra_config: &[Str
     // comp-host's own fallback (./comp-kv.db) would put it. `STATE_DIRECTORY`,
     // when the caller set one (systemd, or e2e/photoquest.sh's temp dir), wins —
     // comp-host already reads it.
-    if kv_mode == "sqlite" && std::env::var_os("STATE_DIRECTORY").map_or(true, |v| v.is_empty()) {
+    if kv_mode == "sqlite" && std::env::var_os("STATE_DIRECTORY").is_none_or(|v| v.is_empty()) {
         let dir = Path::new("target/state").join(app);
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         let db = dir.join("kv.db");
@@ -924,11 +948,18 @@ fn stage_examples() -> Result<()> {
                         let pin_dir = PathBuf::from(format!("components/target/stage-pin-{base}"));
                         let _ = fs::remove_dir_all(&pin_dir);
                         fs::create_dir_all(&pin_dir)?;
-                        fs::copy(format!("{RELEASE}/{pin}.wasm"), pin_dir.join(format!("{pin}.wasm")))?;
-                        let output = Command::new(&plug).arg("--dir").arg(&pin_dir).arg(&root).output()?;
+                        fs::copy(
+                            format!("{RELEASE}/{pin}.wasm"),
+                            pin_dir.join(format!("{pin}.wasm")),
+                        )?;
+                        let output =
+                            Command::new(&plug).arg("--dir").arg(&pin_dir).arg(&root).output()?;
                         let _ = fs::remove_dir_all(&pin_dir);
                         if !output.status.success() {
-                            anyhow::bail!("comp-plug {root} failed: {}", String::from_utf8_lossy(&output.stderr));
+                            anyhow::bail!(
+                                "comp-plug {root} failed: {}",
+                                String::from_utf8_lossy(&output.stderr)
+                            );
                         }
                         fs::copy(String::from_utf8_lossy(&output.stdout).trim(), &out)?;
                     } else {
@@ -947,7 +978,9 @@ fn stage_examples() -> Result<()> {
     }
     println!(
         "{}",
-        format!("✔ Staged {staged} example input(s) from the build — none of them tracked").green().bold()
+        format!("✔ Staged {staged} example input(s) from the build — none of them tracked")
+            .green()
+            .bold()
     );
     Ok(())
 }
@@ -1002,8 +1035,17 @@ fn e2e(target: &str, args: &[String]) -> Result<()> {
             comp_host()?;
             comp_plug()?;
             let mut cmd = Command::new("cargo");
-            cmd.args(["build", "--release", "--target", "wasm32-wasip2", "-p", "bytes-codec", "-p", "codec-probe"])
-                .current_dir("components");
+            cmd.args([
+                "build",
+                "--release",
+                "--target",
+                "wasm32-wasip2",
+                "-p",
+                "bytes-codec",
+                "-p",
+                "codec-probe",
+            ])
+            .current_dir("components");
             run_cmd(&mut cmd, "build bytes-codec + codec-probe")?;
             run_script("components/bytes-codec/gate.sh")
         }
@@ -1047,7 +1089,14 @@ fn e2e_app(app: &str, args: &[String]) -> Result<()> {
     // Fails loudly when a prerequisite is missing rather than skipping.
     if app == "console" {
         let mut seed = Command::new("cargo");
-        seed.args(["build", "--manifest-path", "reconciler/Cargo.toml", "--release", "--bin", "comp-trace-seed"]);
+        seed.args([
+            "build",
+            "--manifest-path",
+            "reconciler/Cargo.toml",
+            "--release",
+            "--bin",
+            "comp-trace-seed",
+        ]);
         run_cmd(&mut seed, "build comp-trace-seed")?;
     }
     let mut ci = Command::new("npm");
@@ -1073,7 +1122,9 @@ fn e2e_app(app: &str, args: &[String]) -> Result<()> {
 /// `cargo xtask build` produces and what everything else composes against.
 fn binder_poly(args: &[String]) -> Result<()> {
     let [lang, cap] = args else {
-        anyhow::bail!("usage: cargo xtask e2e binder-poly <lang> <capability>  (e.g. go portfolio-value)");
+        anyhow::bail!(
+            "usage: cargo xtask e2e binder-poly <lang> <capability>  (e.g. go portfolio-value)"
+        );
     };
     build_components(false)?;
     let mut poly = Command::new("./tools/build-polyglot.sh");
@@ -1201,7 +1252,10 @@ fn main() -> Result<()> {
         }
 
         Commands::Clean => {
-            println!("{}", "Cleaning targets and build stamps across all workspaces...".yellow().bold());
+            println!(
+                "{}",
+                "Cleaning targets and build stamps across all workspaces...".yellow().bold()
+            );
             let workspaces = ["components", "host", "lattice", "cli", "reconciler"];
             for ws in workspaces {
                 let manifest = format!("{ws}/Cargo.toml");
@@ -1271,7 +1325,8 @@ fn wit_imports(text: &str) -> Vec<String> {
 
 fn contract_critic_one(goal_path: &Path) -> Result<bool> {
     let goal: toml::Value = toml::from_str(
-        &fs::read_to_string(goal_path).with_context(|| format!("reading {}", goal_path.display()))?,
+        &fs::read_to_string(goal_path)
+            .with_context(|| format!("reading {}", goal_path.display()))?,
     )?;
     let title = goal
         .get("title")
@@ -1316,8 +1371,8 @@ fn contract_critic_one(goal_path: &Path) -> Result<bool> {
                     continue;
                 }
                 let alias = contract_alias(&ns);
-                let covered =
-                    contract.contains(&format!("{alias}::")) || contract.contains(&format!("{ns}:"));
+                let covered = contract.contains(&format!("{alias}::"))
+                    || contract.contains(&format!("{ns}:"));
                 if !covered {
                     problems.insert(format!(
                         "{name}: world imports `{ns}:` but the contract never quotes \
@@ -1378,12 +1433,18 @@ fn wadm_status() -> Result<()> {
     }
     for s in &scalers {
         let kind = s.get("kind").and_then(|k| k.as_str()).unwrap_or("?");
-        let name: String = s.get("name").and_then(|n| n.as_str()).unwrap_or("?").chars().take(46).collect();
+        let name: String =
+            s.get("name").and_then(|n| n.as_str()).unwrap_or("?").chars().take(46).collect();
         let status_type = s.pointer("/status/type").and_then(|t| t.as_str()).unwrap_or("?");
         println!("  {kind:<12} {name:<46} {status_type}");
         if status_type == "failed" {
-            let msg: String =
-                s.pointer("/status/message").and_then(|m| m.as_str()).unwrap_or("").chars().take(160).collect();
+            let msg: String = s
+                .pointer("/status/message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .chars()
+                .take(160)
+                .collect();
             println!("               {msg}");
         }
     }

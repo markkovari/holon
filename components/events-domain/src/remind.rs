@@ -103,7 +103,13 @@ pub fn holders_of(event_id: &str) -> Vec<String> {
 }
 
 /// Tell one subject, through their own preferences, and report what happened.
-pub fn tell(subject: &str, kind: &str, title: &str, body: &str, payload: &str) -> serde_json::Value {
+pub fn tell(
+    subject: &str,
+    kind: &str,
+    title: &str,
+    body: &str,
+    payload: &str,
+) -> serde_json::Value {
     match notify::notify(subject, kind, title, body, payload) {
         Ok(outcomes) => json!(outcomes
             .iter()

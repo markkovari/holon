@@ -521,7 +521,7 @@ fn report_of(candidate: &str, results: Vec<Result1>) -> Report {
     // what gives a generation where nothing passes yet something to select on.
     let total_weight: u32 = results.iter().map(|r| r.weight).sum();
     let won: u32 = results.iter().filter(|r| r.passed).map(|r| r.weight).sum();
-    let score = if total_weight == 0 { 0 } else { (won * 1000) / total_weight };
+    let score = (won * 1000).checked_div(total_weight).unwrap_or(0);
 
     Report {
         candidate: candidate.to_string(),
@@ -954,7 +954,10 @@ mod tests {
 
         assert!(permitted(&allow, &cmd("cargo test")));
         assert!(permitted(&allow, &cmd("cargo test -p thing")), "arguments after are fine");
-        assert!(permitted(&allow, &cmd("just build")), "a one-word allow entry permits any subcommand");
+        assert!(
+            permitted(&allow, &cmd("just build")),
+            "a one-word allow entry permits any subcommand"
+        );
 
         assert!(!permitted(&allow, &cmd("cargo")), "a prefix of an allowed command is not it");
         assert!(!permitted(&allow, &cmd("cargo publish")), "a sibling subcommand is not allowed");

@@ -38,8 +38,7 @@ fn valid_day(d: &str) -> bool {
 fn table(day: &str) -> Vec<Vec<String>> {
     let mut keyed: Vec<(String, Vec<String>)> = Vec::new();
     let mut after = String::new();
-    loop {
-        let Ok(page) = records::list_records("reports", 0, &after) else { break };
+    while let Ok(page) = records::list_records("reports", 0, &after) {
         for e in &page.entries {
             let doc: serde_json::Value = serde_json::from_str(&e.data).unwrap_or(json!({}));
             let field = |k: &str| doc.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();

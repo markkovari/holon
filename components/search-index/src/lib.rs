@@ -238,11 +238,11 @@ fn tag_docids(bucket: &kv::Bucket, tag: &str) -> Result<Vec<String>, SearchError
 
 // ---- forward record ------------------------------------------------------
 
+/// A doc's stored forward record: tokens with their term frequency, and tags.
+type ForwardRecord = (Vec<(String, u64)>, Vec<String>);
+
 /// (tokens-with-tf, tags) of a doc's stored forward record, if present.
-fn load_forward(
-    bucket: &kv::Bucket,
-    id: &str,
-) -> Result<Option<(Vec<(String, u64)>, Vec<String>)>, SearchError> {
+fn load_forward(bucket: &kv::Bucket, id: &str) -> Result<Option<ForwardRecord>, SearchError> {
     let raw = match get_string(bucket, &doc_key(id))? {
         Some(s) => s,
         None => return Ok(None),

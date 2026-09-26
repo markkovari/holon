@@ -1,13 +1,13 @@
-use crate::{Reply, Route};
-use crate::bindings::auth::identity::authorizer;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::audit::log::recorder as audit;
 use crate::bindings::audit::log::types::Event;
+use crate::bindings::auth::identity::authorizer;
+use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
+use crate::bindings::featureflags::guard::evaluator as featureflags;
 use crate::bindings::policy::guard::guard as policy;
 use crate::bindings::policy::guard::guard::{Attr, Condition, Effect, Op, Rule as PolicyRule};
 use crate::bindings::records::store::store as records;
-use crate::bindings::featureflags::guard::evaluator as featureflags;
 use crate::bindings::wasi::http::types::Method;
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
@@ -15,7 +15,9 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     match (method, seg.as_slice()) {
         (Method::Post, ["api", "services"]) => create_service(route, body),
         (Method::Get, ["api", "services"]) => list_services(route),
-        (Method::Post, ["api", "services", name, "flags", flag]) => toggle_flag(route, name, flag, body),
+        (Method::Post, ["api", "services", name, "flags", flag]) => {
+            toggle_flag(route, name, flag, body)
+        }
         _ => Reply::err(404, "not_found"),
     }
 }
@@ -150,9 +152,7 @@ fn toggle_flag(route: &Route, name: &str, flag: &str, body: &str) -> Reply {
         Attr { key: "subject".to_string(), value: principal.subject.clone() },
         Attr { key: "roles".to_string(), value: roles.join(",") },
     ];
-    let resource_attrs = vec![
-        Attr { key: "owner_role".to_string(), value: owner_role },
-    ];
+    let resource_attrs = vec![Attr { key: "owner_role".to_string(), value: owner_role }];
 
     let allowed = policy::enforce(crate::TENANT, "toggle", &principal_attrs, &resource_attrs);
     if !allowed {
@@ -160,11 +160,7 @@ fn toggle_flag(route: &Route, name: &str, flag: &str, body: &str) -> Reply {
         return Reply::err(403, "forbidden");
     }
 
-    let rule = if enabled {
-        featureflags::Rule::Enabled
-    } else {
-        featureflags::Rule::Disabled
-    };
+    let rule = if enabled { featureflags::Rule::Enabled } else { featureflags::Rule::Disabled };
 
     let flag_name = format!("{}.{}", name, flag);
     if featureflags::set_rule(&flag_name, "flagconsole", rule).is_err() {

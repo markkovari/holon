@@ -175,6 +175,9 @@ impl Trace {
     /// reviewable, whereas a copy of it here would be a second copy that can
     /// disagree with the first. Cost and duration are the two facts that exist
     /// nowhere else once the terminal is gone.
+    // Two over clippy's default threshold; each is its own recorded fact
+    // (see the doc above), not a struct's fields waiting to be extracted.
+    #[allow(clippy::too_many_arguments)]
     pub fn attempt_finished(
         &self,
         run: &str,

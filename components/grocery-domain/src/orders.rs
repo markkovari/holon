@@ -1,9 +1,9 @@
-use serde_json::{json, Value};
 use crate::bindings::wasi::clocks::wall_clock;
 use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::read_body;
 use crate::store::{load_cart, load_products, save_cart, save_products};
 use crate::types::{CartItem, Outcome};
+use serde_json::{json, Value};
 
 /// GET /api/cart
 pub fn get_cart() -> Outcome {
@@ -22,11 +22,15 @@ pub fn get_cart() -> Outcome {
             }));
         }
     }
-    Outcome::Json(200, json!({
-        "items": items,
-        "total_cents": total_cents,
-        "items_count": cart.iter().map(|i| i.quantity).sum::<u32>(),
-    }).to_string())
+    Outcome::Json(
+        200,
+        json!({
+            "items": items,
+            "total_cents": total_cents,
+            "items_count": cart.iter().map(|i| i.quantity).sum::<u32>(),
+        })
+        .to_string(),
+    )
 }
 
 /// POST /api/cart/items
@@ -95,7 +99,9 @@ pub fn checkout(request: &IncomingRequest) -> Outcome {
     for (barcode, qty) in &items_to_buy {
         if let Some(p) = products.iter_mut().find(|p| &p.barcode == barcode) {
             p.stock -= *qty as i32;
-            if p.stock < 0 { p.stock = 0; }
+            if p.stock < 0 {
+                p.stock = 0;
+            }
             total_cents += p.price_cents * *qty;
         }
     }
@@ -107,10 +113,14 @@ pub fn checkout(request: &IncomingRequest) -> Outcome {
     let sec = wall_clock::now().seconds;
     let order_id = format!("ORD-{}", sec % 1_000_000);
 
-    Outcome::Json(200, json!({
-        "order_id": order_id,
-        "status": "confirmed",
-        "total_cents": total_cents,
-        "timestamp": sec,
-    }).to_string())
+    Outcome::Json(
+        200,
+        json!({
+            "order_id": order_id,
+            "status": "confirmed",
+            "total_cents": total_cents,
+            "timestamp": sec,
+        })
+        .to_string(),
+    )
 }

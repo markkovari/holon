@@ -15,7 +15,9 @@ use serde_json::{json, Map, Value};
 
 use crate::bindings::wasi::http::types::IncomingRequest;
 use crate::req;
-use crate::{auth_types, bus, caller, now, orgs, personal_org, read_body, records, str_of, Outcome};
+use crate::{
+    auth_types, bus, caller, now, orgs, personal_org, read_body, records, str_of, Outcome,
+};
 
 /// Every route in this file needs a session and the org that caller is
 /// acting as, differing only in which `orgs::Role` the route requires — the
@@ -176,7 +178,11 @@ fn goals_of(project: &str) -> Vec<Value> {
         .collect()
 }
 
-pub fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
+pub fn goal_create(
+    request: &IncomingRequest,
+    project: &str,
+    query: &Map<String, Value>,
+) -> Outcome {
     let (_p, org) = session!(request, query, orgs::Role::Member);
     if !projects_of(&org).iter().any(|d| str_of(d, "name") == project) {
         return Outcome::Err(404, format!("no project `{project}`"));
@@ -217,8 +223,7 @@ pub fn goal_create(request: &IncomingRequest, project: &str, query: &Map<String,
     });
     match records::create(GOALS, &doc.to_string(), &["project".to_string(), "org".to_string()]) {
         Ok(e) => {
-            let event =
-                json!({ "id": e.id, "project": project, "from": Value::Null, "to": "queued", "at": now() });
+            let event = json!({ "id": e.id, "project": project, "from": Value::Null, "to": "queued", "at": now() });
             let _ = bus::publish(&goal_topic(project), event.to_string().as_bytes());
             Outcome::Json(
                 201,
@@ -270,7 +275,10 @@ fn parent_is_usable(parent: &str, project: &str) -> Result<(), (u16, String)> {
     let mut at = str_of(&doc, "parent");
     while !at.is_empty() {
         if seen.contains(&at) {
-            return Err((422, format!("goal `{parent}` is already part of a cycle through `{at}`")));
+            return Err((
+                422,
+                format!("goal `{parent}` is already part of a cycle through `{at}`"),
+            ));
         }
         seen.push(at.clone());
         // A runaway walk is bounded here as well as by the check below, because
@@ -334,20 +342,29 @@ pub fn goals_list(request: &IncomingRequest, project: &str, query: &Map<String, 
 /// polling with no group named don't silently share (and steal events from)
 /// one offset — same reasoning as `event:bus`'s own per-group design, applied
 /// so a forgotten `?group=` cannot look like it worked while dropping events.
-pub fn events_list(request: &IncomingRequest, project: &str, query: &Map<String, Value>) -> Outcome {
+pub fn events_list(
+    request: &IncomingRequest,
+    project: &str,
+    query: &Map<String, Value>,
+) -> Outcome {
     let (p, _org) = session!(request, query, orgs::Role::Viewer);
     let group = query.get("group").and_then(|v| v.as_str()).unwrap_or(&p.subject);
-    let max: u32 = query.get("max").and_then(|v| v.as_str()).and_then(|v| v.parse().ok()).unwrap_or(50);
+    let max: u32 =
+        query.get("max").and_then(|v| v.as_str()).and_then(|v| v.parse().ok()).unwrap_or(50);
     match bus::poll(&goal_topic(project), group, max) {
         Ok(events) => {
             let rows: Vec<Value> = events
                 .iter()
                 .map(|e| {
-                    let payload = serde_json::from_slice::<Value>(&e.payload).unwrap_or(Value::Null);
+                    let payload =
+                        serde_json::from_slice::<Value>(&e.payload).unwrap_or(Value::Null);
                     json!({ "id": e.id, "at": e.at, "event": payload })
                 })
                 .collect();
-            Outcome::Json(200, json!({ "group": group, "count": rows.len(), "events": rows }).to_string())
+            Outcome::Json(
+                200,
+                json!({ "group": group, "count": rows.len(), "events": rows }).to_string(),
+            )
         }
         // Never a hard failure: a caller that only wants the fast path falls
         // straight back to `goals_list` on any bus trouble, exactly as it
@@ -476,7 +493,8 @@ pub fn goal_transition(
             // are swallowed for exactly that reason: a full backlog or an
             // unreachable bus must not turn into a goal that cannot move.
             let project = str_of(&doc, "project");
-            let event = json!({ "id": id, "project": project, "from": from, "to": to, "at": now() });
+            let event =
+                json!({ "id": id, "project": project, "from": from, "to": to, "at": now() });
             let _ = bus::publish(&goal_topic(&project), event.to_string().as_bytes());
             Outcome::Json(
                 200,

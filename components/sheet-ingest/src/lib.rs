@@ -54,8 +54,11 @@ pub enum ImportError {
 /// This is what decides a cell's column. Document order does not, because a row
 /// with a gap in it omits the cell rather than emitting an empty one.
 pub fn column_of(reference: &str) -> Option<usize> {
-    let letters: String =
-        reference.chars().take_while(|c| c.is_ascii_alphabetic()).collect::<String>().to_uppercase();
+    let letters: String = reference
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_uppercase();
     if letters.is_empty() {
         return None;
     }
@@ -286,8 +289,7 @@ pub fn xlsx_from_parts(parts: &[(String, Vec<u8>)]) -> Result<Sheet, ImportError
         .min_by_key(|(n, _)| n.clone())
         .map(|(n, d)| (n.clone(), String::from_utf8_lossy(d).to_string()))
         .ok_or(ImportError::NoSheet)?;
-    let short =
-        name.rsplit('/').next().unwrap_or(&name).trim_end_matches(".xml").to_string();
+    let short = name.rsplit('/').next().unwrap_or(&name).trim_end_matches(".xml").to_string();
     shape(worksheet_rows(&sheet_xml, &shared), &short)
 }
 

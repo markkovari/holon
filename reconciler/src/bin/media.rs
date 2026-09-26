@@ -78,7 +78,10 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 #[derive(Parser)]
-#[command(name = "comp-media", about = "Upload, evaluate and render large photos by key (ADR-0098).")]
+#[command(
+    name = "comp-media",
+    about = "Upload, evaluate and render large photos by key (ADR-0098)."
+)]
 struct Args {
     /// Shared secret a caller must send as `Authorization: Bearer <token>`.
     /// See `comp_reconciler::daemon_auth` for why loopback alone is not a
@@ -183,7 +186,8 @@ const MAX_SIGN_TTL: u64 = 7 * 24 * 3600;
 const ALLOWED_EXTS: &[&str] = &["arw", "jpg", "jpeg"];
 /// What a browser plausibly sends for those. An ARW has no registered type,
 /// so browsers send an empty string or octet-stream for it.
-const ALLOWED_TYPES: &[&str] = &["", "application/octet-stream", "image/jpeg", "image/x-sony-arw", "image/arw"];
+const ALLOWED_TYPES: &[&str] =
+    &["", "application/octet-stream", "image/jpeg", "image/x-sony-arw", "image/arw"];
 const STREAM: &str = "MEDIA_JOBS";
 const SUBJECT: &str = "media.jobs";
 const CONSUMER: &str = "media-worker";
@@ -203,7 +207,9 @@ const GRID: usize = 16;
 /// `[A-Za-z0-9_-]{1,64}`. A `photo_id` becomes part of an object key and a
 /// `job_id` a directory name, so neither may carry a `/` or a `..`.
 fn valid_id(id: &str) -> bool {
-    !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    !id.is_empty()
+        && id.len() <= 64
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 /// The lower-cased extension of `filename`, if it is one this accepts.
@@ -228,7 +234,8 @@ fn parse_key(key: &str) -> Option<(Which, &str)> {
     }
     if let Some(obj) = key.strip_prefix("renditions/") {
         let (id, file) = obj.split_once('/')?;
-        return (valid_id(id) && ["thumb.jpg", "share.jpg", "ai.jpg"].contains(&file)).then_some((Which::Renditions, obj));
+        return (valid_id(id) && ["thumb.jpg", "share.jpg", "ai.jpg"].contains(&file))
+            .then_some((Which::Renditions, obj));
     }
     None
 }
@@ -353,7 +360,8 @@ impl Store {
         use base64::Engine as _;
         let b = self.bucket(w);
         let body = cors_xml(origins);
-        let md5 = base64::engine::general_purpose::STANDARD.encode(md5::Md5::digest(body.as_bytes()));
+        let md5 =
+            base64::engine::general_purpose::STANDARD.encode(md5::Md5::digest(body.as_bytes()));
         let mut action = b.create_bucket(&self.creds);
         action.query_mut().insert("cors", "");
         let url = action.sign(Duration::from_secs(60));
@@ -375,31 +383,56 @@ impl Store {
     }
 
     async fn create_upload(&self, object: &str, content_type: &str) -> Result<String, MediaError> {
-        let url = self.originals.create_multipart_upload(Some(&self.creds), object).sign(Duration::from_secs(60));
+        let url = self
+            .originals
+            .create_multipart_upload(Some(&self.creds), object)
+            .sign(Duration::from_secs(60));
         let mut req = self.http.post(url);
         if !content_type.is_empty() {
             req = req.header("Content-Type", content_type);
         }
         let body = Self::check(req.send().await.map_err(unavailable)?, "create upload").await?;
-        let parsed = rusty_s3::actions::CreateMultipartUpload::parse_response(&body).map_err(unavailable)?;
+        let parsed =
+            rusty_s3::actions::CreateMultipartUpload::parse_response(&body).map_err(unavailable)?;
         Ok(parsed.upload_id().to_string())
     }
 
     fn part_url(&self, object: &str, number: u16, upload_id: &str) -> String {
-        self.public_originals.upload_part(Some(&self.creds), object, number, upload_id).sign(UPLOAD_URL_TTL).to_string()
+        self.public_originals
+            .upload_part(Some(&self.creds), object, number, upload_id)
+            .sign(UPLOAD_URL_TTL)
+            .to_string()
     }
 
-    async fn complete_upload(&self, object: &str, upload_id: &str, etags: &[String]) -> Result<(), MediaError> {
-        let action = self.originals.complete_multipart_upload(Some(&self.creds), object, upload_id, etags.iter().map(String::as_str));
+    async fn complete_upload(
+        &self,
+        object: &str,
+        upload_id: &str,
+        etags: &[String],
+    ) -> Result<(), MediaError> {
+        let action = self.originals.complete_multipart_upload(
+            Some(&self.creds),
+            object,
+            upload_id,
+            etags.iter().map(String::as_str),
+        );
         let url = action.sign(Duration::from_secs(60));
         let body = action.body();
-        Self::check(self.http.post(url).body(body).send().await.map_err(unavailable)?, "complete upload").await?;
+        Self::check(
+            self.http.post(url).body(body).send().await.map_err(unavailable)?,
+            "complete upload",
+        )
+        .await?;
         Ok(())
     }
 
     async fn abort_upload(&self, object: &str, upload_id: &str) -> Result<(), MediaError> {
-        let url = self.originals.abort_multipart_upload(Some(&self.creds), object, upload_id).sign(Duration::from_secs(60));
-        Self::check(self.http.delete(url).send().await.map_err(unavailable)?, "abort upload").await?;
+        let url = self
+            .originals
+            .abort_multipart_upload(Some(&self.creds), object, upload_id)
+            .sign(Duration::from_secs(60));
+        Self::check(self.http.delete(url).send().await.map_err(unavailable)?, "abort upload")
+            .await?;
         Ok(())
     }
 
@@ -408,23 +441,33 @@ impl Store {
     }
 
     async fn put(&self, w: Which, object: &str, bytes: Vec<u8>, content_type: &str) -> Result<()> {
-        let url = self.bucket(w).put_object(Some(&self.creds), object).sign(Duration::from_secs(300));
-        let resp = self.http.put(url).header("Content-Type", content_type).body(bytes).send().await?;
+        let url =
+            self.bucket(w).put_object(Some(&self.creds), object).sign(Duration::from_secs(300));
+        let resp =
+            self.http.put(url).header("Content-Type", content_type).body(bytes).send().await?;
         Self::check(resp, "put object").await.map_err(|e| anyhow!("{e:?}"))?;
         Ok(())
     }
 
     /// Stream an object to `dest`, hashing as it goes — the 129 MB original is
     /// never in memory, let alone twice. Returns (bytes, sha256 hex).
-    async fn download(&self, w: Which, object: &str, dest: &Path, max: u64) -> Result<(u64, String)> {
-        let url = self.bucket(w).get_object(Some(&self.creds), object).sign(Duration::from_secs(600));
+    async fn download(
+        &self,
+        w: Which,
+        object: &str,
+        dest: &Path,
+        max: u64,
+    ) -> Result<(u64, String)> {
+        let url =
+            self.bucket(w).get_object(Some(&self.creds), object).sign(Duration::from_secs(600));
         let mut resp = self.http.get(url).send().await?;
         if !resp.status().is_success() {
             let s = resp.status();
             let text = resp.text().await.unwrap_or_default();
             bail!("GET {object}: {s} {}", xml_tag(&text, "Code").unwrap_or_default());
         }
-        let mut file = tokio::io::BufWriter::with_capacity(1 << 20, tokio::fs::File::create(dest).await?);
+        let mut file =
+            tokio::io::BufWriter::with_capacity(1 << 20, tokio::fs::File::create(dest).await?);
         let mut hasher = Sha256::new();
         let mut total = 0u64;
         while let Some(chunk) = resp.chunk().await? {
@@ -449,7 +492,10 @@ fn xml_tag(body: &str, tag: &str) -> Option<String> {
 }
 
 fn cors_xml(origins: &[String]) -> String {
-    let origins: String = origins.iter().map(|o| format!("<AllowedOrigin>{}</AllowedOrigin>", xml_escape(o))).collect();
+    let origins: String = origins
+        .iter()
+        .map(|o| format!("<AllowedOrigin>{}</AllowedOrigin>", xml_escape(o)))
+        .collect();
     format!(
         "<CORSConfiguration><CORSRule>{origins}<AllowedMethod>PUT</AllowedMethod><AllowedMethod>GET</AllowedMethod>\
          <AllowedMethod>HEAD</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader>\
@@ -524,16 +570,28 @@ async fn start_upload(State(d): Shared, Json(req): Json<StartUpload>) -> Json<Va
 
 async fn start_upload_inner(d: &Daemon, req: StartUpload) -> Result<Value, MediaError> {
     if !valid_id(&req.photo_id) {
-        return Err(MediaError::Refused(format!("photo_id must match [A-Za-z0-9_-]{{1,64}}: {:?}", req.photo_id)));
+        return Err(MediaError::Refused(format!(
+            "photo_id must match [A-Za-z0-9_-]{{1,64}}: {:?}",
+            req.photo_id
+        )));
     }
     let Some(ext) = allowed_ext(&req.filename) else {
-        return Err(MediaError::Refused(format!("not an accepted file type: {:?} (accepts {ALLOWED_EXTS:?})", req.filename)));
+        return Err(MediaError::Refused(format!(
+            "not an accepted file type: {:?} (accepts {ALLOWED_EXTS:?})",
+            req.filename
+        )));
     };
     if !ALLOWED_TYPES.contains(&req.content_type.to_ascii_lowercase().as_str()) {
-        return Err(MediaError::Refused(format!("not an accepted content type: {:?}", req.content_type)));
+        return Err(MediaError::Refused(format!(
+            "not an accepted content type: {:?}",
+            req.content_type
+        )));
     }
     if req.size == 0 || req.size > d.max_upload {
-        return Err(MediaError::Refused(format!("size {} is outside 1..={} bytes", req.size, d.max_upload)));
+        return Err(MediaError::Refused(format!(
+            "size {} is outside 1..={} bytes",
+            req.size, d.max_upload
+        )));
     }
     let parts = plan_parts(req.size, PART_SIZE);
     if parts.len() as u64 > MAX_PARTS {
@@ -572,7 +630,9 @@ struct CompleteUpload {
 fn ordered_etags(mut parts: Vec<PartEtag>) -> Result<Vec<String>, MediaError> {
     parts.sort_by_key(|p| p.number);
     if parts.is_empty() || parts.iter().enumerate().any(|(i, p)| p.number as usize != i + 1) {
-        return Err(MediaError::Refused("parts must be numbered 1..=n with none missing or repeated".into()));
+        return Err(MediaError::Refused(
+            "parts must be numbered 1..=n with none missing or repeated".into(),
+        ));
     }
     Ok(parts.into_iter().map(|p| p.etag).collect())
 }
@@ -622,25 +682,35 @@ async fn submit(State(d): Shared, Json(job): Json<Job>) -> Json<Value> {
     answer(
         async {
             if !valid_id(&job.job_id) || !valid_id(&job.photo_id) {
-                return Err(MediaError::Refused("job_id and photo_id must match [A-Za-z0-9_-]{1,64}".into()));
+                return Err(MediaError::Refused(
+                    "job_id and photo_id must match [A-Za-z0-9_-]{1,64}".into(),
+                ));
             }
             match parse_key(&job.key) {
-                Some((Which::Originals, obj)) if obj.starts_with(&format!("{}.", job.photo_id)) => {}
-                _ => return Err(MediaError::Refused(format!("not this photo's original: {:?}", job.key))),
+                Some((Which::Originals, obj)) if obj.starts_with(&format!("{}.", job.photo_id)) => {
+                }
+                _ => {
+                    return Err(MediaError::Refused(format!(
+                        "not this photo's original: {:?}",
+                        job.key
+                    )))
+                }
             }
             callback_allowed(&job.callback_url, &d.callback_allow).map_err(MediaError::Refused)?;
             let mut headers = async_nats::HeaderMap::new();
             headers.insert("Nats-Msg-Id", job.job_id.as_str());
             let payload = serde_json::to_vec(&job).map_err(unavailable)?;
-            let ack = d
-                .js
-                .publish_with_headers(SUBJECT, headers, payload.into())
-                .await
-                .map_err(unavailable)?
-                .await
-                .map_err(unavailable)?;
+            let ack =
+                d.js.publish_with_headers(SUBJECT, headers, payload.into())
+                    .await
+                    .map_err(unavailable)?
+                    .await
+                    .map_err(unavailable)?;
             if ack.duplicate {
-                eprintln!("comp-media: job {} was already queued — dropped as a duplicate", job.job_id);
+                eprintln!(
+                    "comp-media: job {} was already queued — dropped as a duplicate",
+                    job.job_id
+                );
             }
             Ok(json!({ "job_id": job.job_id, "queued": true }))
         }
@@ -657,10 +727,15 @@ struct SignReq {
 async fn sign(State(d): Shared, Json(req): Json<SignReq>) -> Json<Value> {
     answer((|| {
         let Some((which, object)) = parse_key(&req.key) else {
-            return Err(MediaError::Refused(format!("not a key this daemon issues: {:?}", req.key)));
+            return Err(MediaError::Refused(format!(
+                "not a key this daemon issues: {:?}",
+                req.key
+            )));
         };
         if which == Which::Originals && !d.sign_originals {
-            return Err(MediaError::Refused("originals are not signed for browsers (see --sign-originals)".into()));
+            return Err(MediaError::Refused(
+                "originals are not signed for browsers (see --sign-originals)".into(),
+            ));
         }
         let ttl = Duration::from_secs(req.ttl_secs.clamp(1, MAX_SIGN_TTL));
         Ok(json!({ "url": d.store.sign_get(which, object, ttl) }))
@@ -669,7 +744,9 @@ async fn sign(State(d): Shared, Json(req): Json<SignReq>) -> Json<Value> {
 
 async fn health(State(d): Shared) -> Json<Value> {
     let queue = d.nats.connection_state() == async_nats::connection::State::Connected;
-    Json(json!({ "ok": true, "store": d.store.healthy().await, "queue": queue, "apple": d.apple().is_some() }))
+    Json(
+        json!({ "ok": true, "store": d.store.healthy().await, "queue": queue, "apple": d.apple().is_some() }),
+    )
 }
 
 // ---- sharpness: green-stab-v1 ----------------------------------------------------
@@ -684,7 +761,8 @@ fn tile_variances(p: &[f32], w: usize, h: usize, grid: usize) -> Vec<f64> {
         let ty = (y / th).min(grid - 1);
         for x in 1..w - 1 {
             let c = p[y * w + x];
-            let l = (p[(y - 1) * w + x] + p[(y + 1) * w + x] + p[y * w + x - 1] + p[y * w + x + 1] - 4.0 * c) as f64;
+            let l = (p[(y - 1) * w + x] + p[(y + 1) * w + x] + p[y * w + x - 1] + p[y * w + x + 1]
+                - 4.0 * c) as f64;
             let t = &mut acc[ty * grid + (x / tw).min(grid - 1)];
             t.0 += l;
             t.1 += l * l;
@@ -1044,7 +1122,12 @@ fn develop_cpu(path: &Path, ext: &str) -> Result<(DynamicImage, &'static str)> {
 fn encode_jpeg(img: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
     let rgb = img.to_rgb8();
     let mut out = Vec::new();
-    JpegEncoder::new_with_quality(&mut out, quality).write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)?;
+    JpegEncoder::new_with_quality(&mut out, quality).write_image(
+        rgb.as_raw(),
+        rgb.width(),
+        rgb.height(),
+        image::ExtendedColorType::Rgb8,
+    )?;
     Ok(out)
 }
 
@@ -1065,7 +1148,8 @@ fn renditions_cpu(full: &DynamicImage) -> Result<Vec<Rendition>> {
     let share = fit(full, 4096, FilterType::Triangle);
     let mut out = Vec::new();
     for (name, edge) in RENDITIONS {
-        let img = if name == "share" { share.clone() } else { fit(&share, edge, FilterType::Lanczos3) };
+        let img =
+            if name == "share" { share.clone() } else { fit(&share, edge, FilterType::Lanczos3) };
         let mut bytes = encode_jpeg(&img, if name == "thumb" { 80 } else { 85 })?;
         // A busy high-ISO frame can blow past the share cap at q85.
         let mut q = 85;
@@ -1128,16 +1212,26 @@ struct HelperOut {
     timings_ms: BTreeMap<String, u64>,
 }
 
-async fn run_helper(helper: &Path, original: &Path, dec: &Decoded, dir: &Path) -> Result<HelperOut> {
+async fn run_helper(
+    helper: &Path,
+    original: &Path,
+    dec: &Decoded,
+    dir: &Path,
+) -> Result<HelperOut> {
     let green_path = dir.join("green.f32");
     let bytes: Vec<u8> = dec.green.iter().flat_map(|v| v.to_le_bytes()).collect();
     tokio::fs::write(&green_path, bytes).await?;
     let out = tokio::process::Command::new(helper)
-        .arg("--original").arg(original)
-        .arg("--green").arg(&green_path)
-        .arg("--green-width").arg(dec.gw.to_string())
-        .arg("--green-height").arg(dec.gh.to_string())
-        .arg("--out").arg(dir)
+        .arg("--original")
+        .arg(original)
+        .arg("--green")
+        .arg(&green_path)
+        .arg("--green-width")
+        .arg(dec.gw.to_string())
+        .arg("--green-height")
+        .arg(dec.gh.to_string())
+        .arg("--out")
+        .arg(dir)
         .kill_on_drop(true)
         .output()
         .await?;
@@ -1175,15 +1269,29 @@ async fn evaluate(d: &Daemon, job: &Job, dir: &Path) -> Result<Value> {
     let mut timings = BTreeMap::new();
 
     let t = Instant::now();
-    let (size, sha256) = d.store.download(Which::Originals, object, &original, d.max_upload).await?;
+    let (size, sha256) =
+        d.store.download(Which::Originals, object, &original, d.max_upload).await?;
     timings.insert("download".to_string(), ms(t));
     eprintln!("comp-media: [{}] downloaded {size} bytes in {} ms", job.job_id, ms(t));
 
     let t = Instant::now();
     let (path, e) = (original.clone(), ext.clone());
-    let mut dec = tokio::task::spawn_blocking(move || if e == "arw" { decode_raw(&path) } else { decode_jpeg(&path) }).await??;
+    let mut dec = tokio::task::spawn_blocking(move || {
+        if e == "arw" {
+            decode_raw(&path)
+        } else {
+            decode_jpeg(&path)
+        }
+    })
+    .await??;
     timings.insert("decode".to_string(), ms(t));
-    eprintln!("comp-media: [{}] decoded, green plane {}x{} in {} ms", job.job_id, dec.gw, dec.gh, ms(t));
+    eprintln!(
+        "comp-media: [{}] decoded, green plane {}x{} in {} ms",
+        job.job_id,
+        dec.gw,
+        dec.gh,
+        ms(t)
+    );
 
     // The Apple path first; any failure there falls back to the CPU path, so a
     // broken helper degrades the result instead of losing it.
@@ -1195,7 +1303,10 @@ async fn evaluate(d: &Daemon, job: &Job, dir: &Path) -> Result<Value> {
                 eprintln!("comp-media: [{}] apple helper done in {} ms", job.job_id, ms(t));
                 helper_out = Some(h);
             }
-            Err(e) => eprintln!("comp-media: [{}] apple helper failed ({e:#}); falling back to the CPU", job.job_id),
+            Err(e) => eprintln!(
+                "comp-media: [{}] apple helper failed ({e:#}); falling back to the CPU",
+                job.job_id
+            ),
         }
     }
 
@@ -1204,7 +1315,10 @@ async fn evaluate(d: &Daemon, job: &Job, dir: &Path) -> Result<Value> {
     match helper_out {
         Some(h) => {
             for (name, _) in RENDITIONS {
-                let r = h.renditions.get(name).ok_or_else(|| anyhow!("helper wrote no {name} rendition"))?;
+                let r = h
+                    .renditions
+                    .get(name)
+                    .ok_or_else(|| anyhow!("helper wrote no {name} rendition"))?;
                 let bytes = tokio::fs::read(dir.join(format!("{name}.jpg"))).await?;
                 renditions.push((name, r.width, r.height, bytes));
             }
@@ -1292,7 +1406,13 @@ fn failed_body(job: &Job, error: &str) -> Value {
 }
 
 /// POST `body`, signed, retrying a non-2xx with backoff. True once accepted.
-async fn deliver(http: &reqwest::Client, url: &str, body: &Value, secret: &str, attempts: u32) -> bool {
+async fn deliver(
+    http: &reqwest::Client,
+    url: &str,
+    body: &Value,
+    secret: &str,
+    attempts: u32,
+) -> bool {
     let raw = serde_json::to_vec(body).unwrap_or_default();
     let sig = signature(&raw, secret);
     for attempt in 1..=attempts {
@@ -1306,8 +1426,13 @@ async fn deliver(http: &reqwest::Client, url: &str, body: &Value, secret: &str, 
             .await;
         match sent {
             Ok(r) if r.status().is_success() => return true,
-            Ok(r) => eprintln!("comp-media: callback {url} answered {} (attempt {attempt}/{attempts})", r.status()),
-            Err(e) => eprintln!("comp-media: callback {url} failed: {e} (attempt {attempt}/{attempts})"),
+            Ok(r) => eprintln!(
+                "comp-media: callback {url} answered {} (attempt {attempt}/{attempts})",
+                r.status()
+            ),
+            Err(e) => {
+                eprintln!("comp-media: callback {url} failed: {e} (attempt {attempt}/{attempts})")
+            }
         }
         if attempt < attempts {
             tokio::time::sleep(Duration::from_secs(1 << (attempt - 1))).await;
@@ -1335,12 +1460,15 @@ async fn run_job(d: &Daemon, job: &Job) {
         }
     };
     let status = body["status"].as_str().unwrap_or("?").to_string();
-    let ok = deliver(&d.store.http, &job.callback_url, &body, &d.callback_secret, CALLBACK_ATTEMPTS).await;
+    let ok =
+        deliver(&d.store.http, &job.callback_url, &body, &d.callback_secret, CALLBACK_ATTEMPTS)
+            .await;
     if !ok && status == "done" {
         // The contract: after the last attempt, a final `failed` — best effort,
         // to the same receiver, so a receiver that recovers learns the job
         // will not be retried.
-        let fb = failed_body(job, &format!("callback not accepted after {CALLBACK_ATTEMPTS} attempts"));
+        let fb =
+            failed_body(job, &format!("callback not accepted after {CALLBACK_ATTEMPTS} attempts"));
         deliver(&d.store.http, &job.callback_url, &fb, &d.callback_secret, 1).await;
     }
     eprintln!(
@@ -1354,7 +1482,8 @@ async fn run_job(d: &Daemon, job: &Job) {
 async fn worker(d: Arc<Daemon>, consumer: async_nats::jetstream::consumer::PullConsumer) {
     use futures::StreamExt;
     loop {
-        let batch = consumer.batch().max_messages(1).expires(Duration::from_secs(30)).messages().await;
+        let batch =
+            consumer.batch().max_messages(1).expires(Duration::from_secs(30)).messages().await;
         let mut batch = match batch {
             Ok(b) => b,
             Err(e) => {
@@ -1418,7 +1547,10 @@ async fn worker(d: Arc<Daemon>, consumer: async_nats::jetstream::consumer::PullC
 /// A secret from `--x-file` (wins) or `--x`.
 fn secret(direct: Option<String>, file: Option<PathBuf>, name: &str) -> Result<String> {
     if let Some(path) = file {
-        return Ok(std::fs::read_to_string(&path).with_context(|| format!("--{name}-file {}", path.display()))?.trim().to_string());
+        return Ok(std::fs::read_to_string(&path)
+            .with_context(|| format!("--{name}-file {}", path.display()))?
+            .trim()
+            .to_string());
     }
     direct.ok_or_else(|| anyhow!("--{name} or --{name}-file is required"))
 }
@@ -1426,14 +1558,16 @@ fn secret(direct: Option<String>, file: Option<PathBuf>, name: &str) -> Result<S
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let token = comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
+    let token =
+        comp_reconciler::daemon_auth::resolve_token(args.token.clone(), args.token_file.clone());
     comp_reconciler::daemon_auth::warn_if_unauthenticated("comp-media", &token);
 
     let creds = Credentials::new(
         secret(args.s3_access_key, args.s3_access_key_file, "s3-access-key")?,
         secret(args.s3_secret_key, args.s3_secret_key_file, "s3-secret-key")?,
     );
-    let callback_secret = secret(args.callback_secret, args.callback_secret_file, "callback-secret")?;
+    let callback_secret =
+        secret(args.callback_secret, args.callback_secret_file, "callback-secret")?;
     if args.callback_allow.is_empty() {
         eprintln!(
             "comp-media: WARNING — no --callback-allow given: EVERY job will be refused. \
@@ -1451,9 +1585,19 @@ async fn main() -> Result<()> {
     let region = args.s3_region.clone();
     let store = Store {
         http: reqwest::Client::builder().connect_timeout(Duration::from_secs(10)).build()?,
-        originals: Bucket::new(endpoint.clone(), style, args.bucket_originals.clone(), region.clone())?,
+        originals: Bucket::new(
+            endpoint.clone(),
+            style,
+            args.bucket_originals.clone(),
+            region.clone(),
+        )?,
         renditions: Bucket::new(endpoint, style, args.bucket_renditions.clone(), region.clone())?,
-        public_originals: Bucket::new(public.clone(), style, args.bucket_originals.clone(), region.clone())?,
+        public_originals: Bucket::new(
+            public.clone(),
+            style,
+            args.bucket_originals.clone(),
+            region.clone(),
+        )?,
         public_renditions: Bucket::new(public, style, args.bucket_renditions.clone(), region)?,
         creds,
     };
@@ -1473,7 +1617,9 @@ async fn main() -> Result<()> {
         }
     }
 
-    let nats = async_nats::connect(&args.nats_url).await.with_context(|| format!("connect {}", args.nats_url))?;
+    let nats = async_nats::connect(&args.nats_url)
+        .await
+        .with_context(|| format!("connect {}", args.nats_url))?;
     let js = async_nats::jetstream::new(nats.clone());
     let stream = js
         .get_or_create_stream(async_nats::jetstream::stream::Config {
@@ -1551,7 +1697,14 @@ mod tests {
         let cmd = Args::command();
         let arg = cmd.get_arguments().find(|a| a.get_id() == "nats_url").unwrap();
         assert_eq!(arg.get_env().and_then(|e| e.to_str()), Some("MEDIA_NATS_URL"));
-        let args = Args::try_parse_from(["comp-media", "--s3-endpoint", "http://127.0.0.1:9000", "--nats-url", "nats://127.0.0.1:4999"]).unwrap();
+        let args = Args::try_parse_from([
+            "comp-media",
+            "--s3-endpoint",
+            "http://127.0.0.1:9000",
+            "--nats-url",
+            "nats://127.0.0.1:4999",
+        ])
+        .unwrap();
         assert_eq!(args.nats_url, "nats://127.0.0.1:4999");
     }
 
@@ -1573,7 +1726,13 @@ mod tests {
         for y in 0..h {
             for x in 0..w {
                 let base = match edge {
-                    Some(0) => if x < 128 { 0.2 } else { 0.8 },
+                    Some(0) => {
+                        if x < 128 {
+                            0.2
+                        } else {
+                            0.8
+                        }
+                    }
                     // A ramp `width` pixels wide: an out-of-focus version.
                     Some(width) => {
                         let t = ((x as f32 - 128.0) / width as f32 + 0.5).clamp(0.0, 1.0);
@@ -1599,10 +1758,20 @@ mod tests {
         let sharp = green_stab_v1(&plane(Some(0), 0.02), 256, 256);
         let blurred = green_stab_v1(&plane(Some(24), 0.02), 256, 256);
         let loud_noise = green_stab_v1(&plane(None, 0.2), 256, 256);
-        assert!(peak(&sharp) > 3.0 * peak(&blurred), "sharp {} vs blurred {}", peak(&sharp), peak(&blurred));
+        assert!(
+            peak(&sharp) > 3.0 * peak(&blurred),
+            "sharp {} vs blurred {}",
+            peak(&sharp),
+            peak(&blurred)
+        );
         let ratio = |v: &Value| v["focus_ratio"].as_f64().unwrap();
         assert!(ratio(&loud_noise) < 1.0, "noise focus ratio {}", ratio(&loud_noise));
-        assert!(ratio(&sharp) > 10.0 * ratio(&loud_noise), "sharp {} vs noise {}", ratio(&sharp), ratio(&loud_noise));
+        assert!(
+            ratio(&sharp) > 10.0 * ratio(&loud_noise),
+            "sharp {} vs noise {}",
+            ratio(&sharp),
+            ratio(&loud_noise)
+        );
         assert_eq!(sharp["tiles"].as_array().unwrap().len(), GRID * GRID);
         assert_eq!(sharp["method"], "green-stab-v1");
     }
@@ -1627,7 +1796,11 @@ mod tests {
                 let base: f32 = if x < 120 && y < 120 {
                     0.1 + 0.8 * shirt
                 } else if y >= 160 && x >= 160 {
-                    if x < 208 { 0.08 } else { 0.2 } // a dim, sharp edge bottom-right
+                    if x < 208 {
+                        0.08
+                    } else {
+                        0.2
+                    } // a dim, sharp edge bottom-right
                 } else {
                     0.1
                 };
@@ -1642,15 +1815,22 @@ mod tests {
         let (rx, ry) = best(&raw);
         assert!(rx < 5 && ry < 5, "the raw metric should fall for the shirt, picked ({rx},{ry})");
         let v = green_stab_v1(&p, w, h);
-        let tiles: Vec<f64> = v["tiles"].as_array().unwrap().iter().map(|t| t.as_f64().unwrap()).collect();
-        assert_eq!(best(&tiles).0, 13, "green-stab-v1 must pick the edge column, got {:?}", best(&tiles));
+        let tiles: Vec<f64> =
+            v["tiles"].as_array().unwrap().iter().map(|t| t.as_f64().unwrap()).collect();
+        assert_eq!(
+            best(&tiles).0,
+            13,
+            "green-stab-v1 must pick the edge column, got {:?}",
+            best(&tiles)
+        );
     }
 
     /// The sharp tiles are where the edge is: columns 7 and 8 of 16.
     #[test]
     fn the_peak_is_in_the_tiles_under_the_edge() {
         let v = green_stab_v1(&plane(Some(0), 0.02), 256, 256);
-        let tiles: Vec<f64> = v["tiles"].as_array().unwrap().iter().map(|t| t.as_f64().unwrap()).collect();
+        let tiles: Vec<f64> =
+            v["tiles"].as_array().unwrap().iter().map(|t| t.as_f64().unwrap()).collect();
         let best = (0..tiles.len()).max_by(|a, b| tiles[*a].total_cmp(&tiles[*b])).unwrap();
         assert!([7, 8].contains(&(best % GRID)), "best tile column {}", best % GRID);
     }
@@ -1722,7 +1902,10 @@ mod tests {
     #[test]
     fn a_part_list_with_a_gap_or_a_repeat_is_refused() {
         let p = |n: u32| PartEtag { number: n, etag: format!("\"e{n}\"") };
-        assert_eq!(ordered_etags(vec![p(2), p(1), p(3)]).unwrap(), vec!["\"e1\"", "\"e2\"", "\"e3\""]);
+        assert_eq!(
+            ordered_etags(vec![p(2), p(1), p(3)]).unwrap(),
+            vec!["\"e1\"", "\"e2\"", "\"e3\""]
+        );
         assert!(ordered_etags(vec![p(1), p(3)]).is_err());
         assert!(ordered_etags(vec![p(1), p(1)]).is_err());
         assert!(ordered_etags(vec![p(2)]).is_err());
@@ -1746,7 +1929,9 @@ mod tests {
     #[test]
     fn a_callback_must_be_on_the_allow_list() {
         let allow = vec!["127.0.0.1:3941".to_string(), "App.Example.com:443".to_string()];
-        assert!(callback_allowed("http://127.0.0.1:3941/internal/photos/x/evaluated", &allow).is_ok());
+        assert!(
+            callback_allowed("http://127.0.0.1:3941/internal/photos/x/evaluated", &allow).is_ok()
+        );
         assert!(callback_allowed("https://app.example.com/cb", &allow).is_ok());
         for bad in [
             "http://127.0.0.1:3942/cb",
@@ -1765,7 +1950,10 @@ mod tests {
     /// calls use the internal one.
     #[test]
     fn browser_urls_are_signed_against_the_public_endpoint() {
-        let b = |e: &str, n: &str| Bucket::new(e.parse().unwrap(), UrlStyle::Path, n.to_string(), "us-east-1".to_string()).unwrap();
+        let b = |e: &str, n: &str| {
+            Bucket::new(e.parse().unwrap(), UrlStyle::Path, n.to_string(), "us-east-1".to_string())
+                .unwrap()
+        };
         let store = Store {
             http: reqwest::Client::new(),
             creds: Credentials::new("k", "s"),
@@ -1778,7 +1966,11 @@ mod tests {
         assert!(part.starts_with("https://s3.example.com/originals/p1.arw?"), "{part}");
         let get = store.sign_get(Which::Renditions, "p1/share.jpg", Duration::from_secs(60));
         assert!(get.starts_with("https://s3.example.com/renditions/p1/share.jpg?"), "{get}");
-        assert!(store.bucket(Which::Originals).base_url().as_str().starts_with("http://rustfs:9000"));
+        assert!(store
+            .bucket(Which::Originals)
+            .base_url()
+            .as_str()
+            .starts_with("http://rustfs:9000"));
     }
 
     #[test]
@@ -1973,14 +2165,16 @@ mod tests {
 
     #[test]
     fn s3_error_codes_are_read_from_the_xml() {
-        let body = "<?xml version=\"1.0\"?><Error><Code>NoSuchUpload</Code><Message>x</Message></Error>";
+        let body =
+            "<?xml version=\"1.0\"?><Error><Code>NoSuchUpload</Code><Message>x</Message></Error>";
         assert_eq!(xml_tag(body, "Code").as_deref(), Some("NoSuchUpload"));
         assert_eq!(xml_tag("<a/>", "Code"), None);
     }
 
     #[test]
     fn colour_of_a_flat_grey_picture() {
-        let img = DynamicImage::ImageRgb8(image::RgbImage::from_pixel(8, 8, image::Rgb([128, 128, 128])));
+        let img =
+            DynamicImage::ImageRgb8(image::RgbImage::from_pixel(8, 8, image::Rgb([128, 128, 128])));
         let c = colour(&encode_jpeg(&img, 95).unwrap()).unwrap();
         assert!((c["mean_luma"].as_f64().unwrap() - 0.502).abs() < 0.01);
         assert_eq!(c["clipped_highlights_pct"].as_f64().unwrap(), 0.0);

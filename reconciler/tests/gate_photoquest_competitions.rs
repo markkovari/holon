@@ -57,7 +57,13 @@ fn evaluated_photo(gate: &Gate, token: &str, tweak: impl Fn(&mut Value)) -> Stri
 
 /// Metrics that make auto-v1 easy to reason about: no face (so `subject_or_focus`
 /// is `focus_ratio`), a `grass` label, the given aesthetics and clipping.
-fn metrics(sha: &str, focus: f64, aesthetics: f64, clip_each: f64, label: &str) -> impl Fn(&mut Value) {
+fn metrics(
+    sha: &str,
+    focus: f64,
+    aesthetics: f64,
+    clip_each: f64,
+    label: &str,
+) -> impl Fn(&mut Value) {
     let (sha, label) = (sha.to_string(), label.to_string());
     move |r: &mut Value| {
         r["sha256"] = json!(sha);
@@ -102,7 +108,11 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
 
     // --- accounts ---------------------------------------------------------------
     let account = |who: &str| -> (String, String) {
-        let email = if who == "root" { admin_email.clone() } else { format!("{who}-{run}@photoquest.test") };
+        let email = if who == "root" {
+            admin_email.clone()
+        } else {
+            format!("{who}-{run}@photoquest.test")
+        };
         let (code, reg) =
             gate.post("/register", None, json!({"email": email, "password": "correct horse"}));
         assert_eq!(code, 201, "register {who}: {reg}");
@@ -211,7 +221,11 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     let e_photo = evaluated_photo(&gate, &eve, metrics(&sha("e"), 8.0, 1.0, 0.0, "grass"));
 
     let enter = |token: &str, photo: &str| {
-        gate.post(&format!("/api/competitions/{comp}/entries"), Some(token), json!({"photo_id": photo}))
+        gate.post(
+            &format!("/api/competitions/{comp}/entries"),
+            Some(token),
+            json!({"photo_id": photo}),
+        )
     };
 
     // Not your photo.
@@ -223,13 +237,19 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     assert_eq!((code, error_of(&out)), (422, "ineligible".into()), "a tree is not grass: {out}");
     let verdict = &parse(&out)["verdict"];
     assert_eq!(verdict["pass"], false, "{out}");
-    assert!(verdict["checks"].as_array().is_some_and(|c| !c.is_empty()), "the verdict lists its checks: {out}");
+    assert!(
+        verdict["checks"].as_array().is_some_and(|c| !c.is_empty()),
+        "the verdict lists its checks: {out}"
+    );
 
     // Entries.
     let mut entry_of = std::collections::HashMap::new();
-    for (who, token, photo) in
-        [("ada", &ada, &a_photo), ("bob", &bob, &b_photo), ("cyd", &cyd, &c_photo), ("eve", &eve, &e_photo)]
-    {
+    for (who, token, photo) in [
+        ("ada", &ada, &a_photo),
+        ("bob", &bob, &b_photo),
+        ("cyd", &cyd, &c_photo),
+        ("eve", &eve, &e_photo),
+    ] {
         let (code, out) = enter(token, photo);
         assert_eq!(code, 201, "{who} enters: {out}");
         let e = parse(&out);
@@ -243,9 +263,17 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     let (code, out) = enter(&ada, &a_photo);
     assert_eq!((code, error_of(&out)), (409, "already_entered".into()), "{out}");
     let (code, out) = enter(&ada, &a_second);
-    assert_eq!((code, error_of(&out)), (409, "entry_limit".into()), "max_entries_per_user is 1: {out}");
+    assert_eq!(
+        (code, error_of(&out)),
+        (409, "entry_limit".into()),
+        "max_entries_per_user is 1: {out}"
+    );
     let (code, out) = enter(&dan, &d_copy);
-    assert_eq!((code, error_of(&out)), (409, "already_entered".into()), "same sha256 as ada's: {out}");
+    assert_eq!(
+        (code, error_of(&out)),
+        (409, "already_entered".into()),
+        "same sha256 as ada's: {out}"
+    );
 
     // --- votes and judging -------------------------------------------------------------
     let vote = |token: &str, entry: &str, stars: Value| {
@@ -277,7 +305,11 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     assert_eq!(vote(&bob, ea, json!(1)).0, 200);
 
     let (code, out) = judge(&ada, eb, json!(9));
-    assert_eq!((code, error_of(&out)), (403, "forbidden_role".into()), "only curators judge: {out}");
+    assert_eq!(
+        (code, error_of(&out)),
+        (403, "forbidden_role".into()),
+        "only curators judge: {out}"
+    );
     let (code, out) = judge(&cura, eb, json!(11));
     assert_eq!(code, 400, "score 11 is outside 0..10: {out}");
     assert_eq!(judge(&cura, eb, json!(10)).0, 200);
@@ -291,9 +323,11 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     };
     let rows = board();
     assert_eq!(rows.len(), 4, "every entry, before any is hidden: {rows:?}");
-    let row = |rows: &[Value], e: &str| rows.iter().find(|r| r["entry"] == e).cloned().expect("row");
+    let row =
+        |rows: &[Value], e: &str| rows.iter().find(|r| r["entry"] == e).cloned().expect("row");
 
-    let (auto_a, auto_b, auto_c) = (auto_v1(8.0, 0.9, 0.0), auto_v1(4.0, 0.6, 1.0), auto_v1(2.0, 0.3, 2.5));
+    let (auto_a, auto_b, auto_c) =
+        (auto_v1(8.0, 0.9, 0.0), auto_v1(4.0, 0.6, 1.0), auto_v1(2.0, 0.3, 2.5));
     let ra = row(&rows, ea);
     let rb = row(&rows, eb);
     let rc = row(&rows, ec);
@@ -302,7 +336,10 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
         assert!(close(rb["parts"]["auto"]["value"].as_f64().unwrap(), auto_b), "{rb}");
         assert!(close(rc["parts"]["auto"]["value"].as_f64().unwrap(), auto_c), "{rc}");
     } else {
-        eprintln!("NOTE: rules::auto_v1 not built yet (ada's auto = {}); auto values not asserted", ra["parts"]["auto"]["value"]);
+        eprintln!(
+            "NOTE: rules::auto_v1 not built yet (ada's auto = {}); auto values not asserted",
+            ra["parts"]["auto"]["value"]
+        );
     }
     assert_eq!(rb["parts"]["votes"]["count"], 2, "one vote per voter, latest wins: {rb}");
     assert!(close(rb["parts"]["votes"]["value"].as_f64().unwrap(), 1.0), "(5-1)/4: {rb}");
@@ -325,15 +362,19 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     assert_eq!(rows[0]["entry"], *eb, "votes and judges carry bob to the top: {rows:?}");
 
     // --- a hidden entry drops out ---------------------------------------------------------
-    let (code, out) =
-        gate.post(&format!("/api/admin/photos/{e_photo}/hide"), Some(&root), json!({"reason": "stolen"}));
+    let (code, out) = gate.post(
+        &format!("/api/admin/photos/{e_photo}/hide"),
+        Some(&root),
+        json!({"reason": "stolen"}),
+    );
     assert_eq!(code, 200, "admin hides eve's photo (needs moderation.rs): {out}");
     let rows = board();
     assert_eq!(rows.len(), 3, "a hidden entry is off the leaderboard: {rows:?}");
     assert!(rows.iter().all(|r| r["entry"] != *ee), "{rows:?}");
     let (code, out) = vote(&ada, ee, json!(5));
     assert_eq!(code, 404, "a hidden entry cannot be voted on: {out}");
-    let order: Vec<String> = rows.iter().map(|r| r["entry"].as_str().unwrap_or_default().to_string()).collect();
+    let order: Vec<String> =
+        rows.iter().map(|r| r["entry"].as_str().unwrap_or_default().to_string()).collect();
     if rules_built {
         assert_eq!(order, vec![eb.clone(), ea.clone(), ec.clone()], "bob, ada, cyd: {rows:?}");
     }
@@ -377,7 +418,11 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
     assert_eq!(r1["frozen_at"], r2["frozen_at"], "frozen once");
     assert_eq!(r1["ranking"], r2["ranking"], "the ranking does not move");
     for (_, out) in &reads {
-        assert_eq!(parse(out)["frozen_at"], r1["frozen_at"], "concurrent readers saw one freeze: {out}");
+        assert_eq!(
+            parse(out)["frozen_at"],
+            r1["frozen_at"],
+            "concurrent readers saw one freeze: {out}"
+        );
     }
     let ranking = r1["ranking"].as_array().cloned().unwrap_or_default();
     assert_eq!(ranking.len(), 3, "the hidden entry is not ranked: {first}");
@@ -400,7 +445,11 @@ fn a_competition_runs_from_entry_to_frozen_results_and_pays_out_once() {
         let p = parse(&prog);
         let ledger = p["ledger"].as_array().cloned().unwrap_or_default();
         let prizes: Vec<&Value> = ledger.iter().filter(|r| r["source"] == "competition").collect();
-        assert_eq!(prizes.len(), 1, "bob's first place is credited once, however often results are read: {prog}");
+        assert_eq!(
+            prizes.len(),
+            1,
+            "bob's first place is credited once, however often results are read: {prog}"
+        );
         assert_eq!(prizes[0]["xp"], 300, "{prog}");
         assert_eq!(prizes[0]["source_id"], format!("{comp}#1"), "{prog}");
     } else {

@@ -80,7 +80,13 @@ impl<S: ParkStore> Engine<S> {
     }
 
     /// Register an outstanding call before dispatching it.
-    pub async fn park(&self, session: &SessionId, call: OutboundCall, by: Agent, now_ms: u64) -> Result<ParkResult> {
+    pub async fn park(
+        &self,
+        session: &SessionId,
+        call: OutboundCall,
+        by: Agent,
+        now_ms: u64,
+    ) -> Result<ParkResult> {
         let ticket = ticket_id(session, &call.correlation);
 
         if let Some((existing, _)) = self.store.get(&ticket).await? {
@@ -114,7 +120,9 @@ impl<S: ParkStore> Engine<S> {
             // Lost a race to create the identical ticket. The winner's record
             // is what's there now; report against it, not against ours.
             let (existing, _) = self.store.get(&ticket).await?.ok_or_else(|| {
-                ParkError::storage("create() said the ticket already existed, then get() found nothing")
+                ParkError::storage(
+                    "create() said the ticket already existed, then get() found nothing",
+                )
             })?;
             return Ok(ParkResult { ticket, outcome: outcome_of(&existing) });
         }
@@ -126,8 +134,12 @@ impl<S: ParkStore> Engine<S> {
         // only invisible to a LISTING until something re-indexes it, which is
         // exactly what a `park` retry (the crash-recovery path) does.
         self.store.index_session(session, &ticket).await?;
-        if let Some(other) = self.store.claim_correlation(&record.call.correlation, &ticket).await? {
-            debug_assert_eq!(other, ticket, "claim_correlation raced with a DIFFERENT ticket after create() won");
+        if let Some(other) = self.store.claim_correlation(&record.call.correlation, &ticket).await?
+        {
+            debug_assert_eq!(
+                other, ticket,
+                "claim_correlation raced with a DIFFERENT ticket after create() won"
+            );
         }
 
         Ok(ParkResult { ticket, outcome: ParkOutcome::Parked })
@@ -143,7 +155,12 @@ impl<S: ParkStore> Engine<S> {
     /// redelivered webhook must not tell a resumer pool about the same ticket
     /// twice — [`WakeOutcome::freshly_woken`] is how the daemon knows to
     /// publish to `PARK_WAKE` only once per real answer.
-    pub async fn wake(&self, correlation: &str, answer: CallResult, now_ms: u64) -> Result<WakeOutcome> {
+    pub async fn wake(
+        &self,
+        correlation: &str,
+        answer: CallResult,
+        now_ms: u64,
+    ) -> Result<WakeOutcome> {
         let ticket = self
             .store
             .find_correlation(correlation)
@@ -151,16 +168,20 @@ impl<S: ParkStore> Engine<S> {
             .ok_or_else(|| ParkError::NotFound(correlation.to_string()))?;
 
         retry(|| async {
-            let (record, rev) = self
-                .store
-                .get(&ticket)
-                .await?
-                .ok_or_else(|| ParkError::storage(format!("correlation index named {ticket}, which does not exist")))?;
+            let (record, rev) = self.store.get(&ticket).await?.ok_or_else(|| {
+                ParkError::storage(format!(
+                    "correlation index named {ticket}, which does not exist"
+                ))
+            })?;
             let session = record.session.clone();
 
             if !matches!(record.status, StoredStatus::Parked) {
                 // ready, resumed or cancelled: accepted, nothing rewritten.
-                return Ok(Some(WakeOutcome { ticket: ticket.clone(), session, freshly_woken: false }));
+                return Ok(Some(WakeOutcome {
+                    ticket: ticket.clone(),
+                    session,
+                    freshly_woken: false,
+                }));
             }
 
             let mut next = record;
@@ -188,7 +209,8 @@ impl<S: ParkStore> Engine<S> {
     /// Consume a `ready` ticket's result exactly once.
     pub async fn take_ready(&self, ticket: &TicketId, now_ms: u64) -> Result<CallResult> {
         retry(|| async {
-            let (record, rev) = self.store.get(ticket).await?.ok_or_else(|| ParkError::NotFound(ticket.clone()))?;
+            let (record, rev) =
+                self.store.get(ticket).await?.ok_or_else(|| ParkError::NotFound(ticket.clone()))?;
 
             match record.status {
                 StoredStatus::Parked => return Err(ParkError::NotFound(ticket.clone())),
@@ -217,7 +239,8 @@ impl<S: ParkStore> Engine<S> {
     pub async fn cancel(&self, ticket: &TicketId, by: Agent, now_ms: u64) -> Result<()> {
         let by = &by;
         retry(|| async {
-            let (record, rev) = self.store.get(ticket).await?.ok_or_else(|| ParkError::NotFound(ticket.clone()))?;
+            let (record, rev) =
+                self.store.get(ticket).await?.ok_or_else(|| ParkError::NotFound(ticket.clone()))?;
 
             match record.status {
                 StoredStatus::Resumed | StoredStatus::Cancelled => {
@@ -241,7 +264,13 @@ impl<S: ParkStore> Engine<S> {
 
     /// One session's history, oldest first, starting strictly after `after`
     /// milliseconds (`None`: from the start).
-    pub async fn oplog(&self, session: &SessionId, after: Option<u64>, limit: u32, now_ms: u64) -> Result<Vec<TicketEntry>> {
+    pub async fn oplog(
+        &self,
+        session: &SessionId,
+        after: Option<u64>,
+        limit: u32,
+        now_ms: u64,
+    ) -> Result<Vec<TicketEntry>> {
         let mut entries = self.entries_of(session, now_ms).await?;
         if let Some(after) = after {
             entries.retain(|e| e.parked_at > after);
@@ -267,7 +296,9 @@ impl<S: ParkStore> Engine<S> {
 fn outcome_of(record: &Record) -> ParkOutcome {
     match record.status {
         StoredStatus::Ready => ParkOutcome::AlreadyWoken,
-        StoredStatus::Parked | StoredStatus::Resumed | StoredStatus::Cancelled => ParkOutcome::AlreadyParked,
+        StoredStatus::Parked | StoredStatus::Resumed | StoredStatus::Cancelled => {
+            ParkOutcome::AlreadyParked
+        }
     }
 }
 

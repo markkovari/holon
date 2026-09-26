@@ -229,8 +229,19 @@ impl Default for Target {
 /// a bucket nobody writes to, while a missing one costs a runtime trap.
 fn stateful(component: &str) -> bool {
     const PURE: &[&str] = &[
-        "money", "validate", "markdown", "pii-redact", "pagination", "upload-policy",
-        "csv", "diff", "semver-range", "shaper", "cron", "geo", "i18n-catalog",
+        "money",
+        "validate",
+        "markdown",
+        "pii-redact",
+        "pagination",
+        "upload-policy",
+        "csv",
+        "diff",
+        "semver-range",
+        "shaper",
+        "cron",
+        "geo",
+        "i18n-catalog",
     ];
     !PURE.contains(&component)
 }
@@ -762,9 +773,6 @@ pub fn check_fusable(spec: &Spec, topo: Topology) -> Result<()> {
     Ok(())
 }
 
-/// Config that belongs to the whole deployment rather than one component.
-pub type Overrides = BTreeMap<String, String>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,7 +814,8 @@ mod tests {
     #[test]
     fn a_linked_render_names_every_stateful_capability() {
         let s = spec("components = [\"gate-domain\", \"record-store\", \"shaper\"]\n");
-        let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph())).unwrap();
+        let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph()))
+            .unwrap();
         assert!(y.contains("name: record-store"), "{y}");
         // record-store keeps state, so it gets its own bucket...
         assert!(y.contains("bucket: record-store"), "{y}");
@@ -820,7 +829,8 @@ mod tests {
         // Found against a real wadm 0.21, which answered:
         //   "The following capability component(s) are missing from the manifest"
         let s = spec("components = [\"gate-domain\", \"record-store\"]\n");
-        let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph())).unwrap();
+        let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph()))
+            .unwrap();
         assert!(y.contains("name: keyvalue-nats"), "{y}");
         assert!(y.contains("image: ghcr.io/wasmcloud/keyvalue-nats"), "{y}");
 
@@ -845,7 +855,8 @@ mod tests {
         // ADR-0015: a bucket name is not a boundary, so sharing one is sharing state.
         let s = spec("components = [\"gate-domain\", \"record-store\", \"session-store\"]\n");
         // Both are stateful and both appear as edges in the fixture graph.
-        let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph())).unwrap();
+        let y = render(&s, Topology::Linked, ApiVersion::V1, &Target::default(), Some(&graph()))
+            .unwrap();
         assert!(y.contains("bucket: record-store"), "{y}");
         assert!(y.contains("bucket: session-store"), "{y}");
     }
@@ -895,7 +906,8 @@ mod tests {
         let s = spec(
             "components = [\"gate-domain\", \"record-store\"]\n[config]\ngrace-period-secs = \"5\"\n",
         );
-        let v2 = render_workload(&s, "wasmcloud-v2", &Target::default(), Some(&graph()), true).unwrap();
+        let v2 =
+            render_workload(&s, "wasmcloud-v2", &Target::default(), Some(&graph()), true).unwrap();
 
         // "invalid reference format" — v1 needs the oci:// prefix and v2 rejects it.
         assert!(!v2.contains("oci://"), "{v2}");
@@ -952,12 +964,18 @@ mod tests {
         // own `--egress` — reaching the daemon and resolving its name are both
         // grants the component needs spelled out, not assumed.
         assert!(y.contains("localResources:\n        allowedHosts:\n          - fswatch-daemon.ns.svc.cluster.local:8000"), "{y}");
-        assert!(y.contains("allowedIpNameLookups:\n          - fswatch-daemon.ns.svc.cluster.local"), "{y}");
+        assert!(
+            y.contains("allowedIpNameLookups:\n          - fswatch-daemon.ns.svc.cluster.local"),
+            "{y}"
+        );
 
         // The daemon's own Deployment + Service, appended as further documents.
         assert!(y.contains("kind: Deployment"), "{y}");
         assert!(y.contains("name: fswatch-daemon"), "{y}");
-        assert!(y.contains("image: registry.wasmcloud.svc.cluster.local:5000/comp-fswatch:latest"), "{y}");
+        assert!(
+            y.contains("image: registry.wasmcloud.svc.cluster.local:5000/comp-fswatch:latest"),
+            "{y}"
+        );
         assert!(y.contains("- --allow-path\n            - \"/var/log\""), "{y}");
         assert!(y.contains("kind: Service"), "{y}");
         assert!(y.contains("port: 8000"), "{y}");

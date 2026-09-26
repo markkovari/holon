@@ -155,13 +155,17 @@ impl Stack {
             logs: tempfile::tempdir().unwrap(),
             vcs: None,
             starts: 0,
-            http: reqwest::blocking::Client::builder().timeout(Duration::from_secs(600)).build().unwrap(),
+            http: reqwest::blocking::Client::builder()
+                .timeout(Duration::from_secs(600))
+                .build()
+                .unwrap(),
             gate: None,
         };
         s.start_vcs(&[]);
         let url = format!("vcs-url=http://127.0.0.1:{port}");
         let egress = format!("127.0.0.1:{port}");
-        let gate = gatelib::Gate::compose_and_start_with_egress("vcs", "vcs-gateway", &[&url], &[&egress]);
+        let gate =
+            gatelib::Gate::compose_and_start_with_egress("vcs", "vcs-gateway", &[&url], &[&egress]);
         match gate {
             Some(g) => s.gate = Some(g),
             None => panic!(
@@ -180,7 +184,8 @@ impl Stack {
     fn start_vcs(&mut self, extra: &[&str]) {
         assert!(self.vcs.is_none(), "comp-vcs is already running");
         self.starts += 1;
-        let log = std::fs::File::create(self.logs.path().join(format!("vcs-{}.log", self.starts))).unwrap();
+        let log = std::fs::File::create(self.logs.path().join(format!("vcs-{}.log", self.starts)))
+            .unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_comp-vcs"));
         cmd.args(["--addr", &format!("127.0.0.1:{}", self.port)])
             .args(["--nats-url", &self.svc.nats])
@@ -206,7 +211,11 @@ impl Stack {
                 self.vcs = None;
                 panic!("[{}] comp-vcs exited during startup: {st}", self.name);
             }
-            assert!(t0.elapsed() < Duration::from_secs(60), "[{}] comp-vcs never became healthy", self.name);
+            assert!(
+                t0.elapsed() < Duration::from_secs(60),
+                "[{}] comp-vcs never became healthy",
+                self.name
+            );
             std::thread::sleep(Duration::from_millis(50));
         }
         self.vcs = Some(child);
@@ -241,7 +250,12 @@ impl Stack {
     }
 
     fn vcs_health(&self) -> Value {
-        self.http.get(format!("http://127.0.0.1:{}/health", self.port)).send().unwrap().json().unwrap()
+        self.http
+            .get(format!("http://127.0.0.1:{}/health", self.port))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap()
     }
 
     fn ws(&self, tag: &str) -> String {
@@ -250,19 +264,23 @@ impl Stack {
 
     /// One route of the gateway.
     fn raw(&self, func: &str, body: &Value) -> Result<Value, Refusal> {
-        let (status, text) = self.gate.as_ref().unwrap().post(&wire::route(func), None, body.clone());
+        let (status, text) =
+            self.gate.as_ref().unwrap().post(&wire::route(func), None, body.clone());
         if status == 200 {
-            return Ok(serde_json::from_str(&text)
-                .unwrap_or_else(|e| panic!("{func}: 200 with a body that is not JSON ({e}): {text}")));
+            return Ok(serde_json::from_str(&text).unwrap_or_else(|e| {
+                panic!("{func}: 200 with a body that is not JSON ({e}): {text}")
+            }));
         }
-        let body: wire::ErrorBody = serde_json::from_str(&text)
-            .unwrap_or_else(|e| panic!("{func}: HTTP {status} with a body that is not an error ({e}): {text}"));
+        let body: wire::ErrorBody = serde_json::from_str(&text).unwrap_or_else(|e| {
+            panic!("{func}: HTTP {status} with a body that is not an error ({e}): {text}")
+        });
         Err(Refusal { status, body })
     }
 
     fn call<T: DeserializeOwned>(&self, func: &str, body: Value) -> Result<T, Refusal> {
-        self.raw(func, &body)
-            .map(|v| serde_json::from_value(v.clone()).unwrap_or_else(|e| panic!("{func}: {e}: {v}")))
+        self.raw(func, &body).map(|v| {
+            serde_json::from_value(v.clone()).unwrap_or_else(|e| panic!("{func}: {e}: {v}"))
+        })
     }
 
     fn ok<T: DeserializeOwned>(&self, func: &str, body: Value) -> T {
@@ -281,7 +299,10 @@ impl Stack {
 
     /// The symbol's view, or nothing when it is not live (`symbol-not-found`).
     fn query(&self, ws: &str, id: &SymbolId) -> Vec<SymbolView> {
-        match self.call("query-symbol", json!({ "workspace": ws, "query": SymbolQuery::Symbol(id.clone()) })) {
+        match self.call(
+            "query-symbol",
+            json!({ "workspace": ws, "query": SymbolQuery::Symbol(id.clone()) }),
+        ) {
             Ok(v) => v,
             Err(r) if r.is("symbol-not-found") && r.status == 404 => Vec::new(),
             Err(r) => panic!("query-symbol {id}: {r:?}"),
@@ -317,8 +338,10 @@ impl Stack {
     fn file(&self, ws: &str, path: &str) -> String {
         let snap = self.export(ws).unwrap_or_else(|r| panic!("export refused: {r:?}"));
         let files = self.files(&snap);
-        String::from_utf8(files.get(path).unwrap_or_else(|| panic!("no {path} in {:?}", files.keys())).clone())
-            .unwrap()
+        String::from_utf8(
+            files.get(path).unwrap_or_else(|| panic!("no {path} in {:?}", files.keys())).clone(),
+        )
+        .unwrap()
     }
 
     fn verify(&self, ws: &str) -> ConsistencyReport {
@@ -337,15 +360,29 @@ impl Stack {
         self.call("materialize", json!({ "workspace": ws, "component": COMPONENT, "dest": dest }))
     }
 
-    fn ingest(&self, ws: &str, path: &str, text: &str, by: &str, read_at: Option<u64>) -> wire::IngestReport {
-        let file = wire::SourceFile { path: path.into(), content: wire::Bytes(text.as_bytes().to_vec()) };
+    fn ingest(
+        &self,
+        ws: &str,
+        path: &str,
+        text: &str,
+        by: &str,
+        read_at: Option<u64>,
+    ) -> wire::IngestReport {
+        let file =
+            wire::SourceFile { path: path.into(), content: wire::Bytes(text.as_bytes().to_vec()) };
         self.ok(
             "ingest-file",
             json!({ "workspace": ws, "component": COMPONENT, "file": file, "by": agent(by), "read-at": read_at }),
         )
     }
 
-    fn ingest_tree(&self, ws: &str, files: &[(String, Vec<u8>)], read_at: Option<u64>, prune: bool) -> Vec<wire::IngestReport> {
+    fn ingest_tree(
+        &self,
+        ws: &str,
+        files: &[(String, Vec<u8>)],
+        read_at: Option<u64>,
+        prune: bool,
+    ) -> Vec<wire::IngestReport> {
         let files: Vec<wire::SourceFile> = files
             .iter()
             .map(|(p, b)| wire::SourceFile { path: p.clone(), content: wire::Bytes(b.clone()) })
@@ -366,7 +403,14 @@ fn sym(path: &str, name: &str) -> SymbolId {
     SymbolId::new(COMPONENT, path, name, SymbolKind::Function)
 }
 
-fn req(ws: &str, id: &SymbolId, parent: Option<&str>, change: Transformation, by: &str, read_at: Option<u64>) -> PatchRequest {
+fn req(
+    ws: &str,
+    id: &SymbolId,
+    parent: Option<&str>,
+    change: Transformation,
+    by: &str,
+    read_at: Option<u64>,
+) -> PatchRequest {
     PatchRequest {
         workspace: ws.into(),
         symbol: id.clone(),
@@ -499,12 +543,25 @@ fn a_two_agents_two_functions_both_land_one_commutes() {
     let ws = s.ws("a");
     let (h, total, validate) = setup_orders(&s, &ws);
     let edits = [
-        (total.clone(), with_line(&text_of(&total), TOTAL_OPEN, "    // agent A: totals are cents")),
-        (validate.clone(), with_line(&text_of(&validate), VALIDATE_OPEN, "    // agent B: validated first")),
+        (
+            total.clone(),
+            with_line(&text_of(&total), TOTAL_OPEN, "    // agent A: totals are cents"),
+        ),
+        (
+            validate.clone(),
+            with_line(&text_of(&validate), VALIDATE_OPEN, "    // agent B: validated first"),
+        ),
     ];
     let results = at_once(2, |i| {
         let (v, new) = &edits[i];
-        let r = req(&ws, &v.id, Some(&v.tip), Transformation::Replace(inline(new)), ["a", "b"][i], Some(h));
+        let r = req(
+            &ws,
+            &v.id,
+            Some(&v.tip),
+            Transformation::Replace(inline(new)),
+            ["a", "b"][i],
+            Some(h),
+        );
         s.apply(&r).unwrap_or_else(|e| panic!("agent {i}: {e:?}"))
     });
     for r in &results {
@@ -516,9 +573,16 @@ fn a_two_agents_two_functions_both_land_one_commutes() {
         results.iter().enumerate().filter(|(_, r)| r.outcome == PatchOutcome::Commuted).collect();
     assert!(!commuted.is_empty(), "at least one edit commuted: {results:?}");
     for (i, r) in &commuted {
-        assert!(r.commuted_with.contains(&results[1 - i].patch), "{i} commuted past the other: {results:?}");
+        assert!(
+            r.commuted_with.contains(&results[1 - i].patch),
+            "{i} commuted past the other: {results:?}"
+        );
     }
-    let want = with_line(&with_line(ORDERS_RS, TOTAL_OPEN, "    // agent A: totals are cents"), VALIDATE_OPEN, "    // agent B: validated first");
+    let want = with_line(
+        &with_line(ORDERS_RS, TOTAL_OPEN, "    // agent A: totals are cents"),
+        VALIDATE_OPEN,
+        "    // agent B: validated first",
+    );
     assert_eq!(s.file(&ws, ORDERS), want);
     assert_clean(&s.verify(&ws));
     timed("a", t0);
@@ -537,11 +601,19 @@ fn b_same_function_conflicts_export_waits_for_the_resolution() {
         with_line(&text_of(&total), TOTAL_OPEN, "    // agent B: prices exclude tax"),
     ];
     let results = at_once(2, |i| {
-        let r = req(&ws, &total.id, Some(&total.tip), Transformation::Replace(inline(&sides[i])), ["a", "b"][i], Some(h));
+        let r = req(
+            &ws,
+            &total.id,
+            Some(&total.tip),
+            Transformation::Replace(inline(&sides[i])),
+            ["a", "b"][i],
+            Some(h),
+        );
         s.apply(&r).unwrap_or_else(|e| panic!("agent {i}: {e:?}"))
     });
     let won: Vec<usize> = (0..2).filter(|&i| landed(&results[i])).collect();
-    let lost: Vec<usize> = (0..2).filter(|&i| results[i].outcome == PatchOutcome::Conflicted).collect();
+    let lost: Vec<usize> =
+        (0..2).filter(|&i| results[i].outcome == PatchOutcome::Conflicted).collect();
     assert_eq!((won.len(), lost.len()), (1, 1), "one lands, one conflicts: {results:?}");
     let (w, l) = (won[0], lost[0]);
     let cid = results[l].conflict.clone().expect("a conflicted result names its conflict");
@@ -560,7 +632,15 @@ fn b_same_function_conflicts_export_waits_for_the_resolution() {
     let dest = s.allow_root().join("b-refused");
     assert!(s.materialize(&ws, &dest).unwrap_err().is("unresolved-conflict"));
 
-    let merged = with_line(&sides[w], TOTAL_OPEN, if w == 0 { "    // agent B: prices exclude tax" } else { "    // agent A: prices include tax" });
+    let merged = with_line(
+        &sides[w],
+        TOTAL_OPEN,
+        if w == 0 {
+            "    // agent B: prices exclude tax"
+        } else {
+            "    // agent A: prices include tax"
+        },
+    );
     let res: CommitResult = s.ok(
         "resolve-conflict",
         json!({ "workspace": ws, "conflict": cid, "resolution": Transformation::Replace(inline(&merged)),
@@ -577,7 +657,11 @@ fn b_same_function_conflicts_export_waits_for_the_resolution() {
     let m = s.materialize(&ws, &dest).unwrap();
     assert_eq!(m.files, 1);
     assert_eq!(std::fs::read_to_string(dest.join(ORDERS)).unwrap(), want);
-    assert_eq!(Some(git_tree_of(&dest)), snap.git_tree, "the materialized tree is the snapshot's git tree");
+    assert_eq!(
+        Some(git_tree_of(&dest)),
+        snap.git_tree,
+        "the materialized tree is the snapshot's git tree"
+    );
     assert_eq!(m.snapshot.git_tree, snap.git_tree);
     // Outside --allow-path: refused, and nothing written.
     let outside = tempfile::tempdir().unwrap();
@@ -624,13 +708,47 @@ fn c_crash_at_every_write_step_then_restart_repairs() {
         let f = sym("src/lib.rs", "f");
         let g = sym("src/lib.rs", "g");
         let h = sym("src/lib.rs", "h");
-        let pf = s.apply(&req(&ws, &f, None, Transformation::Create(inline("fn f() {}\n")), "setup", None)).unwrap();
-        let pg = s.apply(&req(&ws, &g, None, Transformation::Create(inline("fn g() {}\n")), "setup", None)).unwrap();
+        let pf = s
+            .apply(&req(
+                &ws,
+                &f,
+                None,
+                Transformation::Create(inline("fn f() {}\n")),
+                "setup",
+                None,
+            ))
+            .unwrap();
+        let pg = s
+            .apply(&req(
+                &ws,
+                &g,
+                None,
+                Transformation::Create(inline("fn g() {}\n")),
+                "setup",
+                None,
+            ))
+            .unwrap();
         let setup_ops = s.oplog(&ws).len();
         let the_op = match op {
-            Op::Replace => req(&ws, &f, Some(&pf.patch), Transformation::Replace(inline("fn f() { 1 }\n")), "x", None),
-            Op::Create => req(&ws, &sym("src/lib.rs", "k"), None, Transformation::Create(inline("fn k() {}\n")), "x", None),
-            Op::Rename => req(&ws, &g, Some(&pg.patch), Transformation::Rename("h".into()), "x", None),
+            Op::Replace => req(
+                &ws,
+                &f,
+                Some(&pf.patch),
+                Transformation::Replace(inline("fn f() { 1 }\n")),
+                "x",
+                None,
+            ),
+            Op::Create => req(
+                &ws,
+                &sym("src/lib.rs", "k"),
+                None,
+                Transformation::Create(inline("fn k() {}\n")),
+                "x",
+                None,
+            ),
+            Op::Rename => {
+                req(&ws, &g, Some(&pg.patch), Transformation::Rename("h".into()), "x", None)
+            }
         };
         let has_landed = |s: &Stack| match op {
             Op::Replace => s.content(&ws, &f) == "fn f() { 1 }\n",
@@ -639,7 +757,14 @@ fn c_crash_at_every_write_step_then_restart_repairs() {
         };
 
         s.restart_vcs(&[lease[0], lease[1], flag, step, "--i-know-this-is-a-test"]);
-        assert_eq!(s.vcs_health()["fault-injection"].as_str().map(|p| p.split(':').nth(1).unwrap().to_string()), Some(step.to_string()));
+        assert_eq!(
+            s.vcs_health()["fault-injection"].as_str().map(|p| p
+                .split(':')
+                .nth(1)
+                .unwrap()
+                .to_string()),
+            Some(step.to_string())
+        );
         let crashed_at = Instant::now();
         let r = s.apply(&the_op).expect_err(&format!("{case}: the daemon died mid-request"));
         assert!(r.is("storage-error") && r.status == 503, "{case}: {r:?}");
@@ -653,11 +778,13 @@ fn c_crash_at_every_write_step_then_restart_repairs() {
         s.start_vcs(&lease);
 
         let startup = s.vcs_health()["startup-repair"].clone();
-        let mine = startup.as_array().unwrap().iter().find(|e| e["workspace"] == json!(ws)).cloned();
+        let mine =
+            startup.as_array().unwrap().iter().find(|e| e["workspace"] == json!(ws)).cloned();
         assert_clean(&s.verify(&ws));
         assert_eq!(has_landed(&s), want_landed, "{case}: landed? startup repair said {mine:?}");
         if step != "blob" {
-            let mine = mine.unwrap_or_else(|| panic!("{case}: startup repair did not see {ws}: {startup}"));
+            let mine = mine
+                .unwrap_or_else(|| panic!("{case}: startup repair did not see {ws}: {startup}"));
             let key = if want_landed { "rolled-forward" } else { "aborted" };
             // After the commit write the op was already committed: nothing to roll forward.
             if step != "commit" {
@@ -694,19 +821,54 @@ fn d_commuted_is_exact_with_read_at_and_over_reports_without() {
     let Some(s) = Stack::up("d") else { return };
     // f and g exist; X edits g; then Y edits f three ways.
     // Returns Y's result, X's patch and g's creation.
-    let run = |tag: &str, read: &dyn Fn(u64, u64) -> Option<u64>| -> (CommitResult, String, String) {
-        let ws = s.ws(tag);
-        let (f, g) = (sym("src/lib.rs", "f"), sym("src/lib.rs", "g"));
-        let pf = s.apply(&req(&ws, &f, None, Transformation::Create(inline("fn f() {}\n")), "setup", None)).unwrap();
-        let pg = s.apply(&req(&ws, &g, None, Transformation::Create(inline("fn g() {}\n")), "setup", None)).unwrap();
-        let before_x = s.head(&ws);
-        let x = s.apply(&req(&ws, &g, Some(&pg.patch), Transformation::Replace(inline("fn g() { 1 }\n")), "x", Some(before_x))).unwrap();
-        let after_x = s.head(&ws);
-        let y = s
-            .apply(&req(&ws, &f, Some(&pf.patch), Transformation::Replace(inline("fn f() { 1 }\n")), "y", read(before_x, after_x)))
-            .unwrap();
-        (y, x.patch, pg.patch)
-    };
+    let run =
+        |tag: &str, read: &dyn Fn(u64, u64) -> Option<u64>| -> (CommitResult, String, String) {
+            let ws = s.ws(tag);
+            let (f, g) = (sym("src/lib.rs", "f"), sym("src/lib.rs", "g"));
+            let pf = s
+                .apply(&req(
+                    &ws,
+                    &f,
+                    None,
+                    Transformation::Create(inline("fn f() {}\n")),
+                    "setup",
+                    None,
+                ))
+                .unwrap();
+            let pg = s
+                .apply(&req(
+                    &ws,
+                    &g,
+                    None,
+                    Transformation::Create(inline("fn g() {}\n")),
+                    "setup",
+                    None,
+                ))
+                .unwrap();
+            let before_x = s.head(&ws);
+            let x = s
+                .apply(&req(
+                    &ws,
+                    &g,
+                    Some(&pg.patch),
+                    Transformation::Replace(inline("fn g() { 1 }\n")),
+                    "x",
+                    Some(before_x),
+                ))
+                .unwrap();
+            let after_x = s.head(&ws);
+            let y = s
+                .apply(&req(
+                    &ws,
+                    &f,
+                    Some(&pf.patch),
+                    Transformation::Replace(inline("fn f() { 1 }\n")),
+                    "y",
+                    read(before_x, after_x),
+                ))
+                .unwrap();
+            (y, x.patch, pg.patch)
+        };
     // Y read after X's edit: it saw it, nothing commuted.
     let (y, _, _) = run("d-seen", &|_, after| Some(after));
     assert_eq!((y.outcome, y.commuted_with.len()), (PatchOutcome::Applied, 0), "{y:?}");
@@ -717,7 +879,11 @@ fn d_commuted_is_exact_with_read_at_and_over_reports_without() {
     // everything after it counts — X's edit AND g's creation, both of which Y had
     // seen. The documented over-report (ADR-0099, *`commuted`, exactly*).
     let (y, x, g_created) = run("d-unknown", &|_, _| None);
-    assert_eq!((y.outcome, y.commuted_with.clone()), (PatchOutcome::Commuted, vec![g_created, x]), "{y:?}");
+    assert_eq!(
+        (y.outcome, y.commuted_with.clone()),
+        (PatchOutcome::Commuted, vec![g_created, x]),
+        "{y:?}"
+    );
     timed("d", t0);
 }
 
@@ -732,13 +898,29 @@ fn e_eight_renames_to_one_name_one_wins() {
     let tips: Vec<(SymbolId, String)> = (0..N)
         .map(|i| {
             let id = sym("src/lib.rs", &format!("s{i}"));
-            let r = s.apply(&req(&ws, &id, None, Transformation::Create(inline(&format!("fn s{i}() {{}}\n"))), "setup", None)).unwrap();
+            let r = s
+                .apply(&req(
+                    &ws,
+                    &id,
+                    None,
+                    Transformation::Create(inline(&format!("fn s{i}() {{}}\n"))),
+                    "setup",
+                    None,
+                ))
+                .unwrap();
             (id, r.patch)
         })
         .collect();
     let results = at_once(N, |i| {
         let (id, tip) = &tips[i];
-        s.apply(&req(&ws, id, Some(tip), Transformation::Rename("target".into()), &format!("r{i}"), None))
+        s.apply(&req(
+            &ws,
+            id,
+            Some(tip),
+            Transformation::Rename("target".into()),
+            &format!("r{i}"),
+            None,
+        ))
     });
     let wins = results.iter().filter(|r| matches!(r, Ok(c) if landed(c))).count();
     assert_eq!(wins, 1, "exactly one rename lands: {results:?}");
@@ -748,7 +930,10 @@ fn e_eight_renames_to_one_name_one_wins() {
         assert_eq!(id.name, "target");
     }
     assert_eq!(s.query(&ws, &sym("src/lib.rs", "target")).len(), 1);
-    let live: Vec<SymbolView> = s.ok("query-symbol", json!({ "workspace": ws, "query": SymbolQuery::Component(COMPONENT.into()) }));
+    let live: Vec<SymbolView> = s.ok(
+        "query-symbol",
+        json!({ "workspace": ws, "query": SymbolQuery::Component(COMPONENT.into()) }),
+    );
     assert_eq!(live.len(), N, "renames lose no symbol");
     assert_clean(&s.verify(&ws));
     timed("e", t0);
@@ -769,10 +954,19 @@ fn record_store() -> Vec<(String, Vec<u8>)> {
     let mut files: Vec<(String, Vec<u8>)> = String::from_utf8(out.stdout)
         .unwrap()
         .lines()
-        .map(|p| (p.trim_start_matches("components/record-store/").to_string(), std::fs::read(root.join(p)).unwrap()))
+        .map(|p| {
+            (
+                p.trim_start_matches("components/record-store/").to_string(),
+                std::fs::read(root.join(p)).unwrap(),
+            )
+        })
         .collect();
     files.sort();
-    assert!(files.iter().any(|f| f.0 == IDLIST) && files.iter().any(|f| f.0.ends_with(".wit")), "{:?}", files.iter().map(|f| &f.0).collect::<Vec<_>>());
+    assert!(
+        files.iter().any(|f| f.0 == IDLIST) && files.iter().any(|f| f.0.ends_with(".wit")),
+        "{:?}",
+        files.iter().map(|f| &f.0).collect::<Vec<_>>()
+    );
     files
 }
 
@@ -803,19 +997,28 @@ fn f_real_files_ingest_export_materialize_and_race() {
     let originals = tempfile::tempdir().unwrap();
     write_tree(originals.path(), &files);
     let git_tree = git_tree_of(originals.path());
-    assert_eq!(snap.git_tree.as_deref(), Some(git_tree.as_str()), "snapshot git-tree vs git write-tree of the originals");
+    assert_eq!(
+        snap.git_tree.as_deref(),
+        Some(git_tree.as_str()),
+        "snapshot git-tree vs git write-tree of the originals"
+    );
     let dest = s.allow_root().join("f-out");
     let m = s.materialize(&ws, &dest).unwrap();
     assert_eq!(read_dir_files(&dest), files.iter().cloned().collect::<BTreeMap<_, _>>());
     assert_eq!(git_tree_of(&dest), git_tree);
     assert_eq!(m.bytes as usize, files.iter().map(|f| f.1.len()).sum::<usize>());
-    eprintln!("e2e_vcs::f: {} files, {} bytes, {symbols} symbols, git tree {git_tree}", files.len(), m.bytes);
+    eprintln!(
+        "e2e_vcs::f: {} files, {} bytes, {symbols} symbols, git tree {git_tree}",
+        files.len(),
+        m.bytes
+    );
     // Unchanged, re-ingested: nothing to write.
     let h = s.head(&ws);
     let again = s.ingest_tree(&ws, &files, Some(h), true);
     assert_eq!(again.iter().map(|r| r.patches.len()).sum::<usize>(), 0);
 
-    let original = String::from_utf8(files.iter().find(|f| f.0 == IDLIST).unwrap().1.clone()).unwrap();
+    let original =
+        String::from_utf8(files.iter().find(|f| f.0 == IDLIST).unwrap().1.clone()).unwrap();
 
     // Two agents, two neighbouring functions, one read point, at once.
     let h = s.head(&ws);
@@ -834,7 +1037,9 @@ fn f_real_files_ingest_export_materialize_and_race() {
     let conflicted: Vec<&wire::IngestPatch> = reps
         .iter()
         .flat_map(|r| &r.patches)
-        .filter(|p| matches!(&p.outcome, wire::Outcome::Ok(c) if c.outcome == PatchOutcome::Conflicted))
+        .filter(
+            |p| matches!(&p.outcome, wire::Outcome::Ok(c) if c.outcome == PatchOutcome::Conflicted),
+        )
         .collect();
     assert_eq!(conflicted.len(), 1, "exactly one side conflicts: {reps:?}");
     assert_eq!(conflicted[0].symbol.name, "page_start");
@@ -845,7 +1050,11 @@ fn f_real_files_ingest_export_materialize_and_race() {
         other => panic!("{other:?}"),
     };
     let (l, r) = (side(&open[0].left.content), side(&open[0].right.content));
-    assert!(l.contains("// A: pages") != r.contains("// A: pages") && (l.contains("// B: pages") || r.contains("// B: pages")), "both versions verbatim:\n{l}\n{r}");
+    assert!(
+        l.contains("// A: pages") != r.contains("// A: pages")
+            && (l.contains("// B: pages") || r.contains("// B: pages")),
+        "both versions verbatim:\n{l}\n{r}"
+    );
     assert!(s.export(&ws).unwrap_err().is("unresolved-conflict"));
     let res: CommitResult = s.ok(
         "resolve-conflict",
@@ -858,7 +1067,7 @@ fn f_real_files_ingest_export_materialize_and_race() {
 
     // Two inserts at one spot, at once: both land, neither conflicts.
     let h = s.head(&ws);
-    let spot = format!("{IS_ZERO_END}");
+    let spot = IS_ZERO_END.to_string();
     let a_copy = resolved.replacen(&spot, &format!("{spot}{BY_A}"), 1);
     let b_copy = resolved.replacen(&spot, &format!("{spot}{BY_B}"), 1);
     let reps = at_once(2, |i| s.ingest(&ws, IDLIST, [&a_copy, &b_copy][i], ["a", "b"][i], Some(h)));
@@ -867,7 +1076,10 @@ fn f_real_files_ingest_export_materialize_and_race() {
     let got = s.file(&ws, IDLIST);
     let ab = resolved.replacen(&spot, &format!("{spot}{BY_A}{BY_B}"), 1);
     let ba = resolved.replacen(&spot, &format!("{spot}{BY_B}{BY_A}"), 1);
-    assert!(got == ab || got == ba, "both inserts, right after is_zero, in one of the two orders:\n{got}");
+    assert!(
+        got == ab || got == ba,
+        "both inserts, right after is_zero, in one of the two orders:\n{got}"
+    );
 
     // And the final tree onto disk, checked against git once more.
     let mut want: BTreeMap<String, Vec<u8>> = files.iter().cloned().collect();
@@ -888,7 +1100,8 @@ fn g_a_function_moved_by_ingest_exports_exactly_and_back() {
     let t0 = Instant::now();
     let Some(s) = Stack::up("g") else { return };
     let ws = s.ws("g");
-    let original = String::from_utf8(record_store().into_iter().find(|f| f.0 == IDLIST).unwrap().1).unwrap();
+    let original =
+        String::from_utf8(record_store().into_iter().find(|f| f.0 == IDLIST).unwrap().1).unwrap();
     assert_ingested(&s.ingest(&ws, IDLIST, &original, "setup", None));
 
     // is_zero, cut from above chunk_key and pasted just before enc().
@@ -900,8 +1113,18 @@ fn g_a_function_moved_by_ingest_exports_exactly_and_back() {
     let h = s.head(&ws);
     let r = s.ingest(&ws, IDLIST, &moved, "mover", Some(h));
     assert_ingested(&r);
-    assert!(r.patches.iter().any(|p| p.edit == wire::EditKind::Move), "a move patch: {:?}", r.patches);
-    assert!(!r.patches.iter().any(|p| p.edit == wire::EditKind::Create || p.edit == wire::EditKind::Delete), "{:?}", r.patches);
+    assert!(
+        r.patches.iter().any(|p| p.edit == wire::EditKind::Move),
+        "a move patch: {:?}",
+        r.patches
+    );
+    assert!(
+        !r.patches
+            .iter()
+            .any(|p| p.edit == wire::EditKind::Create || p.edit == wire::EditKind::Delete),
+        "{:?}",
+        r.patches
+    );
     assert_eq!(s.file(&ws, IDLIST), moved);
 
     let h = s.head(&ws);
@@ -922,8 +1145,11 @@ fn h_a_crashed_writers_intent_blocks_export_until_the_lease_passes() {
     let ws = s.ws("h");
     s.restart_vcs(&lease);
     let f = sym("src/lib.rs", "f");
-    let pf = s.apply(&req(&ws, &f, None, Transformation::Create(inline("fn f() {}\n")), "setup", None)).unwrap();
-    let edit = req(&ws, &f, Some(&pf.patch), Transformation::Replace(inline("fn f() { 1 }\n")), "x", None);
+    let pf = s
+        .apply(&req(&ws, &f, None, Transformation::Create(inline("fn f() {}\n")), "setup", None))
+        .unwrap();
+    let edit =
+        req(&ws, &f, Some(&pf.patch), Transformation::Replace(inline("fn f() { 1 }\n")), "x", None);
 
     s.restart_vcs(&[lease[0], lease[1], "--crash-before-step", "tip", "--i-know-this-is-a-test"]);
     let crashed = Instant::now();
@@ -945,18 +1171,30 @@ fn h_a_crashed_writers_intent_blocks_export_until_the_lease_passes() {
         match s.export(&ws) {
             Ok(snap) => break snap,
             Err(r) if r.is("concurrent-modification") => {
-                assert!(crashed.elapsed() < LEASE + Duration::from_secs(10), "still refused long after the lease");
+                assert!(
+                    crashed.elapsed() < LEASE + Duration::from_secs(10),
+                    "still refused long after the lease"
+                );
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(r) => panic!("{r:?}"),
         }
     };
     let cleared_at = crashed.elapsed();
-    assert!(cleared_at >= LEASE - Duration::from_millis(500), "cleared at {cleared_at:?}, before the lease");
-    assert_eq!(String::from_utf8(s.files(&snap)["src/lib.rs"].clone()).unwrap(), "fn f() {}\n", "the crashed edit never landed");
+    assert!(
+        cleared_at >= LEASE - Duration::from_millis(500),
+        "cleared at {cleared_at:?}, before the lease"
+    );
+    assert_eq!(
+        String::from_utf8(s.files(&snap)["src/lib.rs"].clone()).unwrap(),
+        "fn f() {}\n",
+        "the crashed edit never landed"
+    );
     assert_clean(&s.verify(&ws));
     let again = s.apply(&edit).unwrap();
     assert_eq!(again.outcome, PatchOutcome::Applied);
-    eprintln!("e2e_vcs::h: refused at {refused_at:.2?}, cleared at {cleared_at:.2?} (lease {LEASE:?})");
+    eprintln!(
+        "e2e_vcs::h: refused at {refused_at:.2?}, cleared at {cleared_at:.2?} (lease {LEASE:?})"
+    );
     timed("h", t0);
 }
