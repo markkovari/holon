@@ -64,6 +64,51 @@ A token is not optional off the loopback and `comp-checks` refuses to start
 without one: `--allow` bounds the *command*, not the tree it runs over, and
 `cargo test` on a tree an agent wrote runs that tree's `build.rs`.
 
+### A swarm of branches, one box: already fine; many checks at once: was not
+
+`comp-goalrun`'s own `warm_caches()` already gives every branch a **shared,
+persistent** `CARGO_HOME`/`CARGO_TARGET_DIR` (`~/.cache/comp-goalrun/…`, paid
+once, ever) when it runs `comp-checks` co-located. This is not a hypothetical
+fix — it is measured: 8 to 64 concurrent `cargo build`s of one component, each
+with a genuinely distinct edit, against that shared `target/`, ran in **7–10 s
+flat** on 12 cores, zero failures, no lock-degradation even at 64-way
+concurrency far past core count. Isolated per-branch `target/` dirs, for
+comparison, plateau around 41–43 s regardless of N in that range — the
+difference is entirely cargo's own fingerprint reuse on the shared dir, not
+avoided lock contention, and capping each build's own `--jobs` made things
+*slower*, not faster: let cargo and the OS arbitrate.
+
+**What was not fine: `comp-checks` itself answered one request at a time**,
+full stop — a plain `for stream in listener.incoming()` loop with no
+concurrency, independent of caching or core count. Measured: 20 concurrent
+2-second checks took 42 s (exactly N × duration — perfectly serial). Now fixed:
+each connection runs on its own thread, bounded by `--max-concurrent` (default
+256 — generous on purpose, since the data above shows the compile step itself
+does not need throttling; it exists as a safety ceiling against a pathological
+spike, each waiting connection being one thread). The same 20×2 s test now
+finishes in 2 s. A real, pre-existing race this surfaced — two concurrent
+first-time requests for the same brand-new commit could corrupt its cached
+base tree — is fixed with a lock around just that (rare, cheap) step.
+
+Full measurements, the two wrong theories tried first, and the plan for
+distributing across a second machine (not built yet — no second machine to
+test it against): [`docs/measure/gate-concurrency.md`](docs/measure/gate-concurrency.md).
+
+For a **second, remote worker box** (the `--checks-url` case below, a separate
+machine with no local `warm_caches`), point it at its own persistent cache the
+same way, and optionally add [`sccache`](https://github.com/mozilla/sccache)
+(plain caching mode — its distributed-compilation mode needs a Linux scheduler
+and is unproven for `wasm32-wasip2`) so a cold new box bootstraps faster:
+
+```bash
+comp-checks --addr … --token-file … --allow 'cargo test' --timeout 120 \
+  --max-concurrent 256 \
+  --check-env CARGO_HOME=/var/cache/holon/cargo-home \
+  --check-env CARGO_TARGET_DIR=/var/cache/holon/cargo-target \
+  --check-env RUSTC_WRAPPER=/usr/local/bin/sccache \
+  --check-env SCCACHE_DIR=/var/cache/holon/sccache
+```
+
 ```bash
 cargo xtask compose gate                # components -> one .wasm
 ```
