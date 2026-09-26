@@ -1,0 +1,33 @@
+# park — a durable record of an outstanding call (ADR-0100) as HTTP, for
+# agents on the tailnet: `park-gateway` (routes) composed with `park-store`
+# (the contract, each call one request to comp-park), in front of `comp-park`
+# (the engine, on NATS JetStream). The wire is
+# components/park-store/CONTRACT.md.
+#
+#   cargo xtask compose park && cargo xtask host park     # needs NATS, below
+#   holon node render apps/park.toml --out target/selfhost
+name = "park"
+# Whoever reaches the gateway can park, wake or cancel any session's ticket:
+# tailnet only, and left that way on purpose.
+access = "tailnet"
+domain = "park.example.com"
+artifact = "components/target/park_gateway.composed.wasm"
+root = "park-gateway"
+port = 3943
+# The gateway keeps nothing; every byte of state is comp-park's.
+kv = "memory"
+
+# `park-url` must agree with the [[daemon]] addr below.
+[config]
+park-url = "http://127.0.0.1:8015"
+
+# No `token` here — permissive, same reasoning as apps/vcs.toml. A real
+# deployment sets `token` AND the matching `park-token` in [config] above.
+#
+# `extra_args`: the compose NATS (`docker compose -f infra/compose.yaml up -d
+# nats`, or any `nats-server -js`) — no SurrealDB, unlike vcs: a ticket is one
+# mutable record, not a graph.
+[[daemon]]
+name = "park"
+addr = "127.0.0.1:8015"
+extra_args = ["--nats-url nats://127.0.0.1:4222"]

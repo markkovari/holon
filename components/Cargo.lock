@@ -1642,6 +1642,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "holon-park"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "holon-vcs"
 version = "0.1.0"
 dependencies = [
@@ -2541,6 +2552,27 @@ dependencies = [
  "base64 0.22.1",
  "hmac",
  "sha2",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "park-gateway"
+version = "0.1.0"
+dependencies = [
+ "guestio",
+ "holon-park",
+ "serde",
+ "serde_json",
+ "wit-bindgen-rt",
+]
+
+[[package]]
+name = "park-store"
+version = "0.1.0"
+dependencies = [
+ "holon-park",
+ "serde",
+ "serde_json",
  "wit-bindgen-rt",
 ]
 
