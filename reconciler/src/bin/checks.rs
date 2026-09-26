@@ -45,6 +45,9 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
@@ -111,6 +114,55 @@ struct Args {
     /// environment.
     #[arg(long = "check-env")]
     check_env: Vec<String>,
+
+    /// How many checks may run at once. The rest wait here rather than spawn and
+    /// fight the machine that is running them.
+    ///
+    /// Measured (this repo's own `record-store`, a shared `CARGO_TARGET_DIR`, 12
+    /// cores): 8 to 64 concurrent `cargo build`s of distinct candidates ran in
+    /// 7-10s FLAT — no degradation, no lock contention, and capping each build's
+    /// own `--jobs` made it slower, not faster. Cargo's fingerprint/lock system on
+    /// the shared target dir already arbitrates the real cost (compiling a
+    /// candidate's own changed crate); an external cap on top does not help that.
+    /// This default is a generous safety ceiling against a pathological spike —
+    /// each waiting connection is one thread, and a thread's stack is real memory
+    /// — not a throttle the compile step needs.
+    #[arg(long, default_value_t = 256)]
+    max_concurrent: usize,
+}
+
+/// A bounded number of checks may run at once (`--max-concurrent`); the rest
+/// block here. A panicking handler still releases its permit — `PermitGuard`'s
+/// `Drop` runs on unwind the same as on a normal return.
+struct Permits {
+    available: Mutex<usize>,
+    freed: Condvar,
+}
+
+impl Permits {
+    fn new(max: usize) -> Self {
+        Self { available: Mutex::new(max), freed: Condvar::new() }
+    }
+
+    fn acquire(&self) -> PermitGuard<'_> {
+        let mut n = self.available.lock().unwrap();
+        while *n == 0 {
+            n = self.freed.wait(n).unwrap();
+        }
+        *n -= 1;
+        PermitGuard { permits: self }
+    }
+}
+
+struct PermitGuard<'a> {
+    permits: &'a Permits,
+}
+
+impl Drop for PermitGuard<'_> {
+    fn drop(&mut self) {
+        *self.permits.available.lock().unwrap() += 1;
+        self.permits.freed.notify_one();
+    }
 }
 
 /// One thing to check about a candidate.
@@ -421,10 +473,20 @@ fn evaluate(
     allow: &[Vec<String>],
     req: &Request,
     run_id: &str,
+    base_lock: &Mutex<()>,
 ) -> Result<std::result::Result<Report, NeedTree>> {
-    let base = match ensure_base(args, req) {
-        Ok(b) => b,
-        Err(need) => return Ok(Err(need)),
+    // `write_tree` (inside `ensure_base`) stages a new commit's base at a FIXED,
+    // commit-keyed path, not a request-unique one — two concurrent first-time
+    // requests for the same brand-new commit would race on that one staging
+    // directory. Established commits (the overwhelmingly common case, after the
+    // first candidate of a generation) take this lock only for an `is_dir` check,
+    // microseconds; the actual checks run after it is released, fully concurrent.
+    let base = {
+        let _guard = base_lock.lock().unwrap();
+        match ensure_base(args, req) {
+            Ok(b) => b,
+            Err(need) => return Ok(Err(need)),
+        }
     };
 
     let work = work_root(args).join(run_id);
@@ -600,123 +662,150 @@ fn serve(args: Args) -> Result<()> {
         if token.is_some() { "bearer token required" } else { "none (loopback only)" }
     );
 
-    let mut seq: u64 = 0;
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else { continue };
-        seq += 1;
+    // Each connection is handled on its own thread, bounded by `permits` — see
+    // its own doc for why that bound is generous rather than core-count-sized.
+    // `base_lock` serialises only the rare, cheap "is this commit's base already
+    // on disk" step (`evaluate`'s own doc); everything expensive — materialising a
+    // candidate's scratch tree, running its checks — runs fully concurrently.
+    // `thread::scope` rather than `Arc`ing everything: `args`/`allow`/`token`
+    // outlive every request already, a scope just lets threads borrow them.
+    let permits = Permits::new(args.max_concurrent);
+    let base_lock = Mutex::new(());
+    let seq = AtomicU64::new(0);
+    thread::scope(|scope| {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { continue };
+            let run_id = format!("run-{}", seq.fetch_add(1, Ordering::Relaxed));
+            let permit = permits.acquire();
+            let args = &args;
+            let allow = &allow;
+            let token = &token;
+            let base_lock = &base_lock;
+            scope.spawn(move || {
+                let _permit = permit; // held for the life of this request; released on return or panic
+                handle_connection(stream, args, allow, token, run_id, base_lock);
+            });
+        }
+    });
+    Ok(())
+}
 
-        // Read the request. A WASM guest STREAMS its body, so it arrives chunked
-        // with no content-length — and a reader that only understands
-        // content-length waits for a close that never comes, because the caller is
-        // waiting for the response. That deadlock reads from the outside as the
-        // runner hanging, which is the least informative failure available.
-        let mut buf = Vec::new();
-        let mut chunk = [0u8; 8192];
-        let mut want: Option<usize> = None;
-        let mut chunked = false;
-        loop {
-            match stream.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(n) => {
-                    buf.extend_from_slice(&chunk[..n]);
-                    if want.is_none() && !chunked {
-                        if let Some(pos) = find_headers_end(&buf) {
-                            let head = &buf[..pos];
-                            chunked = is_chunked(head);
-                            if !chunked {
-                                want = content_length(head).map(|len| pos + len);
-                            }
-                        }
-                    }
-                    if let Some(w) = want {
-                        if buf.len() >= w {
-                            break;
-                        }
-                    }
-                    if chunked {
-                        if let Some(pos) = find_headers_end(&buf) {
-                            if chunk_body_complete(&buf[pos..]) {
-                                break;
-                            }
+/// One request, start to finish: read it, check its token, evaluate it, answer
+/// it. Runs on its own thread (see `serve`) — every `continue` a serial version
+/// of this loop had is a `return` here instead.
+fn handle_connection(
+    mut stream: TcpStream,
+    args: &Args,
+    allow: &[Vec<String>],
+    token: &Option<String>,
+    run_id: String,
+    base_lock: &Mutex<()>,
+) {
+    // Read the request. A WASM guest STREAMS its body, so it arrives chunked
+    // with no content-length — and a reader that only understands
+    // content-length waits for a close that never comes, because the caller is
+    // waiting for the response. That deadlock reads from the outside as the
+    // runner hanging, which is the least informative failure available.
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    let mut want: Option<usize> = None;
+    let mut chunked = false;
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if want.is_none() && !chunked {
+                    if let Some(pos) = find_headers_end(&buf) {
+                        let head = &buf[..pos];
+                        chunked = is_chunked(head);
+                        if !chunked {
+                            want = content_length(head).map(|len| pos + len);
                         }
                     }
                 }
-                Err(_) => break,
-            }
-        }
-
-        let Some(pos) = find_headers_end(&buf) else {
-            respond(stream, 400, r#"{"error":"no headers"}"#);
-            continue;
-        };
-        if let Some(expected) = &token {
-            if !bearer(&buf[..pos]).is_some_and(|g| token_matches(expected, &g)) {
-                // The peer, because the useful fact about a rejected call is
-                // WHERE it came from — a misconfigured runner of your own and a
-                // stranger look identical without it.
-                eprintln!(
-                    "comp-checks: rejected an unauthenticated request from {}",
-                    stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "?".into())
-                );
-                respond(
-                    stream,
-                    401,
-                    r#"{"error":"this runner requires a bearer token; see --token-file"}"#,
-                );
-                continue;
-            }
-        }
-        let raw = &buf[pos..];
-        let decoded;
-        let body: &[u8] = if chunked {
-            decoded = dechunk(raw);
-            &decoded
-        } else {
-            raw
-        };
-        let req: Request = match serde_json::from_slice(body) {
-            Ok(r) => r,
-            Err(e) => {
-                respond(stream, 400, &format!(r#"{{"error":"bad request: {e}"}}"#));
-                continue;
-            }
-        };
-
-        let run_id = format!("run-{seq}");
-        match evaluate(&args, &allow, &req, &run_id) {
-            // 409: the runner cannot answer until it has the tree. A distinct
-            // status because "send me the base" is not a failure of the
-            // candidate, and answering 200 with a made-up score would be.
-            Ok(Err(need)) => {
-                eprintln!(
-                    "comp-checks: need the tree for {}",
-                    if need.base_commit.is_empty() {
-                        "(no commit given)"
-                    } else {
-                        &need.base_commit
+                if let Some(w) = want {
+                    if buf.len() >= w {
+                        break;
                     }
-                );
-                respond(stream, 409, &serde_json::to_string(&need).unwrap_or_default());
+                }
+                if chunked {
+                    if let Some(pos) = find_headers_end(&buf) {
+                        if chunk_body_complete(&buf[pos..]) {
+                            break;
+                        }
+                    }
+                }
             }
-            Ok(Ok(report)) => {
-                eprintln!(
-                    "comp-checks: {} — {}/{} passed, score {}, {}",
-                    if report.candidate.is_empty() { "(unnamed)" } else { &report.candidate },
-                    report.passed,
-                    report.total,
-                    report.score,
-                    if report.accepted { "ACCEPTED" } else { "rejected" }
-                );
-                let out = serde_json::to_string(&report).unwrap_or_default();
-                respond(stream, 200, &out);
-            }
-            Err(e) => {
-                eprintln!("comp-checks: {run_id} could not be evaluated: {e:#}");
-                respond(stream, 500, &format!(r#"{{"error":"{e}"}}"#));
-            }
+            Err(_) => break,
         }
     }
-    Ok(())
+
+    let Some(pos) = find_headers_end(&buf) else {
+        respond(stream, 400, r#"{"error":"no headers"}"#);
+        return;
+    };
+    if let Some(expected) = &token {
+        if !bearer(&buf[..pos]).is_some_and(|g| token_matches(expected, &g)) {
+            // The peer, because the useful fact about a rejected call is
+            // WHERE it came from — a misconfigured runner of your own and a
+            // stranger look identical without it.
+            eprintln!(
+                "comp-checks: rejected an unauthenticated request from {}",
+                stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "?".into())
+            );
+            respond(
+                stream,
+                401,
+                r#"{"error":"this runner requires a bearer token; see --token-file"}"#,
+            );
+            return;
+        }
+    }
+    let raw = &buf[pos..];
+    let decoded;
+    let body: &[u8] = if chunked {
+        decoded = dechunk(raw);
+        &decoded
+    } else {
+        raw
+    };
+    let req: Request = match serde_json::from_slice(body) {
+        Ok(r) => r,
+        Err(e) => {
+            respond(stream, 400, &format!(r#"{{"error":"bad request: {e}"}}"#));
+            return;
+        }
+    };
+
+    match evaluate(args, allow, &req, &run_id, base_lock) {
+        // 409: the runner cannot answer until it has the tree. A distinct
+        // status because "send me the base" is not a failure of the
+        // candidate, and answering 200 with a made-up score would be.
+        Ok(Err(need)) => {
+            eprintln!(
+                "comp-checks: need the tree for {}",
+                if need.base_commit.is_empty() { "(no commit given)" } else { &need.base_commit }
+            );
+            respond(stream, 409, &serde_json::to_string(&need).unwrap_or_default());
+        }
+        Ok(Ok(report)) => {
+            eprintln!(
+                "comp-checks: {} — {}/{} passed, score {}, {}",
+                if report.candidate.is_empty() { "(unnamed)" } else { &report.candidate },
+                report.passed,
+                report.total,
+                report.score,
+                if report.accepted { "ACCEPTED" } else { "rejected" }
+            );
+            let out = serde_json::to_string(&report).unwrap_or_default();
+            respond(stream, 200, &out);
+        }
+        Err(e) => {
+            eprintln!("comp-checks: {run_id} could not be evaluated: {e:#}");
+            respond(stream, 500, &format!(r#"{{"error":"{e}"}}"#));
+        }
+    }
 }
 
 fn find_headers_end(buf: &[u8]) -> Option<usize> {
