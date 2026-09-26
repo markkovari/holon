@@ -352,15 +352,19 @@ jobs:
       #                does not exist — `error[E0583]: file not found for
       #                module 'bindings'`, the actual failure this job's
       #                first real (non-timeout) run hit.
-      #   slug_live    self-sufficient — it runs `cargo component check`
-      #                itself before its own `cargo build`. Needs the tool
-      #                and the target installed, same as the line above.
+      #   slug_live    ALMOST self-sufficient — it runs `cargo component
+      #                check -p slug-probe` itself, but then `cargo build -p
+      #                slug-probe -p slug`, and never checks `slug` on its
+      #                own. Same gap, different crate: found the same way as
+      #                `version-probe`, by running this job for real and
+      #                reading the error (`slug/src/lib.rs: file not found
+      #                for module 'bindings'`), not by re-reading the test
+      #                file hard enough to have guessed it up front.
       #
       # So: the wasm target and `cargo-component` (not `wasm-tools` — neither
       # test's own on-the-fly build invokes the metadata-stamping pass that
-      # tool is for), and one explicit bindings-generation step for
-      # `version-probe`, mirroring what `slug_live` already does for its own
-      # probe inline.
+      # tool is for), and one explicit bindings-generation step for both
+      # crates neither test generates for itself.
       - name: Install the wasm target
         run: rustup target add wasm32-wasip2
 
@@ -369,9 +373,9 @@ jobs:
         with:
           tool: cargo-component@0.21.1
 
-      - name: Generate bindings for version-probe (newversion's own on-the-fly build needs them already there)
+      - name: Generate bindings for the crates newversion/slug_live don't generate their own for
         working-directory: components
-        run: cargo component check --release -p version-probe
+        run: cargo component check --release -p version-probe -p slug
 
       # nats-server, and it buys more than any other line in this file.
       #
