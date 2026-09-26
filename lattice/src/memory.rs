@@ -23,10 +23,11 @@ use async_trait::async_trait;
 use crate::{Artifacts, Command, CommandBus, Entry, Inventory};
 
 type Handlers = Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<Command>>>>;
+type Entries = Arc<Mutex<HashMap<String, (Vec<u8>, Instant)>>>;
 
 #[derive(Clone, Default)]
 pub struct MemoryLattice {
-    entries: Arc<Mutex<HashMap<String, (Vec<u8>, Instant)>>>,
+    entries: Entries,
     objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     handlers: Handlers,
 }

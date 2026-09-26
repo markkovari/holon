@@ -405,12 +405,11 @@ fn get_quest(id: &str) -> Reply {
     }
 }
 
+/// The quest's own entry and document, and its journey's document.
+type EditableQuest = (records::Entry, Map<String, Value>, Map<String, Value>);
+
 /// The quest and its journey, when `principal` may edit them.
-fn editable_quest(
-    principal: &Principal,
-    id: &str,
-    event: &str,
-) -> Result<(records::Entry, Map<String, Value>, Map<String, Value>), Reply> {
+fn editable_quest(principal: &Principal, id: &str, event: &str) -> Result<EditableQuest, Reply> {
     let Some((entry, q)) = load(QUESTS, id)? else { return Err(Reply::err(404, "not_found")) };
     let j = load(JOURNEYS, str_of(&q, "journey"))?.map(|(_, j)| j).unwrap_or_default();
     if !may_edit(principal, &j) && str_of(&q, "created_by") != principal.subject {

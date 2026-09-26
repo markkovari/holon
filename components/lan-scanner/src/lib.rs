@@ -75,15 +75,14 @@ fn post(body: Vec<u8>) -> Result<Vec<u8>, ScanError> {
     let net = |m: &str| ScanError::Unavailable(m.to_string());
 
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     // A shared secret, if the deployment set one — see
     // `comp_reconciler::daemon_auth`'s own doc for why loopback
     // binding alone is not a boundary. Absent means the daemon was
     // started with no --token, so there is nothing to send.
     if let Ok(Some(token)) = config::get("lanscan-token") {
         if !token.is_empty() {
-            let _ = headers
-                .set(&"authorization".to_string(), &[format!("Bearer {token}").into_bytes()]);
+            let _ = headers.set("authorization", &[format!("Bearer {token}").into_bytes()]);
         }
     }
     let req = OutgoingRequest::new(headers);

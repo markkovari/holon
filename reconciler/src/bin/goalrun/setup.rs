@@ -90,8 +90,8 @@ pub fn warm_caches(goal: &GoalSpec, args: &Args) -> Vec<String> {
     check_env.push(format!("RUSTUP_TOOLCHAIN={toolchain}"));
 
     warm_the_gate_cache(
-        &goal,
-        &args,
+        goal,
+        args,
         &GateCaches {
             uv_cache: uv_cache.clone(),
             uv_python: uv_python.clone(),

@@ -18,7 +18,7 @@ impl Guest for Component {
         // compare position by position; a missing answer counts wrong.
         let correct =
             key.iter().enumerate().filter(|(i, k)| answers.get(*i) == Some(*k)).count() as u32;
-        let score_pct = if total == 0 { 0 } else { (correct * 100 + total / 2) / total };
+        let score_pct = (correct * 100 + total / 2).checked_div(total).unwrap_or(0);
         GradeResult { correct, total, score_pct, passed: score_pct >= pass_mark }
     }
 

@@ -239,8 +239,7 @@ impl Guest for Component {
             json_str(&prompt),
         );
 
-        let (status, bytes) =
-            post(body.as_bytes()).map_err(|e| DescribeError::ProviderUnavailable(e))?;
+        let (status, bytes) = post(body.as_bytes()).map_err(DescribeError::ProviderUnavailable)?;
 
         let parsed: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|e| DescribeError::BadResponse(format!("not json: {e}")))?;

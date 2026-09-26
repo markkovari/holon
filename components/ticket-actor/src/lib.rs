@@ -27,7 +27,7 @@ pub enum TicketMessage {
 use std::cell::RefCell;
 
 thread_local! {
-    static STATE: RefCell<Option<TicketState>> = RefCell::new(None);
+    static STATE: RefCell<Option<TicketState>> = const { RefCell::new(None) };
 }
 struct Component;
 

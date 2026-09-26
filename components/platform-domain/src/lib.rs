@@ -2716,7 +2716,7 @@ fn manifests(request: &IncomingRequest, id: &str) -> Outcome {
 }
 
 /// What the applier re-applies on its interval (ADR-0004's drift correction).
-
+///
 /// Every record in a collection, following the cursor.
 ///
 /// `list_records` takes a limit and returns a cursor, and a single call with a
@@ -2734,8 +2734,7 @@ fn all_records(collection: &str, cap: usize) -> Vec<records::Entry> {
     const PAGE: u32 = 500;
     let mut out = Vec::new();
     let mut after = String::new();
-    loop {
-        let Ok(page) = records::list_records(collection, PAGE, &after) else { break };
+    while let Ok(page) = records::list_records(collection, PAGE, &after) {
         let empty = page.entries.is_empty();
         out.extend(page.entries);
         if out.len() >= cap {

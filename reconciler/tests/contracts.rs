@@ -147,7 +147,7 @@ fn report_who_consumes_each_capability() {
     );
     println!("  load-bearing (interface: consumers)");
     let mut ranked: Vec<_> = used.iter().map(|(i, c)| (c.len(), i, c)).collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (n, iface, who) in ranked.iter().take(12) {
         println!("    {n:>2}  {iface}  ({})", who.join(", "));
     }

@@ -2,7 +2,6 @@ use crate::api::Reply;
 use crate::bindings::ai::inference::inference as ai;
 use crate::bindings::audit::log::recorder;
 use crate::bindings::audit::log::types;
-use crate::bindings::id::generate::generator;
 use crate::bindings::records::store::store;
 use crate::bindings::wasi::clocks::wall_clock;
 use serde_json::{json, Value};

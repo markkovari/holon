@@ -1,5 +1,5 @@
 use crate::bindings::exports::wasi::http::incoming_handler::{IncomingRequest, ResponseOutparam};
-use crate::bindings::wasi::http::types::{Fields, OutgoingBody, OutgoingResponse, RequestOptions};
+use crate::bindings::wasi::http::types::{Fields, OutgoingBody, OutgoingResponse};
 use crate::reply;
 use crate::tickets;
 
@@ -93,7 +93,7 @@ fn read_body(req: IncomingRequest) -> String {
 
 fn send_reply(response_out: ResponseOutparam, reply: Reply) {
     let headers = Fields::new();
-    headers.set(&"content-type".to_string(), &[reply.content_type.as_bytes().to_vec()]).unwrap();
+    headers.set("content-type", &[reply.content_type.as_bytes().to_vec()]).unwrap();
 
     let response = OutgoingResponse::new(headers);
     response.set_status_code(reply.status).unwrap();

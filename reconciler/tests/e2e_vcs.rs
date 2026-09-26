@@ -1067,7 +1067,7 @@ fn f_real_files_ingest_export_materialize_and_race() {
 
     // Two inserts at one spot, at once: both land, neither conflicts.
     let h = s.head(&ws);
-    let spot = format!("{IS_ZERO_END}");
+    let spot = IS_ZERO_END.to_string();
     let a_copy = resolved.replacen(&spot, &format!("{spot}{BY_A}"), 1);
     let b_copy = resolved.replacen(&spot, &format!("{spot}{BY_B}"), 1);
     let reps = at_once(2, |i| s.ingest(&ws, IDLIST, [&a_copy, &b_copy][i], ["a", "b"][i], Some(h)));

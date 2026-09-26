@@ -144,13 +144,13 @@ fn has_newer_wit(dir: &Path, stamp_time: SystemTime) -> bool {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                if path.file_name().map_or(false, |n| n == "target") {
+                if path.file_name().is_some_and(|n| n == "target") {
                     continue;
                 }
                 if has_newer_wit(&path, stamp_time) {
                     return true;
                 }
-            } else if path.extension().map_or(false, |e| e == "wit") {
+            } else if path.extension().is_some_and(|e| e == "wit") {
                 if let Ok(meta) = path.metadata() {
                     if let Ok(mtime) = meta.modified() {
                         if mtime > stamp_time {
@@ -218,7 +218,7 @@ fn build_components(force: bool) -> Result<()> {
             if let Ok(entries) = fs::read_dir(p) {
                 for entry in entries.flatten() {
                     let file_path = entry.path();
-                    if file_path.extension().map_or(false, |e| e == "wasm") {
+                    if file_path.extension().is_some_and(|e| e == "wasm") {
                         let stem = file_path.file_stem().unwrap().to_string_lossy();
                         let name = stem.replace('_', "-");
                         if !registered.contains(&name) {
@@ -235,7 +235,7 @@ fn build_components(force: bool) -> Result<()> {
     if wasip2_dir.is_dir() {
         for entry in fs::read_dir(wasip2_dir)?.flatten() {
             let file_path = entry.path();
-            if file_path.extension().map_or(false, |e| e == "wasm") {
+            if file_path.extension().is_some_and(|e| e == "wasm") {
                 let stem = file_path.file_stem().unwrap().to_string_lossy();
                 let name = stem.replace('_', "-");
                 let stamp = marker_dir.join(&name);
@@ -550,7 +550,7 @@ fn compose_app(app: Option<&str>, build_ui: bool) -> Result<()> {
                 for e in entries.flatten() {
                     let p = e.path();
                     if p.file_name()
-                        .map_or(false, |n| n.to_string_lossy().starts_with("grocery-domain."))
+                        .is_some_and(|n| n.to_string_lossy().starts_with("grocery-domain."))
                     {
                         fs::copy(&p, canonical)?;
                         break;
@@ -810,7 +810,7 @@ fn host_app(
     // comp-host's own fallback (./comp-kv.db) would put it. `STATE_DIRECTORY`,
     // when the caller set one (systemd, or e2e/photoquest.sh's temp dir), wins —
     // comp-host already reads it.
-    if kv_mode == "sqlite" && std::env::var_os("STATE_DIRECTORY").map_or(true, |v| v.is_empty()) {
+    if kv_mode == "sqlite" && std::env::var_os("STATE_DIRECTORY").is_none_or(|v| v.is_empty()) {
         let dir = Path::new("target/state").join(app);
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         let db = dir.join("kv.db");

@@ -14,7 +14,7 @@
 //!   * `detect` — report spans only (no modification).
 //!   * `redact` — replace each span with a typed placeholder (`[EMAIL]`, …).
 //!   * `mask`   — partially mask, keeping a little context (`j***@e***.com`,
-//!                card last-4, etc.).
+//!     card last-4, etc.).
 //!
 //! Overlap handling: scanners run in a fixed priority order — credit-card and
 //! SSN (the most specific) first, then email and IPv4, then phone last. A

@@ -132,7 +132,7 @@ fn save(img: &image::DynamicImage, out: &Path, quality: u8) -> image::ImageResul
     if !is_jpeg {
         return img.save(out);
     }
-    let file = std::fs::File::create(out).map_err(|e| image::ImageError::IoError(e))?;
+    let file = std::fs::File::create(out).map_err(image::ImageError::IoError)?;
     let mut writer = std::io::BufWriter::new(file);
     let encoder = JpegEncoder::new_with_quality(&mut writer, quality);
     encoder.write_image(img.as_bytes(), img.width(), img.height(), img.color().into())

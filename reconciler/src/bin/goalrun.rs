@@ -560,7 +560,6 @@ fn new_capabilities(files: &Value) -> Vec<(String, String)> {
 /// two cannot disagree — an allow-list naming a different authority than the
 /// base URL fails at the first call, with an egress error about a host nobody
 /// typed rather than about the URL somebody actually mistyped.
-
 pub fn render(fixture: &str, subs: &[(&str, &str)]) -> Result<PathBuf> {
     let mut yaml = std::fs::read_to_string(repo_root().join("fixtures").join(fixture))
         .with_context(|| format!("reading fixture {fixture}"))?;
@@ -1094,7 +1093,7 @@ fn smoke(
         println!("  · that the parts negotiate — the first request costs one small call");
     }
     println!("\nRun for real by dropping --smoke.");
-    return Ok(());
+    Ok(())
 }
 
 /// Run each check once in the checkout, with the caches the gate will use.

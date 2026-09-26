@@ -84,7 +84,10 @@ pub struct Spec {
     /// and present so that moving a spec up a tier is not a rewrite.
     #[serde(default)]
     pub components: Vec<String>,
+    // Read (by tier 3) and round-tripped (by this file's own test), never by
+    // this tier's renderer — see the doc comment above.
     #[serde(default)]
+    #[allow(dead_code)]
     pub strategy: Option<String>,
 
     /// What drives this app's timers and topics, if anything does.

@@ -191,7 +191,7 @@ fn five_components_one_link_graph_and_a_provider_that_is_really_asked_to_embed()
     let again = dense.post(
         &format!(
             "/observe?ns=errors&goal={}&env=env-2&attempt=1",
-            enc(&format!("  MAKE a Slug from a title STRING\n"))
+            enc("  MAKE a Slug from a title STRING\n")
         ),
         "lowercasing the title is not enough — punctuation has to go too, again",
     );

@@ -1,11 +1,9 @@
 use crate::bindings::auth::identity::accounts;
 use crate::bindings::auth::identity::authorizer as authz;
 use crate::bindings::auth::identity::rbac;
-use crate::bindings::auth::identity::types::{AuthError, Permission, Principal};
 use crate::bindings::fsm::workflow::engine as fsm;
 use crate::bindings::ledger::doubleentry::ledger;
 use crate::bindings::payment::stripe::gateway as stripe;
-use crate::bindings::policy::guard::guard;
 use crate::bindings::records::store::store;
 use crate::bindings::wasi::http::types::Method;
 use crate::{Reply, Route};
@@ -105,13 +103,12 @@ fn create_order(route: &Route, body: &str) -> Reply {
     let total_amount = price_per_unit * (req.qty as i64);
     let desc = format!("Order for {} (qty: {})", req.product_id, req.qty);
 
-    let charge_id =
-        match stripe::charge(total_amount, "USD".into(), &req.stripe_source, Some(&desc)) {
-            Ok(id) => id,
-            Err(e) => {
-                return Reply::err(500, &format!("payment_failed: {:?}", e));
-            }
-        };
+    let charge_id = match stripe::charge(total_amount, "USD", &req.stripe_source, Some(&desc)) {
+        Ok(id) => id,
+        Err(e) => {
+            return Reply::err(500, &format!("payment_failed: {:?}", e));
+        }
+    };
 
     let order_id = Uuid::new_v4().to_string();
 
@@ -133,7 +130,7 @@ fn create_order(route: &Route, body: &str) -> Reply {
         ],
     };
 
-    if let Err(_) = ledger::validate(&ledger_entry) {
+    if ledger::validate(&ledger_entry).is_err() {
         return Reply::err(500, "ledger_validation_failed");
     }
 
@@ -147,8 +144,7 @@ fn create_order(route: &Route, body: &str) -> Reply {
     });
 
     // Store ledger entry
-    if let Err(_) =
-        store::create("ledger_entries", &serde_json::to_string(&ledger_data).unwrap(), &[])
+    if store::create("ledger_entries", &serde_json::to_string(&ledger_data).unwrap(), &[]).is_err()
     {
         return Reply::err(500, "store_ledger_failed");
     }
@@ -184,7 +180,7 @@ fn create_order(route: &Route, body: &str) -> Reply {
         },
     );
 
-    if let Err(_) = fsm::create_instance("fulfillment_workflow", &order_entry.id) {
+    if fsm::create_instance("fulfillment_workflow", &order_entry.id).is_err() {
         return Reply::err(500, "fsm_create_failed");
     }
 
@@ -210,27 +206,23 @@ fn list_orders(route: &Route) -> Reply {
     let mut items = Vec::new();
     let mut after = "".to_string();
 
-    loop {
-        if let Ok(page) = store::list_records("orders", 100, &after) {
-            for record in page.entries {
-                if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&record.data) {
-                    parsed["id"] = json!(record.id);
+    while let Ok(page) = store::list_records("orders", 100, &after) {
+        for record in page.entries {
+            if let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&record.data) {
+                parsed["id"] = json!(record.id);
 
-                    let status = match fsm::get_status("fulfillment_workflow", &record.id) {
-                        Ok(s) => s.state,
-                        Err(_) => "unknown".to_string(),
-                    };
-                    parsed["status"] = json!(status);
-                    items.push(parsed);
-                }
+                let status = match fsm::get_status("fulfillment_workflow", &record.id) {
+                    Ok(s) => s.state,
+                    Err(_) => "unknown".to_string(),
+                };
+                parsed["status"] = json!(status);
+                items.push(parsed);
             }
-            if page.next.is_empty() {
-                break;
-            }
-            after = page.next;
-        } else {
+        }
+        if page.next.is_empty() {
             break;
         }
+        after = page.next;
     }
 
     Reply::json(200, json!({ "items": items }))
@@ -254,7 +246,7 @@ pub fn fulfill_order(method: &Method, route: &Route, id: &str, _body: &str) -> R
         return Reply::err(403, "forbidden");
     }
 
-    if let Err(_) = fsm::fire("fulfillment_workflow", id, "pack_and_ship") {
+    if fsm::fire("fulfillment_workflow", id, "pack_and_ship").is_err() {
         return Reply::err(500, "fsm_fire_failed");
     }
 
@@ -269,8 +261,8 @@ pub fn fulfill_order(method: &Method, route: &Route, id: &str, _body: &str) -> R
     };
 
     order_data["status"] = json!("shipped");
-    if let Err(_) =
-        store::update("orders", id, &serde_json::to_string(&order_data).unwrap(), record.revision)
+    if store::update("orders", id, &serde_json::to_string(&order_data).unwrap(), record.revision)
+        .is_err()
     {
         return Reply::err(500, "store_update_failed");
     }

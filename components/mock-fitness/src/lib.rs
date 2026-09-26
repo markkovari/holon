@@ -96,7 +96,7 @@ impl Guest for Component {
         let total: u32 = outcomes.iter().map(|o| o.weight).sum();
         let won: u32 =
             outcomes.iter().filter(|o| o.state == CheckState::Passed).map(|o| o.weight).sum();
-        let score = if total == 0 { 0 } else { (won * 1000) / total };
+        let score = (won * 1000).checked_div(total).unwrap_or(0);
 
         Ok(Verdict { accepted, score, outcomes })
     }
@@ -163,7 +163,7 @@ mod tests {
         let total: u32 = outcomes.iter().map(|o| o.weight).sum();
         let won: u32 =
             outcomes.iter().filter(|o| o.state == CheckState::Passed).map(|o| o.weight).sum();
-        Verdict { accepted, score: if total == 0 { 0 } else { won * 1000 / total }, outcomes }
+        Verdict { accepted, score: (won * 1000).checked_div(total).unwrap_or(0), outcomes }
     }
 
     #[test]

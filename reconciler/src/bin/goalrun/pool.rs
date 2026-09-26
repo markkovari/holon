@@ -223,7 +223,7 @@ pub fn pool_context(
             "- `{}` (in {} app(s)) exports {} — {}",
             c.name,
             c.apps,
-            c.exports.iter().cloned().collect::<Vec<_>>().join(", "),
+            c.exports.to_vec().join(", "),
             c.description
         )
     };

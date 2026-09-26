@@ -167,8 +167,7 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
     }
 
     let mut debit_attempts = 0;
-    let mut final_from_units = 0;
-    loop {
+    let final_from_units = loop {
         if debit_attempts >= 50 {
             return do_complete_err(503, "contended");
         }
@@ -204,17 +203,14 @@ fn write_transfer(route: &Route, body: &str) -> Reply {
                 }
                 doc["units"] = json!(rem.units);
                 match records::update("accounts", from_id, &doc.to_string(), entry.revision) {
-                    Ok(_) => {
-                        final_from_units = rem.units;
-                        break;
-                    }
+                    Ok(_) => break rem.units,
                     Err(records::StoreError::RevisionConflict(_)) => continue,
                     Err(_) => return do_complete_err(503, "store_error"),
                 }
             }
             Err(_) => return do_complete_err(500, "money_error"),
         }
-    }
+    };
 
     // Credit loop
     let final_to_units = match do_credit(to_id, &amount) {

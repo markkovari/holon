@@ -166,8 +166,7 @@ fn seed_journal(body: &str) -> Reply {
 fn peek_journal() -> Reply {
     let mut lines = Vec::new();
     let mut after = String::new();
-    loop {
-        let Ok(page) = records::list_records("journal", 200, &after) else { break };
+    while let Ok(page) = records::list_records("journal", 200, &after) {
         let empty = page.entries.is_empty();
         for e in &page.entries {
             if let Ok(mut v) = serde_json::from_str::<Value>(&e.data) {

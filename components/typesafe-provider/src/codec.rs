@@ -286,10 +286,13 @@ pub fn parse_gate(body: &[u8]) -> Result<u32, ParseError> {
 /// order, each independently `Ok`/`Err` (a provider that left one id out of
 /// its `answers` map fails only that entry, not the whole batch). Only the
 /// envelope itself (bad JSON) fails the whole call.
+/// One question's id, and its independently-parsed answer.
+type AnswerResult = (String, Result<AnswerSpec, ParseError>);
+
 pub fn parse_evaluate(
     body: &[u8],
     questions: &[QuestionItem],
-) -> Result<Vec<(String, Result<AnswerSpec, ParseError>)>, ParseError> {
+) -> Result<Vec<AnswerResult>, ParseError> {
     let answers = answers_of(body)?;
     Ok(questions
         .iter()

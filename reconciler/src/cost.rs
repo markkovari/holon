@@ -47,8 +47,8 @@ pub fn cost_cents(prompt_tokens: u32, completion_tokens: u32, model: &str, off_p
         (1500u64, 7500u64)
     };
 
-    let prompt_cost = (prompt_tokens as u64 * input_price + 999_999) / 1_000_000;
-    let completion_cost = (completion_tokens as u64 * output_price + 999_999) / 1_000_000;
+    let prompt_cost = (prompt_tokens as u64 * input_price).div_ceil(1_000_000);
+    let completion_cost = (completion_tokens as u64 * output_price).div_ceil(1_000_000);
 
     prompt_cost + completion_cost
 }

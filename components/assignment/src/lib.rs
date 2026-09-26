@@ -10,7 +10,6 @@ use crate::bindings::records::store::store as records;
 use crate::bindings::wasi::http::types::{
     Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
 };
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 struct Component;
@@ -25,7 +24,8 @@ impl RouterGuest for Component {
             "load-balanced" => {
                 agents.iter().min_by_key(|a| a.open_tickets).map(|a| a.agent_id.clone())
             }
-            "round-robin" | _ => Some(agents[0].agent_id.clone()),
+            // "round-robin", and anything unrecognised: the same fallback.
+            _ => Some(agents[0].agent_id.clone()),
         }
     }
 }
@@ -100,7 +100,7 @@ impl HttpGuest for Component {
 
 fn emit(out: ResponseOutparam, status: u16, body: String) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"application/json".to_vec()]);
+    let _ = headers.set("content-type", &[b"application/json".to_vec()]);
     let response = OutgoingResponse::new(headers);
     response.set_status_code(status).unwrap();
     let out_body = response.body().unwrap();

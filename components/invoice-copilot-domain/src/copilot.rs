@@ -45,7 +45,7 @@ fn suggest_lines(route: &Route, body: &str, id: &str) -> Reply {
     let total_str = req.get("total").and_then(Value::as_str).unwrap_or("");
     let shares = req.get("shares").and_then(Value::as_u64).unwrap_or(0);
 
-    if prose.is_empty() || total_str.is_empty() || shares < 2 || shares > 12 {
+    if prose.is_empty() || total_str.is_empty() || !(2..=12).contains(&shares) {
         return Reply::err(400, "invalid_suggestion");
     }
 

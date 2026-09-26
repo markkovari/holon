@@ -773,9 +773,6 @@ pub fn check_fusable(spec: &Spec, topo: Topology) -> Result<()> {
     Ok(())
 }
 
-/// Config that belongs to the whole deployment rather than one component.
-pub type Overrides = BTreeMap<String, String>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

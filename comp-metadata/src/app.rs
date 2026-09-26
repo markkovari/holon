@@ -117,7 +117,7 @@ pub fn registered_apps(root_dir: &Path) -> Vec<AppSpec> {
     if let Ok(entries) = fs::read_dir(root_dir.join("apps")) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.extension().map_or(false, |e| e == "toml") {
+            if p.extension().is_some_and(|e| e == "toml") {
                 if let Ok(content) = fs::read_to_string(&p) {
                     match toml::from_str::<AppSpec>(&content) {
                         Ok(spec) => apps.push(spec),
@@ -183,9 +183,9 @@ pub fn discover_apps(root_dir: &Path) -> Vec<App> {
         }
         if comp.ends_with("-probe")
             || comp.ends_with("-suite")
-            || comp == &"adversary"
-            || comp == &"contrast-audit"
-            || comp == &"http-serve"
+            || comp == "adversary"
+            || comp == "contrast-audit"
+            || comp == "http-serve"
         {
             continue;
         }

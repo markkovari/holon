@@ -59,7 +59,9 @@ pub fn conforms(name: &str, version: &str) -> Result<(), String> {
         "template" => {
             // 1.0.0 — placeholder substitution with a fistful of edge cases.
             let r = |t: &str, v: &[(&str, &str)]| template::render(t, v);
-            let cases: &[(&str, &[(&str, &str)], &str)] = &[
+            // (template, substitutions, expected render).
+            type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
+            let cases: &[Case] = &[
                 ("Hi {{name}}", &[("name", "Ada")], "Hi Ada"),
                 ("{{a}}{{b}}", &[("a", "1"), ("b", "2")], "12"),
                 ("{{ name }}", &[("name", "Ada")], "Ada"), // key trimmed

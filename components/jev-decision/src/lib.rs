@@ -25,8 +25,8 @@
 mod bindings;
 
 use bindings::exports::jev::decision::decision::{
-    AnswerKind, Answered, ChoiceRequest, ChoiceResult, DecisionError, GateCriteria, GateRequest,
-    GateResult, Guest, OptionScore, Question, QuestionKind, ScoreRequest, ScoreResult,
+    AnswerKind, Answered, ChoiceRequest, ChoiceResult, DecisionError, GateRequest, GateResult,
+    Guest, OptionScore, Question, QuestionKind, ScoreRequest, ScoreResult,
 };
 
 struct Component;

@@ -115,7 +115,9 @@ fn f64_of(m: &Map<String, Value>, key: &str) -> f64 {
     m.get(key).and_then(Value::as_f64).unwrap_or(0.0)
 }
 
-fn load(collection: &str, id: &str) -> Result<Option<(records::Entry, Map<String, Value>)>, Reply> {
+type EntryDoc = (records::Entry, Map<String, Value>);
+
+fn load(collection: &str, id: &str) -> Result<Option<EntryDoc>, Reply> {
     if !valid_id(id) {
         return Ok(None);
     }

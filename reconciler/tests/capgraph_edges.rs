@@ -158,7 +158,7 @@ fn record_store_is_the_most_consumed_interface() {
         .into_iter()
         .map(|iface| (catalog.consumer_count(&iface), iface))
         .collect();
-    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+    ranked.sort_by_key(|a| std::cmp::Reverse(a.0));
 
     let (top_count, top_iface) = ranked.first().cloned().expect("no interfaces at all");
     assert_eq!(

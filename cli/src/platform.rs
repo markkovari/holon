@@ -185,7 +185,7 @@ pub fn component_ls() -> Result<()> {
         println!("no components yet — `comp component push <file.wasm>`");
         return Ok(());
     }
-    println!("{:<28} {:<10} {:<12} {}", "ID", "VISIBLE", "DISTRIBUTED", "EXPORTS");
+    println!("{:<28} {:<10} {:<12} EXPORTS", "ID", "VISIBLE", "DISTRIBUTED");
     for r in rows {
         let digest = r["digest"].as_str().unwrap_or("");
         let exports: Vec<&str> = r["surface"]["exports"]
@@ -267,7 +267,7 @@ pub fn app_ls() -> Result<()> {
         println!("no deployments yet — `comp app create`");
         return Ok(());
     }
-    println!("{:<26} {:<16} {:<10} {:<9} {}", "ID", "NAME", "STRATEGY", "REVISION", "STATUS");
+    println!("{:<26} {:<16} {:<10} {:<9} STATUS", "ID", "NAME", "STRATEGY", "REVISION");
     for r in rows {
         println!(
             "{:<26} {:<16} {:<10} {:<9} {}",
@@ -336,7 +336,7 @@ pub fn org_ls() -> Result<()> {
     let s = load()?;
     let v = call(&s, "GET", "/api/orgs", None, "application/json")?;
     let rows = v["orgs"].as_array().cloned().unwrap_or_default();
-    println!("{:<24} {:<24} {}", "ID", "NAME", "YOUR ROLE");
+    println!("{:<24} {:<24} YOUR ROLE", "ID", "NAME");
     for r in rows {
         println!(
             "{:<24} {:<24} {}",
@@ -385,7 +385,7 @@ pub fn org_join(code: &str) -> Result<()> {
 pub fn org_members(org: &str) -> Result<()> {
     let s = load()?;
     let v = call(&s, "GET", &format!("/api/orgs/{org}/members"), None, "application/json")?;
-    println!("{:<30} {}", "SUBJECT", "ROLE");
+    println!("{:<30} ROLE", "SUBJECT");
     for m in v["members"].as_array().cloned().unwrap_or_default() {
         println!(
             "{:<30} {}",
@@ -485,7 +485,7 @@ pub fn secret_ls(org: Option<&str>) -> Result<()> {
         println!("no secrets — `comp secret set <name> --from <file>` stores one");
         return Ok(());
     }
-    println!("{:<28} {}", "NAME", "REFERENCE");
+    println!("{:<28} REFERENCE", "NAME");
     for r in rows {
         println!("{:<28} {}", r["name"].as_str().unwrap_or("?"), r["ref"].as_str().unwrap_or("?"));
     }
@@ -621,7 +621,7 @@ fn print_goals(project: &str, rows: &[Value]) {
         println!("no goals — `comp goal add {project} \"what to do\"` queues one");
         return;
     }
-    println!("{:<28} {:<16} {:>4}  {}", "ID", "STATE", "PRI", "TITLE");
+    println!("{:<28} {:<16} {:>4}  TITLE", "ID", "STATE", "PRI");
     for r in rows {
         let title = r["title"].as_str().unwrap_or("?");
         let reason = r["reason"].as_str().unwrap_or_default();

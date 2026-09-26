@@ -35,8 +35,6 @@ struct Seen {
     body: String,
 }
 
-/// `size\r\n<bytes>\r\n` until a zero-length chunk.
-
 /// An OpenAI-compatible endpoint that answers one request and reports it.
 ///
 /// Hand-rolled over `TcpListener` rather than pulled from a crate: it has to

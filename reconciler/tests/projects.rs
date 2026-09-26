@@ -713,7 +713,8 @@ fn a_sub_goal_is_a_goal_with_a_parent_and_the_queue_refuses_the_shapes_that_are_
     // Finish the parts and the parent may finish. `failed` counts as finished
     // here: it is terminal, and a parent held open forever by a part that can
     // never move is worse than one that closes over a failure.
-    for p in [&back] {
+    {
+        let p = &back;
         api.post(&format!("/api/goals/{p}/start"), json!({}));
         api.post(&format!("/api/goals/{p}/review"), json!({}));
         api.post(&format!("/api/goals/{p}/done"), json!({}));

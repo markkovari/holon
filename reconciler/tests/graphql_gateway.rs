@@ -6,7 +6,7 @@ fn graphql_gateway_ping() {
     let dir = repo_root().join("components/target/wasm32-wasip2/release");
 
     // Compose graphql-gateway with proxy-route to satisfy the proxy:route import
-    let catalog = comp_reconciler::plug::Catalog::scan(&[dir.clone()]);
+    let catalog = comp_reconciler::plug::Catalog::scan(std::slice::from_ref(&dir));
     let composed = comp_reconciler::plug::compose("graphql-gateway", &catalog)
         .expect("graphql-gateway composes with proxy-route");
 

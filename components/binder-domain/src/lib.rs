@@ -315,8 +315,7 @@ fn scan<T: for<'de> Deserialize<'de>>(b: &store::Bucket, prefix: &str) -> Vec<T>
     // €60.00 — every number tripled, and every one of them still plausible.
     let mut keys = std::collections::BTreeSet::new();
     let mut cursor = None;
-    loop {
-        let Ok(page) = b.list_keys(cursor.clone()) else { break };
+    while let Ok(page) = b.list_keys(cursor) {
         let before = keys.len();
         keys.extend(page.keys.into_iter().filter(|k| k.starts_with(prefix)));
         match page.cursor {
@@ -347,8 +346,7 @@ fn event_key(ns: &str, e: &StoredEvent) -> String {
 fn keys_under(b: &store::Bucket, prefix: &str) -> Vec<String> {
     let mut out = std::collections::BTreeSet::new();
     let mut cursor = None;
-    loop {
-        let Ok(page) = b.list_keys(cursor.clone()) else { break };
+    while let Ok(page) = b.list_keys(cursor) {
         let before = out.len();
         out.extend(page.keys.into_iter().filter(|k| k.starts_with(prefix)));
         match page.cursor {
@@ -447,8 +445,8 @@ fn stream_photo(
     media_type: String,
 ) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[b"text/event-stream".to_vec()]);
-    let _ = headers.set(&"cache-control".to_string(), &[b"no-cache".to_vec()]);
+    let _ = headers.set("content-type", &[b"text/event-stream".to_vec()]);
+    let _ = headers.set("cache-control", &[b"no-cache".to_vec()]);
     let response = OutgoingResponse::new(headers);
     let _ = response.set_status_code(200);
     let body = response.body().expect("outgoing body");
@@ -517,7 +515,7 @@ fn stream_photo(
 
 fn respond(out: ResponseOutparam, status: u16, content_type: &str, body: &[u8]) {
     let headers = Fields::new();
-    let _ = headers.set(&"content-type".to_string(), &[content_type.as_bytes().to_vec()]);
+    let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
     let resp = OutgoingResponse::new(headers);
     let _ = resp.set_status_code(status);
     let out_body = resp.body().expect("a response has a body");
@@ -1325,10 +1323,10 @@ impl Guest for Component {
                     .filter(|c| c.card_id == id)
                     .collect();
                 // Newest first: a history is read from what just happened backwards.
-                changes.sort_by(|a, b| b.at.cmp(&a.at));
+                changes.sort_by_key(|a| std::cmp::Reverse(a.at));
 
                 let mut evs = events;
-                evs.sort_by(|a, b| b.at.cmp(&a.at));
+                evs.sort_by_key(|a| std::cmp::Reverse(a.at));
 
                 json_out(
                     out,
@@ -1708,7 +1706,7 @@ impl Guest for Component {
                 let step = param(&query, "step")
                     .and_then(|s| s.parse::<u64>().ok())
                     .filter(|s| *s > 0)
-                    .unwrap_or_else(|| if window > 400 * 86_400 { 7 * 86_400 } else { 86_400 });
+                    .unwrap_or(if window > 400 * 86_400 { 7 * 86_400 } else { 86_400 });
                 match pv::value_at(&events, &quotes, until) {
                     Ok(v) => {
                         let since = until.saturating_sub(window.max(step));

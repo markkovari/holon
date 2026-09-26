@@ -47,7 +47,7 @@ pub fn checksum_digit(digits: &str) -> Option<u8> {
     // Once a digit is appended, every existing digit's doubling flips (the
     // rightmost existing digit is no longer the rightmost overall).
     let sum = folded_sum(digits, true)?;
-    Some(((10 - (sum % 10) as u8) % 10) as u8)
+    Some((10 - (sum % 10) as u8) % 10)
 }
 
 /// `digits` with its check digit appended, or `None` on the same bad input as

@@ -153,7 +153,7 @@ fn list(route: &Route) -> Result<Reply, Reply> {
     };
 
     let mut docs: Vec<Value> = entries.iter().map(merged).collect();
-    docs.sort_by(|a, b| key_of(a).cmp(&key_of(b)));
+    docs.sort_by_key(key_of);
     Ok(Reply::json(200, json!({ "requests": docs })))
 }
 

@@ -92,7 +92,7 @@ impl Guest for Component {
             }
         }
 
-        if status >= 200 && status < 300 {
+        if (200..300).contains(&status) {
             let parsed: Value =
                 serde_json::from_slice(&buf).map_err(|e| Error::ApiError(e.to_string()))?;
             if let Some(id) = parsed.get("id").and_then(|v| v.as_str()) {

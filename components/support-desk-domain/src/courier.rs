@@ -3,7 +3,7 @@ use crate::bindings::auth::identity::types::Permission;
 use crate::bindings::notify::dispatch::dispatcher as notify;
 use crate::bindings::outbox::dispatch::queue as outbox;
 use crate::bindings::wasi::http::types::Method;
-use crate::{cfg_u64, now_secs, Reply, Route};
+use crate::{Reply, Route};
 use serde_json::{json, Value};
 
 pub fn handle(method: &Method, route: &Route, _body: &str) -> Reply {

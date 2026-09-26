@@ -28,7 +28,7 @@ pub fn handle(method: &Method, route: &Route, body: &str) -> Reply {
     // 1. Step-up
     let entries =
         records::find_by("stepups", "subject", &json!(subject).to_string()).unwrap_or_default();
-    let is_stepped_up = entries.first().map_or(false, |entry| {
+    let is_stepped_up = entries.first().is_some_and(|entry| {
         let doc: Value = serde_json::from_str(&entry.data).unwrap_or(json!({}));
         let verified_at = doc.get("verified_at").and_then(Value::as_u64).unwrap_or(0);
         let ttl = cfg_u64("stepup-ttl-secs", 900);
