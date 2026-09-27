@@ -39,13 +39,28 @@ env:
 jobs:
   # This used to be ONE job, sequential: build 202 wasm components, test that
   # workspace, then build host/gate binaries, then the two reconciler suites —
-  # ~950s end to end even after the nextest work above. The last three steps
-  # split into TWO parallel jobs below because that is where the real,
-  # measured time is (551s of it) and because — unlike the build step, profiled
-  # and found to have no hidden per-crate loop to cut — the two reconciler test
-  # steps do not depend on EACH OTHER, only on this job's own output. Both
-  # `needs: components` and both re-download the same artifact; neither can
-  # start before this job finishes, but they no longer wait for each other.
+  # ~950s end to end even after the nextest work above. Now FOUR jobs:
+  #
+  #   components              builds the wasm tree, tests that workspace,
+  #                           uploads the `.wasm` artifact.
+  #   native-binaries         builds `comp-host`/`holon` ONCE, in parallel
+  #                           with `components` (no `needs:` between them —
+  #                           its ~90s hides inside that job's ~270s), uploads
+  #                           both as artifacts.
+  #   reconciler-artifact-suites,
+  #   reconciler-fleet-suites  `needs: [components, native-binaries]`, run
+  #                           concurrently with EACH OTHER (551s combined,
+  #                           and they never depended on one another, only on
+  #                           the two jobs above), downloading rather than
+  #                           rebuilding what both need.
+  #
+  # The two reconciler jobs used to build `comp-host`/`holon` independently
+  # rather than via `native-binaries` — measured, twice, at 6-8 minutes PER
+  # JOB against a 48s/45s single warm build, for a reason not fully
+  # root-caused (a `host`/`reconciler`/`cli`-scoped cache restored in two
+  # places was not translating into fast rebuilds the way one job's always
+  # had). Building once and downloading sidesteps the question rather than
+  # keeps debugging it.
   components:
     name: components (wasm32-wasip2)
     runs-on: ubuntu-latest
@@ -116,18 +131,70 @@ jobs:
           retention-days: 30
           compression-level: 9
 
+  # `comp-host` and `holon` live in `host`/`cli` — workspaces neither reconciler
+  # suites job otherwise touches — and BOTH downstream jobs need them, spawned
+  # as real processes rather than linked in. Building them independently in
+  # each downstream job (the first version of this split) was measured, twice,
+  # to cost 6-8 minutes PER JOB instead of the 48s/45s a single warm build
+  # takes — restoring a `host`/`reconciler`/`cli`-scoped cache in two places
+  # was not translating into fast rebuilds the way one job's cache always did,
+  # for a reason not fully root-caused. Building once here and downloading the
+  # two binaries sidesteps the question rather than keeps debugging it: no
+  # workspace this job doesn't otherwise need, built exactly once, and it runs
+  # in PARALLEL with `components` (no `needs:` between them) — its own ~90s
+  # hides entirely inside that job's ~270s.
+  #
+  # NOT `comp-plug`/`comp-mailrelay`: those are `reconciler`'s OWN `[[bin]]`
+  # targets, and cargo already builds a package's own binaries for free via
+  # `CARGO_BIN_EXE_*` while compiling that package's tests — each downstream
+  # job has to compile the `reconciler` crate to run its suites regardless, so
+  # there is no separate cost there to deduplicate.
+  native-binaries:
+    name: native binaries (comp-host, holon)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            host -> target
+            cli -> target
+
+      - name: Build comp-host
+        working-directory: host
+        run: cargo build --release --bin comp-host
+
+      - name: Build holon
+        working-directory: cli
+        run: cargo build --release --bin holon
+
+      # Two artifacts, not one: each is a single file in its own directory,
+      # matching the `components` job's own wasm-artifact pattern exactly
+      # (upload a directory's contents, download into the same directory) —
+      # the shape already proven to round-trip correctly, rather than a new
+      # one (a single multi-file artifact spanning two unrelated directories)
+      # that has not been.
+      - name: Keep comp-host
+        uses: actions/upload-artifact@v4
+        with:
+          name: comp-host-bin
+          path: host/target/release/comp-host
+          retention-days: 1
+
+      - name: Keep holon
+        uses: actions/upload-artifact@v4
+        with:
+          name: holon-bin
+          path: cli/target/release/holon
+          retention-days: 1
+
   reconciler-artifact-suites:
     name: reconciler suites (built artifacts)
-    needs: components
+    needs: [components, native-binaries]
     runs-on: ubuntu-latest
-    # 30, not 20: splitting `rust-cache`'s scope out of the old single job's
-    # combined entry gave `host`/`reconciler`/`cli` a cache key that had never
-    # been saved before, so THIS job's first-ever run rebuilt all three from
-    # scratch — 6m02s and 8m23s for steps that measure 48s/45s warm — and hit a
-    # 20-minute ceiling mid-test. Not a hang: every step up to the timeout
-    # succeeded. 30 covers that one cold run; once it saves a cache under the
-    # new key, later runs should look like the warm numbers again.
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -142,12 +209,11 @@ jobs:
       - name: Fetch main, so the surfaces guard has something to compare against
         run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
+      # Just `reconciler` — this job no longer builds anything in `host` or
+      # `cli` itself, only downloads what `native-binaries` already built.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            host -> target
-            reconciler -> target
-            cli -> target
+          workspaces: reconciler -> target
 
       # The tree the `components` job above just tested — not a rebuild of it.
       # CI jobs do not share a filesystem, so this is how the two get to agree.
@@ -160,10 +226,27 @@ jobs:
       # `publish` spawns `comp-host` through `tests/harness/mod.rs`, so the host
       # has to exist before the step below. Dropped once already when this
       # section was rewritten, and CI failed on
-      # `missing …/comp-host — cargo build --release in host/`.
-      - name: Build the host that `publish` spawns
-        working-directory: host
-        run: cargo build --release --bin comp-host
+      # `missing …/comp-host — cargo build --release in host/` — now downloaded
+      # from `native-binaries` rather than rebuilt (see that job's own comment).
+      - name: Fetch comp-host
+        uses: actions/download-artifact@v4
+        with:
+          name: comp-host-bin
+          path: host/target/release
+
+      - name: Fetch holon
+        uses: actions/download-artifact@v4
+        with:
+          name: holon-bin
+          path: cli/target/release
+
+      # `actions/download-artifact@v4` is documented to preserve Unix file
+      # modes, but this is the one place a silent loss of the executable bit
+      # would surface as a confusing "Permission denied" deep in a test's own
+      # `Command::spawn()` rather than here — cheap insurance, not a sign of
+      # doubt in the tool.
+      - name: Mark the downloaded binaries executable
+        run: chmod +x host/target/release/comp-host cli/target/release/holon
 
       # Four reconciler suites need the BUILT artifacts and nothing else.
       #
@@ -272,12 +355,16 @@ jobs:
       # header pointed at had already been deleted — a released binary nobody ran.
       # ADR-0097's rule, one level up from a generated file: ask what reads it, and if
       # the answer is nothing, delete it and keep the program.
+      #
+      # `comp-host` and `holon` are not built here any more — downloaded above,
+      # from `native-binaries`. Only `comp-plug`/`comp-mailrelay` remain, and
+      # only for the prewarming: `cargo test` below builds `reconciler`'s own
+      # `[[bin]]` targets for free via `CARGO_BIN_EXE_*` regardless, since it
+      # has to compile the `reconciler` package to run its tests either way.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
-          cargo build --release --manifest-path cli/Cargo.toml --bin holon
 
       # Which binaries, established by asking the suites rather than by adding one
       # per failure. The fleet suites (the OTHER job) resolve exactly two by PATH —
@@ -328,13 +415,9 @@ jobs:
 
   reconciler-fleet-suites:
     name: reconciler suites (fleet)
-    needs: components
+    needs: [components, native-binaries]
     runs-on: ubuntu-latest
-    # 30, not 20 — same reasoning as `reconciler-artifact-suites`'s own
-    # comment: a cold `host`/`reconciler`/`cli` cache under the new per-job
-    # scope, not a hang. This job hit the same ceiling mid-test for the same
-    # reason (6m02s/7m52s builds instead of 48s/45s).
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -415,13 +498,16 @@ jobs:
       # above compiles inside that workspace, and without its own cache entry
       # in THIS job it would cold-compile `version-probe` (and its deps) on
       # every run rather than reusing the `components` job's own warm cache.
+      # Not `host`/`cli` any more — this job downloads `comp-host`/`holon`
+      # from `native-binaries` rather than building them (see that job's own
+      # comment for why: building them independently here and in the OTHER
+      # reconciler-suites job measured 6-8 minutes per job, twice, against a
+      # 48s/45s warm single build).
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             components -> target
-            host -> target
             reconciler -> target
-            cli -> target
 
       # The tree the `components` job above just tested — not a rebuild of it.
       # Several fleet suites (`gendeploy`, `newversion`, `generation`, `memory`,
@@ -435,21 +521,31 @@ jobs:
           name: components-wasm32-wasip2
           path: components/target/wasm32-wasip2/release
 
-      # Same two builds as `reconciler-artifact-suites`, done again here rather
-      # than passed as a second artifact: both are cheap once `rust-cache` above
-      # is warm (seconds, not the 45+48s a cold run costs), and a raw-binary
-      # hand-off between jobs is a second thing to keep in sync for a saving
-      # smaller than the artifact-transfer time it would spend either way.
-      - name: Build the host that `publish` spawns
-        working-directory: host
-        run: cargo build --release --bin comp-host
+      # Same two downloads as `reconciler-artifact-suites`, independently —
+      # jobs do not share a filesystem, and this one does not wait on that job
+      # either (both only wait on `components` and `native-binaries`).
+      - name: Fetch comp-host
+        uses: actions/download-artifact@v4
+        with:
+          name: comp-host-bin
+          path: host/target/release
 
+      - name: Fetch holon
+        uses: actions/download-artifact@v4
+        with:
+          name: holon-bin
+          path: cli/target/release
+
+      - name: Mark the downloaded binaries executable
+        run: chmod +x host/target/release/comp-host cli/target/release/holon
+
+      # Only `comp-plug`/`comp-mailrelay` built here now — same reasoning as
+      # `reconciler-artifact-suites`'s own comment: `cargo nextest` below
+      # compiles `reconciler`'s own `[[bin]]` targets for free regardless.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
-          cargo build --release --manifest-path cli/Cargo.toml --bin holon
 
       # THE FLEET SUITES — 41 of them, and until #289 nothing ran a single one.
       #
