@@ -156,41 +156,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # `shared-key`, and ALL FOUR workspaces even though this job only builds
-      # in two of them: root-caused after this split's cache kept missing —
-      # `gh api repos/.../actions/cache/usage` showed the repo sitting at
-      # 10.02 GB, right at GitHub's 10 GB-per-repo cache cap, because
-      # `rust-cache`'s default (`add-job-id-key: true`) gives every distinctly
-      # NAMED job its own cache slot: what was one ~1.5 GB entry for
-      # `components`+`host`+`reconciler`+`cli` became three (this job, and
-      # both reconciler-suites jobs below), and the resulting overflow evicted
-      # each one before the next job ever got to restore it — "No cache
-      # found." on every single restore, confirmed in the raw log, not
-      # inferred. `shared-key` collapses this job and both of theirs back to
-      # ONE entry; listing the SAME four workspaces in all three (rather than
-      # each job's own narrower need) means whichever of them finishes first
-      # saves the complete set, not just its own slice — a partial save here
-      # would silently starve the other two of the workspaces THEY need.
+      # ITS OWN cache, not `reconciler-pipeline` (the shared one below, in both
+      # reconciler-suites jobs) — that was tried, and it was the wrong fix.
+      # This job never builds anything in `components` or `reconciler`, so
+      # restoring the shared cache bought it nothing there; and once neither
+      # of the two reconciler jobs builds `host`/`cli` any more either (they
+      # download `comp-host`/`holon` from HERE rather than compiling them),
+      # nothing ever populates `host`/`cli` in the shared cache either — this
+      # job's own `save-if: false` phase was correctly protecting the shared
+      # cache from a thin overwrite, but left this job restoring a cache that
+      # could never help it, for a cost (~7 min, unimproved across runs) that
+      # was quietly eating most of the parallelism win the whole split exists
+      # for.
       #
-      # `save-if: false` HERE specifically, after the shared cache genuinely
-      # restored (`Cache hit ... full match: true`, confirmed in the raw log)
-      # and the two reconciler-suites jobs STILL recompiled ~500 crates from
-      # scratch. Cause: this job is the fastest of the three and always wins
-      # the save race, but it never touches `components` or `reconciler` at
-      # all — so every save it wins commits an empty/near-empty state for the
-      # two workspaces that actually matter, permanently starving the shared
-      # cache of the one thing worth caching. It still RESTORES from whatever
-      # the other two save (their build output overlaps what this job needs
-      # for `host`/`cli` too), just never overwrites their work with its own
-      # thinner slice.
+      # A small, PLAIN, job-scoped cache (default keying, no `shared-key`,
+      # default `save-if: true`) for exactly what this job touches — `host` +
+      # `cli`, nothing else — has no one else to race against and nothing
+      # else to starve. The `reconciler-pipeline` history (root-caused over
+      # the last several commits: a 10 GB-per-repo cap, then a save-race
+      # starving the workspaces that mattered) was entirely about MULTIPLE
+      # jobs sharing overlapping workspaces; this job's workspaces overlap
+      # with no one, so it never needed to be part of that story.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: reconciler-pipeline
-          save-if: false
           workspaces: |
-            components -> target
             host -> target
-            reconciler -> target
             cli -> target
 
       - name: Build comp-host
@@ -240,22 +230,20 @@ jobs:
       - name: Fetch main, so the surfaces guard has something to compare against
         run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
-      # `shared-key` with `native-binaries` and `reconciler-fleet-suites` — see
-      # that job's own comment for why (a per-job cache key tripled this
-      # pipeline's cache footprint past GitHub's 10 GB-per-repo cap, and the
-      # eviction that followed meant NONE of the three ever actually restored
-      # a cache, only rebuilt from scratch every time). All four workspaces
-      # listed here too, not just the `reconciler` this job itself builds in —
-      # a save from THIS job must carry `host`/`cli`/`components` forward
-      # complete, or whichever job saves next silently drops them.
+      # `shared-key` with `reconciler-fleet-suites` — see `native-binaries`'s
+      # own comment for the fuller history (a per-job cache key tripled this
+      # pipeline's footprint past GitHub's 10 GB cap; the fix after that
+      # starved the shared cache a different way; `host`/`cli` used to be
+      # listed here too, until `native-binaries` got its own small cache
+      # instead — this job never built anything there, only downloads
+      # `comp-host`/`holon`, so keeping them here was dead weight once
+      # nothing populated them any more either).
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: reconciler-pipeline
           workspaces: |
             components -> target
-            host -> target
             reconciler -> target
-            cli -> target
 
       # The tree the `components` job above just tested — not a rebuild of it.
       # CI jobs do not share a filesystem, so this is how the two get to agree.
@@ -536,22 +524,18 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # `shared-key` with `native-binaries` and `reconciler-artifact-suites` —
-      # see `native-binaries`'s own comment for the full reasoning: a per-job
-      # cache key tripled this pipeline's footprint past GitHub's 10 GB-per-
-      # repo cap, and the eviction that followed meant "No cache found." on
-      # every restore, confirmed in the raw log. All four workspaces listed
-      # here too (not just `components`+`reconciler`, which is all this job
-      # itself touches) — a save from here must carry `host`/`cli` forward
-      # complete, or the next job to save silently drops them.
+      # `shared-key` with `reconciler-artifact-suites` — see `native-
+      # binaries`'s own comment for the fuller history. `host`/`cli` no
+      # longer listed: this job doesn't build there either any more (`comp-
+      # host`/`holon` are downloaded from `native-binaries`, which now keeps
+      # its own small cache for exactly those two), so they were dead weight
+      # once nothing populated them.
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: reconciler-pipeline
           workspaces: |
             components -> target
-            host -> target
             reconciler -> target
-            cli -> target
 
       # The tree the `components` job above just tested — not a rebuild of it.
       # Several fleet suites (`gendeploy`, `newversion`, `generation`, `memory`,
