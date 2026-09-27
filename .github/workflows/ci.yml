@@ -171,9 +171,22 @@ jobs:
       # each job's own narrower need) means whichever of them finishes first
       # saves the complete set, not just its own slice — a partial save here
       # would silently starve the other two of the workspaces THEY need.
+      #
+      # `save-if: false` HERE specifically, after the shared cache genuinely
+      # restored (`Cache hit ... full match: true`, confirmed in the raw log)
+      # and the two reconciler-suites jobs STILL recompiled ~500 crates from
+      # scratch. Cause: this job is the fastest of the three and always wins
+      # the save race, but it never touches `components` or `reconciler` at
+      # all — so every save it wins commits an empty/near-empty state for the
+      # two workspaces that actually matter, permanently starving the shared
+      # cache of the one thing worth caching. It still RESTORES from whatever
+      # the other two save (their build output overlaps what this job needs
+      # for `host`/`cli` too), just never overwrites their work with its own
+      # thinner slice.
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: reconciler-pipeline
+          save-if: false
           workspaces: |
             components -> target
             host -> target
