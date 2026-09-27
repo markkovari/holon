@@ -37,23 +37,36 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # This used to be ONE job, sequential: build 202 wasm components, test that
+  # workspace, then build host/gate binaries, then the two reconciler suites —
+  # ~950s end to end even after the nextest work above. Now FOUR jobs:
+  #
+  #   components              builds the wasm tree, tests that workspace,
+  #                           uploads the `.wasm` artifact.
+  #   native-binaries         builds `comp-host`/`holon` ONCE, in parallel
+  #                           with `components` (no `needs:` between them —
+  #                           its ~90s hides inside that job's ~270s), uploads
+  #                           both as artifacts.
+  #   reconciler-artifact-suites,
+  #   reconciler-fleet-suites  `needs: [components, native-binaries]`, run
+  #                           concurrently with EACH OTHER (551s combined,
+  #                           and they never depended on one another, only on
+  #                           the two jobs above), downloading rather than
+  #                           rebuilding what both need.
+  #
+  # The two reconciler jobs used to build `comp-host`/`holon` independently
+  # rather than via `native-binaries` — measured, twice, at 6-8 minutes PER
+  # JOB against a 48s/45s single warm build, for a reason not fully
+  # root-caused (a `host`/`reconciler`/`cli`-scoped cache restored in two
+  # places was not translating into fast rebuilds the way one job's always
+  # had). Building once and downloading sidesteps the question rather than
+  # keeps debugging it.
   components:
     name: components (wasm32-wasip2)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      # `witsurface` asks whether a shape changed WITHOUT its version, and answers
-      # it by comparing against the base branch — the shape that shipped, which a
-      # branch cannot rewrite by regenerating a file. `actions/checkout` fetches one
-      # ref, so `origin/main` is not here and the guard would SKIP: a guard that
-      # quietly does not run is worse than the hole it was written to close.
-      #
-      # `--depth=1` and one ref: the comparison needs the file at main's tip and
-      # nothing else, so this is a few hundred kilobytes rather than the history.
-      - name: Fetch main, so the surfaces guard has something to compare against
-        run: git fetch --depth=1 origin main:refs/remotes/origin/main
 
       - name: Install the wasm target
         run: rustup target add wasm32-wasip2
@@ -67,55 +80,14 @@ jobs:
       # because wasm32-wasip2 components come out anonymous. `wit-reflect`
       # asserts that name, so a raw `cargo build` produces a tree that fails its
       # own tests — which is exactly what this workflow's first run did.
-      - name: Install cargo-component, wasm-tools and cargo-nextest
+      - name: Install cargo-component and wasm-tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-component@0.21.1,wasm-tools,cargo-nextest
+          tool: cargo-component@0.21.1,wasm-tools
 
-      # nats-server, and it buys more than any other line in this file.
-      #
-      # FORTY-ONE reconciler suites spawn a fleet, and a fleet is NATS. Without the
-      # binary every one of them was excluded, and this file's own note said so —
-      # "drop nats-server from PATH -> 21 of the rest spawn NATS". They were not run
-      # anywhere, by anything, and one of them (`gendeploy`) had been RED since #158
-      # over a drifted interface version that nothing was watching (#214).
-      #
-      # Measured before adding it, on a machine matching this runner — nats-server
-      # present, no model shim, no SurrealDB:
-      #
-      #     57 passed, 4 failed, 6 ignored, in 469s
-      #
-      # The four were `gate_dispatch`, red on purpose while goal 10's parts were
-      # stubs. Goal 10 landed in #220, so they pass and it runs with the artifact
-      # suites — the measurement above is left as it was taken.
-      #
-      # Not `taiki-e/install-action`: it does not carry nats-server. A pinned release
-      # tarball is two lines and cannot surprise this job on a morning nobody touched
-      # a workflow — the same reasoning the `actionlint` step gives for pinning.
-      - name: Install nats-server
-        run: |
-          ver=v2.10.22
-          url="https://github.com/nats-io/nats-server/releases/download/${ver}/nats-server-${ver}-linux-amd64.tar.gz"
-          curl -fsSL "$url" | tar xz --strip-components=1 -C /usr/local/bin \
-            "nats-server-${ver}-linux-amd64/nats-server"
-          nats-server --version
-
-      # THREE workspaces, not one. This job builds `comp-host` (for the `publish`
-      # suite) and the reconciler's test binaries, and with only `components`
-      # declared those two compiled from scratch on every run:
-      #
-      #     346s  Build the host that `publish` spawns
-      #     216s  Test the reconciler suites that read built artifacts
-      #
-      # — 562s of a 780s job, to produce binaries the `native workspaces` jobs
-      # build in 54s and 95s from their own caches. Measured on run 33107417721.
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            components -> target
-            host -> target
-            reconciler -> target
-            cli -> target
+          workspaces: components -> target
 
       # The project's own entry point, not an approximation of it. CI that
       # builds differently from the repo is CI that answers a question nobody
@@ -123,6 +95,14 @@ jobs:
       # `force=1`: the incremental path keys on stamp markers under `target/`, and a
       # cache restore can bring those back alongside artifacts it did not verify.
       # CI is the one place that should always do the whole thing.
+      #
+      # Profiled after the nextest work above shifted this job's bottleneck:
+      # this is ONE `cargo build --release --target wasm32-wasip2` for the
+      # whole workspace, not a per-crate loop, and rustc's own incremental
+      # cache (restored above) applies regardless of `--force` — it only skips
+      # a WIT content-hash short-circuit and a metadata re-stamp check, both
+      # cheap file-level operations. ~190-200s measured, twice, on identical
+      # input; no hidden cost found to cut here.
       - name: Build
         run: cargo xtask build --force
 
@@ -133,7 +113,9 @@ jobs:
         run: cargo test --workspace --exclude browser-automation
 
       # The 25 MB this job actually produced, kept so no other machine has to
-      # rebuild 7.1 GB of intermediates to get them.
+      # rebuild 7.1 GB of intermediates to get them — AND so the two jobs below
+      # can download the exact tree this job tested rather than rebuilding it
+      # twice in parallel (which would also work, just slower and doubled).
       #
       # These are the bytes `cargo xtask build --force` makes — the same entry point, with the
       # `wasm-tools metadata add` name stamp already applied — so a fetched tree is
@@ -149,18 +131,158 @@ jobs:
           retention-days: 30
           compression-level: 9
 
+  # `comp-host` and `holon` live in `host`/`cli` — workspaces neither reconciler
+  # suites job otherwise touches — and BOTH downstream jobs need them, spawned
+  # as real processes rather than linked in. Building them independently in
+  # each downstream job (the first version of this split) was measured, twice,
+  # to cost 6-8 minutes PER JOB instead of the 48s/45s a single warm build
+  # takes — restoring a `host`/`reconciler`/`cli`-scoped cache in two places
+  # was not translating into fast rebuilds the way one job's cache always did,
+  # for a reason not fully root-caused. Building once here and downloading the
+  # two binaries sidesteps the question rather than keeps debugging it: no
+  # workspace this job doesn't otherwise need, built exactly once, and it runs
+  # in PARALLEL with `components` (no `needs:` between them) — its own ~90s
+  # hides entirely inside that job's ~270s.
+  #
+  # NOT `comp-plug`/`comp-mailrelay`: those are `reconciler`'s OWN `[[bin]]`
+  # targets, and cargo already builds a package's own binaries for free via
+  # `CARGO_BIN_EXE_*` while compiling that package's tests — each downstream
+  # job has to compile the `reconciler` crate to run its suites regardless, so
+  # there is no separate cost there to deduplicate.
+  native-binaries:
+    name: native binaries (comp-host, holon)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # ITS OWN cache, not `reconciler-pipeline` (the shared one below, in both
+      # reconciler-suites jobs) — that was tried, and it was the wrong fix.
+      # This job never builds anything in `components` or `reconciler`, so
+      # restoring the shared cache bought it nothing there; and once neither
+      # of the two reconciler jobs builds `host`/`cli` any more either (they
+      # download `comp-host`/`holon` from HERE rather than compiling them),
+      # nothing ever populates `host`/`cli` in the shared cache either — this
+      # job's own `save-if: false` phase was correctly protecting the shared
+      # cache from a thin overwrite, but left this job restoring a cache that
+      # could never help it, for a cost (~7 min, unimproved across runs) that
+      # was quietly eating most of the parallelism win the whole split exists
+      # for.
+      #
+      # A small, PLAIN, job-scoped cache (default keying, no `shared-key`,
+      # default `save-if: true`) for exactly what this job touches — `host` +
+      # `cli`, nothing else — has no one else to race against and nothing
+      # else to starve. The `reconciler-pipeline` history (root-caused over
+      # the last several commits: a 10 GB-per-repo cap, then a save-race
+      # starving the workspaces that mattered) was entirely about MULTIPLE
+      # jobs sharing overlapping workspaces; this job's workspaces overlap
+      # with no one, so it never needed to be part of that story.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            host -> target
+            cli -> target
+
+      - name: Build comp-host
+        working-directory: host
+        run: cargo build --release --bin comp-host
+
+      - name: Build holon
+        working-directory: cli
+        run: cargo build --release --bin holon
+
+      # Two artifacts, not one: each is a single file in its own directory,
+      # matching the `components` job's own wasm-artifact pattern exactly
+      # (upload a directory's contents, download into the same directory) —
+      # the shape already proven to round-trip correctly, rather than a new
+      # one (a single multi-file artifact spanning two unrelated directories)
+      # that has not been.
+      - name: Keep comp-host
+        uses: actions/upload-artifact@v4
+        with:
+          name: comp-host-bin
+          path: host/target/release/comp-host
+          retention-days: 1
+
+      - name: Keep holon
+        uses: actions/upload-artifact@v4
+        with:
+          name: holon-bin
+          path: cli/target/release/holon
+          retention-days: 1
+
+  reconciler-artifact-suites:
+    name: reconciler suites (built artifacts)
+    needs: [components, native-binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # `witsurface` asks whether a shape changed WITHOUT its version, and answers
+      # it by comparing against the base branch — the shape that shipped, which a
+      # branch cannot rewrite by regenerating a file. `actions/checkout` fetches one
+      # ref, so `origin/main` is not here and the guard would SKIP: a guard that
+      # quietly does not run is worse than the hole it was written to close.
+      #
+      # `--depth=1` and one ref: the comparison needs the file at main's tip and
+      # nothing else, so this is a few hundred kilobytes rather than the history.
+      - name: Fetch main, so the surfaces guard has something to compare against
+        run: git fetch --depth=1 origin main:refs/remotes/origin/main
+
+      # `shared-key` with `reconciler-fleet-suites` — see `native-binaries`'s
+      # own comment for the fuller history (a per-job cache key tripled this
+      # pipeline's footprint past GitHub's 10 GB cap; the fix after that
+      # starved the shared cache a different way; `host`/`cli` used to be
+      # listed here too, until `native-binaries` got its own small cache
+      # instead — this job never built anything there, only downloads
+      # `comp-host`/`holon`, so keeping them here was dead weight once
+      # nothing populated them any more either).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: reconciler-pipeline
+          workspaces: |
+            components -> target
+            reconciler -> target
+
+      # The tree the `components` job above just tested — not a rebuild of it.
+      # CI jobs do not share a filesystem, so this is how the two get to agree.
+      - name: Fetch the wasm components this job's suites read
+        uses: actions/download-artifact@v4
+        with:
+          name: components-wasm32-wasip2
+          path: components/target/wasm32-wasip2/release
+
       # `publish` spawns `comp-host` through `tests/harness/mod.rs`, so the host
       # has to exist before the step below. Dropped once already when this
       # section was rewritten, and CI failed on
-      # `missing …/comp-host — cargo build --release in host/`.
-      - name: Build the host that `publish` spawns
-        working-directory: host
-        run: cargo build --release --bin comp-host
+      # `missing …/comp-host — cargo build --release in host/` — now downloaded
+      # from `native-binaries` rather than rebuilt (see that job's own comment).
+      - name: Fetch comp-host
+        uses: actions/download-artifact@v4
+        with:
+          name: comp-host-bin
+          path: host/target/release
+
+      - name: Fetch holon
+        uses: actions/download-artifact@v4
+        with:
+          name: holon-bin
+          path: cli/target/release
+
+      # `actions/download-artifact@v4` is documented to preserve Unix file
+      # modes, but this is the one place a silent loss of the executable bit
+      # would surface as a confusing "Permission denied" deep in a test's own
+      # `Command::spawn()` rather than here — cheap insurance, not a sign of
+      # doubt in the tool.
+      - name: Mark the downloaded binaries executable
+        run: chmod +x host/target/release/comp-host cli/target/release/holon
 
       # Four reconciler suites need the BUILT artifacts and nothing else.
       #
       # They live here because `components/target/wasm32-wasip2/release/*.wasm`
-      # is produced by this job and CI jobs do not share a filesystem. Two of
+      # is produced by the `components` job and CI jobs do not share a
+      # filesystem — downloaded above rather than rebuilt. Two of
       # them — `capsearch` and `contracts` — were red on main and had never run.
       #
       # The other integration suites are NOT here: they spawn `nats-server`,
@@ -209,7 +331,8 @@ jobs:
       #                    never named here.
       #
       # 41 of 59 reconciler test files are absent from this workflow, 61 of 118 test
-      # functions, and almost all of that is fair: they spawn a fleet.
+      # functions, and almost all of that is fair: they spawn a fleet, in the
+      # `reconciler-fleet-suites` job below.
       #
       # `checks` is the ONLY one that is not. Seven others looked addable by reading
       # them — they mention SurrealDB, and this job already runs `capgraph_store`
@@ -262,19 +385,23 @@ jobs:
       # header pointed at had already been deleted — a released binary nobody ran.
       # ADR-0097's rule, one level up from a generated file: ask what reads it, and if
       # the answer is nothing, delete it and keep the program.
+      #
+      # `comp-host` and `holon` are not built here any more — downloaded above,
+      # from `native-binaries`. Only `comp-plug`/`comp-mailrelay` remain, and
+      # only for the prewarming: `cargo test` below builds `reconciler`'s own
+      # `[[bin]]` targets for free via `CARGO_BIN_EXE_*` regardless, since it
+      # has to compile the `reconciler` package to run its tests either way.
       - name: Build the binaries the gates and suites spawn
         run: |
-          cargo build --release --manifest-path host/Cargo.toml --bin comp-host
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
-          cargo build --release --manifest-path cli/Cargo.toml --bin holon
 
       # Which binaries, established by asking the suites rather than by adding one
-      # per failure. The fleet suites resolve exactly two by PATH — `comp-host` and
-      # `cli/.../holon` — and three more through `CARGO_BIN_EXE_*`, which cargo builds
-      # for a test automatically and no step has to. `secretcli` wanted `holon` and
-      # said so plainly ("cargo build --release in cli/"), which is the only reason
-      # this was one round trip and not four.
+      # per failure. The fleet suites (the OTHER job) resolve exactly two by PATH —
+      # `comp-host` and `cli/.../holon` — and three more through `CARGO_BIN_EXE_*`,
+      # which cargo builds for a test automatically and no step has to. `secretcli`
+      # wanted `holon` and said so plainly ("cargo build --release in cli/"), which
+      # is the only reason this was one round trip and not four.
 
       # COMP_HOST is set even though the fallback path is the one the step above
       # builds, and that is the point: with it set, `gatelib::host_bin` finds no
@@ -296,7 +423,7 @@ jobs:
       # fork/exec overhead on this runner's 4 vCPUs than its parallelism bought
       # back: two real CI runs on the same commit put it at 4m46s and 6m07s
       # under nextest against 5m04s here, under `cargo test`'s one-process-per-
-      # BINARY, internally-threaded model — flat at best. The fleet suite below
+      # BINARY, internally-threaded model — flat at best. The fleet suite job
       # is the opposite (60 tests, each 5-30s) and keeps nextest for exactly
       # that reason: parallelism wins when the per-test cost is the large part.
       - name: Test the reconciler suites that read built artifacts
@@ -316,24 +443,158 @@ jobs:
           --test gate_answer --test gate_copilot --test gate_verdict --test gate_reply --test gate_assist
           --test gate_relay --test gate_notify --test gate_dispatch
 
-      # THE FLEET SUITES — 41 of them, and until this commit nothing ran a single one.
+  reconciler-fleet-suites:
+    name: reconciler suites (fleet)
+    needs: [components, native-binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Two of these 41 suites don't just READ the wasm artifact downloaded
+      # below — they compile a component fresh, at test-time, on whatever
+      # runner they land on:
+      #
+      #   newversion   `build()` runs a plain `cargo build -p version-probe`
+      #                and assumes `bindings.rs` already exists (it does not
+      #                generate it itself) — true in the old single job,
+      #                where `cargo xtask build --force` had already run
+      #                first on the SAME runner. False here: this job never
+      #                runs that build, so a `bindings.rs` gitignored and
+      #                never uploaded (only the compiled `.wasm` is) simply
+      #                does not exist — `error[E0583]: file not found for
+      #                module 'bindings'`, the actual failure this job's
+      #                first real (non-timeout) run hit.
+      #   slug_live    ALMOST self-sufficient — it runs `cargo component
+      #                check -p slug-probe` itself, but then `cargo build -p
+      #                slug-probe -p slug`, and never checks `slug` on its
+      #                own. Same gap, different crate: found the same way as
+      #                `version-probe`, by running this job for real and
+      #                reading the error (`slug/src/lib.rs: file not found
+      #                for module 'bindings'`), not by re-reading the test
+      #                file hard enough to have guessed it up front.
+      #
+      # So: the wasm target and `cargo-component` (not `wasm-tools` — neither
+      # test's own on-the-fly build invokes the metadata-stamping pass that
+      # tool is for), and one explicit bindings-generation step for both
+      # crates neither test generates for itself.
+      - name: Install the wasm target
+        run: rustup target add wasm32-wasip2
+
+      - name: Install cargo-component
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-component@0.21.1
+
+      - name: Generate bindings for the crates newversion/slug_live don't generate their own for
+        working-directory: components
+        run: cargo component check --release -p version-probe -p slug
+
+      # nats-server, and it buys more than any other line in this file.
+      #
+      # FORTY-ONE reconciler suites spawn a fleet, and a fleet is NATS. Without the
+      # binary every one of them was excluded, and this file's own note said so —
+      # "drop nats-server from PATH -> 21 of the rest spawn NATS". They were not run
+      # anywhere, by anything, and one of them (`gendeploy`) had been RED since #158
+      # over a drifted interface version that nothing was watching (#214).
+      #
+      # Measured before adding it, on a machine matching this runner — nats-server
+      # present, no model shim, no SurrealDB:
+      #
+      #     57 passed, 4 failed, 6 ignored, in 469s
+      #
+      # The four were `gate_dispatch`, red on purpose while goal 10's parts were
+      # stubs. Goal 10 landed in #220, so they pass and run in the OTHER job now
+      # (`reconciler-artifact-suites`) — the measurement above is left as it was
+      # taken.
+      #
+      # Not `taiki-e/install-action`: it does not carry nats-server. A pinned release
+      # tarball is two lines and cannot surprise this job on a morning nobody touched
+      # a workflow — the same reasoning the `actionlint` step gives for pinning.
+      - name: Install nats-server
+        run: |
+          ver=v2.10.22
+          url="https://github.com/nats-io/nats-server/releases/download/${ver}/nats-server-${ver}-linux-amd64.tar.gz"
+          curl -fsSL "$url" | tar xz --strip-components=1 -C /usr/local/bin \
+            "nats-server-${ver}-linux-amd64/nats-server"
+          nats-server --version
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      # `shared-key` with `reconciler-artifact-suites` — see `native-
+      # binaries`'s own comment for the fuller history. `host`/`cli` no
+      # longer listed: this job doesn't build there either any more (`comp-
+      # host`/`holon` are downloaded from `native-binaries`, which now keeps
+      # its own small cache for exactly those two), so they were dead weight
+      # once nothing populated them.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: reconciler-pipeline
+          workspaces: |
+            components -> target
+            reconciler -> target
+
+      # The tree the `components` job above just tested — not a rebuild of it.
+      # Several fleet suites (`gendeploy`, `newversion`, `generation`, `memory`,
+      # `environments`, `forge`...) deploy or compose real components, so this
+      # job needs the same artifacts the OTHER reconciler-suites job downloads —
+      # independently, since jobs do not share a filesystem and this one does
+      # not wait on that job either (both only wait on `components`).
+      - name: Fetch the wasm components this job's suites read
+        uses: actions/download-artifact@v4
+        with:
+          name: components-wasm32-wasip2
+          path: components/target/wasm32-wasip2/release
+
+      # Same two downloads as `reconciler-artifact-suites`, independently —
+      # jobs do not share a filesystem, and this one does not wait on that job
+      # either (both only wait on `components` and `native-binaries`).
+      - name: Fetch comp-host
+        uses: actions/download-artifact@v4
+        with:
+          name: comp-host-bin
+          path: host/target/release
+
+      - name: Fetch holon
+        uses: actions/download-artifact@v4
+        with:
+          name: holon-bin
+          path: cli/target/release
+
+      - name: Mark the downloaded binaries executable
+        run: chmod +x host/target/release/comp-host cli/target/release/holon
+
+      # Only `comp-plug`/`comp-mailrelay` built here now — same reasoning as
+      # `reconciler-artifact-suites`'s own comment: `cargo nextest` below
+      # compiles `reconciler`'s own `[[bin]]` targets for free regardless.
+      - name: Build the binaries the gates and suites spawn
+        run: |
+          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
+          cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
+
+      # THE FLEET SUITES — 41 of them, and until #289 nothing ran a single one.
       #
       # Every one spawns NATS, which is why they were all excluded and why the
-      # `nats-server` step above exists. Kept as a SEPARATE step rather than folded
-      # into the list above so a fleet failure is legible on its own: these are the
-      # slow ones, they share a machine, and mixing them into the artifact suites
-      # would make one red tick mean either.
+      # `nats-server` step above exists. Kept as a SEPARATE JOB (once a separate
+      # step in the same job as the suites above) so a fleet failure is legible
+      # on its own, and — since the split — so it runs at the same time as that
+      # job rather than after it: these are the slow ones, and they no longer
+      # share a machine with the other suites, only the `components` job's
+      # output.
       #
       # `gate_dispatch` is not here: it reads built artifacts and spawns no fleet,
-      # so it belongs to the step above, which is where it now runs.
+      # so it belongs to `reconciler-artifact-suites`, which is where it runs.
       # `nextest`, `--profile ci`, and an exact (`=name`) match per binary — the
-      # artifact-suite step above was tried this way too and reverted (measured
-      # flat-to-worse there: 92 small, fast tests do not amortize nextest's
-      # per-test process overhead on this runner). THIS step is the opposite:
-      # 41 binaries that used to run one at a time, each spawning a real fleet
-      # that takes 5-30s on its own, now share every idle core instead — a real,
-      # repeated ~3.6x win, not an assumed one. It is also the step where a slow
-      # runner showed up as a flake (`state`'s
+      # OTHER job was tried this way too and reverted (measured flat-to-worse
+      # there: 92 small, fast tests do not amortize nextest's per-test process
+      # overhead on this runner). THIS step is the opposite: 41 binaries that
+      # used to run one at a time, each spawning a real fleet that takes 5-30s
+      # on its own, now share every idle core instead — a real, repeated ~3.6x
+      # win, not an assumed one. It is also the step where a slow runner showed
+      # up as a flake (`state`'s
       # `a_shared_store_lets_two_replicas_continue_one_count`, see its own comment
       # and the matching override in `.config/nextest.toml`).
       # `--config-file ../...`: `reconciler` is its OWN Cargo workspace (this
