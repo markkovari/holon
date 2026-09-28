@@ -160,6 +160,11 @@ beats default, and a misspelled key is an error ([`comp.example.toml`](../comp.e
 The knobs that matter: `settle_passes` (the scale-down cooldown), `inventory_ttl` (how
 fast a dead machine is noticed), `max_inflight` (where the ingress starts shedding).
 
+State off the box: `comp-host --blob s3` puts object bytes in an S3/R2 bucket while keyed
+state stays on `--kv`, and `comp-backup` copies every JetStream stream and named SurrealDB
+database, sealed, to a bucket and restores it ([0101](adr/0101-state-can-live-somewhere-else.md),
+[`SELFHOST.md`](SELFHOST.md)).
+
 ## Tests
 
 374 across four workspaces — 303 in `reconciler`, 43 in `host`, 19 in `cli`, 9 in
