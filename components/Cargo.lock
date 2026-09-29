@@ -1156,7 +1156,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]
@@ -3496,7 +3496,7 @@ dependencies = [
  "guestio",
  "serde",
  "serde_json",
- "wit-bindgen-rt",
+ "wit-bindgen",
 ]
 
 [[package]]

@@ -383,3 +383,86 @@ macro_rules! guest_p3_respond {
         }
     };
 }
+
+/// Define `fetch(method, url, headers, body) -> Result<(u16, Vec<u8>), String>`:
+/// one outbound request through the p3 `wasi:http/client`, the response body read
+/// whole under `$limit` (same rules as `guest_p3_read_body!` — a failed transfer is
+/// an error, never a short body). `url` is `scheme://authority/path?query`. The
+/// host's egress allow-list applies exactly as it does to p2's outgoing-handler.
+///
+/// ```ignore
+/// guestio::guest_p3_fetch!(16 * 1024 * 1024);
+/// let (status, body) = fetch(Method::Post, "https://api.example.com/v1/x",
+///                            &[("content-type", "application/json")], bytes).await?;
+/// ```
+#[macro_export]
+macro_rules! guest_p3_fetch {
+    ($limit:expr) => {
+        /// One outbound request; the whole response body, or an error.
+        ///
+        /// Expanded by `guestio::guest_p3_fetch!()`.
+        #[allow(dead_code)]
+        async fn fetch(
+            method: crate::bindings::p3::http::types::Method,
+            url: &str,
+            headers: &[(&str, &str)],
+            body: Vec<u8>,
+        ) -> Result<(u16, Vec<u8>), String> {
+            use crate::bindings::p3::http::types::{Fields, Request, Response, Scheme};
+            let (scheme, rest) = match url.split_once("://") {
+                Some(("https", r)) => (Scheme::Https, r),
+                Some(("http", r)) => (Scheme::Http, r),
+                _ => return Err(format!("unsupported url {url:?}")),
+            };
+            let (authority, path) = match rest.find('/') {
+                Some(i) => (&rest[..i], &rest[i..]),
+                None => (rest, "/"),
+            };
+            let fields = Fields::new();
+            for (k, v) in headers {
+                fields.append(k, v.as_bytes()).map_err(|e| format!("header {k}: {e:?}"))?;
+            }
+            let (trailers_tx, trailers_rx) = crate::bindings::wit_future::new(|| Ok(None));
+            drop(trailers_tx);
+            let contents = if body.is_empty() {
+                None
+            } else {
+                let (mut tx, rx) = crate::bindings::wit_stream::new();
+                wit_bindgen::spawn_local(async move {
+                    tx.write_all(body).await;
+                });
+                Some(rx)
+            };
+            let (req, _sent) = Request::new(fields, contents, trailers_rx, None);
+            req.set_method(&method).map_err(|()| "bad method".to_string())?;
+            req.set_scheme(Some(&scheme)).map_err(|()| "bad scheme".to_string())?;
+            req.set_authority(Some(authority)).map_err(|()| "bad authority".to_string())?;
+            req.set_path_with_query(Some(path)).map_err(|()| "bad path".to_string())?;
+            let resp = crate::bindings::p3::http::client::send(req)
+                .await
+                .map_err(|e| format!("send: {e:?}"))?;
+            let status = resp.get_status_code();
+            let (res_tx, res_rx) = crate::bindings::wit_future::new(|| Ok(()));
+            let (mut stream, trailers) = Response::consume_body(resp, res_rx);
+            let mut buf: Vec<u8> = Vec::new();
+            loop {
+                buf.reserve(8192);
+                let (st, b) = stream.read(buf).await;
+                buf = b;
+                if buf.len() > $limit {
+                    return Err("response body over the limit".into());
+                }
+                match st {
+                    wit_bindgen::StreamResult::Complete(_) => {}
+                    wit_bindgen::StreamResult::Dropped => break,
+                    wit_bindgen::StreamResult::Cancelled => {
+                        return Err("body read cancelled".into())
+                    }
+                }
+            }
+            drop(res_tx);
+            trailers.await.map_err(|e| format!("response body: {e:?}"))?;
+            Ok((status, buf))
+        }
+    };
+}
