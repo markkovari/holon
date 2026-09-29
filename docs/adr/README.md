@@ -129,6 +129,7 @@ tells you what is true now rather than what was once believed.
 | [0097](0097-a-derived-file-is-a-liability.md) | A derived file is a liability, and a name is not a fact | **accepted**, and done — `catalog.json` deleted, `reusable_as_is` read off the exports |
 | [0098](0098-photos-live-in-object-storage.md) | Photos live in object storage, and evaluation is a queue on the machine with the GPU | **accepted** — `comp-media`, `media:pipeline`, first user `photoquest` |
 | [0099](0099-an-agent-native-code-store.md) | An agent-native code store: an oplog over a commutative, symbol-level patch graph | **served** — contract `wit/vcs/vcs.wit`; engine + NATS/SurrealDB adapters in `crates/holon-vcs` (step two); crash consistency, exact `commuted`, name reservations, positions, indexes (step three); `comp-vcs` + `vcs-store` + `vcs-gateway`, `apps/vcs.toml`, `e2e/vcs.sh` (the service) |
+| [0101](0101-state-can-live-somewhere-else.md) | State can live somewhere else: object bytes on S3/R2, and backups off the box | **accepted**, and built — `--blob s3`, `blob-store`'s `blobs` store, `comp-backup` |
 
 ## History: superseded, and kept
 

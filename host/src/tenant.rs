@@ -37,8 +37,25 @@ use sha2::{Digest, Sha256};
 /// The inner field is deliberately private. Nothing outside this module can build
 /// one, so a `BucketId` reaching a backend is proof that the host named it — which
 /// is clause (1), enforced by the compiler instead of by review.
+///
+/// It also carries what KIND of store the host assigned, so a backend router can
+/// send object bytes somewhere other than keyed state without reading anything a
+/// guest wrote — the class is decided here, by the host, like the name.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BucketId(String);
+pub struct BucketId(String, StoreClass);
+
+/// What a bucket holds, which decides where it may live.
+///
+/// `Kv` is keyed state: small values, many operations per request, compare-and-set
+/// on the hot path — it belongs on a low-latency store (ADR-0070 counted 85 store
+/// operations in one request). `Object` is large bytes read and written whole, a
+/// few times per request at most — the one kind of state an object store such as
+/// S3 or R2 is the right home for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StoreClass {
+    Kv,
+    Object,
+}
 
 /// A secret reference, as the PLATFORM wrote it — `vault://<org>/<name>`.
 ///
@@ -64,12 +81,21 @@ impl BucketId {
         &self.0
     }
 
+    pub fn class(&self) -> StoreClass {
+        self.1
+    }
+
     /// Backend tests need to name a store without going through a `Scope`.
     /// `cfg(test)` on purpose: the production build has no way to make one of
     /// these except from a scope, which is the property being defended.
     #[cfg(test)]
     pub fn for_test(name: &str) -> Self {
-        BucketId(name.to_string())
+        BucketId(name.to_string(), StoreClass::Kv)
+    }
+
+    #[cfg(test)]
+    pub fn object_for_test(name: &str) -> Self {
+        BucketId(name.to_string(), StoreClass::Object)
     }
 }
 
@@ -387,8 +413,16 @@ impl StartCommand {
         // The seeded name is `default` because that is what every component in the
         // catalog hardcodes. Seeding it means the ADR-0012 fix needs zero catalog
         // changes — which is precisely what killed the fix proposed there.
-        let real = BucketId(format!("b-{}", env_for(&self.tenant, &self.app)));
-        let buckets = BTreeMap::from([("default".to_string(), real)]);
+        //
+        // `blobs` is the second and last: object bytes, which `blob-store` keeps
+        // apart from its index so a host with `--blob s3` can put them in an
+        // object store while everything else stays on the KV backend. Without
+        // that flag both land on the one backend, under two names.
+        let env = env_for(&self.tenant, &self.app);
+        let buckets = BTreeMap::from([
+            ("default".to_string(), BucketId(format!("b-{env}"), StoreClass::Kv)),
+            ("blobs".to_string(), BucketId(format!("o-{env}"), StoreClass::Object)),
+        ]);
 
         Scope {
             buckets,
@@ -484,9 +518,17 @@ mod tests {
     }
 
     #[test]
-    fn a_scope_grants_exactly_one_store() {
+    fn a_scope_grants_exactly_two_stores() {
         // If this ever grows, every new entry is a new thing a guest can name.
-        assert_eq!(scope("alice", "shop").bucket_names(), vec!["default"]);
+        let s = scope("alice", "shop");
+        assert_eq!(s.bucket_names(), vec!["blobs", "default"]);
+        assert_eq!(s.bucket("default").unwrap().class(), StoreClass::Kv);
+        assert_eq!(s.bucket("blobs").unwrap().class(), StoreClass::Object);
+        assert_ne!(
+            s.bucket("default").unwrap().as_str(),
+            s.bucket("blobs").unwrap().as_str(),
+            "two names on one backend must still be two stores"
+        );
     }
 
     #[test]

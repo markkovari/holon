@@ -575,7 +575,10 @@ jobs:
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-plug
           cargo build --release --manifest-path reconciler/Cargo.toml --bin comp-mailrelay
 
-      # THE FLEET SUITES — 41 of them, and until #289 nothing ran a single one.
+      # THE FLEET SUITES — 43 of them, and until #289 nothing ran a single one.
+      #
+      # `blob_s3` and `backup` also start RustFS (and `backup` two SurrealDBs) in
+      # Docker, which this runner has; each prints SKIPPED if Docker cannot.
       #
       # Every one spawns NATS, which is why they were all excluded and why the
       # `nats-server` step above exists. Kept as a SEPARATE JOB (once a separate
@@ -617,7 +620,7 @@ jobs:
           binary(=newversion) | binary(=photo_critic_live) | binary(=projects) | binary(=reveal) |
           binary(=scaling) | binary(=search) | binary(=secretcli) | binary(=select) | binary(=slug_live) |
           binary(=staleness) | binary(=state) | binary(=tagged) | binary(=tagged_loop) | binary(=trace_live) |
-          binary(=treesize) | binary(=vgit) | binary(=graphql_gateway)
+          binary(=treesize) | binary(=vgit) | binary(=graphql_gateway) | binary(=blob_s3) | binary(=backup)
           "
 
   # An invalid workflow file does not fail loudly. GitHub schedules NO jobs, shows

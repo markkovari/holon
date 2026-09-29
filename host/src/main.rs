@@ -26,12 +26,15 @@ mod agent;
 mod kv;
 mod kvcache;
 mod kvprofile;
+mod objkv;
 mod rpc;
 mod secrets;
 mod sync;
 mod tenant;
 // The gate for `--kv surreal`/`--kv turso`, kept out of `kv.rs` on purpose:
 // the file that implements a backend must not be the file that judges it.
+#[cfg(test)]
+mod objkv_test;
 #[cfg(test)]
 mod surrealkv_test;
 #[cfg(test)]
@@ -827,6 +830,35 @@ struct Args {
     /// hosted Turso; a self-hosted `sqld` usually takes none either).
     #[arg(long)]
     kv_token: Option<String>,
+
+    // ---- object bytes -----------------------------------------------------
+    /// Where object bytes live — what `blob-store` puts in its `blobs` bucket:
+    /// unset keeps them on the `--kv` backend; `s3` puts them in an
+    /// S3-compatible bucket (Cloudflare R2, AWS S3, MinIO) while keyed state
+    /// stays where `--kv` put it. The store must enforce conditional writes —
+    /// checked at startup, refused if not.
+    #[arg(long)]
+    blob: Option<String>,
+    /// S3 API endpoint for `--blob s3`, e.g.
+    /// `https://<account>.r2.cloudflarestorage.com` or `http://127.0.0.1:9000`.
+    #[arg(long)]
+    s3_endpoint: Option<String>,
+    /// The one S3 bucket every tenant's objects go in, under its own prefix.
+    #[arg(long, default_value = "holon-blobs")]
+    s3_bucket: String,
+    /// Signing region. R2 takes `auto`; RustFS and MinIO take `us-east-1`.
+    #[arg(long, default_value = "us-east-1")]
+    s3_region: String,
+    /// Files holding the access key id and secret. Files, not flags, so they do
+    /// not show up in `ps`; `S3_ACCESS_KEY` / `S3_SECRET_KEY` are read when the
+    /// files are not given.
+    #[arg(long)]
+    s3_access_key_file: Option<String>,
+    #[arg(long)]
+    s3_secret_key_file: Option<String>,
+    /// Path-style addressing (`host/bucket/key`). RustFS and MinIO need it.
+    #[arg(long)]
+    s3_path_style: bool,
     /// NATS URL for `--kv nats`, or a comma-separated list of them.
     ///
     /// List every server in the cluster. A client given one address does learn the
@@ -998,6 +1030,33 @@ pub(crate) fn build_linker(engine: &Engine) -> Result<Linker<Host>> {
 
 // ---- main: instantiate + serve -------------------------------------------
 
+/// `--blob s3`'s settings, with the secrets read from their files (or the
+/// environment) and never from a flag.
+fn s3_config(args: &Args) -> Result<objkv::S3Config> {
+    let secret = |file: &Option<String>, env: &str| -> Result<String> {
+        match file {
+            Some(p) => Ok(std::fs::read_to_string(p)
+                .with_context(|| format!("reading {p}"))?
+                .trim()
+                .to_string()),
+            None => std::env::var(env).with_context(|| {
+                format!(
+                    "--blob s3 needs --s3-{}-file or {env}",
+                    if env.contains("ACCESS") { "access-key" } else { "secret-key" }
+                )
+            }),
+        }
+    };
+    Ok(objkv::S3Config {
+        endpoint: args.s3_endpoint.clone().context("--blob s3 needs --s3-endpoint")?,
+        bucket: args.s3_bucket.clone(),
+        region: args.s3_region.clone(),
+        access_key: secret(&args.s3_access_key_file, "S3_ACCESS_KEY")?,
+        secret_key: secret(&args.s3_secret_key_file, "S3_SECRET_KEY")?,
+        path_style: args.s3_path_style,
+    })
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -1067,6 +1126,21 @@ async fn main() -> Result<()> {
     let kv_backend: Kv = match &cache {
         Some(c) => c.clone(),
         None => kv_backend,
+    };
+    // After the cache, so object bytes are never held in it; before the
+    // profiler, so it still counts everything the guest asked for.
+    let kv_backend: Kv = match args.blob.as_deref() {
+        None => kv_backend,
+        Some("s3") => {
+            let cfg = s3_config(&args)?;
+            let objects = objkv::S3Kv::connect(&cfg)?;
+            eprintln!(
+                "comp-host: object bytes on S3 bucket {} at {} (conditional writes verified)",
+                cfg.bucket, cfg.endpoint
+            );
+            objkv::RoutedKv::new(kv_backend, Arc::new(objects))
+        }
+        Some(other) => anyhow::bail!("unknown --blob backend: {other} (use s3, or leave it unset)"),
     };
     // Wrapped, not replaced: `shared()` and every answer come from the real backend,
     // so a profiled run is the same run with a clock on it.

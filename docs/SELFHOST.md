@@ -471,6 +471,43 @@ which read-modify-write. Verified with 8 threads × 50 increments landing on exa
 The other options remain: `memory` for a pure cache, `redis` or `nats` (each needs a
 `kv_url`) when apps on *different* boxes must share state.
 
+### State somewhere else: remote stores, object bytes on R2, backups off the box
+
+Keyed state can already live on another machine: `--kv nats --nats-url <remote>`
+(a 3-node JetStream cluster is the replicated option) or `--kv redis --redis-url
+<remote>` (Upstash, a managed Valkey). It should stay on something that answers in
+under a millisecond — a request can make dozens of store calls.
+
+Object bytes are different, and can go to an object store (ADR-0101):
+
+```
+comp-host ... --blob s3 \
+  --s3-endpoint https://<account>.r2.cloudflarestorage.com --s3-region auto \
+  --s3-bucket holon-blobs \
+  --s3-access-key-file /etc/comp/r2.id --s3-secret-key-file /etc/comp/r2.secret
+```
+
+`blob-store`'s bytes go to that bucket; its index and every other component's state
+stay on `--kv`. The host checks at startup that the store enforces conditional writes
+and refuses to start if it does not. RustFS and MinIO need `--s3-path-style`.
+
+Backups go off the box with `comp-backup` — every JetStream stream and any named
+SurrealDB database, sealed, to a bucket:
+
+```
+comp-backup keygen > /etc/comp/backup.key          # keep a copy that is NOT in the bucket
+comp-backup run --nats-url nats://127.0.0.1:4222 --encrypt-key-file /etc/comp/backup.key \
+  --surreal-url http://127.0.0.1:8000 --surreal-db vcs/graph --surreal-pass-file /etc/comp/surreal.pass \
+  --s3-endpoint https://<account>.r2.cloudflarestorage.com --s3-region auto \
+  --s3-access-key-file /etc/comp/r2.id --s3-secret-key-file /etc/comp/r2.secret \
+  --keep 14 --every 6h
+comp-backup list    --s3-endpoint ... 
+comp-backup restore --id latest --nats-url nats://new:4222 --encrypt-key-file /etc/comp/backup.key --s3-endpoint ...
+```
+
+A restore goes into servers that do not have those streams (or `--replace`), and
+renumbers KV revisions — see ADR-0101 for what that means and why.
+
 **The limit that no backend can fix:** `wasi:keyvalue` has no compare-and-swap, so a
 component doing read-then-write across two calls is still racy however strong the store
 (ADR-0008). SQLite makes the host's `increment` atomic; it cannot hand a guest a

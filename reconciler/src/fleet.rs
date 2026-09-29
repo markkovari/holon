@@ -324,7 +324,20 @@ impl Fleet {
         // Tests run what production runs: pooling on (ADR-0054), read cache off
         // (ADR-0063 — it trades cross-node freshness, so a test asserting shared
         // state must not get it by accident).
-        Self::start_full(lattice, specs, &[], &[], nodes, max_inflight, kv, true, 0, &[], false)
+        Self::start_full(
+            lattice,
+            specs,
+            &[],
+            &[],
+            nodes,
+            max_inflight,
+            kv,
+            true,
+            0,
+            &[],
+            false,
+            &[],
+        )
     }
 
     /// A fleet whose control plane holds a vault: `vault://<org>/<name>=value`.
@@ -337,14 +350,51 @@ impl Fleet {
         artifacts: &[String],
         secrets: &[String],
     ) -> Self {
-        Self::start_full(lattice, specs, artifacts, secrets, 1, None, None, true, 0, &[], false)
+        Self::start_full(
+            lattice,
+            specs,
+            artifacts,
+            secrets,
+            1,
+            None,
+            None,
+            true,
+            0,
+            &[],
+            false,
+            &[],
+        )
     }
 
     /// A fleet driven by the REAL control plane, for tests that exercise the
     /// platform's own API rather than a fixture — deploying, then spawning an
     /// environment and watching the loop converge on it (ADR-0078).
     pub fn start_with_platform(lattice: &str, nodes: u16) -> Self {
-        Self::start_full(lattice, &[], &[], &[], nodes, None, None, true, 0, &[], true)
+        Self::start_full(lattice, &[], &[], &[], nodes, None, None, true, 0, &[], true, &[])
+    }
+
+    /// A fleet whose every node gets `host_args` on its command line — how a test
+    /// runs the host with a flag no other entry point sets, such as `--blob s3`.
+    pub fn start_with_host_args(
+        lattice: &str,
+        specs: &[&str],
+        artifacts: &[String],
+        host_args: &[String],
+    ) -> Self {
+        Self::start_full(
+            lattice,
+            specs,
+            artifacts,
+            &[],
+            1,
+            None,
+            None,
+            true,
+            0,
+            &[],
+            false,
+            host_args,
+        )
     }
 
     /// Where the control plane is listening.
@@ -390,6 +440,7 @@ impl Fleet {
             0,
             labels,
             false,
+            &[],
         )
     }
 
@@ -397,7 +448,20 @@ impl Fleet {
     /// two or more: on one node the cache invalidates its own writes and cannot be
     /// caught being stale.
     pub fn start_with_cache(lattice: &str, specs: &[&str], nodes: u16, cache_ms: u64) -> Self {
-        Self::start_full(lattice, specs, &[], &[], nodes, None, None, true, cache_ms, &[], false)
+        Self::start_full(
+            lattice,
+            specs,
+            &[],
+            &[],
+            nodes,
+            None,
+            None,
+            true,
+            cache_ms,
+            &[],
+            false,
+            &[],
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -417,6 +481,8 @@ impl Fleet {
         labels: &[&str],
         // Run `platform-domain` as the control plane instead of `comp-stub`.
         real_platform: bool,
+        // Appended to every node's command line — `--blob s3 ...`, say.
+        host_args: &[String],
     ) -> Self {
         let root = repo_root();
         let host_bin = std::env::var("COMP_HOST_BIN")
@@ -606,6 +672,7 @@ impl Fleet {
             if let Some(l) = labels.get((n - 1) as usize) {
                 c.args(["--label", l]);
             }
+            c.args(host_args);
             // A harness runs everything on loopback, and loopback is a PRIVATE
             // address the host refuses to dial by default (ADR-0008). So a test
             // whose subject talks to a real backing service — a database, say —
@@ -924,7 +991,20 @@ impl Fleet {
         // request pays two JetStream round trips and the number measures the bus.
         kv: Option<&str>,
     ) -> Self {
-        Self::start_full(lattice, &[spec_dir], artifacts, &[], nodes, None, kv, pool, 0, &[], false)
+        Self::start_full(
+            lattice,
+            &[spec_dir],
+            artifacts,
+            &[],
+            nodes,
+            None,
+            kv,
+            pool,
+            0,
+            &[],
+            false,
+            &[],
+        )
     }
 
     /// The host process for node `n`, so a caller can read its RSS.
