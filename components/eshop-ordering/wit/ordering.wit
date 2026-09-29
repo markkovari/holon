@@ -26,7 +26,7 @@ package eshop:ordering@0.1.0;
 
 /// The ordering HTTP backend, composed from capability contracts.
 world ordering-service {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // token introspection against the shared session bucket.
     import auth:identity/authorizer@0.1.0;
@@ -44,6 +44,6 @@ world ordering-service {
     import idempotency:guard/store@0.1.0;
 
     // grace-period sweep needs "now"; the window is deploy-time config.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
     import wasi:config/store@0.2.0-rc.1;
 }

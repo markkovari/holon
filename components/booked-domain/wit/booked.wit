@@ -35,7 +35,7 @@ package booked:app@0.1.0;
 /// conflict-free bookings (single or recurring) + .ics export + email
 /// confirmation, composed from capability contracts.
 world booked-domain {
-    export wasi:http/incoming-handler@0.2.0;
+    export wasi:http/handler@0.3.0-rc-2026-03-15;
 
     // auth: register / login / session + token introspection + role grants.
     import auth:identity/accounts@0.1.0;
@@ -55,5 +55,5 @@ world booked-domain {
     // expand "repeat every N weeks on these days" into booking instances.
     import rrule:recur/recur@0.1.0;
     // booking + lease timestamps.
-    import wasi:clocks/wall-clock@0.2.0;
+    import wasi:clocks/system-clock@0.3.0-rc-2026-03-15;
 }
