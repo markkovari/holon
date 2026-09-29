@@ -46,6 +46,20 @@ pub fn cost_usd_micros(
     off_peak: bool,
 ) -> u64 {
     let (i, o) = prices(model, off_peak);
+    micros_at(i, o, input, output, cache_read, cache_write)
+}
+
+/// [`cost_usd_micros`] at explicit prices (cents per million tokens, input
+/// and output), for a model the table cannot know — a self-hosted one an
+/// operator prices at zero, say.
+pub fn micros_at(
+    i: u64,
+    o: u64,
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+) -> u64 {
     // cents/M tokens -> micro-USD is x10_000 / 1_000_000, i.e. /100; the cache
     // multipliers (0.1, 1.25) are folded in as /10_000 with integer weights.
     let scaled = (input * i + output * o) * 100 + cache_read * i * 10 + cache_write * i * 125;
@@ -78,7 +92,7 @@ fn prices(model: &str, off_peak: bool) -> (u64, u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::{cost_cents, cost_usd_micros};
+    use super::{cost_cents, cost_usd_micros, micros_at};
 
     // Prices, cents per million tokens (input, output), pinned by these tests:
     //   haiku            100 /  500
@@ -185,6 +199,15 @@ mod tests {
         assert_eq!(
             cost_usd_micros(1000, 0, 0, 0, "mlx-community/Qwen2.5-Coder-32B", false),
             cost_usd_micros(1000, 0, 0, 0, "claude-opus-5", false)
+        );
+    }
+
+    #[test]
+    fn explicit_prices_override_the_table_and_zero_is_free() {
+        assert_eq!(micros_at(0, 0, 1_000_000, 1_000_000, 5, 5), 0);
+        assert_eq!(
+            micros_at(300, 1500, 7, 3, 2, 1),
+            cost_usd_micros(7, 3, 2, 1, "claude-sonnet-5", false)
         );
     }
 }

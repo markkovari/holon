@@ -102,7 +102,7 @@ toml = "0.8"
 serde_norway = "0.9"
 tempfile = "3"
 # comp-stub serves HTTP; the OCI test also stands up a fake registry with it.
-axum = "0.8"
+axum = { version = "0.8", features = ["http2"] }
 serde_json = "1"
 regex = "1"
 anyhow = "1"
@@ -171,6 +171,18 @@ holon-vcs = { path = "../crates/holon-vcs", features = ["native"] }
 # KV and the PARK_WAKE work-queue stream. No SurrealDB — unlike vcs, there is
 # no graph here, one ticket is one mutable record.
 holon-park = { path = "../crates/holon-park", features = ["native"] }
+# comp-agentd (ADR-0102): the gRPC half of api/holon/v1/agent.proto, served on
+# the same port as the REST half. tonic is already in the tree (surrealdb).
+tonic = "0.14"
+tonic-prost = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+tonic-web = "0.14"
+
+[build-dependencies]
+# build.rs: agent.proto -> Rust, with protox standing in for protoc.
+tonic-prost-build = "0.14"
+protox = "0.9"
 
 [dev-dependencies]
 miniz_oxide = "0.8"

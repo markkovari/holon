@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use comp_reconciler::cost::cost_usd_micros;
+use comp_reconciler::cost::{cost_usd_micros, micros_at};
 
 use super::model::{Msg, Provider, ToolResult};
 use super::session::{Answer, Session};
@@ -17,6 +17,9 @@ pub struct Ctx {
     pub http: reqwest::Client,
     pub max_turns: u32,
     pub approval_timeout: Option<Duration>,
+    /// Operator prices that win over `cost.rs`'s table: (substring of the
+    /// model id, input, output), cents per million tokens.
+    pub prices: Vec<(String, u64, u64)>,
     /// Whether DeepSeek's off-peak price applies; a clock question `cost.rs`
     /// leaves to its caller.
     pub off_peak: fn() -> bool,
@@ -29,6 +32,7 @@ pub async fn run(sess: Arc<Session>, ctx: Arc<Ctx>, task_id: String, prompt: Str
         .catch_unwind()
         .await
         .unwrap_or_else(|_| Err((FailCode::Internal, "the agent loop panicked".into())));
+    sess.save_history(&sess.history.lock().await);
     sess.finish(&task_id, outcome);
 }
 
@@ -39,6 +43,21 @@ async fn turns(
     prompt: String,
 ) -> Result<String, (FailCode, String)> {
     let mut history = sess.history.lock().await;
+    // A task cancelled mid-tool leaves calls with no results, and a provider
+    // refuses a conversation like that. Answer them before moving on.
+    if let Some(Msg::Assistant { calls, .. }) = history.last() {
+        let rs: Vec<ToolResult> = calls
+            .iter()
+            .map(|c| ToolResult {
+                call_id: c.id.clone(),
+                output: "cancelled before it ran".into(),
+                is_error: true,
+            })
+            .collect();
+        if !rs.is_empty() {
+            history.push(Msg::ToolResults(rs));
+        }
+    }
     history.push(Msg::User(prompt));
     for _ in 0..ctx.max_turns {
         if sess.remaining() <= 0 {
@@ -55,14 +74,19 @@ async fn turns(
             .map_err(|e| (FailCode::ModelError, format!("{e:#}")))?;
 
         let t = &turn.tokens;
-        let cost = cost_usd_micros(
-            t.input,
-            t.output,
-            t.cache_read,
-            t.cache_write,
-            &sess.model,
-            (ctx.off_peak)(),
-        );
+        // Case-insensitive: `--price qwen=0,0` must match `mlx-community/Qwen3-4B`.
+        let model_lc = sess.model.to_lowercase();
+        let cost = match ctx.prices.iter().find(|(p, ..)| model_lc.contains(&p.to_lowercase())) {
+            Some((_, i, o)) => micros_at(*i, *o, t.input, t.output, t.cache_read, t.cache_write),
+            None => cost_usd_micros(
+                t.input,
+                t.output,
+                t.cache_read,
+                t.cache_write,
+                &sess.model,
+                (ctx.off_peak)(),
+            ),
+        };
         let delta = Usage {
             input_tokens: t.input,
             output_tokens: t.output,

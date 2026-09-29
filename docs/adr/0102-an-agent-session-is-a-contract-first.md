@@ -3,11 +3,11 @@
 *A Telegram bot, a Node backend and a Python script should all be able to
 drive the same agent, and none of them should have to parse a CLI's output.*
 
-**Status: accepted, and the REST half is served.** The contract is
-`api/holon/v1/agent.proto` (ConnectRPC/gRPC) and its REST twin
-`api/openapi.yaml` (JSON + Server-Sent Events). `comp-agentd`
-(`reconciler/src/bin/agentd.rs`) serves the REST twin; nothing serves the
-proto yet.
+**Status: accepted, and served.** The contract is `api/holon/v1/agent.proto`
+(gRPC) and its REST twin `api/openapi.yaml` (JSON + Server-Sent Events).
+`comp-agentd` (`reconciler/src/bin/agentd.rs`) serves both on one port: REST,
+gRPC over HTTP/2, and gRPC-web. A Connect client reaches it through its gRPC
+or gRPC-web transport; Connect's own protocol is not served.
 
 ## The problem
 
@@ -81,18 +81,36 @@ What it does:
   workspace, with symlinks resolved. `run` is a shell and cannot be confined;
   approval is its boundary. By default every tool asks.
 - Sessions must live under a `--workspace-root`.
+- With `--state-dir`, a session survives a restart. Each session is three
+  files: `session.json`, an append-only `events.jsonl`, and `history.json`.
+  Spend and task states are rebuilt from the log rather than stored twice. A
+  task the log shows as unfinished was cut off by the restart; it is failed
+  in the log as `internal`, so every reader sees how it ended.
+- `CancelTask` stops one task and keeps the session. A cancelled turn's
+  unanswered tool calls get "cancelled" results before the next prompt,
+  because a provider refuses a conversation with a dangling call.
 - Cost comes from `cost.rs`'s price table, via the new `cost_usd_micros`.
-  An unknown model is charged at the dearest tier, as `cost_cents` has always
-  done. That includes a self-hosted one such as csatapaci's Qwen, whose budget
-  therefore burns as if it were opus.
-- `--provider mock` is scripted and free. It emits every event kind, for tests
-  and for anyone building a client.
+  An unknown model is charged at the dearest tier, as `cost_cents` has
+  always done. `--price PATTERN=IN,OUT` overrides that, ignoring case, so
+  `--price qwen=0,0` makes a self-hosted model free.
+- `--provider mock` is scripted and free. It emits every event kind, for
+  tests and for anyone building a client.
+
+How it was verified:
+- `agentd/tests.rs` drives a real router over loopback, through REST, SSE,
+  gRPC and gRPC-web. Both model dialects run against fake HTTP model servers
+  that replay recorded streams.
+- A live run used `mlx_lm.server` (the stack csatapaci serves) with
+  `mlx-community/Qwen3-4B-Instruct-2507-4bit`. The agent listed, read and
+  wrote files through approved tool calls. It adapted to a denial. After a
+  restart with `--state-dir` it still had its session and conversation.
+- The same run found that `mlx_lm` 0.31.3 drops a tool call whose JSON has
+  no `"arguments"` key, answering with an empty message.
+  `Qwen2.5-3B-Instruct` emits exactly that shape. The weakness is in the
+  server, not here, but a small model behind mlx can look like it "never
+  calls tools".
 
 What it does not do yet:
-- Persist anything. Sessions and their event logs are in memory and gone on
-  restart. Moving the log to JetStream, the way `comp-park` holds its
-  records, is the next step if it serves more than one user.
-- Serve the proto. ConnectRPC/gRPC needs a codegen step this tree does not
-  have.
-- Cancel one task without closing its session. Add it when a caller needs
-  to keep a session after stopping a task.
+- Evict anything. Every session's log is also held in memory.
+- Serve Connect's own protocol (`application/connect+json`), in addition
+  to gRPC and gRPC-web.

@@ -8,24 +8,25 @@
 //! client before paying for a model.
 
 use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// One entry of a conversation, provider-neutral.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Msg {
     User(String),
     Assistant { text: String, calls: Vec<Call> },
     ToolResults(Vec<ToolResult>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Call {
     pub id: String,
     pub name: String,
     pub input: Value,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolResult {
     pub call_id: String,
     pub output: String,
@@ -161,12 +162,35 @@ fn anthropic_body(model: &str, msgs: &[Msg]) -> Value {
             })).collect::<Vec<_>>()}),
         })
         .collect();
+    let messages = merge_user_turns(messages);
     let tools: Vec<Value> = super::tools::specs()
         .into_iter()
         .map(|(n, d, s)| json!({"name": n, "description": d, "input_schema": s}))
         .collect();
     json!({"model": model, "max_tokens": MAX_TOKENS, "system": SYSTEM, "messages": messages,
            "tools": tools, "stream": true})
+}
+
+/// Anthropic wants roles to alternate; tool results followed by the next
+/// prompt are two user turns in a row, so they become one.
+fn merge_user_turns(msgs: Vec<Value>) -> Vec<Value> {
+    let blocks = |c: &Value| match c {
+        Value::String(t) => vec![json!({"type": "text", "text": t})],
+        Value::Array(a) => a.clone(),
+        _ => vec![],
+    };
+    let mut out: Vec<Value> = Vec::new();
+    for m in msgs {
+        match out.last_mut() {
+            Some(prev) if prev["role"] == "user" && m["role"] == "user" => {
+                let mut c = blocks(&prev["content"]);
+                c.extend(blocks(&m["content"]));
+                prev["content"] = Value::Array(c);
+            }
+            _ => out.push(m),
+        }
+    }
+    out
 }
 
 #[derive(Default)]
@@ -438,6 +462,36 @@ mod tests {
             vec![Call { id: "c1".into(), name: "run".into(), input: json!({"command": "ls"}) }]
         );
         assert_eq!(t.tokens, Tokens { input: 60, output: 7, cache_read: 40, cache_write: 0 });
+    }
+
+    #[test]
+    fn anthropic_gets_alternating_roles_after_tool_results() {
+        let msgs = vec![
+            Msg::User("a".into()),
+            Msg::Assistant {
+                text: String::new(),
+                calls: vec![Call { id: "t1".into(), name: "run".into(), input: json!({}) }],
+            },
+            Msg::ToolResults(vec![ToolResult {
+                call_id: "t1".into(),
+                output: "x".into(),
+                is_error: false,
+            }]),
+            Msg::User("b".into()),
+        ];
+        let body = anthropic_body("m", &msgs);
+        let roles: Vec<&str> = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["role"].as_str().unwrap())
+            .collect();
+        assert_eq!(roles, ["user", "assistant", "user"]);
+        let last = &body["messages"][2]["content"];
+        assert_eq!(
+            (last[0]["type"].as_str(), last[1]["text"].as_str()),
+            (Some("tool_result"), Some("b"))
+        );
     }
 
     #[test]

@@ -88,6 +88,25 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
 
+  /v1/sessions/{session_id}/tasks/{task_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - name: task_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: cancelTask
+      summary: Stop a running task; it ends with task_failed/cancelled and the session stays open.
+      description: On a task that already ended, returns it unchanged, so a retry is harmless.
+      responses:
+        "200":
+          description: The task as it now stands.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "404": { $ref: "#/components/responses/Problem" }
+
   /v1/sessions/{session_id}/events:
     parameters:
       - $ref: "#/components/parameters/SessionId"
@@ -248,7 +267,7 @@ components:
         session_id: { type: string }
         status:
           type: string
-          enum: [queued, running, completed, failed]
+          enum: [running, completed, failed]
         created_at: { type: string, format: date-time }
 
     # ---- Usage and cost ----

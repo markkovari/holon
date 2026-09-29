@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Token counts and their price. Per call (`delta`) or a running total.
-#[derive(Serialize, Clone, Copy, Default, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Default, Debug, PartialEq)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -31,7 +31,7 @@ pub enum Decision {
     Deny,
 }
 
-#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FailCode {
     BudgetExceeded,
@@ -42,7 +42,7 @@ pub enum FailCode {
 }
 
 /// The payload of one event; `type` is its tag and the SSE `event:` name.
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Payload {
     TaskStarted {
@@ -106,7 +106,7 @@ impl Payload {
     }
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Event {
     pub seq: u64,
     pub session_id: String,
