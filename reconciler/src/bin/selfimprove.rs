@@ -277,11 +277,21 @@ fn build_probe(components: &Path, component: &str, tag: &str) -> Result<Vec<u8>>
     // used only for codegen (check is enough); a fresh source tree has no
     // `bindings.rs` until this runs, and then a plain build targets wasip2. This
     // is exactly what `cargo xtask build --force` does, inlined so any source tree is buildable.
-    let chk = Command::new("cargo")
-        .current_dir(components)
-        .args(["component", "check", "--release", "-p", component])
-        .output()
-        .context("cargo component check (bindings)")?;
+    //
+    // A p3 crate (it depends on `wit-bindgen` itself) makes its bindings at compile
+    // time and must NOT go through cargo-component, which cannot resolve its world.
+    let manifest =
+        std::fs::read_to_string(components.join(component).join("Cargo.toml")).unwrap_or_default();
+    let p3 = manifest.lines().any(|l| l.trim_start().starts_with("wit-bindgen ="));
+    let chk = if p3 {
+        Command::new("true").output()
+    } else {
+        Command::new("cargo")
+            .current_dir(components)
+            .args(["component", "check", "--release", "-p", component])
+            .output()
+    }
+    .context("cargo component check (bindings)")?;
     if !chk.status.success() {
         bail!(
             "generating bindings for {component} failed:\n{}",

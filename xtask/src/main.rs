@@ -39,6 +39,14 @@ enum Commands {
         force: bool,
     },
 
+    /// Generate the p2 components' cargo-component bindings, skipping p3 crates
+    /// (which generate their own). Use this, not a bare `cargo component check`.
+    Bindings {
+        /// A crate to leave out. Repeatable.
+        #[arg(long)]
+        exclude: Vec<String>,
+    },
+
     /// Run all workspace tests in parallel using cargo-nextest
     Test {
         /// Fast mode: skip long-running integration suites
@@ -143,6 +151,10 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Build { force } => {
             build_components(force)?;
+        }
+
+        Commands::Bindings { exclude } => {
+            build::generate_p2_bindings(&exclude)?;
         }
 
         Commands::Test { fast, filter } => {

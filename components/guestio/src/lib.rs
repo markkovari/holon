@@ -218,3 +218,168 @@ macro_rules! guest_read_body_text {
         }
     };
 }
+
+// ---- WASI p3 (`wasi:http@0.3.0-rc-2026-03-15`) --------------------------------
+//
+// The same helpers for a component whose door is the async `wasi:http/handler`.
+// Its bindings come from `wit_bindgen::generate!` inside `mod bindings`, which
+// also defines `bindings::p3::http` — an alias, because wit-bindgen suffixes the
+// module with its version (`http0_3_0_rc_2026_03_15`) whenever the p2 `wasi:http`
+// is in the same resolve, and the root `auth.wit` puts it there for most
+// components. Code and these macros name `p3::http`; only the alias moves when
+// the WIT version does. There is no `write_all`: a
+// p3 `stream<u8>` write has no 4096-byte trap, and `StreamWriter::write_all`
+// already loops until every byte is taken.
+
+/// Define `read_body(Request) -> Result<Vec<u8>, ()>` for a p3 component: every
+/// byte, or an error — never a silent prefix, never past `$limit`.
+///
+/// ```ignore
+/// const MAX_BODY_BYTES: usize = 16 * 1024 * 1024;
+/// guestio::guest_p3_read_body!(MAX_BODY_BYTES);
+/// ```
+#[macro_export]
+macro_rules! guest_p3_read_body {
+    ($limit:expr) => {
+        $crate::guest_p3_read_body_named!(read_body, $limit);
+    };
+}
+
+/// The p3 body loop, under a name the caller chooses. Call `guest_p3_read_body!`
+/// or `guest_p3_read_body_text!` rather than this.
+#[macro_export]
+macro_rules! guest_p3_read_body_named {
+    ($name:ident, $limit:expr) => {
+        /// Read the whole request body, or fail. Never returns a partial one.
+        ///
+        /// Expanded by `guestio::guest_p3_read_body!()`.
+        async fn $name(request: crate::bindings::p3::http::types::Request) -> Result<Vec<u8>, ()> {
+            let (res_tx, res_rx) = crate::bindings::wit_future::new(|| Ok(()));
+            let (mut body, trailers) =
+                crate::bindings::p3::http::types::Request::consume_body(request, res_rx);
+            let mut buf: Vec<u8> = Vec::new();
+            loop {
+                // `read` fills spare capacity; at most 8 KiB past the ceiling.
+                buf.reserve(8192);
+                let (status, b) = body.read(buf).await;
+                buf = b;
+                // A ceiling, not a policy — see `guest_read_body_named`.
+                if buf.len() > $limit {
+                    return Err(());
+                }
+                match status {
+                    wit_bindgen::StreamResult::Complete(_) => {}
+                    wit_bindgen::StreamResult::Dropped => break,
+                    wit_bindgen::StreamResult::Cancelled => return Err(()),
+                }
+            }
+            drop(res_tx);
+            // The stream ending is not the body arriving whole: in p3 a transfer that
+            // failed partway is reported on the trailers future, so a body is only
+            // complete once that future says so.
+            match trailers.await {
+                Ok(_) => Ok(buf),
+                Err(_) => Err(()),
+            }
+        }
+    };
+}
+
+/// The p3 text reader: `read_body(Request) -> String` (lossy — for text you are
+/// about to parse) plus `read_body_bytes(Request) -> Result<Vec<u8>, ()>`.
+/// See `guest_read_body_text!` for why both exist.
+#[macro_export]
+macro_rules! guest_p3_read_body_text {
+    ($limit:expr) => {
+        $crate::guest_p3_read_body_named!(read_body_bytes, $limit);
+
+        /// The request body as text, with invalid UTF-8 replaced. A failed read
+        /// yields an EMPTY string, not a partial one.
+        ///
+        /// Expanded by `guestio::guest_p3_read_body_text!()`.
+        async fn read_body(request: crate::bindings::p3::http::types::Request) -> String {
+            String::from_utf8_lossy(&read_body_bytes(request).await.unwrap_or_default())
+                .into_owned()
+        }
+    };
+}
+
+/// Define `bearer(&Request) -> Option<String>` for a p3 component. Same rules as
+/// `guest_bearer!`: every `authorization` value is tried, parsing is `guestfmt`'s.
+#[macro_export]
+macro_rules! guest_p3_bearer {
+    () => {
+        /// The bearer credential this request carries, if it carries one.
+        ///
+        /// Expanded by `guestio::guest_p3_bearer!()`.
+        fn bearer(request: &crate::bindings::p3::http::types::Request) -> Option<String> {
+            request
+                .get_headers()
+                .get("authorization")
+                .into_iter()
+                .filter_map(|v| String::from_utf8(v).ok())
+                .find_map(|v| guestfmt::bearer_token(&v).map(str::to_string))
+        }
+    };
+}
+
+/// Define the p3 response builders:
+///
+///   * `respond_with(status, Fields, body) -> Result<Response, ErrorCode>`
+///   * `respond(status, content_type, body)` — the common one-header case
+///
+/// An empty body gets no stream, and the trailers writer is dropped rather than
+/// written: its default (`Ok(None)`) is what the host reads, with no handshake.
+#[macro_export]
+macro_rules! guest_p3_respond {
+    () => {
+        /// A response with these headers and this whole body.
+        ///
+        /// Expanded by `guestio::guest_p3_respond!()`.
+        fn respond_with(
+            status: u16,
+            headers: crate::bindings::p3::http::types::Fields,
+            body: Vec<u8>,
+        ) -> Result<
+            crate::bindings::p3::http::types::Response,
+            crate::bindings::p3::http::types::ErrorCode,
+        > {
+            let (trailers_tx, trailers_rx) = crate::bindings::wit_future::new(|| Ok(None));
+            drop(trailers_tx);
+            let contents = if body.is_empty() {
+                None
+            } else {
+                let (mut tx, rx) = crate::bindings::wit_stream::new();
+                wit_bindgen::spawn_local(async move {
+                    tx.write_all(body).await;
+                });
+                Some(rx)
+            };
+            let (response, _sent) =
+                crate::bindings::p3::http::types::Response::new(headers, contents, trailers_rx);
+            response.set_status_code(status).map_err(|()| {
+                crate::bindings::p3::http::types::ErrorCode::InternalError(Some(format!(
+                    "bad status {status}"
+                )))
+            })?;
+            Ok(response)
+        }
+
+        /// A response with one `content-type` header and this whole body.
+        ///
+        /// Expanded by `guestio::guest_p3_respond!()`.
+        #[allow(dead_code)]
+        fn respond(
+            status: u16,
+            content_type: &str,
+            body: impl Into<Vec<u8>>,
+        ) -> Result<
+            crate::bindings::p3::http::types::Response,
+            crate::bindings::p3::http::types::ErrorCode,
+        > {
+            let headers = crate::bindings::p3::http::types::Fields::new();
+            let _ = headers.set("content-type", &[content_type.as_bytes().to_vec()]);
+            respond_with(status, headers, body.into())
+        }
+    };
+}

@@ -25,7 +25,8 @@ for APP in "${APPS[@]}"; do
   APP_NAME=${APP%-domain}
 
   echo "Building WASM components..."
-  (cd ../ && cargo component build --release --manifest-path components/Cargo.toml --target-dir components/target --target wasm32-wasip2 -p ${APP} -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p record-store -p id-generate)
+  # Bindings via xtask (p3 crates make their own), then one plain build.
+  (cd ../ && cargo xtask bindings && cargo build --release --manifest-path components/Cargo.toml --target-dir components/target --target wasm32-wasip2 -p ${APP} -p auth-guard -p rate-limiter -p audit-log -p policy-guard -p record-store -p id-generate)
 
   echo "Composing WASM components..."
   ART=$(cd ../ && ./reconciler/target/release/comp-plug ${APP})
