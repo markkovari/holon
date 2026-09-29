@@ -1,0 +1,480 @@
+# REST twin of api/holon/v1/agent.proto: same resources, same fields
+# (snake_case), same semantics. Streaming is Server-Sent Events.
+#
+# Money is integer micro-USD (1 USD = 1_000_000). Unlike Connect's JSON,
+# 64-bit integers here are plain JSON numbers; every value we emit stays
+# below 2^53 so JavaScript clients read them exactly.
+openapi: 3.0.3
+info:
+  title: Holon Agent API
+  version: 1.0.0
+  description: >
+    Sessions, tasks, a resumable event stream, and human approval of tool calls.
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/sessions:
+    post:
+      operationId: createSession
+      summary: Open a session. Model, workspace and budget are fixed for its lifetime.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSessionRequest" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+
+  /v1/sessions/{session_id}:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: getSession
+      summary: Read a session, including its running spend.
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: closeSession
+      summary: Stop any running task (it ends with task_failed/cancelled) and close the session.
+      responses:
+        "200":
+          description: The closed session.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/sessions/{session_id}/tasks:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    post:
+      operationId: sendTask
+      summary: Queue a task. Returns at once; progress arrives on the event stream.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Resending the same key returns the original task instead of starting a second one.
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SendTaskRequest" }
+      responses:
+        "202":
+          description: Accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: A task is already running, or the session is closed. One task at a time per session.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+  /v1/sessions/{session_id}/tasks/{task_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - name: task_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: cancelTask
+      summary: Stop a running task; it ends with task_failed/cancelled and the session stays open.
+      description: On a task that already ended, returns it unchanged, so a retry is harmless.
+      responses:
+        "200":
+          description: The task as it now stands.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/sessions/{session_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+    get:
+      operationId: streamEvents
+      summary: SSE stream of every event in the session, in seq order.
+      description: |
+        Each SSE frame is:
+
+            id: <seq>
+            event: <AgentEvent.type>
+            data: <AgentEvent as JSON, one line>
+
+        Resume after a disconnect with the `Last-Event-ID` header (browsers
+        send it automatically) or `after_seq`; delivery restarts at seq + 1
+        with no gaps or repeats. The server sends a `: keepalive` comment
+        every 15 s. Clients must ignore event types they do not know.
+      parameters:
+        - name: after_seq
+          in: query
+          required: false
+          description: Deliver events with seq > after_seq. Default 0 (from the start).
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Same as after_seq; wins if both are given.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The event stream. The schema describes each frame's `data`.
+          content:
+            text/event-stream:
+              schema: { $ref: "#/components/schemas/AgentEvent" }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/sessions/{session_id}/tool-calls/{call_id}/approval:
+    parameters:
+      - $ref: "#/components/parameters/SessionId"
+      - name: call_id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      operationId: submitApproval
+      summary: Approve or deny a tool call announced by tool_approval_required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitApprovalRequest" }
+      responses:
+        "200":
+          description: Decision recorded; the task resumes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubmitApprovalResponse" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409":
+          description: The call is not pending (already decided, expired, or task gone).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    SessionId:
+      name: session_id
+      in: path
+      required: true
+      schema: { type: string }
+
+  responses:
+    Problem:
+      description: Error (RFC 9457 problem details).
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    # ---- Sessions ----
+    CreateSessionRequest:
+      type: object
+      required: [model, workspace_dir, max_budget_usd_micros]
+      properties:
+        model:
+          type: string
+          description: Model id as the provider names it.
+          example: claude-sonnet-5
+        workspace_dir:
+          type: string
+          description: Absolute path the agent may read and write. Rejected (400) if outside the server's workspace roots.
+          example: /srv/holon/work/my-repo
+        max_budget_usd_micros:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Hard spend ceiling for the whole session, micro-USD.
+          example: 5000000
+        auto_approve_tools:
+          type: array
+          items: { type: string }
+          description: Tools that run without asking. Empty or absent means every tool call needs approval.
+          example: [read_file, grep]
+        labels:
+          type: object
+          additionalProperties: { type: string }
+          description: Free-form caller labels, echoed back, never interpreted.
+          example: { telegram_chat_id: "12345" }
+
+    Session:
+      type: object
+      required: [id, model, workspace_dir, status, usage, max_budget_usd_micros, created_at]
+      properties:
+        id: { type: string }
+        model: { type: string }
+        workspace_dir: { type: string }
+        status: { $ref: "#/components/schemas/SessionStatus" }
+        usage:
+          $ref: "#/components/schemas/Usage"
+        max_budget_usd_micros: { type: integer, format: int64 }
+        auto_approve_tools:
+          type: array
+          items: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+        created_at: { type: string, format: date-time }
+        active_task_id:
+          type: string
+          nullable: true
+          description: Task currently running; null when idle.
+
+    SessionStatus:
+      type: string
+      enum: [idle, running, awaiting_approval, closed]
+
+    # ---- Tasks ----
+    SendTaskRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          description: The instruction for the agent, plain text.
+
+    Task:
+      type: object
+      required: [id, session_id, status, created_at]
+      properties:
+        id: { type: string }
+        session_id: { type: string }
+        status:
+          type: string
+          enum: [running, completed, failed]
+        created_at: { type: string, format: date-time }
+
+    # ---- Usage and cost ----
+    Usage:
+      type: object
+      description: Token counts and their price. Per model call (delta) or running total.
+      required: [input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd_micros]
+      properties:
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cache_read_tokens:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Prompt-cache hits, priced differently from plain input.
+        cache_write_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_usd_micros:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Price of the tokens above, from the server's price table.
+
+    # ---- Events ----
+    AgentEvent:
+      description: One domain event. `type` selects the payload shape; it is also the SSE `event:` name.
+      oneOf:
+        - $ref: "#/components/schemas/TaskStartedEvent"
+        - $ref: "#/components/schemas/TextDeltaEvent"
+        - $ref: "#/components/schemas/ToolCallStartedEvent"
+        - $ref: "#/components/schemas/ToolApprovalRequiredEvent"
+        - $ref: "#/components/schemas/ToolApprovalResolvedEvent"
+        - $ref: "#/components/schemas/ToolCallFinishedEvent"
+        - $ref: "#/components/schemas/UsageUpdatedEvent"
+        - $ref: "#/components/schemas/TaskCompletedEvent"
+        - $ref: "#/components/schemas/TaskFailedEvent"
+      discriminator:
+        propertyName: type
+        mapping:
+          task_started: "#/components/schemas/TaskStartedEvent"
+          text_delta: "#/components/schemas/TextDeltaEvent"
+          tool_call_started: "#/components/schemas/ToolCallStartedEvent"
+          tool_approval_required: "#/components/schemas/ToolApprovalRequiredEvent"
+          tool_approval_resolved: "#/components/schemas/ToolApprovalResolvedEvent"
+          tool_call_finished: "#/components/schemas/ToolCallFinishedEvent"
+          usage_updated: "#/components/schemas/UsageUpdatedEvent"
+          task_completed: "#/components/schemas/TaskCompletedEvent"
+          task_failed: "#/components/schemas/TaskFailedEvent"
+
+    EventEnvelope:
+      type: object
+      required: [type, seq, session_id, time]
+      properties:
+        type: { type: string }
+        seq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Monotonic per session, no gaps. The resume cursor and SSE id.
+        session_id: { type: string }
+        task_id: { type: string }
+        time: { type: string, format: date-time }
+
+    TaskStartedEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [prompt]
+          properties:
+            prompt: { type: string }
+
+    TextDeltaEvent:
+      description: A chunk of assistant text. Concatenate deltas with the same message_id in seq order.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [message_id, text]
+          properties:
+            message_id: { type: string }
+            text: { type: string }
+
+    ToolCallStartedEvent:
+      description: The model asked for a tool. If it is not auto-approved, tool_approval_required follows before it runs.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [call_id, tool_name, input]
+          properties:
+            call_id: { type: string }
+            tool_name: { type: string }
+            input:
+              type: object
+              additionalProperties: true
+              description: Arguments exactly as the model produced them.
+
+    ToolApprovalRequiredEvent:
+      description: The task is paused until submitApproval is called for call_id.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [call_id, tool_name, input]
+          properties:
+            call_id: { type: string }
+            tool_name: { type: string }
+            input:
+              type: object
+              additionalProperties: true
+            expires_at:
+              type: string
+              format: date-time
+              nullable: true
+              description: When the server auto-denies if nobody answers. Null waits forever.
+
+    ToolApprovalResolvedEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [call_id, decision, decided_by]
+          properties:
+            call_id: { type: string }
+            decision: { $ref: "#/components/schemas/ApprovalDecision" }
+            decided_by:
+              type: string
+              description: The approver from submitApproval, or "timeout".
+
+    ToolCallFinishedEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [call_id, output, is_error, duration_ms]
+          properties:
+            call_id: { type: string }
+            output:
+              type: string
+              description: What the tool returned, as text handed back to the model.
+            is_error:
+              type: boolean
+              description: True when the tool failed or was denied; output then holds the reason.
+            duration_ms: { type: integer, format: int64, minimum: 0 }
+
+    UsageUpdatedEvent:
+      description: Emitted after every model call.
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [delta, session_total, budget_remaining_usd_micros]
+          properties:
+            delta: { $ref: "#/components/schemas/Usage" }
+            session_total: { $ref: "#/components/schemas/Usage" }
+            budget_remaining_usd_micros:
+              type: integer
+              format: int64
+              description: May go negative on the call that crosses the ceiling, which then fails the task.
+
+    TaskCompletedEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [result, task_usage]
+          properties:
+            result:
+              type: string
+              description: The agent's final answer.
+            task_usage: { $ref: "#/components/schemas/Usage" }
+
+    TaskFailedEvent:
+      allOf:
+        - $ref: "#/components/schemas/EventEnvelope"
+        - type: object
+          required: [code, message, task_usage]
+          properties:
+            code:
+              type: string
+              enum: [budget_exceeded, cancelled, model_error, max_turns, internal]
+              description: Branch on this; message is not stable.
+            message: { type: string }
+            task_usage: { $ref: "#/components/schemas/Usage" }
+
+    # ---- Human in the loop ----
+    ApprovalDecision:
+      type: string
+      enum: [approve, deny]
+
+    SubmitApprovalRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision: { $ref: "#/components/schemas/ApprovalDecision" }
+        reason:
+          type: string
+          description: On deny, passed to the model as the tool error so it can adapt.
+        approver:
+          type: string
+          description: Who is deciding; recorded in tool_approval_resolved.
+          example: "telegram:12345"
+
+    SubmitApprovalResponse:
+      type: object
+      required: [call_id, decision]
+      properties:
+        call_id: { type: string }
+        decision: { $ref: "#/components/schemas/ApprovalDecision" }
+
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, example: "https://holon.dev/errors/task-running" }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }

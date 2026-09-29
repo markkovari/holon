@@ -1,0 +1,264 @@
+// Holon agent service: sessions, tasks, a resumable event stream, and
+// human approval of tool calls. Served by comp-agentd (ADR-0102) over gRPC
+// and gRPC-web. The REST twin is api/openapi.yaml: same
+// resources and fields; REST moves ids to the path and the idempotency key
+// to a header.
+//
+// Money is integer micro-USD (1 USD = 1_000_000) everywhere: a single model
+// call costs fractions of a cent, and floats do not add up. Note that proto3
+// JSON (Connect's JSON codec) renders 64-bit integers as strings.
+syntax = "proto3";
+
+package holon.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+service AgentService {
+  // Open a session: model, workspace and budget are fixed for its lifetime.
+  rpc CreateSession(CreateSessionRequest) returns (Session);
+  rpc GetSession(GetSessionRequest) returns (Session);
+  // Stops any running task (it ends with TaskFailed{CANCELLED}) and closes the session.
+  rpc CloseSession(CloseSessionRequest) returns (Session);
+
+  // Queue a task. Returns at once; progress arrives on StreamEvents.
+  // A session runs one task at a time: FAILED_PRECONDITION while one is running.
+  rpc SendTask(SendTaskRequest) returns (Task);
+
+  // Stop a running task; it ends with TaskFailed{CANCELLED} and the session
+  // stays open. On a task that already ended, returns it unchanged.
+  rpc CancelTask(CancelTaskRequest) returns (Task);
+
+  // Server stream of every event in the session, in `seq` order. Pass the
+  // last seq you saw to resume after a disconnect without gaps or repeats.
+  rpc StreamEvents(StreamEventsRequest) returns (stream AgentEvent);
+
+  // Approve or deny a tool call announced by ToolApprovalRequired.
+  // FAILED_PRECONDITION if the call is not pending (already decided, or gone).
+  rpc SubmitApproval(SubmitApprovalRequest) returns (SubmitApprovalResponse);
+}
+
+// ---- Sessions ----
+
+message CreateSessionRequest {
+  // Model id as the provider names it, e.g. "claude-sonnet-5".
+  string model = 1;
+  // Absolute path the agent may read and write. The server rejects paths
+  // outside its configured workspace roots (INVALID_ARGUMENT).
+  string workspace_dir = 2;
+  // Hard spend ceiling for the whole session, micro-USD. Must be > 0.
+  int64 max_budget_usd_micros = 3;
+  // Tools that run without asking. Empty: every tool call needs approval.
+  repeated string auto_approve_tools = 4;
+  // Free-form caller labels (e.g. "telegram_chat_id"), echoed back, never interpreted.
+  map<string, string> labels = 5;
+}
+
+message Session {
+  string id = 1;
+  string model = 2;
+  string workspace_dir = 3;
+  SessionStatus status = 4;
+  // Spend so far across all tasks, and the ceiling it is checked against.
+  Usage usage = 5;
+  int64 max_budget_usd_micros = 6;
+  repeated string auto_approve_tools = 7;
+  map<string, string> labels = 8;
+  google.protobuf.Timestamp created_at = 9;
+  // Task currently running, empty when idle.
+  string active_task_id = 10;
+}
+
+enum SessionStatus {
+  SESSION_STATUS_UNSPECIFIED = 0;
+  SESSION_STATUS_IDLE = 1;              // ready for SendTask
+  SESSION_STATUS_RUNNING = 2;           // a task is executing
+  SESSION_STATUS_AWAITING_APPROVAL = 3; // a task is blocked on SubmitApproval
+  SESSION_STATUS_CLOSED = 4;            // terminal
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+// ---- Tasks ----
+
+message SendTaskRequest {
+  string session_id = 1;
+  // The instruction for the agent, plain text.
+  string prompt = 2;
+  // Optional caller-chosen id. Resending the same key returns the original
+  // Task instead of starting a second one (safe retries from bots).
+  string idempotency_key = 3;
+}
+
+message CancelTaskRequest {
+  string session_id = 1;
+  string task_id = 2;
+}
+
+message Task {
+  string id = 1;
+  string session_id = 2;
+  TaskStatus status = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  reserved 1; // was QUEUED: a task starts the moment it is accepted
+  TASK_STATUS_RUNNING = 2;
+  TASK_STATUS_COMPLETED = 3;
+  TASK_STATUS_FAILED = 4;
+}
+
+// ---- Usage and cost ----
+
+// Token counts and their price. Used both per model call (UsageUpdated.delta)
+// and as running totals (UsageUpdated.session_total, Session.usage).
+message Usage {
+  uint64 input_tokens = 1;
+  uint64 output_tokens = 2;
+  // Prompt-cache tokens, priced differently from plain input.
+  uint64 cache_read_tokens = 3;
+  uint64 cache_write_tokens = 4;
+  // Price of the tokens above, micro-USD, computed by the server's price table.
+  int64 cost_usd_micros = 5;
+}
+
+// ---- Event stream ----
+
+message StreamEventsRequest {
+  string session_id = 1;
+  // Deliver events with seq > after_seq. 0 = from the session's first event.
+  uint64 after_seq = 2;
+}
+
+// One domain event. The envelope is the same for every kind; exactly one
+// payload is set. Clients must ignore payload kinds they do not know.
+message AgentEvent {
+  // Monotonic per session, starting at 1, no gaps. The resume cursor.
+  uint64 seq = 1;
+  string session_id = 2;
+  // Empty only for session-level events (none today).
+  string task_id = 3;
+  google.protobuf.Timestamp time = 4;
+
+  oneof payload {
+    TaskStarted task_started = 10;
+    TextDelta text_delta = 11;
+    ToolCallStarted tool_call_started = 12;
+    ToolApprovalRequired tool_approval_required = 13;
+    ToolApprovalResolved tool_approval_resolved = 14;
+    ToolCallFinished tool_call_finished = 15;
+    UsageUpdated usage_updated = 16;
+    TaskCompleted task_completed = 17;
+    TaskFailed task_failed = 18;
+  }
+}
+
+message TaskStarted {
+  string prompt = 1;
+}
+
+// A chunk of assistant text. Concatenate deltas with the same message_id
+// in seq order to get the full message.
+message TextDelta {
+  string message_id = 1;
+  string text = 2;
+}
+
+// The model asked for a tool. If the tool is not auto-approved, a
+// ToolApprovalRequired with the same call_id follows before it runs.
+message ToolCallStarted {
+  string call_id = 1;
+  string tool_name = 2;
+  // Arguments exactly as the model produced them.
+  google.protobuf.Struct input = 3;
+}
+
+// The task is paused until SubmitApproval is called for call_id.
+message ToolApprovalRequired {
+  string call_id = 1;
+  string tool_name = 2;
+  google.protobuf.Struct input = 3;
+  // When the server auto-denies if nobody answers. Unset: waits forever.
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+message ToolApprovalResolved {
+  string call_id = 1;
+  ApprovalDecision decision = 2;
+  // Who decided: the approver string from SubmitApproval, or "timeout".
+  string decided_by = 3;
+}
+
+message ToolCallFinished {
+  string call_id = 1;
+  // What the tool returned, as text handed back to the model.
+  string output = 2;
+  // True when the tool failed or was denied; output then holds the reason.
+  bool is_error = 3;
+  uint64 duration_ms = 4;
+}
+
+// Emitted after every model call.
+message UsageUpdated {
+  // This call alone.
+  Usage delta = 1;
+  // Running total for the session, including delta.
+  Usage session_total = 2;
+  // max_budget_usd_micros - session_total.cost_usd_micros; may go negative
+  // on the call that crosses the ceiling, which then fails the task.
+  int64 budget_remaining_usd_micros = 3;
+}
+
+message TaskCompleted {
+  // The agent's final answer.
+  string result = 1;
+  // Spend of this task alone.
+  Usage task_usage = 2;
+}
+
+message TaskFailed {
+  TaskFailureCode code = 1;
+  // Human-readable detail. Not stable; branch on code.
+  string message = 2;
+  Usage task_usage = 3;
+}
+
+enum TaskFailureCode {
+  TASK_FAILURE_CODE_UNSPECIFIED = 0;
+  TASK_FAILURE_CODE_BUDGET_EXCEEDED = 1;
+  TASK_FAILURE_CODE_CANCELLED = 2;    // CancelTask, or the session closed mid-task
+  TASK_FAILURE_CODE_MODEL_ERROR = 3;  // provider refused, errored or timed out
+  TASK_FAILURE_CODE_MAX_TURNS = 4;    // agent loop hit its step limit
+  TASK_FAILURE_CODE_INTERNAL = 5;
+}
+
+// ---- Human in the loop ----
+
+enum ApprovalDecision {
+  APPROVAL_DECISION_UNSPECIFIED = 0;
+  APPROVAL_DECISION_APPROVE = 1;
+  APPROVAL_DECISION_DENY = 2;
+}
+
+message SubmitApprovalRequest {
+  string session_id = 1;
+  string call_id = 2;
+  ApprovalDecision decision = 3;
+  // On deny: passed to the model as the tool error, so it can adapt.
+  string reason = 4;
+  // Who is deciding (e.g. "telegram:12345"); recorded in ToolApprovalResolved.
+  string approver = 5;
+}
+
+message SubmitApprovalResponse {
+  string call_id = 1;
+  ApprovalDecision decision = 2;
+}
