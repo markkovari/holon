@@ -491,7 +491,8 @@ async fn restore(a: RestoreArgs) -> Result<()> {
     };
     let js = nats(&a.nats).await?;
     let db = Surreal::new(&a.surreal)?;
-    let scratch = tempfile::Builder::new().prefix(&format!("comp-backup-restore-{id}-")).tempdir()?;
+    let scratch =
+        tempfile::Builder::new().prefix(&format!("comp-backup-restore-{id}-")).tempdir()?;
     eprintln!("comp-backup: restoring {id} ({} parts)", m.parts.len());
 
     for part in m.parts.iter().filter(|p| matches_any(&a.only, &p.name)) {
